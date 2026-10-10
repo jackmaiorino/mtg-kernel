@@ -14,7 +14,7 @@ use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 
 /// Appended after the 192 Pauper definitions, in registry order.
-const STANDARD_APPENDED: [&str; 39] = [
+const STANDARD_APPENDED: [&str; 77] = [
     "Plains",
     "Burst Lightning",
     "Shock",
@@ -54,50 +54,116 @@ const STANDARD_APPENDED: [&str; 39] = [
     "Extraction Specialist",
     "Hullbreaker Horror",
     "Recruitment Officer",
+    "Emberheart Challenger",
+    "Burnout Bashtronaut",
+    "Nova Hellkite",
+    "Full Bore",
+    "Iridescent Vinelasher",
+    "Iridescent Vinelasher Offspring Token",
+    "Aloe Alchemist",
+    "Forsaken Miner",
+    "Axebane Ferox",
+    "Hopeful Initiate",
+    "Chrome Host Seedshark",
+    "Incubator Token",
+    "Brutal Cathar",
+    "Knight-Errant of Eos",
+    "Monastery Swiftspear",
+    "Heartfire Hero",
+    "Slickshot Show-Off",
+    "Sanguine Evangelist",
+    "Bat Token",
+    "Darkstar Augur",
+    "Darkstar Augur Offspring Token",
+    "Ruin-Lurker Bat",
+    "Pawpatch Recruit",
+    "Pawpatch Recruit Offspring Token",
+    "Manifold Mouse",
+    "Manifold Mouse Offspring Token",
+    "Yotian Frontliner",
+    "Cori-Steel Cutter",
+    "Monk Token",
+    "Graveyard Trespasser",
+    "Overlord of the Mistmoors",
+    "White Insect Token",
+    "Enduring Curiosity",
+    "Enduring Innocence",
+    "Make Disappear",
+    "Phantom Interference",
+    "Spirit Token",
+    "Flourishing Bloom-Kin",
 ];
 
 /// Every distinct nonbasic card in the 16 decks that this build fully
 /// supports. Each Standard card batch extends this list.
-const SUPPORTED_NONBASIC: [&str; 34] = [
+const SUPPORTED_NONBASIC: [&str; 62] = [
     "Adeline, Resplendent Cathar",
+    "Aloe Alchemist",
     "Ascendant Packleader",
+    "Axebane Ferox",
     "Bloodletter of Aclazotz",
+    "Brutal Cathar",
+    "Burnout Bashtronaut",
     "Burst Lightning",
     "Cenote Scout",
+    "Chrome Host Seedshark",
     "Consider",
     "Coppercoat Vanguard",
+    "Cori-Steel Cutter",
+    "Darkstar Augur",
     "Deep-Cavern Bat",
     "Destroy Evil",
     "Dissipate",
     "Duress",
+    "Emberheart Challenger",
+    "Enduring Curiosity",
+    "Enduring Innocence",
     "Fading Hope",
     "Flow of Knowledge",
+    "Forsaken Miner",
+    "Full Bore",
     "Gatekeeper of Malakir",
     "Get Lost",
+    "Graveyard Trespasser",
     "Hard-Hitting Question",
+    "Heartfire Hero",
     "Hired Claw",
+    "Hopeful Initiate",
     "Hullbreaker Horror",
     "Impulse",
+    "Iridescent Vinelasher",
+    "Knight-Errant of Eos",
     "Lightning Strike",
     "Llanowar Elves",
+    "Make Disappear",
+    "Manifold Mouse",
+    "Monastery Swiftspear",
     "Negate",
+    "Nova Hellkite",
     "Novice Inspector",
     "Opt",
+    "Overlord of the Mistmoors",
+    "Pawpatch Recruit",
+    "Phantom Interference",
     "Razorkin Needlehead",
+    "Ruin-Lurker Bat",
+    "Sanguine Evangelist",
     "Sentinel of the Nameless City",
     "Shock",
     "Shoot the Sheriff",
+    "Slickshot Show-Off",
     "Spell Pierce",
     "Thirst for Discovery",
     "Tolarian Terror",
     "Unstoppable Slasher",
     "Voldaren Epicure",
     "Warden of the Inner Sky",
+    "Yotian Frontliner",
 ];
 
 /// Definitions retained for development with incomplete printed behavior.
 /// Full deck admission must refuse every one.
-const PARTIAL: [&str; 8] = [
+const PARTIAL: [&str; 9] = [
     "Memory Deluge",
     "Recruitment Officer",
     "Evolving Adaptive",
@@ -106,6 +172,7 @@ const PARTIAL: [&str; 8] = [
     "Quirion Beastcaller",
     "Sharp-Eyed Rookie",
     "Thalia, Guardian of Thraben",
+    "Flourishing Bloom-Kin",
 ];
 
 const BASICS: [&str; 5] = ["Plains", "Island", "Swamp", "Mountain", "Forest"];
@@ -169,9 +236,9 @@ fn standard_registry_appends_to_the_pauper_prefix_without_fdn() {
 
 #[test]
 fn standard_catalog_identity_is_frozen() {
-    const EXPECTED_STANDARD_V3: u64 = 0xc613_9dbd_d2f0_db62;
+    const EXPECTED_STANDARD_V4: u64 = 0x58c7_c4e6_8b6e_f277;
     assert_eq!(
-        KERNEL_CARDDB_HASH, EXPECTED_STANDARD_V3,
+        KERNEL_CARDDB_HASH, EXPECTED_STANDARD_V4,
         "Standard catalog hash {KERNEL_CARDDB_HASH:#018x}"
     );
 }

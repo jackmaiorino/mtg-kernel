@@ -493,3 +493,32 @@ pub(crate) fn controlled_forest_boost(state: &GameState, id: ObjectId) -> i32 {
         })
         .count() as i32
 }
+
+/// One name-keyed static rule above, as the rules-vector extractor
+/// describes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StandardKeywordStaticV1 {
+    /// "Start your engines!" (the controller gets speed), and double strike
+    /// while its controller is at max speed.
+    StartYourEnginesMaxSpeedDoubleStrike,
+    /// "This creature can't block."
+    CantBlock,
+    /// Daybound / nightbound: transforms with the day/night designation.
+    DayboundNightbound,
+    /// Gets +1/+1 for each Forest its controller controls.
+    PlusOnePerControlledForest,
+}
+
+/// The statics this module applies for the definition named `name`. Every
+/// name keyed above has an entry except the bookkeeping-only ones (Enduring
+/// last-known creature status, last-known power for leave triggers) and
+/// Spree, which the extractor reads through `spree_extra_generic`.
+pub(crate) fn rules_vector_statics(name: &str) -> &'static [StandardKeywordStaticV1] {
+    match name {
+        "Burnout Bashtronaut" => &[StandardKeywordStaticV1::StartYourEnginesMaxSpeedDoubleStrike],
+        "Forsaken Miner" => &[StandardKeywordStaticV1::CantBlock],
+        "Brutal Cathar" | "Graveyard Trespasser" => &[StandardKeywordStaticV1::DayboundNightbound],
+        "Flourishing Bloom-Kin" => &[StandardKeywordStaticV1::PlusOnePerControlledForest],
+        _ => &[],
+    }
+}

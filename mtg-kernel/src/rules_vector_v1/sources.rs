@@ -884,6 +884,8 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
 
     #[cfg(feature = "standard-magezero-fixtures")]
     standard_statics(name, &mut walk);
+    #[cfg(feature = "standard-magezero-fixtures")]
+    standard_keyword_statics(name, &mut walk);
 
     // Permanents with a continuous effect on their host.
     if let Some(equip) = equipment {
@@ -1121,6 +1123,90 @@ fn attachment_facts(aura: AttachmentDef, out: &mut Collector) {
                 );
             }
         }
+    }
+}
+
+/// The MageZero Standard keyword rules `standard_keywords_v1` keys by name:
+/// its statics, and each Spree mode set's surcharge and resolution prelude.
+#[cfg(feature = "standard-magezero-fixtures")]
+fn standard_keyword_statics(name: &str, walk: &mut Walk) {
+    use crate::standard_keywords_v1::StandardKeywordStaticV1;
+    for fact in crate::standard_keywords_v1::rules_vector_statics(name) {
+        walk.rec(
+            "standard_keyword_static",
+            Value::String(format!("{fact:?}")),
+        );
+        walk.ability(CtxF::Static, |out| match *fact {
+            StandardKeywordStaticV1::StartYourEnginesMaxSpeedDoubleStrike => {
+                // Vocabulary gap: no speed designation or read; the max-speed
+                // gate is marked conditional and the speed rules opaque.
+                out.atoms.push(Atom::Opaque);
+                out.control(ControlF::Conditional);
+                for bit in keyword_bits(crate::card_def::Keywords::DOUBLE_STRIKE) {
+                    out.effect(
+                        EffectAtom::new(EvF::GrantKeyword)
+                            .player(RelF::You)
+                            .obj(ObjF::ThisObject)
+                            .duration(DurF::WhileOnBattlefield)
+                            .keyword(bit),
+                    );
+                }
+            }
+            StandardKeywordStaticV1::CantBlock => out.effect(
+                EffectAtom::new(EvF::Restrict)
+                    .player(RelF::You)
+                    .obj(ObjF::ThisObject)
+                    .duration(DurF::WhileOnBattlefield),
+            ),
+            StandardKeywordStaticV1::DayboundNightbound => {
+                // Transforms as the day/night designation changes.
+                // Vocabulary gap: no day/night read.
+                out.control(ControlF::Conditional);
+                out.effect(EffectAtom::new(EvF::Transform).obj(ObjF::ThisObject));
+            }
+            StandardKeywordStaticV1::PlusOnePerControlledForest => {
+                // Vocabulary gap: ObjF has no subtype class; nearest is the
+                // controller's lands.
+                out.read(
+                    RelF::You,
+                    Some(ZoneF::Battlefield),
+                    Some(ObjF::Typed(CardTypeF::Land)),
+                    AggF::Count,
+                );
+                out.effect(
+                    EffectAtom::new(EvF::StatChange)
+                        .player(RelF::You)
+                        .obj(ObjF::ThisObject)
+                        .amount(AmtF::Dynamic)
+                        .duration(DurF::WhileOnBattlefield),
+                );
+            }
+        });
+    }
+    for mode in 0..3u8 {
+        let Some(extra) = crate::standard_keywords_v1::spree_extra_generic(name, mode) else {
+            continue;
+        };
+        let prelude = crate::standard_keywords_v1::spree_mode_prelude(name, mode);
+        walk.rec(
+            "spree_mode",
+            json!({
+                "mode": mode,
+                "extra_generic": extra,
+                "prelude": prelude.as_ref().map(program_value),
+            }),
+        );
+        let env = Env {
+            target_spec: TargetSpec::None,
+        };
+        walk.ability(CtxF::Mode, |out| {
+            // The mode set's `+{N}` surcharge on top of the mana cost.
+            // Vocabulary gap: `CostAtom::Mana` carries no amount.
+            out.cost(CostAtom::Mana);
+            if let Some(op) = &prelude {
+                meaning::effect_op(op, &env, out);
+            }
+        });
     }
 }
 

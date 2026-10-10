@@ -1,7 +1,8 @@
 # MageZero Standard family D: new set keywords v1
 
-Third batch of the MageZero Standard catalog (`kernel_carddb_standard/v4`),
-covering mechanic family D of `docs/reports/standard_magezero_inventory_v1.md`.
+Third batch of the MageZero Standard catalog (`kernel_carddb_standard/v4`,
+`0x58c7c4e68b6ef277`), covering mechanic family D of
+`docs/reports/standard_magezero_inventory_v1.md`.
 Every card's printed behavior was read from its XMage card file (path in the
 registry entry). All new behavior is gated on the `standard-magezero-fixtures`
 feature, so the Pauper and FDN Limited identities are unchanged.
@@ -78,6 +79,10 @@ Mouse offspring tokens, Incubator, Bat, Monk, White Insect and Spirit.
 - Triggered abilities with "up to" targets can now finish early, and the
   new target specs are another creature you control, a creature you control
   with a subtype, and up to one card in a graveyard.
+- **Rules vector.** Family D's trigger conditions, costs, Ward costs and
+  effect ops have meaning rows (`rules_vector_v1/meaning/effect_h.rs` for
+  the ops). Its name-keyed statics and Spree surcharges are read through
+  `standard_keywords_v1::rules_vector_statics` and `spree_extra_generic`.
 
 ## Simplifications
 
@@ -107,12 +112,14 @@ from the printed rules.
   program must stay rooted.
 - **Flourishing Bloom-Kin has no disguise.** The engine has no face-down
   objects, so it can only be hard-cast and its turned-face-up trigger never
-  fires.
+  fires. Because a printed ability is missing, its registry entry is
+  `partial` and full-deck admission refuses it.
 
 ## Deferred
 
 - **Monstrous Rage** needs the creature-Aura static profile from the FDN
-  token and Aura batch (#168).
+  token and Aura batch (#168). That batch has merged, so it is the next
+  follow-up.
 - **Zoetic Glyph** needs an artifact Aura that makes its host a creature.
   Family E's vehicles need the same artifact-becomes-creature primitive, so
   it waits for that batch rather than building it twice. Discover lands with

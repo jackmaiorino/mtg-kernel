@@ -2374,7 +2374,7 @@
     },
     {
       "name": "Flourishing Bloom-Kin",
-      "engine_capability": "full",
+      "engine_capability": "partial",
       "mana_cost": "{1}{G}",
       "mana_value": 2,
       "colors": [

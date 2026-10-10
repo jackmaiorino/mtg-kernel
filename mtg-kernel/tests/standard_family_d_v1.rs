@@ -162,7 +162,6 @@ fn family_d_cards_are_fully_supported() {
         "Make Disappear",
         "Phantom Interference",
         "Spirit Token",
-        "Flourishing Bloom-Kin",
     ] {
         let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} missing"));
         assert_eq!(
@@ -171,6 +170,12 @@ fn family_d_cards_are_fully_supported() {
             "{name}"
         );
     }
+}
+
+#[test]
+fn flourishing_bloom_kin_is_partial_without_disguise() {
+    let id = card_id_by_name("Flourishing Bloom-Kin").expect("Flourishing Bloom-Kin");
+    assert_eq!(CARD_DEFS[id as usize].capability, CardCapability::Partial);
 }
 
 #[test]
