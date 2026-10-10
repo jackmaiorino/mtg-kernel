@@ -7331,6 +7331,13 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     order_resolved,
                     path,
                 } => {
+                    if to_zone == Zone::Graveyard && objects.len() >= 2 && !order_resolved {
+                        // Validate before reading any bound object, under
+                        // either runtime profile.
+                        for binding in &objects {
+                            validate_effect_object_binding(state, *binding)?;
+                        }
+                    }
                     if to_zone == Zone::Graveyard
                         && objects.len() >= 2
                         && !order_resolved
@@ -7339,9 +7346,6 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                             state.objects.get(objects[0].object).owner,
                         )
                     {
-                        for binding in &objects {
-                            validate_effect_object_binding(state, *binding)?;
-                        }
                         let player = state.objects.get(objects[0].object).owner;
                         assert!(
                             objects

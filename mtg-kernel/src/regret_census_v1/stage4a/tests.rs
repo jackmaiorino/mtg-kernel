@@ -801,13 +801,38 @@ fn scripted_cast(
     Vec<Vec<crate::rl::ActionSemanticV1>>,
     crate::state::GameState,
 ) {
+    scripted_cast_with(rules, spell, library, &[], false).0
+}
+
+/// `scripted_cast` with extra hand cards; with `stop_at_suspension`, also
+/// returns the state at the first suspended effect after the cast.
+fn scripted_cast_with(
+    rules: crate::engine::RuntimeRulesV1,
+    spell: &str,
+    library: &[&str],
+    hand: &[&str],
+    stop_at_suspension: bool,
+) -> (
+    (
+        Vec<Vec<crate::rl::ActionSemanticV1>>,
+        crate::state::GameState,
+    ),
+    Option<crate::state::GameState>,
+) {
     use crate::policy_observation_v6::tests::{put, ready_state};
     use crate::rl::{ActionSemanticV1, PlayerSeatV1, TargetRefV1};
     use crate::state::Zone;
     let mut st = ready_state();
     let me = PlayerId::P0;
     put(&mut st, me, spell, Zone::Hand);
-    for c in [crate::mana::ManaColor::B, crate::mana::ManaColor::U] {
+    for name in hand {
+        put(&mut st, me, name, Zone::Hand);
+    }
+    for c in [
+        crate::mana::ManaColor::B,
+        crate::mana::ManaColor::U,
+        crate::mana::ManaColor::G,
+    ] {
         st.players[0].mana_pool[c.pool_index()] = 4;
     }
     for name in library {
@@ -821,9 +846,13 @@ fn scripted_cast(
     let spell_id = crate::card_def::card_id_by_name(spell).unwrap();
     let mut menus = Vec::new();
     let mut cast = false;
+    let mut suspended = None;
     for _ in 0..400 {
         let Some(d) = play::decision(&s) else { break };
         let g = s.game_state();
+        if stop_at_suspension && cast && suspended.is_none() && g.engine.pending_effect.is_some() {
+            suspended = Some(g.clone());
+        }
         if cast
             && g.stack.is_empty()
             && g.engine.pending_effect.is_none()
@@ -872,7 +901,7 @@ fn scripted_cast(
         s.step(d.episode_id, d.step, a as u32).unwrap();
     }
     assert!(cast, "{spell} was never cast");
-    (menus, s.game_state().clone())
+    ((menus, s.game_state().clone()), suspended)
 }
 
 fn order_menus(menus: &[Vec<crate::rl::ActionSemanticV1>]) -> usize {
@@ -1083,7 +1112,9 @@ fn resolution_boundary_preserves_events_and_bound_order_for_spy() {
         .collect();
     let fwd: Vec<String> = lib.iter().map(|s| s.to_string()).collect();
     let rev: Vec<String> = fwd.iter().rev().cloned().collect();
-    assert!(milled == fwd || milled == rev, "{gy:?}");
+    // Library index 0 is the top; the batch keeps that bound order.
+    let _ = rev;
+    assert_eq!(milled, fwd, "{gy:?}");
 }
 
 #[test]
@@ -1107,4 +1138,97 @@ fn resolution_boundary_covers_plain_mills() {
         zone_names(&new, &new.players[0].hand, true)
     );
     assert_eq!(event_multiset(&old), event_multiset(&new));
+}
+
+#[test]
+fn resolution_boundary_keeps_the_order_choice_for_a_delve_card_in_hand() {
+    use crate::engine::RuntimeRulesV1;
+    let lib = [
+        "Dread Return",
+        "Lotleth Giant",
+        "Balustrade Spy",
+        "Dread Return",
+    ];
+    let ((menus, st), _) = scripted_cast_with(
+        RuntimeRulesV1::RESOLUTION_BOUNDARY_V1,
+        "Balustrade Spy",
+        &lib,
+        &["Gurmag Angler"],
+        false,
+    );
+    assert!(order_menus(&menus) >= 3, "{menus:?}");
+    // Delve payment reads the oldest graveyard cards, so the order the owner
+    // chose is what a later Angler would exile first.
+    assert!(st.players[0].graveyard.len() >= 4);
+}
+
+#[test]
+fn resolution_boundary_covers_reveal_and_partition() {
+    use crate::engine::RuntimeRulesV1;
+    let lib = ["Lotleth Giant", "Dread Return", "Masked Vandal", "Swamp"];
+    let ((old_menus, old), _) =
+        scripted_cast_with(RuntimeRulesV1::default(), "Winding Way", &lib, &[], false);
+    let ((new_menus, new), _) = scripted_cast_with(
+        RuntimeRulesV1::RESOLUTION_BOUNDARY_V1,
+        "Winding Way",
+        &lib,
+        &[],
+        false,
+    );
+    assert!(order_menus(&old_menus) >= 1, "{old_menus:?}");
+    assert_eq!(order_menus(&new_menus), 0, "{new_menus:?}");
+    assert_eq!(
+        zone_names(&old, &old.players[0].graveyard, true),
+        zone_names(&new, &new.players[0].graveyard, true)
+    );
+    assert_eq!(
+        zone_names(&old, &old.players[0].hand, true),
+        zone_names(&new, &new.players[0].hand, true)
+    );
+    assert_eq!(event_multiset(&old), event_multiset(&new));
+    assert_eq!(old.library_knowledge, new.library_knowledge);
+}
+
+/// A graveyard batch whose binding no longer exists is an error, never a
+/// panic, under either profile.
+#[test]
+fn resolution_boundary_rejects_a_missing_binding_without_panicking() {
+    use crate::effect::{EffectFrame, EffectObjectBinding};
+    use crate::engine::RuntimeRulesV1;
+    use crate::state::Zone;
+    let lib = ["Lotleth Giant", "Dread Return", "Masked Vandal", "Swamp"];
+    for rules in [
+        RuntimeRulesV1::default(),
+        RuntimeRulesV1::RESOLUTION_BOUNDARY_V1,
+    ] {
+        let (_, suspended) = scripted_cast_with(rules, "Winding Way", &lib, &[], true);
+        let mut st = suspended.expect("Winding Way suspends on its type choice");
+        let mut cont = st.engine.pending_effect.take().unwrap();
+        let top = st.players[0].library[0];
+        cont.frames.push(EffectFrame::MoveObjectsBatch {
+            objects: vec![
+                EffectObjectBinding {
+                    object: crate::ids::ObjectId(60_000),
+                    expected_zone: Zone::Library,
+                    expected_zone_change_count: 0,
+                },
+                EffectObjectBinding {
+                    object: top,
+                    expected_zone: Zone::Library,
+                    expected_zone_change_count: st.objects.get(top).zone_change_count,
+                },
+            ],
+            to_zone: Zone::Graveyard,
+            preserve_known_identity: false,
+            order_resolved: false,
+            path: Vec::new(),
+        });
+        cont.choice = None;
+        cont.answered_choice_guard = None;
+        st.engine.pending_effect = Some(cont);
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::effect::resume_resumable_resolution(&mut st)
+        }));
+        assert!(matches!(r, Ok(Err(_))), "{rules:?}");
+    }
 }
