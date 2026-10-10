@@ -1336,6 +1336,9 @@ pub enum EffectOp {
     ReturnAbilitySourceFromGraveyard {
         tapped: bool,
     },
+    /// Each opponent loses the spell's announced X; gain exactly the life
+    /// lost by those proposals after replacement. The game has two seats.
+    LoseOpponentsLifeXThenGainLifeLost,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -12579,6 +12582,24 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             };
             event::propose_and_commit(state, event::ProposedEvent::life_gain(player, amount));
         }
+        EffectOp::LoseOpponentsLifeXThenGainLifeLost => {
+            let opponent = ctx.controller.opponent();
+            let start = state.engine.event_history.len();
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::life_loss(opponent, i32::from(ctx.x_value)),
+            );
+            let lost = state.engine.event_history[start..]
+                .iter()
+                .filter_map(|event| match event {
+                    event::CommittedEvent::LifeLoss { player, amount } if *player == opponent => {
+                        Some((*amount).max(0))
+                    }
+                    _ => None,
+                })
+                .sum();
+            event::propose_and_commit(state, event::ProposedEvent::life_gain(ctx.controller, lost));
+        }
         EffectOp::LoseLife { player, amount } => {
             let player = ctx.resolve_player(*player, state);
             event::propose_and_commit(state, event::ProposedEvent::life_loss(player, *amount));
@@ -15114,6 +15135,63 @@ mod tests {
                     "old activation cannot return a later graveyard incarnation"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn exsanguinate_primitive_uses_announced_x_and_does_not_cap_loss_at_remaining_life() {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            for x in [0, 5, u16::MAX] {
+                let mut state = two_card_libraries();
+                state.players[player.opponent().index()].life = 2;
+                let mut ctx = ExecCtx::no_targets(ObjectId(0), player);
+                ctx.x_value = x;
+                let mut restored: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                for branch in [&mut state, &mut restored] {
+                    execute(&EffectOp::LoseOpponentsLifeXThenGainLifeLost, &ctx, branch);
+                    assert_eq!(branch.players[player.index()].life, 20 + i32::from(x));
+                    assert_eq!(
+                        branch.players[player.opponent().index()].life,
+                        2 - i32::from(x)
+                    );
+                    assert!(!branch
+                        .engine
+                        .event_history
+                        .iter()
+                        .any(|event| matches!(event, CommittedEvent::Damage { .. })));
+                }
+                assert_eq!(state.state_hash(), restored.state_hash());
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "standard-magezero-fixtures")]
+    fn exsanguinate_primitive_gains_the_replaced_life_loss() {
+        let card = crate::card_def::card_id_by_name("Bloodletter of Aclazotz").unwrap();
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                &[card; 7],
+                &[card; 7],
+                |_| "Bloodletter of Aclazotz".into(),
+                720,
+                player,
+            );
+            let source = state.players[player.index()].hand[0];
+            event::propose_and_commit(
+                &mut state,
+                event::ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            let mut ctx = ExecCtx::no_targets(source, player);
+            ctx.x_value = 3;
+            execute(
+                &EffectOp::LoseOpponentsLifeXThenGainLifeLost,
+                &ctx,
+                &mut state,
+            );
+            assert_eq!(state.players[player.opponent().index()].life, 14);
+            assert_eq!(state.players[player.index()].life, 26);
         }
     }
 

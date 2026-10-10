@@ -239,6 +239,23 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                     .duration(DurF::WhileOnBattlefield),
             );
         }
+        EffectOp::LoseOpponentsLifeXThenGainLifeLost => {
+            out.effect(
+                EffectAtom::new(EvF::LifeLoss)
+                    .player(RelF::EachOpponent)
+                    .obj(ObjF::Player)
+                    .amount(AmtF::Dynamic),
+            );
+            out.effect(
+                EffectAtom::new(EvF::LifeGain)
+                    .player(RelF::You)
+                    .obj(ObjF::Player)
+                    .amount(AmtF::Dynamic),
+            );
+            // The exact program records X and the replaced life-loss dependency.
+            // The fixed facet vocabulary has no term for that binding.
+            out.atoms.push(Atom::Opaque);
+        }
         EffectOp::ExileGraveyardTargetsDrainPerCreature { max_targets } => {
             // Each still-legal graveyard card target is exiled; per creature
             // card exiled, each opponent loses 1 life and the controller

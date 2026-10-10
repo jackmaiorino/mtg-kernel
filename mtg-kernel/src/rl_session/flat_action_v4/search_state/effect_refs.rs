@@ -145,6 +145,7 @@ impl Scan<'_> {
             | BindPlusOneCounterOnAnotherTargetToTriggerTarget
             | ReturnSourceFromGraveyardUnearthed
             | ReturnAbilitySourceFromGraveyard { .. }
+            | LoseOpponentsLifeXThenGainLifeLost
             | ExileGraveyardTargetsDrainPerCreature { .. }
             | RemoveTimeCounterFromSource
             | ReturnSourceAsEnduringEnchantment

@@ -3367,6 +3367,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         mode2: None,
     };
     Some(match name {
+        "Exsanguinate" => program(
+            "None",
+            "LoseOpponentsLifeXThenGainLifeLost(announcedX,actualCommittedLoss)",
+            "EffectOp::LoseOpponentsLifeXThenGainLifeLost",
+        ),
         "Brass's Bounty" => program(
             "None",
             "CreateTokensDynamic(Treasure Token,Controller,ControlledPermanentsWithType(Land),untapped)",
