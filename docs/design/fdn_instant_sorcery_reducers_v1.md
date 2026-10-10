@@ -41,9 +41,11 @@ reserved objects. It also sums mandatory life costs with Phyrexian payment and
 preserves zero-life payment at negative life. Three new regressions cover these
 risks. Read-only review found that post-solve life checking could reject a legal
 mana allocation. Repair 41a74348 puts the remaining life budget inside pip
-backtracking and adds the exact Aquifer/Swamp regression. Native execution and
-repair review are pending. Convoke still explicitly refuses this planner until
-its complete adapter is implemented.
+backtracking and adds the exact Aquifer/Swamp regression. Review then found generic payment outside the pip search could miss a legal
+Phyrexian payment. Repair 5c761ec8 includes generic payment at the search's
+terminal condition with isolated failed-branch state and a taxed-spell
+regression. Native execution and repair review are pending. Convoke still
+explicitly refuses this planner until its complete adapter is implemented.
 
 Remaining work: Convoke adapter; offer/pending/X/final-payment integration;
 atomic nonmana payment; actual card gameplay and restore tests; metadata and
