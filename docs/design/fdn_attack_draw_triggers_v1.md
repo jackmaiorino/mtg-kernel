@@ -26,3 +26,13 @@ draws, one life-loss trigger per successful draw, own-draw and failed-draw
 exclusion, untargeted placement, and finalized-stack/pending-order restore.
 Source preparation does not change registry/profile/catalog identities or
 accepted coverage. Native and card gameplay qualification remain pending.
+
+Source receipt, October 10: preparation196479b8 initially lacked Construct;
+repair867a79ae725a66b6e3ea1a0bf3b2ef2c65a2b7bb appends it without shifting
+accepted subtype IDs. Separate read-only review found no remaining actionable
+defects. Formatting/diff checks pass. Haley's unstarted guard expired with
+no_room after its whole-host reservation held for the full wait; no native
+command executed there. Jack's eligible cores16-17 then admitted supported
+guard9d511dd432b6475daa5f8d000da0ea97, supervisor29824, on a retained owned
+checkout at exact867a79ae. It reuses the owned build cache and also checks
+Limited-plus-Standard test compilation. Native results remain pending.
