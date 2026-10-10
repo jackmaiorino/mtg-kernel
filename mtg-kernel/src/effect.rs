@@ -15425,9 +15425,9 @@ mod tests {
             );
             state.step = crate::state::Step::Main1;
             let target = state.players[player.index()].hand[0];
-            state.players[player.index()].mana_pool[5] = 5;
-            state.players[player.index()].mana_pool[crate::mana::ManaColor::U.pool_index()] = 1;
-            state.players[player.index()].mana_pool[crate::mana::ManaColor::G.pool_index()] = 1;
+            state.players[player.index()].mana_pool[5] = 3;
+            state.players[player.index()].mana_pool[crate::mana::ManaColor::U.pool_index()] = 2;
+            state.players[player.index()].mana_pool[crate::mana::ManaColor::G.pool_index()] = 2;
             crate::engine::advance_until_decision(&mut state);
             crate::engine::step(&mut state, crate::engine::Action::CastSpell(target)).unwrap();
             assert!(matches!(
