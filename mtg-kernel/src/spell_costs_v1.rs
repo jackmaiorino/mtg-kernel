@@ -16,6 +16,117 @@ pub(super) struct SpellManaPaymentV1 {
     pub(super) convoke_tapped: Vec<ObjectId>,
 }
 
+/// Local, synchronous payment actions. No restored payload can assert that
+/// these were prepared, and commitment never selects counters or hand cards.
+pub(super) struct PreparedSpellNonmanaV1 {
+    actions: Vec<PreparedNonmanaActionV1>,
+}
+
+enum PreparedNonmanaActionV1 {
+    Component(CostComponent, Vec<ObjectId>),
+    CounterRemovals(Vec<ObjectId>),
+    RevealHand(Vec<ObjectId>),
+}
+
+impl PreparedNonmanaActionV1 {
+    fn commit(&self, state: &mut GameState, player: PlayerId, source: ObjectId) {
+        match self {
+            Self::Component(component, chosen) => {
+                // Mana, Convoke, counters and reveal are excluded at preparation.
+                // Remaining legacy arms have no fallible resource selection.
+                let spent = super::commit_cost_components_from_plan_v1(
+                    state,
+                    player,
+                    source,
+                    &[*component],
+                    chosen,
+                    None,
+                );
+                debug_assert_eq!(spent, Some(0));
+            }
+            Self::CounterRemovals(objects) => {
+                for &object in objects {
+                    state.objects.get_mut(object).counters.plus1_plus1 -= 1;
+                }
+            }
+            Self::RevealHand(objects) => {
+                for &object in objects {
+                    for observer in [PlayerId::P0, PlayerId::P1] {
+                        state
+                            .reveal_hand_card(observer, player, object)
+                            .expect("synchronous prepared hand reveal remains live");
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl PreparedSpellNonmanaV1 {
+    pub(super) fn commit(self, state: &mut GameState, player: PlayerId, source: ObjectId) {
+        for action in self.actions {
+            action.commit(state, player, source);
+        }
+    }
+}
+
+/// Prepare against the resource state after the caller's frozen mana/discard
+/// payment. A private projection applies each ordered component so later
+/// groups cannot double-spend counters, life or departing objects. The caller
+/// validates chosen-creature and optional-cost bindings separately.
+pub(super) fn prepare_spell_nonmana_v1(
+    state: &GameState,
+    player: PlayerId,
+    source: ObjectId,
+    groups: &[(&[CostComponent], &[ObjectId])],
+) -> Option<PreparedSpellNonmanaV1> {
+    let mut projected = state.clone();
+    let mut actions = Vec::new();
+    for (components, chosen) in groups {
+        let nonmana = components
+            .iter()
+            .copied()
+            .filter(|component| {
+                !matches!(
+                    component,
+                    CostComponent::Mana(_)
+                        | CostComponent::ConvokeMana(_)
+                        | CostComponent::DiscardCards(_)
+                        | CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand
+                )
+            })
+            .collect::<Vec<_>>();
+        super::validate_cost_component_choices_v1(&projected, player, source, &nonmana, chosen)?;
+        for component in nonmana {
+            if !super::can_pay_components(&[component], player, source, &projected) {
+                return None;
+            }
+            let action = match component {
+                CostComponent::RemovePlusOneCountersFromControlledCreatures(amount) => {
+                    PreparedNonmanaActionV1::CounterRemovals(
+                        super::controlled_plus_one_counter_removals(player, &projected, amount)?,
+                    )
+                }
+                CostComponent::RevealHandIfNoCardsWithType(_) => {
+                    let hand = projected.players[player.index()].hand.clone();
+                    if hand.iter().any(|object| {
+                        projected.objects.try_get(*object).is_none_or(|card| {
+                            card.owner != player || card.zone != crate::state::Zone::Hand
+                        })
+                    }) {
+                        return None;
+                    }
+                    PreparedNonmanaActionV1::RevealHand(hand)
+                }
+                _ => PreparedNonmanaActionV1::Component(component, chosen.to_vec()),
+            };
+            action.commit(&mut projected, player, source);
+            actions.push(action);
+        }
+    }
+    Some(PreparedSpellNonmanaV1 { actions })
+}
+
 /// Object choices retain the same base/additional ownership as the staged
 /// cast. This result is local preparation, never serialized payment evidence.
 pub(super) struct SpellComponentChoicesV1 {
@@ -799,6 +910,125 @@ mod tests {
             .unwrap();
         assert_eq!(plan.pool_used[3], 1);
         assert_eq!(plan.pool_used[5], 0);
+    }
+
+    #[test]
+    fn prepared_nonmana_groups_refuse_shared_life_or_counter_exhaustion_without_mutation() {
+        let elf = card_def::card_id_by_name("Llanowar Elves").unwrap();
+        let forest = card_def::card_id_by_name("Forest").unwrap();
+        let mut state = GameState::new_from_libraries(&[elf], &[forest], |_| "card".into(), 950);
+        let object = state.draw_card(PlayerId::P0).unwrap();
+        assert!(state.move_hand_to_battlefield(PlayerId::P0, object));
+        state.objects.get_mut(object).counters.plus1_plus1 = 2;
+        state.players[0].life = 3;
+        let before = serde_json::to_value(&state).unwrap();
+        for component in [
+            CostComponent::PayLife(2),
+            CostComponent::RemovePlusOneCountersFromControlledCreatures(2),
+        ] {
+            assert!(super::super::can_pay_components(
+                &[component],
+                PlayerId::P0,
+                object,
+                &state,
+            ));
+            assert!(prepare_spell_nonmana_v1(
+                &state,
+                PlayerId::P0,
+                object,
+                &[(&[component], &[]), (&[component], &[])],
+            )
+            .is_none());
+            assert_eq!(serde_json::to_value(&state).unwrap(), before);
+        }
+        let prepared = prepare_spell_nonmana_v1(
+            &state,
+            PlayerId::P0,
+            object,
+            &[
+                (
+                    &[CostComponent::RemovePlusOneCountersFromControlledCreatures(
+                        1,
+                    )],
+                    &[],
+                ),
+                (
+                    &[CostComponent::RemovePlusOneCountersFromControlledCreatures(
+                        1,
+                    )],
+                    &[],
+                ),
+            ],
+        )
+        .unwrap();
+        assert_eq!(serde_json::to_value(&state).unwrap(), before);
+        prepared.commit(&mut state, PlayerId::P0, object);
+        assert_eq!(state.objects.get(object).counters.plus1_plus1, 0);
+        assert_eq!(state.players[0].life, 3);
+    }
+
+    #[test]
+    fn prepared_nonmana_refuses_counters_after_their_only_creature_was_sacrificed() {
+        let elf = card_def::card_id_by_name("Llanowar Elves").unwrap();
+        let forest = card_def::card_id_by_name("Forest").unwrap();
+        let mut state =
+            GameState::new_from_libraries(&[elf, forest], &[forest], |_| "card".into(), 951);
+        let creature = state.draw_card(PlayerId::P0).unwrap();
+        assert!(state.move_hand_to_battlefield(PlayerId::P0, creature));
+        let source = state.draw_card(PlayerId::P0).unwrap();
+        state.objects.get_mut(creature).counters.plus1_plus1 = 2;
+        let before = serde_json::to_value(&state).unwrap();
+        assert!(prepare_spell_nonmana_v1(
+            &state,
+            PlayerId::P0,
+            source,
+            &[
+                (
+                    &[CostComponent::SacrificeControlled {
+                        count: 1,
+                        filter: super::super::PermanentFilter::Creature,
+                    }],
+                    &[creature]
+                ),
+                (
+                    &[CostComponent::RemovePlusOneCountersFromControlledCreatures(
+                        1
+                    )],
+                    &[]
+                ),
+            ],
+        )
+        .is_none());
+        assert_eq!(serde_json::to_value(&state).unwrap(), before);
+    }
+
+    #[test]
+    fn prepared_nonmana_reveal_checks_live_hand_before_any_payment() {
+        let forest = card_def::card_id_by_name("Forest").unwrap();
+        let mut state = GameState::new_from_libraries(&[forest], &[forest], |_| "card".into(), 952);
+        let source = state.draw_card(PlayerId::P0).unwrap();
+        let groups: &[(&[CostComponent], &[ObjectId])] = &[
+            (&[CostComponent::PayLife(1)], &[]),
+            (
+                &[CostComponent::RevealHandIfNoCardsWithType(
+                    CardType::Creature,
+                )],
+                &[],
+            ),
+        ];
+        let before = serde_json::to_value(&state).unwrap();
+        let prepared = prepare_spell_nonmana_v1(&state, PlayerId::P0, source, groups).unwrap();
+        assert_eq!(serde_json::to_value(&state).unwrap(), before);
+        prepared.commit(&mut state, PlayerId::P0, source);
+        assert_eq!(state.players[0].life, 19);
+        assert!(state.hand_knowledge[1][0]
+            .iter()
+            .any(|entry| entry.object == source));
+
+        state.objects.get_mut(source).owner = PlayerId::P1;
+        let corrupt = serde_json::to_value(&state).unwrap();
+        assert!(prepare_spell_nonmana_v1(&state, PlayerId::P0, source, groups).is_none());
+        assert_eq!(serde_json::to_value(&state).unwrap(), corrupt);
     }
 
     #[test]
