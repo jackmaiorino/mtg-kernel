@@ -25,3 +25,11 @@ MSVC19.50.35725/14.50.35717, and the recorded native commands regenerate the
 compiler cache. Subsequent checks set CARGO_INCREMENTAL=0 to avoid accumulating
 this intermediate data. No execution time or regenerated output equivalence
 is inferred. Actual prune execution and reserve restoration remain pending.
+Executed prune1 under supported guardccb9198a40bc4dd494aab5e6e4329e93,
+supervisor152872, cores14-15 BelowNormal, terminal0. Removed23,621 uncited
+incremental files totaling37,622,644,719 logical bytes. All114 retained identities
+matched; free space rose54.437 to66.713GiB. The per-file manifest SHA256 is
+b9a9f05709fd74863db98df8d913eddc79457278e61391898da1d49509c3875a. Manifest
+and receipt cold copies in E:/storage-records/fdn110 match that hash. Native15
+then admitted cores14-15 under guard23cdb1287c41437cbc0c08ad11cf876d,
+supervisor158680, source0295d5f9, with CARGO_INCREMENTAL=0. Its result is pending.
