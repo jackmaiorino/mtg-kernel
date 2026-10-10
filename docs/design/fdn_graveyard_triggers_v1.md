@@ -63,3 +63,11 @@ frozen v63 identity and adds historical readability plus rejection before
 resume/publication mutations. Separate source review of150aee30 found no
 findings. All34 affected Python cases, formatting and diff checks pass.
 Native gameplay and current-head hosted qualification remain pending.
+
+The first focused native attempt atf753523a passed all14 accepted v63
+regressions and seven of eight new graveyard cases. The remaining permanent
+card-class fixture named Rancor, absent from this catalog; it now uses the
+registered Witness Protection Aura. The fixture lookup now reports the missing
+name explicitly. Local-12's exit101 and full log are retained. This repairs
+only the fixture, preserving engine/catalog/profile identity. Focused checks
+are retried on the repaired head.
