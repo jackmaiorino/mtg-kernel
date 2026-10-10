@@ -27,9 +27,11 @@ pub(super) struct SelectedSpellManaCostsV1 {
 
 impl SelectedSpellManaCostsV1 {
     /// Validate one chosen-object slice per collected component group before
-    /// deriving the combined payment. The casting caller already validates
-    /// staged discard and chosen-creature bindings, and supplies any separately
-    /// selected graveyard costs so Delve cannot reuse their cards.
+    /// deriving the combined payment. The casting caller independently validates
+    /// discard and chosen-creature bindings, and freezes generic modifiers before
+    /// any cost changes state. A projected resource state can then include paid
+    /// discards without changing that frozen total. Separately selected graveyard
+    /// costs cannot reuse mandatory exile picks or supply Delve payment.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn payment_plan_with_component_choices_v1(
         &self,
@@ -37,6 +39,7 @@ impl SelectedSpellManaCostsV1 {
         player: PlayerId,
         source: ObjectId,
         state: &GameState,
+        generic_modifiers: (u32, u32),
         chosen_by_group: &[&[ObjectId]],
         separately_reserved_graveyard: &[ObjectId],
     ) -> Option<SpellManaPaymentV1> {
@@ -72,11 +75,13 @@ impl SelectedSpellManaCostsV1 {
             if components.iter().any(|component| {
                 matches!(component, CostComponent::ExileOtherCardsFromOwnGraveyard(_))
             }) {
+                if chosen.iter().any(|object| reserved.contains(object)) {
+                    return None;
+                }
                 reserved.extend(chosen.iter().copied());
             }
         }
-        let (increase, reduction) =
-            super::spell_cost_generic_modifiers_v1(state, self.types, player);
+        let (increase, reduction) = generic_modifiers;
         self.payment_plan(x, player, state, increase, reduction, &reserved)
     }
 
@@ -482,15 +487,39 @@ mod tests {
         assert_eq!(state.players[0].hand, vec![source]);
         let before = serde_json::to_value(&state).unwrap();
         assert!(selected
-            .payment_plan_with_component_choices_v1(0, PlayerId::P0, source, &state, &[&[]], &[],)
+            .payment_plan_with_component_choices_v1(
+                0,
+                PlayerId::P0,
+                source,
+                &state,
+                (0, 0),
+                &[&[]],
+                &[],
+            )
             .is_some());
         assert_eq!(serde_json::to_value(&state).unwrap(), before);
         state.players[0].life = 0;
         assert!(selected
-            .payment_plan_with_component_choices_v1(0, PlayerId::P0, source, &state, &[&[]], &[],)
+            .payment_plan_with_component_choices_v1(
+                0,
+                PlayerId::P0,
+                source,
+                &state,
+                (0, 0),
+                &[&[]],
+                &[],
+            )
             .is_none());
         assert!(selected
-            .payment_plan_with_component_choices_v1(0, PlayerId::P0, source, &state, &[], &[],)
+            .payment_plan_with_component_choices_v1(
+                0,
+                PlayerId::P0,
+                source,
+                &state,
+                (0, 0),
+                &[],
+                &[],
+            )
             .is_none());
     }
 
@@ -518,6 +547,7 @@ mod tests {
                 PlayerId::P0,
                 source,
                 &state,
+                (0, 0),
                 &[&graveyard[..1]],
                 &[],
             )
@@ -529,6 +559,7 @@ mod tests {
                 PlayerId::P0,
                 source,
                 &state,
+                (0, 0),
                 &[&graveyard[..1]],
                 &graveyard[1..],
             )
@@ -539,8 +570,20 @@ mod tests {
                 PlayerId::P0,
                 source,
                 &state,
+                (0, 0),
                 &[&[source]],
                 &[],
+            )
+            .is_none());
+        assert!(selected
+            .payment_plan_with_component_choices_v1(
+                0,
+                PlayerId::P0,
+                source,
+                &state,
+                (0, 0),
+                &[&graveyard[..1]],
+                &graveyard[..1],
             )
             .is_none());
         assert_eq!(serde_json::to_value(&state).unwrap(), before);
