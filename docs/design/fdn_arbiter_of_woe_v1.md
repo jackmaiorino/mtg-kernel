@@ -19,4 +19,10 @@ mandatory casting-cost candidates and rollback, pending/answered-cost restore,
 token and borrowed-creature payment, sacrifice death triggers before the spell
 resolves, opponent discard choice and restored effect continuation, source
 departure, empty opponent hands and exactly one draw/two life in both seats.
-Native checks and read-only review remain pending. No paid experiment is included.
+Read-only source review found no actionable defects. Combined sourcea70d648f
+passes both Limited-only and combined Standard/Limited test compilations,
+44 focused native executions and frozen v65 identity under supported
+guard5de40808e06145f2b53c4613c9d29167, command sequence exit0. This includes
+the registered Armasaur/captured-source regressions and accepted graveyard/static
+team games. The four Arbiter games remain unexecuted until registration and
+gameplay qualification after v65 acceptance. No paid experiment is included.

@@ -64,7 +64,13 @@ Read-only port review found a duplicate imported Regrower/Wolf definition
 block and the predecessor definition-count pin. The redundant identical
 block is removed; v65 repair21814662 supplies338 definitions. It also retains
 the latest pending-cast replay fixture and both failed native receipts.
-Native source qualification remains pending; this is not card gameplay support.
+Sourcea70d648f passed both Limited-only and combined Standard/Limited test
+compilations under supported guard5de40808e06145f2b53c4613c9d29167 on two
+cores16-17 at BelowNormal priority. All44 focused executions pass: the
+Armasaur declaration regression,23 rules-vector cases (one existing ignore),
+frozen v65 identity, captured-source targeting and individual target guards,
+plus eight accepted graveyard and nine v65 static-team games. The command
+sequence returned zero. The31 new card games remain unexecuted.
 
 All31 prospective metadata rows were checked against the pinned Mage primary
 constructors at a5c90fe180021e70e2a644ade00eeab07f857a40 and frozen printing
@@ -72,3 +78,9 @@ IDs. Existing prepared registry rows agree on cost, mana value, colors, types,
 subtypes, supertypes and P/T. The prospective file and deferred admission
 script are retained outside the repository. The script refuses until PR212
 is merged and its actual merge is an ancestor of this branch. It has not run.
+
+Read-only review of both deferred admission/profile scripts at sourcea70d648f
+found no actionable defects. They preserve historical v65 readability and add
+stale v65 resume/publication refusals. Profile invocation requires the observed
+generated v66 identity; the31-name metadata admission remains gated on PR212
+acceptance.
