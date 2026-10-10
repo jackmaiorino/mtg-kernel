@@ -218,6 +218,7 @@ pub struct PaymentPlan {
 struct SpellSourceChoicesV1 {
     aliases: Vec<ObjectId>,
     convoke: Vec<bool>,
+    require_convoke: bool,
 }
 
 fn set_spell_source_used_v1(
@@ -415,6 +416,7 @@ pub(crate) fn plan_spell_mana_total_v1(
 /// Solve a determined spell total with Convoke and ordinary mana together.
 /// Planning does not tap creatures or produce mana. The returned tap lists
 /// distinguish Convoke payment from mana-ability activation.
+/// The existing Alternative-cast interface requires at least one convoker.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn plan_spell_mana_total_with_convoke_v1(
     pips: &[Pip],
@@ -447,6 +449,7 @@ pub(crate) fn plan_spell_mana_total_with_convoke_v1(
     let mut source_choices = SpellSourceChoicesV1 {
         aliases: Vec::new(),
         convoke: Vec::new(),
+        require_convoke: true,
     };
     for creature in creatures {
         let colors = crate::engine::object_color_mask(state, creature);
@@ -762,24 +765,14 @@ fn solve_pips_with_life_budget_v1(
         let Some(generic) = generic_needed else {
             return true;
         };
-        // A failed generic branch must not alter the pip search's state.
-        let mut generic_plan = plan.clone();
-        let mut generic_pool = *pool_remaining;
-        let mut generic_used = used.to_vec();
-        if !pay_generic_with_source_choices_v1(
+        return finish_spell_generic_payment_v1(
             generic,
             sources,
-            &mut generic_used,
-            &mut generic_pool,
-            &mut generic_plan,
+            used,
+            pool_remaining,
+            plan,
             source_choices,
-        ) {
-            return false;
-        }
-        *plan = generic_plan;
-        *pool_remaining = generic_pool;
-        used.copy_from_slice(&generic_used);
-        return true;
+        );
     };
 
     let candidate_colors: Vec<ManaColor> = match *pip {
@@ -876,6 +869,67 @@ fn solve_pips_with_life_budget_v1(
         plan.life_paid -= 2;
     }
 
+    false
+}
+
+/// A failed terminal branch leaves pip-search state untouched. When a Convoke
+/// alternative has not used a creature for a pip, try each unused creature
+/// for one generic before paying the rest. Trying each alias matters when a
+/// different creature must retain its multi-yield mana ability.
+fn finish_spell_generic_payment_v1(
+    generic: u32,
+    sources: &[ManaSource],
+    used: &mut [bool],
+    pool: &mut [u8; 6],
+    plan: &mut PaymentPlan,
+    choices: Option<&SpellSourceChoicesV1>,
+) -> bool {
+    let requires_creature = choices.is_some_and(|choices| {
+        choices.require_convoke
+            && !plan
+                .taps
+                .iter()
+                .any(|(id, _)| choices.convoke[id.0 as usize])
+    });
+    if requires_creature && generic == 0 {
+        return false;
+    }
+    let candidates = if requires_creature { sources.len() } else { 1 };
+    for index in 0..candidates {
+        if requires_creature && (used[index] || !choices.unwrap().convoke[index]) {
+            continue;
+        }
+        let mut candidate_plan = plan.clone();
+        let mut candidate_pool = *pool;
+        let mut candidate_used = used.to_vec();
+        let remaining = if requires_creature {
+            set_spell_source_used_v1(&mut candidate_used, index, true, choices);
+            candidate_plan.taps.push((
+                sources[index].id,
+                sources[index]
+                    .choices
+                    .first()
+                    .copied()
+                    .unwrap_or(ManaColor::C),
+            ));
+            generic - 1
+        } else {
+            generic
+        };
+        if pay_generic_with_source_choices_v1(
+            remaining,
+            sources,
+            &mut candidate_used,
+            &mut candidate_pool,
+            &mut candidate_plan,
+            choices,
+        ) {
+            *plan = candidate_plan;
+            *pool = candidate_pool;
+            used.copy_from_slice(&candidate_used);
+            return true;
+        }
+    }
     false
 }
 
@@ -1374,6 +1428,79 @@ mod tests {
     }
 
     #[test]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    fn convoke_alternative_uses_a_creature_even_when_floating_mana_covers_cost() {
+        let (mut state, elf) = ready_convoke_elf();
+        state.players[0].mana_pool = [0, 0, 0, 0, 1, 1];
+        for (pips, generic) in [(&[Pip::Colored(ManaColor::G)][..], 0), (&[][..], 1)] {
+            let (plan, convoked) = plan_spell_mana_total_with_convoke_v1(
+                pips,
+                generic,
+                PlayerId::P0,
+                &state,
+                false,
+                &[],
+                0,
+            )
+            .unwrap();
+            assert_eq!(convoked, vec![elf]);
+            assert_eq!(plan.pool_used, [0; 6]);
+            assert!(plan.taps.is_empty());
+            assert!(plan_spell_mana_total_with_convoke_v1(
+                pips,
+                generic,
+                PlayerId::P0,
+                &state,
+                false,
+                &[elf],
+                0
+            )
+            .is_none());
+        }
+        assert!(
+            plan_spell_mana_total_with_convoke_v1(&[], 0, PlayerId::P0, &state, false, &[], 0)
+                .is_none()
+        );
+        assert!(!state.objects.get(elf).tapped);
+        assert_eq!(state.players[0].mana_pool, [0, 0, 0, 0, 1, 1]);
+    }
+
+    #[test]
+    fn required_convoke_backtracks_to_keep_another_creatures_multi_yield_mana() {
+        let mut mana_source = src(2, &[ManaColor::G]);
+        mana_source.yield_per_tap = 3;
+        let sources = [src(0, &[ManaColor::G]), src(1, &[]), mana_source];
+        let alternatives = SpellSourceChoicesV1 {
+            aliases: vec![ObjectId(50), ObjectId(51), ObjectId(50)],
+            convoke: vec![true, true, false],
+            require_convoke: true,
+        };
+        let mut plan = PaymentPlan::default();
+        let mut pool = [0; 6];
+        let mut used = [false; 3];
+        assert!(solve_pips_with_life_budget_v1(
+            &[],
+            0,
+            &sources,
+            &mut used,
+            &mut pool,
+            &mut plan,
+            20,
+            Some(4),
+            Some(&alternatives)
+        ));
+        assert_eq!(
+            plan.taps,
+            vec![(ObjectId(1), ManaColor::C), (ObjectId(2), ManaColor::G)]
+        );
+        assert_eq!(used, [true; 3]);
+        assert_eq!(plan.surplus, [0; 6]);
+    }
+
+    #[test]
     fn convoke_alias_generic_payment_uses_a_multi_yield_mana_alternative() {
         let mut mana_source = src(1, &[ManaColor::G]);
         mana_source.yield_per_tap = 3;
@@ -1381,6 +1508,7 @@ mod tests {
         let alternatives = SpellSourceChoicesV1 {
             aliases: vec![ObjectId(50), ObjectId(50)],
             convoke: vec![true, false],
+            require_convoke: false,
         };
         let mut plan = PaymentPlan::default();
         let mut pool = [0; 6];
