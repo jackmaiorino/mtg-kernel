@@ -6466,8 +6466,22 @@ impl FastActorSessionV1 {
     /// `engine::RuntimeRulesV1`). It changes which choices later effects
     /// expose, never the current decision, so a caller can replay a
     /// historical game to a root and continue under the new profile.
-    pub fn set_runtime_rules_v1(&mut self, rules: crate::engine::RuntimeRulesV1) {
+    /// Refused when the profile would remove a choice some card in the game
+    /// can read (a Delve card anywhere, for either player).
+    pub fn set_runtime_rules_v1(
+        &mut self,
+        rules: crate::engine::RuntimeRulesV1,
+    ) -> Result<(), String> {
+        if rules.auto_unobservable_graveyard_order
+            && crate::engine::graveyard_order_readers_present(&self.state)
+        {
+            return Err(
+                "resolution-boundary profile refused: a card in this game reads graveyard order (Delve)"
+                    .into(),
+            );
+        }
         self.state.engine.runtime_rules = rules;
+        Ok(())
     }
 
     /// Audit-only copy of the current canonical semantic action order.

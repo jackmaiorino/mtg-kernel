@@ -842,7 +842,7 @@ fn scripted_cast_with(
         put(&mut st, me.opponent(), "Swamp", Zone::Library);
     }
     let mut s = crate::rl_session::FastActorSessionV1::from_v3_fixture_state(st);
-    s.set_runtime_rules_v1(rules);
+    s.set_runtime_rules_v1(rules).unwrap();
     let spell_id = crate::card_def::card_id_by_name(spell).unwrap();
     let mut menus = Vec::new();
     let mut cast = false;
@@ -1006,23 +1006,6 @@ fn resolution_boundary_stops_at_the_first_land_like_the_historical_engine() {
 }
 
 #[test]
-fn resolution_boundary_keeps_the_order_choice_when_delve_can_read_it() {
-    use crate::engine::RuntimeRulesV1;
-    let lib = [
-        "Dread Return",
-        "Lotleth Giant",
-        "Gurmag Angler",
-        "Dread Return",
-    ];
-    let (menus, _) = scripted_cast(
-        RuntimeRulesV1::RESOLUTION_BOUNDARY_V1,
-        "Balustrade Spy",
-        &lib,
-    );
-    assert!(order_menus(&menus) >= 3, "{menus:?}");
-}
-
-#[test]
 fn resolution_boundary_keeps_ordered_library_placement() {
     use crate::engine::RuntimeRulesV1;
     let lib = ["Island", "Swamp", "Lotleth Giant", "Dread Return"];
@@ -1054,9 +1037,10 @@ fn resolution_boundary_profile_survives_world_sampling_and_is_hash_neutral() {
     let h = |st: &crate::state::GameState| (st.state_hash(), st.diagnostic_state_hash());
     let json = |st: &crate::state::GameState| serde_json::to_string(st).unwrap();
     let before = (h(s.game_state()), json(s.game_state()));
-    s.set_runtime_rules_v1(RuntimeRulesV1::default());
+    s.set_runtime_rules_v1(RuntimeRulesV1::default()).unwrap();
     assert_eq!(before, (h(s.game_state()), json(s.game_state())));
-    s.set_runtime_rules_v1(RuntimeRulesV1::RESOLUTION_BOUNDARY_V1);
+    s.set_runtime_rules_v1(RuntimeRulesV1::RESOLUTION_BOUNDARY_V1)
+        .unwrap();
     // Hash-neutral for the runtime state hash; the audit hash and snapshot
     // record the profile once it is on.
     assert_eq!(before.0 .0, h(s.game_state()).0);
@@ -1141,28 +1125,6 @@ fn resolution_boundary_covers_plain_mills() {
 }
 
 #[test]
-fn resolution_boundary_keeps_the_order_choice_for_a_delve_card_in_hand() {
-    use crate::engine::RuntimeRulesV1;
-    let lib = [
-        "Dread Return",
-        "Lotleth Giant",
-        "Balustrade Spy",
-        "Dread Return",
-    ];
-    let ((menus, st), _) = scripted_cast_with(
-        RuntimeRulesV1::RESOLUTION_BOUNDARY_V1,
-        "Balustrade Spy",
-        &lib,
-        &["Gurmag Angler"],
-        false,
-    );
-    assert!(order_menus(&menus) >= 3, "{menus:?}");
-    // Delve payment reads the oldest graveyard cards, so the order the owner
-    // chose is what a later Angler would exile first.
-    assert!(st.players[0].graveyard.len() >= 4);
-}
-
-#[test]
 fn resolution_boundary_covers_reveal_and_partition() {
     use crate::engine::RuntimeRulesV1;
     let lib = ["Lotleth Giant", "Dread Return", "Masked Vandal", "Swamp"];
@@ -1231,4 +1193,39 @@ fn resolution_boundary_rejects_a_missing_binding_without_panicking() {
         }));
         assert!(matches!(r, Ok(Err(_))), "{rules:?}");
     }
+}
+
+/// The profile is a game-level rule: refused whenever any card in the game,
+/// in any zone and for either player, reads graveyard order (Delve), so the
+/// ordering stage's presence never depends on hidden cards. Without the
+/// profile the Delve owner is still asked.
+#[test]
+fn resolution_boundary_is_refused_when_any_card_reads_graveyard_order() {
+    use crate::engine::RuntimeRulesV1;
+    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::state::Zone;
+    let me = PlayerId::P0;
+    for (owner, zone) in [
+        (me, Zone::Library),
+        (me, Zone::Hand),
+        (me.opponent(), Zone::Library),
+    ] {
+        let mut st = ready_state();
+        put(&mut st, me, "Balustrade Spy", Zone::Hand);
+        put(&mut st, owner, "Gurmag Angler", zone);
+        put(&mut st, me.opponent(), "Swamp", Zone::Library);
+        let mut s = crate::rl_session::FastActorSessionV1::from_v3_fixture_state(st);
+        assert!(s
+            .set_runtime_rules_v1(RuntimeRulesV1::RESOLUTION_BOUNDARY_V1)
+            .is_err());
+        assert!(s.set_runtime_rules_v1(RuntimeRulesV1::default()).is_ok());
+    }
+    let lib = [
+        "Dread Return",
+        "Lotleth Giant",
+        "Gurmag Angler",
+        "Dread Return",
+    ];
+    let (menus, _) = scripted_cast(RuntimeRulesV1::default(), "Balustrade Spy", &lib);
+    assert!(order_menus(&menus) >= 3, "{menus:?}");
 }

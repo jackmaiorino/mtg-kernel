@@ -537,7 +537,7 @@ fn run_root_diag(
     // under the opt-in rules profile (a new runtime identity).
     let runtime = shared.runtime_rules;
     if let Some(r) = runtime {
-        session.set_runtime_rules_v1(r);
+        session.set_runtime_rules_v1(r)?;
     }
     let replay_secs = started.elapsed().as_secs_f64();
     let d = decision(&session).ok_or("root is terminal")?;
