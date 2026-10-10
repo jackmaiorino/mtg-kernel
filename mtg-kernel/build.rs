@@ -3367,6 +3367,16 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         mode2: None,
     };
     Some(match name {
+        "Seeker's Folly" => Special::Program {
+            target: "TargetOpponent",
+            recipe: "DiscardCards(Target0,2)",
+            effect: "EffectOp::DiscardCards { player: PlayerRef::Target(0), count: 2 }",
+            mode2: Some(ProgramMode {
+                target: "None",
+                recipe: "BoostPlayerCreaturesUntilEndOfTurn(Opponent,-1,-1,None,currentIncarnations)",
+                effect: "EffectOp::BoostPlayerCreaturesUntilEndOfTurn { player: PlayerRef::Opponent, power: -1, toughness: -1, keywords: Keywords::NONE }",
+            }),
+        },
         "An Offer You Can't Refuse" => program(
             "NoncreatureSpellOnStack",
             "CounterTargetSpellThenCreateTokens(Target0,Treasure Token,2,currentSpellController,independentOfCounterSuccess)",

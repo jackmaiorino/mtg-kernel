@@ -192,6 +192,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::BindTemporaryBoostToTriggerSource { .. }
         | EffectOp::BoostBoundObjectUntilEndOfTurn { .. }
         | EffectOp::BoostControlledCreaturesUntilEndOfTurn { .. }
+        | EffectOp::BoostPlayerCreaturesUntilEndOfTurn { .. }
         | EffectOp::GainLifeByAttackingSubtypeCount { .. }
         | EffectOp::CreatureTargetPowerDamage { .. }
         | EffectOp::PreventCombatDamageToTargetThisTurn { .. }

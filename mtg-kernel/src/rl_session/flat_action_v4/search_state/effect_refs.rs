@@ -148,6 +148,7 @@ impl Scan<'_> {
             | LoseOpponentsLifeXThenGainLifeLost
             | ReturnAttackingCreaturesToOwnersHands
             | CounterTargetSpellThenCreateTokens { .. }
+            | BoostPlayerCreaturesUntilEndOfTurn { .. }
             | ExileGraveyardTargetsDrainPerCreature { .. }
             | RemoveTimeCounterFromSource
             | ReturnSourceAsEnduringEnchantment

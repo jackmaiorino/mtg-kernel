@@ -1349,6 +1349,14 @@ pub enum EffectOp {
         token_def: u16,
         count: u8,
     },
+    /// Snapshot current creatures controlled by the resolved player and
+    /// install per-incarnation boosts and keywords until this turn's cleanup.
+    BoostPlayerCreaturesUntilEndOfTurn {
+        player: PlayerRef,
+        power: i32,
+        toughness: i32,
+        keywords: Keywords,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -14111,6 +14119,31 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         } => {
             install_temporary_boost(state, *object, *power, *toughness, Keywords::NONE);
         }
+        EffectOp::BoostPlayerCreaturesUntilEndOfTurn {
+            player,
+            power,
+            toughness,
+            keywords,
+        } => {
+            let player = ctx.resolve_player(*player, state);
+            let objects: Vec<_> = state
+                .objects
+                .iter()
+                .filter_map(|(object, live)| {
+                    (live.zone == Zone::Battlefield
+                        && live.controller == player
+                        && crate::engine::object_has_type(state, object, CardType::Creature))
+                    .then_some(EffectObjectBinding {
+                        object,
+                        expected_zone: Zone::Battlefield,
+                        expected_zone_change_count: live.zone_change_count,
+                    })
+                })
+                .collect();
+            for object in objects {
+                install_temporary_boost(state, object, *power, *toughness, *keywords);
+            }
+        }
         EffectOp::BoostControlledCreaturesUntilEndOfTurn {
             power,
             toughness,
@@ -15456,6 +15489,90 @@ mod tests {
             assert!(state.players[player.opponent().index()]
                 .battlefield
                 .is_empty());
+        }
+    }
+
+    #[test]
+    fn player_creature_boost_snapshots_current_control_and_exact_incarnations() {
+        let card = crate::card_def::card_id_by_name("Faerie Miscreant").unwrap();
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        for caster in [PlayerId::P0, PlayerId::P1] {
+            let mut state = GameState::new_from_libraries(
+                &[card; 7],
+                &[card; 7],
+                |_| "Faerie Miscreant".into(),
+                750,
+            );
+            let affected = state.players[caster.opponent().index()].hand[0];
+            let excluded = state.players[caster.opponent().index()].hand[1];
+            let late = state.players[caster.opponent().index()].hand[2];
+            let borrowed = state.players[caster.index()].hand[0];
+            let own = state.players[caster.index()].hand[1];
+            for object in [affected, excluded, borrowed, own] {
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change(object, Zone::Battlefield),
+                );
+            }
+            state.objects.get_mut(excluded).card_def = forest;
+            state.objects.get_mut(excluded).v4 = crate::state::ObjectStateV4::from_card_def(forest);
+            state.objects.get_mut(borrowed).controller = caster.opponent();
+            state.players[caster.index()]
+                .battlefield
+                .retain(|&id| id != borrowed);
+            state.players[caster.opponent().index()]
+                .battlefield
+                .push(borrowed);
+            let ctx = ExecCtx::no_targets(own, caster);
+            let mut replay: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut replay] {
+                execute(
+                    &EffectOp::BoostPlayerCreaturesUntilEndOfTurn {
+                        player: PlayerRef::Opponent,
+                        power: 2,
+                        toughness: 3,
+                        keywords: Keywords::HEXPROOF,
+                    },
+                    &ctx,
+                    branch,
+                );
+                for object in [affected, borrowed] {
+                    assert_eq!(crate::engine::effective_power(branch, object), 3);
+                    assert_eq!(crate::engine::effective_toughness(branch, object), 4);
+                    assert!(crate::engine::has_effective_keyword(
+                        branch,
+                        object,
+                        Keywords::HEXPROOF
+                    ));
+                }
+                assert_eq!(crate::engine::effective_power(branch, own), 1);
+                assert!(!crate::engine::has_effective_keyword(
+                    branch,
+                    own,
+                    Keywords::HEXPROOF
+                ));
+                event::propose_and_commit(
+                    branch,
+                    event::ProposedEvent::zone_change(late, Zone::Battlefield),
+                );
+                assert_eq!(crate::engine::effective_power(branch, late), 1);
+                event::propose_and_commit(
+                    branch,
+                    event::ProposedEvent::zone_change(affected, Zone::Hand),
+                );
+                event::propose_and_commit(
+                    branch,
+                    event::ProposedEvent::zone_change(affected, Zone::Battlefield),
+                );
+                assert_eq!(crate::engine::effective_power(branch, affected), 1);
+                assert!(!crate::engine::has_effective_keyword(
+                    branch,
+                    affected,
+                    Keywords::HEXPROOF
+                ));
+            }
+            assert_eq!(state.state_hash(), replay.state_hash());
         }
     }
 

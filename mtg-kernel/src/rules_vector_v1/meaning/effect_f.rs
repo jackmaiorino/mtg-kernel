@@ -103,6 +103,26 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
             let _ = object; // engine-internal exact-incarnation binding
             let _ = (power, toughness); // copied from the marker, emitted there
         }
+        EffectOp::BoostPlayerCreaturesUntilEndOfTurn {
+            player,
+            power,
+            toughness,
+            keywords,
+        } => {
+            let player = player_ref(*player);
+            let obj = ObjF::Typed(CardTypeF::Creature);
+            temporary_boost(*power, *toughness, player, obj, out);
+            for bit in keyword_bits(*keywords) {
+                out.effect(
+                    EffectAtom::new(EvF::GrantKeyword)
+                        .player(player)
+                        .obj(obj)
+                        .amount(AmtF::All)
+                        .duration(DurF::EndOfTurn)
+                        .keyword(bit),
+                );
+            }
+        }
         EffectOp::BoostControlledCreaturesUntilEndOfTurn {
             power,
             toughness,
