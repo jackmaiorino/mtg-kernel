@@ -128,10 +128,12 @@ fn assert_warmed_encode_allocates_nothing(mut session: FastActorSessionV1) {
         TRACK_ALLOCATIONS.store(false, Ordering::SeqCst);
         ENCODER_THREAD.set(false);
         assert_eq!(first, warmed);
+        // Encoding is synchronous. The harness can allocate on another thread
+        // during this window, so only encoder-thread allocations test its contract.
         assert_eq!(
             ENCODER_THREAD_ALLOCATION_COUNT.load(Ordering::SeqCst),
             0,
-            "warmed decision {decisions}; global allocations {}",
+            "warmed decision {decisions}; process allocations {}",
             ALLOCATION_COUNT.load(Ordering::SeqCst)
         );
         decisions += 1;
