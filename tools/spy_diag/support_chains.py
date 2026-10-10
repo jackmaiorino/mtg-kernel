@@ -265,7 +265,12 @@ def reconcile_all(nodes, sims):
     for sim in sims:
         if sim.get("end") not in ("win", "loss"):
             continue
-        for nid, edge in sim.get("path", []):
+        for entry in sim.get("path", []):
+            if not isinstance(entry, (list, tuple)) or len(entry) < 2:
+                return False
+            nid, edge = entry[:2]
+            if type(nid) is not int or type(edge) is not int:
+                return False
             if nid not in nodes or not 0 <= edge < len(counts[nid]) or edge >= len(wins[nid]):
                 return False
             counts[nid][edge] += 1
