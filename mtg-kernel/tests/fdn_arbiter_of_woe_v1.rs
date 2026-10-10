@@ -218,6 +218,41 @@ fn opponent_discards_exactly_one_then_life_draw_gain_continue_after_source_leave
             (20, 20)
         );
         assert_eq!(state.players[player.index()].library.len(), 40);
+        assert!(state.engine.pending_effect.is_some());
+        for kind in 0..4 {
+            let mut forged = restored(&state);
+            match kind {
+                0 => forged.engine.pending_discard.as_mut().unwrap().count = 2,
+                1 => forged
+                    .engine
+                    .pending_effect
+                    .as_mut()
+                    .unwrap()
+                    .frames
+                    .clear(),
+                2 => {
+                    let mtg_kernel::engine::DiscardResume::FinishEffectContinuation {
+                        path, ..
+                    } = &mut forged.engine.pending_discard.as_mut().unwrap().resume
+                    else {
+                        panic!("resumable discard absent")
+                    };
+                    *path = vec![1];
+                }
+                3 => {
+                    let mtg_kernel::engine::DiscardResume::FinishEffectContinuation {
+                        original_hand,
+                        ..
+                    } = &mut forged.engine.pending_discard.as_mut().unwrap().resume
+                    else {
+                        panic!("resumable discard absent")
+                    };
+                    original_hand[0].expected_zone_change_count += 1;
+                }
+                _ => unreachable!(),
+            }
+            refuse(&mut forged, Action::Discard(vec![chosen]));
+        }
         refuse(&mut state, Action::Discard(vec![]));
         refuse(&mut state, Action::Discard(vec![chosen, retained]));
         event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Exile));

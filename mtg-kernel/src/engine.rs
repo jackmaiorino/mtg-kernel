@@ -920,6 +920,13 @@ pub enum DiscardResume {
     /// discard is chosen; `apply_discard` then removes this exact stack
     /// item. Appended after every earlier variant.
     FinishAbilityResolution { stack_item_id: StackItemId },
+    /// A discard inside a resumable sequence. Its remaining instructions
+    /// wait on the exact hand answer while the resolving item stays public.
+    FinishEffectContinuation {
+        stack_item_id: StackItemId,
+        path: Vec<u16>,
+        original_hand: Vec<effect::EffectObjectBinding>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -7638,6 +7645,14 @@ pub(crate) fn validate_pending_discard_binding(
     pending_discard: &PendingDiscard,
 ) -> Result<(), (ObjectId, String)> {
     match &pending_discard.resume {
+        DiscardResume::FinishEffectContinuation { .. } => {
+            effect::validate_resumable_discard(state, pending_discard).map_err(|message| {
+                (
+                    state.stack.last().map_or(ObjectId(0), |item| item.source),
+                    message,
+                )
+            })
+        }
         DiscardResume::FinishCast {
             source_contract,
             controller,
@@ -7874,6 +7889,20 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
         commit_discarded_card(state, id);
     }
     match pending_discard.resume {
+        DiscardResume::FinishEffectContinuation { .. } => {
+            // Validation before any card moved authenticated the saved discard
+            // leaf and every remaining frame. Remove only that paid leaf and
+            // resume inside the same uninterrupted resolution. No answered
+            // payment attestation is exposed in a later snapshot.
+            state
+                .engine
+                .pending_effect
+                .as_mut()
+                .expect("validated resumable discard retains its continuation")
+                .frames
+                .pop();
+            let _ = drain_pending_effect_or_decide(state);
+        }
         DiscardResume::None => collect_and_queue_triggers(state),
         DiscardResume::FinishAbilityResolution { stack_item_id } => {
             // The ability's resolution is over only now (608.2).
@@ -8087,6 +8116,19 @@ pub(crate) fn pending_effect_targets_decision_v2(
 /// resolution path's pop-before-effects invariant.
 fn drain_pending_effect_or_decide(state: &mut GameState) -> Option<Decision> {
     state.engine.pending_effect.as_ref()?;
+    if state
+        .engine
+        .pending_discard
+        .as_ref()
+        .is_some_and(|discard| {
+            matches!(
+                discard.resume,
+                DiscardResume::FinishEffectContinuation { .. }
+            )
+        })
+    {
+        return drain_pending_discard_or_decide(state);
+    }
     if effect::validate_pending_effect_choice(state).is_err() {
         let source = state
             .engine
