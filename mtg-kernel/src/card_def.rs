@@ -293,10 +293,11 @@ pub enum Subtype {
     Avatar,
     Glimmer,
     Sheep,
+    /// Appended for Lightshell Duo without changing existing subtype ids.
+    Otter,
     /// MageZero Standard lands batch; existing ids remain fixed.
     AssemblyWorker,
     Mite,
-    Otter,
     /// Mirrex's land subtype. Not a creature type.
     Sphere,
     /// Starting Town's land subtype. Not a creature type.
@@ -416,6 +417,8 @@ impl Subtype {
         Subtype::Dwarf,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Berserker,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Otter,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Scout,
         #[cfg(feature = "standard-magezero-fixtures")]
@@ -446,8 +449,6 @@ impl Subtype {
         Subtype::AssemblyWorker,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Mite,
-        #[cfg(feature = "standard-magezero-fixtures")]
-        Subtype::Otter,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -582,6 +583,7 @@ impl Subtype {
                 | Subtype::Homunculus
                 | Subtype::Merfolk
                 | Subtype::Octopus
+                | Subtype::Otter
                 | Subtype::Hyena
                 | Subtype::Raccoon
                 | Subtype::Citizen
@@ -612,7 +614,6 @@ impl Subtype {
                 | Subtype::Sheep
                 | Subtype::AssemblyWorker
                 | Subtype::Mite
-                | Subtype::Otter
         )
     }
 }
@@ -2159,11 +2160,11 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 329 (activated combat abilities).
+        // batches append through id 331 (surveil creatures).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                330
+                332
             } else {
                 192
             }
@@ -2269,8 +2270,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v61_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x949b_eb8c_995c_006c;
+    fn card_db_hash_v62_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x1742_7afa_c1e9_5f8e;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

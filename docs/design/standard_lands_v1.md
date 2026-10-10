@@ -7,6 +7,10 @@ and all 37 dual lands. Soulstone Sanctuary stays with the FDN threads; the Restl
 the other channel lands and the remaining utility lands are the second lands batch, which
 reuses the animation and channel primitives added here.
 
+The batch admits 39 Full lands. Mirrex is Partial until public poison counters are
+represented in policy observations. Rockface Village is Partial until the floating mana
+pool represents spending restrictions. Full deck admission refuses both.
+
 Card text comes from the XMage card files named in each registry entry
 (`magefree/mage` master). Every definition appends to `data/standard/magezero_v1/cards_v1.json`.
 
@@ -52,8 +56,9 @@ Instead the payment planner (`mana::can_pay_spell`) adds the restricted color to
 land's source choices only while it pays the total cost of a creature card cast normally,
 with Kicker or Delve included. Bestow, Adventure and Omen forms and X costs do not use it
 yet; none of those spells is in the Standard catalog. The player
-loses the option of floating restricted mana ahead of time, which never makes an illegal
-play legal. The lands in the second batch with "spend only on creature spells" or
+loses the option of floating restricted mana ahead of time. This omits legal lines, such
+as floating the Village's red before Cleansing Wildfire destroys it, then using that red
+to cast Voldaren Epicure after Wildfire resolves. Rockface Village stays Partial. The lands in the second batch with "spend only on creature spells" or
 "legendary spells" mana (Lupinflower Village, Mudflat Village, Plaza of Heroes) reuse it.
 
 **Land animation** (`CardDef::animation`, `ObjectStateV4::animation`). Mishra's Foundry's
@@ -88,7 +93,11 @@ Players gain `poison_counters`; combat damage a creature with toxic N deals to a
 gives that player N poison counters (702.164c), and a player with ten or more poison
 counters loses the game as a state-based action (704.5c). `Keywords::TOXIC_1` is a new
 keyword bit. "Can't block" reuses family D's name-keyed rule
-(`standard_keywords_v1::cant_block`, Forsaken Miner's).
+(`standard_keywords_v1::cant_block`, Forsaken Miner's). Poison is public rules state,
+but the current `PlayerStatusV1` policy observation has no poison field. Mirrex remains
+Partial for that reason. The Mite token keeps the existing Full token-construction
+invariant so the implemented primitive can execute in development; it is not a deck
+card, and its producer is refused by Full deck admission.
 
 Rockface Village's `{R}, {T}` sorcery-speed ability gives target Lizard, Mouse, Otter or
 Raccoon you control +1/+0 and haste until end of turn
@@ -97,8 +106,9 @@ Raccoon you control +1/+0 and haste until end of turn
 
 ## Identity
 
-New subtypes append to `Subtype` (Assembly-Worker, Mite, Otter, Sphere, Town; family D
-already added Mouse); the creature types are added to `CREATURE_TYPES` only under the Standard feature. New `CardDef`
+Otter retains the subtype id introduced by FDN Surveil v62. Assembly-Worker, Mite,
+Sphere and Town append after it; family D already added Mouse. Assembly-Worker and Mite
+are added to `CREATURE_TYPES` only under the Standard feature, and Otter is listed once. New `CardDef`
 fields are appended with empty defaults and enter the catalog contract only when a card
 sets them, so the Pauper (`kernel_carddb/v34`) and FDN Limited identities do not move. The
 Standard catalog moves to `kernel_carddb_standard/v5`. New object and player state

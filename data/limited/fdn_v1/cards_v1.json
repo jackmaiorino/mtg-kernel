@@ -4104,6 +4104,72 @@
       "java_file": "Mage.Sets/src/mage/cards/r/RoguesPassage.java",
       "scryfall_id": "a2a424ea-ef32-4ac5-8f8c-3ea1839f01d4",
       "oracle_id": "f29dc596-2121-4421-8463-15f6c2e8b9b3"
+    },
+    {
+      "name": "Lightshell Duo",
+      "engine_capability": "full",
+      "mana_cost": "{3}{U}",
+      "mana_value": 4,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Rat",
+        "Otter"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_surveil.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "prowess",
+        "surveil"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LightshellDuo.java",
+      "scryfall_id": "bb75315c-ea8f-4eb0-899e-c73ef75fc396",
+      "oracle_id": "ef8fab12-d7d2-4c21-8b8c-41627048ac8b"
+    },
+    {
+      "name": "Cephalid Inkmage",
+      "engine_capability": "full",
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Octopus",
+        "Wizard"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_surveil.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "surveil",
+        "threshold"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CephalidInkmage.java",
+      "scryfall_id": "b7e47680-18c7-4ffb-aac4-c5db6e7095ba",
+      "oracle_id": "8d979a0b-ba04-4abb-8f78-c707ce15351a"
     }
   ]
 }

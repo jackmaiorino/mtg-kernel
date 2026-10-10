@@ -46,4 +46,6 @@ python python/tools/limited_decks_v1.py inventory --registry-extension data/stan
 `docs/reports/standard_magezero_inventory_v1.md` lists the missing cards by mechanic family and which
 thread owns each family.
 
-The tracked pool has 52 Full nonbasic cards, 19 Partial cards and 154 missing cards. No complete MageZero deck resolves yet. Full deck admission refuses every Partial definition. Their current behavior remains available for development; see `docs/design/standard_family_g_v1.md` and `docs/design/standard_family_d_keywords_v1.md` for the missing mechanics.
+The tracked pool has 91 Full nonbasic cards, 21 Partial cards and 113 missing cards. No complete MageZero deck resolves yet. Full deck admission refuses every Partial definition. Their current behavior remains available for development; see `docs/design/standard_family_g_v1.md` and `docs/design/standard_family_d_keywords_v1.md` for the missing mechanics.
+
+The first lands batch adds 39 Full lands. Mirrex remains Partial because poison counters are absent from policy observations; Rockface Village remains Partial because restricted red mana cannot be floated. Their engine primitives are retained for development. See `docs/design/standard_lands_v1.md`.

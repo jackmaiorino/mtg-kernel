@@ -12118,6 +12118,13 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
     toughness
 }
 
+pub(crate) fn static_graveyard_threshold_keyword_for(name: &str) -> Option<(u16, Keywords)> {
+    match name {
+        "Cephalid Inkmage" => Some((7, Keywords::CANT_BE_BLOCKED)),
+        _ => None,
+    }
+}
+
 /// Whether `id` currently has `kw`, folding in every source this kernel
 /// models: the card's own static `Keywords`, `static_self_boost_for`'s
 /// conditional self-grant (Goblin Tomb Raider's haste), and any active
@@ -12161,6 +12168,16 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     #[cfg(feature = "standard-magezero-fixtures")]
     if (printed_active && crate::standard_keywords_v1::max_speed_keywords(state, id).has(kw))
         || crate::standard_statics_v1::conditional_self_keywords(state, id).has(kw)
+    {
+        return true;
+    }
+    if printed_active
+        && obj.zone == Zone::Battlefield
+        && static_graveyard_threshold_keyword_for(def.name).is_some_and(|(minimum, keyword)| {
+            kw == keyword
+                && crate::effect::controller_graveyard_card_count(state, obj.controller)
+                    >= usize::from(minimum)
+        })
     {
         return true;
     }

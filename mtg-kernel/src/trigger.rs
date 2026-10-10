@@ -488,6 +488,15 @@ const ELEMENTALIST_ADEPT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityD
     condition: TriggerCondition::CastNoncreatureSpell,
     ..etb_trigger(prowess_effect)
 }];
+const LIGHTSHELL_DUO_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    etb_trigger(lightshell_duo_etb_effect),
+    TriggeredAbilityDef {
+        condition: TriggerCondition::CastNoncreatureSpell,
+        ..etb_trigger(prowess_effect)
+    },
+];
+const CEPHALID_INKMAGE_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(cephalid_inkmage_etb_effect)];
 const CRYPT_FEASTER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::AttacksWithControllerGraveyardCardCountAtLeast(7),
     ..etb_trigger(crypt_feaster_threshold_effect)
@@ -2066,6 +2075,20 @@ fn conduit_pylons_etb_effect() -> EffectOp {
     }
 }
 
+fn lightshell_duo_etb_effect() -> EffectOp {
+    EffectOp::Surveil {
+        player: PlayerRef::Controller,
+        count: 2,
+    }
+}
+
+fn cephalid_inkmage_etb_effect() -> EffectOp {
+    EffectOp::Surveil {
+        player: PlayerRef::Controller,
+        count: 3,
+    }
+}
+
 fn humbling_elder_etb_effect() -> EffectOp {
     EffectOp::PumpTargetUntilEndOfTurnDynamic {
         target: TargetRef::Target(0),
@@ -2749,6 +2772,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Eager Trufflesnout" => &EAGER_TRUFFLESNOUT_TRIGGERS,
         "Rite of the Dragoncaller" => &RITE_OF_THE_DRAGONCALLER_TRIGGERS,
         "Elementalist Adept" => &ELEMENTALIST_ADEPT_TRIGGERS,
+        "Lightshell Duo" => &LIGHTSHELL_DUO_TRIGGERS,
+        "Cephalid Inkmage" => &CEPHALID_INKMAGE_TRIGGERS,
         "Crypt Feaster" => &CRYPT_FEASTER_TRIGGERS,
         "Erudite Wizard" => &ERUDITE_WIZARD_TRIGGERS,
         "Phyrexian Arena" => &PHYREXIAN_ARENA_TRIGGERS,

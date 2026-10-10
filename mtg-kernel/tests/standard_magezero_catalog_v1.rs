@@ -138,7 +138,7 @@ const STANDARD_APPENDED: [&str; 119] = [
 
 /// Every distinct nonbasic card in the 16 decks that this build fully
 /// supports. Each Standard card batch extends this list.
-const SUPPORTED_NONBASIC: [&str; 93] = [
+const SUPPORTED_NONBASIC: [&str; 91] = [
     "Adarkar Wastes",
     "Adeline, Resplendent Cathar",
     "Aloe Alchemist",
@@ -192,7 +192,6 @@ const SUPPORTED_NONBASIC: [&str; 93] = [
     "Llanowar Wastes",
     "Lush Portico",
     "Manifold Mouse",
-    "Mirrex",
     "Mishra's Foundry",
     "Monastery Swiftspear",
     "Negate",
@@ -205,7 +204,6 @@ const SUPPORTED_NONBASIC: [&str; 93] = [
     "Razorkin Needlehead",
     "Razorverge Thicket",
     "Riverpyre Verge",
-    "Rockface Village",
     "Rockfall Vale",
     "Ruin-Lurker Bat",
     "Sanguine Evangelist",
@@ -236,7 +234,9 @@ const SUPPORTED_NONBASIC: [&str; 93] = [
 
 /// Definitions retained for development with incomplete printed behavior.
 /// Full deck admission must refuse every one.
-const PARTIAL: [&str; 19] = [
+const PARTIAL: [&str; 21] = [
+    "Mirrex",
+    "Rockface Village",
     "Memory Deluge",
     "Recruitment Officer",
     "Evolving Adaptive",

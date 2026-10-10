@@ -308,6 +308,18 @@ impl Scan<'_> {
                 expected_remaining_frames,
                 ..
             } => self.bs(original_library) || self.fs(expected_remaining_frames),
+            SurveilLibraryMany {
+                original_library,
+                graveyard_order,
+                kept_order,
+                expected_remaining_frames,
+                ..
+            } => {
+                self.bs(original_library)
+                    || self.bs(graveyard_order)
+                    || kept_order.as_ref().is_some_and(|order| self.bs(order))
+                    || self.fs(expected_remaining_frames)
+            }
             SacrificeChosenCreature {
                 original_candidates,
                 chosen,
@@ -403,6 +415,16 @@ impl Scan<'_> {
                 expected_remaining_frames,
                 ..
             } => self.bs(original_library) || self.fs(expected_remaining_frames),
+            SurveilLibraryMany {
+                original_library,
+                graveyard_order,
+                expected_remaining_frames,
+                ..
+            } => {
+                self.bs(original_library)
+                    || graveyard_order.as_ref().is_some_and(|order| self.bs(order))
+                    || self.fs(expected_remaining_frames)
+            }
             ScryLibrary {
                 original_prefix,
                 stage,
@@ -628,6 +650,7 @@ pub(super) fn conflicts(
                 | CounterTargetUnlessPaysGeneric { frame }
                 | ExileOneFromGraveyard { frame }
                 | SurveilLibraryOne { frame }
+                | SurveilLibraryMany { frame }
                 | ExileOneMatchingFromGraveyard { frame }
                 | SacrificeCreature { frame }
                 | PayManaThen { frame }

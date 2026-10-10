@@ -1,6 +1,6 @@
 # MageZero Standard pool inventory
 
-The `standard-magezero-fixtures` catalog targets the 16-deck Standard opponent pool MageZero trains against (`data/standard/magezero_v1/`). As of `kernel_carddb_standard/v5`, the decks use 225 distinct nonbasic cards: 93 are Full, 19 are Partial and 113 are missing. No deck resolves yet. `mtg-kernel/tests/standard_magezero_catalog_v1.rs` and `python/tests/test_standard_decks_v1.py` track Full admission.
+The `standard-magezero-fixtures` catalog targets the 16-deck Standard opponent pool MageZero trains against (`data/standard/magezero_v1/`). As of `kernel_carddb_standard/v5`, the decks use 225 distinct nonbasic cards: 91 are Full, 21 are Partial and 113 are missing. No deck resolves yet. `mtg-kernel/tests/standard_magezero_catalog_v1.rs` and `python/tests/test_standard_decks_v1.py` track Full admission.
 
 ## Order of work
 
@@ -89,3 +89,5 @@ Family D adds 18 Full cards and retains 11 Partial definitions. Full deck admiss
 - **Legends**: Jodah, the Unifier, Katilda, Dawnhart Prime, Lagrella, the Magpie, Shanna, Purifying Blade, Melira, the Living Cure, Gwenna, Eyes of Gaea, Hajar, Loyal Bodyguard, Halana and Alena, Partners, Djeru and Hazoret, Ertai Resurrected, Skrelv, Defector Mite
 
 Memory Deluge is Partial: its current implementation keeps the bottomed cards in looked-at order, so full deck admission refuses it until subset randomization is implemented. The registry retains its definition and flashback behavior for development.
+
+Lands v5 admits 39 Full lands. Mirrex and Rockface Village are Partial: poison counters need policy observations, and restricted red mana needs a floating-pool representation. Their definitions remain executable for development and are refused by Full deck admission.

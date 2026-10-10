@@ -222,6 +222,27 @@ fn surveil_one_and_surveil_count_one_agree() {
     );
 }
 
+#[test]
+fn multi_card_surveil_includes_library_reordering() {
+    for count in [2, 3] {
+        assert!(op_atoms(&EffectOp::Surveil { player: PlayerRef::Controller, count })
+            .iter().any(|atom| matches!(atom, Atom::Effect(effect) if effect.ev == EvF::Reorder && effect.from == Some(ZoneF::Library))));
+    }
+}
+
+#[test]
+#[cfg(feature = "limited-fdn-fixtures")]
+fn inkmage_threshold_static_is_extracted_from_engine_data() {
+    let facts = rules("Cephalid Inkmage");
+    assert!(facts.opaque_rules.is_empty());
+    assert!(facts.abilities.iter().filter(|ability| ability.ctx == CtxF::Static)
+        .flat_map(|ability| &ability.atoms)
+        .any(|atom| matches!(atom, Atom::Read(read) if read.zone == Some(ZoneF::Graveyard) && read.player == RelF::You && matches!(read.agg, AggF::AtLeast(_)))));
+    assert!(effects(&facts, Some(CtxF::Static))
+        .iter()
+        .any(|effect| effect.ev == EvF::GrantKeyword));
+}
+
 fn reads_of(fill: impl FnOnce(&mut Collector)) -> Vec<(RelF, Option<ZoneF>, Option<ObjF>)> {
     let mut out = Collector::default();
     fill(&mut out);
@@ -586,6 +607,8 @@ fn power_toughness_changes_keep_their_sign() {
 /// or `event_time_trigger_programs`; token names are reached through
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
+    "Cephalid Inkmage",
+    "Lightshell Duo",
     "Adeline, Resplendent Cathar",
     "Adventuring Gear",
     "Ajani's Pridemate",
@@ -769,6 +792,11 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    (
+        "engine.rs",
+        "Cephalid Inkmage",
+        "read via engine::static_graveyard_threshold_keyword_for",
+    ),
     (
         "engine.rs",
         "Dwynen, Gilt-Leaf Daen",

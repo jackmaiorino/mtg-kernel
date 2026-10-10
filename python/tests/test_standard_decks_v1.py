@@ -34,8 +34,8 @@ SUPPORTED_NONBASIC = {
     "Deserted Beach", "Dreamroot Cascade", "Eiganjo, Seat of the Empire", "Elegant Parlor",
     "Floodfarm Verge", "Gloomlake Verge", "Haunted Ridge", "Hushwood Verge",
     "Inspiring Vantage", "Jetmir's Garden", "Karplusan Forest", "Llanowar Wastes",
-    "Lush Portico", "Mirrex", "Mishra's Foundry", "Overgrown Farmland", "Razorverge Thicket",
-    "Riverpyre Verge", "Rockface Village", "Rockfall Vale", "Seachrome Coast", "Shivan Reef",
+    "Lush Portico", "Mishra's Foundry", "Overgrown Farmland", "Razorverge Thicket",
+    "Riverpyre Verge", "Rockfall Vale", "Seachrome Coast", "Shivan Reef",
     "Spara's Headquarters", "Spirebluff Canal", "Starting Town", "Sulfurous Springs",
     "Thornspire Verge", "Underground Mortuary", "Underground River", "Wastewood Verge",
     "Yavimaya Coast", "Ziatora's Proving Ground",
@@ -84,6 +84,11 @@ class StandardDeckTest(unittest.TestCase):
     def test_unsupported_deck_is_refused(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported mainboard"):
             limited.resolve_mainboard(self.decks["Standard-MonoR"], self.registry)
+
+    def test_incomplete_lands_are_refused(self) -> None:
+        for name in ("Mirrex", "Rockface Village"):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "unsupported mainboard"):
+                limited.resolve_mainboard(limited.parse_dck(f"39 Plains\n1 {name}"), self.registry)
 
     def test_memory_deluge_partial_card_is_refused(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported mainboard"):

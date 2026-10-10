@@ -204,7 +204,7 @@ fn def(name: &str) -> &'static mtg_kernel::card_def::CardDef {
 }
 
 #[test]
-fn every_land_in_the_batch_is_a_fully_supported_land() {
+fn every_land_in_the_batch_has_the_declared_support_and_characteristics() {
     let names = PAINLANDS
         .iter()
         .map(|(name, _)| *name)
@@ -218,7 +218,12 @@ fn every_land_in_the_batch_is_a_fully_supported_land() {
     assert_eq!(names.len(), 41);
     for name in names {
         let def = def(name);
-        assert_eq!(def.capability, CardCapability::Full, "{name}");
+        let expected = if matches!(name, "Mirrex" | "Rockface Village") {
+            CardCapability::Partial
+        } else {
+            CardCapability::Full
+        };
+        assert_eq!(def.capability, expected, "{name}");
         assert!(def.is_land, "{name}");
         assert_eq!(def.types, &[CardType::Land], "{name}");
         assert!(def.colors.is_empty(), "{name}");

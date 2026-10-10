@@ -6497,6 +6497,43 @@ fn pending_effect_semantic_v4(
     pending: &crate::effect::EffectContinuation,
 ) -> Result<PendingEffectSemanticV4> {
     crate::effect::validate_pending_effect_choice(state).map_err(RlContractError)?;
+    // Every private batch stage, including an accepted answer waiting for
+    // engine advance, shares one nonchooser envelope. Stage/purpose and kept
+    // cardinality must not reveal a private partition before its zone moves.
+    let surveil_player = match pending.choice.as_ref() {
+        Some(crate::effect::PendingEffectChoice::SelectTargets {
+            player,
+            purpose: crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { .. },
+            ..
+        }) => Some(*player),
+        None => match pending.answered_choice_guard.as_ref() {
+            Some(crate::effect::EffectAnsweredChoiceGuard::SurveilLibraryMany { frame }) => {
+                match frame.as_ref() {
+                    crate::effect::EffectFrame::SurveilLibraryMany { player, .. } => Some(*player),
+                    _ => None,
+                }
+            }
+            _ => None,
+        },
+        _ => None,
+    };
+    if let Some(player) = surveil_player.filter(|player| *player != acting_player) {
+        return Ok(PendingEffectSemanticV4 {
+            source: Some(stack_source_ref(state, &pending.resolving_item)?),
+            controller: pending.resolving_item.controller.into(),
+            choice: Some(PendingEffectChoiceSemanticV4::Targets {
+                player: player.into(),
+                structural_path: Vec::new(),
+                selected_targets: Vec::new(),
+                legal_targets: Vec::new(),
+                min_targets: 0,
+                max_targets: 0,
+                can_finish: true,
+                ordered: true,
+                purpose: TargetSelectionPurposeV4::CardSelection,
+            }),
+        });
+    }
     let choice = pending
         .choice
         .as_ref()
@@ -6544,6 +6581,7 @@ fn pending_effect_semantic_v4(
                             }
                             | crate::effect::EffectTargetSelectionPurpose::ScryLibrary { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryOne { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand {
                                 ..
                             }
@@ -6577,7 +6615,8 @@ fn pending_effect_semantic_v4(
                     ) && acting_player == *player;
                     let redact_search_shape = matches!(
                         purpose,
-                        crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
+                        crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
                             | crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. } | crate::effect::EffectTargetSelectionPurpose::SearchLibraryCardsToDestination { .. }
                             | crate::effect::EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand { .. }
@@ -6627,7 +6666,9 @@ fn pending_effect_semantic_v4(
                         },
                         ordered: *ordered,
                         purpose: match purpose {
-                            crate::effect::EffectTargetSelectionPurpose::SurveilLibraryOne { .. }
+                            crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { graveyard_order: Some(_), .. } => TargetSelectionPurposeV4::LibraryOrder,
+                            crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { graveyard_order: None, .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryOne { .. }
                             | crate::effect::EffectTargetSelectionPurpose::OrderIntoGraveyard {
                                 ..
                             }

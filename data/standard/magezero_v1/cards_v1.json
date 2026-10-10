@@ -2471,7 +2471,7 @@
     },
     {
       "name": "Mirrex",
-      "engine_capability": "full",
+      "engine_capability": "partial",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -2510,7 +2510,7 @@
     },
     {
       "name": "Rockface Village",
-      "engine_capability": "full",
+      "engine_capability": "partial",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
