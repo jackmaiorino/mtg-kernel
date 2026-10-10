@@ -33,3 +33,14 @@ unit case and unregistered Dreadwing fixture exercise that transient boundary.
 This correction belongs to the later prepared admission; it does not alter
 PR210. Native source compilation of58b0c17a is already running; the correction
 requires the affected native threshold case afterward.
+
+Source58b0c17a passed test compilation in Limited-only and combined
+Standard/Limited configurations,23 rules-vector cases (one existing ignore)
+and the frozen v63 catalog case under supported guard
+740db464e6324c7eb9a90b8bac0bd6e7. The command sequence completed zero;
+the guard terminates after its owned idle compiler telemetry child releases.
+Corrected readerbb8a9fca passed the registered threshold regression under
+guard22fb7ec5ac3c47279ab124fe4f4f5079. Read-only follow-up review of that
+exact correction confirms the finding resolved. The five Dreadwing card
+cases remain unexecuted until registration. The retained27-name admission
+order is documented separately with frozen printing membership checked.
