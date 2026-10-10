@@ -392,6 +392,18 @@ impl Subtype {
         Subtype::Berserker,
     ];
 
+    /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
+    /// present in the enum. Assassin and Mercenary join this list when a
+    /// batch appends them; until then no registry card can carry them, since
+    /// `build.rs` rejects unknown subtypes. Changelings carry every listed
+    /// type through their effective subtype set.
+    pub const OUTLAW_TYPES: &'static [Subtype] = &[
+        Subtype::Pirate,
+        Subtype::Rogue,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Warlock,
+    ];
+
     /// Schema-v4 observation id. Existing discriminants are append-only:
     /// feature encoders may sort and embed these ids without depending on
     /// source spelling or locale-sensitive string ordering.
@@ -686,6 +698,16 @@ pub enum TargetSpec {
     OpponentNonlandPermanent,
     /// A creature spell on the stack (Essence Scatter).
     CreatureSpellOnStack,
+    /// Exactly one creature that is not an outlaw (Assassin, Mercenary,
+    /// Pirate, Rogue or Warlock, counting changelings as every type).
+    /// Shoot the Sheriff is the first consumer. Ids 42-46 are claimed by
+    /// in-flight FDN batches, so MageZero Standard specs start at 47.
+    NonOutlawCreature,
+    /// Exactly one creature whose current toughness is 4 or greater (Destroy
+    /// Evil's first mode).
+    CreatureToughnessAtLeastFour,
+    /// Exactly one creature, enchantment, or planeswalker (Get Lost).
+    CreatureEnchantmentOrPlaneswalker,
 }
 
 impl TargetSpec {
@@ -741,6 +763,9 @@ impl TargetSpec {
             TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour => 44,
             TargetSpec::OpponentNonlandPermanent => 45,
             TargetSpec::CreatureSpellOnStack => 46,
+            TargetSpec::NonOutlawCreature => 47,
+            TargetSpec::CreatureToughnessAtLeastFour => 48,
+            TargetSpec::CreatureEnchantmentOrPlaneswalker => 49,
         }
     }
 }
@@ -1125,6 +1150,10 @@ pub enum DynamicValueDef {
         amount_when_met: u8,
         amount_otherwise: u8,
     },
+    /// Count battlefield permanents the evaluating controller controls whose
+    /// effective subtypes include the named subtype (Flow of Knowledge's
+    /// "each Island you control").
+    ControlledPermanentsWithSubtype(Subtype),
 }
 
 /// Two subtypes a *single* permanent must carry at once, e.g. the Urza's
@@ -1362,6 +1391,9 @@ pub struct CardDef {
     /// Printed protection applying to this card as a spell, including copies.
     /// It does not protect the permanent's activated or triggered abilities.
     pub spell_cannot_be_countered: bool,
+    /// The spell's program reads the amount of mana spent to cast it, so the
+    /// cast records it on the stack item (`StackStateV4::mana_spent`).
+    pub records_mana_spent: bool,
     /// Printed Equipment behavior shared by attachments, effective
     /// characteristics, cast triggers, and RL continuous-effect projection.
     pub equipment: Option<EquipmentDef>,
@@ -1955,6 +1987,9 @@ mod tests {
             ),
             (TargetSpec::OpponentNonlandPermanent, 45),
             (TargetSpec::CreatureSpellOnStack, 46),
+            (TargetSpec::NonOutlawCreature, 47),
+            (TargetSpec::CreatureToughnessAtLeastFour, 48),
+            (TargetSpec::CreatureEnchantmentOrPlaneswalker, 49),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);

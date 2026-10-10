@@ -88,8 +88,10 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::GainLife { .. }
         | EffectOp::LoseLife { .. }
         | EffectOp::DrawCards { .. }
+        | EffectOp::DrawCardsDynamic { .. }
         | EffectOp::RevealTopAndPartitionByType { .. }
         | EffectOp::DiscardCards { .. }
+        | EffectOp::DiscardBasicLandOrCards { .. }
         | EffectOp::MoveObject { .. }
         | EffectOp::Sacrifice { .. }
         | EffectOp::TapObject { .. }
@@ -114,13 +116,15 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. }
         | EffectOp::PutBoundObjectInOwnersLibrary { .. }
         | EffectOp::DestroyObject { .. }
+        | EffectOp::DestroyObjectThenCreateTokens { .. }
         | EffectOp::CounterUnlessPaysGeneric { .. }
         | EffectOp::DamageEachCreatureWithoutSubtype { .. }
         | EffectOp::CounterTargetUnlessPaysGeneric { .. }
         | EffectOp::GainLifeDynamic { .. }
         | EffectOp::UntapObject { .. }
         | EffectOp::PumpTargetUntilEndOfTurnDynamic { .. }
-        | EffectOp::LookTopSelectByTypeToHandBottomRest { .. } => effect_b::effect_op(op, env, out),
+        | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
+        | EffectOp::LookTopPickToHandBottomRest { .. } => effect_b::effect_op(op, env, out),
         EffectOp::GainLifeEqualToPaidCostManaValue { .. }
         | EffectOp::MoveAllTargets { .. }
         | EffectOp::ExploreTarget { .. }

@@ -2714,7 +2714,8 @@ enum Special {
     /// `recipe` is the stable semantic token hashed into the card database;
     /// `effect` and the optional second mode's effect are the emitted Rust
     /// expressions, which are not hashed. FDN removal and combat-trick
-    /// batches add their cards through `fdn_program_for` so each card is one
+    /// batches add their cards through `fdn_program_for`, and MageZero
+    /// Standard batches through `standard_program_for`, so each card is one
     /// table row rather than a new enum variant and four codegen sites.
     Program {
         target: &'static str,
@@ -3306,7 +3307,9 @@ fn special_for(name: &str) -> Special {
             toughness: 3,
             keyword: "TRAMPLE",
         },
-        _ => fdn_program_for(name).unwrap_or(Special::None),
+        _ => fdn_program_for(name)
+            .or_else(|| standard_program_for(name))
+            .unwrap_or(Special::None),
     }
 }
 
@@ -3403,6 +3406,114 @@ fn fdn_program_for(name: &str) -> Option<Special> {
     })
 }
 
+const DESTROY_TARGET0_ON_BATTLEFIELD: &str = "EffectOp::Conditional { cond: EffectCond::TargetInZone(0, Zone::Battlefield), then: Box::new(EffectOp::DestroyObject { object: ObjectRef::Target(0) }), else_: Box::new(EffectOp::Sequence(vec![])) }";
+
+/// MageZero Standard spells that compose generic effect operations.
+/// Characteristics and rules text were read from the XMage card files named
+/// in each `data/standard/magezero_v1/cards_v1.json` entry. These names do
+/// not occur in the Pauper or FDN registries, so those catalogs never select
+/// a row here.
+fn standard_program_for(name: &str) -> Option<Special> {
+    let program = |target, recipe, effect| Special::Program {
+        target,
+        recipe,
+        effect,
+        mode2: None,
+    };
+    Some(match name {
+        // Shock and Lightning Strike deal 2 and 3 damage to any target;
+        // Negate counters target noncreature spell; Opt is scry 1, then draw
+        // a card. Each reuses the Pauper recipe of the same shape.
+        "Shock" => Special::BurnAnyTarget(2),
+        "Lightning Strike" => Special::BurnAnyTarget(3),
+        "Negate" => Special::CounterTarget(StackSpellFilter::Noncreature),
+        "Opt" => Special::ScryThenDraw { scry: 1, draw: 1 },
+        // Counter target spell. If that spell is countered this way, exile it
+        // instead of putting it into its owner's graveyard.
+        "Dissipate" => program(
+            "AnySpellOnStack",
+            "Conditional(TargetSpellCanBeCountered(0),MoveObject(Target0,Exile))",
+            "EffectOp::Conditional { cond: EffectCond::TargetSpellCanBeCountered(0), then: Box::new(EffectOp::MoveObject { object: ObjectRef::Target(0), to_zone: Zone::Exile }), else_: Box::new(EffectOp::Sequence(vec![])) }",
+        ),
+        // Look at the top card of your library. You may put that card into
+        // your graveyard. Draw a card.
+        "Consider" => program(
+            "None",
+            "Sequence(Surveil(Controller,1),DrawCards(Controller,1))",
+            "EffectOp::Sequence(vec![EffectOp::Surveil { player: PlayerRef::Controller, count: 1 }, EffectOp::DrawCards { player: PlayerRef::Controller, count: 1 }])",
+        ),
+        // Target creature you control deals damage equal to its power to
+        // target creature or planeswalker you don't control.
+        "Hard-Hitting Question" => program(
+            "ControlledCreatureThenOpponentCreatureOrPlaneswalker",
+            "CreatureTargetPowerDamage(0,1,counter=0)",
+            "EffectOp::CreatureTargetPowerDamage { source_index: 0, target_index: 1, plus1_plus1: 0, target_spec: TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker }",
+        ),
+        // Destroy target non-outlaw creature.
+        "Shoot the Sheriff" => program(
+            "NonOutlawCreature",
+            "Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0))",
+            DESTROY_TARGET0_ON_BATTLEFIELD,
+        ),
+        // Choose one -- Destroy target creature with toughness 4 or greater;
+        // or destroy target enchantment.
+        "Destroy Evil" => Special::Program {
+            target: "CreatureToughnessAtLeastFour",
+            recipe: "Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0))",
+            effect: DESTROY_TARGET0_ON_BATTLEFIELD,
+            mode2: Some(ProgramMode {
+                target: "EnchantmentPermanent",
+                recipe: "Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0))",
+                effect: DESTROY_TARGET0_ON_BATTLEFIELD,
+            }),
+        },
+        // Destroy target creature, enchantment, or planeswalker. Its
+        // controller creates two Map tokens.
+        "Get Lost" => program(
+            "CreatureEnchantmentOrPlaneswalker",
+            "Sequence(Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0)),CreateToken(MapToken,ObjectController(Target0)),CreateToken(MapToken,ObjectController(Target0)))",
+            "EffectOp::DestroyObjectThenCreateTokens { object: ObjectRef::Target(0), token_def: crate::card_def::card_id_by_name(\"Map Token\").expect(\"Map Token in CARD_DEFS\"), count: 2 }",
+        ),
+        // Return target creature to its owner's hand. If its mana value was
+        // 3 or less, scry 1. The mana value is read before the move.
+        "Fading Hope" => program(
+            "Creature",
+            "Conditional(TargetManaValueAtMost(0,3),Sequence(MoveObject(Target0,Hand),Scry(Controller,1)),MoveObject(Target0,Hand))",
+            "EffectOp::Conditional { cond: EffectCond::TargetManaValueAtMost(0, 3), then: Box::new(EffectOp::Sequence(vec![EffectOp::MoveObject { object: ObjectRef::Target(0), to_zone: Zone::Hand }, EffectOp::Scry { player: PlayerRef::Controller, count: 1 }])), else_: Box::new(EffectOp::MoveObject { object: ObjectRef::Target(0), to_zone: Zone::Hand }) }",
+        ),
+        // Draw a card for each Island you control, then discard two cards.
+        "Flow of Knowledge" => program(
+            "None",
+            "Sequence(DrawCardsDynamic(Controller,ControlledPermanentsWithSubtype(Island)),DiscardCards(Controller,2))",
+            "EffectOp::Sequence(vec![EffectOp::DrawCardsDynamic { player: PlayerRef::Controller, count: DynamicValueDef::ControlledPermanentsWithSubtype(Subtype::Island) }, EffectOp::DiscardCards { player: PlayerRef::Controller, count: 2 }])",
+        ),
+        // Draw three cards. Then discard two cards unless you discard a basic
+        // land card.
+        "Thirst for Discovery" => program(
+            "None",
+            "Sequence(DrawCards(Controller,3),DiscardBasicLandOrCards(Controller,2))",
+            "EffectOp::Sequence(vec![EffectOp::DrawCards { player: PlayerRef::Controller, count: 3 }, EffectOp::DiscardBasicLandOrCards { player: PlayerRef::Controller, otherwise: 2 }])",
+        ),
+        // Look at the top four cards of your library. Put one of them into
+        // your hand and the rest on the bottom of your library in any order.
+        "Impulse" => program(
+            "None",
+            "LookTopPickToHandBottomRest(Controller,Fixed(4),pick=1,rest=Chosen)",
+            "EffectOp::LookTopPickToHandBottomRest { player: PlayerRef::Controller, count: crate::effect::LibraryLookCount::Fixed(4), pick: 1, choose_rest_order: true }",
+        ),
+        // Look at the top X cards of your library, where X is the amount of
+        // mana spent to cast this spell. Put two of them into your hand and
+        // the rest on the bottom of your library in a random order.
+        // Flashback {5}{U}{U} is modeled in `flashback_for`.
+        "Memory Deluge" => program(
+            "None",
+            "LookTopPickToHandBottomRest(Controller,ManaSpentToCast,pick=2,rest=LookedAt)",
+            "EffectOp::LookTopPickToHandBottomRest { player: PlayerRef::Controller, count: crate::effect::LibraryLookCount::ManaSpentToCast, pick: 2, choose_rest_order: false }",
+        ),
+        _ => return None,
+    })
+}
+
 fn program_target_spec_src(target: &str) -> &'static str {
     match target {
         "None" => "TargetSpec::None",
@@ -3414,6 +3525,14 @@ fn program_target_spec_src(target: &str) -> &'static str {
         "ArtifactEnchantmentOrCreaturePowerAtLeastFour" => {
             "TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour"
         }
+        "AnySpellOnStack" => "TargetSpec::AnySpellOnStack",
+        "EnchantmentPermanent" => "TargetSpec::EnchantmentPermanent",
+        "ControlledCreatureThenOpponentCreatureOrPlaneswalker" => {
+            "TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker"
+        }
+        "NonOutlawCreature" => "TargetSpec::NonOutlawCreature",
+        "CreatureToughnessAtLeastFour" => "TargetSpec::CreatureToughnessAtLeastFour",
+        "CreatureEnchantmentOrPlaneswalker" => "TargetSpec::CreatureEnchantmentOrPlaneswalker",
         other => panic!("unsupported program target spec {other}"),
     }
 }
@@ -4053,6 +4172,13 @@ fn flashback_for(name: &str) -> String {
         }
         "Revenge of the Rats" => {
             let (pips, generic, x_count) = parse_cost("{2}{B}{B}");
+            format!(
+                "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})] }})",
+                pips.join(", ")
+            )
+        }
+        "Memory Deluge" => {
+            let (pips, generic, x_count) = parse_cost("{5}{U}{U}");
             format!(
                 "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})] }})",
                 pips.join(", ")
@@ -5365,8 +5491,8 @@ fn mode2_for(name: &str) -> String {
             name.to_ascii_lowercase().replace([' ', '\''], "_")
         ),
         Special::Program { mode2: Some(mode), .. } => format!(
-            "Some(ModeDef {{ target_spec: TargetSpec::{}, effect: mode2_effect_program_{} }})",
-            mode.target,
+            "Some(ModeDef {{ target_spec: {}, effect: mode2_effect_program_{} }})",
+            program_target_spec_src(mode.target),
             program_function_suffix(name)
         ),
         _ => "None".to_string(),
@@ -5489,6 +5615,13 @@ fn generic_cost_reduction_for(name: &str) -> &'static str {
         }
         _ => "None",
     }
+}
+
+/// Whether the spell program reads "the amount of mana spent to cast this
+/// spell". Derived from the hashed program recipe, so it needs no separate
+/// canonical token.
+fn records_mana_spent_for(name: &str) -> bool {
+    matches!(special_for(name), Special::Program { recipe, .. } if recipe.contains("ManaSpentToCast"))
 }
 
 fn spell_cannot_be_countered_for(card: &CardJson) -> bool {
@@ -8301,6 +8434,12 @@ fn codegen(cards: &[CardJson]) -> String {
         .unwrap();
         writeln!(
             out,
+            "        records_mana_spent: {},",
+            records_mana_spent_for(&c.name)
+        )
+        .unwrap();
+        writeln!(
+            out,
             "        equipment: {},",
             equipment_src(equipment_for(&c.name))
         )
@@ -8578,7 +8717,7 @@ fn codegen(cards: &[CardJson]) -> String {
         // `standard-magezero-fixtures` builds: the Pauper prefix plus
         // `data/standard/magezero_v1/cards_v1.json`, versioned separately
         // from the FDN Limited catalog.
-        canon = String::from("kernel_carddb_standard/v1\n");
+        canon = String::from("kernel_carddb_standard/v2\n");
     }
     if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
         canon.push_str("counter_target_spell_guard=bound_stack_spell_can_be_countered\n");

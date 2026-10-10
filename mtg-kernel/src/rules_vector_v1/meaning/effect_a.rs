@@ -65,7 +65,10 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
         | TargetSpec::AttackingOrBlockingCreature
         | TargetSpec::CreatureOrPlaneswalker
         | TargetSpec::ArtifactEnchantmentOrFlyingCreature
-        | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour => (BATTLEFIELD, None),
+        | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour
+        | TargetSpec::NonOutlawCreature
+        | TargetSpec::CreatureToughnessAtLeastFour
+        | TargetSpec::CreatureEnchantmentOrPlaneswalker => (BATTLEFIELD, None),
         TargetSpec::ControlledCreature => (BATTLEFIELD, Some(RelF::You)),
         TargetSpec::OpponentControlledCreature
         | TargetSpec::OpponentArtifactOrEnchantmentPermanent
@@ -196,6 +199,16 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                     .amount(AmtF::fixed(i64::from(*count))),
             );
         }
+        EffectOp::DrawCardsDynamic { player, count } => {
+            // The count is sampled once at resolution.
+            let amount = reads::dynamic_value(*count, out);
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Library), ZoneF::Hand)
+                    .player(player_ref(*player))
+                    .obj(ObjF::AnyCard)
+                    .amount(amount),
+            );
+        }
         EffectOp::RevealTopAndPartitionByType {
             player,
             count,
@@ -236,6 +249,26 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                     .player(player_ref(*player))
                     .obj(ObjF::AnyCard)
                     .amount(AmtF::fixed(i64::from(*count))),
+            );
+        }
+        EffectOp::DiscardBasicLandOrCards { player, otherwise } => {
+            // The player privately chooses zero or one basic land card from
+            // hand to discard; declining falls through to an ordinary staged
+            // discard of `otherwise` cards. Vocabulary gap: no basic-land
+            // class; nearest is "a land".
+            let player = player_ref(*player);
+            out.control(ControlF::ChooseObjects);
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Hand), ZoneF::Graveyard)
+                    .player(player)
+                    .obj(ObjF::Typed(CardTypeF::Land))
+                    .amount(AmtF::fixed(1)),
+            );
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Hand), ZoneF::Graveyard)
+                    .player(player)
+                    .obj(ObjF::AnyCard)
+                    .amount(AmtF::fixed(i64::from(*otherwise))),
             );
         }
         EffectOp::MoveObject { object, to_zone } => {

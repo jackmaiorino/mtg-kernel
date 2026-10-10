@@ -79,6 +79,7 @@ impl Scan<'_> {
             | PutObjectInOwnersLibraryTopOrBottom { .. }
             | SurveilOne { .. }
             | DestroyObject { .. }
+            | DestroyObjectThenCreateTokens { .. }
             | CounterUnlessPaysGeneric { .. }
             | DamageEachCreatureWithoutSubtype { .. }
             | CounterTargetUnlessPaysGeneric { .. }
@@ -86,6 +87,9 @@ impl Scan<'_> {
             | UntapObject { .. }
             | PumpTargetUntilEndOfTurnDynamic { .. }
             | LookTopSelectByTypeToHandBottomRest { .. }
+            | LookTopPickToHandBottomRest { .. }
+            | DrawCardsDynamic { .. }
+            | DiscardBasicLandOrCards { .. }
             | GainLifeEqualToPaidCostManaValue { .. }
             | MoveAllTargets { .. }
             | ExploreTarget { .. }
@@ -217,6 +221,11 @@ impl Scan<'_> {
                 original_prefix,
                 progress,
                 ..
+            }
+            | LookTopPickToHandBottomRest {
+                original_prefix,
+                progress,
+                ..
             } => {
                 self.bs(original_prefix)
                     || match progress {
@@ -290,6 +299,16 @@ impl Scan<'_> {
                 selected,
                 ..
             } => self.bs(original_hand) || self.bs(eligible) || self.b(selected),
+            DiscardBasicLandInstead {
+                original_hand,
+                eligible,
+                selected,
+                ..
+            } => {
+                self.bs(original_hand)
+                    || self.bs(eligible)
+                    || selected.as_ref().is_some_and(|b| self.b(b))
+            }
             BeginSearchLibraryToBattlefieldTapped {
                 expected_remaining_frames,
                 ..
@@ -382,6 +401,11 @@ impl Scan<'_> {
                 original_prefix,
                 stage,
                 ..
+            }
+            | LookTopPickToHandBottomRest {
+                original_prefix,
+                stage,
+                ..
             } => {
                 self.bs(original_prefix)
                     || match stage {
@@ -407,6 +431,11 @@ impl Scan<'_> {
                 ..
             } => self.bs(original_candidates),
             DuressDiscard {
+                original_hand,
+                eligible,
+                ..
+            }
+            | DiscardBasicLandInstead {
                 original_hand,
                 eligible,
                 ..

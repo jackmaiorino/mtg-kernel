@@ -263,6 +263,19 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
             Some(RelF::Opponent),
             ZoneF::Battlefield,
         ),
+        // A creature without an outlaw type. No creature-type facet exists;
+        // the nearest class is "a creature".
+        TargetSpec::NonOutlawCreature => object(out, creature(), None, ZoneF::Battlefield),
+        // A creature with effective toughness >= 4. The toughness
+        // requirement has no facet; the nearest class is "a creature".
+        TargetSpec::CreatureToughnessAtLeastFour => {
+            object(out, creature(), None, ZoneF::Battlefield)
+        }
+        TargetSpec::CreatureEnchantmentOrPlaneswalker => {
+            object(out, creature(), None, ZoneF::Battlefield);
+            object(out, typed(CardType::Enchantment), None, ZoneF::Battlefield);
+            object(out, typed(CardType::Planeswalker), None, ZoneF::Battlefield);
+        }
     }
 }
 
@@ -332,7 +345,8 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
         | TargetSpec::ArtifactOrEnchantmentPermanent
         | TargetSpec::CreatureOrPlaneswalker
         | TargetSpec::ArtifactEnchantmentOrFlyingCreature
-        | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour => {
+        | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour
+        | TargetSpec::CreatureEnchantmentOrPlaneswalker => {
             let _ = slot; // One target slot.
             ObjF::Permanent
         }
@@ -356,7 +370,9 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
         | TargetSpec::UpToOneTappedCreature
         | TargetSpec::NonblackCreature
         | TargetSpec::ControlledCreatureThenOpponentCreature
-        | TargetSpec::AttackingOrBlockingCreature => {
+        | TargetSpec::AttackingOrBlockingCreature
+        | TargetSpec::NonOutlawCreature
+        | TargetSpec::CreatureToughnessAtLeastFour => {
             let _ = slot; // Every slot is a creature.
             creature()
         }

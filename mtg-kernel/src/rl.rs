@@ -6545,6 +6545,12 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
                                 ..
                             }
+                            | crate::effect::EffectTargetSelectionPurpose::LookTopPickToHandBottomRest {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::DiscardBasicLandInstead {
+                                ..
+                            }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany {
                                 ..
                             }
@@ -6661,6 +6667,10 @@ fn pending_effect_semantic_v4(
                             crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
                                 stage,
                                 ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::LookTopPickToHandBottomRest {
+                                stage,
+                                ..
                             } => match stage {
                                 crate::effect::LibraryPartitionSelectionStage::ChooseMatchingSubset => {
                                     TargetSelectionPurposeV4::CardSelection
@@ -6679,6 +6689,9 @@ fn pending_effect_semantic_v4(
                                 ..
                             }
                             | crate::effect::EffectTargetSelectionPurpose::DuressDiscard {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::DiscardBasicLandInstead {
                                 ..
                             }
                             | crate::effect::EffectTargetSelectionPurpose::UndercityThroneCreature {

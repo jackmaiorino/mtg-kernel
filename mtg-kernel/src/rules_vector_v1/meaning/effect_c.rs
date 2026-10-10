@@ -63,7 +63,10 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
         | TargetSpec::AttackingOrBlockingCreature
         | TargetSpec::CreatureOrPlaneswalker
         | TargetSpec::ArtifactEnchantmentOrFlyingCreature
-        | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour => (BATTLEFIELD, None),
+        | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour
+        | TargetSpec::NonOutlawCreature
+        | TargetSpec::CreatureToughnessAtLeastFour
+        | TargetSpec::CreatureEnchantmentOrPlaneswalker => (BATTLEFIELD, None),
         TargetSpec::ControlledCreature => (BATTLEFIELD, Some(RelF::You)),
         TargetSpec::OpponentControlledCreature
         | TargetSpec::OpponentArtifactOrEnchantmentPermanent
