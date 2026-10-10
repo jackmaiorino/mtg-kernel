@@ -19,3 +19,9 @@ One primitive and three card cases cover both seats, duplicate values,
 zero-mana tokens, artifact lands, control changes after casting, ordinary costs,
 zero draw and finalized-stack restore. They remain unexecuted. Registry,
 fixture, catalog/profile identity and gameplay admission remain pending.
+
+Read-only review at `a1c31fa1` found no actionable defects in current control,
+effective land filtering, distinct-value grouping, resolution sampling or
+restore. Unused fixture imports were removed in `5f8139c5`. Supported two-core
+native checks use that exact committed source on Haley's PC; the result is
+pending. This checkout also contains the fight fixture type repair `6876b395`.
