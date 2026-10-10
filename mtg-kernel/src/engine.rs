@@ -4637,6 +4637,27 @@ fn pay_cost_components_spending_mana(
         return None;
     }
     let mana_plan = mana_plan.flatten();
+    commit_cost_components_from_plan_v1(
+        state,
+        player,
+        source,
+        components,
+        object_cost_chosen,
+        mana_plan.as_ref(),
+    )
+}
+
+/// Commit an already validated component group using its previously determined
+/// ordinary mana plan. Spell finalization can pass only nonmana components
+/// after its combined payment; the legacy Convoke arm remains unchanged here.
+fn commit_cost_components_from_plan_v1(
+    state: &mut GameState,
+    player: PlayerId,
+    source: ObjectId,
+    components: &[CostComponent],
+    object_cost_chosen: &[ObjectId],
+    mana_plan: Option<&mana::PaymentPlan>,
+) -> Option<u16> {
     let mut mana_spent = 0;
     for c in components {
         match c {
@@ -4728,7 +4749,7 @@ fn pay_cost_components_spending_mana(
                 mana_spent = pay_plan(
                     state,
                     player,
-                    mana_plan.as_ref().expect(
+                    mana_plan.expect(
                         "a supported component slice has at most one preflighted mana cost",
                     ),
                 );
