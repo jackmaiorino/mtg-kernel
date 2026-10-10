@@ -17,3 +17,8 @@ life totals nine/ten/eleven, changes after casting, damage events, ordinary
 payment, finalized-stack restore and lethal state actions. These cases remain
 unexecuted. Registry, fixture, catalog/profile and gameplay admission await
 serial predecessors; accepted coverage is unchanged.
+
+Read-only review at `16636107` found no actionable defects in resolution-time
+player selection, equality, damage, restore or lethal state actions. Formatting
+and diff checks passed. Native qualification remains pending after the preceding
+guarded prepared-source check completes; no card case has executed.
