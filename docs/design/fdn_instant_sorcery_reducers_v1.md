@@ -1,6 +1,6 @@
 # Controller instant/sorcery cost reducers, source preparation
 
-This separate issue #110 preparation follows the 31-name admission. Neither
+This separate issue #110 preparation supports the next cost-reducer admission. Neither
 Mocking Sprite nor Archmage of Runes is registered or accepted by this work.
 
 The pinned Mage constructors at
@@ -156,7 +156,38 @@ their source for mana or Convoke. A future discard-plus-Delve shape needs a
 projected resource state while preserving its pre-discard frozen cost. No
 serialized PendingCast payment attestation is introduced.
 
-Remaining work: offer/pending/X/final-payment integration;
-atomic nonmana payment; actual card gameplay and restore tests; metadata and
-catalog admission; live profile qualification; CI and default-branch acceptance.
-No new card gameplay, increased coverage or experimental result is claimed.
+Native12 qualifies the nonmana preparer at
+6dff3f094d1a71ca37e0af2195bfcaf78e6e5dcb. Both feature test compilations and
+84 executions pass:25 mana,18 collector/preparation,23 rules-vector, frozen v65,
+8 graveyard and9 static-team cases, with one existing rules-vector ignore.
+Guard7e431e33acbb498d99fd9c384b954f89 released with observed terminal0. The
+preparer authenticates hand entries before legacy reveal predicates, applies
+ordered cost groups to a private projection, and caches exact counter/reveal
+actions for synchronous consumption. No restored payload can assert payment.
+
+Source16f2f1186806762a5b89147c58ec417eba2827f6 wires full prepared payment into
+finalize_cast and FinishCast discard. Modifiers freeze before actual discard;
+the resource projection uses the Madness-aware discard path, pays one combined
+mana/life total, then prepares base and additional groups and optional costs.
+Chosen-creature power and paid-cost provenance retain the final paid snapshot.
+Actual commitment consumes the prepared payment once. Mid-cast payability uses
+the same selected total and object/GY reservations. Read-only reviews found no
+actionable findings. Native13 guardc2a3c672335b4133a8efa0e116fb2373 admitted
+cores14-15 BelowNormal, Rust1.94.1/MSVC19.50.35725; both feature test compilations
+and169 engine tests pass. The remaining qualification commands are pending.
+
+Source776b2aed8040a36774f8ad34b407bdf7004efc34 adds pure complete-cost quotes
+to cast offers, spell forms, cast modes, target-dependent affordability,
+kicker and X validation/choices, and Plotted offers. One supported interactive
+object family is completed before quoting; tap picks reserve mana sources,
+sacrificed lands may produce mana first, and exile picks cannot overlap separate
+graveyard costs. Four added regressions cover discard/source exclusion,
+sacrifice completion, Escape reservations, and malformed reveal-only hands.
+These new regressions have not executed. Review of the main migrated paths
+found no remaining findings after the reveal-hand guard repair; final exact
+review including Plotted and the new cases is pending.
+
+Remaining work: finish native qualification of runtime integration and quotes;
+actual Sprite/Archmage gameplay and restore tests; metadata/catalog admission;
+live profile qualification; CI and default-branch acceptance. Accepted booster
+coverage remains138. No new card gameplay or experimental result is claimed.
