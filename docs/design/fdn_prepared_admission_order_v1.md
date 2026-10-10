@@ -183,3 +183,13 @@ fight bodies with live counter changes. Cast-observer, damage, zone and restore
 assertions remain. Common step-entry validation97da6a02 additionally refuses
 forged Pass actions before mutation; the Native10 source predates that boundary.
 Current-head native qualification and CI remain required before acceptance169.
+
+Native11 at90c2ac17 passed both feature compiles, unchanged generated identity,
+the Hacker regression and112 of113 card cases. All24 other targets passed;
+casting observers passed six of seven. Its newly reached artifact row used
+Golden Egg, which is not registered in Limited. The fixture now uses registered
+two-mana artifact Goldvein Pick, preserving Balmor0/Whelp1 and every life/replay
+assertion. Read-only review found no side effects in this unattached, no-combat
+case. Guardf3c64ca601f64a7e9968436620622408 ended101 after only its proven idle
+VCTIP158420 released. The failed source and log remain retained. The focused
+casting follow-up can reuse the compatible24-target/Arbiter/identity receipts.

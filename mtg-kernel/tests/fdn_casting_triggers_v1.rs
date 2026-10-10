@@ -241,7 +241,7 @@ fn printed_metadata_and_exact_cast_costs() {
 fn spell_filters_apply_to_actual_casts_and_dragon_triggers_once() {
     for (name, pips, generic, balmor_count, whelp_count) in [
         ("Mental Note", vec![ManaColor::U], 0, 1, 1),
-        ("Golden Egg", vec![], 2, 0, 1),
+        ("Goldvein Pick", vec![], 2, 0, 1),
         ("Llanowar Elves", vec![ManaColor::G], 0, 0, 0),
         ("Firespitter Whelp", vec![ManaColor::R], 2, 0, 1),
     ] {
