@@ -1,5 +1,7 @@
+import ctypes
 import importlib.util
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
@@ -17,7 +19,7 @@ class RecoveryBindingTests(unittest.TestCase):
     def setUp(self):
         self.scratch = tempfile.TemporaryDirectory()
         self.addCleanup(self.scratch.cleanup)
-        self.root = Path(self.scratch.name)
+        self.root = Path(self.scratch.name).resolve()
         self.native = self.root / 'matched-native'
         self.native.mkdir()
         (self.native / 'nested').mkdir()
@@ -37,6 +39,27 @@ class RecoveryBindingTests(unittest.TestCase):
 
     def test_exact_inventory_and_bytes_accept(self):
         POST.verify_native_recovery(self.native, self.archive)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows short-path alias')
+    def test_short_path_alias_accepts_matching_bytes_and_refuses_replacement(self):
+        get_short = ctypes.WinDLL('kernel32', use_last_error=True).GetShortPathNameW
+        get_short.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_ulong]
+        get_short.restype = ctypes.c_ulong
+        size = get_short(str(self.native), None, 0)
+        if not size:
+            raise ctypes.WinError(ctypes.get_last_error())
+        buffer = ctypes.create_unicode_buffer(size)
+        length = get_short(str(self.native), buffer, size)
+        self.assertGreater(length, 0)
+        self.assertLess(length, size)
+        alias = Path(buffer.value)
+        if alias == self.native:
+            self.skipTest('8.3 aliases unavailable on this volume')
+        self.assertEqual(alias.resolve(), self.native)
+        POST.verify_native_recovery(alias, self.archive)
+        (self.native / 'completion.json').write_text('{"case":"new"}', encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'native recovery bytes differ'):
+            POST.verify_native_recovery(alias, self.archive)
 
     def test_replaced_bytes_refuse_without_changing_raw(self):
         path = self.native / 'completion.json'

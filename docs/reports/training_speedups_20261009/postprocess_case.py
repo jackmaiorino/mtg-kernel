@@ -74,6 +74,7 @@ def files_in_tree(root):
 
 def verify_native_recovery(native, archive):
     """Bind the current raw bytes to this case's verified recovery inventory."""
+    native = checked_path(native)
     expected = {}
     for shard in archive['shards']:
         for name, digest in shard['files'].items():
