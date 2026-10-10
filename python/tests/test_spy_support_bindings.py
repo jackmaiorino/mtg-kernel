@@ -54,6 +54,9 @@ class SupportBindings(unittest.TestCase):
                     {**self.row, "diag": {"trace": {"sha256": "0" * 64}}}):
             with self.assertRaises(ValueError):
                 support.load(self.path, "fixture", self.pin, row, 1)
+        for selection in ("fpu-1.5", True, "unknown"):
+            with self.assertRaises(ValueError):
+                self.load(row={**self.row, "select_rule": selection})
 
     def test_changed_bytes_key_parent_and_meta_are_refused(self):
         for pin in (("0" * 64, self.pin[1], None),
