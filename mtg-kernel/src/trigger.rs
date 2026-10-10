@@ -564,6 +564,11 @@ const GLEAMING_BARRIER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef
     ..etb_trigger(gleaming_barrier_effect)
 }];
 const BIGFIN_BOUNCER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(bigfin_bouncer_effect)];
+const TRAGIC_BANSHEE_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(tragic_banshee_effect)];
+const GRAPPLING_KRAKEN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControlledLandEnters,
+    ..etb_trigger(grappling_kraken_effect)
+}];
 const RUNE_SCARRED_DEMON_TRIGGERS: [TriggeredAbilityDef; 1] =
     [etb_trigger(rune_scarred_demon_effect)];
 const TATYOVA_BENTHIC_DRUID_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
@@ -631,6 +636,34 @@ fn bigfin_bouncer_effect() -> EffectOp {
         object: ObjectRef::Target(0),
         to_zone: Zone::Hand,
     }
+}
+
+fn tragic_banshee_effect() -> EffectOp {
+    let boost = |amount| EffectOp::PumpTargetUntilEndOfTurnDynamic {
+        target: TargetRef::Target(0),
+        power: DynamicValueDef::Fixed(amount),
+        toughness: DynamicValueDef::Fixed(amount),
+    };
+    EffectOp::Conditional {
+        cond: EffectCond::CreatureDiedThisTurn,
+        then: Box::new(boost(-13)),
+        else_: Box::new(boost(-1)),
+    }
+}
+
+fn grappling_kraken_effect() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::TapObject {
+            object: ObjectRef::Target(0),
+        },
+        EffectOp::AddCountersToTarget {
+            target_index: 0,
+            optional: false,
+            plus1_plus1: 0,
+            lifelink: 0,
+            stun: 1,
+        },
+    ])
 }
 
 const DRAGON_TRAINER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(dragon_trainer_effect)];
@@ -2905,6 +2938,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Gleaming Barrier" => &GLEAMING_BARRIER_TRIGGERS,
         "Angel of Finality" => &BOJUKA_BOG_TRIGGERS,
         "Bigfin Bouncer" => &BIGFIN_BOUNCER_TRIGGERS,
+        "Tragic Banshee" => &TRAGIC_BANSHEE_TRIGGERS,
+        "Grappling Kraken" => &GRAPPLING_KRAKEN_TRIGGERS,
         "Rune-Scarred Demon" => &RUNE_SCARRED_DEMON_TRIGGERS,
         "Elvish Regrower" => &ELVISH_REGROWER_TRIGGERS,
         "Vampire Soulcaller" => &VAMPIRE_SOULCALLER_TRIGGERS,
@@ -3060,7 +3095,9 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         "Lotleth Giant" => TargetSpec::TargetOpponent,
         "Harrier Strix" => TargetSpec::AnyPermanent,
         "Bojuka Bog" | "Angel of Finality" => TargetSpec::AnyPlayer,
-        "Bigfin Bouncer" | "Nova Hellkite" => TargetSpec::OpponentControlledCreature,
+        "Bigfin Bouncer" | "Nova Hellkite" | "Tragic Banshee" | "Grappling Kraken" => {
+            TargetSpec::OpponentControlledCreature
+        }
         "Humbling Elder" => TargetSpec::OpponentControlledCreature,
         "Meteor Golem" => TargetSpec::OpponentNonlandPermanent,
         "Reclamation Sage" => TargetSpec::ArtifactOrEnchantmentPermanent,

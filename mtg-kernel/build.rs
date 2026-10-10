@@ -6195,6 +6195,8 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Gleaming Barrier" => "dies:create_treasure_token:1",
         "Angel of Finality" => "etb:target_player:exile_graveyard",
         "Bigfin Bouncer" => "etb:target_opponent_controlled_creature:return_to_owners_hand",
+        "Tragic Banshee" => "etb:target_opponent_controlled_creature:resolution_morbid:pump_target:-13:-13_else:-1:-1:exact_incarnation_until_cleanup",
+        "Grappling Kraken" => "controlled_land_enters:target_opponent_controlled_creature:tap_then_stun_counter:1:exact_incarnation",
         "Rune-Scarred Demon" => "etb:search_library_any_card_to_hand_unrevealed",
         "Elvish Regrower" => "etb:return_target_own_graveyard_permanent_card_to_hand",
         "Vampire Soulcaller" => "etb:return_target_own_graveyard_creature_card_to_hand;static:cant_block:printed_source_abilities",
