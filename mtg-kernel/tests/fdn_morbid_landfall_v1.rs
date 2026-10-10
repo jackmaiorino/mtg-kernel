@@ -124,9 +124,9 @@ fn copy(state: &GameState) -> GameState {
 
 fn next_turn_through_cleanup_and_untap(state: &mut GameState) {
     let previous = state.active_player;
-    // EndStep grants priority. Passing both seats enters Cleanup, then
+    // End grants priority. Passing both seats enters Cleanup, then
     // the opponent's Untap, executing both entry actions normally.
-    state.step = Step::EndStep;
+    state.step = Step::End;
     for _ in 0..8 {
         let decision = next(state);
         if state.active_player != previous {
@@ -232,7 +232,10 @@ fn banshee_samples_morbid_at_resolution_and_replays_then_expires_at_cleanup() {
                 assert_eq!(engine::effective_toughness(current, wanted), 28);
             }
             assert_eq!(state.state_hash(), restored.state_hash());
-            assert_eq!(state.state_hash_v4(), restored.state_hash_v4());
+            assert_eq!(
+                state.diagnostic_state_hash(),
+                restored.diagnostic_state_hash()
+            );
         }
     }
 }
@@ -270,7 +273,10 @@ fn banshee_source_departure_keeps_trigger_but_target_reentry_or_control_change_f
                 if change == 0 { 7 } else { 8 }
             );
         }
-        assert_eq!(state.state_hash_v4(), restored.state_hash_v4());
+        assert_eq!(
+            state.diagnostic_state_hash(),
+            restored.diagnostic_state_hash()
+        );
     }
 }
 
@@ -298,7 +304,10 @@ fn kraken_landfall_stuns_already_tapped_targets_and_actual_untap_consumes_one_co
                 assert!(current.objects.get(wanted).tapped);
                 assert_eq!(current.objects.get(wanted).counters.stun, 0);
             }
-            assert_eq!(state.state_hash_v4(), restored.state_hash_v4());
+            assert_eq!(
+                state.diagnostic_state_hash(),
+                restored.diagnostic_state_hash()
+            );
         }
     }
 }
@@ -343,6 +352,9 @@ fn kraken_ignores_opponent_land_entry_and_illegal_target_incarnations() {
                 if change == 0 { 1 } else { 0 }
             );
         }
-        assert_eq!(state.state_hash_v4(), restored.state_hash_v4());
+        assert_eq!(
+            state.diagnostic_state_hash(),
+            restored.diagnostic_state_hash()
+        );
     }
 }

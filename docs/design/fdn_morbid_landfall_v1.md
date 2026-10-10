@@ -41,3 +41,9 @@ with no remaining actionable defects. Formatting/diff checks pass. Before
 admission, the existing unstarted Haley queue was updated to this exact source,
 preserving its guard, cache and reservation. It includes compilation of these
 five card cases; unregistered card gameplay remains unexecuted.
+
+The local native preflight at source867a79ae caught two API-name errors missed
+by source review: Step::EndStep and state_hash_v4 do not exist. The fixture now
+uses Step::End and diagnostic_state_hash, preserving real cleanup/untap and
+full-state replay comparisons. Primitive and Duress checks passed; the failed
+local-6 log remains retained and card gameplay qualification remains pending.

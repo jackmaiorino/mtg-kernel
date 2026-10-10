@@ -119,9 +119,9 @@ fn copy(state: &GameState) -> GameState {
 
 fn next_turn_through_cleanup_and_untap(state: &mut GameState) {
     let previous = state.active_player;
-    // EndStep grants priority. Passing both seats enters Cleanup, then
+    // End grants priority. Passing both seats enters Cleanup, then
     // the opponent's Untap, executing both entry actions normally.
-    state.step = Step::EndStep;
+    state.step = Step::End;
     for _ in 0..8 {
         let decision = next(state);
         if state.active_player != previous {
@@ -235,7 +235,10 @@ fn berserker_triggers_once_for_multiple_other_attackers_and_replays_boost_and_cl
             ));
         }
         assert_eq!(state.state_hash(), restored.state_hash());
-        assert_eq!(state.state_hash_v4(), restored.state_hash_v4());
+        assert_eq!(
+            state.diagnostic_state_hash(),
+            restored.diagnostic_state_hash()
+        );
     }
 }
 
@@ -282,7 +285,10 @@ fn berserker_has_no_empty_attack_trigger_and_target_reentry_does_not_inherit_eit
                 Keywords::MENACE
             ));
         }
-        assert_eq!(state.state_hash_v4(), restored.state_hash_v4());
+        assert_eq!(
+            state.diagnostic_state_hash(),
+            restored.diagnostic_state_hash()
+        );
     }
 }
 
@@ -319,7 +325,10 @@ fn crawler_upkeep_draws_active_player_first_and_its_opponent_draw_trigger_is_unt
             assert_eq!(draws, vec![player, player.opponent()]);
         }
         assert_eq!(state.state_hash(), restored.state_hash());
-        assert_eq!(state.state_hash_v4(), restored.state_hash_v4());
+        assert_eq!(
+            state.diagnostic_state_hash(),
+            restored.diagnostic_state_hash()
+        );
     }
 }
 
@@ -348,7 +357,10 @@ fn crawler_counts_each_successful_opponent_draw_and_captured_triggers_survive_de
             assert_eq!(current.players[player.index()].life, 20);
             assert_eq!(current.players[player.opponent().index()].life, 17);
         }
-        assert_eq!(state.state_hash_v4(), restored.state_hash_v4());
+        assert_eq!(
+            state.diagnostic_state_hash(),
+            restored.diagnostic_state_hash()
+        );
     }
 }
 

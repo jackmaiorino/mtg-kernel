@@ -36,3 +36,11 @@ command executed there. Jack's eligible cores16-17 then admitted supported
 guard9d511dd432b6475daa5f8d000da0ea97, supervisor29824, on a retained owned
 checkout at exact867a79ae. It reuses the owned build cache and also checks
 Limited-plus-Standard test compilation. Native results remain pending.
+
+Native preflight at source867a79ae passed 48 card-definition tests, 28 effect
+tests, Lunar Insight, a repeated Pilfer filter check, Madness and Duress.
+Limited test compilation then failed: the fixture referenced nonexistent
+Step::EndStep and state_hash_v4 APIs. Both new fixture files now use Step::End
+and the existing full-state diagnostic_state_hash alongside state_hash.
+The failed local-6 log is retained; remaining type checks are retried separately.
+Unregistered card gameplay and catalog admission remain pending.
