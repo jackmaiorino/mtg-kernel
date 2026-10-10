@@ -7598,103 +7598,71 @@ fn remaining_cast_payment_is_payable(
     staged_method: CastMethodV4,
 ) -> bool {
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-    let cast_method = finalized_cast_method(pending, staged_method, def);
-    let x_value = pending.x_value.unwrap_or(0);
-    let base_payable = match cast_method {
-        CastMethodV4::Normal => {
-            let normal = with_spree_surcharge(
-                def,
-                pending.mode_chosen.unwrap_or(0),
-                effective_normal_cast_cost_with_targets(
-                    def,
-                    pending.controller,
-                    &pending.targets_chosen,
-                    state,
-                ),
-            );
-            if pending.kicked == Some(true) {
-                def.kicker_cost.is_some_and(|kicker| {
-                    mana::can_pay_combined_spell(
-                        &[&normal, &kicker],
-                        0,
-                        pending.controller,
-                        state,
-                        def.has_type(CardType::Creature),
-                    )
-                    .is_some()
-                })
-            } else {
-                normal_cost_is_payable(def, &normal, x_value, pending.controller, state)
-            }
-        }
-        CastMethodV4::Alternative => def.alt_cost.is_some_and(|alt| {
+    let method = finalized_cast_method(pending, staged_method, def);
+    if method == CastMethodV4::Alternative
+        && !def.alt_cost.is_some_and(|alt| {
             alt_cost_condition_met(
                 alt.condition,
                 pending.controller,
                 pending.origin_zone,
                 state,
-            ) && can_pay_components(alt.components, pending.controller, pending.spell, state)
-        }),
-        CastMethodV4::Flashback => def.flashback.as_ref().is_some_and(|flashback| {
-            can_pay_components(flashback.cost, pending.controller, pending.spell, state)
-        }),
-        CastMethodV4::Escape => def.escape.as_ref().is_some_and(|escape| {
-            can_pay_components(escape.cost, pending.controller, pending.spell, state)
-        }),
-        CastMethodV4::Madness => def
-            .madness_cost
-            .is_some_and(|cost| mana::can_pay(&cost, 0, pending.controller, state).is_some()),
-        CastMethodV4::Plotted => true,
-        CastMethodV4::Omen => {
-            if let Some(adventure) = supported_adventure(def) {
-                mana::can_pay(
-                    &static_adjusted_spell_cost(
-                        adventure.cost,
-                        adventure.types,
-                        pending.controller,
-                        state,
-                    ),
-                    x_value,
-                    pending.controller,
-                    state,
-                )
-                .is_some()
-            } else {
-                supported_omen(def).is_some_and(|omen| {
-                    mana::can_pay(
-                        &static_adjusted_spell_cost(
-                            omen.cost,
-                            omen.types,
-                            pending.controller,
-                            state,
-                        ),
-                        x_value,
-                        pending.controller,
-                        state,
-                    )
-                    .is_some()
-                })
-            }
-        }
-        CastMethodV4::Bestow => supported_bestow(def).is_some_and(|bestow| {
-            mana::can_pay(
-                &static_adjusted_spell_cost(
-                    bestow.cost,
-                    &[CardType::Enchantment],
-                    pending.controller,
-                    state,
-                ),
-                x_value,
-                pending.controller,
-                state,
             )
-            .is_some()
-        }),
-    };
-    base_payable
-        && def.additional_cost.is_none_or(|components| {
-            can_pay_components(components, pending.controller, pending.spell, state)
         })
+    {
+        return false;
+    }
+    let Some(selected) = spell_costs_v1::selected_spell_mana_costs_v1(
+        def,
+        method,
+        pending.kicked == Some(true),
+        pending.mode_chosen.unwrap_or(0),
+        &pending.targets_chosen,
+        pending.controller,
+        state,
+    ) else {
+        return false;
+    };
+    let Some(choices) = selected.component_choices_v1(
+        def,
+        method,
+        pending.controller,
+        state,
+        &pending.sacrifice_chosen,
+    ) else {
+        return false;
+    };
+    let groups = choices
+        .chosen_by_group
+        .iter()
+        .map(Vec::as_slice)
+        .collect::<Vec<_>>();
+    let reserved_graveyard = if pending.optional_additional_cost_paid == Some(true)
+        && matches!(
+            def.optional_additional_cost,
+            Some(OptionalAdditionalCostDef::CollectEvidence { .. })
+        ) {
+        pending
+            .optional_additional_cost_chosen
+            .iter()
+            .map(|binding| binding.object)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let modifiers = spell_cost_generic_modifiers_v1(state, selected.types, pending.controller);
+    // This is the pre-discard binding check. Final preparation separately
+    // projects the exact answered discard before any real card is moved.
+    selected
+        .payment_plan_with_component_choices_v1(
+            pending.x_value.unwrap_or(0),
+            pending.controller,
+            pending.spell,
+            state,
+            modifiers,
+            &groups,
+            &reserved_graveyard,
+        )
+        .is_some()
 }
 
 fn finalized_cast_method(
