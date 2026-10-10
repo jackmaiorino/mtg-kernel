@@ -7948,14 +7948,27 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
             .last()
             .and_then(|item| item.v4.cast_method)
             .expect("validated FinishCast retains its exact top placeholder method");
+        let staged = state
+            .engine
+            .pending_cast
+            .as_ref()
+            .expect("validated FinishCast retains its pending cast");
+        let def = &card_def::CARD_DEFS[state.objects.get(staged.spell).card_def as usize];
+        let cast_method = finalized_cast_method(staged, staged_method, def);
+        let payment =
+            spell_costs_v1::prepare_final_spell_payment_v1(state, staged, cast_method, &chosen);
         let pending = state
             .engine
             .pending_cast
             .take()
-            .expect("validated FinishCast retains its pending cast");
-        let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-        let cast_method = finalized_cast_method(&pending, staged_method, def);
-        Some((pending, cast_method))
+            .expect("validated cast remains pending");
+        let Some(payment) = payment else {
+            // No selected card or mana resource has changed on refusal.
+            state.engine.pending_discard = None;
+            abort_cast(state, pending, cast_method);
+            return;
+        };
+        Some((pending, cast_method, payment))
     } else {
         None
     };
@@ -7973,10 +7986,10 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
             collect_and_queue_triggers(state);
         }
         DiscardResume::FinishCast { .. } => {
-            let (pending, cast_method) =
+            let (pending, cast_method, payment) =
                 owned_cast.expect("validated FinishCast owns its removed pending cast");
             let source = pending.spell;
-            if finalize_owned_cast(state, pending, cast_method, chosen).is_err() {
+            if finalize_owned_cast(state, pending, cast_method, chosen, payment).is_err() {
                 state.engine.halted =
                     Some((UnsupportedMechanic::InvalidEffectContinuation, source));
             }
@@ -16185,14 +16198,20 @@ fn finalize_cast(state: &mut GameState, discarded: Vec<ObjectId>) -> Result<(), 
         .last()
         .and_then(|item| item.v4.cast_method)
         .ok_or("validated cast placeholder lost its cast method")?;
+    let def = &card_def::CARD_DEFS[state.objects.get(staged.spell).card_def as usize];
+    let cast_method = finalized_cast_method(staged, staged_method, def);
+    let payment =
+        spell_costs_v1::prepare_final_spell_payment_v1(state, staged, cast_method, &discarded);
     let pending = state
         .engine
         .pending_cast
         .take()
         .expect("finalize_cast requires a pending cast");
-    let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-    let cast_method = finalized_cast_method(&pending, staged_method, def);
-    finalize_owned_cast(state, pending, cast_method, discarded)
+    let Some(payment) = payment else {
+        abort_cast(state, pending, cast_method);
+        return Ok(());
+    };
+    finalize_owned_cast(state, pending, cast_method, discarded, payment)
 }
 
 /// Commits a cast whose complete staged record was already validated and
@@ -16204,260 +16223,24 @@ fn finalize_owned_cast(
     pending: PendingCast,
     cast_method: CastMethodV4,
     discarded: Vec<ObjectId>,
+    payment: spell_costs_v1::PreparedSpellPaymentV1,
 ) -> Result<(), String> {
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
     let x_value = pending.x_value.unwrap_or(0);
-    let mut was_kicked = false;
-    // Escape choices are intentionally absent from the frozen public
-    // sacrifice feature. Canonicalize the selected set by the controller's
-    // graveyard-vector order before it can affect payment events or immutable
-    // stack provenance, so two public-equivalent pick orders have identical
-    // future behavior. Other object costs preserve their established order.
-    let object_cost_chosen = if cast_method == CastMethodV4::Escape {
-        let ordered: Vec<_> = state.players[pending.controller.index()]
-            .graveyard
-            .iter()
-            .copied()
-            .filter(|object| pending.sacrifice_chosen.contains(object))
-            .collect();
-        debug_assert_eq!(ordered.len(), pending.sacrifice_chosen.len());
-        ordered
-    } else {
-        pending.sacrifice_chosen.clone()
-    };
-    let additional_owns_object_cost = def.additional_cost.is_some_and(|components| {
-        controlled_permanent_sacrifice_in(components).is_some()
-            || tap_permanent_filter_in(components).is_some()
-    });
-    let base_object_cost_chosen: &[ObjectId] = if additional_owns_object_cost {
-        &[]
-    } else {
-        &object_cost_chosen
-    };
-    let additional_object_cost_chosen: &[ObjectId] = if additional_owns_object_cost {
-        &object_cost_chosen
-    } else {
-        &[]
-    };
-
-    // Mana spent to cast this spell (CR 601.2h), recorded on the stack item
-    // only for definitions that read it.
-    let mut mana_spent: u16 = 0;
-    match cast_method {
-        CastMethodV4::Plotted => {}
-        CastMethodV4::Madness => {
-            let cost = def
-                .madness_cost
-                .expect("validated Madness cast has a definition-owned cost");
-            let Some(plan) = mana::can_pay(&cost, 0, pending.controller, state) else {
-                abort_cast(state, pending, cast_method);
-                return Ok(());
-            };
-            mana_spent = pay_plan(state, pending.controller, &plan);
-        }
-        CastMethodV4::Flashback => {
-            let fb = def
-                .flashback
-                .as_ref()
-                .expect("validated Flashback cast has a definition-owned cost");
-            let Some(spent) = pay_cost_components_spending_mana(
-                state,
-                pending.controller,
-                pending.spell,
-                fb.cost,
-                base_object_cost_chosen,
-                0,
-            ) else {
-                abort_cast(state, pending, cast_method);
-                return Ok(());
-            };
-            mana_spent = spent;
-        }
-        CastMethodV4::Escape => {
-            let escape = def
-                .escape
-                .as_ref()
-                .expect("validated Escape cast has a definition-owned cost");
-            let Some(spent) = pay_cost_components_spending_mana(
-                state,
-                pending.controller,
-                pending.spell,
-                escape.cost,
-                base_object_cost_chosen,
-                0,
-            ) else {
-                abort_cast(state, pending, cast_method);
-                return Ok(());
-            };
-            mana_spent = spent;
-        }
-        CastMethodV4::Normal => {
-            let kicked = pending.kicked == Some(true);
-            let normal_cost = with_spree_surcharge(
-                def,
-                pending.mode_chosen.unwrap_or(0),
-                effective_normal_cast_cost_with_targets(
-                    def,
-                    pending.controller,
-                    &pending.targets_chosen,
-                    state,
-                ),
-            );
-            if def.delve {
-                // Delve is never combined with Kicker in this pool (Gurmag
-                // Angler has no `kicker_cost`); `kicked` stays false and
-                // `delve_payment_plan` re-derives, at payment time, the same
-                // "smallest k that's affordable, oldest cards first" plan
-                // `normal_cost_is_payable` already checked at offer time.
-                let Some((plan, exiled)) = mana::delve_payment_plan(
-                    &normal_cost,
-                    x_value,
-                    pending.controller,
-                    state,
-                    def.has_type(CardType::Creature),
-                ) else {
-                    abort_cast(state, pending, cast_method);
-                    return Ok(());
-                };
-                mana_spent = pay_plan(state, pending.controller, &plan);
-                commit_graveyard_exile(state, &exiled);
-            } else {
-                let plan = if kicked {
-                    let kicker_cost = def
-                        .kicker_cost
-                        .expect("validated kicked cast has a definition-owned kicker cost");
-                    mana::can_pay_combined_spell(
-                        &[&normal_cost, &kicker_cost],
-                        x_value,
-                        pending.controller,
-                        state,
-                        def.has_type(CardType::Creature),
-                    )
-                } else {
-                    mana::can_pay_spell(
-                        &normal_cost,
-                        x_value,
-                        pending.controller,
-                        state,
-                        def.has_type(CardType::Creature),
-                    )
-                };
-                let Some(plan) = plan else {
-                    abort_cast(state, pending, cast_method);
-                    return Ok(());
-                };
-                mana_spent = pay_plan(state, pending.controller, &plan);
-            }
-            was_kicked = kicked;
-        }
-        CastMethodV4::Alternative => {
-            let alt = def
-                .alt_cost
-                .expect("validated alternative cast has a definition-owned cost");
-            let Some(spent) = pay_cost_components_spending_mana(
-                state,
-                pending.controller,
-                pending.spell,
-                alt.components,
-                base_object_cost_chosen,
-                0,
-            ) else {
-                abort_cast(state, pending, cast_method);
-                return Ok(());
-            };
-            mana_spent = spent;
-        }
-        CastMethodV4::Omen => {
-            let (cost, types) = if let Some(adventure) = supported_adventure(def) {
-                (adventure.cost, adventure.types)
-            } else {
-                let omen = supported_omen(def)
-                    .expect("validated Omen cast has definition-owned spell characteristics");
-                (omen.cost, omen.types)
-            };
-            let cost = static_adjusted_spell_cost(cost, types, pending.controller, state);
-            let Some(plan) = mana::can_pay(&cost, x_value, pending.controller, state) else {
-                abort_cast(state, pending, cast_method);
-                return Ok(());
-            };
-            mana_spent = pay_plan(state, pending.controller, &plan);
-        }
-        CastMethodV4::Bestow => {
-            let bestow = supported_bestow(def)
-                .expect("validated Bestow cast has definition-owned characteristics");
-            let Some(plan) = mana::can_pay(
-                &static_adjusted_spell_cost(
-                    bestow.cost,
-                    &[CardType::Enchantment],
-                    pending.controller,
-                    state,
-                ),
-                x_value,
-                pending.controller,
-                state,
-            ) else {
-                abort_cast(state, pending, cast_method);
-                return Ok(());
-            };
-            mana_spent = pay_plan(state, pending.controller, &plan);
-        }
-    }
-    if let Some(binding) = pending.chosen_creature_cost {
-        let zone = pending
-            .chosen_creature_cost_zone
-            .expect("validated chosen-creature cost retains its zone");
-        if !chosen_creature_cost_candidates(pending.controller, zone, state).contains(&binding) {
-            abort_cast(state, pending, cast_method);
-            return Ok(());
-        }
-        if zone == ChosenCreatureCostZoneV1::Hand {
-            for observer in [PlayerId::P0, PlayerId::P1] {
-                if state
-                    .reveal_hand_card(observer, pending.controller, binding.object)
-                    .is_err()
-                {
-                    abort_cast(state, pending, cast_method);
-                    return Ok(());
-                }
-            }
-        }
-    }
-    if let Some(add) = def.additional_cost {
-        let Some(spent) = pay_cost_components_spending_mana(
-            state,
-            pending.controller,
-            pending.spell,
-            add,
-            additional_object_cost_chosen,
-            0,
-        ) else {
-            abort_cast(state, pending, cast_method);
-            return Ok(());
-        };
-        mana_spent = mana_spent.saturating_add(spent);
-    }
-
+    // The complete local plan was prepared before any real discard or mana
+    // payment. Capture provenance inputs before consuming it exactly once.
+    let object_cost_chosen = payment.ordered_objects.clone();
+    let chosen_power_lki = payment.chosen_power_lki;
+    let was_kicked = pending.kicked == Some(true);
     let paid_optional_additional_cost = if pending.optional_additional_cost_paid == Some(true) {
-        let kind = def
-            .optional_additional_cost
-            .expect("validated paid optional additional cost remains definition-owned");
-        let chosen = pending
-            .optional_additional_cost_chosen
-            .iter()
-            .map(|binding| binding.object)
-            .collect::<Vec<_>>();
-        match kind {
-            OptionalAdditionalCostDef::CollectEvidence { .. } => {
-                commit_graveyard_exile(state, &chosen)
-            }
-            OptionalAdditionalCostDef::Bargain | OptionalAdditionalCostDef::Casualty(_) => {
-                commit_sacrifice(state, &chosen)
-            }
-        }
-        Some(kind)
+        Some(
+            def.optional_additional_cost
+                .expect("prepared optional cost remains definition-owned"),
+        )
     } else {
         None
     };
+    let mana_spent = payment.commit(state, pending.controller, pending.spell);
 
     let mut paid_cost_objects = object_cost_chosen;
     paid_cost_objects.extend(discarded.iter().copied());
@@ -16478,24 +16261,12 @@ fn finalize_owned_cast(
         .map(|object| PaidCostRefV4::capture(state, object))
         .collect();
     if let Some(binding) = pending.chosen_creature_cost {
-        let power = match state.objects.get(binding.object).zone {
-            Zone::Battlefield => effective_power(state, binding.object),
-            Zone::Hand => card_def::CARD_DEFS[state.objects.get(binding.object).card_def as usize]
-                .power
-                .map(i32::from)
-                .unwrap_or(0),
-            _ => {
-                abort_cast(state, pending, cast_method);
-                return Ok(());
-            }
-        };
-        let Some(reference) = paid_cost_refs
+        let power =
+            chosen_power_lki.expect("complete preparation captured payment-time chosen power");
+        let reference = paid_cost_refs
             .iter_mut()
             .find(|reference| reference.object == binding.object)
-        else {
-            abort_cast(state, pending, cast_method);
-            return Ok(());
-        };
+            .expect("chosen creature is included in its paid provenance");
         reference.power_lki = Some(power);
     }
     let selected_target_spec = if cast_method == CastMethodV4::Omen {
