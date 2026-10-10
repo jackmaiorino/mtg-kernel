@@ -58,6 +58,12 @@ object_color_mask and tests Witness Protection with a stale-incarnation check.
 Exact repair review found no further defects. Six new Convoke regressions and
 all newer payment changes remain unexecuted.
 
+Source 3e5bf0ca extracts immutable selected-component choice validation and
+reserved tap sources from legacy payment without changing its checks or order.
+Two focused regressions cover invalid sacrifice choices and tap/mana source
+sharing. Exact read-only review found no defects. Native execution is pending;
+this is not yet complete nonmana preflight or casting-route integration.
+
 Remaining work: offer/pending/X/final-payment integration;
 atomic nonmana payment; actual card gameplay and restore tests; metadata and
 catalog admission; live profile qualification; CI and default-branch acceptance.
