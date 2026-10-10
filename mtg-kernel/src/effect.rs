@@ -15551,7 +15551,10 @@ mod tests {
         let land = crate::card_def::card_id_by_name("Mountain").unwrap();
         let cards = [creature, spell, land, land, land, land, land];
         for player in [PlayerId::P0, PlayerId::P1] {
-            let state = GameState::new_from_libraries(&cards, &cards, |_| "card".into(), 760);
+            let mut state = GameState::new_from_libraries(&cards, &cards, |_| "card".into(), 760);
+            for _ in 0..cards.len() {
+                state.draw_card(player).unwrap();
+            }
             let original_hand = bind_hand(&state, player);
             let replay: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
@@ -15591,7 +15594,7 @@ mod tests {
                     |_| "Faerie Miscreant".into(),
                     710,
                 );
-                let source = state.players[player.index()].hand[0];
+                let source = state.draw_card(player).unwrap();
                 event::propose_and_commit(
                     &mut state,
                     event::ProposedEvent::zone_change(source, Zone::Graveyard),
@@ -15678,7 +15681,7 @@ mod tests {
                 720,
                 player,
             );
-            let source = state.players[player.index()].hand[0];
+            let source = state.draw_card(player).unwrap();
             event::propose_and_commit(
                 &mut state,
                 event::ProposedEvent::zone_change(source, Zone::Battlefield),
@@ -15706,9 +15709,9 @@ mod tests {
                 |_| "Faerie Miscreant".into(),
                 730,
             );
-            let attacker = state.players[caster.opponent().index()].hand[0];
-            let idle = state.players[caster.index()].hand[0];
-            let noncreature = state.players[caster.index()].hand[1];
+            let attacker = state.draw_card(caster.opponent()).unwrap();
+            let idle = state.draw_card(caster).unwrap();
+            let noncreature = state.draw_card(caster).unwrap();
             for id in [attacker, idle, noncreature] {
                 event::propose_and_commit(
                     &mut state,
@@ -15763,7 +15766,7 @@ mod tests {
                 player,
             );
             state.step = crate::state::Step::Main1;
-            let target = state.players[player.index()].hand[0];
+            let target = state.draw_card(player).unwrap();
             state.players[player.index()].mana_pool[crate::mana::ManaColor::U.pool_index()] = 1;
             crate::engine::advance_until_decision(&mut state);
             crate::engine::step(&mut state, crate::engine::Action::CastSpell(target)).unwrap();
@@ -15772,7 +15775,7 @@ mod tests {
                 crate::engine::Decision::CastSpellOrPass { .. }
             ));
             let mut ctx = ExecCtx::no_targets(
-                state.players[player.opponent().index()].hand[0],
+                state.draw_card(player.opponent()).unwrap(),
                 player.opponent(),
             );
             ctx.targets.push(Target::Object(target));
@@ -15827,7 +15830,7 @@ mod tests {
                 player,
             );
             state.step = crate::state::Step::Main1;
-            let target = state.players[player.index()].hand[0];
+            let target = state.draw_card(player).unwrap();
             state.players[player.index()].mana_pool[5] = 3;
             state.players[player.index()].mana_pool[crate::mana::ManaColor::U.pool_index()] = 2;
             state.players[player.index()].mana_pool[crate::mana::ManaColor::G.pool_index()] = 2;
@@ -15873,11 +15876,11 @@ mod tests {
                 |_| "Faerie Miscreant".into(),
                 750,
             );
-            let affected = state.players[caster.opponent().index()].hand[0];
-            let excluded = state.players[caster.opponent().index()].hand[1];
-            let late = state.players[caster.opponent().index()].hand[2];
-            let borrowed = state.players[caster.index()].hand[0];
-            let own = state.players[caster.index()].hand[1];
+            let affected = state.draw_card(caster.opponent()).unwrap();
+            let excluded = state.draw_card(caster.opponent()).unwrap();
+            let late = state.draw_card(caster.opponent()).unwrap();
+            let borrowed = state.draw_card(caster).unwrap();
+            let own = state.draw_card(caster).unwrap();
             for object in [affected, excluded, borrowed, own] {
                 event::propose_and_commit(
                     &mut state,

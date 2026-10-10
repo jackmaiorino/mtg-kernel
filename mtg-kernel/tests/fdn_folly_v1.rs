@@ -20,6 +20,11 @@ fn ready(player: PlayerId) -> GameState {
         750,
         player,
     );
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for _ in 0..7 {
+            state.draw_card(player).unwrap();
+        }
+    }
     state.step = Step::Main1;
     state
 }
