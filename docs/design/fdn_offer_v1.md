@@ -23,3 +23,6 @@ uncounterable spells, stale targets, own/opposing noncreature spells,
 creature rejection, pending targeting and final-stack restore. The card
 cases await registration, fixture, generated identity/profile and serial
 native/hosted gameplay qualification. None of these cases has executed.
+Read-only review at `77d9c1df` confirmed the Koma mana-fixture and
+owner-bound counter-departure facet repairs. No actionable findings remain.
+Native/card tests remain unexecuted.
