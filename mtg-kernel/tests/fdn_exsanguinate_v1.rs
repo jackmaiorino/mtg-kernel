@@ -132,6 +132,14 @@ fn exsanguinate_x_choice_and_final_stack_restore_for_both_seats() {
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
             for branch in [&mut state, &mut pending_restore, &mut stack_restore] {
                 settle(branch);
+                if x >= 2 {
+                    assert!(
+                        matches!(next(branch), Decision::GameOver { winner: Some(winner) }
+                        if winner == player)
+                    );
+                } else {
+                    assert!(matches!(next(branch), Decision::CastSpellOrPass { .. }));
+                }
                 assert_eq!(branch.players[player.index()].life, 20 + i32::from(x));
                 assert_eq!(
                     branch.players[player.opponent().index()].life,
