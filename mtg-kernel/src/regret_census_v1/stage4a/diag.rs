@@ -21,7 +21,12 @@ use std::collections::HashMap;
 /// Label bits of one action: 1 cast Spy, 2 Spy targets the focal player,
 /// 4 Dread Return targets Lotleth Giant, 8 Spy targets another player,
 /// 16 Dread Return targets something else.
-pub(crate) fn bits(x: &ActionSemanticV1, s: &FastActorSessionV1, focal: PlayerId, d: &SpyDefs) -> u8 {
+pub(crate) fn bits(
+    x: &ActionSemanticV1,
+    s: &FastActorSessionV1,
+    focal: PlayerId,
+    d: &SpyDefs,
+) -> u8 {
     let (cast, own, dr) = classify(x, s.game_state(), focal, d);
     let mut b = u8::from(cast) | u8::from(own) << 1 | u8::from(dr) << 2;
     if let ActionSemanticV1::ChooseTarget { source, target, .. } = x {
@@ -111,11 +116,7 @@ pub(crate) struct Trace {
     cur: Map<String, Value>,
 }
 
-fn menu_bits(
-    s: &FastActorSessionV1,
-    focal: PlayerId,
-    defs: &SpyDefs,
-) -> Vec<u8> {
+fn menu_bits(s: &FastActorSessionV1, focal: PlayerId, defs: &SpyDefs) -> Vec<u8> {
     s.diagnostic_current_action_semantics()
         .map(|sem| sem.iter().map(|x| bits(x, s, focal, defs)).collect())
         .unwrap_or_default()
@@ -150,7 +151,10 @@ impl Trace {
     }
 
     /// A node created by expansion (the parent is the path's last entry).
-    #[allow(clippy::too_many_arguments, reason = "values already computed by the search")]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "values already computed by the search"
+    )]
     pub(crate) fn node_created(
         &mut self,
         key: &Key,
@@ -190,7 +194,10 @@ impl Trace {
 
     /// A focal non-forced selection decision; `at` is the tree node and edge
     /// index when the choice came from the tree.
-    #[allow(clippy::too_many_arguments, reason = "values already computed by the search")]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "values already computed by the search"
+    )]
     pub(crate) fn sel_decision(
         &mut self,
         s: &FastActorSessionV1,
@@ -254,7 +261,10 @@ impl Trace {
         let mut rows: Vec<(u32, String)> = Vec::new();
         for (k, n) in &tree.nodes {
             let Some(m) = self.meta.get(k) else {
-                rows.push((u32::MAX, json!({"r":"node","key":hex(k),"error":"no trace metadata"}).to_string()));
+                rows.push((
+                    u32::MAX,
+                    json!({"r":"node","key":hex(k),"error":"no trace metadata"}).to_string(),
+                ));
                 continue;
             };
             rows.push((
@@ -284,7 +294,10 @@ impl Trace {
     /// node with its frozen choice; `key` the lookup key when execution
     /// computed one; `edge` the chosen action's edge index when execution
     /// computed the canonical decision.
-    #[allow(clippy::too_many_arguments, reason = "values already computed by execution")]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "values already computed by execution"
+    )]
     pub(crate) fn eval_decision(
         &mut self,
         s: &FastActorSessionV1,
@@ -305,7 +318,11 @@ impl Trace {
         let off = menu.iter().fold(0u8, |x, y| x | y);
         let ch = menu.get(a as usize).copied().unwrap_or(0);
         let node = match (hit, key) {
-            (Some(_), Some(k)) => self.ids.get(k).map(|&i| json!(i)).unwrap_or(json!("untraced")),
+            (Some(_), Some(k)) => self
+                .ids
+                .get(k)
+                .map(|&i| json!(i))
+                .unwrap_or(json!("untraced")),
             _ => Value::Null,
         };
         let mut v = json!({"t":t,"pd":d.physical_decision_id,"ss":[d.substep_index,d.substep_count],
