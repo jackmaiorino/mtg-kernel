@@ -274,6 +274,15 @@ pub(crate) fn dynamic_value(value: DynamicValueDef, out: &mut Collector) -> AmtF
             AmtF::Dynamic
         }
         DynamicValueDef::Fixed(n) => AmtF::fixed(i64::from(n)),
+        DynamicValueDef::ControlledPermanentsWithType(card_type) => {
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::from(card_type)),
+                AggF::Count,
+            );
+            AmtF::Dynamic
+        }
         DynamicValueDef::ControllerGraveyardCardsWithType(card_type) => {
             // Nontoken cards of the type the controller owns in their
             // graveyard.

@@ -1286,6 +1286,9 @@ pub enum DynamicValueDef {
     /// effective subtypes include the named subtype (Flow of Knowledge's
     /// "each Island you control").
     ControlledPermanentsWithSubtype(Subtype),
+    /// Count battlefield permanents currently controlled by the evaluating
+    /// player with this effective card type, including tokens and copies.
+    ControlledPermanentsWithType(CardType),
 }
 
 /// Two subtypes a *single* permanent must carry at once, e.g. the Urza's

@@ -3514,6 +3514,15 @@ pub(crate) fn evaluate_dynamic_value(
                 && card_def::CARD_DEFS[live.card_def as usize].has_type(card_type)
         })
         .count(),
+        DynamicValueDef::ControlledPermanentsWithType(card_type) => state
+            .objects
+            .iter()
+            .filter(|(id, object)| {
+                object.zone == Zone::Battlefield
+                    && object.controller == controller
+                    && object_has_type(state, *id, card_type)
+            })
+            .count(),
         // UrzaTerrainValue's shape: every required conjunction must be
         // matched by at least one battlefield permanent `controller`
         // controls, and one permanent must carry both subtypes of the pair
@@ -16488,6 +16497,66 @@ mod tests {
 
     fn empty_game() -> GameState {
         GameState::new_from_libraries(&[], &[], |c| format!("card-{c}"), 1)
+    }
+
+    #[test]
+    fn controlled_type_value_counts_current_control_and_zone_including_tokens() {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = empty_game();
+            put_on_battlefield(&mut state, player, "Forest");
+            let token = put_on_battlefield(&mut state, player, "Forest");
+            state.objects.get_mut(token).v4.is_token = true;
+            let borrowed = put_on_battlefield(&mut state, player.opponent(), "Great Furnace");
+            state.objects.get_mut(borrowed).controller = player;
+            put_on_battlefield(&mut state, player.opponent(), "Forest");
+            put_in_hand(&mut state, player, "Forest");
+            put_in_graveyard(&mut state, player, "Forest");
+            put_on_battlefield(&mut state, player, "Faerie Miscreant");
+            assert_eq!(
+                evaluate_dynamic_value(
+                    &state,
+                    DynamicValueDef::ControlledPermanentsWithType(CardType::Land),
+                    player,
+                ),
+                3
+            );
+            assert_eq!(
+                evaluate_dynamic_value(
+                    &state,
+                    DynamicValueDef::ControlledPermanentsWithType(CardType::Artifact),
+                    player,
+                ),
+                1,
+                "an artifact land counts for both types"
+            );
+            assert_eq!(
+                evaluate_dynamic_value(
+                    &state,
+                    DynamicValueDef::ControlledPermanentsWithType(CardType::Creature),
+                    player,
+                ),
+                1
+            );
+            state.objects.get_mut(borrowed).controller = player.opponent();
+            assert_eq!(
+                evaluate_dynamic_value(
+                    &state,
+                    DynamicValueDef::ControlledPermanentsWithType(CardType::Land),
+                    player,
+                ),
+                2
+            );
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(
+                evaluate_dynamic_value(
+                    &restored,
+                    DynamicValueDef::ControlledPermanentsWithType(CardType::Land),
+                    player,
+                ),
+                2
+            );
+        }
     }
 
     // ---- starting-player authority (P1-METAMORPHIC-AUDIT-DESIGN-V4.md

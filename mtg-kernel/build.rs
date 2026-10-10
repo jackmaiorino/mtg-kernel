@@ -3364,6 +3364,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         mode2: None,
     };
     Some(match name {
+        "Brass's Bounty" => program(
+            "None",
+            "CreateTokensDynamic(Treasure Token,Controller,ControlledPermanentsWithType(Land),untapped)",
+            "EffectOp::CreateTokensDynamic { token_def: crate::card_def::card_id_by_name(\"Treasure Token\").expect(\"Treasure Token in CARD_DEFS\"), controller: PlayerRef::Controller, count: DynamicValueDef::ControlledPermanentsWithType(CardType::Land), tapped: false }",
+        ),
         // Target creature gets +3/+0 and gains first strike until end of turn.
         "Sure Strike" => program(
             "Creature",
