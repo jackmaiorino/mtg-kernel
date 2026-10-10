@@ -357,6 +357,11 @@ pub(crate) fn plan_spell_mana_total_v1(
     excluded: &[ObjectId],
     additional_life: u32,
 ) -> Option<PaymentPlan> {
+    let life = i64::from(state.players[player.index()].life);
+    if additional_life != 0 && i64::from(additional_life) > life {
+        return None;
+    }
+    let mana_life_budget = (life - i64::from(additional_life)).max(0);
     let sources = gather_sources_for_spell(player, state, creature_spell)
         .into_iter()
         .filter(|source| !excluded.contains(&source.id))
@@ -366,7 +371,15 @@ pub(crate) fn plan_spell_mana_total_v1(
     let mut plan = PaymentPlan::default();
     let mut pool_remaining = pool;
     let mut used = vec![false; sources.len()];
-    if !solve_pips(pips, 0, &sources, &mut used, &mut pool_remaining, &mut plan) {
+    if !solve_pips_with_life_budget_v1(
+        pips,
+        0,
+        &sources,
+        &mut used,
+        &mut pool_remaining,
+        &mut plan,
+        mana_life_budget,
+    ) {
         return None;
     }
     if !pay_generic(generic, &sources, &mut used, &mut pool_remaining, &mut plan) {
@@ -596,6 +609,20 @@ fn solve_pips(
     pool_remaining: &mut [u8; 6],
     plan: &mut PaymentPlan,
 ) -> bool {
+    solve_pips_with_life_budget_v1(pips, idx, sources, used, pool_remaining, plan, i64::MAX)
+}
+
+/// A selected spell's remaining life budget participates in pip backtracking,
+/// so rejecting a Phyrexian life branch can still find a legal mana allocation.
+fn solve_pips_with_life_budget_v1(
+    pips: &[Pip],
+    idx: usize,
+    sources: &[ManaSource],
+    used: &mut [bool],
+    pool_remaining: &mut [u8; 6],
+    plan: &mut PaymentPlan,
+    max_life_payment: i64,
+) -> bool {
     let Some(pip) = pips.get(idx) else {
         return true;
     };
@@ -613,7 +640,15 @@ fn solve_pips(
         if pool_remaining[pi] > 0 {
             pool_remaining[pi] -= 1;
             plan.pool_used[pi] += 1;
-            if solve_pips(pips, idx + 1, sources, used, pool_remaining, plan) {
+            if solve_pips_with_life_budget_v1(
+                pips,
+                idx + 1,
+                sources,
+                used,
+                pool_remaining,
+                plan,
+                max_life_payment,
+            ) {
                 return true;
             }
             pool_remaining[pi] += 1;
@@ -645,7 +680,15 @@ fn solve_pips(
             plan.taps.push((sources[i].id, c));
             pool_remaining[pi] += extra;
             plan.surplus[pi] += extra;
-            if solve_pips(pips, idx + 1, sources, used, pool_remaining, plan) {
+            if solve_pips_with_life_budget_v1(
+                pips,
+                idx + 1,
+                sources,
+                used,
+                pool_remaining,
+                plan,
+                max_life_payment,
+            ) {
                 return true;
             }
             plan.surplus[pi] -= extra;
@@ -656,9 +699,17 @@ fn solve_pips(
     }
 
     // Phyrexian pips may also be paid with 2 life instead of mana.
-    if let Pip::Phyrexian(_) = pip {
+    if matches!(pip, Pip::Phyrexian(_)) && i64::from(plan.life_paid) + 2 <= max_life_payment {
         plan.life_paid += 2;
-        if solve_pips(pips, idx + 1, sources, used, pool_remaining, plan) {
+        if solve_pips_with_life_budget_v1(
+            pips,
+            idx + 1,
+            sources,
+            used,
+            pool_remaining,
+            plan,
+            max_life_payment,
+        ) {
             return true;
         }
         plan.life_paid -= 2;
@@ -987,6 +1038,35 @@ mod tests {
             255,
         )
         .is_none());
+    }
+
+    #[test]
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
+    fn spell_life_budget_backtracks_from_phyrexian_life_to_dual_source_mana() {
+        let aquifer = crate::card_def::card_id_by_name("Contaminated Aquifer").unwrap();
+        let swamp = crate::card_def::card_id_by_name("Swamp").unwrap();
+        let mut state =
+            GameState::new_from_libraries(&[aquifer, swamp], &[swamp], |_| "land".into(), 4);
+        let first = state.draw_card(PlayerId::P0).unwrap();
+        let second = state.draw_card(PlayerId::P0).unwrap();
+        state.move_hand_to_battlefield(PlayerId::P0, first);
+        state.move_hand_to_battlefield(PlayerId::P0, second);
+        let (aquifer, swamp) = if state.objects.get(first).card_def == aquifer {
+            (first, second)
+        } else {
+            (second, first)
+        };
+        state.objects.get_mut(aquifer).tapped = false;
+        state.players[0].battlefield = vec![aquifer, swamp];
+        state.players[0].life = 2;
+        let pips = [Pip::Colored(ManaColor::B), Pip::Phyrexian(ManaColor::U)];
+        let plan = plan_spell_mana_total_v1(&pips, 0, PlayerId::P0, &state, false, &[], 1)
+            .expect("Swamp pays B, Aquifer pays U, and one life pays the additional cost");
+        assert_eq!(plan.life_paid, 0);
+        assert_eq!(
+            plan.taps,
+            vec![(swamp, ManaColor::B), (aquifer, ManaColor::U)]
+        );
     }
 
     #[test]
