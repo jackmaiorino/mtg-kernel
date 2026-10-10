@@ -24,3 +24,6 @@ Read-only review found the borrowed-creature fixture retained the old
 battlefield bucket after changing controller, so real attacker declaration
 would reject it. The fixture now moves it to the active controller
 battlefield list while preserving ownership. Native checks remain pending.
+
+Read-only confirmation at `6dc2da45` found both fixture findings resolved
+and no remaining actionable defects. Native/card execution remains pending.
