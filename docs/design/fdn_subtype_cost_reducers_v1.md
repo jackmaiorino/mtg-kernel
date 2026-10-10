@@ -28,3 +28,12 @@ seat across zero to five qualifying permanents, failed colored payment and
 rollback, recomputed payment after control/type/zone changes, draw three,
 resolution-sampled team membership, reentry exclusion and stack restore.
 Native verification, card gameplay and catalog admission remain pending.
+
+Native sourcef2c60bb3 passed both subtype-cost runtime tests, including the
+registered Thoughtcast/Thalia ordering regression, and four Affinity tests
+(one existing ignored). The following combined-feature rules-vector check
+failed two existing FDN-specific fixtures because Standard is the selected
+registry when both flags are enabled. Their guards now follow that actual
+catalog precedence; Limited-only retains both cases. The failed local-9 log
+is preserved. Both rules-vector configurations and remaining type checks are
+retried; full native and unregistered card qualification remain pending.

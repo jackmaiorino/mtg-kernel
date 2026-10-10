@@ -27,3 +27,10 @@ Separate read-only review of preparation4d06367ad824a11911ed8d623b50358ebb4cea8c
 found no actionable defects in modal authentication, captured controller,
 intervening-if branches or fixture transitions. Native compilation is next;
 card games remain unexecuted until registration qualification.
+
+Native preparation359d8abc passed six trigger cases and both Limited-only
+and Limited-plus-Standard test compilation under supported two-core guard
+bbe34d0da99f4afebe0f259cab85ed66, which exited zero. These checks do not
+execute Wardens' unregistered card cases. Later integrationf2c60bb3 preserves
+all accepted v63 gameplay/catalog/profile inputs and PR200 training changes;
+separate read-only review found no actionable integration defects.
