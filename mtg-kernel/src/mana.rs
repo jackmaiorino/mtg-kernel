@@ -328,37 +328,52 @@ pub(crate) fn can_pay_combined_spell_with_generic_modifiers_v1(
     generic_increase: u32,
     generic_reduction: u32,
 ) -> Option<PaymentPlan> {
-    let sources = gather_sources_for_spell(player, state, creature_spell);
-    let pool = state.players[player.index()].mana_pool;
     let combined_pips: Vec<Pip> = costs.iter().flat_map(|c| c.pips.iter().copied()).collect();
     let generic: u32 = costs.iter().map(|c| c.generic as u32).sum();
     let x_count: u32 = costs.iter().map(|c| c.x_count as u32).sum();
+    plan_spell_mana_total_v1(
+        &combined_pips,
+        (generic + x_count * u32::from(x_value))
+            .saturating_add(generic_increase)
+            .saturating_sub(generic_reduction),
+        player,
+        state,
+        creature_spell,
+        &[],
+        0,
+    )
+}
+
+/// Solve an already determined spell mana total. Alternate mana payments
+/// remove requirements before this call; reserved tap-cost objects cannot
+/// also produce mana, and all additional life costs share one life budget.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn plan_spell_mana_total_v1(
+    pips: &[Pip],
+    generic: u32,
+    player: PlayerId,
+    state: &GameState,
+    creature_spell: bool,
+    excluded: &[ObjectId],
+    additional_life: u32,
+) -> Option<PaymentPlan> {
+    let sources = gather_sources_for_spell(player, state, creature_spell)
+        .into_iter()
+        .filter(|source| !excluded.contains(&source.id))
+        .collect::<Vec<_>>();
+    let pool = state.players[player.index()].mana_pool;
 
     let mut plan = PaymentPlan::default();
     let mut pool_remaining = pool;
     let mut used = vec![false; sources.len()];
-    if !solve_pips(
-        &combined_pips,
-        0,
-        &sources,
-        &mut used,
-        &mut pool_remaining,
-        &mut plan,
-    ) {
+    if !solve_pips(pips, 0, &sources, &mut used, &mut pool_remaining, &mut plan) {
         return None;
     }
-    if !pay_generic(
-        (generic + x_count * u32::from(x_value))
-            .saturating_add(generic_increase)
-            .saturating_sub(generic_reduction),
-        &sources,
-        &mut used,
-        &mut pool_remaining,
-        &mut plan,
-    ) {
+    if !pay_generic(generic, &sources, &mut used, &mut pool_remaining, &mut plan) {
         return None;
     }
-    life_payment_affordable(plan.life_paid, state.players[player.index()].life).then_some(plan)
+    let total_life = i64::from(plan.life_paid) + i64::from(additional_life);
+    (total_life == 0 || total_life <= i64::from(state.players[player.index()].life)).then_some(plan)
 }
 
 /// Delve (702.65a): "For each generic mana in this spell's total cost, you
@@ -972,6 +987,31 @@ mod tests {
             255,
         )
         .is_none());
+    }
+
+    #[test]
+    fn spell_total_plan_reserves_tap_sources_and_combines_life_requirements() {
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        let mut state = GameState::new_from_libraries(&[forest], &[forest], |_| "Forest".into(), 3);
+        let land = state.draw_card(PlayerId::P0).unwrap();
+        state.move_hand_to_battlefield(PlayerId::P0, land);
+        let green = [Pip::Colored(ManaColor::G)];
+        assert!(plan_spell_mana_total_v1(&green, 0, PlayerId::P0, &state, false, &[], 0).is_some());
+        assert!(
+            plan_spell_mana_total_v1(&green, 0, PlayerId::P0, &state, false, &[land], 0).is_none()
+        );
+
+        let phyrexian = [Pip::Phyrexian(ManaColor::B)];
+        state.players[0].life = 5;
+        let plan =
+            plan_spell_mana_total_v1(&phyrexian, 0, PlayerId::P0, &state, false, &[], 3).unwrap();
+        assert_eq!(plan.life_paid, 2);
+        assert!(
+            plan_spell_mana_total_v1(&phyrexian, 0, PlayerId::P0, &state, false, &[], 4).is_none()
+        );
+        state.players[0].life = -1;
+        assert!(plan_spell_mana_total_v1(&[], 0, PlayerId::P0, &state, false, &[], 0).is_some());
+        assert!(plan_spell_mana_total_v1(&[], 0, PlayerId::P0, &state, false, &[], 1).is_none());
     }
 
     #[test]
