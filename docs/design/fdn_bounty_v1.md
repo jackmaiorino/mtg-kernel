@@ -19,4 +19,7 @@ artifact lands, tokens and JSON restore. Three prepared card tests cover
 metadata/payment, zero and 257-land counts, opponent/nonland exclusion, and
 resolution-time board/control changes with pending-stack restore. These
 checks have not executed. Registry, fixture, generated catalog/profile and
-native gameplay qualification remain pending serial admission.
+native gameplay qualification remain pending serial admission. Read-only
+review of source2135882f found no actionable defects; its restore-coverage
+note is addressed by requiring a finalized spell and a priority decision
+before board changes and serialization.

@@ -73,6 +73,13 @@ fn cast(state: &mut GameState, player: PlayerId) -> ObjectId {
     next(state);
     engine::step(state, Action::CastSpell(spell)).unwrap();
     assert_eq!(state.objects.get(spell).zone, Zone::Stack);
+    assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
+    assert!(state.engine.pending_cast.is_none());
+    assert_eq!(
+        state.stack.len(),
+        1,
+        "finalized spell awaits priority passes"
+    );
     spell
 }
 
