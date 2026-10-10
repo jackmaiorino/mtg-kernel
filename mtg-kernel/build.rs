@@ -5991,6 +5991,8 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Eager Trufflesnout" => "source_combat_damage_to_player:create_food:1",
         "Rite of the Dragoncaller" => "cast_instant_or_sorcery:create_red_5_5_flying_dragon:1",
         "Elementalist Adept" => "cast_noncreature:pump_bound_source:1:1:end_of_turn",
+        "Lightshell Duo" => "etb:surveil:2;cast_noncreature:pump_bound_source:1:1:end_of_turn",
+        "Cephalid Inkmage" => "etb:surveil:3;static:controller_graveyard_cards_at_least:7:source_cant_be_blocked",
         "Crypt Feaster" => "attacks_if_controller_graveyard_cards_at_least:7:recheck_threshold:pump_bound_source:2:0:end_of_turn",
         "Erudite Wizard" => "controller_draws_nth_card_this_turn:2:counter_on_bound_source:1",
         "Phyrexian Arena" => "beginning_controller_upkeep:draw:1:then_controller_loses_life:1",
@@ -9114,7 +9116,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v61\n"
+            "kernel_carddb/v62\n"
         } else {
             "kernel_carddb/v34\n"
         },
@@ -9478,6 +9480,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Ninja" => "Subtype::Ninja",
         "Ouphe" => "Subtype::Ouphe",
         "Octopus" => "Subtype::Octopus",
+        "Otter" => "Subtype::Otter",
         "Hyena" => "Subtype::Hyena",
         "Raccoon" => "Subtype::Raccoon",
         "Citizen" => "Subtype::Citizen",

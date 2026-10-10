@@ -10,6 +10,11 @@
 //! - `s4a-run`: for each frozen root in `ROOTS`, selection by E, A and D
 //!   under the transition ceiling, then 16 paired evaluation worlds per arm.
 //!   One row per root; a root already present in `out` is skipped (resume).
+//! - `s4a-diag`: E only for each frozen root, unchanged selection from
+//!   simulation zero and the same evaluation worlds, for the Spy execution
+//!   diagnosis (collab LANES/spy-execution-diagnosis-plan-20261010). With
+//!   `S4A_TRACE=<dir>`, writes a passive decision trace per root there
+//!   (`diag.rs`); the row's E fields are identical with or without it.
 //!
 //! Settings: `S4A_MODEL` (seed namespace model label, e.g. r1), `ROOTS`,
 //! `OPPONENTS` (`label=source,...`, in game-setup order), and optionally
@@ -17,6 +22,7 @@
 //! checks (rows record the limits and whether they are formal).
 
 mod arms;
+mod diag;
 mod labels;
 mod play;
 mod seeds;
@@ -41,7 +47,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 pub(super) fn is_mode(mode: &str) -> bool {
-    matches!(mode, "s4a-corpus" | "s4a-run")
+    matches!(mode, "s4a-corpus" | "s4a-run" | "s4a-diag")
 }
 
 const SPY_DECK: &str = "Spy";
@@ -112,7 +118,7 @@ fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
         }
         Err(_) => Limits::FORMAL,
     };
-    let roots = if cfg.mode == "s4a-run" {
+    let roots = if cfg.mode != "s4a-corpus" {
         let path = std::env::var("ROOTS").map_err(|_| "ROOTS names no roots file")?;
         std::fs::read_to_string(&path)
             .map_err(|e| format!("{path}: {e}"))?
@@ -446,6 +452,140 @@ fn run_root(
     Ok(row)
 }
 
+/// `s4a-diag`: one frozen root, E only. Selection, worlds and execution are
+/// those of `run_root`; the E fields of the row equal the archived E
+/// projection. With `S4A_TRACE=<dir>` a passive trace is written to
+/// `<dir>/<root_id>.trace.jsonl`; its hash goes under `diag`, outside the
+/// E fields.
+fn run_root_diag(
+    cfg: &CensusConfigV1,
+    shared: &Shared,
+    roles: &mut Roles,
+    root: &Value,
+) -> Result<Value, String> {
+    let started = Instant::now();
+    let root_id = root["root_id"]
+        .as_str()
+        .ok_or("root has no root_id")?
+        .to_owned();
+    let (setup, session) = replay(cfg, shared, roles, root)?;
+    let replay_secs = started.elapsed().as_secs_f64();
+    let d = decision(&session).ok_or("root is terminal")?;
+    let seeds = RootSeeds {
+        model: shared.model.clone(),
+        root: root_id.clone(),
+    };
+    let probs = arms::softmax(&roles.scorer.score_fast_session_v1(&session)?.logits);
+    let cast_root = match root["stratum"].as_str() {
+        Some("cast") => true,
+        Some("target") => false,
+        other => return Err(format!("root stratum {other:?}")),
+    };
+    let ctx = RootCtx {
+        root: &session,
+        d,
+        focal: crate::ids::PlayerId(setup.focal as u8),
+        opp: setup.model,
+        seeds: &seeds,
+        prior: &shared.prior,
+        defs: spy_defs(),
+        cast_root,
+        probs: probs.clone(),
+        limits: shared.limits,
+    };
+    let trace_dir = std::env::var("S4A_TRACE").ok();
+    let mut trace = trace_dir.as_ref().map(|_| diag::Trace::default());
+    if let Some(t) = trace.as_mut() {
+        t.meta_line(json!({"r":"meta","schema":"s4a-diag-trace/v1","root_id":root_id,
+            "model":shared.model,"stratum":root["stratum"],"cast_root":cast_root,"focal_seat":setup.focal,
+            "opp_model":root["opp_model"],"limits":shared.limits.json(),"k":d.legal_action_count,
+            "event_bits":"1 spy resolved, 2 self-target resolved, 4 DR->Giant resolved, 8 DR->Giant on stack",
+            "action_bits":"1 cast Spy, 2 Spy targets focal, 4 DR targets Giant, 8 Spy targets other, 16 DR targets other"}));
+    }
+    let (e_sel, e_tree) = roles.select_e_traced(&ctx, trace.as_mut());
+    let eval_started = Instant::now();
+    let mut eval_sampler = SamplerStats::default();
+    let mut worlds = Vec::new();
+    let mut rejected_worlds = Vec::new();
+    let mut per_world: Vec<Value> = Vec::new();
+    let mut summary = (0u64, 0u64, 0u64, 0u64, 0u64);
+    for e in 0..shared.limits.eval_worlds {
+        let seed = seeds.get(Purpose::EvalWorld, "", e, b"world");
+        let world = match world::sample(&session, seed, &shared.prior) {
+            Ok(w) => w,
+            Err(err) => {
+                rejected_worlds
+                    .push(json!({"world":e,"error":err.chars().take(300).collect::<String>()}));
+                continue;
+            }
+        };
+        worlds.push(json!({"world":e,"prior_deck":shared.prior.ids()[world.prior_deck]}));
+        if let Some(t) = trace.as_mut() {
+            t.world_begin(e);
+        }
+        let out = roles.evaluate_traced(
+            &ctx,
+            "E",
+            &world.world,
+            e,
+            None,
+            Some(&e_tree),
+            &mut eval_sampler,
+            trace.as_mut(),
+        );
+        summary.0 += u64::from(out.w);
+        summary.1 += u64::from(out.j);
+        summary.2 += u64::from(out.unknown);
+        summary.3 += u64::from(out.fault.is_some());
+        summary.4 += out.transitions;
+        let mut v = out.json();
+        v["world"] = json!(e);
+        if let Some(t) = trace.as_mut() {
+            t.world_end(v.clone());
+        }
+        per_world.push(v);
+    }
+    let eval_wall = eval_started.elapsed().as_secs_f64();
+    let j_any = per_world.iter().any(|v| v["j"] == json!(true));
+    let mut arms_json = serde_json::Map::new();
+    arms_json.insert(
+        "E".into(),
+        json!({"selection":e_sel.json(),"eval":per_world,
+            "summary":{"w":summary.0,"j":summary.1,"unknown":summary.2,"faults":summary.3,
+                "eval_transitions":summary.4,"j_any":j_any}}),
+    );
+    let invalid = !rejected_worlds.is_empty()
+        || summary.3 > 0
+        || !e_sel.faults.is_empty()
+        || e_sel.incomplete;
+    let mut row = json!({"kind":"s4a_diag_root","root_id":root_id,"model":shared.model,
+        "cell":root["cell"],"stratum":root["stratum"],"game":root["game"],"seed":root["seed"],
+        "step":root["step"],"opp_model":root["opp_model"],"focal_seat":setup.focal,
+        "starting_player":setup.starting,"opp_deck":RUNTIME_DECKS[setup.decks[1-setup.focal]].id,
+        "probs":probs,"k":d.legal_action_count,
+        "config":{"limits":shared.limits.json(),"sampler":world::SAMPLER_VERSION,
+            "prior_decks":shared.prior.ids(),"opponents":shared.labels,"seed_namespace":seeds::NAMESPACE},
+        "arms":arms_json,"eval_worlds":worlds,"rejected_eval_worlds":rejected_worlds,
+        "eval_sampler":eval_sampler.json(),"invalid":invalid,
+        "cost":{"selection_transitions":e_sel.transitions,"selection_inference_calls":e_sel.inference,
+            "eval_transitions":summary.4},
+        "timing":{"replay":replay_secs,"selection_wall":{"E":e_sel.wall},
+            "selection_sampler_seconds":{"E":e_sel.sampler.seconds},
+            "eval_wall":eval_wall,"root_wall":started.elapsed().as_secs_f64()}});
+    let mut diag_info = json!({"trace":null});
+    if let (Some(dir), Some(t)) = (trace_dir, trace) {
+        let mut bytes = t.lines.join("\n").into_bytes();
+        bytes.push(b'\n');
+        let path = std::path::Path::new(&dir).join(format!("{root_id}.trace.jsonl"));
+        std::fs::write(&path, &bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+        diag_info = json!({"trace":{"path":path.display().to_string(),"sha256":sha(&bytes),
+            "lines":t.lines.len(),"bytes":bytes.len()}});
+    }
+    diag_info["root_wall_with_trace_io"] = json!(started.elapsed().as_secs_f64());
+    row["diag"] = diag_info;
+    Ok(row)
+}
+
 fn fork_roles(policy: &FrozenPlayPolicyV1, shared: &Shared) -> Result<Roles, String> {
     Ok(Roles {
         focal: policy.fork_for_collection_v3()?,
@@ -466,12 +606,17 @@ fn fork_roles(policy: &FrozenPlayPolicyV1, shared: &Shared) -> Result<Roles, Str
 
 pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(), String> {
     let shared = load_shared(cfg)?;
-    let done: HashSet<String> = if cfg.mode == "s4a-run" {
+    let row_kind = if cfg.mode == "s4a-diag" {
+        "s4a_diag_root"
+    } else {
+        "s4a_root"
+    };
+    let done: HashSet<String> = if cfg.mode != "s4a-corpus" {
         std::fs::read_to_string(&cfg.out)
             .unwrap_or_default()
             .lines()
             .filter_map(|l| serde_json::from_str::<Value>(l).ok())
-            .filter(|v| v["kind"] == "s4a_root")
+            .filter(|v| v["kind"] == row_kind)
             .filter_map(|v| v["root_id"].as_str().map(str::to_owned))
             .collect()
     } else {
@@ -497,7 +642,7 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
             .open(&cfg.out)
             .map_err(|e| e.to_string())?,
     );
-    let (first, end) = if cfg.mode == "s4a-run" {
+    let (first, end) = if cfg.mode != "s4a-corpus" {
         (0, shared.roots.len() as u64)
     } else {
         (cfg.first_game, cfg.first_game + cfg.games)
@@ -531,8 +676,12 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
                         if done.contains(&id) {
                             continue;
                         }
-                        run_root(cfg, shared, &mut roles, root)
-                            .and_then(|row| write_line(sink, &row))
+                        let row = if cfg.mode == "s4a-diag" {
+                            run_root_diag(cfg, shared, &mut roles, root)
+                        } else {
+                            run_root(cfg, shared, &mut roles, root)
+                        };
+                        row.and_then(|row| write_line(sink, &row))
                     };
                     if let Err(e) = result {
                         eprintln!("item {item} failed: {e}");
