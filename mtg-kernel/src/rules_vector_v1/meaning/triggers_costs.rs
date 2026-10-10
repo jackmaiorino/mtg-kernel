@@ -524,6 +524,16 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
             let _ = (count, filter);
             out.cost(CostAtom::TapOthers);
         }
+        CostComponent::SacrificeOtherControlledCreatures(count) => {
+            move_cost(
+                out,
+                ZoneF::Battlefield,
+                ZoneF::Graveyard,
+                ObjF::Typed(CardTypeF::Creature),
+                count,
+            );
+            out.atoms.push(Atom::Opaque);
+        }
         CostComponent::SacrificeControlled { count, filter } => {
             // The component itself restricts candidates to the payer's
             // permanents, so the filter's relation adds nothing.

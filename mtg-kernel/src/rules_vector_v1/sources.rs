@@ -330,6 +330,14 @@ fn activated(walk: &mut Walk, ctx: CtxF, key: &str, ability: &ActivatedAbilityDe
             "max_per_turn": max_activations_per_turn,
         }),
     );
+    if cost.iter().any(|component| {
+        matches!(
+            component,
+            CostComponent::SacrificeOtherControlledCreatures(_)
+        )
+    }) {
+        walk.opaque.push("sacrifice cost excludes its source");
+    }
     let env = Env { target_spec };
     walk.ability(ctx, |out| {
         for &component in cost {

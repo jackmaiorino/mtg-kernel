@@ -1057,6 +1057,10 @@ pub enum CostComponent {
     /// deterministically; whether to convoke at all is the ordinary cast
     /// mode choice.
     ConvokeMana(crate::mana::Cost),
+    /// Sacrifice `count` other creatures the payer currently controls.
+    /// The source is excluded from both selection and atomic payment.
+    /// Appended for Hungry Ghoul, preserving all older cost variants.
+    SacrificeOtherControlledCreatures(u8),
 }
 
 /// Optional additional costs chosen while announcing a spell. The selected

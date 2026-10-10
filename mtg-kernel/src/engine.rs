@@ -3847,6 +3847,7 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                 saw_source_changing_component = true;
             }
             CostComponent::SacrificeControlled { count, .. }
+            | CostComponent::SacrificeOtherControlledCreatures(count)
             | CostComponent::TapControlled { count, .. } => {
                 if *count == 0 {
                     return false;
@@ -4116,6 +4117,10 @@ fn can_pay_components(
                 hand_other >= *n as usize
             }
             CostComponent::SacrificeLands(n) => count_controlled_lands(player, state) >= *n as u32,
+            CostComponent::SacrificeOtherControlledCreatures(count) => {
+                sacrificeable_other_controlled_creatures(player, source, state, &[]).len()
+                    >= usize::from(*count)
+            }
             CostComponent::SacrificeControlled { count, filter } => {
                 sacrificeable_controlled_permanents(player, *filter, state, &[]).len()
                     >= usize::from(*count)
@@ -4284,6 +4289,9 @@ fn pay_cost_components_spending_mana(
         }
     }
     let sacrifice_controlled = components.iter().find_map(|component| match component {
+        CostComponent::SacrificeOtherControlledCreatures(count) => {
+            Some((usize::from(*count), PermanentFilter::Creature))
+        }
         CostComponent::SacrificeControlled { count, filter } => {
             Some((usize::from(*count), *filter))
         }
@@ -4311,7 +4319,13 @@ fn pay_cost_components_spending_mana(
             .iter()
             .enumerate()
             .any(|(index, id)| object_cost_chosen[..index].contains(id));
+        let excludes_source = sacrifices_other_creatures(components);
+        let other_candidates = excludes_source
+            .then(|| sacrificeable_other_controlled_creatures(player, source, state, &[]));
         let invalid = object_cost_chosen.iter().any(|id| {
+            if let Some(candidates) = &other_candidates {
+                return !candidates.contains(id);
+            }
             !state.players[player.index()].battlefield.contains(id)
                 || state.objects.try_get(*id).is_none_or(|object| {
                     object.controller != player
@@ -4463,7 +4477,8 @@ fn pay_cost_components_spending_mana(
                 );
                 commit_sacrifice(state, object_cost_chosen);
             }
-            CostComponent::SacrificeControlled { count, .. } => {
+            CostComponent::SacrificeControlled { count, .. }
+            | CostComponent::SacrificeOtherControlledCreatures(count) => {
                 debug_assert_eq!(object_cost_chosen.len(), usize::from(*count));
                 commit_sacrifice(state, object_cost_chosen);
             }
@@ -5028,11 +5043,43 @@ fn sacrificeable_controlled_permanents(
         .collect()
 }
 
+fn sacrifices_other_creatures(components: &[CostComponent]) -> bool {
+    components.iter().any(|component| {
+        matches!(
+            component,
+            CostComponent::SacrificeOtherControlledCreatures(_)
+        )
+    })
+}
+
+/// Current control and effective type, regardless of ownership. Tokens qualify;
+/// neither tapping nor summoning sickness prevents sacrificing a creature.
+fn sacrificeable_other_controlled_creatures(
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+    already_chosen: &[ObjectId],
+) -> Vec<ObjectId> {
+    state
+        .objects
+        .iter()
+        .filter_map(|(id, object)| {
+            (id != source
+                && !already_chosen.contains(&id)
+                && object.zone == Zone::Battlefield
+                && object.controller == player
+                && object_has_type(state, id, CardType::Creature))
+            .then_some(id)
+        })
+        .collect()
+}
+
 /// Incarnation-bound form of `sacrificeable_controlled_permanents` used by
 /// staged activations. Cast staging retains its frozen `ObjectId` wire shape,
 /// while an activation must reject a selected permanent that left and later
 /// returned before payment.
 fn activation_controlled_cost_candidates(
+    excluded_source: Option<ObjectId>,
     player: PlayerId,
     filter: PermanentFilter,
     tap: bool,
@@ -5043,7 +5090,9 @@ fn activation_controlled_cost_candidates(
         .iter()
         .map(|binding| binding.object)
         .collect::<Vec<_>>();
-    let candidates = if tap {
+    let candidates = if let Some(source) = excluded_source {
+        sacrificeable_other_controlled_creatures(player, source, state, &already_chosen_ids)
+    } else if tap {
         tappable_controlled_permanents(player, filter, state, &already_chosen_ids)
     } else {
         sacrificeable_controlled_permanents(player, filter, state, &already_chosen_ids)
@@ -5081,6 +5130,9 @@ fn controlled_permanent_sacrifice_in(
 ) -> Option<(u8, PermanentFilter)> {
     components.iter().find_map(|component| match component {
         CostComponent::SacrificeControlled { count, filter } => Some((*count, *filter)),
+        CostComponent::SacrificeOtherControlledCreatures(count) => {
+            Some((*count, PermanentFilter::Creature))
+        }
         _ => None,
     })
 }
@@ -5099,6 +5151,9 @@ fn activation_controlled_object_cost(
 ) -> Option<(u8, PermanentFilter, bool)> {
     components.iter().find_map(|component| match component {
         CostComponent::SacrificeControlled { count, filter } => Some((*count, *filter, false)),
+        CostComponent::SacrificeOtherControlledCreatures(count) => {
+            Some((*count, PermanentFilter::Creature, false))
+        }
         CostComponent::TapControlled { count, filter } => Some((*count, *filter, true)),
         _ => None,
     })
@@ -9224,6 +9279,7 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
     } else if let Some((needed, filter, tap)) = activation_controlled_object_cost(ability.cost) {
         if pending.object_cost_chosen.len() < usize::from(needed) {
             let candidates = activation_controlled_cost_candidates(
+                sacrifices_other_creatures(ability.cost).then_some(pending.source),
                 pending.controller,
                 filter,
                 tap,
@@ -9489,7 +9545,16 @@ pub(crate) fn validate_pending_activation(
         if duplicate {
             return Err("pending activation repeats an object-cost selection".to_string());
         }
+        let other_candidates = sacrifices_other_creatures(ability.cost).then(|| {
+            sacrificeable_other_controlled_creatures(pending.controller, pending.source, state, &[])
+        });
         if pending.object_cost_chosen.iter().any(|binding| {
+            if let Some(candidates) = &other_candidates {
+                return binding.expected_zone != Zone::Battlefield
+                    || !candidates.contains(&binding.object)
+                    || state.objects.get(binding.object).zone_change_count
+                        != binding.expected_zone_change_count;
+            }
             binding.expected_zone != Zone::Battlefield
                 || state.objects.try_get(binding.object).is_none_or(|live| {
                     live.zone_change_count != binding.expected_zone_change_count
@@ -9508,6 +9573,7 @@ pub(crate) fn validate_pending_activation(
             return Err("pending activation carries an illegal object-cost selection".to_string());
         }
         let remaining = activation_controlled_cost_candidates(
+            sacrifices_other_creatures(ability.cost).then_some(pending.source),
             pending.controller,
             filter,
             tap,
@@ -14107,6 +14173,7 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
         {
             if pending.object_cost_chosen.len() < usize::from(needed) {
                 let candidates = activation_controlled_cost_candidates(
+                    sacrifices_other_creatures(ability.cost).then_some(pending.source),
                     pending.controller,
                     filter,
                     tap,
@@ -16637,6 +16704,153 @@ mod tests {
             &chosen,
         ));
         assert_eq!(state, before, "failed payment must be exactly nonmutating");
+    }
+
+    #[test]
+    fn sacrifice_other_creature_cost_rejects_source_opponent_and_noncreature_atomically() {
+        let mut state = ready_game_in_main1(0);
+        let source = put_on_battlefield(&mut state, PlayerId::P0, "Monastery Swiftspear");
+        let opponent = put_on_battlefield(&mut state, PlayerId::P1, "Faerie Seer");
+        let artifact = put_on_battlefield(&mut state, PlayerId::P0, "Blood Token");
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 1;
+        let components = [
+            CostComponent::Mana(Cost {
+                pips: &[],
+                generic: 1,
+                x_count: 0,
+            }),
+            CostComponent::SacrificeOtherControlledCreatures(1),
+        ];
+        assert!(!can_pay_activation_components(
+            &components,
+            PlayerId::P0,
+            source,
+            &state
+        ));
+        for invalid in [source, opponent, artifact] {
+            let before = state.clone();
+            assert!(!pay_cost_components(
+                &mut state,
+                PlayerId::P0,
+                source,
+                &components,
+                &[invalid]
+            ));
+            assert_eq!(state, before);
+        }
+        let donor = put_on_battlefield(&mut state, PlayerId::P0, "Faerie Seer");
+        state.objects.get_mut(donor).tapped = true;
+        state.objects.get_mut(donor).summoning_sick = true;
+        assert!(can_pay_activation_components(
+            &components,
+            PlayerId::P0,
+            source,
+            &state
+        ));
+        state.players[0].mana_pool = [0; 6];
+        let before = state.clone();
+        assert!(!pay_cost_components(
+            &mut state,
+            PlayerId::P0,
+            source,
+            &components,
+            &[donor]
+        ));
+        assert_eq!(state, before, "mana failure cannot sacrifice the donor");
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 1;
+        assert!(pay_cost_components(
+            &mut state,
+            PlayerId::P0,
+            source,
+            &components,
+            &[donor]
+        ));
+        assert_eq!(state.objects.get(donor).zone, Zone::Graveyard);
+        assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+        assert_eq!(state.players[0].mana_pool, [0; 6]);
+    }
+
+    #[test]
+    fn sacrifice_other_creature_cost_uses_current_control_and_incarnation_bindings() {
+        let mut state = ready_game_in_main1(0);
+        let source = put_on_battlefield(&mut state, PlayerId::P0, "Monastery Swiftspear");
+        let borrowed = put_on_battlefield(&mut state, PlayerId::P1, "Faerie Seer");
+        state.objects.get_mut(borrowed).controller = PlayerId::P0;
+        let components = [CostComponent::SacrificeOtherControlledCreatures(1)];
+        let bindings = activation_controlled_cost_candidates(
+            Some(source),
+            PlayerId::P0,
+            PermanentFilter::Creature,
+            false,
+            &state,
+            &[],
+        );
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0].object, borrowed);
+        let old = bindings[0];
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(borrowed, Zone::Hand));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(borrowed, Zone::Battlefield),
+        );
+        state.objects.get_mut(borrowed).controller = PlayerId::P0;
+        let fresh = activation_controlled_cost_candidates(
+            Some(source),
+            PlayerId::P0,
+            PermanentFilter::Creature,
+            false,
+            &state,
+            &[],
+        );
+        assert_eq!(fresh[0].object, old.object);
+        assert_ne!(
+            fresh[0].expected_zone_change_count,
+            old.expected_zone_change_count
+        );
+        assert!(pay_cost_components(
+            &mut state,
+            PlayerId::P0,
+            source,
+            &components,
+            &[borrowed]
+        ));
+        assert!(
+            state.players[1].graveyard.contains(&borrowed),
+            "owner's graveyard receives the card"
+        );
+    }
+
+    #[test]
+    fn sacrifice_other_creature_cost_rejects_zero_count_duplicates_and_wrong_count() {
+        let mut state = ready_game_in_main1(0);
+        let source = put_on_battlefield(&mut state, PlayerId::P0, "Monastery Swiftspear");
+        let first = put_on_battlefield(&mut state, PlayerId::P0, "Faerie Seer");
+        let second = put_on_battlefield(&mut state, PlayerId::P0, "Faerie Seer");
+        let before = state.clone();
+        for (count, chosen) in [
+            (0, vec![]),
+            (2, vec![first]),
+            (2, vec![first, first]),
+            (1, vec![first, second]),
+        ] {
+            assert!(!pay_cost_components(
+                &mut state,
+                PlayerId::P0,
+                source,
+                &[CostComponent::SacrificeOtherControlledCreatures(count)],
+                &chosen
+            ));
+            assert_eq!(state, before);
+        }
+        assert!(pay_cost_components(
+            &mut state,
+            PlayerId::P0,
+            source,
+            &[CostComponent::SacrificeOtherControlledCreatures(2)],
+            &[first, second]
+        ));
+        assert_eq!(state.objects.get(first).zone, Zone::Graveyard);
+        assert_eq!(state.objects.get(second).zone, Zone::Graveyard);
     }
 
     #[test]

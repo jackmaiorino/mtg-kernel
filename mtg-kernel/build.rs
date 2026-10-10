@@ -3047,6 +3047,7 @@ enum AbilityCostRecipe {
     /// multicolor consumer.
     ManaCost(&'static str),
     RemovePlusOneCountersFromControlledCreatures(u8),
+    SacrificeOtherControlledCreatures(u8),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4374,6 +4375,21 @@ fn escape_for(name: &str) -> String {
 /// then resolve the reusable typed library search.
 fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
+        "Hungry Ghoul" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 1,
+                },
+                AbilityCostRecipe::SacrificeOtherControlledCreatures(1),
+            ],
+            effect: AbilityEffectRecipe::PutPlusOneCounterOnSource,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Shivan Dragon" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Mana {
                 colored: Some("R"),
@@ -5257,6 +5273,9 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
         }
         AbilityCostRecipe::DiscardSelf => "CostComponent::DiscardSelf".to_string(),
         AbilityCostRecipe::SacrificeSelf => "CostComponent::SacrificeSelf".to_string(),
+        AbilityCostRecipe::SacrificeOtherControlledCreatures(count) => {
+            format!("CostComponent::SacrificeOtherControlledCreatures({count})")
+        }
         AbilityCostRecipe::ReturnControlledLandWithSubtype(subtype) => format!(
             "CostComponent::ReturnControlledPermanentToOwnersHand(PermanentFilterDef::LandWithSubtype(Subtype::{subtype}))"
         ),
@@ -5301,6 +5320,9 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::DiscardCards(count) => format!("discard_cards:{count}"),
         AbilityCostRecipe::DiscardSelf => "discard_self".to_string(),
         AbilityCostRecipe::SacrificeSelf => "sacrifice_self".to_string(),
+        AbilityCostRecipe::SacrificeOtherControlledCreatures(count) => {
+            format!("sacrifice_other_controlled_creatures:{count}")
+        }
         AbilityCostRecipe::ReturnControlledLandWithSubtype(subtype) => {
             format!("return_controlled_land_with_subtype:{subtype}")
         }
