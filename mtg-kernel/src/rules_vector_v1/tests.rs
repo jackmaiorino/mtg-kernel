@@ -613,6 +613,7 @@ fn power_toughness_changes_keep_their_sign() {
 /// or `event_time_trigger_programs`; token names are reached through
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
+    "Dreadwing Scavenger",
     "Wardens of the Cycle",
     "Tragic Banshee",
     "Grappling Kraken",
@@ -813,6 +814,11 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    (
+        "engine.rs",
+        "Dreadwing Scavenger",
+        "read via static_self_boost_for and static_graveyard_threshold_keyword_for",
+    ),
     (
         "engine.rs",
         "Billowing Shriekmass",

@@ -3702,6 +3702,7 @@ fn effect_recipe_for(card: &CardJson) -> String {
                 "Anthem of Champions" => ";static=boost_live_controlled_creatures:1:1:layer7c:printed_source_abilities",
                 "Empyrean Eagle" => ";static=boost_other_live_controlled_creatures_with_effective_flying:1:1:layer7c:printed_source_abilities",
                 "Billowing Shriekmass" => ";static=controller_graveyard_cards_at_least:7:boost_source:2:1:layer7c:printed_source_abilities",
+                "Dreadwing Scavenger" => ";static=controller_graveyard_cards_at_least:7:boost_source:1:1:layer7c:deathtouch:printed_source_abilities",
                 _ => "",
             };
             format!("target=None;spell={spell};mana={mana}{static_bonus}")
@@ -3954,7 +3955,8 @@ fn keywords_for(card: &CardJson) -> String {
         | "Shivan Dragon"
         | "Vanguard Seraph"
         | "Vampire Soulcaller"
-        | "Billowing Shriekmass" => keywords.push("Keywords::FLYING"),
+        | "Billowing Shriekmass"
+        | "Dreadwing Scavenger" => keywords.push("Keywords::FLYING"),
         "Generous Ent"
         | "Writhing Chrysalis"
         | "Vitu-Ghazi Inspector"
@@ -6157,6 +6159,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
         "Wardens of the Cycle" => "controller_end_step:intervening_if_creature_died_this_turn:mode_at_placement:gain_controller_life:2|draw_controller:1_then_lose_controller_life:1:recheck_morbid_in_each_branch:untargeted",
         "Billowing Shriekmass" => "etb:mill_controller_library:3:private_ordering_exact_incarnations",
+        "Dreadwing Scavenger" => "etb_or_source_declared_attacker:draw_controller:1:then_discard_controller:1",
         "Apothecary Stomper" => "etb:mode_before_targets:controlled_creature_plus_one_counters:2|gain_controller_life:4",
         "Celestial Armor" => "etb:target_controlled_creature:attach_exact_source:then_grant_hexproof_indestructible_until_end_of_turn",
         "Mossborn Hydra" => "controlled_land_enters:double_plus_one_counters_on_bound_source",

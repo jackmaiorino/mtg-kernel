@@ -473,6 +473,14 @@ const HELPFUL_HUNTER_TRIGGERS: [TriggeredAbilityDef; 1] =
 const PRIDEFUL_PARENT_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(prideful_parent_effect)];
 const ICEWIND_ELEMENTAL_TRIGGERS: [TriggeredAbilityDef; 1] =
     [etb_trigger(icewind_elemental_effect)];
+
+const DREADWING_SCAVENGER_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    etb_trigger(icewind_elemental_effect),
+    TriggeredAbilityDef {
+        condition: TriggerCondition::Attacks,
+        ..etb_trigger(icewind_elemental_effect)
+    },
+];
 const BURGLAR_RAT_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(burglar_rat_effect)];
 const INFESTATION_SAGE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::LeftBattlefieldToGraveyard,
@@ -3017,6 +3025,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Helpful Hunter" => &HELPFUL_HUNTER_TRIGGERS,
         "Prideful Parent" => &PRIDEFUL_PARENT_TRIGGERS,
         "Icewind Elemental" => &ICEWIND_ELEMENTAL_TRIGGERS,
+        "Dreadwing Scavenger" => &DREADWING_SCAVENGER_TRIGGERS,
         "Burglar Rat" => &BURGLAR_RAT_TRIGGERS,
         "Infestation Sage" => &INFESTATION_SAGE_TRIGGERS,
         "Wary Thespian" => &WARY_THESPIAN_TRIGGERS,

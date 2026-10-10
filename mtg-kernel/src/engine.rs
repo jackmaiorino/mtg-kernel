@@ -12081,6 +12081,13 @@ pub(crate) fn static_self_boost_for(name: &str) -> Option<StaticSelfBoostDef> {
             grant_haste: false,
             battlefield_only: true,
         }),
+        "Dreadwing Scavenger" => Some(StaticSelfBoostDef {
+            condition: controller_has_threshold_v1,
+            power: 1,
+            toughness: 1,
+            grant_haste: false,
+            battlefield_only: true,
+        }),
         _ => None,
     }
 }
@@ -12366,6 +12373,7 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
 pub(crate) fn static_graveyard_threshold_keyword_for(name: &str) -> Option<(u16, Keywords)> {
     match name {
         "Cephalid Inkmage" => Some((7, Keywords::CANT_BE_BLOCKED)),
+        "Dreadwing Scavenger" => Some((7, Keywords::DEATHTOUCH)),
         _ => None,
     }
 }
