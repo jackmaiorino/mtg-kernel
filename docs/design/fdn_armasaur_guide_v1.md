@@ -25,3 +25,11 @@ attacking or not, token attackers, exactly one counter, opponent declarations,
 combat insertion without declaration, mandatory target legality, source leaving,
 target control/exile/reentry and restored resolution after attackers leave.
 Native checks and read-only review are pending. No paid experiment is included.
+
+Read-only review of5da24991 found no actionable defects. That exact source
+passed both feature test compilations, the registered declaration predicate
+regression,23 rules-vector cases (one existing ignore) and the frozen v63
+catalog case under supported guard0c463538ef5b42428b6bf8c91b17b0da,
+command exit0. Four card fixtures compiled but remain unexecuted until
+registration. The owned idle compiler telemetry child was released after
+verifying the completed command sequence.
