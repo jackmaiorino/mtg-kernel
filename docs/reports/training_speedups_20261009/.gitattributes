@@ -1,0 +1,3 @@
+# Preserve the exact hashed bytes of copied measurement receipts.
+desktop/formal-v4-analysis.json -text
+desktop/formal-v4-analysis-recovery.json -text
