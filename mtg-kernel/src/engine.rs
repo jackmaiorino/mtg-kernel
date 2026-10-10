@@ -11921,6 +11921,84 @@ fn controlled_subtype_boost(state: &GameState, recipient: ObjectId) -> (i32, i32
         })
 }
 
+/// A layer-7c team bonus whose recipient predicate reads layer-6 keywords.
+/// Kept separate from the historical subtype-lord binding and its catalog token.
+pub(crate) enum StaticControlledCreatureFilterV1 {
+    All,
+    WithKeyword(Keywords),
+}
+
+pub(crate) struct StaticControlledCreatureBoostDefV1 {
+    pub(crate) filter: StaticControlledCreatureFilterV1,
+    pub(crate) exclude_source: bool,
+    pub(crate) power: i32,
+    pub(crate) toughness: i32,
+}
+
+pub(crate) fn static_controlled_creature_boost_for_v1(
+    name: &str,
+) -> Option<StaticControlledCreatureBoostDefV1> {
+    if !cfg!(feature = "limited-fdn-fixtures") {
+        return None;
+    }
+    let (filter, exclude_source) = match name {
+        "Anthem of Champions" => (StaticControlledCreatureFilterV1::All, false),
+        "Empyrean Eagle" => (
+            StaticControlledCreatureFilterV1::WithKeyword(Keywords::FLYING),
+            true,
+        ),
+        _ => return None,
+    };
+    Some(StaticControlledCreatureBoostDefV1 {
+        filter,
+        exclude_source,
+        power: 1,
+        toughness: 1,
+    })
+}
+
+fn controlled_creature_boost_v1(state: &GameState, recipient: ObjectId) -> (i32, i32) {
+    if !cfg!(feature = "limited-fdn-fixtures") {
+        return (0, 0);
+    }
+    let object = state.objects.get(recipient);
+    if object.zone != Zone::Battlefield || !object_has_type(state, recipient, CardType::Creature) {
+        return (0, 0);
+    }
+    state
+        .objects
+        .iter()
+        .filter_map(|(source, source_object)| {
+            if source_object.zone != Zone::Battlefield
+                || source_object.controller != object.controller
+                || source_object.v4.face_index != 0
+                || !crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+            {
+                return None;
+            }
+            let definition = &card_def::CARD_DEFS[source_object.card_def as usize];
+            if !definition.is_executable() {
+                return None;
+            }
+            let boost = static_controlled_creature_boost_for_v1(definition.name)?;
+            if boost.exclude_source && source == recipient {
+                return None;
+            }
+            let matches = match boost.filter {
+                StaticControlledCreatureFilterV1::All => true,
+                // Keyword evaluation never reads P/T or this bonus table, so
+                // the layer-6 predicate cannot recurse into layer 7c here.
+                StaticControlledCreatureFilterV1::WithKeyword(keyword) => {
+                    has_effective_keyword(state, recipient, keyword)
+                }
+            };
+            matches.then_some((boost.power, boost.toughness))
+        })
+        .fold((0, 0), |(power, toughness), (p, t)| {
+            (power + p, toughness + t)
+        })
+}
+
 fn controls_an_artifact(controller: PlayerId, state: &GameState) -> bool {
     state.players[controller.index()]
         .battlefield
@@ -12112,6 +12190,7 @@ pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
         power += crate::standard_keywords_v1::controlled_forest_boost(state, id);
         power += crate::standard_statics_v1::self_counter_boost(state, id).0;
     }
+    power += controlled_creature_boost_v1(state, id).0;
     if def.is_executable()
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     {
@@ -12171,6 +12250,7 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
         toughness += crate::standard_keywords_v1::controlled_forest_boost(state, id);
         toughness += crate::standard_statics_v1::self_counter_boost(state, id).1;
     }
+    toughness += controlled_creature_boost_v1(state, id).1;
     if def.is_executable()
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     {

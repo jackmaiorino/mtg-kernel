@@ -1028,6 +1028,47 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         });
     }
 
+    if let Some(boost) = crate::engine::static_controlled_creature_boost_for_v1(name) {
+        let keyword = match boost.filter {
+            crate::engine::StaticControlledCreatureFilterV1::All => None,
+            crate::engine::StaticControlledCreatureFilterV1::WithKeyword(keyword) => {
+                Some(keyword.0)
+            }
+        };
+        walk.rec(
+            "static_controlled_creature_boost",
+            json!({"keyword": keyword, "exclude_source": boost.exclude_source, "power": boost.power, "toughness": boost.toughness}),
+        );
+        if keyword.is_some() || boost.exclude_source {
+            walk.opaque
+                .push("static team predicate: effective keyword or exact source exclusion");
+        }
+        walk.ability(CtxF::Static, |out| {
+            if keyword.is_some() {
+                out.control(ControlF::Conditional);
+                out.read(
+                    RelF::You,
+                    Some(ZoneF::Battlefield),
+                    Some(ObjF::Typed(CardTypeF::Creature)),
+                    AggF::Characteristic,
+                );
+            }
+            if keyword.is_some() || boost.exclude_source {
+                out.atoms.push(Atom::Opaque);
+            }
+            out.effect(
+                EffectAtom::new(EvF::StatChange)
+                    .player(RelF::You)
+                    .obj(ObjF::Typed(CardTypeF::Creature))
+                    .amount(AmtF::stat(
+                        i64::from(boost.power),
+                        i64::from(boost.toughness),
+                    ))
+                    .duration(DurF::WhileOnBattlefield),
+            );
+        });
+    }
+
     if let Some((minimum, keywords)) = crate::engine::static_graveyard_threshold_keyword_for(name) {
         walk.rec(
             "static_graveyard_threshold_keyword",
