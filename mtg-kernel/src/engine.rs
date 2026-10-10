@@ -4853,11 +4853,8 @@ fn commit_cost_components_from_plan_v1(
             CostComponent::ConvokeMana(cost) => {
                 #[cfg(feature = "standard-magezero-fixtures")]
                 {
-                    let Some((creatures, plan)) =
-                        crate::standard_keywords_v1::convoke_plan(cost, player, state)
-                    else {
-                        return None;
-                    };
+                    let (creatures, plan) =
+                        crate::standard_keywords_v1::convoke_plan(cost, player, state)?;
                     for &creature in &creatures {
                         event::propose_and_commit(state, ProposedEvent::tap(creature));
                     }

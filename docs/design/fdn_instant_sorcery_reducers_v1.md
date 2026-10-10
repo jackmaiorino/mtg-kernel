@@ -217,6 +217,12 @@ its unsupported-cost fallback without inventing rendering semantics. The
 library/runtime receipts remain compatible; both all-target feature lint
 checks still require execution on the repaired source.
 
+Native17 at a95eb446 passed strict all-target Limited lint. Combined-feature
+lint then rejected a Convoke let-else in the Option-returning payment helper.
+Guardff52b27d4bad479d82cf983b5a37e306 ended101. The equivalent question-mark
+rewrite preserves the prior340 runtime receipts. Both feature lint checks on
+the repaired source remain required; no pending check is a pass.
+
 Remaining work: finish native qualification of runtime integration and quotes;
 actual Sprite/Archmage gameplay and restore tests; metadata/catalog admission;
 live profile qualification; CI and default-branch acceptance. Accepted booster
