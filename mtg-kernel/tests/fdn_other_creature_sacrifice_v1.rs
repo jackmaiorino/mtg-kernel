@@ -67,7 +67,7 @@ fn offered(state: &mut GameState, source: ObjectId) -> bool {
 fn choice(state: &mut GameState) -> Vec<ObjectId> {
     match next(state) {
         Decision::ChooseCostTargets {
-            cost_kind: CostKind::SacrificeCreatures,
+            cost_kind: CostKind::SacrificePermanents,
             remaining: 1,
             candidates,
             ..
