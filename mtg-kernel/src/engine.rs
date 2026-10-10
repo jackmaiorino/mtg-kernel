@@ -5420,12 +5420,7 @@ fn effective_normal_cast_cost_with_targets(
     targets: &[Target],
     state: &GameState,
 ) -> Cost {
-    static_adjusted_spell_cost(
-        printed_normal_cast_cost_with_targets(def, player, targets, state),
-        def.types,
-        player,
-        state,
-    )
+    printed_normal_cast_cost_with_targets(def, player, targets, state)
 }
 
 /// Applies permanents' statics that make spells cost more or less (Thalia,
@@ -5461,10 +5456,28 @@ fn printed_normal_cast_cost_with_targets(
     targets: &[Target],
     state: &GameState,
 ) -> Cost {
+    // Increases precede every reduction. Floor after applying both battlefield
+    // modifiers and this spell's own reducer, rather than flooring the own
+    // reducer before a later tax can consume its excess.
+    let mut cost = static_adjusted_spell_cost(def.cost, def.types, player, state);
     let Some(reducer) = def.generic_cost_reduction else {
-        return def.cost;
+        return cost;
     };
-    let count = match reducer.count {
+    let count = normal_cast_reduction_count(reducer.count, player, targets, state);
+    let reduction = count.saturating_mul(u32::from(reducer.generic_per_count));
+    cost.generic = cost
+        .generic
+        .saturating_sub(reduction.min(u32::from(u8::MAX)) as u8);
+    cost
+}
+
+fn normal_cast_reduction_count(
+    count: card_def::DynamicCountDef,
+    player: PlayerId,
+    targets: &[Target],
+    state: &GameState,
+) -> u32 {
+    match count {
         card_def::DynamicCountDef::ControllerBattlefieldAnyType(types) => state.players
             [player.index()]
         .battlefield
@@ -5527,13 +5540,23 @@ fn printed_normal_cast_cost_with_targets(
                 })
             }))
         }
-    };
-    let reduction = count.saturating_mul(u32::from(reducer.generic_per_count));
-    let mut cost = def.cost;
-    cost.generic = cost
-        .generic
-        .saturating_sub(reduction.min(u32::from(u8::MAX)) as u8);
-    cost
+        card_def::DynamicCountDef::ControllerBattlefieldSubtype(subtype)
+        | card_def::DynamicCountDef::ControllerHasPermanentSubtype(subtype) => {
+            let matches = state.objects.iter().filter(|(id, object)| {
+                object.zone == Zone::Battlefield
+                    && object.controller == player
+                    && has_effective_subtype(state, *id, subtype)
+            });
+            if matches!(
+                count,
+                card_def::DynamicCountDef::ControllerHasPermanentSubtype(_)
+            ) {
+                u32::from(matches.take(1).count() != 0)
+            } else {
+                matches.count() as u32
+            }
+        }
+    }
 }
 
 fn normal_cast_cost_depends_on_targets(def: &card_def::CardDef) -> bool {
@@ -16745,6 +16768,68 @@ mod tests {
 
     fn empty_game() -> GameState {
         GameState::new_from_libraries(&[], &[], |c| format!("card-{c}"), 1)
+    }
+
+    #[test]
+    fn subtype_cost_count_tracks_control_zone_tokens_changeling_and_type_changes() {
+        use card_def::{DynamicCountDef, Subtype};
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = empty_game();
+            let cat = put_on_battlefield(&mut state, player, "Masked Meower");
+            let token = put_on_battlefield(&mut state, player, "Masked Meower");
+            state.objects.get_mut(token).v4.is_token = true;
+            let borrowed =
+                put_on_battlefield(&mut state, player.opponent(), "Webweaver Changeling");
+            state.objects.get_mut(borrowed).controller = player;
+            put_on_battlefield(&mut state, player.opponent(), "Masked Meower");
+            put_in_hand(&mut state, player, "Masked Meower");
+            put_in_graveyard(&mut state, player, "Masked Meower");
+            let count = DynamicCountDef::ControllerBattlefieldSubtype(Subtype::Cat);
+            let present = DynamicCountDef::ControllerHasPermanentSubtype(Subtype::Wizard);
+            assert_eq!(normal_cast_reduction_count(count, player, &[], &state), 3);
+            assert_eq!(normal_cast_reduction_count(present, player, &[], &state), 1);
+            let second = put_on_battlefield(&mut state, player, "Webweaver Changeling");
+            assert_eq!(normal_cast_reduction_count(present, player, &[], &state), 1);
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(second, Zone::Exile));
+            state.objects.get_mut(borrowed).controller = player.opponent();
+            assert_eq!(normal_cast_reduction_count(count, player, &[], &state), 2);
+            assert_eq!(normal_cast_reduction_count(present, player, &[], &state), 0);
+            state.objects.get_mut(cat).v4.effective_subtype_ids = vec![Subtype::Wizard.stable_id()];
+            assert_eq!(normal_cast_reduction_count(count, player, &[], &state), 1);
+            assert_eq!(normal_cast_reduction_count(present, player, &[], &state), 1);
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(token, Zone::Exile));
+            assert_eq!(normal_cast_reduction_count(count, player, &[], &state), 0);
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(
+                normal_cast_reduction_count(present, player, &[], &restored),
+                1
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "standard-magezero-fixtures")]
+    fn subtype_cost_reduction_order_floors_after_tax_and_preserves_colored_pips() {
+        // Existing Affinity is a registered consumer of the same cost path.
+        // Six artifacts exceed Thoughtcast's printed four plus Thalia's one.
+        let mut state = empty_game();
+        put_on_battlefield(&mut state, PlayerId::P1, "Thalia, Guardian of Thraben");
+        for _ in 0..6 {
+            put_on_battlefield(&mut state, PlayerId::P0, "Great Furnace");
+        }
+        let def = &card_def::CARD_DEFS[card_id_by_name("Thoughtcast").unwrap() as usize];
+        let cost = effective_normal_cast_cost(def, PlayerId::P0, &state);
+        assert_eq!(cost.generic, 0);
+        assert_eq!(cost.pips, &[mana::Pip::Colored(ManaColor::U)]);
+        for _ in 0..3 {
+            let object = state.players[0].battlefield.last().copied().unwrap();
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(object, Zone::Exile));
+        }
+        assert_eq!(
+            effective_normal_cast_cost(def, PlayerId::P0, &state).generic,
+            2
+        );
     }
 
     #[test]

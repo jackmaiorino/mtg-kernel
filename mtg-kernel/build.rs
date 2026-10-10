@@ -3194,7 +3194,7 @@ fn special_for(name: &str) -> Special {
         // Great Furnace is intentionally explicit: unlike a basic land, its
         // mana ability is rules text, not intrinsic to a basic land type.
         "Great Furnace" => Special::GreatFurnace,
-        "Lorien Revealed" => Special::DrawCards(3),
+        "Lorien Revealed" | "Arcane Epiphany" => Special::DrawCards(3),
         "Fleeting Distraction" => Special::PumpCreatureThenDraw {
             power: -1,
             toughness: 0,
@@ -3514,6 +3514,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
             "None",
             "BoostControlledCreatures(10,10,VIGILANCE,exact_incarnations)",
             "EffectOp::BoostControlledCreaturesUntilEndOfTurn { power: 10, toughness: 10, keywords: Keywords::VIGILANCE }",
+        ),
+        "Claws Out" => program(
+            "None",
+            "BoostControlledCreatures(2,2,NONE,exact_incarnations)",
+            "EffectOp::BoostControlledCreaturesUntilEndOfTurn { power: 2, toughness: 2, keywords: Keywords::NONE }",
         ),
         // Destroy target creature. Create a Food token.
         "Bake into a Pie" => program(
@@ -6035,6 +6040,12 @@ fn cost_src(mana_cost: &str) -> String {
 
 fn generic_cost_reduction_for(name: &str) -> &'static str {
     match name {
+        "Arcane Epiphany" => {
+            "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerHasPermanentSubtype(Subtype::Wizard) })"
+        }
+        "Claws Out" => {
+            "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerBattlefieldSubtype(Subtype::Cat) })"
+        }
         "Luminous Rebuke" => {
             "Some(GenericCostReductionDef { generic_per_count: 3, count: DynamicCountDef::SpellTargetsTappedCreature })"
         }

@@ -1508,6 +1508,10 @@ pub enum DynamicCountDef {
     ControllerHasCreatureWithAndWithoutSubtype(Subtype),
     /// One iff a chosen spell target is a tapped battlefield creature.
     SpellTargetsTappedCreature,
+    /// Count currently controlled permanents with the effective named subtype.
+    ControllerBattlefieldSubtype(Subtype),
+    /// One iff a currently controlled permanent has the effective named subtype.
+    ControllerHasPermanentSubtype(Subtype),
 }
 
 /// Reduces only the generic portion of a spell's mana cost, flooring at

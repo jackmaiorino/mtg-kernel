@@ -50,7 +50,7 @@ integrating Ambush Wolf. Prepared source does not establish supported gameplay.
 
 October 10 delivery plan: retain the explicitly recorded v63, v64 and v65
 order. The unregistered source families tentatively labeled v66 through v81
-can form one coherent later catalog batch, IDs 338-361, after those prerequisites
+can form one coherent later catalog batch, IDs 338-363, after those prerequisites
 integrate. Their tentative version labels are preparation labels, not frozen
 catalog identities. This avoids a separate full CI cycle for each one-card
 family while preserving focused tests for every card, stable card IDs and one

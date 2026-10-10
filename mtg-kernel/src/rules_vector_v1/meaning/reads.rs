@@ -423,6 +423,22 @@ pub(crate) fn dynamic_count(count: DynamicCountDef, out: &mut Collector) -> AmtF
             );
             AmtF::Dynamic
         }
+        DynamicCountDef::ControllerBattlefieldSubtype(_)
+        | DynamicCountDef::ControllerHasPermanentSubtype(_) => {
+            // Vocabulary gap: ObjF has no subtype class. Preserve the actual
+            // controller, zone and count-versus-presence aggregate.
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Permanent),
+                if matches!(count, DynamicCountDef::ControllerHasPermanentSubtype(_)) {
+                    at_least(1)
+                } else {
+                    AggF::Count
+                },
+            );
+            AmtF::Dynamic
+        }
     }
 }
 
