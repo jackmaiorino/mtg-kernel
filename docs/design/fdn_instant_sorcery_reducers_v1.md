@@ -72,7 +72,7 @@ Two new regressions cover these cases. Exact read-only review found the named
 defect resolved. The future shared planner may change the legacy helper's
 deterministic maximum-creature tap selection; integration must account for it.
 
-At 20:39 UTC Haley's core-slot and whole-host status both showed free. Source
+At approximately 20:37 UTC Haley's core-slot and whole-host status both showed free. Source
 892e828fc8e438c0298a8f1e8eca6c3ae3590e53 was transferred in a SHA256-checked
 bundle (6cc834a30225f2bfbdb3681da14cb4cf7fa6ca4e4a1a7c817e1565c3bd9d5341)
 to a new owned checkout, C:/mtg-node/codex-fdn-spell-costs-20261010.
