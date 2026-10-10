@@ -482,29 +482,22 @@ mod tests {
         assert_eq!(state.players[0].hand, vec![source]);
         let before = serde_json::to_value(&state).unwrap();
         assert!(selected
-            .payment_plan_with_component_choices_v1(
-                0, PlayerId::P0, source, &state, &[&[]], &[],
-            )
+            .payment_plan_with_component_choices_v1(0, PlayerId::P0, source, &state, &[&[]], &[],)
             .is_some());
         assert_eq!(serde_json::to_value(&state).unwrap(), before);
         state.players[0].life = 0;
         assert!(selected
-            .payment_plan_with_component_choices_v1(
-                0, PlayerId::P0, source, &state, &[&[]], &[],
-            )
+            .payment_plan_with_component_choices_v1(0, PlayerId::P0, source, &state, &[&[]], &[],)
             .is_none());
         assert!(selected
-            .payment_plan_with_component_choices_v1(
-                0, PlayerId::P0, source, &state, &[], &[],
-            )
+            .payment_plan_with_component_choices_v1(0, PlayerId::P0, source, &state, &[], &[],)
             .is_none());
     }
 
     #[test]
     fn component_preflight_reserves_graveyard_picks_from_delve_without_mutation() {
         let mut selected = selected("Gurmag Angler", CastMethodV4::Normal, false);
-        selected.component_groups =
-            vec![&[CostComponent::ExileOtherCardsFromOwnGraveyard(1)]];
+        selected.component_groups = vec![&[CostComponent::ExileOtherCardsFromOwnGraveyard(1)]];
         let forest = card_def::card_id_by_name("Forest").unwrap();
         let mut state =
             GameState::new_from_libraries(&[forest; 3], &[forest], |_| "Forest".into(), 950);
@@ -521,18 +514,33 @@ mod tests {
         let before = serde_json::to_value(&state).unwrap();
         let payment = selected
             .payment_plan_with_component_choices_v1(
-                0, PlayerId::P0, source, &state, &[&graveyard[..1]], &[],
+                0,
+                PlayerId::P0,
+                source,
+                &state,
+                &[&graveyard[..1]],
+                &[],
             )
             .unwrap();
         assert_eq!(payment.delve_exiled, graveyard[1..]);
         assert!(selected
             .payment_plan_with_component_choices_v1(
-                0, PlayerId::P0, source, &state, &[&graveyard[..1]], &graveyard[1..],
+                0,
+                PlayerId::P0,
+                source,
+                &state,
+                &[&graveyard[..1]],
+                &graveyard[1..],
             )
             .is_none());
         assert!(selected
             .payment_plan_with_component_choices_v1(
-                0, PlayerId::P0, source, &state, &[&[source]], &[],
+                0,
+                PlayerId::P0,
+                source,
+                &state,
+                &[&[source]],
+                &[],
             )
             .is_none());
         assert_eq!(serde_json::to_value(&state).unwrap(), before);
