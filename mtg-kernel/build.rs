@@ -3985,7 +3985,7 @@ fn keywords_for(card: &CardJson) -> String {
         "Resolute Reinforcements" | "Twinblade Blessing" | "Ambush Wolf" => {
             keywords.push("Keywords::FLASH")
         }
-        "Mischievous Pup" => keywords.push("Keywords::FLASH"),
+        "Mischievous Pup" | "Brineborn Cutthroat" => keywords.push("Keywords::FLASH"),
         "Elfsworn Giant" => keywords.push("Keywords::REACH"),
         "Eager Trufflesnout" => keywords.push("Keywords::TRAMPLE"),
         _ => {}
@@ -6168,6 +6168,7 @@ fn delve_for(name: &str) -> bool {
 /// event, target, and effect part of the generated card database identity.
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Brineborn Cutthroat" => "controller_cast_spell_during_opponent_turn:plus_one_counter_on_bound_source:1",
         "Wardens of the Cycle" => "controller_end_step:intervening_if_creature_died_this_turn:mode_at_placement:gain_controller_life:2|draw_controller:1_then_lose_controller_life:1:recheck_morbid_in_each_branch:untargeted",
         "Billowing Shriekmass" => "etb:mill_controller_library:3:private_ordering_exact_incarnations",
         "Dreadwing Scavenger" => "etb_or_source_declared_attacker:draw_controller:1:then_discard_controller:1",

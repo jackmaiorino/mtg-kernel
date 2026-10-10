@@ -294,6 +294,15 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
                 obj: ObjF::Spell,
             });
         }
+        TriggerCondition::CastSpellDuringOpponentsTurn => {
+            out.trigger(TrigF::SpellCast {
+                by: RelF::You,
+                obj: ObjF::Spell,
+            });
+            out.control(ControlF::Conditional);
+            // The vocabulary has no relation to the active turn's player.
+            out.atoms.push(Atom::Opaque);
+        }
         TriggerCondition::CastSpellManaValueAtLeast(minimum) => {
             // A spell the controller casts whose mana value on the stack is
             // at least `minimum`. Vocabulary gap: the trigger carries no

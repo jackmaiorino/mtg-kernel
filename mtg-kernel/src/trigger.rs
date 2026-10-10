@@ -222,6 +222,9 @@ pub enum TriggerCondition {
     /// One declaration by the controller containing at least this many
     /// creatures. The observing source need not attack.
     ControllerAttacksWithAtLeastCreatures(u8),
+    /// The controller casts any spell during another player's turn. This is
+    /// a trigger-time restriction, not an intervening-if resolution gate.
+    CastSpellDuringOpponentsTurn,
 }
 
 pub struct TriggeredAbilityDef {
@@ -1403,6 +1406,11 @@ fn writhing_chrysalis_cast_effect() -> EffectOp {
 fn writhing_chrysalis_counter_marker_effect() -> EffectOp {
     EffectOp::BindPlusOnePlusOneCounterToTriggerSource
 }
+
+const BRINEBORN_CUTTHROAT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastSpellDuringOpponentsTurn,
+    ..etb_trigger(writhing_chrysalis_counter_marker_effect)
+}];
 
 fn blood_fountain_effect() -> EffectOp {
     let blood = crate::card_def::card_id_by_name("Blood Token").expect("Blood Token in CARD_DEFS");
@@ -3153,6 +3161,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Balmor, Battlemage Captain" => &BALMOR_TRIGGERS,
         "Firespitter Whelp" => &FIRESPITTER_WHELP_TRIGGERS,
         "Gixian Infiltrator" => &GIXIAN_INFILTRATOR_TRIGGERS,
+        "Brineborn Cutthroat" => &BRINEBORN_CUTTHROAT_TRIGGERS,
         "Webweaver Changeling" => &WEBWEAVER_CHANGELING_TRIGGERS,
         "Glint Hawk" => &GLINT_HAWK_TRIGGERS,
         "Gatecreeper Vine" => &GATECREEPER_VINE_TRIGGERS,
@@ -4683,6 +4692,12 @@ fn trigger_matches(
             },
         ) => *caster == controller,
         (
+            TriggerCondition::CastSpellDuringOpponentsTurn,
+            CommittedEvent::SpellCast {
+                controller: caster, ..
+            },
+        ) => *caster == controller && state.active_player != controller,
+        (
             TriggerCondition::CastSpellManaValueAtLeast(minimum),
             CommittedEvent::SpellCast {
                 spell,
@@ -5353,6 +5368,123 @@ mod tests {
     use super::*;
     use crate::ids::PlayerId;
     use crate::state::GameState;
+
+    #[test]
+    fn opponent_turn_cast_condition_counts_all_spell_types_for_both_seats() {
+        let elf = crate::card_def::card_id_by_name("Llanowar Elves").unwrap();
+        let instant = crate::card_def::CARD_DEFS
+            .iter()
+            .position(|definition| definition.has_type(CardType::Instant))
+            .unwrap() as u16;
+        for controller in [PlayerId::P0, PlayerId::P1] {
+            let mut state = GameState::new_from_libraries(
+                &[elf, instant],
+                &[elf, instant],
+                |id| crate::card_def::CARD_DEFS[id as usize].name.into(),
+                958,
+            );
+            let source = state.players[controller.index()].library[0];
+            for active_player in [PlayerId::P0, PlayerId::P1] {
+                state.active_player = active_player;
+                for caster in [PlayerId::P0, PlayerId::P1] {
+                    for spell in state.players[caster.index()].library.iter().copied() {
+                        let event = CommittedEvent::SpellCast {
+                            spell,
+                            controller: caster,
+                        };
+                        let replay: GameState =
+                            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                        for candidate in [&state, &replay] {
+                            assert_eq!(
+                                trigger_matches(
+                                    TriggerCondition::CastSpellDuringOpponentsTurn,
+                                    &event,
+                                    source,
+                                    controller,
+                                    candidate,
+                                    0,
+                                ),
+                                caster == controller && active_player != controller,
+                            );
+                        }
+                    }
+                }
+            }
+            assert!(!trigger_matches(
+                TriggerCondition::CastSpellDuringOpponentsTurn,
+                &CommittedEvent::LifeGain {
+                    player: controller,
+                    amount: 1
+                },
+                source,
+                controller,
+                &state,
+                0,
+            ));
+        }
+    }
+
+    #[test]
+    fn opponent_turn_counter_keeps_original_source_after_restore_and_zone_change() {
+        let elf = crate::card_def::card_id_by_name("Llanowar Elves").unwrap();
+        for controller in [PlayerId::P0, PlayerId::P1] {
+            let mut state =
+                GameState::new_from_libraries(&[elf; 4], &[elf; 4], |_| "elf".into(), 959);
+            let source = state.players[controller.index()].library[0];
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            let effect = materialize_trigger_source_program(
+                (BRINEBORN_CUTTHROAT_TRIGGERS[0].effect)(),
+                source,
+                &state,
+            );
+            let ctx = crate::effect::ExecCtx::no_targets(source, controller);
+            let mut replay: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            // The turn restriction has already been evaluated. Neither a
+            // subsequent control change nor a turn change cancels the counter.
+            state.active_player = controller;
+            state.objects.get_mut(source).controller = controller.opponent();
+            replay.active_player = state.active_player;
+            replay.objects.get_mut(source).controller = controller.opponent();
+            for candidate in [&mut state, &mut replay] {
+                candidate.players[controller.index()]
+                    .battlefield
+                    .retain(|object| *object != source);
+                candidate.players[controller.opponent().index()]
+                    .battlefield
+                    .push(source);
+            }
+            crate::effect::execute(&effect, &ctx, &mut state);
+            crate::effect::execute(&effect, &ctx, &mut replay);
+            assert_eq!(state.objects.get(source).counters.plus1_plus1, 1);
+            assert_eq!(
+                serde_json::to_value(&state).unwrap(),
+                serde_json::to_value(&replay).unwrap()
+            );
+            for candidate in [&mut state, &mut replay] {
+                crate::event::propose_and_commit(
+                    candidate,
+                    crate::event::ProposedEvent::zone_change(source, Zone::Hand),
+                );
+                crate::effect::execute(&effect, &ctx, candidate);
+                assert_eq!(candidate.objects.get(source).counters.plus1_plus1, 0);
+                crate::event::propose_and_commit(
+                    candidate,
+                    crate::event::ProposedEvent::zone_change(source, Zone::Battlefield),
+                );
+                crate::effect::execute(&effect, &ctx, candidate);
+                assert_eq!(candidate.objects.get(source).counters.plus1_plus1, 0);
+                assert!(candidate.engine.halted.is_none());
+            }
+            assert_eq!(
+                serde_json::to_value(&state).unwrap(),
+                serde_json::to_value(&replay).unwrap()
+            );
+        }
+    }
 
     #[test]
     fn attack_count_condition_uses_declaration_and_source_incarnation() {
