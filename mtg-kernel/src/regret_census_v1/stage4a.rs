@@ -75,6 +75,9 @@ struct Shared {
     model: String,
     limits: Limits,
     prior: world::DeckPrior,
+    /// `S4A_FAST_FORWARD=1`: every role scores with the search-only fast
+    /// forward. Rows then record it; without it rows are unchanged.
+    fast_forward: bool,
 }
 
 fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
@@ -130,6 +133,11 @@ fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
         model,
         limits,
         prior: world::DeckPrior::new(&cfg.decks),
+        fast_forward: match std::env::var("S4A_FAST_FORWARD").as_deref() {
+            Ok("1") => true,
+            Ok("0") | Err(_) => false,
+            Ok(v) => return Err(format!("S4A_FAST_FORWARD must be 0 or 1, not {v}")),
+        },
     })
 }
 
@@ -442,11 +450,28 @@ fn run_root(
             "selection_sampler_seconds":{"E":e_sel.sampler.seconds,"A":a_sel.sampler.seconds,"D":d_sel.sampler.seconds},
             "eval_wall":eval_wall,"eval_sampler_seconds":eval_sampler.seconds,
             "root_wall":started.elapsed().as_secs_f64()}});
+    if shared.fast_forward {
+        row["config"]["fast_search_forward"] = json!(true);
+    }
     row["primary_sha256"] = json!(primary_hash(&row));
     Ok(row)
 }
 
 fn fork_roles(policy: &FrozenPlayPolicyV1, shared: &Shared) -> Result<Roles, String> {
+    let mut roles = plain_roles(policy, shared)?;
+    if shared.fast_forward {
+        for p in [&mut roles.focal, &mut roles.scorer, &mut roles.inner_focal]
+            .into_iter()
+            .chain(roles.opps.iter_mut())
+            .chain(roles.inner_opps.iter_mut())
+        {
+            p.enable_fast_search_forward_v1();
+        }
+    }
+    Ok(roles)
+}
+
+fn plain_roles(policy: &FrozenPlayPolicyV1, shared: &Shared) -> Result<Roles, String> {
     Ok(Roles {
         focal: policy.fork_for_collection_v3()?,
         opps: shared
@@ -503,11 +528,12 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
         (cfg.first_game, cfg.first_game + cfg.games)
     };
     eprintln!(
-        "stage4a {}: model {}, opponents {:?}, items {first}..{end}, limits {}, {} already done",
+        "stage4a {}: model {}, opponents {:?}, items {first}..{end}, limits {}, fast forward {}, {} already done",
         cfg.mode,
         shared.model,
         shared.labels,
         shared.limits.json(),
+        shared.fast_forward,
         done.len()
     );
     let next = AtomicU64::new(first);

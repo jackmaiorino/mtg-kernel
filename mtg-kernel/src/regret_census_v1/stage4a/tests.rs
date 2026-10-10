@@ -544,3 +544,70 @@ fn suffix_labels_follow_a_scripted_spy_line() {
     );
     assert!(!other.complete(), "{other:?}");
 }
+
+/// The search-only fast forward scores like the ordinary one: logits and
+/// values within 1e-4 and the same argmax at every fixture decision.
+#[test]
+fn fast_search_forward_matches_the_ordinary_forward_closely() {
+    let mut plain = FrozenPlayPolicyV1::training_fixture_v3();
+    let mut fast = FrozenPlayPolicyV1::training_fixture_v3();
+    fast.enable_fast_search_forward_v1();
+    let (mut worst, mut decisions) = (0f32, 0u64);
+    for game in 0..2 {
+        each_decision(game, |s, _| {
+            let a = plain.score_fast_session_v1(s).unwrap();
+            let b = fast.score_fast_session_v1(s).unwrap();
+            assert_eq!(a.logits.len(), b.logits.len());
+            for (x, y) in a.logits.iter().zip(&b.logits) {
+                worst = worst.max((x - y).abs());
+            }
+            worst = worst.max((a.value - b.value).abs());
+            let argmax = |v: &[f32]| (0..v.len()).max_by(|&i, &j| v[i].total_cmp(&v[j]));
+            assert_eq!(argmax(&a.logits), argmax(&b.logits));
+            decisions += 1;
+        });
+    }
+    assert!(
+        decisions > 100 && worst <= 1e-4,
+        "{decisions} decisions, worst {worst:e}"
+    );
+}
+
+/// Per-call cost of policy scoring, ordinary vs fast search forward
+/// (manual: --ignored --nocapture).
+#[test]
+#[ignore]
+fn profile_policy_scoring_phases() {
+    for fast in [false, true] {
+        let mut p = FrozenPlayPolicyV1::training_fixture_v3();
+        if fast {
+            p.enable_fast_search_forward_v1();
+        }
+        let mut t = [0f64; 8];
+        let mut n = 0u64;
+        let mut worst = 0f32;
+        let mut reference = FrozenPlayPolicyV1::training_fixture_v3();
+        for game in 0..6 {
+            each_decision(game, |s, _| {
+                let x = p.profile_score_phases_v3(s);
+                for i in 0..8 {
+                    t[i] += x[i];
+                }
+                let (a, b) = (
+                    p.score_fast_session_v1(s).unwrap(),
+                    reference.score_fast_session_v1(s).unwrap(),
+                );
+                for (x, y) in a.logits.iter().zip(&b.logits) {
+                    worst = worst.max((x - y).abs());
+                }
+                n += 1;
+            });
+        }
+        let m = |i: usize| t[i] * 1e3 / n as f64;
+        let r = |i: usize| t[i] / n as f64;
+        eprintln!(
+            "fast={fast} decisions={n} per-call ms: encode={:.4} tensorize={:.4} forward={:.4} forward_hot={:.4} total={:.4}; rows objects={:.1} edges={:.1} action_refs={:.1} actions={:.1}; max logit diff {worst:e}",
+            m(0), m(1), m(2), m(3), m(0) + m(1) + m(2), r(4), r(5), r(6), r(7)
+        );
+    }
+}
