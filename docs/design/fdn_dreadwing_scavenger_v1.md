@@ -24,3 +24,12 @@ six/seven-card threshold, tokens excluded, current control, nonbattlefield
 exclusion and Witness Protection's removal of both static and triggered
 abilities. They await registration before gameplay execution. Source review
 and test compilation are next; no paid/formal experiment is included.
+
+Read-only review of58b0c17a found one shared threshold gap: the count excluded
+definition tokens and virtual spells but counted runtime token copies that
+retain ordinary card definitions before their next SBA. The prepared reader
+now also excludes the existing object token marker. The registered threshold
+unit case and unregistered Dreadwing fixture exercise that transient boundary.
+This correction belongs to the later prepared admission; it does not alter
+PR210. Native source compilation of58b0c17a is already running; the correction
+requires the affected native threshold case afterward.

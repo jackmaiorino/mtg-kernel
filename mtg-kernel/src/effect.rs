@@ -15178,6 +15178,7 @@ pub(crate) fn controller_graveyard_card_count(state: &GameState, controller: Pla
             object.zone == Zone::Graveyard
                 && object.owner == controller
                 && !crate::card_def::CARD_DEFS[object.card_def as usize].is_token
+                && !object.v4.is_token
                 && object.spell_copy_origin.is_none()
         })
         .count()
@@ -16440,6 +16441,14 @@ mod tests {
         });
         let copy = state.objects.push(copy);
         state.players[0].graveyard.push(copy);
+        assert_eq!(controller_graveyard_card_count(&state, PlayerId::P0), 7);
+        // Runtime token copies keep a nontoken definition. They are still
+        // not cards while temporarily in the graveyard before the next SBA.
+        let mut token_copy = state.objects.get(parent).clone();
+        token_copy.v4.is_token = true;
+        assert!(!crate::card_def::CARD_DEFS[token_copy.card_def as usize].is_token);
+        let token_copy = state.objects.push(token_copy);
+        state.players[0].graveyard.push(token_copy);
         assert_eq!(controller_graveyard_card_count(&state, PlayerId::P0), 7);
     }
 

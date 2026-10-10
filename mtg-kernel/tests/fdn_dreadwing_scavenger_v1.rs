@@ -240,6 +240,9 @@ fn threshold_recomputes_cards_current_controller_zone_and_restored_state() {
         assert_eq!(stats(&state, source), (2, 2, false));
         put(&mut state, player, "Rat Token", Zone::Graveyard);
         assert_eq!(stats(&state, source), (2, 2, false));
+        let token_copy = put(&mut state, player, "Forest", Zone::Graveyard);
+        state.objects.get_mut(token_copy).v4.is_token = true;
+        assert_eq!(stats(&state, source), (2, 2, false));
         let seventh = put(&mut state, player, "Forest", Zone::Graveyard);
         assert_eq!(stats(&state, source), (3, 3, true));
         assert_eq!(stats(&copy(&state), source), (3, 3, true));
