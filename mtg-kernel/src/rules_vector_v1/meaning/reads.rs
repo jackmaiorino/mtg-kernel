@@ -274,6 +274,18 @@ pub(crate) fn dynamic_value(value: DynamicValueDef, out: &mut Collector) -> AmtF
             AmtF::Dynamic
         }
         DynamicValueDef::Fixed(n) => AmtF::fixed(i64::from(n)),
+        DynamicValueDef::DistinctManaValuesAmongControlledNonlandPermanents => {
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Permanent),
+                AggF::Characteristic,
+            );
+            // The fixed vocabulary has no nonland exclusion or distinct
+            // mana-value grouping. Preserve that limitation explicitly.
+            out.atoms.push(Atom::Opaque);
+            AmtF::Dynamic
+        }
         DynamicValueDef::ControlledPermanentsWithType(card_type) => {
             out.read(
                 RelF::You,

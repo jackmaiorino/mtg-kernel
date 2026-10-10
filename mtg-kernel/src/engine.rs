@@ -3523,6 +3523,17 @@ pub(crate) fn evaluate_dynamic_value(
                     && object_has_type(state, *id, card_type)
             })
             .count(),
+        DynamicValueDef::DistinctManaValuesAmongControlledNonlandPermanents => state
+            .objects
+            .iter()
+            .filter(|(id, object)| {
+                object.zone == Zone::Battlefield
+                    && object.controller == controller
+                    && !object_has_type(state, *id, CardType::Land)
+            })
+            .map(|(_, object)| card_def::CARD_DEFS[object.card_def as usize].mana_value)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
         // UrzaTerrainValue's shape: every required conjunction must be
         // matched by at least one battlefield permanent `controller`
         // controls, and one permanent must carry both subtypes of the pair
@@ -16563,6 +16574,37 @@ mod tests {
                 ),
                 2
             );
+        }
+    }
+
+    #[test]
+    fn distinct_nonland_mana_value_counts_current_control_and_zone() {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = empty_game();
+            put_on_battlefield(&mut state, player, "Forest");
+            put_on_battlefield(&mut state, player, "Great Furnace");
+            put_on_battlefield(&mut state, player, "Faerie Miscreant");
+            put_on_battlefield(&mut state, player, "Faerie Miscreant");
+            let token = put_on_battlefield(&mut state, player, "Treasure Token");
+            state.objects.get_mut(token).v4.is_token = true;
+            let borrowed = put_on_battlefield(&mut state, player.opponent(), "Mulldrifter");
+            state.objects.get_mut(borrowed).controller = player;
+            put_on_battlefield(&mut state, player.opponent(), "Troll of Khazad-dum");
+            put_in_hand(&mut state, player, "Troll of Khazad-dum");
+            put_in_graveyard(&mut state, player, "Troll of Khazad-dum");
+            let value = DynamicValueDef::DistinctManaValuesAmongControlledNonlandPermanents;
+            assert_eq!(evaluate_dynamic_value(&state, value, player), 3);
+            state.objects.get_mut(borrowed).controller = player.opponent();
+            assert_eq!(evaluate_dynamic_value(&state, value, player), 2);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(token, Zone::Graveyard),
+            );
+            assert_eq!(evaluate_dynamic_value(&state, value, player), 1);
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(evaluate_dynamic_value(&restored, value, player), 1);
+            assert_eq!(restored.state_hash(), state.state_hash());
         }
     }
 

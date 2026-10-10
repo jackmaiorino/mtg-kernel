@@ -1289,6 +1289,9 @@ pub enum DynamicValueDef {
     /// Count battlefield permanents currently controlled by the evaluating
     /// player with this effective card type, including tokens and copies.
     ControlledPermanentsWithType(CardType),
+    /// Count distinct mana values among currently controlled nonland
+    /// battlefield permanents. Tokens participate, and X is zero off-stack.
+    DistinctManaValuesAmongControlledNonlandPermanents,
 }
 
 /// Two subtypes a *single* permanent must carry at once, e.g. the Urza's

@@ -3407,6 +3407,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
             "LoseOpponentsLifeXThenGainLifeLost(announcedX,actualCommittedLoss)",
             "EffectOp::LoseOpponentsLifeXThenGainLifeLost",
         ),
+        "Lunar Insight" => program(
+            "None",
+            "DrawCardsDynamic(Controller,DistinctManaValuesAmongControlledNonlandPermanents,resolutionSample)",
+            "EffectOp::DrawCardsDynamic { player: PlayerRef::Controller, count: DynamicValueDef::DistinctManaValuesAmongControlledNonlandPermanents }",
+        ),
         "Brass's Bounty" => program(
             "None",
             "CreateTokensDynamic(Treasure Token,Controller,ControlledPermanentsWithType(Land),untapped)",
