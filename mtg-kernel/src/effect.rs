@@ -5945,6 +5945,18 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::engine::validated_stack_item_target_spec(&pending.resolving_item, state)
         .map_err(|error| format!("effect continuation has invalid stack provenance: {error}"))?;
     validate_answered_choice_guard(state, pending)?;
+    if pending.choice.is_none() && pending.answered_choice_guard.is_none() {
+        let root = validated_definition_owned_root_effect(state, pending)?;
+        if matches!(root.as_ref(), EffectOp::Sequence(ops) if ops.iter().take(ops.len().saturating_sub(1)).any(|op| matches!(op, EffectOp::DiscardCards { .. })))
+        {
+            let discard = state
+                .engine
+                .pending_discard
+                .as_ref()
+                .ok_or("nonterminal discard continuation lost its pending hand answer")?;
+            validate_resumable_discard_details(state, pending, discard)?;
+        }
+    }
     let Some(choice) = pending.choice.as_ref() else {
         return Ok(());
     };
@@ -10135,6 +10147,20 @@ pub(crate) fn validate_resumable_discard(
     state: &GameState,
     discard: &crate::engine::PendingDiscard,
 ) -> Result<(), String> {
+    validate_pending_effect_choice(state)?;
+    let pending = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .ok_or("resumable discard lost its continuation")?;
+    validate_resumable_discard_details(state, pending, discard)
+}
+
+fn validate_resumable_discard_details(
+    state: &GameState,
+    pending: &EffectContinuation,
+    discard: &crate::engine::PendingDiscard,
+) -> Result<(), String> {
     let crate::engine::DiscardResume::FinishEffectContinuation {
         stack_item_id,
         path,
@@ -10143,12 +10169,6 @@ pub(crate) fn validate_resumable_discard(
     else {
         return Err("discard is not bound to a resumable effect".to_string());
     };
-    validate_pending_effect_choice(state)?;
-    let pending = state
-        .engine
-        .pending_effect
-        .as_ref()
-        .ok_or("resumable discard lost its continuation")?;
     if pending.resolving_item.v4.stack_item_id != *stack_item_id
         || pending.choice.is_some()
         || pending.answered_choice_guard.is_some()

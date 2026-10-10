@@ -7901,7 +7901,7 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
                 .expect("validated resumable discard retains its continuation")
                 .frames
                 .pop();
-            let _ = drain_pending_effect_or_decide(state);
+            let _ = resume_owned_pending_effect(state);
         }
         DiscardResume::None => collect_and_queue_triggers(state),
         DiscardResume::FinishAbilityResolution { stack_item_id } => {
@@ -8176,6 +8176,12 @@ fn drain_pending_effect_or_decide(state: &mut GameState) -> Option<Decision> {
         });
     }
 
+    resume_owned_pending_effect(state)
+}
+
+/// Execute a locally owned remainder after common-boundary validation or an
+/// authenticated discard, before another snapshot or action can intervene.
+fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
     let pending = state.engine.pending_effect.as_ref().unwrap();
     let item = pending.resolving_item.clone();
     match state.stack.pop() {

@@ -219,7 +219,7 @@ fn opponent_discards_exactly_one_then_life_draw_gain_continue_after_source_leave
         );
         assert_eq!(state.players[player.index()].library.len(), 40);
         assert!(state.engine.pending_effect.is_some());
-        for kind in 0..4 {
+        for kind in 0..6 {
             let mut forged = restored(&state);
             match kind {
                 0 => forged.engine.pending_discard.as_mut().unwrap().count = 2,
@@ -248,6 +248,11 @@ fn opponent_discards_exactly_one_then_life_draw_gain_continue_after_source_leave
                         panic!("resumable discard absent")
                     };
                     original_hand[0].expected_zone_change_count += 1;
+                }
+                4 => forged.engine.pending_discard = None,
+                5 => {
+                    forged.engine.pending_discard.as_mut().unwrap().resume =
+                        mtg_kernel::engine::DiscardResume::None
                 }
                 _ => unreachable!(),
             }
