@@ -10,7 +10,7 @@ coverage is138 full, one partial and147 missing names.
 The31 names are now registered only in this development candidate, IDs338-368,
 after the deferred admission script verified PR212's merge and ancestry.
 All36 affected Python tests pass, including the new40-card reference fixture.
-Native card gameplay, generated v66 identity/profile migration, CI and actual
+Native card gameplay, live v66 profile execution, CI and actual
 default integration remain required; candidate169 does not increase accepted
 coverage. The separate future cost-framework branch is not part of this batch.
 Historical tentative v66-v81 labels in the individual design notes describe
@@ -57,9 +57,9 @@ registry. All31 names are in the target and absent from that predecessor.
 | 368 | Arbiter of Woe | FDN 55 |
 
 Native source checks and reviews qualify only the observed primitive
-or compilation scope. They do not execute these unregistered card games.
-The proposed admission would reach169 full names only if all31 and both
-predecessor batches pass gameplay/profile checks and merge. The frozen286
+or compilation scope. They do not qualify these candidate card games.
+The proposed admission would reach169 full names only if all31 pass
+gameplay/profile checks and merge after the accepted predecessors. The frozen286
 name target, remaining rules work, cross-color/reference comparisons and
 Limited search/DraftZero acceptance remain unchanged.
 
@@ -121,5 +121,18 @@ fast-forwarded from662b8343 to repaira0032541 using SHA256-verified bundle
 f8c396e07ad41efbf03495b2512156e5ceaab1e98dc8b6c51148f695a16ccaeb.
 Retry guard4a0f751ea5ea4e6699633f479e6f1e7a, supervisor155376, admitted
 cores12-13 BelowNormal and actual compilation restarted with the same pinned
-tools. Observer11056 is retained. The generated identity,25 card targets and
-profile migration remain pending; the failed build is not a gameplay pass.
+tools. Observer11056 is retained. The25 card targets and live profile execution
+remain pending; the failed build is not a gameplay pass.
+
+Retry sourcea0032541 passed the library build and generated observed v66 hash
+e8e2bba9d9071e80. The retained generated file is
+C:/mtg-node/codex-fdn-v63-target-20261010/debug/build/mtg-kernel-c41b5b8e618140b7/out/card_defs.rs,
+SHA2569725865110f84ca56f04215c51009d040953c13973467591be9adb70de4eab98.
+Source97bed88286cb64d1f5ad59bd63abb7169afd404a binds that identity to
+FdnPreparedFamilies/PREPARED_FAMILIES and freezes the matching card database.
+The runtime schema SHA256 remains
+68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851.
+Historical v65 stores remain readable; new cases reject stale v65 resume and
+publication before mutation. Exact read-only migration review found no
+actionable defects. Native profile execution remains pending and must follow
+the retained card-game sequence without mutating its running checkout.
