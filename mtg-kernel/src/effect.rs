@@ -15468,7 +15468,10 @@ mod tests {
                 &mut state,
             );
             assert_eq!(state.objects.get(first).damage, 1);
-            assert_eq!(state.objects.get(second).damage, power.max(0));
+            assert_eq!(
+                state.objects.get(second).damage,
+                u32::try_from(power.max(0)).unwrap()
+            );
         }
         let (mut state, first, _, mut ctx) = fight_fixture(PlayerId::P0);
         ctx.targets = vec![Target::Object(first)];
