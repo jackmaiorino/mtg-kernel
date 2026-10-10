@@ -82,6 +82,9 @@ struct Shared {
     limits: Limits,
     prior: world::DeckPrior,
     runtime_rules: Option<crate::engine::RuntimeRulesV1>,
+    /// E's selection rule (`S4A_SELECT`): None is the formal untried-first
+    /// rule; `fpu-1.5` the finite-urgency candidate.
+    select_urgency: Option<f64>,
 }
 
 fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
@@ -91,6 +94,11 @@ fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
         Err(error) => return Err(format!("invalid S4A_RUNTIME: {error}")),
     };
     let runtime_rules = parse_runtime_rules(&cfg.mode, runtime_setting.as_deref())?;
+    let select_urgency = match std::env::var("S4A_SELECT").ok().as_deref() {
+        None | Some("") | Some("untried-first") => None,
+        Some("fpu-1.5") if cfg.mode == "s4a-diag" => Some(1.5),
+        Some(other) => return Err(format!("unsupported S4A_SELECT {other} for {}", cfg.mode)),
+    };
     let entries: Vec<(String, String)> = std::env::var("OPPONENTS")
         .map_err(|_| "OPPONENTS is required")?
         .split(',')
@@ -144,6 +152,7 @@ fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
         limits,
         prior: world::DeckPrior::new(&cfg.decks),
         runtime_rules,
+        select_urgency,
     })
 }
 
@@ -165,10 +174,21 @@ fn parse_runtime_rules(
 
 /// Admit only completed rows of this runtime before truncation or append.
 /// Missing/null identity is historical; an interrupted final row is disposable.
+#[cfg(test)]
 fn completed_runtime_roots(
     bytes: &[u8],
     row_kind: &str,
     runtime_rules: Option<crate::engine::RuntimeRulesV1>,
+) -> Result<HashSet<String>, String> {
+    completed_identity_roots(bytes, row_kind, runtime_rules, None)
+}
+
+/// `completed_runtime_roots` that also binds the selection rule identity.
+fn completed_identity_roots(
+    bytes: &[u8],
+    row_kind: &str,
+    runtime_rules: Option<crate::engine::RuntimeRulesV1>,
+    select_rule: Option<&str>,
 ) -> Result<HashSet<String>, String> {
     let keep = bytes
         .iter()
@@ -195,6 +215,12 @@ fn completed_runtime_roots(
         };
         if recorded != runtime_rules {
             return Err("resume refused: runtime rules identity differs; preserve output and use a fresh path".into());
+        }
+        if row.get("select_rule").and_then(Value::as_str) != select_rule {
+            return Err(
+                "resume refused: selection rule differs; preserve output and use a fresh path"
+                    .into(),
+            );
         }
         if let Some(id) = row["root_id"].as_str() {
             done.insert(id.to_owned());
@@ -416,6 +442,7 @@ fn run_root(
         cast_root,
         probs: probs.clone(),
         limits: shared.limits,
+        urgency: None,
     };
     let (e_sel, e_tree) = roles.select_e(&ctx);
     let a_cands = arms::a_candidates(&probs);
@@ -562,6 +589,7 @@ fn run_root_diag(
         cast_root,
         probs: probs.clone(),
         limits: shared.limits,
+        urgency: shared.select_urgency,
     };
     let trace_dir = std::env::var("S4A_TRACE").ok();
     let mut trace = trace_dir.as_ref().map(|_| diag::Trace::default());
@@ -641,7 +669,7 @@ fn run_root_diag(
         "config":{"limits":shared.limits.json(),"sampler":world::SAMPLER_VERSION,
             "prior_decks":shared.prior.ids(),"opponents":shared.labels,"seed_namespace":seeds::NAMESPACE},
         "arms":arms_json,"eval_worlds":worlds,"rejected_eval_worlds":rejected_worlds,
-        "eval_sampler":eval_sampler.json(),"invalid":invalid,"runtime_rules":runtime.map(|_| "resolution-boundary-v1"),
+        "eval_sampler":eval_sampler.json(),"invalid":invalid,"runtime_rules":runtime.map(|_| "resolution-boundary-v1"),"select_rule":shared.select_urgency.map(|_| "fpu-1.5"),
         "cost":{"selection_transitions":e_sel.transitions,"selection_inference_calls":e_sel.inference,
             "eval_transitions":summary.4},
         "timing":{"replay":replay_secs,"selection_wall":{"E":e_sel.wall},
@@ -692,7 +720,12 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(error) => return Err(error.to_string()),
         };
-        completed_runtime_roots(&bytes, row_kind, shared.runtime_rules)?
+        completed_identity_roots(
+            &bytes,
+            row_kind,
+            shared.runtime_rules,
+            shared.select_urgency.map(|_| "fpu-1.5"),
+        )?
     } else {
         HashSet::new()
     };
