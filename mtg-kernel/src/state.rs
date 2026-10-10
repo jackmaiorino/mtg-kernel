@@ -15,6 +15,10 @@ fn i16_is_zero(value: &i16) -> bool {
     *value == 0
 }
 
+fn u8_is_zero(value: &u8) -> bool {
+    *value == 0
+}
+
 fn bool_is_false(value: &bool) -> bool {
     !*value
 }
@@ -210,6 +214,32 @@ pub struct ObjectStateV4 {
     /// this set.
     #[serde(default, skip_serializing_if = "bool_is_false")]
     pub on_adventure: bool,
+    /// True iff this battlefield incarnation resolved from a spell cast for
+    /// its warp cost (`card_def::AltCostCondition::WarpFromHand`). Read by
+    /// its own end-step exile trigger and by "if that creature was cast for
+    /// its warp cost" (Full Bore). Every zone change clears it.
+    #[serde(default, skip_serializing_if = "bool_is_false")]
+    pub warped_v1: bool,
+    /// How many creatures convoked this spell (on the stack) or the spell
+    /// this permanent resolved from (on the battlefield). Every zone change
+    /// clears it; resolution carries it onto the permanent.
+    #[serde(default, skip_serializing_if = "u8_is_zero")]
+    pub convoked_creatures_v1: u8,
+    /// True iff this battlefield incarnation was returned by unearth. It is
+    /// exiled at the beginning of the next end step, and exiled instead if
+    /// it would leave the battlefield any other way. Every zone change
+    /// clears it.
+    #[serde(default, skip_serializing_if = "bool_is_false")]
+    pub unearthed_v1: bool,
+    /// Impending's time counters. While any remain the permanent isn't a
+    /// creature; its controller removes one at the beginning of each of
+    /// their end steps. Every zone change clears them.
+    #[serde(default, skip_serializing_if = "u8_is_zero")]
+    pub time_counters_v1: u8,
+    /// An Enduring card returned by its own dies trigger: "It's an
+    /// enchantment" (not a creature). Every zone change clears it.
+    #[serde(default, skip_serializing_if = "bool_is_false")]
+    pub enduring_enchantment_v1: bool,
 }
 
 impl Hash for ObjectStateV4 {
@@ -240,6 +270,23 @@ impl Hash for ObjectStateV4 {
         if let Some(timestamp) = self.lifelink_counter_timestamp {
             "lifelink_counter_timestamp/v1".hash(state);
             timestamp.hash(state);
+        }
+        if self.warped_v1 {
+            "warped/v1".hash(state);
+        }
+        if self.convoked_creatures_v1 != 0 {
+            "convoked-creatures/v1".hash(state);
+            self.convoked_creatures_v1.hash(state);
+        }
+        if self.unearthed_v1 {
+            "unearthed/v1".hash(state);
+        }
+        if self.time_counters_v1 != 0 {
+            "time-counters/v1".hash(state);
+            self.time_counters_v1.hash(state);
+        }
+        if self.enduring_enchantment_v1 {
+            "enduring-enchantment/v1".hash(state);
         }
     }
 }
@@ -277,7 +324,13 @@ impl ObjectStateV4 {
             exiled_by: None,
             ward_generic: match def.ward_cost {
                 Some(crate::card_def::WardCostDef::Generic(amount)) => u16::from(amount),
-                None => 0,
+                // Observations carry only generic Ward amounts.
+                Some(
+                    crate::card_def::WardCostDef::CollectEvidence(_)
+                    | crate::card_def::WardCostDef::BackFacePayLife(_)
+                    | crate::card_def::WardCostDef::DiscardCard,
+                )
+                | None => 0,
             },
             minimum_blockers_override: None,
             landwalk_mask: 0,
@@ -286,6 +339,11 @@ impl ObjectStateV4 {
             layer_timestamp: None,
             lifelink_counter_timestamp: None,
             on_adventure: false,
+            warped_v1: false,
+            convoked_creatures_v1: 0,
+            unearthed_v1: false,
+            time_counters_v1: 0,
+            enduring_enchantment_v1: false,
         }
     }
 
@@ -935,7 +993,9 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::OpponentNonlandPermanent
                 | TargetSpec::NonOutlawCreature
                 | TargetSpec::CreatureToughnessAtLeastFour
-                | TargetSpec::CreatureEnchantmentOrPlaneswalker,
+                | TargetSpec::CreatureEnchantmentOrPlaneswalker
+                | TargetSpec::AnotherControlledCreature
+                | TargetSpec::ControlledCreatureWithSubtype(_),
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Battlefield,
@@ -971,6 +1031,13 @@ pub fn stack_target_contract_is_structurally_valid(
         ) | (
             TargetSpec::UpToTwoCardsInGraveyards,
             0 | 1,
+            StackTargetContractV4::Object {
+                zone: Zone::Graveyard,
+                ..
+            },
+        ) | (
+            TargetSpec::UpToOneCardInGraveyards,
+            0,
             StackTargetContractV4::Object {
                 zone: Zone::Graveyard,
                 ..
@@ -1367,6 +1434,38 @@ pub struct CreatureDeathTurnV1 {
     pub active_player: PlayerId,
 }
 
+/// Each player's speed (Aetherdrift's Start your engines!), indexed by seat.
+/// Zero means the player has no speed. `last_increase` stamps the turn in
+/// which the active player's once-per-turn speed increase last happened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpeedV1 {
+    pub speeds: [u8; 2],
+    pub last_increase: Option<CreatureDeathTurnV1>,
+}
+
+impl SpeedV1 {
+    /// 702.179 (Max speed): a player's speed can't exceed four.
+    pub const MAX: u8 = 4;
+}
+
+/// 700.14: which players descended (had a permanent card put into their
+/// graveyard from anywhere) during `turn`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DescendedTurnV1 {
+    pub turn: CreatureDeathTurnV1,
+    pub players: [bool; 2],
+}
+
+/// 726: the game's day/night designation once a daybound or nightbound
+/// permanent has appeared (absent before then).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DayNightV1 {
+    Day,
+    Night,
+}
+
 /// `Hash` is manual (see the `impl Hash for GameState` block below this
 /// struct): it must reproduce the exact pre-existing field-hash sequence for
 /// a legacy P0-first state, the same discipline `starting_player`'s serde
@@ -1456,6 +1555,16 @@ pub struct GameState {
     /// someone's control. Only `standard-magezero-fixtures` builds record it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attack_block_restrictions_v1: Option<Vec<AttackBlockRestrictionV1>>,
+    /// Absent until some player first gets speed, so every earlier state
+    /// keeps its bytes and hashes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed_v1: Option<SpeedV1>,
+    /// Absent until a daybound permanent first appears.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub day_night_v1: Option<DayNightV1>,
+    /// Absent until some player first descends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub descended_v1: Option<DescendedTurnV1>,
 }
 
 /// Which players lost life during one turn (Hired Claw: "only if an
@@ -1558,6 +1667,18 @@ impl Hash for GameState {
         if let Some(restrictions) = &self.attack_block_restrictions_v1 {
             "attack-block-restrictions-v1".hash(state);
             restrictions.hash(state);
+        }
+        if let Some(speed) = &self.speed_v1 {
+            "speed-v1".hash(state);
+            speed.hash(state);
+        }
+        if let Some(day_night) = &self.day_night_v1 {
+            "day-night-v1".hash(state);
+            day_night.hash(state);
+        }
+        if let Some(descended) = &self.descended_v1 {
+            "descended-v1".hash(state);
+            descended.hash(state);
         }
     }
 }
@@ -1732,6 +1853,9 @@ impl GameState {
             counter_lki_v1: None,
             life_loss_turn_v1: None,
             attack_block_restrictions_v1: None,
+            speed_v1: None,
+            day_night_v1: None,
+            descended_v1: None,
         }
     }
 

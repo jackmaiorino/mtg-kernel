@@ -51,6 +51,8 @@ pub mod native_search_collection_v3;
 pub mod native_search_trajectory_v3;
 pub mod planeswalker_v1;
 #[cfg(feature = "standard-magezero-fixtures")]
+pub mod standard_keywords_v1;
+#[cfg(feature = "standard-magezero-fixtures")]
 pub(crate) mod standard_statics_v1;
 // Fail-closed canonical JSON codec shared by the native training store's
 // records. Schema validation remains a separate layer.

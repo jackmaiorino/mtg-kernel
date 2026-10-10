@@ -1198,6 +1198,1210 @@
         "card_selection"
       ],
       "java_file": "Mage.Sets/src/mage/cards/r/RecruitmentOfficer.java"
+    },
+    {
+      "name": "Emberheart Challenger",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Mouse",
+        "Warrior"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoR.dck",
+        "Standard16-RG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "haste",
+        "prowess",
+        "valiant",
+        "impulse_draw"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/EmberheartChallenger.java"
+    },
+    {
+      "name": "Burnout Bashtronaut",
+      "engine_capability": "partial",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Goblin",
+        "Warrior"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "menace",
+        "start_your_engines",
+        "max_speed",
+        "activated_pump"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BurnoutBashtronaut.java"
+    },
+    {
+      "name": "Nova Hellkite",
+      "engine_capability": "full",
+      "mana_cost": "{3}{R}{R}",
+      "mana_value": 5,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dragon"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "flying",
+        "haste",
+        "etb_targeted_damage",
+        "warp"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/n/NovaHellkite.java"
+    },
+    {
+      "name": "Full Bore",
+      "engine_capability": "full",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "pump",
+        "warp_condition"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FullBore.java"
+    },
+    {
+      "name": "Iridescent Vinelasher",
+      "engine_capability": "full",
+      "mana_cost": "{B}",
+      "mana_value": 1,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Lizard",
+        "Assassin"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "offspring",
+        "landfall",
+        "targeted_player_damage"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/i/IridescentVinelasher.java"
+    },
+    {
+      "name": "Iridescent Vinelasher Offspring Token",
+      "engine_capability": "full",
+      "mana_cost": "{B}",
+      "mana_value": 1,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Lizard",
+        "Assassin"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "offspring",
+        "landfall",
+        "targeted_player_damage",
+        "token_copy"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/i/IridescentVinelasher.java",
+      "is_token": true
+    },
+    {
+      "name": "Aloe Alchemist",
+      "engine_capability": "full",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Plant",
+        "Warlock"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "trample",
+        "plot",
+        "becomes_plotted_trigger",
+        "targeted_pump"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AloeAlchemist.java"
+    },
+    {
+      "name": "Forsaken Miner",
+      "engine_capability": "full",
+      "mana_cost": "{B}",
+      "mana_value": 1,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Skeleton",
+        "Rogue"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "cant_block",
+        "crime",
+        "graveyard_recursion"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/ForsakenMiner.java"
+    },
+    {
+      "name": "Axebane Ferox",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{G}{G}",
+      "mana_value": 4,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Beast"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "deathtouch",
+        "haste",
+        "ward_collect_evidence"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AxebaneFerox.java"
+    },
+    {
+      "name": "Hopeful Initiate",
+      "engine_capability": "partial",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Warlock"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "training",
+        "remove_counters_cost",
+        "artifact_enchantment_removal"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HopefulInitiate.java"
+    },
+    {
+      "name": "Chrome Host Seedshark",
+      "engine_capability": "full",
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Phyrexian",
+        "Shark"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoU.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "flying",
+        "noncreature_cast_trigger",
+        "incubate"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/ChromeHostSeedshark.java"
+    },
+    {
+      "name": "Incubator Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Incubator"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "incubate",
+        "transform",
+        "activated_transform"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/IncubatorToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Brutal Cathar",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Soldier",
+        "Werewolf"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "daybound",
+        "nightbound",
+        "transform",
+        "exile_until_leaves",
+        "first_strike_back_face",
+        "ward_pay_life_back_face"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BrutalCathar.java"
+    },
+    {
+      "name": "Knight-Errant of Eos",
+      "engine_capability": "partial",
+      "mana_cost": "{4}{W}",
+      "mana_value": 5,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Knight"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoW.dck",
+        "Standard16-RW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "convoke",
+        "etb_look_top",
+        "creature_selection_to_hand"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/k/KnightErrantOfEos.java"
+    },
+    {
+      "name": "Monastery Swiftspear",
+      "engine_capability": "full",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Monk"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RG.dck",
+        "Standard16-UR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "haste",
+        "prowess"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MonasterySwiftspear.java"
+    },
+    {
+      "name": "Heartfire Hero",
+      "engine_capability": "full",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Mouse",
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "valiant",
+        "plus_one_counters",
+        "dies_damage_last_power"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HeartfireHero.java"
+    },
+    {
+      "name": "Slickshot Show-Off",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bird",
+        "Wizard"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "flying",
+        "haste",
+        "noncreature_cast_pump",
+        "plot"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SlickshotShowOff.java"
+    },
+    {
+      "name": "Sanguine Evangelist",
+      "engine_capability": "full",
+      "mana_cost": "{2}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Vampire",
+        "Cleric"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "battle_cry",
+        "etb_token",
+        "dies_token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SanguineEvangelist.java"
+    },
+    {
+      "name": "Bat Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bat"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/BatToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Darkstar Augur",
+      "engine_capability": "full",
+      "mana_cost": "{2}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bat",
+        "Warlock"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-BW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "offspring",
+        "flying",
+        "upkeep_reveal_to_hand_life_loss"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DarkstarAugur.java"
+    },
+    {
+      "name": "Darkstar Augur Offspring Token",
+      "engine_capability": "full",
+      "mana_cost": "{2}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bat",
+        "Warlock"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "offspring",
+        "flying",
+        "upkeep_reveal_to_hand_life_loss",
+        "token_copy"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DarkstarAugur.java",
+      "is_token": true
+    },
+    {
+      "name": "Ruin-Lurker Bat",
+      "engine_capability": "full",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bat"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-BW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "flying",
+        "lifelink",
+        "descend",
+        "scry"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RuinLurkerBat.java"
+    },
+    {
+      "name": "Pawpatch Recruit",
+      "engine_capability": "full",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Rabbit",
+        "Warrior"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GW.dck",
+        "Standard16-RG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "offspring",
+        "trample",
+        "becomes_target_trigger",
+        "plus_one_counter"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/p/PawpatchRecruit.java"
+    },
+    {
+      "name": "Pawpatch Recruit Offspring Token",
+      "engine_capability": "full",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Rabbit",
+        "Warrior"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "offspring",
+        "trample",
+        "becomes_target_trigger",
+        "plus_one_counter",
+        "token_copy"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/p/PawpatchRecruit.java",
+      "is_token": true
+    },
+    {
+      "name": "Manifold Mouse",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Mouse",
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "offspring",
+        "beginning_of_combat",
+        "choose_keyword"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/ManifoldMouse.java"
+    },
+    {
+      "name": "Manifold Mouse Offspring Token",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Mouse",
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "offspring",
+        "beginning_of_combat",
+        "choose_keyword",
+        "token_copy"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/ManifoldMouse.java",
+      "is_token": true
+    },
+    {
+      "name": "Yotian Frontliner",
+      "engine_capability": "full",
+      "mana_cost": "{1}",
+      "mana_value": 1,
+      "colors": [],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "attack_trigger",
+        "pump",
+        "unearth"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/y/YotianFrontliner.java"
+    },
+    {
+      "name": "Cori-Steel Cutter",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Equipment"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RG.dck",
+        "Standard16-UR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "equipment",
+        "equip",
+        "flurry",
+        "token_maker"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CoriSteelCutter.java"
+    },
+    {
+      "name": "Monk Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Monk"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "prowess"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/MonasteryMentorToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Graveyard Trespasser",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Werewolf"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "ward_discard",
+        "etb_or_attacks",
+        "graveyard_hate",
+        "drain",
+        "daybound",
+        "transform"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GraveyardTrespasser.java"
+    },
+    {
+      "name": "Overlord of the Mistmoors",
+      "engine_capability": "partial",
+      "mana_cost": "{5}{W}{W}",
+      "mana_value": 7,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Enchantment",
+        "Creature"
+      ],
+      "subtypes": [
+        "Avatar",
+        "Horror"
+      ],
+      "supertypes": [],
+      "power": 6,
+      "toughness": 6,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "impending",
+        "time_counters",
+        "etb_or_attacks",
+        "token_maker"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/o/OverlordOfTheMistmoors.java"
+    },
+    {
+      "name": "White Insect Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Insect"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/InsectWhiteToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Enduring Curiosity",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{U}{U}",
+      "mana_value": 4,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Enchantment",
+        "Creature"
+      ],
+      "subtypes": [
+        "Cat",
+        "Glimmer"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "flash",
+        "combat_damage_draw",
+        "enduring"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/EnduringCuriosity.java"
+    },
+    {
+      "name": "Enduring Innocence",
+      "engine_capability": "partial",
+      "mana_cost": "{1}{W}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Enchantment",
+        "Creature"
+      ],
+      "subtypes": [
+        "Sheep",
+        "Glimmer"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-BW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "lifelink",
+        "creature_enters_draw",
+        "once_each_turn",
+        "enduring"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/EnduringInnocence.java"
+    },
+    {
+      "name": "Make Disappear",
+      "engine_capability": "partial",
+      "mana_cost": "{1}{U}",
+      "mana_value": 2,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "casualty",
+        "counter_unless_pay",
+        "spell_copy"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MakeDisappear.java"
+    },
+    {
+      "name": "Phantom Interference",
+      "engine_capability": "full",
+      "mana_cost": "{U}",
+      "mana_value": 1,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "spree",
+        "counter_unless_pay",
+        "token_creation"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/p/PhantomInterference.java"
+    },
+    {
+      "name": "Spirit Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Spirit"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/Spirit22Token.java",
+      "is_token": true
+    },
+    {
+      "name": "Flourishing Bloom-Kin",
+      "engine_capability": "partial",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Plant",
+        "Elemental"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 0,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "static_pt_boost",
+        "disguise_not_modeled"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FlourishingBloomKin.java"
     }
   ]
 }

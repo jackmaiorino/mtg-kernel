@@ -309,6 +309,12 @@ pub enum EffectCond {
     /// (Fading Hope's "if its mana value was 3 or less"). Evaluate it before
     /// any leaf that moves the target; a stale target fails the condition.
     TargetManaValueAtMost(u8, u16),
+    /// The live target permanent at this index resolved from a spell cast
+    /// for its warp cost (`ObjectStateV4::warped_v1`).
+    TargetWasCastForWarp(u8),
+    /// The resolving triggered ability's source is still the incarnation
+    /// that triggered, in the zone it triggered from.
+    SourceStillInTriggerZone,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -409,8 +415,9 @@ pub enum EffectOp {
         lifelink: i16,
         stun: i16,
     },
-    /// Job Select creates the token even if the Equipment later left, then
-    /// attaches only when the original source incarnation remains live.
+    /// Job Select (and Cori-Steel Cutter's flurry) creates the token even if
+    /// the Equipment later left, then attaches only when the original source
+    /// incarnation remains live.
     CreateTokenAndAttachSource {
         token_def: u16,
     },
@@ -1230,6 +1237,104 @@ pub enum EffectOp {
         player: PlayerRef,
         count: u8,
         max_mana_value: u16,
+    },
+    /// Trigger collection binds this template to the number of creatures
+    /// that convoked the trigger source
+    /// (`LookTopTakeCreaturesManaValueAtMostThenShuffle`).
+    BindConvokedCreatureCountToLookTop {
+        count: u8,
+        max_taken: u8,
+    },
+    /// Look at the top `count` cards of the controller's library, reveal up
+    /// to `max_taken` creature cards with mana value `max_mana_value` or
+    /// less from among them and put them into hand, then shuffle. The
+    /// cards are taken without a choice: the highest mana values first,
+    /// then nearest the top.
+    LookTopTakeCreaturesManaValueAtMostThenShuffle {
+        count: u8,
+        max_taken: u8,
+        max_mana_value: u16,
+    },
+    /// Trigger collection binds this template to the source's last-known
+    /// power as it left the battlefield (`DealDamage` to the opponent).
+    BindDamageOpponentEqualToSourceLastPower,
+    /// Battle cry: each other attacking creature gets +power/+toughness
+    /// until end of turn (the attacking set sampled at resolution).
+    PumpOtherAttackingCreaturesUntilEndOfTurn {
+        power: i32,
+        toughness: i32,
+    },
+    /// Reveal the top card of the controller's library and put it into
+    /// their hand; they lose life equal to its mana value.
+    RevealTopCardToHandLoseLifeEqualToManaValue,
+    /// Trigger collection binds this template to the triggering spell's
+    /// mana value (`Incubate`).
+    BindIncubateToTriggerSpell,
+    /// Incubate N: create an Incubator token with N +1/+1 counters.
+    Incubate {
+        amount: u16,
+    },
+    /// Trigger collection binds this template to the warped source
+    /// incarnation (`WarpExileBoundObject`).
+    BindWarpExileToTriggerSource,
+    /// Warp's (and unearth's) delayed end-step trigger: exile this exact
+    /// incarnation if it is still on the battlefield; a warped one may then
+    /// be cast by its owner from exile on a later turn. A source that
+    /// already left does nothing.
+    WarpExileBoundObject {
+        object: EffectObjectBinding,
+    },
+    /// Trigger collection binds this template to the creature whose
+    /// becoming a target triggered the ability
+    /// (`PutPlusOnePlusOneCounterOnTargetOtherThan`).
+    BindPlusOneCounterOnAnotherTargetToTriggerTarget,
+    /// Put a +1/+1 counter on target 0, a creature "other than" `other_than`.
+    /// Target legality (`TargetSpec::AnotherControlledCreature`) reads the
+    /// exclusion from this op, so the targeted creature is never offered.
+    PutPlusOnePlusOneCounterOnTargetOtherThan {
+        other_than: ObjectId,
+    },
+    /// Unearth's resolution: return this exact graveyard incarnation to the
+    /// battlefield and mark it unearthed (`ObjectStateV4::unearthed_v1`),
+    /// which drives its end-step exile and its leave-the-battlefield exile
+    /// replacement.
+    ReturnSourceFromGraveyardUnearthed,
+    /// Ward—Discard a card: counters the exact stack incarnation that
+    /// targeted the bound Ward permanent unless its controller discards a
+    /// card. Like the other Standard ward costs it never asks: the payer
+    /// pays whenever their hand is not empty, discarding its lowest mana
+    /// value card (the earliest in hand on a tie).
+    CounterUnlessDiscardsCard {
+        ward_target: StackTargetContractV4,
+        targeting_stack_item: StackItemId,
+    },
+    /// Exile each still-legal graveyard card target (at most `max_targets`,
+    /// fixed by the trigger's target specification); each opponent loses 1
+    /// life and the controller gains 1 life per creature card exiled.
+    ExileGraveyardTargetsDrainPerCreature {
+        max_targets: u8,
+    },
+    /// Impending's end-step upkeep: remove a time counter from this exact
+    /// source incarnation if it still has one.
+    RemoveTimeCounterFromSource,
+    /// Enduring: return this exact graveyard incarnation to the battlefield
+    /// under its owner's control; it's an enchantment, not a creature
+    /// (`ObjectStateV4::enduring_enchantment_v1`).
+    ReturnSourceAsEnduringEnchantment,
+    // Append new variants to preserve existing derived Hash discriminants.
+    /// Development-only Ward payment approximation. Axebane Ferox is
+    /// Partial until declining and choosing the evidence subset are supported.
+    CounterUnlessCollectsEvidence {
+        ward_target: StackTargetContractV4,
+        targeting_stack_item: StackItemId,
+        minimum_mana_value: u16,
+    },
+    /// Development-only automatic life payment. Brutal Cathar is Partial
+    /// until the controller can decline or choose a legal payment.
+    CounterUnlessPaysLife {
+        ward_target: StackTargetContractV4,
+        targeting_stack_item: StackItemId,
+        life: u8,
     },
 }
 
@@ -12560,6 +12665,387 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 );
             }
         }
+        EffectOp::BindWarpExileToTriggerSource => {
+            panic!("unmaterialized warp exile");
+        }
+        EffectOp::BindIncubateToTriggerSpell => {
+            panic!("unmaterialized incubate");
+        }
+        EffectOp::BindPlusOneCounterOnAnotherTargetToTriggerTarget => {
+            panic!("unmaterialized other-than counter");
+        }
+        EffectOp::PutPlusOnePlusOneCounterOnTargetOtherThan { other_than } => {
+            if ctx.targets.first() == Some(&Target::Object(*other_than)) {
+                return;
+            }
+            execute(
+                &EffectOp::PutPlusOnePlusOneCounter {
+                    object: ObjectRef::Target(0),
+                },
+                ctx,
+                state,
+            );
+        }
+        EffectOp::CounterUnlessDiscardsCard {
+            targeting_stack_item,
+            ..
+        } => {
+            let Some(payer) = state
+                .stack
+                .iter()
+                .find(|item| item.v4.stack_item_id == *targeting_stack_item)
+                .map(|item| item.controller)
+            else {
+                return;
+            };
+            let discard = state.players[payer.index()]
+                .hand
+                .iter()
+                .copied()
+                .min_by_key(|&id| {
+                    crate::card_def::CARD_DEFS[state.objects.get(id).card_def as usize].mana_value
+                });
+            if let Some(card) = discard {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::zone_change(card, Zone::Graveyard),
+                );
+            } else if crate::engine::counter_stack_item_by_id(state, *targeting_stack_item).is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
+        EffectOp::ExileGraveyardTargetsDrainPerCreature { max_targets } => {
+            let mut creatures = 0;
+            for index in 0..usize::from(*max_targets).min(ctx.targets.len()) {
+                let Target::Object(card) = ctx.targets[index] else {
+                    continue;
+                };
+                if !ctx.target_incarnation_matches(index, state)
+                    || state.objects.get(card).zone != Zone::Graveyard
+                {
+                    continue;
+                }
+                let is_creature = crate::card_def::CARD_DEFS
+                    [state.objects.get(card).card_def as usize]
+                    .has_type(CardType::Creature);
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::zone_change(card, Zone::Exile),
+                );
+                if is_creature && state.objects.get(card).zone == Zone::Exile {
+                    creatures += 1;
+                }
+            }
+            if creatures > 0 {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::life_loss(ctx.controller.opponent(), creatures),
+                );
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::life_gain(ctx.controller, creatures),
+                );
+            }
+        }
+        EffectOp::ReturnSourceAsEnduringEnchantment => {
+            let still_there = ctx.ability_source_contract.is_some_and(|contract| {
+                let object = state.objects.get(contract.source);
+                contract.source == ctx.source
+                    && object.zone == Zone::Graveyard
+                    && object.zone == contract.zone
+                    && object.zone_change_count == contract.zone_change_count
+            });
+            if !still_there {
+                return;
+            }
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::zone_change(ctx.source, Zone::Battlefield),
+            );
+            if state.objects.get(ctx.source).zone == Zone::Battlefield {
+                state.objects.get_mut(ctx.source).v4.enduring_enchantment_v1 = true;
+            }
+        }
+        EffectOp::RemoveTimeCounterFromSource => {
+            let still_there = ctx.ability_source_contract.is_some_and(|contract| {
+                let object = state.objects.get(contract.source);
+                object.zone == Zone::Battlefield
+                    && object.zone_change_count == contract.zone_change_count
+            });
+            if still_there {
+                let counters = &mut state.objects.get_mut(ctx.source).v4.time_counters_v1;
+                *counters = counters.saturating_sub(1);
+            }
+        }
+        EffectOp::ReturnSourceFromGraveyardUnearthed => {
+            let still_there = ctx.ability_source_contract.is_some_and(|contract| {
+                let object = state.objects.get(contract.source);
+                contract.source == ctx.source
+                    && contract.zone == Zone::Graveyard
+                    && object.zone == Zone::Graveyard
+                    && object.zone_change_count == contract.zone_change_count
+            });
+            if !still_there {
+                return;
+            }
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::zone_change(ctx.source, Zone::Battlefield),
+            );
+            if state.objects.get(ctx.source).zone == Zone::Battlefield {
+                state.objects.get_mut(ctx.source).v4.unearthed_v1 = true;
+            }
+        }
+        EffectOp::BindConvokedCreatureCountToLookTop { .. } => {
+            panic!("unmaterialized convoked look");
+        }
+        EffectOp::BindDamageOpponentEqualToSourceLastPower => {
+            panic!("unmaterialized last-power damage");
+        }
+        EffectOp::PumpOtherAttackingCreaturesUntilEndOfTurn { power, toughness } => {
+            let object_ids: Vec<ObjectId> = state
+                .engine
+                .combat
+                .attackers
+                .iter()
+                .copied()
+                .filter(|&id| {
+                    id != ctx.source
+                        && state.objects.get(id).zone == Zone::Battlefield
+                        && crate::engine::object_has_type(state, id, CardType::Creature)
+                })
+                .collect();
+            if !object_ids.is_empty() {
+                let timestamp = crate::engine::next_timestamp(state);
+                for object_id in object_ids {
+                    let object_zone_change_count = state.objects.get(object_id).zone_change_count;
+                    state.engine.until_end_of_turn.push(
+                        crate::engine::UntilEndOfTurnEffect::ResolvedObjectEffect {
+                            object_id,
+                            object_zone_change_count,
+                            layer: crate::engine::Layers::POWER_TOUGHNESS,
+                            timestamp,
+                            duration: crate::engine::EffectDuration::EndOfTurn,
+                            power: *power,
+                            toughness: *toughness,
+                            grant_haste: false,
+                        },
+                    );
+                }
+            }
+        }
+        EffectOp::RevealTopCardToHandLoseLifeEqualToManaValue => {
+            let player = ctx.controller;
+            let Some(&top) = state.players[player.index()].library.first() else {
+                return;
+            };
+            let mana_value =
+                crate::card_def::CARD_DEFS[state.objects.get(top).card_def as usize].mana_value;
+            event::propose_and_commit(state, event::ProposedEvent::zone_change(top, Zone::Hand));
+            if state.objects.get(top).zone == Zone::Hand {
+                for observer in [PlayerId::P0, PlayerId::P1] {
+                    if state.reveal_hand_card(observer, player, top).is_err() {
+                        state.engine.halted = Some((
+                            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                            ctx.source,
+                        ));
+                        return;
+                    }
+                }
+            }
+            if mana_value > 0 {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::life_loss(player, i32::from(mana_value)),
+                );
+            }
+        }
+        EffectOp::LookTopTakeCreaturesManaValueAtMostThenShuffle {
+            count,
+            max_taken,
+            max_mana_value,
+        } => {
+            let player = ctx.controller;
+            let library = &state.players[player.index()].library;
+            let mut candidates: Vec<(usize, ObjectId, u16)> = library
+                .iter()
+                .take(usize::from(*count))
+                .enumerate()
+                .filter_map(|(position, &id)| {
+                    let def = &crate::card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
+                    (def.has_type(CardType::Creature) && def.mana_value <= *max_mana_value)
+                        .then_some((position, id, def.mana_value))
+                })
+                .collect();
+            candidates.sort_by_key(|&(position, _, mana_value)| {
+                (std::cmp::Reverse(mana_value), position)
+            });
+            for &(_, card, _) in candidates.iter().take(usize::from(*max_taken)) {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::zone_change(card, Zone::Hand),
+                );
+                if state.objects.get(card).zone == Zone::Hand {
+                    for observer in [PlayerId::P0, PlayerId::P1] {
+                        if state.reveal_hand_card(observer, player, card).is_err() {
+                            state.engine.halted = Some((
+                                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                                ctx.source,
+                            ));
+                            return;
+                        }
+                    }
+                }
+            }
+            if state.shuffle_library(player).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
+        EffectOp::CounterUnlessPaysLife {
+            targeting_stack_item,
+            life,
+            ..
+        } => {
+            let Some(payer) = state
+                .stack
+                .iter()
+                .find(|item| item.v4.stack_item_id == *targeting_stack_item)
+                .map(|item| item.controller)
+            else {
+                return;
+            };
+            if state.players[payer.index()].life > i32::from(*life) {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::life_loss(payer, i32::from(*life)),
+                );
+            } else if crate::engine::counter_stack_item_by_id(state, *targeting_stack_item).is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
+        EffectOp::Incubate { amount } => {
+            let Some(incubator) = crate::card_def::card_id_by_name("Incubator Token") else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::create_token(incubator, ctx.controller),
+            );
+            let created = state
+                .engine
+                .event_log
+                .iter()
+                .rev()
+                .find_map(|event| match event {
+                    event::CommittedEvent::CreateToken { object, .. }
+                        if state.objects.get(*object).card_def == incubator =>
+                    {
+                        Some(*object)
+                    }
+                    _ => None,
+                });
+            if let Some(token) = created.filter(|_| *amount > 0) {
+                if event::add_plus_one_counters(state, token, ctx.controller, i32::from(*amount))
+                    .is_err()
+                {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                }
+            }
+        }
+        EffectOp::CounterUnlessCollectsEvidence {
+            targeting_stack_item,
+            minimum_mana_value,
+            ..
+        } => {
+            #[cfg(feature = "standard-magezero-fixtures")]
+            {
+                let Some(payer) = state
+                    .stack
+                    .iter()
+                    .find(|item| item.v4.stack_item_id == *targeting_stack_item)
+                    .map(|item| item.controller)
+                else {
+                    return;
+                };
+                match crate::standard_keywords_v1::evidence_plan(state, payer, *minimum_mana_value)
+                {
+                    Some(cards) => {
+                        for card in cards {
+                            event::propose_and_commit(
+                                state,
+                                event::ProposedEvent::zone_change(card, Zone::Exile),
+                            );
+                        }
+                    }
+                    None => {
+                        if crate::engine::counter_stack_item_by_id(state, *targeting_stack_item)
+                            .is_err()
+                        {
+                            state.engine.halted = Some((
+                                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                                ctx.source,
+                            ));
+                        }
+                    }
+                }
+            }
+            #[cfg(not(feature = "standard-magezero-fixtures"))]
+            {
+                let _ = (targeting_stack_item, minimum_mana_value);
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
+        EffectOp::WarpExileBoundObject { object } => {
+            let live = state.objects.get(object.object);
+            if live.zone != object.expected_zone
+                || live.zone_change_count != object.expected_zone_change_count
+            {
+                return;
+            }
+            let owner = live.owner;
+            // Unearth shares this exile; only a warped creature may be cast
+            // from exile afterwards.
+            let warped = live.v4.warped_v1;
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::zone_change(object.object, Zone::Exile),
+            );
+            let exiled = state.objects.get(object.object);
+            if warped && exiled.zone == Zone::Exile {
+                let permission = crate::engine::PlayPermission {
+                    object: object.object,
+                    holder: owner,
+                    zone_change_generation: exiled.zone_change_count,
+                    play_or_cast: crate::engine::PlayOrCast::Cast,
+                    expiry: crate::engine::PlayPermissionExpiry::LaterTurn {
+                        granted_turn: state.turn,
+                        granted_active_player: state.active_player,
+                    },
+                };
+                state.engine.exile_play_permissions.push(permission);
+            }
+        }
         EffectOp::BindEntrantOutgrowsSourceThen { .. }
         | EffectOp::BindOilCounterToTriggerSource => {
             // Templates are always materialized before reaching the stack.
@@ -13086,7 +13572,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     && live.zone_change_count == source.zone_change_count
                     && crate::card_def::CARD_DEFS[live.card_def as usize]
                         .equipment
-                        .is_some_and(|equipment| equipment.job_select)
+                        .is_some()
             });
             if !source_is_live {
                 return;
@@ -13966,6 +14452,12 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             }
             let def = &crate::card_def::CARD_DEFS[source.card_def as usize];
+            // CR 701.27f: an earlier activation may already have transformed
+            // this Incubator since the current activation entered the stack.
+            #[cfg(feature = "standard-magezero-fixtures")]
+            if def.name == "Incubator Token" && source.v4.face_index == 1 {
+                return;
+            }
             if source.v4.face_index != 0 || def.transform_face.is_none() {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -14393,6 +14885,24 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
                 .any(|id| id != ctx.source && state.objects.get(id).card_def == source_def)
         }
         EffectCond::WasKicked => ctx.kicked,
+        EffectCond::TargetWasCastForWarp(index) => {
+            ctx.target_incarnation_matches(usize::from(*index), state)
+                && match ctx.targets.get(usize::from(*index)) {
+                    Some(Target::Object(object)) => {
+                        let object = state.objects.get(*object);
+                        object.zone == Zone::Battlefield && object.v4.warped_v1
+                    }
+                    _ => false,
+                }
+        }
+        EffectCond::SourceStillInTriggerZone => {
+            ctx.ability_source_contract.is_some_and(|contract| {
+                let object = state.objects.get(contract.source);
+                contract.source == ctx.source
+                    && object.zone == contract.zone
+                    && object.zone_change_count == contract.zone_change_count
+            })
+        }
         EffectCond::OptionalAdditionalCostPaid(kind) => {
             ctx.optional_additional_cost_paid == Some(*kind)
         }

@@ -48,7 +48,9 @@ impl Scan<'_> {
             | DoublePlusOneCountersOnBoundObject { object }
             | PutOilCounterOnBoundObject { object }
             | PutPlusOnePlusOneCounterOnTriggerEventObject { object }
-            | BoostBoundObjectUntilEndOfTurn { object, .. } => self.b(object),
+            | BoostBoundObjectUntilEndOfTurn { object, .. }
+            | WarpExileBoundObject { object } => self.b(object),
+            PutPlusOnePlusOneCounterOnTargetOtherThan { other_than } => self.raw(*other_than),
             PutBoundAuraOntoBattlefieldAttached { aura, host } => self.b(aura) || self.b(host),
             ResolveInitiativeTrigger { binding }
             | EnterUndercityRoom { binding, .. }
@@ -88,6 +90,9 @@ impl Scan<'_> {
             | DestroyObject { .. }
             | DestroyObjectThenCreateTokens { .. }
             | CounterUnlessPaysGeneric { .. }
+            | CounterUnlessCollectsEvidence { .. }
+            | CounterUnlessPaysLife { .. }
+            | CounterUnlessDiscardsCard { .. }
             | DamageEachCreatureWithoutSubtype { .. }
             | CounterTargetUnlessPaysGeneric { .. }
             | GainLifeDynamic { .. }
@@ -129,6 +134,19 @@ impl Scan<'_> {
             | PutSourceOntoBattlefieldAttachedToTarget { .. }
             | TapAttachedCreatureAndDamageControllerByPower
             | BoostAttachedCreatureUntilEndOfTurn { .. }
+            | BindWarpExileToTriggerSource
+            | BindIncubateToTriggerSpell
+            | BindDamageOpponentEqualToSourceLastPower
+            | PumpOtherAttackingCreaturesUntilEndOfTurn { .. }
+            | RevealTopCardToHandLoseLifeEqualToManaValue
+            | BindConvokedCreatureCountToLookTop { .. }
+            | LookTopTakeCreaturesManaValueAtMostThenShuffle { .. }
+            | Incubate { .. }
+            | BindPlusOneCounterOnAnotherTargetToTriggerTarget
+            | ReturnSourceFromGraveyardUnearthed
+            | ExileGraveyardTargetsDrainPerCreature { .. }
+            | RemoveTimeCounterFromSource
+            | ReturnSourceAsEnduringEnchantment
             | SearchLibraryCardsToDestination { .. }
             | CreateTokensDynamic { .. }
             | BackupTarget { .. }
@@ -640,7 +658,9 @@ pub(super) fn conflicts(
             | Sacrificed { object, .. }
             | Transformed { object, .. } => s.raw(*object),
             PlusOneCountersAdded { object, .. }
-            | PrintedAbilitiesRemovedBeforeZoneChange { object, .. } => s.raw(*object),
+            | PrintedAbilitiesRemovedBeforeZoneChange { object, .. }
+            | WasCreatureBeforeLeavingBattlefield { object, .. }
+            | PowerBeforeLeavingBattlefield { object, .. } => s.raw(*object),
             Draw { object, .. } => object.is_some_and(|id| s.raw(id)),
             SpellCast { spell, .. } => s.raw(*spell),
             Targeted { target, .. } => s.raw(*target),
@@ -659,6 +679,8 @@ pub(super) fn conflicts(
             | LifeGain { .. }
             | ManaAdded { .. }
             | UpkeepBegan { .. }
+            | CrimeCommitted { .. }
+            | BeginningOfCombat { .. }
             | BeginningEndStep { .. } => false,
         }
     })

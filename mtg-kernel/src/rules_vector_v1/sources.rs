@@ -56,6 +56,12 @@ pub enum PrintedF {
     EntersTappedUnlessControlsSubtype,
     CannotBeCountered,
     Ward(u8),
+    /// Ward—Collect evidence N, mana value bucketed like `AmtF::fixed`.
+    WardCollectEvidence(u8),
+    /// Ward—Pay N life, printed on the transform back face only.
+    WardBackFacePayLife(u8),
+    /// Ward—Discard a card.
+    WardDiscardCard,
     MinimumBlockers(u8),
     CantBeBlockedByMonarchsCreatures,
     EntersWithPlusOneCounters {
@@ -482,6 +488,13 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
             crate::card_def::WardCostDef::Generic(n) => {
                 printed.push(PrintedF::Ward(bucket(i64::from(*n))))
             }
+            crate::card_def::WardCostDef::CollectEvidence(n) => {
+                printed.push(PrintedF::WardCollectEvidence(bucket(i64::from(*n))))
+            }
+            crate::card_def::WardCostDef::BackFacePayLife(n) => {
+                printed.push(PrintedF::WardBackFacePayLife(bucket(i64::from(*n))))
+            }
+            crate::card_def::WardCostDef::DiscardCard => printed.push(PrintedF::WardDiscardCard),
         }
     }
     if *minimum_blockers > 1 {
@@ -702,6 +715,7 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
             intervening_if_kicked,
             intervening_if_controls_another_source_card,
             effect,
+            face_index,
         } = *trigger;
         let event_programs = crate::trigger::event_time_trigger_programs(card_id, condition);
         let programs = if event_programs.is_empty() {
@@ -726,6 +740,10 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                     "optional_cost": format!("{optional_cost:?}"),
                 }),
             );
+            if face_index != 0 {
+                // A transform back face's own trigger.
+                walk.rec("trigger_face_index", json!(face_index));
+            }
             let env = Env { target_spec: spec };
             walk.ability(CtxF::Trigger, |out| {
                 triggers_costs::trigger_condition(condition, out);
@@ -866,6 +884,8 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
 
     #[cfg(feature = "standard-magezero-fixtures")]
     standard_statics(name, &mut walk);
+    #[cfg(feature = "standard-magezero-fixtures")]
+    standard_keyword_statics(name, &mut walk);
 
     // Permanents with a continuous effect on their host.
     if let Some(equip) = equipment {
@@ -1011,6 +1031,25 @@ fn optional_cost_facts(cost: crate::card_def::OptionalAdditionalCostDef, out: &m
             obj: ObjF::Permanent,
             amount: AmtF::fixed(1),
         }),
+        crate::card_def::OptionalAdditionalCostDef::Casualty(minimum_power) => {
+            // Sacrifice one creature with power at least `minimum_power`;
+            // when paid, casting puts a copy of the spell, with the same
+            // targets, on the stack (`engine::copy_spell_keeping_targets`).
+            // Vocabulary gap: the moved class carries no power bound.
+            let _ = minimum_power;
+            out.cost(CostAtom::MoveObject {
+                from: ZoneF::Battlefield,
+                to: ZoneF::Graveyard,
+                obj: ObjF::Typed(CardTypeF::Creature),
+                amount: AmtF::fixed(1),
+            });
+            out.effect(
+                EffectAtom::new(EvF::Copy)
+                    .player(RelF::You)
+                    .obj(ObjF::Spell)
+                    .amount(AmtF::fixed(1)),
+            );
+        }
     }
 }
 
@@ -1084,6 +1123,90 @@ fn attachment_facts(aura: AttachmentDef, out: &mut Collector) {
                 );
             }
         }
+    }
+}
+
+/// The MageZero Standard keyword rules `standard_keywords_v1` keys by name:
+/// its statics, and each Spree mode set's surcharge and resolution prelude.
+#[cfg(feature = "standard-magezero-fixtures")]
+fn standard_keyword_statics(name: &str, walk: &mut Walk) {
+    use crate::standard_keywords_v1::StandardKeywordStaticV1;
+    for fact in crate::standard_keywords_v1::rules_vector_statics(name) {
+        walk.rec(
+            "standard_keyword_static",
+            Value::String(format!("{fact:?}")),
+        );
+        walk.ability(CtxF::Static, |out| match *fact {
+            StandardKeywordStaticV1::StartYourEnginesMaxSpeedDoubleStrike => {
+                // Vocabulary gap: no speed designation or read; the max-speed
+                // gate is marked conditional and the speed rules opaque.
+                out.atoms.push(Atom::Opaque);
+                out.control(ControlF::Conditional);
+                for bit in keyword_bits(crate::card_def::Keywords::DOUBLE_STRIKE) {
+                    out.effect(
+                        EffectAtom::new(EvF::GrantKeyword)
+                            .player(RelF::You)
+                            .obj(ObjF::ThisObject)
+                            .duration(DurF::WhileOnBattlefield)
+                            .keyword(bit),
+                    );
+                }
+            }
+            StandardKeywordStaticV1::CantBlock => out.effect(
+                EffectAtom::new(EvF::Restrict)
+                    .player(RelF::You)
+                    .obj(ObjF::ThisObject)
+                    .duration(DurF::WhileOnBattlefield),
+            ),
+            StandardKeywordStaticV1::DayboundNightbound => {
+                // Transforms as the day/night designation changes.
+                // Vocabulary gap: no day/night read.
+                out.control(ControlF::Conditional);
+                out.effect(EffectAtom::new(EvF::Transform).obj(ObjF::ThisObject));
+            }
+            StandardKeywordStaticV1::PlusOnePerControlledForest => {
+                // Vocabulary gap: ObjF has no subtype class; nearest is the
+                // controller's lands.
+                out.read(
+                    RelF::You,
+                    Some(ZoneF::Battlefield),
+                    Some(ObjF::Typed(CardTypeF::Land)),
+                    AggF::Count,
+                );
+                out.effect(
+                    EffectAtom::new(EvF::StatChange)
+                        .player(RelF::You)
+                        .obj(ObjF::ThisObject)
+                        .amount(AmtF::Dynamic)
+                        .duration(DurF::WhileOnBattlefield),
+                );
+            }
+        });
+    }
+    for mode in 0..3u8 {
+        let Some(extra) = crate::standard_keywords_v1::spree_extra_generic(name, mode) else {
+            continue;
+        };
+        let prelude = crate::standard_keywords_v1::spree_mode_prelude(name, mode);
+        walk.rec(
+            "spree_mode",
+            json!({
+                "mode": mode,
+                "extra_generic": extra,
+                "prelude": prelude.as_ref().map(program_value),
+            }),
+        );
+        let env = Env {
+            target_spec: TargetSpec::None,
+        };
+        walk.ability(CtxF::Mode, |out| {
+            // The mode set's `+{N}` surcharge on top of the mana cost.
+            // Vocabulary gap: `CostAtom::Mana` carries no amount.
+            out.cost(CostAtom::Mana);
+            if let Some(op) = &prelude {
+                meaning::effect_op(op, &env, out);
+            }
+        });
     }
 }
 

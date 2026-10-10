@@ -284,6 +284,15 @@ pub enum Subtype {
     Wolf,
     Kraken,
     Djinn,
+    /// Appended for MageZero Standard family D (new set keywords).
+    Mouse,
+    /// Artifact type of the Incubator token.
+    Incubator,
+    Werewolf,
+    Rabbit,
+    Avatar,
+    Glimmer,
+    Sheep,
 }
 
 impl Subtype {
@@ -413,6 +422,18 @@ impl Subtype {
         Subtype::Kraken,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Djinn,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Mouse,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Werewolf,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Rabbit,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Avatar,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Glimmer,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Sheep,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -569,6 +590,12 @@ impl Subtype {
                 | Subtype::Wolf
                 | Subtype::Kraken
                 | Subtype::Djinn
+                | Subtype::Mouse
+                | Subtype::Werewolf
+                | Subtype::Rabbit
+                | Subtype::Avatar
+                | Subtype::Glimmer
+                | Subtype::Sheep
         )
     }
 }
@@ -746,6 +773,16 @@ pub enum TargetSpec {
     /// Exactly 1 target: a spell on the stack controlled by someone other
     /// than the targeting player (Hullbreaker Horror).
     SpellYouDontControl,
+    // MageZero Standard family D (stable ids 52-54).
+    /// Exactly one creature the announcing player controls other than the
+    /// targeting source, or other than the creature a trigger names
+    /// ("target creature you control other than that creature").
+    AnotherControlledCreature,
+    /// Exactly one creature with this subtype the announcing player
+    /// controls ("target Mouse you control").
+    ControlledCreatureWithSubtype(Subtype),
+    /// Zero or one nontoken card in either graveyard.
+    UpToOneCardInGraveyards,
 }
 
 impl TargetSpec {
@@ -806,6 +843,9 @@ impl TargetSpec {
             TargetSpec::CreatureEnchantmentOrPlaneswalker => 49,
             TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_) => 50,
             TargetSpec::SpellYouDontControl => 51,
+            TargetSpec::AnotherControlledCreature => 52,
+            TargetSpec::ControlledCreatureWithSubtype(_) => 53,
+            TargetSpec::UpToOneCardInGraveyards => 54,
         }
     }
 }
@@ -989,6 +1029,18 @@ pub enum CostComponent {
     /// Activations only; staged one pick at a time like
     /// `SacrificeControlled`.
     TapControlled { count: u8, filter: PermanentFilter },
+    /// Remove `n` +1/+1 counters from among creatures the payer controls
+    /// (MageZero Standard, Hopeful Initiate). Paid without a choice: each
+    /// counter comes off the controlled creature with the most +1/+1
+    /// counters, earliest on the battlefield first on ties.
+    RemovePlusOneCountersFromControlledCreatures(u8),
+    /// Convoke (MageZero Standard, Knight-Errant of Eos), carried as the
+    /// card's alternative cost: pay this mana cost with as many untapped
+    /// creatures the payer controls as `standard_keywords_v1::convoke_plan`
+    /// can use (at least one), the rest with mana. The creatures are chosen
+    /// deterministically; whether to convoke at all is the ordinary cast
+    /// mode choice.
+    ConvokeMana(crate::mana::Cost),
 }
 
 /// Optional additional costs chosen while announcing a spell. The selected
@@ -1001,6 +1053,10 @@ pub enum OptionalAdditionalCostDef {
     CollectEvidence { minimum_mana_value: u16 },
     /// Sacrifice one controlled artifact, enchantment, or token.
     Bargain,
+    /// Casualty N: sacrifice one controlled creature with power N or
+    /// greater; when the spell is cast this way it is copied
+    /// (MageZero Standard, Make Disappear).
+    Casualty(u8),
 }
 
 /// Static rules carried by a permanent while it is attached. The host link
@@ -1074,6 +1130,15 @@ pub enum AltCostCondition {
     /// The caster must control a permanent with the named subtype (Snuff
     /// Out: "If you control a Swamp...").
     ControlsPermanentWithSubtype(Subtype),
+    /// Warp: "You may cast this card from your hand for its warp cost."
+    /// A permanent spell cast this way is exiled at the beginning of the
+    /// next end step and may be cast from exile on a later turn
+    /// (`standard_keywords_v1`).
+    WarpFromHand,
+    /// Impending N: cast from hand for this cost, the permanent enters with
+    /// N time counters and isn't a creature while it has any
+    /// (`ObjectStateV4::time_counters_v1`, `standard_keywords_v1`).
+    ImpendingFromHand { time_counters: u8 },
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -1322,6 +1387,14 @@ pub struct GenericCostReductionDef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WardCostDef {
     Generic(u8),
+    /// Ward—Collect evidence N (MageZero Standard, Axebane Ferox).
+    CollectEvidence(u16),
+    /// Ward—Pay N life, printed on the transform back face only
+    /// (MageZero Standard, Moonrage Brute).
+    BackFacePayLife(u8),
+    /// Ward—Discard a card, printed on both faces (MageZero Standard,
+    /// Graveyard Trespasser).
+    DiscardCard,
 }
 
 /// Alternate battlefield characteristics for a transforming permanent's
@@ -2037,6 +2110,12 @@ mod tests {
             (TargetSpec::NonOutlawCreature, 47),
             (TargetSpec::CreatureToughnessAtLeastFour, 48),
             (TargetSpec::CreatureEnchantmentOrPlaneswalker, 49),
+            (TargetSpec::AnotherControlledCreature, 52),
+            (
+                TargetSpec::ControlledCreatureWithSubtype(Subtype::Mouse),
+                53,
+            ),
+            (TargetSpec::UpToOneCardInGraveyards, 54),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);
@@ -2220,6 +2299,13 @@ mod tests {
             );
             match def.ward_cost.unwrap() {
                 WardCostDef::Generic(amount) => assert_ne!(amount, 0, "{} has Ward 0", def.name),
+                WardCostDef::CollectEvidence(amount) => {
+                    assert_ne!(amount, 0, "{} has Ward 0", def.name)
+                }
+                WardCostDef::BackFacePayLife(amount) => {
+                    assert_ne!(amount, 0, "{} has Ward 0", def.name)
+                }
+                WardCostDef::DiscardCard => {}
             }
         }
     }

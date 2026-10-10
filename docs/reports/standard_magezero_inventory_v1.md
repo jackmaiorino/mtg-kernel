@@ -1,6 +1,6 @@
 # MageZero Standard pool inventory
 
-The `standard-magezero-fixtures` catalog targets the 16-deck Standard opponent pool MageZero trains against (`data/standard/magezero_v1/`). As of `kernel_carddb_standard/v3` the decks use 225 distinct nonbasic cards; 34 are fully supported (Adeline, Resplendent Cathar, Ascendant Packleader, Bloodletter of Aclazotz, Burst Lightning, Cenote Scout, Consider, Coppercoat Vanguard, Deep-Cavern Bat, Destroy Evil, Dissipate, Duress, Fading Hope, Flow of Knowledge, Gatekeeper of Malakir, Get Lost, Hard-Hitting Question, Hired Claw, Hullbreaker Horror, Impulse, Lightning Strike, Llanowar Elves, Negate, Novice Inspector, Opt, Razorkin Needlehead, Sentinel of the Nameless City, Shock, Shoot the Sheriff, Spell Pierce, Thirst for Discovery, Tolarian Terror, Unstoppable Slasher, Voldaren Epicure, Warden of the Inner Sky) and no deck resolves yet. `mtg-kernel/tests/standard_magezero_catalog_v1.rs` and `python/tests/test_standard_decks_v1.py` track the supported list.
+The `standard-magezero-fixtures` catalog targets the 16-deck Standard opponent pool MageZero trains against (`data/standard/magezero_v1/`). As of `kernel_carddb_standard/v4`, the decks use 225 distinct nonbasic cards: 52 are Full, 19 are Partial and 154 are missing. No deck resolves yet. `mtg-kernel/tests/standard_magezero_catalog_v1.rs` and `python/tests/test_standard_decks_v1.py` track Full admission.
 
 ## Order of work
 
@@ -50,6 +50,8 @@ The 5-color deck's legends (family H) wait until those land.
 - **Protection tricks**: Shore Up, Snakeskin Veil
 
 ### D. New set keywords (2022-2025) (32 cards; 13 needed by a mono deck)
+
+Family D adds 18 Full cards and retains 11 Partial definitions. Full deck admission refuses Axebane Ferox, Brutal Cathar, Burnout Bashtronaut, Enduring Curiosity, Enduring Innocence, Flourishing Bloom-Kin, Graveyard Trespasser, Hopeful Initiate, Knight-Errant of Eos, Make Disappear and Overlord of the Mistmoors. Their missing choices, timing and effective-type handling are recorded in `docs/design/standard_family_d_keywords_v1.md`. Monstrous Rage, Zoetic Glyph and Collector's Cage remain deferred.
 
 - **Offspring**: Pawpatch Recruit, Darkstar Augur, Iridescent Vinelasher (mono), Manifold Mouse
 - **Valiant / prowess**: Emberheart Challenger (mono), Heartfire Hero, Monastery Swiftspear

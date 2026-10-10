@@ -2472,6 +2472,9 @@ enum Special {
     /// Choose one: dynamic creature-count damage, destroy an enchantment, or
     /// exile any number of target players' graveyards.
     ThrabenCharm,
+    /// Spree as three printed modes (Spirit only, counter only, both); the
+    /// per-mode `+{N}` costs live in `standard_keywords_v1::spree_extra_generic`.
+    PhantomInterference,
     /// Symmetric Elemental Blast recipe. `checked_color` is the color the
     /// target must have; `filter_timing` distinguishes the Elemental Blasts'
     /// targeting restriction from Pyroblast/Hydroblast's resolution-time
@@ -2647,6 +2650,10 @@ enum Special {
     /// Target creature gains deathtouch and lifelink until end of turn, then
     /// the controller investigates.
     ToxinAnalysis,
+    /// "Target creature you control gets +3/+2 until end of turn. If that
+    /// creature was cast for its warp cost, it also gains trample and haste
+    /// until end of turn." (Full Bore).
+    FullBore,
     /// Gain three life. The card's CastSelf Storm trigger is defined in the
     /// shared trigger table.
     WeatherTheStorm,
@@ -2886,6 +2893,9 @@ impl Special {
                 "cast_into_the_fire:damage_up_to_two_creatures_or_exile_artifact".to_string()
             }
             Special::DustToDust => "dust_to_dust:exile_exactly_two_artifacts".to_string(),
+            Special::PhantomInterference => {
+                "phantom_interference:spree_spirit_or_counter_unless_pays_2".to_string()
+            }
             Special::ThrabenCharm => {
                 "thraben_charm:creature_count_damage_or_destroy_enchantment_or_exile_target_graveyards".to_string()
             }
@@ -2971,6 +2981,7 @@ impl Special {
             Special::ToxinAnalysis => {
                 "toxin_analysis:deathtouch_lifelink_eot_investigate".to_string()
             }
+            Special::FullBore => "full_bore:pump_3_2:if_warped_trample_haste".to_string(),
             Special::WeatherTheStorm => "weather_the_storm:gain_three:storm".to_string(),
             Special::MonstrousEmergence => {
                 "monstrous_emergence:chosen_creature_power_damage".to_string()
@@ -3035,6 +3046,7 @@ enum AbilityCostRecipe {
     /// grammar as spell costs. Twisted Landscape's Cycling is the first
     /// multicolor consumer.
     ManaCost(&'static str),
+    RemovePlusOneCountersFromControlledCreatures(u8),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3100,6 +3112,10 @@ enum AbilityEffectRecipe {
     /// numeric definition id at runtime via a generated `card_id_by_name`
     /// call.
     EachPlayerControllingNamedPermanentDrawsCard(&'static str),
+    /// Transform this permanent (the Incubator token's `{2}`).
+    TransformSource,
+    /// Unearth: return the source from its graveyard; it gains haste.
+    Unearth,
     /// The controller surveils this many cards (Rune-Sealed Wall).
     Surveil(u8),
     /// One +1/+1 counter on the ability's own source while it remains the
@@ -3211,11 +3227,16 @@ fn special_for(name: &str) -> Special {
             filter: StackSpellFilter::Noncreature,
             generic: 2,
         },
+        "Make Disappear" => Special::CounterUnlessPaysGeneric {
+            filter: StackSpellFilter::Any,
+            generic: 2,
+        },
         "Steel Sabotage" => Special::SteelSabotage,
         "Piracy Charm" => Special::PiracyCharm,
         "Cast into the Fire" => Special::CastIntoTheFire,
         "Dust to Dust" => Special::DustToDust,
         "Thraben Charm" => Special::ThrabenCharm,
+        "Phantom Interference" => Special::PhantomInterference,
         "Blue Elemental Blast" => Special::ColorBlast {
             checked_color: BlastColor::Red,
             filter_timing: BlastFilterTiming::Targeting,
@@ -3299,6 +3320,7 @@ fn special_for(name: &str) -> Special {
         "Cleansing Wildfire" => Special::CleansingWildfire,
         "Duress" => Special::Duress,
         "Toxin Analysis" => Special::ToxinAnalysis,
+        "Full Bore" => Special::FullBore,
         "Weather the Storm" => Special::WeatherTheStorm,
         "Monstrous Emergence" => Special::MonstrousEmergence,
         "Bite Down" => Special::BiteDown,
@@ -3647,6 +3669,7 @@ fn effect_recipe_for(card: &CardJson) -> String {
         Special::CastIntoTheFire => "target=UpToTwoCreatures;spell=DamageAllTargets(1);mode2=MoveAllTargets(Exile);mana=None".to_string(),
         Special::DustToDust => "target=ExactlyTwoArtifactPermanents;spell=ExileAllArtifactTargets;mana=None".to_string(),
         Special::ThrabenCharm => "target=Creature;spell=DealDamageByControlledCreatureCount(2);mode2=DestroyEnchantment;mode3=ExileTargetPlayersGraveyards;mana=None".to_string(),
+        Special::PhantomInterference => "target=None;spell=CreateToken(Spirit Token);mode2=CounterTargetUnlessPaysGeneric(2);mode3=CounterTargetUnlessPaysGeneric(2)+prelude(CreateToken(Spirit Token));spree=3,1,4;mana=None".to_string(),
         Special::ColorBlast {
             checked_color,
             filter_timing: BlastFilterTiming::Targeting,
@@ -3753,6 +3776,7 @@ fn effect_recipe_for(card: &CardJson) -> String {
         Special::CleansingWildfire => "target=Land;spell=Sequence(DestroyTargetLandThenMaySearchBasicTapped(Target0),DrawCards(Controller,1));mana=None".to_string(),
         Special::Duress => "target=TargetOpponent;spell=RevealTargetHandChooseNoncreatureNonlandDiscard(Target0);mana=None".to_string(),
         Special::ToxinAnalysis => "target=Creature;spell=Sequence(GrantKeywordsTargetUntilEndOfTurn(Target0,Deathtouch|Lifelink),CreateToken(ClueToken));mana=None".to_string(),
+        Special::FullBore => "target=ControlledCreature;spell=Sequence(PumpTargetUntilEndOfTurn(3,2),If(TargetWasCastForWarp(0),GrantKeywordsTargetUntilEndOfTurn(Target0,Trample|Haste)));mana=None".to_string(),
         Special::WeatherTheStorm => {
             "target=None;spell=GainLife(Controller,3);trigger=CastSelf:Storm;mana=None".to_string()
         }
@@ -3923,6 +3947,7 @@ fn keywords_for(card: &CardJson) -> String {
         keywords.push("Keywords::REACH");
         keywords.push("Keywords::DEATHTOUCH");
     }
+    keywords.extend_from_slice(standard_keywords_for(&card.name));
     if keywords.is_empty() {
         "Keywords::NONE".to_string()
     } else if keywords.len() == 1 {
@@ -3936,6 +3961,30 @@ fn keywords_for(card: &CardJson) -> String {
                 .collect::<Vec<_>>()
                 .join(" | ")
         )
+    }
+}
+
+/// Printed evergreen keywords of MageZero Standard cards, in printed order.
+/// Names are disjoint from the Pauper and FDN tables above.
+fn standard_keywords_for(name: &str) -> &'static [&'static str] {
+    match name {
+        "Emberheart Challenger" => &["Keywords::HASTE"],
+        "Burnout Bashtronaut" => &["Keywords::MENACE"],
+        "Nova Hellkite" => &["Keywords::FLYING", "Keywords::HASTE"],
+        "Aloe Alchemist" => &["Keywords::TRAMPLE"],
+        "Axebane Ferox" => &["Keywords::DEATHTOUCH", "Keywords::HASTE"],
+        "Chrome Host Seedshark" => &["Keywords::FLYING"],
+        "Monastery Swiftspear" => &["Keywords::HASTE"],
+        "Slickshot Show-Off" => &["Keywords::FLYING", "Keywords::HASTE"],
+        "Bat Token" => &["Keywords::FLYING"],
+        "Ruin-Lurker Bat" => &["Keywords::FLYING", "Keywords::LIFELINK"],
+        "White Insect Token" => &["Keywords::FLYING"],
+        "Spirit Token" => &["Keywords::FLYING"],
+        "Enduring Curiosity" => &["Keywords::FLASH"],
+        "Enduring Innocence" => &["Keywords::LIFELINK"],
+        "Pawpatch Recruit" | "Pawpatch Recruit Offspring Token" => &["Keywords::TRAMPLE"],
+        "Darkstar Augur" | "Darkstar Augur Offspring Token" => &["Keywords::FLYING"],
+        _ => &[],
     }
 }
 
@@ -4008,6 +4057,10 @@ fn object_name_for(name: &str) -> &str {
     match name {
         "Sacred Cat Embalmed Token" => "Sacred Cat",
         "Homunculus Horde Token" => "Homunculus Horde",
+        "Iridescent Vinelasher Offspring Token" => "Iridescent Vinelasher",
+        "Darkstar Augur Offspring Token" => "Darkstar Augur",
+        "Pawpatch Recruit Offspring Token" => "Pawpatch Recruit",
+        "Manifold Mouse Offspring Token" => "Manifold Mouse",
         "Koma's Coil Token" => "Koma's Coil",
         "Scion of the Deep Token" => "Scion of the Deep",
         _ => name,
@@ -4018,6 +4071,9 @@ fn transform_face_for(name: &str) -> &'static str {
     match name {
         "The Modern Age" => "Some(TransformFaceDef { name: \"Vector Glider\", types: &[CardType::Enchantment, CardType::Creature], subtypes: &[Subtype::Spirit], colors: &[ManaColor::U], power: Some(2), toughness: Some(3), keywords: Keywords::FLYING })",
         "Delver of Secrets" => "Some(TransformFaceDef { name: \"Insectile Aberration\", types: &[CardType::Creature], subtypes: &[Subtype::Human, Subtype::Insect], colors: &[ManaColor::U], power: Some(3), toughness: Some(2), keywords: Keywords::FLYING })",
+        "Graveyard Trespasser" => "Some(TransformFaceDef { name: \"Graveyard Glutton\", types: &[CardType::Creature], subtypes: &[Subtype::Werewolf], colors: &[ManaColor::B], power: Some(4), toughness: Some(4), keywords: Keywords::NONE })",
+        "Brutal Cathar" => "Some(TransformFaceDef { name: \"Moonrage Brute\", types: &[CardType::Creature], subtypes: &[Subtype::Werewolf], colors: &[ManaColor::R], power: Some(3), toughness: Some(3), keywords: Keywords::FIRST_STRIKE })",
+        "Incubator Token" => "Some(TransformFaceDef { name: \"Phyrexian Token\", types: &[CardType::Artifact, CardType::Creature], subtypes: &[Subtype::Phyrexian], colors: &[], power: Some(0), toughness: Some(0), keywords: Keywords::NONE })",
         _ => "None",
     }
 }
@@ -4031,6 +4087,9 @@ fn transform_face_name_for(name: &str) -> Option<&'static str> {
     match name {
         "The Modern Age" => Some("Vector Glider"),
         "Delver of Secrets" => Some("Insectile Aberration"),
+        "Incubator Token" => Some("Phyrexian Token"),
+        "Brutal Cathar" => Some("Moonrage Brute"),
+        "Graveyard Trespasser" => Some("Graveyard Glutton"),
         _ => None,
     }
 }
@@ -4110,6 +4169,10 @@ fn enters_battlefield_tapped_unless_for(name: &str) -> &'static str {
 fn kicker_cost_for(name: &str) -> String {
     match name {
         "Goblin Bushwhacker" => cost_src("{R}"),
+        // Offspring {2} reuses kicker's optional additional cost.
+        "Iridescent Vinelasher" => cost_src("{2}"),
+        "Darkstar Augur" => cost_src("{B}"),
+        "Pawpatch Recruit" | "Manifold Mouse" => cost_src("{2}"),
         "Gnarlid Colony" => cost_src("{2}{G}"),
         "Sun-Blessed Healer" => cost_src("{1}{W}"),
         "Burst Lightning" => cost_src("{4}"),
@@ -4145,6 +4208,9 @@ fn alt_cost_for(name: &str) -> &'static str {
         "Fireblast" => "Some(AltCostDef { components: &[CostComponent::SacrificeLands(2)], condition: AltCostCondition::Always })",
         "Land Grant" => "Some(AltCostDef { components: &[CostComponent::RevealHandIfNoCardsWithType(CardType::Land)], condition: AltCostCondition::Always })",
         "Snuff Out" => "Some(AltCostDef { components: &[CostComponent::PayLife(4)], condition: AltCostCondition::ControlsPermanentWithSubtype(Subtype::Swamp) })",
+        "Knight-Errant of Eos" => "Some(AltCostDef { components: &[CostComponent::ConvokeMana(Cost { pips: &[Pip::Colored(ManaColor::W)], generic: 4, x_count: 0 })], condition: AltCostCondition::Always })",
+        "Overlord of the Mistmoors" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::W), Pip::Colored(ManaColor::W)], generic: 2, x_count: 0 })], condition: AltCostCondition::ImpendingFromHand { time_counters: 4 } })",
+        "Nova Hellkite" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 2, x_count: 0 })], condition: AltCostCondition::WarpFromHand })",
         _ => "None",
     }
 }
@@ -4366,6 +4432,60 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
                 generic: 3,
             }],
             effect: AbilityEffectRecipe::DrawCards(1),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Yotian Frontliner" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: Some("W"),
+                generic: 0,
+            }],
+            effect: AbilityEffectRecipe::Unearth,
+            activation_zone: "Graveyard",
+            sorcery_speed_only: true,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Incubator Token" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: None,
+                generic: 2,
+            }],
+            effect: AbilityEffectRecipe::TransformSource,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Hopeful Initiate" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: Some("W"),
+                    generic: 2,
+                },
+                AbilityCostRecipe::RemovePlusOneCountersFromControlledCreatures(2),
+            ],
+            effect: AbilityEffectRecipe::DestroyTarget,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "ArtifactOrEnchantmentPermanent",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Burnout Bashtronaut" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: None,
+                generic: 2,
+            }],
+            effect: AbilityEffectRecipe::PumpSourceUntilEndOfTurn {
+                power: 1,
+                toughness: 0,
+            },
             activation_zone: "Battlefield",
             sorcery_speed_only: false,
             target_spec: "None",
@@ -4862,6 +4982,18 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
+        "Cori-Steel Cutter" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: Some("R"),
+                generic: 1,
+            }],
+            effect: AbilityEffectRecipe::AttachSourceToTarget,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: true,
+            target_spec: "ControlledCreature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Quick-Draw Katana" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Mana {
                 colored: None,
@@ -5133,6 +5265,9 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::ReturnControlledUnblockedAttacker => {
             "CostComponent::ReturnControlledUnblockedAttackerToOwnersHand".to_string()
         }
+        AbilityCostRecipe::RemovePlusOneCountersFromControlledCreatures(count) => {
+            format!("CostComponent::RemovePlusOneCountersFromControlledCreatures({count})")
+        }
         AbilityCostRecipe::ManaCost(cost) => {
             let (pips, generic, x_count) = parse_cost(cost);
             format!(
@@ -5175,6 +5310,9 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
             "return_controlled_unblocked_attacker".to_string()
         }
         AbilityCostRecipe::ManaCost(cost) => format!("mana_cost:{cost}"),
+        AbilityCostRecipe::RemovePlusOneCountersFromControlledCreatures(count) => {
+            format!("remove_controlled_plus_one_counters:{count}")
+        }
     }
 }
 
@@ -5256,6 +5394,8 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::AddMinusOneMinusOneCounter => {
             "add_minus_one_minus_one_counter".to_string()
         }
+        AbilityEffectRecipe::TransformSource => "transform_source".to_string(),
+        AbilityEffectRecipe::Unearth => "unearth".to_string(),
         AbilityEffectRecipe::PutPlusOneCounterOnSource => {
             "put_plus_one_counter_on_source".to_string()
         }
@@ -5435,6 +5575,8 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::AddMinusOneMinusOneCounter => {
             "ability_effect_add_minus_one_minus_one_counter".to_string()
         }
+        AbilityEffectRecipe::TransformSource => "ability_effect_transform_source".to_string(),
+        AbilityEffectRecipe::Unearth => "ability_effect_unearth".to_string(),
         AbilityEffectRecipe::PutPlusOneCounterOnSource => {
             "ability_effect_put_plus_one_counter_on_source".to_string()
         }
@@ -5548,6 +5690,8 @@ fn plot_cost_for(name: &str) -> String {
     match name {
         "Highway Robbery" => cost_src("{1}{R}"),
         "Spinewoods Paladin" => cost_src("{3}{G}"),
+        "Aloe Alchemist" => cost_src("{1}{G}"),
+        "Slickshot Show-Off" => cost_src("{1}{R}"),
         _ => "None".to_string(),
     }
 }
@@ -5584,6 +5728,7 @@ fn mode2_for(name: &str) -> String {
         Special::PiracyCharm => "Some(ModeDef { target_spec: TargetSpec::Creature, effect: mode2_effect_piracy_charm_pump })".to_string(),
         Special::CastIntoTheFire => "Some(ModeDef { target_spec: TargetSpec::ArtifactPermanent, effect: mode2_effect_cast_into_the_fire_exile_artifact })".to_string(),
         Special::ThrabenCharm => "Some(ModeDef { target_spec: TargetSpec::EnchantmentPermanent, effect: mode2_effect_thraben_charm_destroy_enchantment })".to_string(),
+        Special::PhantomInterference => "Some(ModeDef { target_spec: TargetSpec::AnySpellOnStack, effect: mode2_effect_phantom_interference_counter })".to_string(),
         Special::BoostControlledOrCreateTokens { .. } => format!(
             "Some(ModeDef {{ target_spec: TargetSpec::None, effect: mode2_effect_create_tokens_{} }})",
             name.to_ascii_lowercase().replace([' ', '\''], "_")
@@ -5599,10 +5744,14 @@ fn mode2_for(name: &str) -> String {
 
 /// Optional third printed mode, using the same stable mode index carried by
 /// pending casts and stack items.
+/// Phantom Interference's "both" mode shares the counter program; its Spirit
+/// half runs first from `standard_keywords_v1::spree_mode_prelude`, since a
+/// counter-unless-pays program must stay rooted.
 fn mode3_for(name: &str) -> String {
     match special_for(name) {
         Special::PiracyCharm => "Some(ModeDef { target_spec: TargetSpec::AnyPlayer, effect: mode3_effect_piracy_charm_discard })".to_string(),
         Special::ThrabenCharm => "Some(ModeDef { target_spec: TargetSpec::UpToTwoPlayers, effect: mode3_effect_thraben_charm_exile_graveyards })".to_string(),
+        Special::PhantomInterference => "Some(ModeDef { target_spec: TargetSpec::AnySpellOnStack, effect: mode2_effect_phantom_interference_counter })".to_string(),
         _ => "None".to_string(),
     }
 }
@@ -5732,6 +5881,9 @@ fn ward_cost_for(name: &str) -> &'static str {
     match name {
         "Tolarian Terror" | "Cackling Prowler" => "Some(WardCostDef::Generic(2))",
         "Koma, World-Eater" => "Some(WardCostDef::Generic(4))",
+        "Axebane Ferox" => "Some(WardCostDef::CollectEvidence(4))",
+        "Brutal Cathar" => "Some(WardCostDef::BackFacePayLife(3))",
+        "Graveyard Trespasser" => "Some(WardCostDef::DiscardCard)",
         _ => "None",
     }
 }
@@ -5761,6 +5913,7 @@ fn equipment_for(name: &str) -> &'static str {
         "Goldvein Pick" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
         "Quick-Draw Katana" => "Some(EquipmentDef { power_delta: 2, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::FIRST_STRIKE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: true })",
         "Swiftfoot Boots" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords(Keywords::HEXPROOF.0 | Keywords::HASTE.0), other_turn_keywords: Keywords(Keywords::HEXPROOF.0 | Keywords::HASTE.0), noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
+        "Cori-Steel Cutter" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords(Keywords::TRAMPLE.0 | Keywords::HASTE.0), other_turn_keywords: Keywords(Keywords::TRAMPLE.0 | Keywords::HASTE.0), noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
         "Viridian Longbow" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: Some(GrantedActivatedAbilityDef { cost: &[CostComponent::Tap], target_spec: TargetSpec::AnyTarget, effect: longbow_ping }) })",
         _ => "None",
     }
@@ -5782,6 +5935,7 @@ fn optional_additional_cost_for(name: &str) -> &'static str {
             "Some(OptionalAdditionalCostDef::CollectEvidence { minimum_mana_value: 6 })"
         }
         "Troublemaker Ouphe" => "Some(OptionalAdditionalCostDef::Bargain)",
+        "Make Disappear" => "Some(OptionalAdditionalCostDef::Casualty(1))",
         _ => "None",
     }
 }
@@ -5912,6 +6066,33 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Delver of Secrets" => {
             "upkeep_controller:look_top_may_reveal_instant_or_sorcery:transform_source_in_place"
         }
+        "Emberheart Challenger" => {
+            "prowess;valiant_first_target_each_turn:impulse_top_one_end_of_turn"
+        }
+        "Burnout Bashtronaut" => "start_your_engines;max_speed:double_strike",
+        "Nova Hellkite" => "etb:target_opponent_creature:damage:1;warp_next_end_step:exile_cast_later_turn",
+        "Aloe Alchemist" => "becomes_plotted:target_creature:pump:3:2:trample",
+        "Hopeful Initiate" => "training",
+        "Chrome Host Seedshark" => "cast_noncreature_spell:incubate_spell_mana_value",
+        "Monastery Swiftspear" => "prowess",
+        "Heartfire Hero" => "valiant:plus_one_counter_on_source;dies:damage_opponent_equal_to_last_power",
+        "Slickshot Show-Off" => "cast_noncreature_spell:pump_source:2:0",
+        "Sanguine Evangelist" => "battle_cry;etb:create_bat_token;dies:create_bat_token",
+        "Darkstar Augur" | "Darkstar Augur Offspring Token" => "etb_if_offspring_paid:create_one_one_token_copy;controller_upkeep:reveal_top_to_hand_lose_life_mana_value",
+        "Ruin-Lurker Bat" => "controller_end_step_if_descended:scry:1",
+        "Pawpatch Recruit" | "Pawpatch Recruit Offspring Token" => "etb_if_offspring_paid:create_one_one_token_copy;controlled_creature_targeted_by_opponent:target_another_controlled_creature:plus_one_counter",
+        "Manifold Mouse" | "Manifold Mouse Offspring Token" => "etb_if_offspring_paid:create_one_one_token_copy;controller_beginning_of_combat:target_controlled_mouse:choose_double_strike_or_trample",
+        "Cori-Steel Cutter" => "flurry:create_monk_prowess_token:may_attach_source",
+        "Monk Token" => "prowess",
+        "Yotian Frontliner" => "attacks:target_another_controlled_creature:pump:1:1;unearth_next_end_step:exile",
+        "Knight-Errant of Eos" => "convoke;etb:look_top:6:take_creatures_mana_value_at_most_convoked:2:shuffle",
+        "Enduring Curiosity" => "controlled_creature_combat_damage_to_player:draw:1;dies_if_creature:return_as_enchantment",
+        "Enduring Innocence" => "other_controlled_power_at_most_2_enters_once_each_turn:draw:1;dies_if_creature:return_as_enchantment",
+        "Overlord of the Mistmoors" => "impending:4;etb_or_attacks:create_two_white_insect_tokens;controller_end_step_with_time_counter:remove_time_counter",
+        "Graveyard Trespasser" => "etb_or_attacks:target_up_to_one_graveyard_card:exile_drain_1_if_creature;ward_discard;daybound;back_face_nightbound_etb_or_attacks:target_up_to_two_graveyard_cards:exile_drain_1_per_creature",
+        "Brutal Cathar" => "etb_or_transforms_into_front:target_opponent_creature:exile_until_source_leaves;daybound;back_face_nightbound_first_strike_ward_pay_life:3",
+        "Forsaken Miner" => "cant_block;graveyard:controller_commits_crime:may_pay:B:return_source_to_battlefield",
+        "Iridescent Vinelasher" | "Iridescent Vinelasher Offspring Token" => "etb_if_offspring_paid:create_one_one_token_copy;landfall:target_opponent:damage:1",
         // MageZero Standard family G.
         "Novice Inspector" => "etb:investigate:1",
         "Sentinel of the Nameless City" => "etb_and_attacks:create_map_token:1",
@@ -6369,6 +6550,19 @@ fn codegen(cards: &[CardJson]) -> String {
 
     if cards
         .iter()
+        .any(|card| matches!(special_for(&card.name), Special::FullBore))
+    {
+        writeln!(out, "fn spell_effect_full_bore() -> Option<EffectOp> {{").unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+        writeln!(out, "        EffectOp::PumpTargetUntilEndOfTurnDynamic {{ target: TargetRef::Target(0), power: DynamicValueDef::Fixed(3), toughness: DynamicValueDef::Fixed(2) }},").unwrap();
+        writeln!(out, "        EffectOp::Conditional {{ cond: EffectCond::TargetWasCastForWarp(0), then: Box::new(EffectOp::GrantKeywordTargetUntilEndOfTurn {{ object: ObjectRef::Target(0), keyword: Keywords(Keywords::TRAMPLE.0 | Keywords::HASTE.0) }}), else_: Box::new(EffectOp::Sequence(vec![])) }},").unwrap();
+        writeln!(out, "    ]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
         .any(|card| matches!(special_for(&card.name), Special::ToxinAnalysis))
     {
         writeln!(
@@ -6570,6 +6764,15 @@ fn codegen(cards: &[CardJson]) -> String {
                     "    EffectOp::DestroyObject {{ object: ObjectRef::Target(0) }}"
                 )
                 .unwrap();
+            }
+            AbilityEffectRecipe::TransformSource => {
+                writeln!(out, "    EffectOp::TransformSourceInPlace").unwrap();
+            }
+            AbilityEffectRecipe::Unearth => {
+                writeln!(out, "    EffectOp::Sequence(vec![").unwrap();
+                writeln!(out, "        EffectOp::ReturnSourceFromGraveyardUnearthed,").unwrap();
+                writeln!(out, "        EffectOp::GrantKeywordTargetUntilEndOfTurn {{ object: ObjectRef::ThisSource, keyword: Keywords::HASTE }},").unwrap();
+                writeln!(out, "    ])").unwrap();
             }
             AbilityEffectRecipe::AddPlusOnePlusOneCounters(count) => {
                 writeln!(out, "    EffectOp::AddCountersToTarget {{ target_index: 0, optional: false, plus1_plus1: {count}, lifelink: 0, stun: 0 }}").unwrap();
@@ -7626,6 +7829,29 @@ fn codegen(cards: &[CardJson]) -> String {
 
     if cards
         .iter()
+        .any(|card| matches!(special_for(&card.name), Special::PhantomInterference))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_phantom_interference_spirit() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    let token = crate::card_def::card_id_by_name(\"Spirit Token\").expect(\"Spirit Token in CARD_DEFS\");").unwrap();
+        writeln!(out, "    Some(EffectOp::CreateToken {{ token_def: token, controller: PlayerRef::Controller }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+        writeln!(
+            out,
+            "fn mode2_effect_phantom_interference_counter() -> EffectOp {{"
+        )
+        .unwrap();
+        writeln!(out, "    EffectOp::CounterTargetUnlessPaysGeneric {{ target: TargetRef::Target(0), generic: 2 }}").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
         .any(|card| matches!(special_for(&card.name), Special::ThrabenCharm))
     {
         writeln!(
@@ -8213,6 +8439,11 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_dust_to_dust".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::PhantomInterference => (
+                "TargetSpec::None",
+                "spell_effect_phantom_interference_spirit".to_string(),
+                "no_effect".to_string(),
+            ),
             Special::ThrabenCharm => (
                 "TargetSpec::Creature",
                 "spell_effect_thraben_charm_damage".to_string(),
@@ -8473,6 +8704,11 @@ fn codegen(cards: &[CardJson]) -> String {
             Special::ToxinAnalysis => (
                 "TargetSpec::Creature",
                 "spell_effect_toxin_analysis".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::FullBore => (
+                "TargetSpec::ControlledCreature",
+                "spell_effect_full_bore".to_string(),
                 "no_effect".to_string(),
             ),
             Special::WeatherTheStorm => (
@@ -8887,7 +9123,7 @@ fn codegen(cards: &[CardJson]) -> String {
         // `standard-magezero-fixtures` builds: the Pauper prefix plus
         // `data/standard/magezero_v1/cards_v1.json`, versioned separately
         // from the FDN Limited catalog.
-        canon = String::from("kernel_carddb_standard/v3\n");
+        canon = String::from("kernel_carddb_standard/v4\n");
     }
     if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
         canon.push_str("counter_target_spell_guard=bound_stack_spell_can_be_countered\n");
@@ -9265,6 +9501,14 @@ fn subtype_variant(t: &str) -> &'static str {
         "Wolf" => "Subtype::Wolf",
         "Kraken" => "Subtype::Kraken",
         "Djinn" => "Subtype::Djinn",
+        "Mouse" => "Subtype::Mouse",
+        "Werewolf" => "Subtype::Werewolf",
+        "Rabbit" => "Subtype::Rabbit",
+        "Avatar" => "Subtype::Avatar",
+        "Glimmer" => "Subtype::Glimmer",
+        "Sheep" => "Subtype::Sheep",
+        "Monk" => "Subtype::Monk",
+        "Incubator" => "Subtype::Incubator",
         "Pirate" => "Subtype::Pirate",
         "Plains" => "Subtype::Plains",
         "ROGUE" => "Subtype::RogueAllCaps",

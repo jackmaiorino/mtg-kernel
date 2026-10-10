@@ -68,7 +68,14 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
         | TargetSpec::NonOutlawCreature
         | TargetSpec::CreatureToughnessAtLeastFour
         | TargetSpec::CreatureEnchantmentOrPlaneswalker => (BATTLEFIELD, None),
-        TargetSpec::ControlledCreature => (BATTLEFIELD, Some(RelF::You)),
+        TargetSpec::ControlledCreature | TargetSpec::AnotherControlledCreature => {
+            (BATTLEFIELD, Some(RelF::You))
+        }
+        TargetSpec::ControlledCreatureWithSubtype(subtype) => {
+            // The subtype is a target legality fact (targets table).
+            let _ = subtype;
+            (BATTLEFIELD, Some(RelF::You))
+        }
         TargetSpec::OpponentControlledCreature
         | TargetSpec::OpponentArtifactOrEnchantmentPermanent
         | TargetSpec::OpponentNonlandPermanent => (BATTLEFIELD, Some(RelF::Opponent)),
@@ -80,9 +87,9 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
         TargetSpec::AnyPlayer | TargetSpec::UpToTwoPlayers | TargetSpec::TargetOpponent => {
             (None, None)
         }
-        TargetSpec::CreatureOrLandCardInGraveyard | TargetSpec::UpToTwoCardsInGraveyards => {
-            (GRAVEYARD, None)
-        }
+        TargetSpec::CreatureOrLandCardInGraveyard
+        | TargetSpec::UpToTwoCardsInGraveyards
+        | TargetSpec::UpToOneCardInGraveyards => (GRAVEYARD, None),
         TargetSpec::UpToTwoCreatureCardsInOwnGraveyard | TargetSpec::CreatureCardInOwnGraveyard => {
             (GRAVEYARD, Some(RelF::You))
         }

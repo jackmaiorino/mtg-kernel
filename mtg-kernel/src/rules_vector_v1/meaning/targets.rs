@@ -292,6 +292,24 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
         TargetSpec::SpellYouDontControl => {
             object(out, ObjF::Spell, Some(RelF::Opponent), ZoneF::Stack)
         }
+        // A creature the targeting player controls other than the source
+        // (or than the creature its trigger names). The exclusion has no
+        // facet; the nearest class is "a creature you control".
+        TargetSpec::AnotherControlledCreature => {
+            object(out, creature(), Some(RelF::You), ZoneF::Battlefield)
+        }
+        // A creature the targeting player controls with one subtype. No
+        // subtype facet exists; the nearest class is "a creature you
+        // control".
+        TargetSpec::ControlledCreatureWithSubtype(subtype) => {
+            let _ = subtype;
+            object(out, creature(), Some(RelF::You), ZoneF::Battlefield)
+        }
+        // Zero or one nontoken card in either graveyard.
+        TargetSpec::UpToOneCardInGraveyards => {
+            object(out, ObjF::AnyCard, None, ZoneF::Graveyard);
+            out.target(TargetAtom::UpTo);
+        }
     }
 }
 
@@ -419,9 +437,18 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
             let _ = slot; // One target slot.
             ObjF::Permanent
         }
-        TargetSpec::UpToTwoCardsInGraveyards => {
+        TargetSpec::UpToTwoCardsInGraveyards | TargetSpec::UpToOneCardInGraveyards => {
             let _ = slot; // Every slot is an unfiltered graveyard card.
             ObjF::AnyCard
+        }
+        TargetSpec::AnotherControlledCreature => {
+            let _ = slot; // One target slot.
+            creature()
+        }
+        TargetSpec::ControlledCreatureWithSubtype(subtype) => {
+            // The subtype restricts which creatures qualify, not their class.
+            let _ = (subtype, slot);
+            creature()
         }
     }
 }

@@ -46,4 +46,4 @@ python python/tools/limited_decks_v1.py inventory --registry-extension data/stan
 `docs/reports/standard_magezero_inventory_v1.md` lists the missing cards by mechanic family and which
 thread owns each family.
 
-The tracked pool has 34 fully supported nonbasic cards and eight Partial cards. Full deck admission refuses Memory Deluge and Recruitment Officer (random bottom ordering), Quirion Beastcaller (targeting and allocation timing), Extraction Specialist (restriction duration), Sharp-Eyed Rookie and Evolving Adaptive (departed entrant power/toughness), and Thalia and Haughty Djinn (complete spell-cost adjustment). Their definitions and current behavior remain available for development. See `docs/design/standard_family_g_v1.md` for the remaining work.
+The tracked pool has 52 Full nonbasic cards, 19 Partial cards and 154 missing cards. No complete MageZero deck resolves yet. Full deck admission refuses every Partial definition. Their current behavior remains available for development; see `docs/design/standard_family_g_v1.md` and `docs/design/standard_family_d_keywords_v1.md` for the missing mechanics.

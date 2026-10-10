@@ -126,6 +126,26 @@ pub(crate) fn effect_cond(cond: &EffectCond, env: &Env, out: &mut Collector) {
                 at_least(1),
             );
         }
+        EffectCond::TargetWasCastForWarp(slot) => {
+            // Reads whether the targeted permanent, still the same
+            // battlefield incarnation, resolved from a spell cast for its
+            // warp cost. Vocabulary gap: no cast-provenance aggregate;
+            // nearest is an event about that object this turn (a warped
+            // permanent is exiled at the end step it was cast).
+            out.read(
+                RelF::ObjectController,
+                Some(ZoneF::Battlefield),
+                Some(env.target_obj(*slot)),
+                AggF::EventThisTurn,
+            );
+        }
+        EffectCond::SourceStillInTriggerZone => {
+            // Reads whether the trigger's source is still the incarnation
+            // that triggered, in the zone it triggered from. Vocabulary
+            // gap: no zone is fixed here (the trigger's home zone is a
+            // separate fact); nearest is "this object exists".
+            out.read(RelF::You, None, Some(ObjF::ThisObject), AggF::Any);
+        }
         EffectCond::WasKicked => {
             // Reads cast-scoped metadata: whether this casting paid its
             // optional additional cost. Vocabulary gap: no cost-paid
@@ -140,6 +160,10 @@ pub(crate) fn effect_cond(cond: &EffectCond, env: &Env, out: &mut Collector) {
                     let _ = minimum_mana_value;
                 }
                 OptionalAdditionalCostDef::Bargain => {}
+                OptionalAdditionalCostDef::Casualty(minimum_power) => {
+                    // The sacrificed creature's power bound is a cost fact.
+                    let _ = minimum_power;
+                }
             }
             optional_cost_paid(out);
         }

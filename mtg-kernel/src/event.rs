@@ -525,6 +525,37 @@ pub enum CommittedEvent {
         source_zone_change_count: u32,
         controller: PlayerId,
     },
+    // Append new variants to preserve existing derived Hash discriminants.
+    /// 700.13: `player` committed a crime by casting a spell, activating an
+    /// ability or putting a triggered ability on the stack that targets an
+    /// opponent, anything an opponent controls, or a card in an opponent's
+    /// graveyard. Logged once per stack item, after its final targeting
+    /// markers. Only `standard-magezero-fixtures` builds emit it.
+    CrimeCommitted {
+        player: PlayerId,
+        targeting_stack_item: StackItemId,
+    },
+    /// Last-known power of a permanent about to leave the battlefield,
+    /// logged just before its zone change for the Standard cards whose
+    /// leave triggers read it (Heartfire Hero). Only
+    /// `standard-magezero-fixtures` builds emit it.
+    PowerBeforeLeavingBattlefield {
+        object: ObjectId,
+        zone_change_count: u32,
+        power: i32,
+    },
+    /// 507.1: the beginning of `active_player`'s beginning of combat step
+    /// (Manifold Mouse). Only `standard-magezero-fixtures` builds emit it.
+    BeginningOfCombat {
+        active_player: PlayerId,
+    },
+    /// A permanent that was a creature just before it left the battlefield,
+    /// logged for the Enduring cards' "if it was a creature". Only
+    /// `standard-magezero-fixtures` builds emit it.
+    WasCreatureBeforeLeavingBattlefield {
+        object: ObjectId,
+        zone_change_count: u32,
+    },
 }
 
 /// Remembers the counters of a departing permanent whose own leave ability
@@ -921,13 +952,19 @@ fn commit_with_ability_lki(
                 amount: d.amount,
             }
         }
-        ProposedEvent::ZoneChange(z) => {
+        ProposedEvent::ZoneChange(mut z) => {
+            #[cfg(feature = "standard-magezero-fixtures")]
+            crate::standard_keywords_v1::unearth_exile_instead(state, &mut z);
+            #[cfg(not(feature = "standard-magezero-fixtures"))]
+            let _ = &mut z;
             let from = state.objects.get(z.object).zone;
             let controller_before = state.objects.get(z.object).controller;
             #[cfg(feature = "standard-magezero-fixtures")]
             if from == Zone::Battlefield {
                 record_counter_lki(state, z.object);
             }
+            #[cfg(feature = "standard-magezero-fixtures")]
+            crate::standard_keywords_v1::before_zone_change(state, z.object, z.to_zone);
             if from == Zone::Battlefield
                 && abilities_removed_before.unwrap_or_else(|| {
                     !crate::continuous_characteristics_v1::printed_abilities_active(state, z.object)
@@ -1069,6 +1106,30 @@ fn commit_with_ability_lki(
                 object,
                 token_def: t.token_def,
                 controller: t.controller,
+            }
+        }
+        ProposedEvent::Transform(t) if t.face_index == 0 => {
+            // Back to the front face (a nightbound permanent as it becomes
+            // day): the definition's own characteristics.
+            let obj = state.objects.get_mut(t.object);
+            let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];
+            assert!(
+                obj.v4.face_index == 1 && def.transform_face.is_some(),
+                "transform_in_place to the front face needs a transformed permanent"
+            );
+            obj.v4.face_index = 0;
+            obj.v4.effective_color_mask = crate::card_def::mana_colors_mask(def.colors);
+            obj.v4.effective_subtype_ids = def
+                .subtypes
+                .iter()
+                .map(|subtype| subtype.stable_id())
+                .collect();
+            obj.v4.effective_subtype_ids.sort_unstable();
+            obj.v4.effective_subtype_ids.dedup();
+            obj.name = def.object_name.to_string();
+            CommittedEvent::Transformed {
+                object: t.object,
+                face_index: 0,
             }
         }
         ProposedEvent::Transform(t) => {
@@ -1237,6 +1298,17 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
 /// later, it doesn't replace the cast event itself).
 pub fn log_spell_cast(state: &mut GameState, spell: ObjectId, controller: PlayerId) {
     let committed = CommittedEvent::SpellCast { spell, controller };
+    state.engine.event_log.push(committed.clone());
+    state.engine.event_history.push(committed);
+}
+
+/// Logs a crime committed by one completed targeting action.
+#[cfg(feature = "standard-magezero-fixtures")]
+pub fn log_crime(state: &mut GameState, player: PlayerId, targeting_stack_item: StackItemId) {
+    let committed = CommittedEvent::CrimeCommitted {
+        player,
+        targeting_stack_item,
+    };
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
 }
@@ -1438,6 +1510,15 @@ fn commit_zone_change(
     battlefield_face_index: Option<u8>,
     battlefield_controller: Option<PlayerId>,
 ) {
+    #[cfg(feature = "standard-magezero-fixtures")]
+    let battlefield_face_index = battlefield_face_index.or_else(|| {
+        (to_zone == Zone::Battlefield
+            && crate::standard_keywords_v1::enters_transformed_at_night(
+                state,
+                state.objects.get(id).card_def,
+            ))
+        .then_some(1)
+    });
     let owner = state.objects.get(id).owner;
     let from_zone = state.objects.get(id).zone;
     refresh_paid_creature_power_lki(state, id, from_zone);
@@ -1777,6 +1858,40 @@ mod tests {
 
     fn fresh_state() -> GameState {
         GameState::new_from_libraries(&[1, 2, 3], &[4, 5, 6], |c| format!("card-{c}"), 1)
+    }
+
+    #[cfg(feature = "standard-magezero-fixtures")]
+    #[test]
+    fn heartfire_death_respects_the_pre_zone_change_ability_snapshot() {
+        for abilities_removed in [false, true] {
+            let mut state = fresh_state();
+            let hero = push_object_into(&mut state, PlayerId::P0, Zone::Battlefield);
+            let definition = crate::card_def::card_id_by_name("Heartfire Hero").unwrap();
+            let object = state.objects.get_mut(hero);
+            object.card_def = definition;
+            object.name = "Heartfire Hero".into();
+            object.v4 = crate::state::ObjectStateV4::from_card_def(definition);
+            state.players[0].battlefield.push(hero);
+
+            // A simultaneous zone-change batch freezes whether an Aura had
+            // removed the printed ability before either permanent leaves.
+            commit_with_ability_lki(
+                &mut state,
+                ProposedEvent::zone_change(hero, Zone::Graveyard),
+                Some(abilities_removed),
+            );
+            let triggers = crate::trigger::collect_and_process(&mut state);
+            assert_eq!(triggers.len(), usize::from(!abilities_removed));
+            if let Some(trigger) = triggers.first() {
+                assert_eq!(
+                    trigger.effect,
+                    crate::effect::EffectOp::DealDamage {
+                        target: crate::effect::TargetRef::Opponent,
+                        amount: 1,
+                    }
+                );
+            }
+        }
     }
 
     fn lifelink_source(state: &mut GameState) -> ObjectId {

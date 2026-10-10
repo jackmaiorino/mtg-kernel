@@ -307,6 +307,134 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
             });
             out.control(ControlF::Conditional);
         }
+        TriggerCondition::BecomesTargetOfControllerSpellOrAbilityFirstTimeEachTurn => {
+            // The source becomes the target of a spell or ability its
+            // controller controls, at most once each turn. Vocabulary gap: no
+            // "becomes the target" event and no per-turn trigger limit facet;
+            // the gate is marked conditional.
+            out.control(ControlF::Conditional);
+        }
+        TriggerCondition::BeginningEndStepAfterWarp => {
+            // The next end step (either player's, but always this turn)
+            // after the source resolved from a warp cast.
+            out.trigger(TrigF::StepBegins {
+                step: StepF::EndStep,
+                yours_only: false,
+            });
+            out.control(ControlF::Conditional);
+        }
+        TriggerCondition::BecomesPlotted => {
+            // The source is moved from hand to exile by the plot special
+            // action. Vocabulary gap: no "becomes plotted" event; nearest is
+            // the source leaving to exile.
+            out.trigger(TrigF::SelfLeaves {
+                to: Some(ZoneF::Exile),
+            });
+        }
+        TriggerCondition::ControllerCommitsCrime => {
+            // The controller commits a crime. Vocabulary gap: no crime
+            // event; the gate is marked conditional.
+            out.control(ControlF::Conditional);
+        }
+        TriggerCondition::AttacksWithGreaterPowerAttacker => {
+            // Training: the source attacks alongside an attacker with
+            // greater power.
+            out.trigger(TrigF::Attacks);
+            out.control(ControlF::Conditional);
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Typed(CardTypeF::Creature)),
+                AggF::Characteristic,
+            );
+        }
+        TriggerCondition::TransformsIntoFrontFace => {
+            // The source transforms to face zero. Vocabulary gap: no
+            // transform event; the gate is marked conditional.
+            out.control(ControlF::Conditional);
+        }
+        TriggerCondition::BeginningControllerEndStepIfDescended => {
+            // The controller's end step begins, gated on a permanent card
+            // they owned having gone to their graveyard this turn.
+            out.trigger(TrigF::StepBegins {
+                step: StepF::EndStep,
+                yours_only: true,
+            });
+            out.control(ControlF::Conditional);
+            out.read(
+                RelF::You,
+                Some(ZoneF::Graveyard),
+                Some(ObjF::Permanent),
+                AggF::EventThisTurn,
+            );
+        }
+        TriggerCondition::ControlledCreatureBecomesTargetOfOpponent => {
+            // A creature the controller controls becomes the target of a
+            // spell or ability an opponent controls. Vocabulary gap: no
+            // "becomes the target" event; the gate is marked conditional.
+            out.control(ControlF::Conditional);
+        }
+        TriggerCondition::BeginningOfControllerCombat => {
+            // Beginning of combat on the controller's turn. Vocabulary gap:
+            // StepF has no combat step; the gate is marked conditional.
+            out.control(ControlF::Conditional);
+        }
+        TriggerCondition::BeginningEndStepAfterUnearth => {
+            // The next end step after the source returned by unearth.
+            out.trigger(TrigF::StepBegins {
+                step: StepF::EndStep,
+                yours_only: false,
+            });
+            out.control(ControlF::Conditional);
+        }
+        TriggerCondition::ControllerCastsSecondSpellEachTurn => {
+            // Flurry: the controller's second spell cast this turn.
+            // Vocabulary gap: the trigger carries no spell ordinal; the
+            // count read is marked conditional.
+            out.trigger(TrigF::SpellCast {
+                by: RelF::You,
+                obj: ObjF::Spell,
+            });
+            out.control(ControlF::Conditional);
+        }
+        TriggerCondition::BeginningControllerEndStepWithTimeCounter => {
+            // Impending: the controller's end step begins while the source
+            // has a time counter. Vocabulary gap: no counter read.
+            out.trigger(TrigF::StepBegins {
+                step: StepF::EndStep,
+                yours_only: true,
+            });
+            out.control(ControlF::Conditional);
+        }
+        TriggerCondition::DiesIfWasCreature => {
+            // Enduring: the source's battlefield -> graveyard zone change,
+            // only when it was a creature as it left (last-known
+            // information).
+            out.trigger(TrigF::SelfLeaves {
+                to: Some(ZoneF::Graveyard),
+            });
+            out.control(ControlF::Conditional);
+        }
+        TriggerCondition::ControlledCreatureDealsCombatDamageToPlayer => {
+            // Any creature the controller controls dealt combat damage to a
+            // player. Vocabulary gap: DealsDamage is source- or host-scoped;
+            // nearest is the source form.
+            out.trigger(TrigF::DealsDamage {
+                combat: true,
+                to_player: true,
+                host: false,
+            });
+        }
+        TriggerCondition::OtherControlledCreatureWithPowerAtMostEntersOncePerTurn(max_power) => {
+            // One or more other creatures with power at most `max_power`
+            // enter under the controller's control, once each turn.
+            // Vocabulary gap: no power threshold on the entrant and no
+            // per-turn trigger limit facet.
+            let _ = max_power;
+            out.trigger(TrigF::OtherEnters {
+                obj: ObjF::Typed(CardTypeF::Creature),
+            });
+        }
     }
 }
 
@@ -473,6 +601,20 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
                 .amount(AmtF::fixed(1));
             reveal.from = Some(ZoneF::Hand);
             out.effect(reveal);
+        }
+        CostComponent::RemovePlusOneCountersFromControlledCreatures(n) => {
+            // `n` +1/+1 counters removed from among creatures the payer
+            // controls, chosen deterministically. Vocabulary gap:
+            // `RemoveCounters` is source-scoped and carries no count.
+            let _ = n;
+            out.cost(CostAtom::RemoveCounters);
+        }
+        CostComponent::ConvokeMana(cost) => {
+            // The mana cost paid partly by tapping untapped creatures the
+            // payer controls (at least one), the rest with mana.
+            let _ = cost;
+            out.cost(CostAtom::TapOthers);
+            out.cost(CostAtom::Mana);
         }
     }
 }

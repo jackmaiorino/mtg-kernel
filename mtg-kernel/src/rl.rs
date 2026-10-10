@@ -2810,17 +2810,14 @@ fn core_surface_action_candidates_v1(
                     )?;
                 }
                 if *can_finish {
-                    let selected_count = state
-                        .engine
-                        .pending_cast
-                        .as_ref()
-                        .filter(|pending| pending.spell == *spell)
-                        .map(|pending| pending.targets_chosen.len() as u16)
-                        .ok_or_else(|| {
-                            RlContractError(
-                                "optional cast target decision lost its pending cast".to_string(),
-                            )
-                        })?;
+                    let selected_count = crate::engine::optional_targets_selected_count(
+                        state, *spell,
+                    )
+                    .ok_or_else(|| {
+                        RlContractError(
+                            "optional cast target decision lost its pending cast".to_string(),
+                        )
+                    })?;
                     push_action(
                         &mut out,
                         ActionSemanticV1::FinishTargetSelection {
@@ -6243,6 +6240,14 @@ fn exile_play_permissions_public_v2(state: &GameState) -> Result<Vec<ExilePlayPe
                 } => PlayPermissionExpiryV2::UntilHoldersNextTurn {
                     holder_turn_started,
                 },
+                // The frozen V2 projection has no unbounded expiry. Warp's
+                // later-turn permission is projected as a not-yet-started
+                // multi-turn permission, its nearest public meaning.
+                PlayPermissionExpiry::LaterTurn { .. } => {
+                    PlayPermissionExpiryV2::UntilHoldersNextTurn {
+                        holder_turn_started: false,
+                    }
+                }
             },
         });
     }

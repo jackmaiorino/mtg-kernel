@@ -66,6 +66,7 @@ fn exile_from_target_opponents_hand_effect() -> EffectOp {
 /// Gatekeeper of Malakir: "When this creature enters, if it was kicked,
 /// target player sacrifices a creature."
 pub(super) const GATEKEEPER_OF_MALAKIR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    face_index: 0,
     condition: TriggerCondition::Etb,
     home_zone: Zone::Battlefield,
     intervening_if_kicked: true,

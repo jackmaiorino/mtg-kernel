@@ -16,6 +16,7 @@ mod effect_d;
 mod effect_e;
 mod effect_f;
 mod effect_g;
+mod effect_h;
 pub(crate) mod reads;
 pub(crate) mod targets;
 pub(crate) mod triggers_costs;
@@ -216,5 +217,23 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. } => {
             effect_g::effect_op(op, env, out)
         }
+        EffectOp::CounterUnlessCollectsEvidence { .. }
+        | EffectOp::CounterUnlessPaysLife { .. }
+        | EffectOp::CounterUnlessDiscardsCard { .. }
+        | EffectOp::BindConvokedCreatureCountToLookTop { .. }
+        | EffectOp::LookTopTakeCreaturesManaValueAtMostThenShuffle { .. }
+        | EffectOp::BindDamageOpponentEqualToSourceLastPower
+        | EffectOp::PumpOtherAttackingCreaturesUntilEndOfTurn { .. }
+        | EffectOp::RevealTopCardToHandLoseLifeEqualToManaValue
+        | EffectOp::BindIncubateToTriggerSpell
+        | EffectOp::Incubate { .. }
+        | EffectOp::BindWarpExileToTriggerSource
+        | EffectOp::WarpExileBoundObject { .. }
+        | EffectOp::BindPlusOneCounterOnAnotherTargetToTriggerTarget
+        | EffectOp::PutPlusOnePlusOneCounterOnTargetOtherThan { .. }
+        | EffectOp::ReturnSourceFromGraveyardUnearthed
+        | EffectOp::ExileGraveyardTargetsDrainPerCreature { .. }
+        | EffectOp::RemoveTimeCounterFromSource
+        | EffectOp::ReturnSourceAsEnduringEnchantment => effect_h::effect_op(op, env, out),
     }
 }
