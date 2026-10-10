@@ -9,7 +9,7 @@ use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::{ManaColor, Pip};
-use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
+use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Zone};
 
 fn ready(player: PlayerId) -> GameState {
     let forest = card_id_by_name("Forest").unwrap();
