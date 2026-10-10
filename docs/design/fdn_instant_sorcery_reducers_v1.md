@@ -1,61 +1,48 @@
 # Controller instant/sorcery cost reducers, source preparation
 
-This separate issue110 preparation follows the31-name admission. Neither
+This separate issue #110 preparation follows the 31-name admission. Neither
 Mocking Sprite nor Archmage of Runes is registered or accepted by this work.
 
-The pinned Mage primary at
+The pinned Mage constructors at
 [a5c90fe1](https://github.com/jackmaiorino/mage/tree/a5c90fe180021e70e2a644ade00eeab07f857a40/Mage.Sets/src/mage/cards)
-defines Mocking Sprite as2U2/1 Faerie Rogue with Flying and controller
-instant/sorcery spells costing one generic less. Archmage of Runes is3UU3/6
-Giant Wizard with the same reduction and an instant/sorcery cast draw-one
-trigger. Both constructors were read at that exact commit.
+define Mocking Sprite as 2U 2/1 Faerie Rogue with Flying and Archmage of Runes
+as 3UU 3/6 Giant Wizard. Both reduce controller instant/sorcery spells by one
+generic; Archmage also draws one on each instant/sorcery cast. Both primary
+constructors were read at that commit.
 
-Read-only cost-path consultation identified incomplete shared casting logic:
-normal costs and Adventure/Omen already read Standard static modifiers, while
-flashback, Escape, Madness and alternative costs bypass them. Flooring a base
-cost before X or kicker loses excess reduction; paying additional mana
-separately cannot apply one reduction budget to the complete spell cost.
+The casting design must determine one complete spell cost: selected base,
+additional mana, kicker, Spree, X and increases, then reductions and one floor.
+Spell-face types determine modifiers for Adventure/Omen and Bestow. Alternative,
+flashback, Escape, Madness and Plotted costs must use the same planner. Freeze
+the payment before a sacrifice can remove a reducer, pay mana once, and preserve
+nonmana costs, Delve/Convoke, source reservations and one combined life budget.
+Activation and resolution payments remain outside spell modifiers.
 
-The first source increment adds a combined mana solver accepting raw generic
-increases and reductions. It sums base, additional and chosen-X generic cost
-in u32 before one floor; colored/hybrid/Phyrexian pip requirements remain in
-the existing solver. Existing entrypoints delegate with zero modifiers.
-Focused regressions cover kicker, two-X costs, tax/reduction ordering, colored
-requirements and totals above255. Read-only review of source8c3b9914 found no
-actionable defects. Both Limited-only and combined Standard/Limited test
-compilations and all15 mana regressions pass under supported
-guardab5c3985b65b40339b8c63a979a7eabd on cores16-17 at BelowNormal priority,
-command sequence exit0. Rust1.94.1 and MSVC19.50.35725 are logged. This
-qualifies the combined solver increment; casting-path integration is pending.
+Source 8c3b9914 implements the u32 combined mana total without truncating at 255.
+Both Limited-only and Standard/Limited test compilations and all 15 mana tests
+passed under guard ab5c3985b65b40339b8c63a979a7eabd, two cores at BelowNormal,
+exit 0, Rust 1.94.1 and MSVC 19.50.35725. Read-only review found no defects.
 
-The next increment collects selected normal/alternative/flashback/Escape/
-Madness/Plotted/Adventure/Omen/Bestow mana costs, kicker and Spree surcharge
-before adjustment. It retains original nonmana component groups and separates
-selected spell-face types from printed creature types. Delve and Convoke stay
-explicit and refuse the ordinary mana-only solver until their payment adapters
-are wired. Six focused collector regressions use existing registered cards;
-native execution and read-only review are pending. The collector is not yet
-wired into the engine's offer, pending-decision or payment paths.
+Source 02dc1469 collects every selected casting route and original nonmana
+component groups. Six collector tests use existing registered cards. Native27
+is queued under guard 7eb5daccdc9848b68f8cc430b0010f2b, supervisor 51012, with
+the existing observer retained. At 20:00 UTC eligible cores were occupied by
+CI and Claude's fast-forward claims; no duplicate or raw launch was made.
 
-Source preparation also binds Mocking Sprite's Flying, Archmage's existing
-instant/sorcery cast draw-one trigger, and both source static fingerprints.
-The new live modifier query stacks executable front-face battlefield sources
-with the caster's current control and active printed abilities; it combines
-raw Standard modifiers without flooring the selected total. Rules-vector
-extraction reads the shared static definition and represents the two spell
-type reductions. No new metadata rows or catalog IDs are admitted. These
-bindings and live query still need compilation/review and actual card games.
+Source 5c231a1c binds Flying, Archmage's existing cast-draw trigger, static
+fingerprints, rules-vector extraction and live modifiers. Sources must be
+executable front-face battlefield objects, currently controlled by the caster,
+with printed abilities active. Raw Standard modifiers combine before flooring.
+Read-only review found no actionable defects; native qualification is pending.
 
-Native27 remains queued under supported guard7eb5daccdc9848b68f8cc430b0010f2b,
-supervisor51012. Current live host admission shows no free eligible cores:
-existing CI owns18-23 and Claude's fast-forward claims own16 and17. The
-existing queue/observer remains active; no duplicate or raw launch was made.
+Source 64607708 prepares immutable Delve payment from the complete adjusted
+total, preserving minimum-exile and oldest-first choices while excluding
+reserved objects. It also sums mandatory life costs with Phyrexian payment and
+preserves zero-life payment at negative life. Three new regressions cover these
+risks. Execution and review are pending. Convoke still explicitly refuses this
+planner until its complete adapter is implemented.
 
-Remaining implementation must derive live source modifiers and route every
-offer, pending choice, X maximum and final payment through one spell-only
-planner. It must include Adventure/Omen types, Plotted taxes, optional costs,
-Delve/Convoke and nonmana payment, freezing the determined total before paying
-a sacrifice that removes a reducer. Activation/resolution payments stay
-outside spell modifiers. The Archmage trigger can reuse CastInstantOrSorcery
-and controller draw. Registration, metadata, card gameplay/restore, generated
-catalog/profile qualification, CI and integration remain required.
+Remaining work: Convoke adapter; offer/pending/X/final-payment integration;
+atomic nonmana payment; actual card gameplay and restore tests; metadata and
+catalog admission; live profile qualification; CI and default-branch acceptance.
+No new card gameplay, increased coverage or experimental result is claimed.
