@@ -1,8 +1,8 @@
 # Training speedup implementation and comparison
 
 Status: implementation verified and 16 short qualifications complete on two PCs.
-The first full comparison stopped during inspection; total end-to-end speedup
-remains unmeasured.
+The corrected full comparison remains pending; total end-to-end speedup
+is not yet measured. Prior attempts and their exclusions are preserved below.
 
 This follows the completed [throughput audit](../training_throughput_20261009/README.md).
 Three GPT-6.1 Sol agents implemented learner arithmetic, collection/model reuse,
@@ -224,28 +224,37 @@ receipt is `desktop/haley-transport-sample-20261010.json`. These costs enter
 the supported allocation comparison; actual complete recovery times must
 still be measured for every formal case.
 
-The bounded clean formal-v3 queued launcher started at 13:22:50 UTC as PID
-12604, pinned in `desktop/clean-queued-job.json`. Its first observed state
-waits for desktop reservation generation 427, `codex-fdn-issue110`. It uses
-canonical directory events with a two-hour bound, then refreshes all three
-hosts, prepares fresh requests, performs four public output-verifying choice
-checks, seals and validates the plan, and starts the supported dispatcher.
-Any started phase failure preserves the attempt and stops the coordinator.
+Formal-v3 began native execution at 13:39 UTC after all four public choice
+checks passed. Its expanded timed reservation applied Windows job affinity
+to the native child: live process readback was mask 65535, despite the
+request's qualified mask 21845. The earlier statement that the child retained
+the eight even CPUs was incorrect. This attempt is excluded from timing.
+Only the identified native child was stopped; normal dispatcher failure and
+reservation release completed at 13:44:29. Its 78 completed iterations and
+partial output tree remain preserved, with no deletion. The compact stop
+and move receipts record 1,439 files totaling 5,287,511,627 bytes.
 
-Both variants reserve cores 0-15 through `host_slots_v1.py timed` while native
-execution retains its qualified binding to 0,2,4,6,8,10,12,14. This protects
-their physical-core siblings and leaves 16-23 for useful CI or build work.
-The v3 controller and adapter are separate files; historical helpers remain
-unchanged. Each case waits for canonical availability before its timer starts;
-queue time is recorded separately and remains inside the coordinator wall.
-The analysis also requires the terminal state's exact independent E: copy.
+Formal-v4 restores the original qualified timed guard, which binds both the
+job and native process to CPUs 0,2,4,6,8,10,12,14. CI can still use 16-23.
+A read-only observer now checks actual native process identity and affinity
+immediately after launch, saving a pinned receipt before the completion wait.
+Final analysis requires mask 21845 for every case as well as full output
+parity and verified independent recovery.
 
-The authoritative queued state is
-`D:/training-speedups-20261009/desktop/formal-v3-launcher/state.json`, followed
-by `desktop/formal-v3/coordinator/state.json` after execution begins. Jack's
-request to poll through completion is covered by the existing
-`finish-training-throughput-comparison` heartbeat. It began at five-minute
-intervals and backed off to 15 minutes after two unchanged observations;
-the local event waiter reacts immediately to reservation release.
-Clean native execution, a complete ABBA result and final end-to-end
-speedup remain pending.
+An initial v4 preparation found a stale generated case label and stopped
+before any native work. Its two choice files and failure logs are preserved.
+The corrected launcher, PID 7360, started at 13:49:01 UTC, pinned in
+`desktop/clean-v4-repaired-job.json`. The generated `clean4-*` labels were
+checked against the coordinator and analyzer before this attempt. Frozen
+binaries, scientific inputs and prior deployed sources remain unchanged.
+The first v4 native baseline started at 13:50:18 UTC as PID 12416. Its live
+identity and mask 21845 were verified and saved in
+`desktop/formal-v4-initial-affinity.json`.
+
+Current state is
+`D:/training-speedups-20261009/desktop/formal-v4-launcher-repaired/state.json`,
+then `desktop/formal-v4/coordinator/state.json`. The bounded local event
+waiter handles reservation release, and the existing
+`finish-training-throughput-comparison` heartbeat checks completion every
+15 minutes. Queue time is separate from case timing and remains in the
+coordinator wall. No complete ABBA result or final speedup is claimed yet.

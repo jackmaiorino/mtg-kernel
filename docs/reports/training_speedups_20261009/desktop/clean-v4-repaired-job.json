@@ -1,0 +1,12 @@
+{
+  "script": {
+    "sha256": "543283cf2996eb873c1e3f701f3965963b3511e1a764e9117d7275b4f60cc0ce",
+    "path": "D:/training-speedups-20261009/desktop/launch_clean_v4_repaired_when_free.py"
+  },
+  "pid": 7360,
+  "state": "D:/training-speedups-20261009/desktop/formal-v4-launcher-repaired/state.json",
+  "started_utc": "2026-10-10T13:49:01.4550102Z",
+  "schema": "training-speedups-queued-job/v1",
+  "coordinator_state": "D:/training-speedups-20261009/desktop/formal-v4/coordinator/state.json",
+  "heartbeat": "finish-training-throughput-comparison"
+}
