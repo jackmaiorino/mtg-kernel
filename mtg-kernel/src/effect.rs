@@ -15338,7 +15338,7 @@ mod tests {
             for target in [controller, controller.opponent()] {
                 for life in [9, 10, 11] {
                     let mut state = two_card_libraries();
-                    let source = state.players[controller.index()].hand[0];
+                    let source = state.draw_card(controller).unwrap();
                     state.players[target.index()].life = life;
                     let mut ctx = ExecCtx::no_targets(source, controller);
                     ctx.targets.push(Target::Player(target));
@@ -15362,7 +15362,7 @@ mod tests {
             }
         }
         let mut state = two_card_libraries();
-        let source = state.players[0].hand[0];
+        let source = state.draw_card(PlayerId::P0).unwrap();
         let before = state.clone();
         execute(&op, &ExecCtx::no_targets(source, PlayerId::P0), &mut state);
         assert_eq!(state, before, "an absent player target fails the condition");
@@ -15376,8 +15376,8 @@ mod tests {
             |_| "Faerie Miscreant".into(),
             770,
         );
-        let first = state.players[player.index()].hand[0];
-        let second = state.players[player.opponent().index()].hand[0];
+        let first = state.draw_card(player).unwrap();
+        let second = state.draw_card(player.opponent()).unwrap();
         for object in [first, second] {
             event::propose_and_commit(
                 &mut state,
