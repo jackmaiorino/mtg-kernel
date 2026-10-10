@@ -6,7 +6,8 @@ Usage: python diag_queue.py ROOT BINARY QUEUE.json
 
 QUEUE.json: {"budget_cpu_seconds": B, "phase": "qualification"|"panel",
   "groups": [[job, ...], ...]}, job = {"name", "model": "r1"|"r2",
-  "roots": path, "trace": bool, "cpu": logical CPU index or null}.
+  "roots": path, "trace": bool, "cpu": logical CPU index or null,
+  optional "env": {S4A_RUNTIME, S4A_LIMITS, S4A_MILLOBS}}.
 Groups run in order; the jobs of a group run together, one process per job,
 each pinned to its own logical CPU (one per physical core). Mode s4a-diag
 (E only), one worker per process.
@@ -113,7 +114,12 @@ def start(job, runs):
     traces = TRACES / job['name']
     if out.exists() or logfile.exists() or traces.exists():
         raise ValueError('preserve existing job outputs; use a fresh attempt name')
-    env = {k: v for k, v in os.environ.items() if k not in ("S4A_LIMITS", "ROOTS", "S4A_TRACE")}
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("S4A_LIMITS", "ROOTS", "S4A_TRACE", "S4A_RUNTIME", "S4A_MILLOBS")}
+    extra = job.get("env", {})
+    if set(extra) - {"S4A_RUNTIME", "S4A_LIMITS", "S4A_MILLOBS"}:
+        raise ValueError("only S4A_RUNTIME, S4A_LIMITS and S4A_MILLOBS may be set per job")
+    env.update({k: str(v) for k, v in extra.items()})
     env.update(OPPONENTS=f"T1={SRC}/t1-source.json,A48={SRC}/a48-source.json", S4A_MODEL=job["model"],
                CUDA_VISIBLE_DEVICES="", ROOTS=job["roots"])
     if job["trace"]:
