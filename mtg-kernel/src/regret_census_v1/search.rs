@@ -442,17 +442,17 @@ pub(super) struct SearchWorkerV1 {
 
 /// Everything the game index decides.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct GameSetup {
-    game: u64,
-    seed: u64,
+pub(super) struct GameSetup {
+    pub(super) game: u64,
+    pub(super) seed: u64,
     /// Deck index (into RUNTIME_DECKS) per seat.
-    decks: [usize; 2],
-    focal: usize,
-    model: usize,
-    starting: u8,
+    pub(super) decks: [usize; 2],
+    pub(super) focal: usize,
+    pub(super) model: usize,
+    pub(super) starting: u8,
 }
 
-fn game_setup(cfg: &CensusConfigV1, models: usize, game: u64) -> GameSetup {
+pub(super) fn game_setup(cfg: &CensusConfigV1, models: usize, game: u64) -> GameSetup {
     let n = cfg.decks.len() as u64;
     let m = models.max(1) as u64;
     let focal_deck = cfg.decks[(game % n) as usize];
@@ -472,7 +472,7 @@ fn game_setup(cfg: &CensusConfigV1, models: usize, game: u64) -> GameSetup {
     }
 }
 
-fn new_session(setup: &GameSetup) -> Result<FastActorSessionV1, String> {
+pub(super) fn new_session(setup: &GameSetup) -> Result<FastActorSessionV1, String> {
     let decks = [
         &RUNTIME_DECKS[setup.decks[0]],
         &RUNTIME_DECKS[setup.decks[1]],
