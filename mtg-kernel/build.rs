@@ -3367,6 +3367,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         mode2: None,
     };
     Some(match name {
+        "Pilfer" => program(
+            "TargetOpponent",
+            "RevealTargetHandChooseNonlandDiscard(Target0,publicHand,exactIncarnations)",
+            "EffectOp::RevealTargetHandChooseNonlandDiscard { player: PlayerRef::Target(0) }",
+        ),
         "Seeker's Folly" => Special::Program {
             target: "TargetOpponent",
             recipe: "DiscardCards(Target0,2)",

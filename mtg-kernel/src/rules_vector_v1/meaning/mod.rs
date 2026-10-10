@@ -158,6 +158,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::DestroyTargetLandThenMaySearchBasicTapped { .. }
         | EffectOp::SearchLibraryToBattlefieldTapped { .. }
         | EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard { .. }
+        | EffectOp::RevealTargetHandChooseNonlandDiscard { .. }
         | EffectOp::ShuffleTriggerSourceIntoOwnersLibrary
         | EffectOp::MaterializeStormCopies
         | EffectOp::CreateStormCopies { .. }

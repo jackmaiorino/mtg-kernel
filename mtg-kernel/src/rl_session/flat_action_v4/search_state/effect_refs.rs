@@ -160,6 +160,7 @@ impl Scan<'_> {
             | DestroyTargetLandThenMaySearchBasicTapped { .. }
             | SearchLibraryToBattlefieldTapped { .. }
             | RevealTargetHandChooseNoncreatureNonlandDiscard { .. }
+            | RevealTargetHandChooseNonlandDiscard { .. }
             | ShuffleTriggerSourceIntoOwnersLibrary
             | LoseHalfLifeRoundedUp { .. }
             | CreateTokenTappedAndAttacking { .. }

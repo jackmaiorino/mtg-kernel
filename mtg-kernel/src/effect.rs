@@ -1357,6 +1357,12 @@ pub enum EffectOp {
         toughness: i32,
         keywords: Keywords,
     },
+    /// Publicly reveal the opponent's hand, then choose one nonland card
+    /// for that player to discard. The definition owns the eligibility
+    /// filter; existing revealed-hand continuations retain their wire shape.
+    RevealTargetHandChooseNonlandDiscard {
+        player: PlayerRef,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -2438,6 +2444,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::DestroyTargetLandThenMaySearchBasicTapped { .. }
         | EffectOp::SearchLibraryToBattlefieldTapped { .. }
         | EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard { .. }
+        | EffectOp::RevealTargetHandChooseNonlandDiscard { .. }
         | EffectOp::RevealHandChooseNonlandToLinkedExile { .. }
         | EffectOp::ReturnLinkedExiledCardToOwnersHand
         | EffectOp::PreventDamageFromChosenColorUntilEndOfTurn { .. }
@@ -4974,18 +4981,21 @@ fn validate_search_library_to_battlefield_origin(
     }
 }
 
-fn validate_duress_origin(
+fn revealed_discard_excludes_creatures(
     state: &GameState,
     pending: &EffectContinuation,
     player: PlayerId,
     canonical_path: &[u16],
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let root = validated_definition_owned_root_effect(state, pending)?;
     match effect_op_at_path(root.as_ref(), canonical_path) {
         Some(EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard {
             player: original_player,
-        }) if pending.ctx.resolve_player(*original_player, state) == player => Ok(()),
-        _ => Err("Duress continuation lost its definition-owned origin".to_string()),
+        }) if pending.ctx.resolve_player(*original_player, state) == player => Ok(true),
+        Some(EffectOp::RevealTargetHandChooseNonlandDiscard {
+            player: original_player,
+        }) if pending.ctx.resolve_player(*original_player, state) == player => Ok(false),
+        _ => Err("revealed discard continuation lost its definition-owned origin".to_string()),
     }
 }
 
@@ -6331,9 +6341,15 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     {
                         return Err("Duress discard prompt has a noncanonical shape".to_string());
                     }
-                    validate_duress_origin(state, pending, *hand_player, canonical_path)?;
+                    let exclude_creatures = revealed_discard_excludes_creatures(
+                        state,
+                        pending,
+                        *hand_player,
+                        canonical_path,
+                    )?;
                     validate_bound_hand_exact(state, *hand_player, original_hand)?;
-                    let recomputed = duress_eligible_hand(state, original_hand)?;
+                    let recomputed =
+                        revealed_discard_eligible_hand(state, original_hand, exclude_creatures)?;
                     if eligible != &recomputed || eligible.is_empty() {
                         return Err("Duress eligible hand partition changed".to_string());
                     }
@@ -8124,9 +8140,15 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     if path != canonical_path {
                         return Err("Duress discard frame path changed".to_string());
                     }
-                    validate_duress_origin(state, &continuation, player, &canonical_path)?;
+                    let exclude_creatures = revealed_discard_excludes_creatures(
+                        state,
+                        &continuation,
+                        player,
+                        &canonical_path,
+                    )?;
                     validate_bound_hand_exact(state, player, &original_hand)?;
-                    let recomputed = duress_eligible_hand(state, &original_hand)?;
+                    let recomputed =
+                        revealed_discard_eligible_hand(state, &original_hand, exclude_creatures)?;
                     if eligible != recomputed
                         || eligible
                             .iter()
@@ -9748,7 +9770,12 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
             }
-            EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard { player } => {
+            discard_op @ (EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard { player }
+            | EffectOp::RevealTargetHandChooseNonlandDiscard { player }) => {
+                let exclude_creatures = matches!(
+                    discard_op,
+                    EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard { .. }
+                );
                 let player = continuation.ctx.resolve_player(player, state);
                 if player == continuation.ctx.controller {
                     return Err("Duress must target an opponent".to_string());
@@ -9760,7 +9787,8 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         state.reveal_hand_card(observer, player, binding.object)?;
                     }
                 }
-                let eligible = duress_eligible_hand(state, &original_hand)?;
+                let eligible =
+                    revealed_discard_eligible_hand(state, &original_hand, exclude_creatures)?;
                 if !eligible.is_empty() {
                     stage_duress_discard_choice(
                         &mut continuation,
@@ -12088,9 +12116,10 @@ fn validate_bound_hand_exact(
     Ok(())
 }
 
-fn duress_eligible_hand(
+fn revealed_discard_eligible_hand(
     state: &GameState,
     original_hand: &[EffectObjectBinding],
+    exclude_creatures: bool,
 ) -> Result<Vec<EffectObjectBinding>, String> {
     let mut eligible = Vec::new();
     for &binding in original_hand {
@@ -12102,7 +12131,9 @@ fn duress_eligible_hand(
         let definition = crate::card_def::CARD_DEFS
             .get(object.card_def as usize)
             .ok_or("Duress hand card definition is missing")?;
-        if !definition.has_type(CardType::Creature) && !definition.has_type(CardType::Land) {
+        if !definition.has_type(CardType::Land)
+            && (!exclude_creatures || !definition.has_type(CardType::Creature))
+        {
             eligible.push(binding);
         }
     }
@@ -14987,6 +15018,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::DestroyTargetLandThenMaySearchBasicTapped { .. }
         | EffectOp::SearchLibraryToBattlefieldTapped { .. }
         | EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard { .. }
+        | EffectOp::RevealTargetHandChooseNonlandDiscard { .. }
         | EffectOp::RevealHandChooseNonlandToLinkedExile { .. }
         | EffectOp::ReturnLinkedExiledCardToOwnersHand
         | EffectOp::ResolveInitiativeTrigger { .. }
@@ -15208,6 +15240,42 @@ mod tests {
 
     fn two_card_libraries() -> GameState {
         GameState::new_from_libraries(&[1, 2], &[3, 4], |c| format!("card-{c}"), 1)
+    }
+
+    #[test]
+    fn revealed_discard_filter_preserves_duress_and_allows_pilfer_creatures() {
+        let creature = crate::card_def::card_id_by_name("Faerie Miscreant").unwrap();
+        let spell = crate::card_def::card_id_by_name("Counterspell").unwrap();
+        let land = crate::card_def::card_id_by_name("Mountain").unwrap();
+        let cards = [creature, spell, land, land, land, land, land];
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let state = GameState::new_from_libraries(&cards, &cards, |_| "card".into(), 760);
+            let original_hand = bind_hand(&state, player);
+            let replay: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&state, &replay] {
+                let old = revealed_discard_eligible_hand(branch, &original_hand, true).unwrap();
+                assert_eq!(old.len(), 1);
+                assert_eq!(branch.objects.get(old[0].object).card_def, spell);
+                let new = revealed_discard_eligible_hand(branch, &original_hand, false).unwrap();
+                assert_eq!(new.len(), 2);
+                assert!(new
+                    .iter()
+                    .any(|binding| branch.objects.get(binding.object).card_def == creature));
+                assert!(new
+                    .iter()
+                    .any(|binding| branch.objects.get(binding.object).card_def == spell));
+                assert!(new
+                    .iter()
+                    .all(|binding| branch.objects.get(binding.object).card_def != land));
+            }
+            let mut stale = state;
+            stale
+                .objects
+                .get_mut(original_hand[0].object)
+                .zone_change_count += 1;
+            assert!(revealed_discard_eligible_hand(&stale, &original_hand, false).is_err());
+        }
     }
 
     #[test]
