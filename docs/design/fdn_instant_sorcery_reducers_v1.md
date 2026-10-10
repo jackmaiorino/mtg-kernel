@@ -121,6 +121,28 @@ Rust1.94.1/MSVC19.50.35725 and compilation. Observer5388 monitors both feature
 compilations,25 mana cases,13 collector/preflight cases, rules vectors, frozen
 v65 and17 prior card games. Results remain pending. Native28 was not submitted.
 
+Native9 actually passed both feature test compilations,25 mana and13
+collector/preflight cases, then its command failed101 because rules_vector_v1
+is a library filter, not an integration-test target. Rules, frozen identity and
+prior games were not reached. Guard0b4308d568e240baa8e3eb4583d722d6 records
+terminal101; the source, command and failure log remain retained.
+
+Sourcea53aa44f7db51108c1d4eb57713b926d88bddf94 adds pure component-choice
+assignment preserving base/additional ownership and canonical Escape order.
+Two regressions cover partitioning and invalid graveyard picks. Exact read-only
+review found no actionable findings. After prior terminal verification, bundle
+SHA256649f64c2a1242281a8df80ca50769f06afdef1f62045be791ca86e0a4a53b76d
+advanced the owned remote checkout to a53aa44f. Native11 corrects the rules
+command to --lib rules_vector_v1::tests::. Supported guard
+12db92f88f044517b443fe89429f0351, supervisor151276, actually admitted cores14-15
+BelowNormal with pinned Rust1.94.1/MSVC19.50.35725. Observer71399 reports
+command exit0: both feature test compilations and81 actual executions pass
+(25 mana,15 collector/preflight,23 rules-vector, frozen v65,8 graveyard and9
+static-team cases), with one existing rules-vector ignore. Guard release still
+requires terminal verification. This qualifies the preparatory primitives only;
+the runtime casting paths have not been changed and Sprite/Archmage stay absent
+from the registry.
+
 Runtime integration must prepare an ephemeral payment before apply_discard
 mutates cards, then consume it without recomputing reductions. Preserve the
 base/additional choice partition, Escape ordering, chosen-creature power and
