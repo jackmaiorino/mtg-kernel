@@ -13,6 +13,7 @@ use super::{
 pub(super) struct SpellManaPaymentV1 {
     pub(super) mana: mana::PaymentPlan,
     pub(super) delve_exiled: Vec<ObjectId>,
+    pub(super) convoke_tapped: Vec<ObjectId>,
 }
 
 pub(super) struct SelectedSpellManaCostsV1 {
@@ -37,8 +38,8 @@ impl SelectedSpellManaCostsV1 {
         reduction: u32,
         reserved: &[ObjectId],
     ) -> Option<SpellManaPaymentV1> {
-        // Convoke still needs its own complete payment adapter.
-        if self.convoke {
+        // No current selected cost combines Delve and Convoke.
+        if self.convoke && self.delve {
             return None;
         }
         let pips = self
@@ -62,6 +63,22 @@ impl SelectedSpellManaCostsV1 {
                 _ => None,
             })
             .sum::<u32>();
+        if self.convoke {
+            let (mana, convoke_tapped) = mana::plan_spell_mana_total_with_convoke_v1(
+                &pips,
+                generic,
+                player,
+                state,
+                self.types.contains(&CardType::Creature),
+                reserved,
+                additional_life,
+            )?;
+            return Some(SpellManaPaymentV1 {
+                mana,
+                convoke_tapped,
+                delve_exiled: Vec::new(),
+            });
+        }
         let graveyard = if self.delve {
             state.players[player.index()]
                 .graveyard
@@ -87,6 +104,7 @@ impl SelectedSpellManaCostsV1 {
                 return Some(SpellManaPaymentV1 {
                     mana,
                     delve_exiled: graveyard[..exiled].to_vec(),
+                    convoke_tapped: Vec::new(),
                 });
             }
         }
@@ -327,6 +345,39 @@ mod tests {
         assert!(selected
             .mana_only_plan(4, PlayerId::P0, &state, 0, 1)
             .is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn selected_convoke_pays_total_after_x_and_tax_reduction_adjustment() {
+        let mut selected = selected("Fireblast", CastMethodV4::Alternative, false);
+        selected.costs = vec![Cost {
+            pips: &[],
+            generic: 1,
+            x_count: 1,
+        }];
+        selected.component_groups.clear();
+        selected.convoke = true;
+        let elf = card_def::card_id_by_name("Llanowar Elves").unwrap();
+        let forest = card_def::card_id_by_name("Forest").unwrap();
+        let mut state = GameState::new_from_libraries(&[elf], &[forest], |_| "card".into(), 947);
+        let object = state.draw_card(PlayerId::P0).unwrap();
+        assert!(state.move_hand_to_battlefield(PlayerId::P0, object));
+        state.players[0].mana_pool[5] = 2;
+        let payment = selected
+            .payment_plan(2, PlayerId::P0, &state, 1, 1, &[])
+            .unwrap();
+        assert_eq!(payment.convoke_tapped, vec![object]);
+        assert_eq!(payment.mana.pool_used[5], 2);
+        assert!(payment.mana.taps.is_empty());
+        assert!(payment.delve_exiled.is_empty());
+        assert!(selected
+            .payment_plan(3, PlayerId::P0, &state, 1, 1, &[])
+            .is_none());
+        assert!(selected
+            .payment_plan(2, PlayerId::P0, &state, 1, 1, &[object])
+            .is_none());
+        assert!(!state.objects.get(object).tapped);
     }
 
     #[test]
