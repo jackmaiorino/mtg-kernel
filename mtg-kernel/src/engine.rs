@@ -16829,6 +16829,10 @@ mod tests {
             let token = put_on_battlefield(&mut state, player, "Forest");
             state.objects.get_mut(token).v4.is_token = true;
             let borrowed = put_on_battlefield(&mut state, player.opponent(), "Great Furnace");
+            state.players[player.opponent().index()]
+                .battlefield
+                .retain(|&id| id != borrowed);
+            state.players[player.index()].battlefield.push(borrowed);
             state.objects.get_mut(borrowed).controller = player;
             let theirs = put_on_battlefield(&mut state, player.opponent(), "Forest");
             let protected = put_on_battlefield(&mut state, player, "Guardian of the Guildpact");
@@ -16887,6 +16891,12 @@ mod tests {
                 legal_targets_for_controller_from_source(spec, &[], player, captured, &restored),
             );
             state.objects.get_mut(borrowed).controller = player.opponent();
+            state.players[player.index()]
+                .battlefield
+                .retain(|&id| id != borrowed);
+            state.players[player.opponent().index()]
+                .battlefield
+                .push(borrowed);
             assert!(
                 !legal_targets_for_controller_from_source(spec, &[], player, captured, &state)
                     .contains(&Target::Object(borrowed))

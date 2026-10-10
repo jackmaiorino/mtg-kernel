@@ -192,7 +192,16 @@ fn any_other_controlled_permanent_including_token_or_borrowed_card_can_return() 
             "Rat Token",
         ] {
             let mut state = ready(player);
-            let wanted = put(&mut state, player, name, Zone::Battlefield);
+            let wanted = if name == "Ajani, Caller of the Pride" {
+                let id = put(&mut state, player, name, Zone::Hand);
+                event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(id, Zone::Battlefield),
+                );
+                id
+            } else {
+                put(&mut state, player, name, Zone::Battlefield)
+            };
             let foreign = put(&mut state, player.opponent(), "Forest", Zone::Battlefield);
             let hand = put(&mut state, player, "Forest", Zone::Hand);
             let grave = put(&mut state, player, "Forest", Zone::Graveyard);
