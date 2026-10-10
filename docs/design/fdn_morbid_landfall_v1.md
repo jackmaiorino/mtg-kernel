@@ -47,3 +47,8 @@ by source review: Step::EndStep and state_hash_v4 do not exist. The fixture now
 uses Step::End and diagnostic_state_hash, preserving real cleanup/untap and
 full-state replay comparisons. Primitive and Duress checks passed; the failed
 local-6 log remains retained and card gameplay qualification remains pending.
+
+Repair a0f2ca62 passed native test compilation with Limited alone and with
+Limited plus Standard under supported guardce63fdf1949e45fab24384c80351be79,
+which exited zero. Source review confirmed the API repairs and real turn
+traversal. Unregistered card games and catalog admission remain pending.

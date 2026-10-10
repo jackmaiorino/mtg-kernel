@@ -44,3 +44,9 @@ Step::EndStep and state_hash_v4 APIs. Both new fixture files now use Step::End
 and the existing full-state diagnostic_state_hash alongside state_hash.
 The failed local-6 log is retained; remaining type checks are retried separately.
 Unregistered card gameplay and catalog admission remain pending.
+
+Repair a0f2ca6282dadf08c1058b6569698da69091b76b passed native cargo check
+--tests with Limited alone (39.04 seconds) and Limited plus Standard (95
+seconds), Rust1.94.1/MSVC19.50.35725. Supported guardce63fdf1949e45fab24384c80351be79
+used cores16-17 and exited zero. Original failed source/log remain retained.
+These compilation checks do not execute the unregistered card games.
