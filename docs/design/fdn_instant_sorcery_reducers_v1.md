@@ -173,8 +173,10 @@ Chosen-creature power and paid-cost provenance retain the final paid snapshot.
 Actual commitment consumes the prepared payment once. Mid-cast payability uses
 the same selected total and object/GY reservations. Read-only reviews found no
 actionable findings. Native13 guardc2a3c672335b4133a8efa0e116fb2373 admitted
-cores14-15 BelowNormal, Rust1.94.1/MSVC19.50.35725; both feature test compilations
-and169 engine tests pass. The remaining qualification commands are pending.
+cores14-15 BelowNormal, Rust1.94.1/MSVC19.50.35725. Both feature test compilations
+and206 executions pass:169 engine,19 combined-feature mana,8 graveyard,9
+static-team andone captured Hacker case. The command and supported guard both
+ended with observed terminal0. No helper cleanup was necessary.
 
 Source776b2aed8040a36774f8ad34b407bdf7004efc34 adds pure complete-cost quotes
 to cast offers, spell forms, cast modes, target-dependent affordability,
@@ -183,9 +185,16 @@ object family is completed before quoting; tap picks reserve mana sources,
 sacrificed lands may produce mana first, and exile picks cannot overlap separate
 graveyard costs. Four added regressions cover discard/source exclusion,
 sacrifice completion, Escape reservations, and malformed reveal-only hands.
-These new regressions have not executed. Review of the main migrated paths
-found no remaining findings after the reveal-hand guard repair; final exact
-review including Plotted and the new cases is pending.
+These new regressions have not executed. Review including Plotted and the new
+cases found one orphaned wrapper with only test callers; sourceeab7cae9 gates
+it with cfg(test) to preserve strict lint. No other actionable finding remains.
+After clean-checkout/prior-terminal verification, bundle
+SHA25669ffc2bdc922287bb51774039d3c983fafd0428cce9a0aa3070b5c004ece81d1
+advanced the owned remote checkout to eab7cae9a0f745395acd3b242fa623116b975e4b.
+Native14 guard9a4d7a309fa6448da8756b9a94e42554, supervisor157364, actually
+admitted cores14-15 BelowNormal and compilation began with the same logged
+pins. Observer66937 retains both feature engine tests, prior gameplay and
+strict lint results. Native14 remains pending.
 
 Remaining work: finish native qualification of runtime integration and quotes;
 actual Sprite/Archmage gameplay and restore tests; metadata/catalog admission;
