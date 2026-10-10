@@ -3648,6 +3648,7 @@ fn program_target_spec_src(target: &str) -> &'static str {
     match target {
         "None" => "TargetSpec::None",
         "AnyPlayer" => "TargetSpec::AnyPlayer",
+        "TargetOpponent" => "TargetSpec::TargetOpponent",
         "Creature" => "TargetSpec::Creature",
         "ControlledCreature" => "TargetSpec::ControlledCreature",
         "ArtifactPermanent" => "TargetSpec::ArtifactPermanent",
@@ -3657,9 +3658,13 @@ fn program_target_spec_src(target: &str) -> &'static str {
             "TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour"
         }
         "AnySpellOnStack" => "TargetSpec::AnySpellOnStack",
+        "NoncreatureSpellOnStack" => "TargetSpec::NoncreatureSpellOnStack",
         "EnchantmentPermanent" => "TargetSpec::EnchantmentPermanent",
         "ControlledCreatureThenOpponentCreatureOrPlaneswalker" => {
             "TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker"
+        }
+        "ControlledCreatureThenOpponentCreature" => {
+            "TargetSpec::ControlledCreatureThenOpponentCreature"
         }
         "NonOutlawCreature" => "TargetSpec::NonOutlawCreature",
         "CreatureToughnessAtLeastFour" => "TargetSpec::CreatureToughnessAtLeastFour",
