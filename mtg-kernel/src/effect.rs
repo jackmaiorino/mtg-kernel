@@ -13627,18 +13627,18 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             let events = state.players[ctx.controller.index()]
                 .graveyard
                 .iter()
-                .filter_map(|&id| {
+                .filter(|&&id| {
                     let object = state.objects.get(id);
                     let def = &crate::card_def::CARD_DEFS[object.card_def as usize];
-                    (object.zone == Zone::Graveyard
+                    object.zone == Zone::Graveyard
                         && object.owner == ctx.controller
                         && !def.is_token
                         && !object.v4.is_token
                         && object.spell_copy_origin.is_none()
                         && def.mana_value <= *max_mana_value
-                        && crate::engine::object_has_type(state, id, CardType::Creature))
-                    .then(|| event::ProposedEvent::zone_change(id, Zone::Battlefield))
+                        && crate::engine::object_has_type(state, id, CardType::Creature)
                 })
+                .map(|&id| event::ProposedEvent::zone_change(id, Zone::Battlefield))
                 .collect();
             event::propose_and_commit_batch(state, events);
         }
@@ -13646,13 +13646,13 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             let events = state
                 .objects
                 .iter()
-                .filter_map(|(id, object)| {
-                    (object.zone == Zone::Battlefield
-                        && state.engine.combat.attackers.contains(&id)
-                        && crate::engine::object_has_type(state, id, CardType::Creature))
-                    .then(|| {
-                        event::ProposedEvent::zone_change_preserving_known_identity(id, Zone::Hand)
-                    })
+                .filter(|(id, object)| {
+                    object.zone == Zone::Battlefield
+                        && state.engine.combat.attackers.contains(id)
+                        && crate::engine::object_has_type(state, *id, CardType::Creature)
+                })
+                .map(|(id, _)| {
+                    event::ProposedEvent::zone_change_preserving_known_identity(id, Zone::Hand)
                 })
                 .collect();
             event::propose_and_commit_batch(state, events);

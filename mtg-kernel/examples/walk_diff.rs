@@ -1709,6 +1709,7 @@ fn render_activated_ability_text(state: &GameState, id: ObjectId, ability_idx: u
             card_def::CostComponent::PayLife(1) => "Pay 1 life".to_string(),
             card_def::CostComponent::PayLife(n) => format!("Pay {n} life"),
             unsupported @ (card_def::CostComponent::SacrificeControlled { .. }
+            | card_def::CostComponent::SacrificeOtherControlledCreatures(_)
             | card_def::CostComponent::ReturnControlledPermanentToOwnersHand(_)
             | card_def::CostComponent::TapOtherUntappedControlledPermanentWithSubtype(_)
             | card_def::CostComponent::TapUntappedControlledPermanent(_)
