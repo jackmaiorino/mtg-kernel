@@ -1,11 +1,14 @@
 # FDN first actual life gain each turn
 
-Source preparation for issue #110, claimed in
+Integration preparation for issue #110, originally claimed in
 [comment 6087899788](https://github.com/jackmaiorino/mtg-kernel/issues/110#issuecomment-6087899788).
-The coordinator tentatively reserves v63 / IDs 332-333 after v61 activated
-combat and v62 surveil. Registry append, live profile pins, focused CI wiring
-and native qualification remain pending serial integration. No card support
-or passing native check is claimed by this preparation.
+V62 is accepted on default branch at `8e65be54`. The owned v63 candidate
+appends IDs 332-333 and wires its focused gameplay test into CI. Its 40-card
+fixture and candidate registry pass 27 deck tests and six frozen booster-target
+tests with Python 3.13.14. Candidate metadata covers 134 full target names;
+accepted default-branch coverage remains 132. Generated catalog identity,
+separate live store profile and native gameplay qualification remain pending.
+No passing native check or accepted card support is claimed yet.
 
 | Card | Exact printed behavior | Existing effect |
 | --- | --- | --- |
@@ -70,4 +73,8 @@ the exact first-gain condition. Its existing vocabulary represents the life
 gain and turn-history read, but the global event ordinal and own-turn gate
 are explicitly reported as opaque. This does not reduce gameplay support;
 it records the extractor's representational limit. Registration, catalog
-admission and gameplay qualification still await v62 integration.
+admission and gameplay qualification still require the generated v63 identity,
+separate store profile and native checks. The supported two-core catalog build
+is queued behind existing claims, including a malformed S4a build shell reported
+to its owner through the shared mailbox and collaboration PR137. No reservation
+or other owner's process was changed.
