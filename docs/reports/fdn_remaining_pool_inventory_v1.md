@@ -27,7 +27,31 @@ Issue 110's remaining work is split by mechanic family so parallel threads do no
 
 Merged batches take one catalog version each: keyword creatures and gainlands (no version bump), triggers and tricks v54, equipment and search v55, tokens and Auras v56, removal and pumps v57, counterspells and simple threats v58, library search, kicker and flashback v59, simple triggers and graveyard spells v60.
 
-Claimed but not yet merged: none. The next batch takes v61. Leyline Axe (game-start leyline step) and Electroduplicate (token copies) remain in the equipment family and are unclaimed engine work.
+The v61 activated-combat batch merged in [PR #195](https://github.com/jackmaiorino/mtg-kernel/pull/195).
+Its default-branch inventory is 130 full, one partial and 155 missing names.
+
+Current integration owner: Codex issue #110 goal, branch `codex/fdn-issue110`.
+The next catalog is v62, Lightshell Duo and Cephalid Inkmage, IDs 330-331,
+with private multi-card surveil and threshold. Its source registry resolves
+132 names, but those two additions remain pending gameplay and hosted
+qualification before that number counts as accepted default-branch coverage.
+The preparation commits on `codex/limited-surveil-batch-20261009` are retained
+and integrated into the owner's branch.
+
+Later prepared families remain retained in their original worktrees: v63
+Vanguard Seraph/Cat Collector (IDs 332-333), v64 Elvish Regrower/Ambush Wolf
+(334-335), v65 Anthem of Champions/Empyrean Eagle (336-337), and v66
+Balmor/Firespitter Whelp (338-339). They require serial registration, generated
+catalog identities, gameplay verification and integration. Source review
+identified Vanguard Seraph's missing flying mapping and the graveyard batch's
+pending-trigger hash compatibility requirement; these must be repaired at
+integration. Existing Standard Wolf subtype support must be preserved when
+integrating Ambush Wolf. Prepared source does not establish supported gameplay.
+
+Leyline Axe (game-start leyline step) and Electroduplicate (token copies)
+remain unclaimed engine work. Full coverage, fair Limited search and DraftZero
+acceptance remain issue #110 requirements. Research and experiments remain
+owned by Claude.
 
 ## Tier 0
 
