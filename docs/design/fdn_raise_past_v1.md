@@ -36,3 +36,10 @@ graveyard-card contract, and also rejects runtime token copies. The primitive
 exclusion case retains both transient objects in the graveyard during execution.
 Lunar Insight's inherited absent Mulldrifter operand is separately repaired to
 supported Tolarian Terror with unchanged distinct-count assertions.
+
+Read-only confirmation at `594d3cf2` found the copy/token exclusion finding
+closed and no remaining actionable defects. Formatting and diff checks pass.
+The existing unstarted Haley guard now targets that exact source, retaining
+its original queue entry and cache, and runs effect primitives, Lunar's dynamic
+count, Pilfer/Madness/Duress regressions and all Limited test-target checking.
+It remains queued behind the whole-host reservation; no native pass is claimed.
