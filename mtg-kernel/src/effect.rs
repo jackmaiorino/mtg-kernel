@@ -15241,6 +15241,10 @@ mod tests {
                 );
             }
             state.objects.get_mut(attacker).controller = caster;
+            state.players[caster.opponent().index()]
+                .battlefield
+                .retain(|&id| id != attacker);
+            state.players[caster.index()].battlefield.push(attacker);
             state.objects.get_mut(idle).tapped = true;
             state.objects.get_mut(noncreature).card_def = land;
             state.objects.get_mut(noncreature).v4 =
@@ -15260,6 +15264,9 @@ mod tests {
                     .hand
                     .contains(&attacker));
                 assert!(!branch.players[caster.index()].hand.contains(&attacker));
+                for seat in [PlayerId::P0, PlayerId::P1] {
+                    assert!(!branch.players[seat.index()].battlefield.contains(&attacker));
+                }
                 assert_eq!(branch.objects.get(idle).zone, Zone::Battlefield);
                 assert_eq!(branch.objects.get(noncreature).zone, Zone::Battlefield);
                 assert!(!branch.engine.combat.attackers.contains(&attacker));

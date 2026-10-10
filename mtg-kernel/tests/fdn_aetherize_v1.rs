@@ -146,6 +146,10 @@ fn aetherize_returns_real_attackers_to_owners_with_pending_stack_restore() {
                 .contains(&attacker));
             assert_eq!(branch.objects.get(borrowed).zone, Zone::Hand);
             assert!(branch.players[caster.index()].hand.contains(&borrowed));
+            for seat in [PlayerId::P0, PlayerId::P1] {
+                assert!(!branch.players[seat.index()].battlefield.contains(&attacker));
+                assert!(!branch.players[seat.index()].battlefield.contains(&borrowed));
+            }
             assert_eq!(branch.objects.get(idle).zone, Zone::Battlefield);
             assert!(!branch.engine.combat.attackers.contains(&attacker));
             assert!(!branch.engine.combat.attackers.contains(&borrowed));
