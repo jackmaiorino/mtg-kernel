@@ -477,15 +477,32 @@ mod tests {
     }
 
     #[test]
-    fn component_preflight_does_not_recheck_a_completed_discard() {
+    fn component_preflight_uses_frozen_modifiers_without_rechecking_completed_discard() {
         let mut selected = selected("Fireblast", CastMethodV4::Alternative, false);
+        selected.costs = vec![Cost {
+            pips: &[],
+            generic: 2,
+            x_count: 0,
+        }];
         selected.component_groups =
             vec![&[CostComponent::DiscardCards(1), CostComponent::PayLife(1)]];
         let mut state = ready();
         let source = state.draw_card(PlayerId::P0).unwrap();
+        state.players[0].mana_pool[5] = 1;
         // Only the casting source remains in hand after the validated discard.
         assert_eq!(state.players[0].hand, vec![source]);
         let before = serde_json::to_value(&state).unwrap();
+        assert!(selected
+            .payment_plan_with_component_choices_v1(
+                0,
+                PlayerId::P0,
+                source,
+                &state,
+                (0, 1),
+                &[&[]],
+                &[],
+            )
+            .is_some());
         assert!(selected
             .payment_plan_with_component_choices_v1(
                 0,
@@ -496,7 +513,7 @@ mod tests {
                 &[&[]],
                 &[],
             )
-            .is_some());
+            .is_none());
         assert_eq!(serde_json::to_value(&state).unwrap(), before);
         state.players[0].life = 0;
         assert!(selected
@@ -505,7 +522,7 @@ mod tests {
                 PlayerId::P0,
                 source,
                 &state,
-                (0, 0),
+                (0, 1),
                 &[&[]],
                 &[],
             )
