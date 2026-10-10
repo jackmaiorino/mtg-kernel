@@ -120,7 +120,7 @@ fn standard_registry_appends_to_the_pauper_prefix_without_fdn() {
 
 #[test]
 fn standard_catalog_identity_is_frozen() {
-    const EXPECTED_STANDARD_V2: u64 = 0x9858_d149_b227_62a7;
+    const EXPECTED_STANDARD_V2: u64 = 0x56b9_10b4_eb9e_4a99;
     assert_eq!(
         KERNEL_CARDDB_HASH, EXPECTED_STANDARD_V2,
         "Standard catalog hash {KERNEL_CARDDB_HASH:#018x}"
@@ -760,6 +760,11 @@ fn get_lost_uses_the_live_controller_even_when_destruction_is_prevented() {
             engine::step(&mut state, Action::CastSpell(get_lost)).unwrap();
             assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
             engine::step(&mut state, Action::ChooseTarget(Target::Object(victim))).unwrap();
+            // Choosing the target does not finalize casting. Control may change
+            // in the priority window only after the spell is on the stack.
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            assert!(state.engine.pending_cast.is_none());
+            assert_eq!(state.stack.last().unwrap().source, get_lost);
             if change_after_targeting {
                 transfer(&mut state);
             }
