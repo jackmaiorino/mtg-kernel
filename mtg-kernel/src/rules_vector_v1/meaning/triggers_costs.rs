@@ -235,6 +235,78 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
                 host: true,
             });
         }
+        TriggerCondition::ControllerAttacks => {
+            // The controller declares one or more attackers, whether or not
+            // the source attacks. Vocabulary gap: no "you attack" event;
+            // nearest is the attack declaration.
+            out.trigger(TrigF::Attacks);
+        }
+        TriggerCondition::ControllerAttacksWithSubtype(subtype) => {
+            // The controller declares attackers including one with the
+            // subtype. Vocabulary gap: no "you attack" event and ObjF has no
+            // subtype class.
+            let _ = subtype;
+            out.trigger(TrigF::Attacks);
+        }
+        TriggerCondition::CastCreatureSpell => {
+            // A spell the controller casts whose selected types include
+            // Creature.
+            out.trigger(TrigF::SpellCast {
+                by: RelF::You,
+                obj: ObjF::Typed(CardTypeF::Creature),
+            });
+        }
+        TriggerCondition::CastSpell => {
+            // Any spell the controller casts.
+            out.trigger(TrigF::SpellCast {
+                by: RelF::You,
+                obj: ObjF::Spell,
+            });
+        }
+        TriggerCondition::CastSpellManaValueAtLeast(minimum) => {
+            // A spell the controller casts whose mana value on the stack is
+            // at least `minimum`. Vocabulary gap: the trigger carries no
+            // mana-value threshold.
+            let _ = minimum;
+            out.trigger(TrigF::SpellCast {
+                by: RelF::You,
+                obj: ObjF::Spell,
+            });
+        }
+        TriggerCondition::ControlledCreatureEntersOutgrowingSource { another } => {
+            // A creature enters under the controller's control with greater
+            // power or toughness than the source: an intervening if that is
+            // rechecked at resolution. The matcher includes the source
+            // itself unless `another`; OtherEnters is the nearest event.
+            let _ = another;
+            out.trigger(TrigF::OtherEnters {
+                obj: ObjF::Typed(CardTypeF::Creature),
+            });
+            out.control(ControlF::Conditional);
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::EventObject),
+                AggF::Characteristic,
+            );
+        }
+        TriggerCondition::OpponentDraws => {
+            // Every card the opponent draws. `nth: 0` marks "every draw".
+            out.trigger(TrigF::Draw {
+                by: RelF::Opponent,
+                nth: 0,
+            });
+        }
+        TriggerCondition::DiesWithoutCounters => {
+            // The source's battlefield -> graveyard zone change, only when
+            // the incarnation that died had no counters (last-known
+            // information). Vocabulary gap: no counter read; the gate is
+            // marked conditional.
+            out.trigger(TrigF::SelfLeaves {
+                to: Some(ZoneF::Graveyard),
+            });
+            out.control(ControlF::Conditional);
+        }
     }
 }
 
@@ -298,6 +370,14 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
                 ObjF::Typed(CardTypeF::Land),
                 n,
             );
+        }
+        CostComponent::TapControlled { count, filter } => {
+            // Taps `count` untapped permanents the payer controls matching
+            // the filter, the source included and summoning sickness
+            // irrelevant. Vocabulary gap: `TapOthers` carries no count or
+            // class.
+            let _ = (count, filter);
+            out.cost(CostAtom::TapOthers);
         }
         CostComponent::SacrificeControlled { count, filter } => {
             // The component itself restricts candidates to the payer's

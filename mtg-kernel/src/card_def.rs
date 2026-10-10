@@ -275,6 +275,15 @@ pub enum Subtype {
     /// Appended for Axgard Cavalry; existing ids remain fixed.
     Dwarf,
     Berserker,
+    /// Appended for the MageZero Standard family G creatures; existing ids
+    /// remain fixed.
+    Scout,
+    Bat,
+    Mercenary,
+    Assassin,
+    Wolf,
+    Kraken,
+    Djinn,
 }
 
 impl Subtype {
@@ -390,18 +399,34 @@ impl Subtype {
         Subtype::Dwarf,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Berserker,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Scout,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Bat,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Mercenary,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Assassin,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Wolf,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Kraken,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Djinn,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
-    /// present in the enum. Assassin and Mercenary join this list when a
-    /// batch appends them; until then no registry card can carry them, since
-    /// `build.rs` rejects unknown subtypes. Changelings carry every listed
-    /// type through their effective subtype set.
+    /// present in the build. Changelings carry every listed type through
+    /// their effective subtype set.
     pub const OUTLAW_TYPES: &'static [Subtype] = &[
         Subtype::Pirate,
         Subtype::Rogue,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Warlock,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Assassin,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Mercenary,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -537,6 +562,13 @@ impl Subtype {
                 | Subtype::Demon
                 | Subtype::Dwarf
                 | Subtype::Berserker
+                | Subtype::Scout
+                | Subtype::Bat
+                | Subtype::Mercenary
+                | Subtype::Assassin
+                | Subtype::Wolf
+                | Subtype::Kraken
+                | Subtype::Djinn
         )
     }
 }
@@ -708,6 +740,12 @@ pub enum TargetSpec {
     CreatureToughnessAtLeastFour,
     /// Exactly one creature, enchantment, or planeswalker (Get Lost).
     CreatureEnchantmentOrPlaneswalker,
+    /// A creature card in the controller's own graveyard with at most this
+    /// printed mana value (Extraction Specialist).
+    CreatureCardInOwnGraveyardManaValueAtMost(u16),
+    /// Exactly 1 target: a spell on the stack controlled by someone other
+    /// than the targeting player (Hullbreaker Horror).
+    SpellYouDontControl,
 }
 
 impl TargetSpec {
@@ -766,6 +804,8 @@ impl TargetSpec {
             TargetSpec::NonOutlawCreature => 47,
             TargetSpec::CreatureToughnessAtLeastFour => 48,
             TargetSpec::CreatureEnchantmentOrPlaneswalker => 49,
+            TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_) => 50,
+            TargetSpec::SpellYouDontControl => 51,
         }
     }
 }
@@ -942,6 +982,13 @@ pub enum CostComponent {
     /// controls or one creature card in their hand. A hand choice is
     /// publicly revealed and the exact incarnation is frozen on the spell.
     ChooseControlledCreatureOrRevealCreatureCardFromHand,
+    /// Tap `count` untapped permanents the payer controls matching `filter`
+    /// (Warden of the Inner Sky: "Tap three untapped artifacts and/or
+    /// creatures you control"). The source itself qualifies, and creatures
+    /// tap regardless of summoning sickness because this is not {T}.
+    /// Activations only; staged one pick at a time like
+    /// `SacrificeControlled`.
+    TapControlled { count: u8, filter: PermanentFilter },
 }
 
 /// Optional additional costs chosen while announcing a spell. The selected

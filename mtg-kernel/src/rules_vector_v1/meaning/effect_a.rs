@@ -40,6 +40,7 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
         | TargetSpec::NoncreatureSpellOnStack
         | TargetSpec::ArtifactSpellOnStack
         | TargetSpec::CreatureSpellOnStack => (STACK, None),
+        TargetSpec::SpellYouDontControl => (STACK, Some(RelF::Opponent)),
         TargetSpec::SpellManaValueAtMostControlledSubtypes { first, second } => {
             // The subtypes bound the legal mana value; that is a target
             // legality fact owned by the targets table, not an origin.
@@ -85,6 +86,11 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
             (GRAVEYARD, None)
         }
         TargetSpec::UpToTwoCreatureCardsInOwnGraveyard | TargetSpec::CreatureCardInOwnGraveyard => {
+            (GRAVEYARD, Some(RelF::You))
+        }
+        TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(mana_value) => {
+            // The mana-value bound is a target legality fact (targets table).
+            let _ = mana_value;
             (GRAVEYARD, Some(RelF::You))
         }
         TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(mana_value) => {

@@ -310,7 +310,7 @@ jobs:
       - name: Validate MageZero Standard catalog
         if: matrix.group == 'limited'
         run: |
-          cargo test --release --locked -p mtg-kernel --features standard-magezero-fixtures --test standard_magezero_catalog_v1
+          cargo test --release --locked -p mtg-kernel --features standard-magezero-fixtures --test standard_magezero_catalog_v1 --test standard_family_g_v1
           python python/tools/run_rust_lib_filters.py --features standard-magezero-fixtures card_def::
 
       - name: Run Rust release tests

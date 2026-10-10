@@ -1,6 +1,6 @@
 # MageZero Standard pool inventory
 
-The `standard-magezero-fixtures` catalog targets the 16-deck Standard opponent pool MageZero trains against (`data/standard/magezero_v1/`). As of `kernel_carddb_standard/v2` the decks use 225 distinct nonbasic cards; 20 are fully supported (Burst Lightning, Consider, Destroy Evil, Dissipate, Duress, Fading Hope, Flow of Knowledge, Get Lost, Hard-Hitting Question, Impulse, Lightning Strike, Llanowar Elves, Negate, Opt, Shock, Shoot the Sheriff, Spell Pierce, Thirst for Discovery, Tolarian Terror, Voldaren Epicure) and no deck resolves yet. `mtg-kernel/tests/standard_magezero_catalog_v1.rs` and `python/tests/test_standard_decks_v1.py` track the supported list.
+The `standard-magezero-fixtures` catalog targets the 16-deck Standard opponent pool MageZero trains against (`data/standard/magezero_v1/`). As of `kernel_carddb_standard/v3` the decks use 225 distinct nonbasic cards; 34 are fully supported (Adeline, Resplendent Cathar, Ascendant Packleader, Bloodletter of Aclazotz, Burst Lightning, Cenote Scout, Consider, Coppercoat Vanguard, Deep-Cavern Bat, Destroy Evil, Dissipate, Duress, Fading Hope, Flow of Knowledge, Gatekeeper of Malakir, Get Lost, Hard-Hitting Question, Hired Claw, Hullbreaker Horror, Impulse, Lightning Strike, Llanowar Elves, Negate, Novice Inspector, Opt, Razorkin Needlehead, Sentinel of the Nameless City, Shock, Shoot the Sheriff, Spell Pierce, Thirst for Discovery, Tolarian Terror, Unstoppable Slasher, Voldaren Epicure, Warden of the Inner Sky) and no deck resolves yet. `mtg-kernel/tests/standard_magezero_catalog_v1.rs` and `python/tests/test_standard_decks_v1.py` track the supported list.
 
 ## Order of work
 
@@ -42,7 +42,7 @@ The 5-color deck's legends (family H) wait until those land.
 
 ### C. Removal, counters and card selection (35 cards; 15 needed by a mono deck)
 
-`kernel_carddb_standard/v2` fully supports the mono cards here except the FDN-owned Essence Scatter and Partial Memory Deluge, plus Opt. Shoot the Sheriff counts all outlaw subtypes currently representable in the registry: Pirate, Rogue and Warlock. Assassin and Mercenary must join `Subtype::OUTLAW_TYPES` when those subtypes are appended. Memory Deluge's bottom-order approximation is excluded from full deck admission.
+`kernel_carddb_standard/v2` fully supports the mono cards here except the FDN-owned Essence Scatter and Partial Memory Deluge, plus Opt. Shoot the Sheriff counts every outlaw subtype: Pirate, Rogue and Warlock, plus Assassin and Mercenary since family G appended them in v3. Memory Deluge's bottom-order approximation is excluded from full deck admission.
 
 - **Removal and burn**: Cut Down, Go for the Throat, Lightning Strike (mono), Shock (mono), Destroy Evil (mono), Sheoldred's Edict, Shoot the Sheriff (mono), Hard-Hitting Question (mono), Maelstrom Pulse, Tear Asunder, Witchstalker Frenzy, Fading Hope (mono), Get Lost (mono), Anoint with Affliction, Gleeful Demolition, Invoke Despair, Gix's Command, Abrade, Boltwave
 - **Counterspells**: Dissipate (mono), Essence Scatter (mono), Negate (mono)
@@ -74,6 +74,8 @@ The 5-color deck's legends (family H) wait until those land.
 - **Big spells**: Breach the Multiverse, Blue Sun's Twilight (mono)
 
 ### G. Creatures with triggered and static abilities (48 cards; 22 needed by a mono deck)
+
+`kernel_carddb_standard/v3` adds 14 Full and seven Partial family G definitions. Kellan, Planar Trailblazer remains FDN-owned. Recruitment Officer, Quirion Beastcaller, Extraction Specialist, Sharp-Eyed Rookie, Evolving Adaptive, Thalia and Haughty Djinn are excluded from full deck admission until their printed behavior is complete (`docs/design/standard_family_g_v1.md`).
 
 - **ETB / dies / attack triggers**: Deep-Cavern Bat (mono), Sentinel of the Nameless City (mono), Spyglass Siren, Bloodtithe Harvester, Brightglass Gearhulk, Extraction Specialist (mono), Faerie Dreamthief, Floodpits Drowner, Gatekeeper of Malakir (mono), Glissa Sunslayer, Hired Claw (mono), Preacher of the Schism, Recruitment Officer (mono), Resolute Reinforcements, Sandstorm Salvager, Tersa Lightshatter, Tishana's Tidebinder, Tranquil Frillback, Unstoppable Slasher (mono), Zoraline, Cosmos Caller, Cenote Scout (mono), Novice Inspector (mono), Sharp-Eyed Rookie (mono), Dark Confidant, Essence Channeler, Kellan, Planar Trailblazer (mono)
 - **Spell-cast and counter growth**: Ascendant Packleader (mono), Evolving Adaptive (mono), Quirion Beastcaller (mono), Teething Wurmlet, Hullbreaker Horror (mono), Surrak, Elusive Hunter, Warden of the Inner Sky (mono)

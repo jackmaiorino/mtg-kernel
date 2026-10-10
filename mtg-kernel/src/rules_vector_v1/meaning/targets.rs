@@ -276,6 +276,22 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
             object(out, typed(CardType::Enchantment), None, ZoneF::Battlefield);
             object(out, typed(CardType::Planeswalker), None, ZoneF::Battlefield);
         }
+        // A creature card the targeting player owns, in that player's
+        // graveyard, with printed mana value at most `maximum`.
+        TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(maximum) => {
+            out.target(TargetAtom::Object {
+                obj: creature(),
+                controller: Some(RelF::You),
+                zone: ZoneF::Graveyard,
+                color: None,
+                mana_value_at_most: Some(mana_value_bucket(maximum)),
+                excludes: None,
+            });
+        }
+        // A spell stack item controlled by the other player.
+        TargetSpec::SpellYouDontControl => {
+            object(out, ObjF::Spell, Some(RelF::Opponent), ZoneF::Stack)
+        }
     }
 }
 
@@ -329,6 +345,15 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
         }
         TargetSpec::CreatureSpellOnStack => {
             let _ = slot; // One target slot.
+            creature()
+        }
+        TargetSpec::SpellYouDontControl => {
+            let _ = slot; // One target slot.
+            ObjF::Spell
+        }
+        TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(maximum) => {
+            // The bound restricts which cards qualify, not their class.
+            let _ = (maximum, slot);
             creature()
         }
         TargetSpec::ArtifactSpellOnStack

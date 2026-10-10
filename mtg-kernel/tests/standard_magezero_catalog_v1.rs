@@ -14,7 +14,7 @@ use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 
 /// Appended after the 192 Pauper definitions, in registry order.
-const STANDARD_APPENDED: [&str; 17] = [
+const STANDARD_APPENDED: [&str; 39] = [
     "Plains",
     "Burst Lightning",
     "Shock",
@@ -32,31 +32,80 @@ const STANDARD_APPENDED: [&str; 17] = [
     "Hard-Hitting Question",
     "Fading Hope",
     "Get Lost",
+    "Novice Inspector",
+    "Sentinel of the Nameless City",
+    "Cenote Scout",
+    "Gatekeeper of Malakir",
+    "Deep-Cavern Bat",
+    "Razorkin Needlehead",
+    "Ascendant Packleader",
+    "Sharp-Eyed Rookie",
+    "Evolving Adaptive",
+    "Quirion Beastcaller",
+    "Unstoppable Slasher",
+    "Coppercoat Vanguard",
+    "Human Token",
+    "Adeline, Resplendent Cathar",
+    "Bloodletter of Aclazotz",
+    "Thalia, Guardian of Thraben",
+    "Haughty Djinn",
+    "Hired Claw",
+    "Warden of the Inner Sky",
+    "Extraction Specialist",
+    "Hullbreaker Horror",
+    "Recruitment Officer",
 ];
 
 /// Every distinct nonbasic card in the 16 decks that this build fully
 /// supports. Each Standard card batch extends this list.
-const SUPPORTED_NONBASIC: [&str; 20] = [
+const SUPPORTED_NONBASIC: [&str; 34] = [
+    "Adeline, Resplendent Cathar",
+    "Ascendant Packleader",
+    "Bloodletter of Aclazotz",
     "Burst Lightning",
+    "Cenote Scout",
     "Consider",
+    "Coppercoat Vanguard",
+    "Deep-Cavern Bat",
     "Destroy Evil",
     "Dissipate",
     "Duress",
     "Fading Hope",
     "Flow of Knowledge",
+    "Gatekeeper of Malakir",
     "Get Lost",
     "Hard-Hitting Question",
+    "Hired Claw",
+    "Hullbreaker Horror",
     "Impulse",
     "Lightning Strike",
     "Llanowar Elves",
     "Negate",
+    "Novice Inspector",
     "Opt",
+    "Razorkin Needlehead",
+    "Sentinel of the Nameless City",
     "Shock",
     "Shoot the Sheriff",
     "Spell Pierce",
     "Thirst for Discovery",
     "Tolarian Terror",
+    "Unstoppable Slasher",
     "Voldaren Epicure",
+    "Warden of the Inner Sky",
+];
+
+/// Definitions retained for development with incomplete printed behavior.
+/// Full deck admission must refuse every one.
+const PARTIAL: [&str; 8] = [
+    "Memory Deluge",
+    "Recruitment Officer",
+    "Evolving Adaptive",
+    "Extraction Specialist",
+    "Haughty Djinn",
+    "Quirion Beastcaller",
+    "Sharp-Eyed Rookie",
+    "Thalia, Guardian of Thraben",
 ];
 
 const BASICS: [&str; 5] = ["Plains", "Island", "Swamp", "Mountain", "Forest"];
@@ -115,14 +164,14 @@ fn standard_registry_appends_to_the_pauper_prefix_without_fdn() {
         .iter()
         .all(|def| def.capability == CardCapability::Full
             || def.is_token
-            || (def.object_name == "Memory Deluge" && def.capability == CardCapability::Partial)));
+            || (PARTIAL.contains(&def.object_name) && def.capability == CardCapability::Partial)));
 }
 
 #[test]
 fn standard_catalog_identity_is_frozen() {
-    const EXPECTED_STANDARD_V2: u64 = 0x56b9_10b4_eb9e_4a99;
+    const EXPECTED_STANDARD_V3: u64 = 0xc613_9dbd_d2f0_db62;
     assert_eq!(
-        KERNEL_CARDDB_HASH, EXPECTED_STANDARD_V2,
+        KERNEL_CARDDB_HASH, EXPECTED_STANDARD_V3,
         "Standard catalog hash {KERNEL_CARDDB_HASH:#018x}"
     );
 }
@@ -785,11 +834,14 @@ fn get_lost_uses_the_live_controller_even_when_destruction_is_prevented() {
 }
 
 #[test]
-fn memory_deluge_is_partial_and_refused_by_full_deck_admission() {
-    let deluge = card_id_by_name("Memory Deluge").unwrap();
-    assert_eq!(
-        CARD_DEFS[deluge as usize].capability,
-        CardCapability::Partial
-    );
-    assert!(preflight_fully_supported_deck(&[deluge]).is_err());
+fn incomplete_cards_are_partial_and_refused_by_full_deck_admission() {
+    for name in PARTIAL {
+        let id = card_id_by_name(name).unwrap();
+        assert_eq!(
+            CARD_DEFS[id as usize].capability,
+            CardCapability::Partial,
+            "{name}"
+        );
+        assert!(preflight_fully_supported_deck(&[id]).is_err(), "{name}");
+    }
 }

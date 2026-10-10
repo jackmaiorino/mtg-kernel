@@ -6551,6 +6551,9 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::DiscardBasicLandInstead {
                                 ..
                             }
+                            | crate::effect::EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand {
+                                ..
+                            }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany {
                                 ..
                             }
@@ -6572,6 +6575,7 @@ fn pending_effect_semantic_v4(
                         crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
                             | crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. } | crate::effect::EffectTargetSelectionPurpose::SearchLibraryCardsToDestination { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped { .. }
                     ) && acting_player != *player;
                     let visible_targets = |candidates: &[crate::effect::EffectTargetCandidate]| {
@@ -6695,6 +6699,9 @@ fn pending_effect_semantic_v4(
                                 ..
                             }
                             | crate::effect::EffectTargetSelectionPurpose::UndercityThroneCreature {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand {
                                 ..
                             } => TargetSelectionPurposeV4::CardSelection,
                             crate::effect::EffectTargetSelectionPurpose::SacrificeCreature {

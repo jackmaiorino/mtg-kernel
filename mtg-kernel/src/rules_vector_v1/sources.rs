@@ -762,6 +762,30 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                     None => {
                         meaning::effect_op(&program, &env, out);
                         targets::target_spec(spec, out);
+                        if crate::trigger::distributes_last_known_plus_one_counters(
+                            card_id, condition,
+                        ) {
+                            // Built at trigger creation: one controller
+                            // choice per last-known +1/+1 counter, each a
+                            // +1/+1 counter on a creature they control.
+                            out.read(
+                                RelF::You,
+                                Some(ZoneF::Graveyard),
+                                Some(ObjF::ThisObject),
+                                AggF::Characteristic,
+                            );
+                            out.control(ControlF::Repeat);
+                            out.control(ControlF::ChooseObjects);
+                            for ev in [EvF::PlaceCounter, EvF::StatChange] {
+                                out.effect(
+                                    EffectAtom::new(ev)
+                                        .player(RelF::You)
+                                        .obj(ObjF::Typed(CardTypeF::Creature))
+                                        .amount(AmtF::Dynamic)
+                                        .duration(DurF::Permanent),
+                                );
+                            }
+                        }
                     }
                 }
             });
@@ -839,6 +863,9 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
             );
         });
     }
+
+    #[cfg(feature = "standard-magezero-fixtures")]
+    standard_statics(name, &mut walk);
 
     // Permanents with a continuous effect on their host.
     if let Some(equip) = equipment {
@@ -1057,5 +1084,154 @@ fn attachment_facts(aura: AttachmentDef, out: &mut Collector) {
                 );
             }
         }
+    }
+}
+
+/// The MageZero Standard statics `standard_statics_v1` keys by name.
+#[cfg(feature = "standard-magezero-fixtures")]
+fn standard_statics(name: &str, walk: &mut Walk) {
+    use crate::standard_statics_v1::StandardStaticV1;
+    for fact in crate::standard_statics_v1::rules_vector_statics(name) {
+        walk.rec("standard_static", Value::String(format!("{fact:?}")));
+        walk.ability(CtxF::Static, |out| match *fact {
+            StandardStaticV1::ConditionalSelfKeywords(keywords) => {
+                // While its controller's turn or its counter count holds.
+                // Vocabulary gap: neither condition has a read.
+                out.control(ControlF::Conditional);
+                for bit in keyword_bits(keywords) {
+                    out.effect(
+                        EffectAtom::new(EvF::GrantKeyword)
+                            .player(RelF::You)
+                            .obj(ObjF::ThisObject)
+                            .duration(DurF::WhileOnBattlefield)
+                            .keyword(bit),
+                    );
+                }
+            }
+            StandardStaticV1::EntersWithPlusOneCounterIfControlsManaValueFour => {
+                // Vocabulary gap: the read carries no mana-value bound.
+                out.control(ControlF::Conditional);
+                out.read(
+                    RelF::You,
+                    Some(ZoneF::Battlefield),
+                    Some(ObjF::Permanent),
+                    AggF::Any,
+                );
+                for ev in [EvF::PlaceCounter, EvF::StatChange] {
+                    out.effect(
+                        EffectAtom::new(ev)
+                            .player(RelF::You)
+                            .obj(ObjF::ThisObject)
+                            .amount(AmtF::fixed(1))
+                            .duration(DurF::Permanent),
+                    );
+                }
+            }
+            StandardStaticV1::EntersWithOilCounter => out.effect(
+                EffectAtom::new(EvF::PlaceCounter)
+                    .player(RelF::You)
+                    .obj(ObjF::ThisObject)
+                    .amount(AmtF::fixed(1))
+                    .duration(DurF::Permanent),
+            ),
+            StandardStaticV1::PlusOnePerOilCounter => {
+                out.read(
+                    RelF::You,
+                    Some(ZoneF::Battlefield),
+                    Some(ObjF::ThisObject),
+                    AggF::Characteristic,
+                );
+                out.effect(
+                    EffectAtom::new(EvF::StatChange)
+                        .player(RelF::You)
+                        .obj(ObjF::ThisObject)
+                        .amount(AmtF::Dynamic)
+                        .duration(DurF::WhileOnBattlefield),
+                );
+            }
+            StandardStaticV1::GrantsWardToOtherHumans => {
+                // Vocabulary gap: ward is not a keyword bit and ObjF has no
+                // subtype class; nearest is a keyword grant to creatures.
+                out.effect(
+                    EffectAtom::new(EvF::GrantKeyword)
+                        .player(RelF::You)
+                        .obj(ObjF::Typed(CardTypeF::Creature))
+                        .duration(DurF::WhileOnBattlefield),
+                );
+            }
+            StandardStaticV1::PowerEqualsControlledCreatures => {
+                out.read(
+                    RelF::You,
+                    Some(ZoneF::Battlefield),
+                    Some(ObjF::Typed(CardTypeF::Creature)),
+                    AggF::Count,
+                );
+                out.effect(
+                    EffectAtom::new(EvF::SetCharacteristic)
+                        .obj(ObjF::ThisObject)
+                        .amount(AmtF::Dynamic)
+                        .duration(DurF::Permanent),
+                );
+            }
+            StandardStaticV1::PowerEqualsGraveyardInstantsAndSorceries => {
+                // Vocabulary gap: no two-type union class; both are read.
+                for card_type in [CardTypeF::Instant, CardTypeF::Sorcery] {
+                    out.read(
+                        RelF::You,
+                        Some(ZoneF::Graveyard),
+                        Some(ObjF::Typed(card_type)),
+                        AggF::Count,
+                    );
+                }
+                out.effect(
+                    EffectAtom::new(EvF::SetCharacteristic)
+                        .obj(ObjF::ThisObject)
+                        .amount(AmtF::Dynamic)
+                        .duration(DurF::Permanent),
+                );
+            }
+            StandardStaticV1::DoublesOpponentLifeLossOnYourTurn => {
+                // A replacement on each opponent life-loss event during the
+                // controller's turn; payments are not life loss events here.
+                out.control(ControlF::Conditional);
+                out.effect(
+                    EffectAtom::new(EvF::LifeLoss)
+                        .player(RelF::Opponent)
+                        .obj(ObjF::Player)
+                        .amount(AmtF::Dynamic)
+                        .duration(DurF::WhileOnBattlefield),
+                );
+            }
+            StandardStaticV1::NoncreatureSpellsCostOneMore => out.effect(
+                // Vocabulary gap: no noncreature class; nearest is any spell.
+                EffectAtom::new(EvF::CostChange)
+                    .player(RelF::EachPlayer)
+                    .obj(ObjF::Spell)
+                    .amount(AmtF::fixed(1))
+                    .duration(DurF::WhileOnBattlefield),
+            ),
+            StandardStaticV1::YourInstantsAndSorceriesCostOneLess => {
+                for card_type in [CardTypeF::Instant, CardTypeF::Sorcery] {
+                    out.effect(
+                        EffectAtom::new(EvF::CostChange)
+                            .player(RelF::You)
+                            .obj(ObjF::Typed(card_type))
+                            .amount(AmtF::fixed(-1))
+                            .duration(DurF::WhileOnBattlefield),
+                    );
+                }
+            }
+            StandardStaticV1::FirstAbilityNeedsOpponentLifeLossThisTurn => {
+                // The activated ability's own facts are walked with the
+                // card's activated abilities; this is its extra gate.
+                out.control(ControlF::Conditional);
+                out.read(
+                    RelF::Opponent,
+                    None,
+                    Some(ObjF::Player),
+                    AggF::EventThisTurn,
+                );
+            }
+        });
     }
 }

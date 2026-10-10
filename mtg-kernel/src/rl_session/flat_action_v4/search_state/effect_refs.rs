@@ -35,11 +35,18 @@ impl Scan<'_> {
             } => self.op(then) || otherwise.as_ref().is_some_and(|x| self.op(x)),
             MayExileFromPlayersGraveyardMatchingThen { then, .. }
             | MayPayManaThen { then, .. }
-            | LookAtTopMayRevealThen { then, .. } => self.op(then),
+            | LookAtTopMayRevealThen { then, .. }
+            | BindEntrantOutgrowsSourceThen { then } => self.op(then),
+            IfEntrantOutgrowsSourceThen {
+                entrant,
+                source,
+                then,
+            } => self.b(entrant) || self.b(source) || self.op(then),
             PutBoundObjectInOwnersLibrary { object, .. }
             | MoveBoundObject { object, .. }
             | PutPlusOnePlusOneCounterOnBoundObject { object }
             | DoublePlusOneCountersOnBoundObject { object }
+            | PutOilCounterOnBoundObject { object }
             | PutPlusOnePlusOneCounterOnTriggerEventObject { object }
             | BoostBoundObjectUntilEndOfTurn { object, .. } => self.b(object),
             PutBoundAuraOntoBattlefieldAttached { aura, host } => self.b(aura) || self.b(host),
@@ -90,6 +97,7 @@ impl Scan<'_> {
             | LookTopPickToHandBottomRest { .. }
             | DrawCardsDynamic { .. }
             | DiscardBasicLandOrCards { .. }
+            | LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. }
             | GainLifeEqualToPaidCostManaValue { .. }
             | MoveAllTargets { .. }
             | ExploreTarget { .. }
@@ -112,6 +120,7 @@ impl Scan<'_> {
             | BindPlusOnePlusOneCounterToTriggerSource
             | BindPlusOnePlusOneCounterToTriggerEventObject
             | BindDoublePlusOneCountersToTriggerSource
+            | BindOilCounterToTriggerSource
             | BindTemporaryBoostToTriggerSource { .. }
             | BoostControlledCreaturesUntilEndOfTurn { .. }
             | GainLifeByAttackingSubtypeCount { .. }
@@ -129,6 +138,11 @@ impl Scan<'_> {
             | SearchLibraryToBattlefieldTapped { .. }
             | RevealTargetHandChooseNoncreatureNonlandDiscard { .. }
             | ShuffleTriggerSourceIntoOwnersLibrary
+            | LoseHalfLifeRoundedUp { .. }
+            | CreateTokenTappedAndAttacking { .. }
+            | AddPlusOneCounterToAbilitySource
+            | ReturnTargetCreatureCardRestrictedWhileSourceControlled { .. }
+            | ReturnSourceFromGraveyardTappedWithStunCounters { .. }
             | MaterializeStormCopies
             | CreateStormCopies { .. }
             | DamageCannotBePreventedThisTurn
@@ -397,6 +411,9 @@ impl Scan<'_> {
             | SearchLibraryToBattlefieldTapped {
                 original_library, ..
             } => self.bs(original_library),
+            LookTopTakeCreatureManaValueAtMostToHand {
+                original_prefix, ..
+            } => self.bs(original_prefix),
             LookTopSelectByTypeToHandBottomRest {
                 original_prefix,
                 stage,
@@ -629,7 +646,8 @@ pub(super) fn conflicts(
             Targeted { target, .. } => s.raw(*target),
             CombatDamageToPlayer { source, .. }
             | SagaChapter { source, .. }
-            | DeclaredAttacker { source, .. } => s.raw(*source),
+            | DeclaredAttacker { source, .. }
+            | ControllerAttacked { source, .. } => s.raw(*source),
             OptionalAdditionalCostPaid {
                 source,
                 paid_cost_refs,

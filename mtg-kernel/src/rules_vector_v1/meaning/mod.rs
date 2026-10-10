@@ -15,6 +15,7 @@ mod effect_c;
 mod effect_d;
 mod effect_e;
 mod effect_f;
+mod effect_g;
 pub(crate) mod reads;
 pub(crate) mod targets;
 pub(crate) mod triggers_costs;
@@ -203,5 +204,17 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::DestroyAllCreatures
         | EffectOp::SearchLibraryCardsToDestination { .. }
         | EffectOp::CreateTokensDynamic { .. } => effect_f::effect_op(op, env, out),
+        EffectOp::BindEntrantOutgrowsSourceThen { .. }
+        | EffectOp::IfEntrantOutgrowsSourceThen { .. }
+        | EffectOp::BindOilCounterToTriggerSource
+        | EffectOp::PutOilCounterOnBoundObject { .. }
+        | EffectOp::CreateTokenTappedAndAttacking { .. }
+        | EffectOp::AddPlusOneCounterToAbilitySource
+        | EffectOp::ReturnTargetCreatureCardRestrictedWhileSourceControlled { .. }
+        | EffectOp::LoseHalfLifeRoundedUp { .. }
+        | EffectOp::ReturnSourceFromGraveyardTappedWithStunCounters { .. }
+        | EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. } => {
+            effect_g::effect_op(op, env, out)
+        }
     }
 }

@@ -22,6 +22,9 @@ use crate::state::{
 };
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "standard-magezero-fixtures")]
+mod standard_family_g_v1;
+
 /// Trigger conditions this increment's kernel can match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TriggerCondition {
@@ -111,6 +114,13 @@ pub enum TriggerCondition {
     /// Declared as an attacker. Being put onto the battlefield attacking
     /// does not satisfy this event.
     Attacks,
+    /// The source's controller declares one or more attackers ("whenever
+    /// you attack", Adeline, Resplendent Cathar).
+    ControllerAttacks,
+    /// The source's controller declares attackers including at least one
+    /// with this subtype ("whenever you attack with one or more Lizards",
+    /// Hired Claw).
+    ControllerAttacksWithSubtype(Subtype),
     ControlledLandEnters,
     ControllerGainsLife,
     ControllerAddedPlusOneCountersToSelf {
@@ -120,6 +130,28 @@ pub enum TriggerCondition {
     AttacksWithControllerGraveyardCardCountAtLeast(u8),
     BeginningControllerEndStepIfCreatureDied,
     BeginningControllerEndStep,
+    /// The controller casts a creature spell (Quirion Beastcaller).
+    CastCreatureSpell,
+    /// The controller casts any spell (Hullbreaker Horror).
+    CastSpell,
+    /// The controller casts a spell whose mana value on the stack is at
+    /// least this (Ascendant Packleader).
+    CastSpellManaValueAtLeast(u16),
+    /// A creature enters under the source's controller with greater power or
+    /// greater toughness than the source has at that moment: the trigger-time
+    /// half of Sharp-Eyed Rookie's and Evolving Adaptive's intervening if.
+    /// `another` excludes the source itself.
+    ControlledCreatureEntersOutgrowingSource {
+        another: bool,
+    },
+    /// Each successful draw by the source controller's opponent (Razorkin
+    /// Needlehead: "whenever an opponent draws a card").
+    OpponentDraws,
+    /// The source dies, and the battlefield incarnation that died had no
+    /// counters of any kind (Unstoppable Slasher's intervening if). Reads
+    /// `GameState::counter_lki_for`, which only `standard-magezero-fixtures`
+    /// builds record.
+    DiesWithoutCounters,
     /// The creature this Equipment is attached to deals combat damage to a
     /// player (Goldvein Pick). The committed marker's source incarnation
     /// must be the Equipment's exact current host.
@@ -195,12 +227,43 @@ fn materialize_trigger_source_program(
                 },
             }
         }
+        EffectOp::BindOilCounterToTriggerSource => {
+            let live = state.objects.get(source);
+            EffectOp::PutOilCounterOnBoundObject {
+                object: EffectObjectBinding {
+                    object: source,
+                    expected_zone: live.zone,
+                    expected_zone_change_count: live.zone_change_count,
+                },
+            }
+        }
+        EffectOp::Sequence(steps) if steps.iter().any(contains_source_binding_template) => {
+            EffectOp::Sequence(
+                steps
+                    .into_iter()
+                    .map(|step| materialize_trigger_source_program(step, source, state))
+                    .collect(),
+            )
+        }
         EffectOp::MaterializeStormCopies => {
             crate::engine::materialize_storm_copy_binding(state, source)
                 .map(|binding| EffectOp::CreateStormCopies { binding })
                 .unwrap_or(EffectOp::MaterializeStormCopies)
         }
         effect => effect,
+    }
+}
+
+/// Whether a program still holds a source-binding template that
+/// `materialize_trigger_source_program` must replace.
+fn contains_source_binding_template(effect: &EffectOp) -> bool {
+    match effect {
+        EffectOp::BindTemporaryBoostToTriggerSource { .. }
+        | EffectOp::BindPlusOnePlusOneCounterToTriggerSource
+        | EffectOp::BindDoublePlusOneCountersToTriggerSource
+        | EffectOp::BindOilCounterToTriggerSource => true,
+        EffectOp::Sequence(steps) => steps.iter().any(contains_source_binding_template),
+        _ => false,
     }
 }
 
@@ -222,6 +285,24 @@ fn materialize_trigger_event_effect(
     state: &GameState,
     event: &CommittedEvent,
 ) -> EffectOp {
+    if let EffectOp::BindEntrantOutgrowsSourceThen { then } = (trigger.effect)() {
+        if let Some(object) = battlefield_entry_object(event) {
+            let live = state.objects.get(source);
+            return EffectOp::IfEntrantOutgrowsSourceThen {
+                entrant: EffectObjectBinding {
+                    object,
+                    expected_zone: Zone::Battlefield,
+                    expected_zone_change_count: state.objects.get(object).zone_change_count,
+                },
+                source: EffectObjectBinding {
+                    object: source,
+                    expected_zone: live.zone,
+                    expected_zone_change_count: live.zone_change_count,
+                },
+                then: Box::new(materialize_trigger_source_program(*then, source, state)),
+            };
+        }
+    }
     if matches!(
         (trigger.effect)(),
         EffectOp::BindPlusOnePlusOneCounterToTriggerEventObject
@@ -582,6 +663,28 @@ pub fn event_time_trigger_programs(card_def: u16, condition: TriggerCondition) -
     }
 }
 
+/// Whether this trigger's program is built when the trigger is created, from
+/// the dying incarnation's last-known +1/+1 counters and its controller's
+/// creatures (Quirion Beastcaller), so the definition's own program is an
+/// empty stand-in. The rules-vector extractor describes it through this.
+pub fn distributes_last_known_plus_one_counters(
+    card_def: u16,
+    condition: TriggerCondition,
+) -> bool {
+    #[cfg(feature = "standard-magezero-fixtures")]
+    {
+        crate::card_def::CARD_DEFS
+            .get(card_def as usize)
+            .is_some_and(|card| card.name == "Quirion Beastcaller")
+            && matches!(condition, TriggerCondition::LeftBattlefieldToGraveyard)
+    }
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
+    {
+        let _ = (card_def, condition);
+        false
+    }
+}
+
 /// A definition-owned modal program waiting for its placement-time choice.
 /// The root is only a pending-trigger marker. It must never reach the stack
 /// or the resolution interpreter; selection replaces it with one branch.
@@ -590,6 +693,12 @@ pub fn unselected_trigger_modes(
     effect: &EffectOp,
 ) -> Option<Vec<(TargetSpec, EffectOp)>> {
     let card = crate::card_def::CARD_DEFS.get(card_def as usize)?;
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if card.name == "Hullbreaker Horror"
+        && *effect == standard_family_g_v1::hullbreaker_horror_effect()
+    {
+        return Some(standard_family_g_v1::hullbreaker_horror_modes());
+    }
     (card.name == "Sylvan Scavenging" && *effect == sylvan_scavenging_effect())
         .then(sylvan_scavenging_modes)
 }
@@ -2002,6 +2111,38 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Avenging Hunter" => &AVENGING_HUNTER_TRIGGERS,
         "Azure Fleet Admiral" => &AZURE_FLEET_ADMIRAL_TRIGGERS,
         "Delver of Secrets" => &DELVER_OF_SECRETS_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Novice Inspector" => &standard_family_g_v1::NOVICE_INSPECTOR_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Sentinel of the Nameless City" => {
+            &standard_family_g_v1::SENTINEL_OF_THE_NAMELESS_CITY_TRIGGERS
+        }
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Cenote Scout" => &standard_family_g_v1::CENOTE_SCOUT_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Gatekeeper of Malakir" => &standard_family_g_v1::GATEKEEPER_OF_MALAKIR_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Deep-Cavern Bat" => &standard_family_g_v1::DEEP_CAVERN_BAT_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Razorkin Needlehead" => &standard_family_g_v1::RAZORKIN_NEEDLEHEAD_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Quirion Beastcaller" => &standard_family_g_v1::QUIRION_BEASTCALLER_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Ascendant Packleader" => &standard_family_g_v1::ASCENDANT_PACKLEADER_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Sharp-Eyed Rookie" => &standard_family_g_v1::SHARP_EYED_ROOKIE_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Evolving Adaptive" => &standard_family_g_v1::EVOLVING_ADAPTIVE_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Unstoppable Slasher" => &standard_family_g_v1::UNSTOPPABLE_SLASHER_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Adeline, Resplendent Cathar" => &standard_family_g_v1::ADELINE_RESPLENDENT_CATHAR_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Hired Claw" => &standard_family_g_v1::HIRED_CLAW_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Extraction Specialist" => &standard_family_g_v1::EXTRACTION_SPECIALIST_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Hullbreaker Horror" => &standard_family_g_v1::HULLBREAKER_HORROR_TRIGGERS,
         _ => &[],
     }
 }
@@ -2031,6 +2172,12 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
             TargetSpec::OpponentArtifactOrEnchantmentPermanent
         }
         "Vitu-Ghazi Inspector" => TargetSpec::Creature,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Gatekeeper of Malakir" => TargetSpec::AnyPlayer,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Deep-Cavern Bat" | "Hired Claw" => TargetSpec::TargetOpponent,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Extraction Specialist" => TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(2),
         _ => TargetSpec::None,
     }
 }
@@ -2080,6 +2227,24 @@ fn source_bound_trigger_program_matches(template: &EffectOp, effect: &EffectOp) 
                 ..
             },
         ) => power == actual_power && toughness == actual_toughness,
+        (EffectOp::Sequence(template_steps), EffectOp::Sequence(actual_steps)) => {
+            template_steps.len() == actual_steps.len()
+                && template_steps
+                    .iter()
+                    .zip(actual_steps)
+                    .all(|(template, actual)| {
+                        source_bound_trigger_program_matches(template, actual)
+                    })
+        }
+        (
+            EffectOp::BindEntrantOutgrowsSourceThen { then },
+            EffectOp::IfEntrantOutgrowsSourceThen {
+                then: actual_then, ..
+            },
+        ) => source_bound_trigger_program_matches(then, actual_then),
+        (EffectOp::BindOilCounterToTriggerSource, EffectOp::PutOilCounterOnBoundObject { .. }) => {
+            true
+        }
         (
             EffectOp::BindPlusOnePlusOneCounterToTriggerSource,
             EffectOp::PutPlusOnePlusOneCounterOnBoundObject { .. },
@@ -2111,6 +2276,20 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
         && [false, true].into_iter().any(|entered| {
             moon_circuit_hacker_combat_effect_for_entered_this_turn(entered) == *effect
         })
+    {
+        return true;
+    }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if card.name == "Quirion Beastcaller"
+        && standard_family_g_v1::is_quirion_beastcaller_dies_effect(effect)
+    {
+        return true;
+    }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if card.name == "Hullbreaker Horror"
+        && standard_family_g_v1::hullbreaker_horror_modes()
+            .iter()
+            .any(|(_, branch)| branch == effect)
     {
         return true;
     }
@@ -2156,6 +2335,15 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
         return None;
     }
     let card = crate::card_def::CARD_DEFS.get(card_def as usize)?;
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if card.name == "Hullbreaker Horror" {
+        return Some(
+            standard_family_g_v1::hullbreaker_horror_modes()
+                .iter()
+                .find(|(_, branch)| branch == effect)
+                .map_or(TargetSpec::None, |(spec, _)| *spec),
+        );
+    }
     if card.name == "Sylvan Scavenging" {
         return Some(
             sylvan_scavenging_modes()
@@ -2647,7 +2835,9 @@ fn triggers_from_events(
         for (ability_index, def) in triggers_for(obj.card_def).iter().enumerate() {
             let uses_leave_lki = matches!(
                 def.condition,
-                TriggerCondition::LeftBattlefieldToGraveyard | TriggerCondition::LeftBattlefield
+                TriggerCondition::LeftBattlefieldToGraveyard
+                    | TriggerCondition::LeftBattlefield
+                    | TriggerCondition::DiesWithoutCounters
             );
             if !uses_leave_lki
                 && (obj.zone != def.home_zone
@@ -2713,6 +2903,19 @@ fn triggers_from_events(
                             obj.v4.entered_battlefield_turn == Some(state.turn),
                         )
                     } else {
+                        #[cfg(feature = "standard-magezero-fixtures")]
+                        if card.name == "Quirion Beastcaller"
+                            && matches!(def.condition, TriggerCondition::LeftBattlefieldToGraveyard)
+                        {
+                            standard_family_g_v1::quirion_beastcaller_dies_effect(
+                                state,
+                                id,
+                                event_controller,
+                            )
+                        } else {
+                            materialize_trigger_event_effect(def, id, state, ev)
+                        }
+                        #[cfg(not(feature = "standard-magezero-fixtures"))]
                         materialize_trigger_event_effect(def, id, state, ev)
                     };
                     let required_optional_cost =
@@ -2863,6 +3066,56 @@ fn triggers_from_events(
                     });
                 }
             }
+        }
+    }
+
+    // Ward granted by another permanent (Coppercoat Vanguard) is the
+    // warded creature's own ability, one trigger per grant.
+    #[cfg(feature = "standard-magezero-fixtures")]
+    for event in events {
+        let CommittedEvent::Targeted {
+            target,
+            target_zone_change_count,
+            targeting_stack_item,
+            targeting_controller,
+        } = event
+        else {
+            continue;
+        };
+        let Some(live) = state.objects.try_get(*target) else {
+            continue;
+        };
+        if live.zone != Zone::Battlefield
+            || live.zone_change_count != *target_zone_change_count
+            || *targeting_controller == live.controller
+        {
+            continue;
+        }
+        let controller = live.controller;
+        for generic in crate::standard_statics_v1::granted_ward_generics(state, *target) {
+            let ward_target = crate::state::StackTargetContractV4::capture(
+                state,
+                crate::state::Target::Object(*target),
+            );
+            new_triggers.push(PendingTrigger {
+                controller,
+                source: *target,
+                granted_by: None,
+                effect: EffectOp::CounterUnlessPaysGeneric {
+                    ward_target,
+                    targeting_stack_item: *targeting_stack_item,
+                    generic,
+                },
+                is_madness_offer: false,
+                kicked: false,
+                target_spec: TargetSpec::None,
+                targets: Vec::new(),
+                target_contracts: Vec::new(),
+                placement_ordered: false,
+                source_contract: Some(AbilitySourceContractV4::capture(state, *target)),
+                optional_additional_cost_paid: None,
+                paid_cost_refs: Vec::new(),
+            });
         }
     }
 
@@ -3102,6 +3355,62 @@ fn trigger_matches(
                 object: Some(_),
             },
         ) => *player == controller,
+        (
+            TriggerCondition::CastCreatureSpell,
+            CommittedEvent::SpellCast {
+                spell,
+                controller: caster,
+            },
+        ) => {
+            *caster == controller
+                && selected_spell_types(state, *spell)
+                    .contains(&crate::card_def::CardType::Creature)
+        }
+        (
+            TriggerCondition::CastSpell,
+            CommittedEvent::SpellCast {
+                controller: caster, ..
+            },
+        ) => *caster == controller,
+        (
+            TriggerCondition::CastSpellManaValueAtLeast(minimum),
+            CommittedEvent::SpellCast {
+                spell,
+                controller: caster,
+            },
+        ) => {
+            *caster == controller
+                && state
+                    .stack
+                    .iter()
+                    .find(|item| {
+                        item.kind == crate::state::StackItemKind::Spell && item.source == *spell
+                    })
+                    .is_some_and(|item| {
+                        crate::engine::stack_spell_mana_value(state, item) >= minimum
+                    })
+        }
+        (TriggerCondition::ControlledCreatureEntersOutgrowingSource { another }, event) => {
+            let Some(object) = battlefield_entry_object(event) else {
+                return false;
+            };
+            let entrant = state.objects.get(object);
+            (!another || object != source)
+                && entrant.zone == Zone::Battlefield
+                && entrant.controller == controller
+                && crate::engine::object_has_type(state, object, CardType::Creature)
+                && (crate::engine::effective_power(state, object)
+                    > crate::engine::effective_power(state, source)
+                    || crate::engine::effective_toughness(state, object)
+                        > crate::engine::effective_toughness(state, source))
+        }
+        (
+            TriggerCondition::OpponentDraws,
+            CommittedEvent::Draw {
+                player,
+                object: Some(_),
+            },
+        ) => *player != controller,
         (TriggerCondition::OtherControlledCreatureEnters { subtype }, event) => {
             let Some(object) = battlefield_entry_object(event) else {
                 return false;
@@ -3182,6 +3491,34 @@ fn trigger_matches(
             *event_source == source
                 && *event_controller == controller
                 && state.objects.get(source).zone_change_count == *source_zone_change_count
+        }
+        (
+            TriggerCondition::ControllerAttacks,
+            CommittedEvent::ControllerAttacked {
+                source: event_source,
+                source_zone_change_count,
+                controller: event_controller,
+            },
+        ) => {
+            *event_source == source
+                && *event_controller == controller
+                && state.objects.get(source).zone_change_count == *source_zone_change_count
+        }
+        (
+            TriggerCondition::ControllerAttacksWithSubtype(subtype),
+            CommittedEvent::ControllerAttacked {
+                source: event_source,
+                source_zone_change_count,
+                controller: event_controller,
+            },
+        ) => {
+            *event_source == source
+                && *event_controller == controller
+                && state.objects.get(source).zone_change_count == *source_zone_change_count
+                && state.engine.combat.attackers.iter().any(|&attacker| {
+                    state.objects.get(attacker).controller == controller
+                        && crate::engine::has_effective_subtype(state, attacker, subtype)
+                })
         }
         (
             TriggerCondition::BeginningControllerEndStepIfCreatureDied,
@@ -3289,6 +3626,23 @@ fn trigger_matches(
                 ..
             },
         ) => *object == source,
+        (
+            TriggerCondition::DiesWithoutCounters,
+            CommittedEvent::ZoneChange {
+                object,
+                from: Zone::Battlefield,
+                to: Zone::Graveyard,
+                ..
+            },
+        ) => {
+            *object == source
+                && state
+                    .objects
+                    .get(source)
+                    .zone_change_count
+                    .checked_sub(1)
+                    .is_some_and(|departed| state.counter_lki_for(source, departed).is_none())
+        }
         (
             TriggerCondition::SacrificeAnotherWithSubtype(subtype),
             CommittedEvent::Sacrificed {

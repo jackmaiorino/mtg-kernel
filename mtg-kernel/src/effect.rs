@@ -1164,6 +1164,73 @@ pub enum EffectOp {
         token_def: u16,
         count: u8,
     },
+    /// Definition-owned template for an intervening "if that creature has
+    /// greater power or toughness than this" entry trigger (Sharp-Eyed
+    /// Rookie, Evolving Adaptive). Trigger materialization binds the entering
+    /// creature and the source into `IfEntrantOutgrowsSourceThen`; `then`'s
+    /// own source-bound templates are materialized at the same time.
+    BindEntrantOutgrowsSourceThen {
+        then: Box<EffectOp>,
+    },
+    /// 603.4's resolution-time recheck: runs `then` only if the bound
+    /// entering creature's power is greater than the source's, or its
+    /// toughness is greater than the source's. Each side is read live while
+    /// it remains the bound battlefield incarnation; once a side has left,
+    /// the check fails closed and `then` does nothing.
+    IfEntrantOutgrowsSourceThen {
+        entrant: EffectObjectBinding,
+        source: EffectObjectBinding,
+        then: Box<EffectOp>,
+    },
+    /// Template: one oil counter on this exact trigger source.
+    BindOilCounterToTriggerSource,
+    /// Put one oil counter on an exact battlefield incarnation.
+    PutOilCounterOnBoundObject {
+        object: EffectObjectBinding,
+    },
+    /// Create one `token_def` token under the controller's control, tapped
+    /// and attacking (Adeline, Resplendent Cathar). It was never declared
+    /// as an attacker, so attack triggers do not see it. Outside combat
+    /// the token is simply created tapped.
+    CreateTokenTappedAndAttacking {
+        token_def: u16,
+    },
+    /// Put one +1/+1 counter on this activated or triggered ability's source
+    /// while it is still the battlefield incarnation the ability came from
+    /// (Hired Claw, Warden of the Inner Sky). Otherwise nothing happens.
+    AddPlusOneCounterToAbilitySource,
+    /// Return the targeted creature card from its owner's graveyard to the
+    /// battlefield (the target spec only offers the controller's own
+    /// graveyard, so its owner controls it); it can't attack or block for
+    /// as long as that player controls this ability's source (Extraction
+    /// Specialist). If the source has already left, the duration is over
+    /// and the creature returns unrestricted.
+    ReturnTargetCreatureCardRestrictedWhileSourceControlled {
+        target_index: u8,
+    },
+    /// The player loses half their life, rounded up (Unstoppable Slasher).
+    /// A player at 0 or less life loses nothing.
+    LoseHalfLifeRoundedUp {
+        player: PlayerRef,
+    },
+    /// Return this dies trigger's source card from its owner's graveyard to
+    /// the battlefield tapped under its owner's control with `stun` stun
+    /// counters (Unstoppable Slasher). Only the graveyard incarnation the
+    /// death created qualifies; if the card has moved on, nothing happens.
+    ReturnSourceFromGraveyardTappedWithStunCounters {
+        stun: i16,
+    },
+    /// Privately look at the top `count` cards of the player's library; they
+    /// may reveal one creature card with mana value at most `max_mana_value`
+    /// from among them and put it into their hand, and the rest go on the
+    /// bottom (Recruitment Officer). The printed random bottom order is kept
+    /// as the looked-at order: randomness only advances through library
+    /// shuffles. The bottom placement reuses the typed partition frame.
+    LookTopMayTakeCreatureManaValueAtMostToHandBottomRest {
+        player: PlayerRef,
+        count: u8,
+        max_mana_value: u16,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -1768,6 +1835,16 @@ pub enum EffectTargetSelectionPurpose {
         otherwise: u8,
         canonical_path: Vec<u16>,
     },
+    /// The private zero-or-one creature choice of
+    /// `EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest`.
+    LookTopTakeCreatureManaValueAtMostToHand {
+        player: PlayerId,
+        requested_count: u8,
+        original_library_len: u32,
+        max_mana_value: u16,
+        original_prefix: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -2202,6 +2279,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
         | EffectOp::LookTopPickToHandBottomRest { .. }
         | EffectOp::DiscardBasicLandOrCards { .. }
+        | EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. }
         | EffectOp::ExploreTarget { .. }
         | EffectOp::ExileOneFromPlayersGraveyard { .. }
         | EffectOp::MayExileFromPlayersGraveyardMatchingThen { .. }
@@ -3203,6 +3281,36 @@ fn complete_resumable_target_selection(
                 canonical_path,
             });
         }
+        EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand {
+            player,
+            requested_count,
+            original_library_len,
+            max_mana_value: _,
+            original_prefix,
+            canonical_path,
+        } => {
+            validate_library_partition_bound_metadata(
+                requested_count,
+                original_library_len,
+                &original_prefix,
+            )?;
+            if path != canonical_path {
+                return Err("look-top creature prompt structural path changed".to_string());
+            }
+            if objects.len() > 1 {
+                return Err("look-top creature prompt selected more than one card".to_string());
+            }
+            let selected = canonicalize_binding_subset(&original_prefix, &objects)?;
+            push_library_partition_bottom_frame(
+                continuation,
+                player,
+                requested_count,
+                original_library_len,
+                original_prefix,
+                selected,
+                canonical_path,
+            )?;
+        }
         EffectTargetSelectionPurpose::SearchLibraryToHand {
             player,
             filter,
@@ -3515,8 +3623,15 @@ fn complete_resumable_target_selection(
             source,
             canonical_path,
         } => {
-            if path != canonical_path || objects.len() != 1 {
+            let optional = linked_hand_exile_kind(source.card_def)
+                .ok_or("linked-exile choice lost its source definition")?
+                .optional();
+            if path != canonical_path || objects.len() > 1 || (objects.is_empty() && !optional) {
                 return Err("linked-exile choice changed path or cardinality".to_string());
+            }
+            if objects.is_empty() {
+                // "You may exile": declining leaves the hand untouched.
+                return Ok(());
             }
             let expected_remaining_frames = continuation.frames.clone();
             let frame = EffectFrame::LinkedExileChosenHandCard {
@@ -4463,7 +4578,7 @@ fn validate_linked_exile_chosen_hand_frame(
         || source.controller != pending.ctx.controller
         || source.zone != Zone::Battlefield
         || source.attached_to.is_some()
-        || crate::card_def::CARD_DEFS[source.card_def as usize].name != "Mesmeric Fiend"
+        || linked_hand_exile_kind(source.card_def).is_none()
     {
         return Err("linked-exile player or source contract changed".to_string());
     }
@@ -6036,6 +6151,55 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         );
                     }
                 }
+                EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand {
+                    player: library_player,
+                    requested_count,
+                    original_library_len,
+                    max_mana_value,
+                    original_prefix,
+                    canonical_path,
+                } => {
+                    if chooser != library_player {
+                        return Err(
+                            "look-top creature choice player does not own the selected library"
+                                .to_string(),
+                        );
+                    }
+                    validate_library_partition_live_metadata(
+                        state,
+                        *library_player,
+                        *requested_count,
+                        *original_library_len,
+                        LibraryPartitionFilter::ByType(CardType::Creature),
+                        original_prefix,
+                    )?;
+                    if path != canonical_path {
+                        return Err("look-top creature prompt structural path changed".to_string());
+                    }
+                    let candidates = selected
+                        .iter()
+                        .chain(legal)
+                        .map(|candidate| {
+                            candidate.expected_object.ok_or_else(|| {
+                                "look-top creature target lacks an object-incarnation binding"
+                                    .to_string()
+                            })
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    let matching = creature_prefix_mana_value_at_most(
+                        state,
+                        *max_mana_value,
+                        original_prefix,
+                    )?;
+                    if matching.is_empty() || *min_targets != 0 || *max_targets != 1 || *ordered {
+                        return Err("look-top creature prompt has a noncanonical shape".to_string());
+                    }
+                    validate_exact_binding_permutation(
+                        &matching,
+                        &candidates,
+                        "look-top creature candidates",
+                    )?;
+                }
                 EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
                     player: library_player,
                     requested_count,
@@ -6407,7 +6571,9 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     if chooser != &pending.ctx.controller || path != canonical_path {
                         return Err("linked-exile chooser or structural path changed".to_string());
                     }
-                    if *min_targets != 1
+                    let kind = linked_hand_exile_kind(source.card_def)
+                        .ok_or("linked-exile prompt lost its source definition")?;
+                    if *min_targets != kind.min_choices()
                         || *max_targets != 1
                         || !*ordered
                         || !selected.is_empty()
@@ -6444,7 +6610,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                                 .has_type(CardType::Land)
                         })
                         .collect::<Vec<_>>();
-                    if expected.len() < 2 {
+                    if expected.len() < 2 - usize::from(kind.optional()) {
                         return Err(
                             "linked-exile prompt has no genuine multi-card choice".to_string()
                         );
@@ -8128,6 +8294,19 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         );
                     }
                     continuation.answered_choice_guard = None;
+                    let source_incarnation_is_live =
+                        state.objects.try_get(source.source).is_some_and(|live| {
+                            live.zone == source.zone
+                                && live.zone_change_count == source.zone_change_count
+                        });
+                    if !source_incarnation_is_live
+                        && linked_hand_exile_kind(source.card_def)
+                            == Some(LinkedHandExileKind::UntilSourceLeaves)
+                    {
+                        // 610.3c: an "until ... leaves" exile whose source is
+                        // already gone does nothing.
+                        continue;
+                    }
                     event::propose_and_commit(
                         state,
                         event::ProposedEvent::zone_change_preserving_known_identity(
@@ -8143,11 +8322,6 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         exiled_owner: exiled.owner,
                         exiled_zone_change_count: exiled.zone_change_count,
                     };
-                    let source_incarnation_is_live =
-                        state.objects.try_get(source.source).is_some_and(|live| {
-                            live.zone == source.zone
-                                && live.zone_change_count == source.zone_change_count
-                        });
                     if source_incarnation_is_live {
                         state.objects.get_mut(chosen.object).v4.exiled_by = Some(ObjectLinkV4 {
                             object: source.source,
@@ -8930,6 +9104,68 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
             }
+            EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest {
+                player,
+                count,
+                max_mana_value,
+            } => {
+                let player = continuation.ctx.resolve_player(player, state);
+                let original_library_len = state.players[player.index()]
+                    .library
+                    .len()
+                    .try_into()
+                    .expect("a live library length fits the u32 state contract");
+                let original_prefix = bind_library_top(state, player, count);
+                validate_library_partition_live_metadata(
+                    state,
+                    player,
+                    count,
+                    original_library_len,
+                    LibraryPartitionFilter::ByType(CardType::Creature),
+                    &original_prefix,
+                )?;
+                state.reveal_library_top(player, player, original_prefix.len());
+                let candidates =
+                    creature_prefix_mana_value_at_most(state, max_mana_value, &original_prefix)?;
+                if candidates.is_empty() {
+                    push_library_partition_bottom_frame(
+                        &mut continuation,
+                        player,
+                        count,
+                        original_library_len,
+                        original_prefix,
+                        Vec::new(),
+                        path,
+                    )?;
+                } else {
+                    continuation.choice = Some(PendingEffectChoice::SelectTargets {
+                        player,
+                        path: path.clone(),
+                        selected: Vec::new(),
+                        legal: candidates
+                            .into_iter()
+                            .map(|binding| EffectTargetCandidate {
+                                target: Target::Object(binding.object),
+                                expected_object: Some(binding),
+                            })
+                            .collect(),
+                        min_targets: 0,
+                        max_targets: 1,
+                        ordered: false,
+                        purpose:
+                            EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand {
+                                player,
+                                requested_count: count,
+                                original_library_len,
+                                max_mana_value,
+                                original_prefix,
+                                canonical_path: path,
+                            },
+                    });
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
             EffectOp::SearchLibraryToHandUpTo {
                 player,
                 filter,
@@ -9059,10 +9295,12 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     || source.controller != continuation.ctx.controller
                     || source.zone != Zone::Battlefield
                     || source.attached_to.is_some()
-                    || crate::card_def::CARD_DEFS[source.card_def as usize].name != "Mesmeric Fiend"
                 {
                     return Err("linked-exile effect has the wrong source contract".to_string());
                 }
+                let Some(kind) = linked_hand_exile_kind(source.card_def) else {
+                    return Err("linked-exile effect has the wrong source contract".to_string());
+                };
                 let original_hand = bind_hand(state, player);
                 validate_bound_hand_exact(state, player, &original_hand)?;
                 for binding in &original_hand {
@@ -9085,7 +9323,7 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     .collect::<Vec<_>>();
                 match candidates.as_slice() {
                     [] => {}
-                    [chosen] => {
+                    [chosen] if !kind.optional() => {
                         let expected_remaining_frames = continuation.frames.clone();
                         let frame = EffectFrame::LinkedExileChosenHandCard {
                             player,
@@ -9111,6 +9349,7 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                             original_hand,
                             candidates,
                             source,
+                            kind.min_choices(),
                             path,
                         );
                         state.engine.pending_effect = Some(continuation);
@@ -9132,7 +9371,8 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     || source.controller != continuation.ctx.controller
                     || source.zone != Zone::Battlefield
                     || source.attached_to.is_some()
-                    || crate::card_def::CARD_DEFS[source.card_def as usize].name != "Mesmeric Fiend"
+                    || linked_hand_exile_kind(source.card_def)
+                        != Some(LinkedHandExileKind::ReturnTrigger)
                 {
                     return Err("linked-exile return has the wrong source contract".to_string());
                 }
@@ -9385,19 +9625,32 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
             }
             EffectOp::ExploreTarget { object } => {
                 let target = continuation.ctx.resolve_object(object);
-                let target_index = match object {
-                    ObjectRef::Target(index) => usize::from(index),
+                // A self-exploring trigger (Cenote Scout) still reveals when
+                // its source has left; only the +1/+1 counter needs the
+                // exact battlefield incarnation (701.44b).
+                let explorer_on_battlefield = match object {
+                    ObjectRef::Target(index) => {
+                        if !continuation
+                            .ctx
+                            .target_incarnation_matches(usize::from(index), state)
+                            || state.objects.get(target).zone != Zone::Battlefield
+                        {
+                            return Err("Explore target incarnation is no longer valid".to_string());
+                        }
+                        true
+                    }
                     ObjectRef::ThisSource => {
-                        return Err("Explore requires an announced creature target".to_string())
+                        let contract = continuation
+                            .ctx
+                            .ability_source_contract
+                            .as_ref()
+                            .ok_or("a self-exploring ability needs its source contract")?;
+                        let live = state.objects.get(target);
+                        contract.zone == Zone::Battlefield
+                            && live.zone == Zone::Battlefield
+                            && live.zone_change_count == contract.zone_change_count
                     }
                 };
-                if !continuation
-                    .ctx
-                    .target_incarnation_matches(target_index, state)
-                    || state.objects.get(target).zone != Zone::Battlefield
-                {
-                    return Err("Explore target incarnation is no longer valid".to_string());
-                }
                 let player = continuation.ctx.controller;
                 let Some(top) = bind_library_top(state, player, 1).into_iter().next() else {
                     continue;
@@ -9416,10 +9669,12 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     );
                     continue;
                 }
-                let counters = &mut state.objects.get_mut(target).counters.plus1_plus1;
-                *counters = counters
-                    .checked_add(1)
-                    .ok_or("Explore +1/+1 counter overflow")?;
+                if explorer_on_battlefield {
+                    let counters = &mut state.objects.get_mut(target).counters.plus1_plus1;
+                    *counters = counters
+                        .checked_add(1)
+                        .ok_or("Explore +1/+1 counter overflow")?;
+                }
                 let canonical_path = path.clone();
                 continuation.choice = Some(PendingEffectChoice::ChooseOption {
                     player,
@@ -10702,6 +10957,67 @@ fn stage_creature_sacrifice_choice(
     });
 }
 
+/// How a linked hand-exile source gets its card back. Mesmeric Fiend's exile
+/// is mandatory and returns through its own leaves-the-battlefield trigger.
+/// Deep-Cavern Bat's "you may exile ... until this creature leaves the
+/// battlefield" is optional and returns immediately, with no stack object,
+/// when that incarnation leaves (610.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LinkedHandExileKind {
+    ReturnTrigger,
+    UntilSourceLeaves,
+}
+
+impl LinkedHandExileKind {
+    fn optional(self) -> bool {
+        self == LinkedHandExileKind::UntilSourceLeaves
+    }
+
+    fn min_choices(self) -> u16 {
+        u16::from(!self.optional())
+    }
+}
+
+pub(crate) fn linked_hand_exile_kind(card_def: u16) -> Option<LinkedHandExileKind> {
+    match crate::card_def::CARD_DEFS.get(card_def as usize)?.name {
+        "Mesmeric Fiend" => Some(LinkedHandExileKind::ReturnTrigger),
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Deep-Cavern Bat" => Some(LinkedHandExileKind::UntilSourceLeaves),
+        _ => None,
+    }
+}
+
+/// Returns the card an "until this leaves" source exiled once that exact
+/// battlefield incarnation (`left_zone_change_count`) has left. Called from
+/// the zone-change commit, so the return happens immediately rather than
+/// through a trigger.
+pub(crate) fn return_cards_exiled_until_source_leaves(
+    state: &mut GameState,
+    source: ObjectId,
+    left_zone_change_count: u32,
+) {
+    let Some(position) = state.engine.linked_exile_records.iter().position(|record| {
+        record.source.source == source
+            && record.source.zone_change_count == left_zone_change_count
+            && record.source.zone == Zone::Battlefield
+            && linked_hand_exile_kind(record.source.card_def)
+                == Some(LinkedHandExileKind::UntilSourceLeaves)
+    }) else {
+        return;
+    };
+    let record = state.engine.linked_exile_records.remove(position);
+    let still_exiled = state.objects.try_get(record.exiled).is_some_and(|live| {
+        live.zone == Zone::Exile && live.zone_change_count == record.exiled_zone_change_count
+    });
+    if still_exiled {
+        event::propose_and_commit(
+            state,
+            event::ProposedEvent::zone_change_preserving_known_identity(record.exiled, Zone::Hand),
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn stage_linked_exile_hand_choice(
     continuation: &mut EffectContinuation,
     chooser: PlayerId,
@@ -10709,9 +11025,10 @@ fn stage_linked_exile_hand_choice(
     original_hand: Vec<EffectObjectBinding>,
     candidates: Vec<EffectObjectBinding>,
     source: AbilitySourceContractV4,
+    min_targets: u16,
     canonical_path: Vec<u16>,
 ) {
-    debug_assert!(candidates.len() >= 2);
+    debug_assert!(candidates.len() >= 2 - usize::from(min_targets == 0));
     continuation.choice = Some(PendingEffectChoice::SelectTargets {
         player: chooser,
         path: canonical_path.clone(),
@@ -10723,7 +11040,7 @@ fn stage_linked_exile_hand_choice(
                 expected_object: Some(binding),
             })
             .collect(),
-        min_targets: 1,
+        min_targets,
         max_targets: 1,
         ordered: true,
         purpose: EffectTargetSelectionPurpose::LinkedExileNonlandFromRevealedHand {
@@ -11198,6 +11515,59 @@ fn binding_partition_rest(
         .copied()
         .filter(|binding| !selected.contains(binding))
         .collect())
+}
+
+/// The creature cards with mana value at most `max_mana_value` in a bound
+/// library prefix, in prefix order.
+fn creature_prefix_mana_value_at_most(
+    state: &GameState,
+    max_mana_value: u16,
+    original_prefix: &[EffectObjectBinding],
+) -> Result<Vec<EffectObjectBinding>, String> {
+    Ok(library_partition_matching_prefix(
+        state,
+        LibraryPartitionFilter::ByType(CardType::Creature),
+        original_prefix,
+    )?
+    .into_iter()
+    .filter(|binding| {
+        crate::card_def::CARD_DEFS[state.objects.get(binding.object).card_def as usize].mana_value
+            <= max_mana_value
+    })
+    .collect())
+}
+
+/// Queues the typed partition frame's final stage: `selected` to hand and
+/// the rest of the prefix to the bottom in prefix order.
+fn push_library_partition_bottom_frame(
+    continuation: &mut EffectContinuation,
+    player: PlayerId,
+    requested_count: u8,
+    original_library_len: u32,
+    original_prefix: Vec<EffectObjectBinding>,
+    selected: Vec<EffectObjectBinding>,
+    canonical_path: Vec<u16>,
+) -> Result<(), String> {
+    let ordered_rest = binding_partition_rest(&original_prefix, &selected)?;
+    let progress = LibraryPartitionProgress::RestOrderChosen {
+        selected,
+        ordered_rest,
+    };
+    let progress_fingerprint = library_partition_progress_fingerprint(&progress);
+    continuation
+        .frames
+        .push(EffectFrame::LookTopSelectByTypeToHandBottomRest {
+            player,
+            requested_count,
+            original_library_len,
+            card_type: CardType::Creature,
+            original_prefix,
+            progress,
+            progress_fingerprint,
+            path: canonical_path.clone(),
+            canonical_path,
+        });
+    Ok(())
 }
 
 fn scry_stage_tag(stage: &ScrySelectionStage) -> u16 {
@@ -12188,6 +12558,171 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     state,
                     event::ProposedEvent::damage(attached, Target::Player(ctx.controller), amount),
                 );
+            }
+        }
+        EffectOp::BindEntrantOutgrowsSourceThen { .. }
+        | EffectOp::BindOilCounterToTriggerSource => {
+            // Templates are always materialized before reaching the stack.
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        EffectOp::IfEntrantOutgrowsSourceThen {
+            entrant,
+            source,
+            then,
+        } => {
+            let live = |binding: &EffectObjectBinding| {
+                validate_effect_object_binding(state, *binding).is_ok()
+                    && binding.expected_zone == Zone::Battlefield
+            };
+            if live(entrant)
+                && live(source)
+                && (crate::engine::effective_power(state, entrant.object)
+                    > crate::engine::effective_power(state, source.object)
+                    || crate::engine::effective_toughness(state, entrant.object)
+                        > crate::engine::effective_toughness(state, source.object))
+            {
+                execute(then, ctx, state);
+            }
+        }
+        EffectOp::CreateTokenTappedAndAttacking { token_def } => {
+            let Some(token) = crate::card_def::CARD_DEFS.get(*token_def as usize) else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            if !token.is_token || !token.has_full_support() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::create_token(*token_def, ctx.controller),
+            );
+            let Some(crate::event::CommittedEvent::CreateToken { object, .. }) =
+                state.engine.event_log.last().cloned()
+            else {
+                return;
+            };
+            state.objects.get_mut(object).tapped = true;
+            let combat = &mut state.engine.combat;
+            if combat.attackers_declared
+                && state.active_player == ctx.controller
+                && matches!(
+                    state.step,
+                    crate::state::Step::DeclareAttackers
+                        | crate::state::Step::DeclareBlockers
+                        | crate::state::Step::CombatDamage
+                )
+                && !combat.attackers.contains(&object)
+            {
+                combat.attackers.push(object);
+            }
+        }
+        EffectOp::AddPlusOneCounterToAbilitySource => {
+            let Some(contract) = ctx.ability_source_contract else {
+                return;
+            };
+            let live = state.objects.get(contract.source);
+            if live.zone != Zone::Battlefield
+                || live.zone_change_count != contract.zone_change_count
+                || !crate::engine::object_has_type(state, contract.source, CardType::Creature)
+            {
+                return;
+            }
+            if event::add_plus_one_counters(state, contract.source, ctx.controller, 1).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
+        EffectOp::ReturnTargetCreatureCardRestrictedWhileSourceControlled { target_index } => {
+            let index = usize::from(*target_index);
+            let Some(Target::Object(object)) = ctx.targets.get(index).copied() else {
+                return;
+            };
+            if !ctx.target_incarnation_matches(index, state)
+                || state.objects.get(object).zone != Zone::Graveyard
+            {
+                return;
+            }
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::zone_change(object, Zone::Battlefield),
+            );
+            let returned = state.objects.get(object);
+            #[cfg(feature = "standard-magezero-fixtures")]
+            if returned.zone != Zone::Battlefield {
+                return;
+            }
+            #[cfg(not(feature = "standard-magezero-fixtures"))]
+            let _ = returned;
+            #[cfg(feature = "standard-magezero-fixtures")]
+            if let Some(source) = ctx.ability_source_contract {
+                let restriction = crate::state::AttackBlockRestrictionV1 {
+                    creature: crate::state::ObjectLinkV4 {
+                        object,
+                        zone_change_count: returned.zone_change_count,
+                    },
+                    source: crate::state::ObjectLinkV4 {
+                        object: source.source,
+                        zone_change_count: source.zone_change_count,
+                    },
+                    controller: ctx.controller,
+                };
+                crate::standard_statics_v1::record_attack_block_restriction(state, restriction);
+            }
+        }
+        EffectOp::LoseHalfLifeRoundedUp { player } => {
+            let player = ctx.resolve_player(*player, state);
+            let life = state.players[player.index()].life;
+            if life > 0 {
+                let amount = life - life / 2;
+                event::propose_and_commit(state, event::ProposedEvent::life_loss(player, amount));
+            }
+        }
+        EffectOp::ReturnSourceFromGraveyardTappedWithStunCounters { stun } => {
+            let Some(contract) = ctx.ability_source_contract else {
+                return;
+            };
+            let live = state.objects.get(contract.source);
+            if live.zone != Zone::Graveyard
+                || Some(live.zone_change_count) != contract.zone_change_count.checked_add(1)
+            {
+                return;
+            }
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::zone_change_to_battlefield_tapped(contract.source),
+            );
+            let returned = state.objects.get_mut(contract.source);
+            if returned.zone == Zone::Battlefield {
+                returned.counters.stun = returned.counters.stun.saturating_add(*stun);
+            }
+        }
+        EffectOp::PutOilCounterOnBoundObject { object } => {
+            if validate_effect_object_binding(state, *object).is_err()
+                || object.expected_zone != Zone::Battlefield
+            {
+                return;
+            }
+            let oil = &mut state.objects.get_mut(object.object).counters.oil;
+            match oil.checked_add(1) {
+                Some(next) => *oil = next,
+                None => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ))
+                }
             }
         }
         EffectOp::BoostAttachedCreatureUntilEndOfTurn { power, toughness } => {
@@ -13695,6 +14230,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
         | EffectOp::LookTopPickToHandBottomRest { .. }
         | EffectOp::DiscardBasicLandOrCards { .. }
+        | EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. }
         | EffectOp::ExileOneFromPlayersGraveyard { .. }
         | EffectOp::MayExileFromPlayersGraveyardMatchingThen { .. }
         | EffectOp::SacrificeCreature { .. }

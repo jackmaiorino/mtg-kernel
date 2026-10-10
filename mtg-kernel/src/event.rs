@@ -284,6 +284,11 @@ impl ProposedEvent {
             touched_by: Vec::new(),
         })
     }
+    /// Paying life loses life (CR 119.4). Modifiers change the loss, not the
+    /// printed amount checked for affordability (CR 118.11).
+    pub fn life_payment(player: PlayerId, amount: i32) -> ProposedEvent {
+        Self::life_loss(player, amount)
+    }
     pub fn life_gain(player: PlayerId, amount: i32) -> ProposedEvent {
         ProposedEvent::LifeGain(LifeGainProposed {
             player,
@@ -512,6 +517,45 @@ pub enum CommittedEvent {
         object: ObjectId,
         zone_change_count: u32,
     },
+    /// Exact declaration-time source for a "whenever you attack" trigger:
+    /// `controller` declared one or more attackers while `source` was on the
+    /// battlefield. Emitted only for permanents with such a trigger.
+    ControllerAttacked {
+        source: ObjectId,
+        source_zone_change_count: u32,
+        controller: PlayerId,
+    },
+}
+
+/// Remembers the counters of a departing permanent whose own leave ability
+/// reads them. Entries for incarnations that have since moved again are
+/// dropped, so the list only holds objects still where they went.
+#[cfg(feature = "standard-magezero-fixtures")]
+fn record_counter_lki(state: &mut GameState, object: ObjectId) {
+    let live = state.objects.get(object);
+    if !crate::standard_statics_v1::reads_counter_lki(live.card_def) {
+        return;
+    }
+    let mut entries = state.counter_lki_v1.take().unwrap_or_default();
+    entries.retain(|entry| {
+        state
+            .objects
+            .try_get(entry.source.object)
+            .is_some_and(|candidate| {
+                candidate.zone_change_count == entry.source.zone_change_count + 1
+                    && entry.source.object != object
+            })
+    });
+    if live.counters.any() {
+        entries.push(crate::state::CounterLkiV1 {
+            source: crate::state::ObjectLinkV4 {
+                object,
+                zone_change_count: live.zone_change_count,
+            },
+            counters: live.counters,
+        });
+    }
+    state.counter_lki_v1 = (!entries.is_empty()).then_some(entries);
 }
 
 fn initialize_entry_counters(state: &mut GameState, object: ObjectId, kicked: bool) {
@@ -524,6 +568,8 @@ fn initialize_entry_counters(state: &mut GameState, object: ObjectId, kicked: bo
             }
         }
     }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    crate::standard_statics_v1::apply_conditional_entry_counters(state, object);
 }
 
 pub(crate) fn log_plus_one_counters_added(
@@ -859,7 +905,14 @@ fn commit_with_ability_lki(
                     }
                 }
                 Target::Player(p) => {
-                    state.players[p.index()].life -= d.amount;
+                    let lost = d.amount;
+                    #[cfg(feature = "standard-magezero-fixtures")]
+                    let lost = crate::standard_statics_v1::modified_life_loss(state, p, lost);
+                    #[cfg(feature = "standard-magezero-fixtures")]
+                    if lost > 0 {
+                        state.record_life_loss_v1(p);
+                    }
+                    state.players[p.index()].life -= lost;
                 }
             }
             CommittedEvent::Damage {
@@ -871,6 +924,10 @@ fn commit_with_ability_lki(
         ProposedEvent::ZoneChange(z) => {
             let from = state.objects.get(z.object).zone;
             let controller_before = state.objects.get(z.object).controller;
+            #[cfg(feature = "standard-magezero-fixtures")]
+            if from == Zone::Battlefield {
+                record_counter_lki(state, z.object);
+            }
             if from == Zone::Battlefield
                 && abilities_removed_before.unwrap_or_else(|| {
                     !crate::continuous_characteristics_v1::printed_abilities_active(state, z.object)
@@ -917,10 +974,17 @@ fn commit_with_ability_lki(
             }
         }
         ProposedEvent::LifeLoss(l) => {
-            state.players[l.player.index()].life -= l.amount;
+            let amount = l.amount;
+            #[cfg(feature = "standard-magezero-fixtures")]
+            let amount = crate::standard_statics_v1::modified_life_loss(state, l.player, amount);
+            #[cfg(feature = "standard-magezero-fixtures")]
+            if amount > 0 {
+                state.record_life_loss_v1(l.player);
+            }
+            state.players[l.player.index()].life -= amount;
             CommittedEvent::LifeLoss {
                 player: l.player,
-                amount: l.amount,
+                amount,
             }
         }
         ProposedEvent::LifeGain(g) => {
@@ -1056,8 +1120,27 @@ fn commit_with_ability_lki(
         | CommittedEvent::CreateToken { object, .. } => Some(*object),
         _ => None,
     };
+    let left_battlefield = match &committed {
+        CommittedEvent::ZoneChange {
+            object,
+            from: Zone::Battlefield,
+            to,
+            ..
+        } if *to != Zone::Battlefield => Some(*object),
+        _ => None,
+    };
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
+    if let Some(object) = left_battlefield {
+        if !state.engine.linked_exile_records.is_empty() {
+            let left_zone_change_count = state.objects.get(object).zone_change_count - 1;
+            crate::effect::return_cards_exiled_until_source_leaves(
+                state,
+                object,
+                left_zone_change_count,
+            );
+        }
+    }
     if let Some(object) = entry_counter_object {
         let live = state.objects.get(object);
         let count = live.counters.plus1_plus1;

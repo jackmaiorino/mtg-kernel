@@ -483,6 +483,721 @@
         "token"
       ],
       "java_file": "Mage.Sets/src/mage/cards/g/GetLost.java"
+    },
+    {
+      "name": "Novice Inspector",
+      "engine_capability": "full",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Detective"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoW.dck",
+        "Standard16-RW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "etb_trigger",
+        "investigate"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/n/NoviceInspector.java"
+    },
+    {
+      "name": "Sentinel of the Nameless City",
+      "engine_capability": "full",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Merfolk",
+        "Warrior",
+        "Scout"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoG.dck",
+        "Standard16-GB.dck",
+        "Standard16-UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "vigilance",
+        "etb_trigger",
+        "attack_trigger",
+        "map_token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SentinelOfTheNamelessCity.java"
+    },
+    {
+      "name": "Cenote Scout",
+      "engine_capability": "full",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Merfolk",
+        "Scout"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "etb_trigger",
+        "explore"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CenoteScout.java"
+    },
+    {
+      "name": "Gatekeeper of Malakir",
+      "engine_capability": "full",
+      "mana_cost": "{B}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Vampire",
+        "Warrior"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "kicker",
+        "etb_trigger",
+        "edict"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GatekeeperOfMalakir.java"
+    },
+    {
+      "name": "Deep-Cavern Bat",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bat"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoB.dck",
+        "Standard16-BW.dck",
+        "Standard16-UB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "flying",
+        "lifelink",
+        "etb_trigger",
+        "exile_until_leaves"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DeepCavernBat.java"
+    },
+    {
+      "name": "Razorkin Needlehead",
+      "engine_capability": "full",
+      "mana_cost": "{R}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Assassin"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "conditional_first_strike",
+        "opponent_draw_trigger"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RazorkinNeedlehead.java"
+    },
+    {
+      "name": "Ascendant Packleader",
+      "engine_capability": "full",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Wolf"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "conditional_entry_counter",
+        "cast_trigger",
+        "plus_one_counters"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AscendantPackleader.java"
+    },
+    {
+      "name": "Sharp-Eyed Rookie",
+      "engine_capability": "partial",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Detective"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "vigilance",
+        "creature_enters_trigger",
+        "investigate"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SharpEyedRookie.java"
+    },
+    {
+      "name": "Evolving Adaptive",
+      "engine_capability": "partial",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Phyrexian",
+        "Warrior"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 0,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "oil_counters",
+        "creature_enters_trigger"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/EvolvingAdaptive.java"
+    },
+    {
+      "name": "Quirion Beastcaller",
+      "engine_capability": "partial",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dryad",
+        "Warrior"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "cast_trigger",
+        "plus_one_counters",
+        "dies_trigger",
+        "distribute_counters"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/q/QuirionBeastcaller.java"
+    },
+    {
+      "name": "Unstoppable Slasher",
+      "engine_capability": "full",
+      "mana_cost": "{2}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Zombie",
+        "Assassin"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "deathtouch",
+        "combat_damage_trigger",
+        "half_life_loss",
+        "dies_trigger",
+        "return_from_graveyard",
+        "stun_counters"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/u/UnstoppableSlasher.java"
+    },
+    {
+      "name": "Coppercoat Vanguard",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "lord",
+        "granted_ward"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CoppercoatVanguard.java"
+    },
+    {
+      "name": "Human Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "token_creation"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/HumanToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Adeline, Resplendent Cathar",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Knight"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 0,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoW.dck",
+        "Standard16-5C.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "vigilance",
+        "characteristic_defining_power",
+        "attack_trigger",
+        "token_creation"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AdelineResplendentCathar.java"
+    },
+    {
+      "name": "Bloodletter of Aclazotz",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}{B}{B}",
+      "mana_value": 4,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Vampire",
+        "Demon"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying",
+        "life_loss_replacement"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BloodletterOfAclazotz.java"
+    },
+    {
+      "name": "Thalia, Guardian of Thraben",
+      "engine_capability": "partial",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Soldier"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoW.dck",
+        "Standard16-5C.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "first_strike",
+        "cost_increase"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/ThaliaGuardianOfThraben.java"
+    },
+    {
+      "name": "Haughty Djinn",
+      "engine_capability": "partial",
+      "mana_cost": "{1}{U}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Djinn"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoU.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "flying",
+        "characteristic_defining_power",
+        "cost_reduction"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HaughtyDjinn.java"
+    },
+    {
+      "name": "Hired Claw",
+      "engine_capability": "full",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Lizard",
+        "Mercenary"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "attack_trigger",
+        "activated_ability",
+        "plus_one_counters"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HiredClaw.java"
+    },
+    {
+      "name": "Warden of the Inner Sky",
+      "engine_capability": "full",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoW.dck",
+        "Standard16-RW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "conditional_flying",
+        "conditional_vigilance",
+        "activated_ability",
+        "tap_permanents_cost",
+        "scry"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/w/WardenOfTheInnerSky.java"
+    },
+    {
+      "name": "Extraction Specialist",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Rogue"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "lifelink",
+        "etb_trigger",
+        "reanimation",
+        "attack_block_restriction"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/ExtractionSpecialist.java"
+    },
+    {
+      "name": "Hullbreaker Horror",
+      "engine_capability": "full",
+      "mana_cost": "{5}{U}{U}",
+      "mana_value": 7,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Kraken",
+        "Horror"
+      ],
+      "supertypes": [],
+      "power": 7,
+      "toughness": 8,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoU.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "flash",
+        "cant_be_countered",
+        "cast_trigger",
+        "modal_trigger",
+        "bounce"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HullbreakerHorror.java"
+    },
+    {
+      "name": "Recruitment Officer",
+      "engine_capability": "partial",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "activated_ability",
+        "look_at_top",
+        "card_selection"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RecruitmentOfficer.java"
     }
   ]
 }

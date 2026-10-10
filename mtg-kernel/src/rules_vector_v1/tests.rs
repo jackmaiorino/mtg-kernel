@@ -586,9 +586,11 @@ fn power_toughness_changes_keep_their_sign() {
 /// or `event_time_trigger_programs`; token names are reached through
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
+    "Adeline, Resplendent Cathar",
     "Adventuring Gear",
     "Ajani's Pridemate",
     "Angel of Finality",
+    "Ascendant Packleader",
     "Avenging Hunter",
     "Azure Fleet Admiral",
     "Balustrade Spy",
@@ -607,14 +609,17 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Campus Guide",
     "Cat Token",
     "Celestial Armor",
+    "Cenote Scout",
     "Clinquant Skymage",
     "Clockwork Percussionist",
+    "Clue Token",
     "Conduit Pylons",
     "Crackling Cyclops",
     "Cryogen Relic",
     "Crypt Feaster",
     "Dauntless Veteran",
     "Dazzling Angel",
+    "Deep-Cavern Bat",
     "Delver of Secrets",
     "Dismal Backwater",
     "Dragon 5/5 Token",
@@ -628,14 +633,17 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Elf Warrior Token",
     "Elfsworn Giant",
     "Erudite Wizard",
+    "Evolving Adaptive",
     "Exemplar of Light",
     "Experimental Synthesizer",
+    "Extraction Specialist",
     "Faerie Miscreant",
     "Faerie Seer",
     "Faerie Token",
     "Firebrand Archer",
     "Food Token",
     "Gatecreeper Vine",
+    "Gatekeeper of Malakir",
     "Generous Ent",
     "Gingerbread Cabin",
     "Gixian Infiltrator",
@@ -650,8 +658,11 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Healer of the Glade",
     "Helpful Hunter",
     "Hero Token",
+    "Hired Claw",
     "Homunculus Horde",
     "Homunculus Horde Token",
+    "Hullbreaker Horror",
+    "Human Token",
     "Humbling Elder",
     "Icewind Elemental",
     "Ichor Wellspring",
@@ -666,6 +677,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Koma, World-Eater",
     "Lembas",
     "Lotleth Giant",
+    "Map Token",
     "Marauding Blight-Priest",
     "Masked Vandal",
     "Mesmeric Fiend",
@@ -676,10 +688,13 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Murmuring Mystic",
     "Nihil Spellbomb",
     "Ninja of the Deep Hours",
+    "Novice Inspector",
     "Outlaw Medic",
     "Phyrexian Arena",
     "Prideful Parent",
+    "Quirion Beastcaller",
     "Raccoon Token",
+    "Razorkin Needlehead",
     "Reclamation Sage",
     "Refurbished Familiar",
     "Resolute Reinforcements",
@@ -691,6 +706,8 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Sanguine Syphoner",
     "Scion of the Deep Token",
     "Scoured Barrens",
+    "Sentinel of the Nameless City",
+    "Sharp-Eyed Rookie",
     "Sneaky Snacker",
     "Soldier Token",
     "Solemn Simulacrum",
@@ -706,6 +723,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Tranquil Cove",
     "Treasure Token",
     "Troublemaker Ouphe",
+    "Unstoppable Slasher",
     "Vitu-Ghazi Inspector",
     "Voldaren Epicure",
     "Wary Thespian",
@@ -758,10 +776,88 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
         "Avenging Hunter",
         "validation only (initiative designation contract)",
     ),
+    (
+        "engine.rs",
+        "Coppercoat Vanguard",
+        "read via engine::static_controlled_subtype_boost_for",
+    ),
+    (
+        "effect.rs",
+        "Deep-Cavern Bat",
+        "validation only (linked-exile source contract)",
+    ),
+    (
+        "standard_statics_v1.rs",
+        "Razorkin Needlehead",
+        "read via standard_statics_v1::rules_vector_statics",
+    ),
+    (
+        "standard_statics_v1.rs",
+        "Warden of the Inner Sky",
+        "read via standard_statics_v1::rules_vector_statics",
+    ),
+    (
+        "standard_statics_v1.rs",
+        "Ascendant Packleader",
+        "read via standard_statics_v1::rules_vector_statics",
+    ),
+    (
+        "standard_statics_v1.rs",
+        "Evolving Adaptive",
+        "read via standard_statics_v1::rules_vector_statics",
+    ),
+    (
+        "standard_statics_v1.rs",
+        "Coppercoat Vanguard",
+        "read via standard_statics_v1::rules_vector_statics",
+    ),
+    (
+        "standard_statics_v1.rs",
+        "Adeline, Resplendent Cathar",
+        "read via standard_statics_v1::rules_vector_statics",
+    ),
+    (
+        "standard_statics_v1.rs",
+        "Haughty Djinn",
+        "read via standard_statics_v1::rules_vector_statics",
+    ),
+    (
+        "standard_statics_v1.rs",
+        "Bloodletter of Aclazotz",
+        "read via standard_statics_v1::rules_vector_statics",
+    ),
+    (
+        "standard_statics_v1.rs",
+        "Thalia, Guardian of Thraben",
+        "read via standard_statics_v1::rules_vector_statics",
+    ),
+    (
+        "standard_statics_v1.rs",
+        "Hired Claw",
+        "read via standard_statics_v1::rules_vector_statics",
+    ),
+    (
+        "standard_statics_v1.rs",
+        "Quirion Beastcaller",
+        "bookkeeping: records the last-known counters its dies trigger reads",
+    ),
+    (
+        "standard_statics_v1.rs",
+        "Unstoppable Slasher",
+        "bookkeeping: records the last-known counters its dies trigger reads",
+    ),
 ];
 
 const RULES_MODULES: &[(&str, &str)] = &[
     ("trigger.rs", include_str!("../trigger.rs")),
+    (
+        "trigger/standard_family_g_v1.rs",
+        include_str!("../trigger/standard_family_g_v1.rs"),
+    ),
+    (
+        "standard_statics_v1.rs",
+        include_str!("../standard_statics_v1.rs"),
+    ),
     ("engine.rs", include_str!("../engine.rs")),
     ("effect.rs", include_str!("../effect.rs")),
     (
@@ -828,7 +924,7 @@ fn every_card_name_branch_in_the_rules_engine_is_accounted_for() {
                 if !names.contains(literal) {
                     continue;
                 }
-                let known = if *file == "trigger.rs" {
+                let known = if *file == "trigger.rs" || file.starts_with("trigger/") {
                     TRIGGER_RS_KEYED_NAMES.contains(&literal)
                 } else {
                     OTHER_KEYED_NAMES

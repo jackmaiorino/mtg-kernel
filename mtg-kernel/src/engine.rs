@@ -1453,6 +1453,8 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::EnchantmentPermanent
         | TargetSpec::CreatureCardInOwnGraveyard
         | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_)
+        | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_)
+        | TargetSpec::SpellYouDontControl
         | TargetSpec::TargetOpponent
         | TargetSpec::OpponentControlledCreature
         | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. }
@@ -2448,7 +2450,7 @@ fn stack_spell_has_type(state: &GameState, item: &StackItem, card_type: CardType
 /// Mana value of the selected printed spell form. Bestow and other
 /// alternative costs retain the ordinary value; Omen/Adventure select
 /// their own printed cost before substituting announced X.
-fn stack_spell_mana_value(state: &GameState, item: &StackItem) -> u16 {
+pub(crate) fn stack_spell_mana_value(state: &GameState, item: &StackItem) -> u16 {
     let def = &card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize];
     if item.v4.cast_method == Some(CastMethodV4::Omen) {
         if let Some((cost, _)) = def.omen_spell_form() {
@@ -2913,6 +2915,35 @@ fn legal_targets_for_controller_from_source(
             })
             .map(Target::Object)
             .collect(),
+        TargetSpec::SpellYouDontControl => {
+            let announcing = state.engine.pending_cast.as_ref().map(|p| p.spell);
+            state
+                .stack
+                .iter()
+                .filter(|item| {
+                    item.kind == StackItemKind::Spell
+                        && item.controller != controller
+                        && Some(item.source) != announcing
+                })
+                .map(|item| Target::Object(item.source))
+                .collect()
+        }
+        TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(maximum) => state.players
+            [controller.index()]
+        .graveyard
+        .iter()
+        .copied()
+        .filter(|&id| {
+            let object = state.objects.get(id);
+            let definition = &card_def::CARD_DEFS[object.card_def as usize];
+            object.owner == controller
+                && object.zone == Zone::Graveyard
+                && !object.v4.is_token
+                && definition.mana_value <= maximum
+                && definition.has_type(CardType::Creature)
+        })
+        .map(Target::Object)
+        .collect(),
         TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(maximum) => state.players
             [controller.index()]
         .graveyard
@@ -3686,7 +3717,8 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                 sacrifice_lands_count += 1;
                 saw_source_changing_component = true;
             }
-            CostComponent::SacrificeControlled { count, .. } => {
+            CostComponent::SacrificeControlled { count, .. }
+            | CostComponent::TapControlled { count, .. } => {
                 if *count == 0 {
                     return false;
                 }
@@ -3946,6 +3978,10 @@ fn can_pay_components(
                 sacrificeable_controlled_permanents(player, *filter, state, &[]).len()
                     >= usize::from(*count)
             }
+            CostComponent::TapControlled { count, filter } => {
+                tappable_controlled_permanents(player, *filter, state, &[]).len()
+                    >= usize::from(*count)
+            }
             CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
                 checked_graveyard_exile_candidates(player, source, state, &[])
                     .is_some_and(|candidates| candidates.len() >= usize::from(*n))
@@ -4097,6 +4133,23 @@ fn pay_cost_components_spending_mana(
         }
         _ => None,
     });
+    let tap_controlled = components.iter().find_map(|component| match component {
+        CostComponent::TapControlled { count, filter } => Some((usize::from(*count), *filter)),
+        _ => None,
+    });
+    if let Some((needed, filter)) = tap_controlled {
+        let duplicate = object_cost_chosen
+            .iter()
+            .enumerate()
+            .any(|(index, id)| object_cost_chosen[..index].contains(id));
+        let tappable = tappable_controlled_permanents(player, filter, state, &[]);
+        if object_cost_chosen.len() != needed
+            || duplicate
+            || object_cost_chosen.iter().any(|id| !tappable.contains(id))
+        {
+            return None;
+        }
+    }
     if let Some((needed, filter)) = sacrifice_controlled {
         let duplicate = object_cost_chosen
             .iter()
@@ -4195,6 +4248,7 @@ fn pay_cost_components_spending_mana(
     }
     if sacrifice_needed.is_none()
         && sacrifice_controlled.is_none()
+        && tap_controlled.is_none()
         && graveyard_exile_needed.is_none()
         && return_filter.is_none()
         && !returns_unblocked_attacker
@@ -4219,7 +4273,7 @@ fn pay_cost_components_spending_mana(
     if tap_other_subtype.is_some() {
         reserved.extend(object_cost_chosen.iter().copied());
     }
-    if tap_filter.is_some() {
+    if tap_filter.is_some() || tap_controlled.is_some() {
         reserved.extend(object_cost_chosen.iter().copied());
     }
     let mana_plan = mana_cost.map(|cost| {
@@ -4256,6 +4310,12 @@ fn pay_cost_components_spending_mana(
             CostComponent::SacrificeControlled { count, .. } => {
                 debug_assert_eq!(object_cost_chosen.len(), usize::from(*count));
                 commit_sacrifice(state, object_cost_chosen);
+            }
+            CostComponent::TapControlled { count, .. } => {
+                debug_assert_eq!(object_cost_chosen.len(), usize::from(*count));
+                for &object in object_cost_chosen {
+                    event::propose_and_commit(state, ProposedEvent::tap(object));
+                }
             }
             CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
                 debug_assert_eq!(
@@ -4324,7 +4384,7 @@ fn pay_cost_components_spending_mana(
             }
             CostComponent::PayLife(amount) => event::propose_and_commit(
                 state,
-                ProposedEvent::life_loss(player, i32::from(*amount)),
+                ProposedEvent::life_payment(player, i32::from(*amount)),
             ),
             CostComponent::DiscardCards(_) => {}
             CostComponent::TapOtherUntappedControlledPermanentWithSubtype(_) => {
@@ -4745,9 +4805,10 @@ fn sacrificeable_controlled_permanents(
 /// staged activations. Cast staging retains its frozen `ObjectId` wire shape,
 /// while an activation must reject a selected permanent that left and later
 /// returned before payment.
-fn activation_sacrifice_cost_candidates(
+fn activation_controlled_cost_candidates(
     player: PlayerId,
     filter: PermanentFilter,
+    tap: bool,
     state: &GameState,
     already_chosen: &[EffectObjectBinding],
 ) -> Vec<EffectObjectBinding> {
@@ -4755,7 +4816,12 @@ fn activation_sacrifice_cost_candidates(
         .iter()
         .map(|binding| binding.object)
         .collect::<Vec<_>>();
-    sacrificeable_controlled_permanents(player, filter, state, &already_chosen_ids)
+    let candidates = if tap {
+        tappable_controlled_permanents(player, filter, state, &already_chosen_ids)
+    } else {
+        sacrificeable_controlled_permanents(player, filter, state, &already_chosen_ids)
+    };
+    candidates
         .into_iter()
         .map(|object| {
             let live = state.objects.get(object);
@@ -4792,13 +4858,36 @@ fn controlled_permanent_sacrifice_in(
     })
 }
 
+/// Activation object costs paid by choosing `count` controlled permanents
+/// one at a time: `SacrificeControlled` and `TapControlled`. The flag says
+/// whether the chosen permanents are tapped rather than sacrificed.
 fn activation_permanent_sacrifice_needed(
     components: &[CostComponent],
 ) -> Option<(u8, PermanentFilter)> {
+    activation_controlled_object_cost(components).map(|(count, filter, _)| (count, filter))
+}
+
+fn activation_controlled_object_cost(
+    components: &[CostComponent],
+) -> Option<(u8, PermanentFilter, bool)> {
     components.iter().find_map(|component| match component {
-        CostComponent::SacrificeControlled { count, filter } => Some((*count, *filter)),
+        CostComponent::SacrificeControlled { count, filter } => Some((*count, *filter, false)),
+        CostComponent::TapControlled { count, filter } => Some((*count, *filter, true)),
         _ => None,
     })
+}
+
+/// Untapped controlled candidates for a `TapControlled` cost.
+fn tappable_controlled_permanents(
+    player: PlayerId,
+    filter: PermanentFilter,
+    state: &GameState,
+    already_chosen: &[ObjectId],
+) -> Vec<ObjectId> {
+    sacrificeable_controlled_permanents(player, filter, state, already_chosen)
+        .into_iter()
+        .filter(|&id| !state.objects.get(id).tapped)
+        .collect()
 }
 
 fn cost_kind_for_permanent_filter(filter: PermanentFilter) -> CostKind {
@@ -4942,6 +5031,47 @@ fn effective_normal_cast_cost(
 }
 
 fn effective_normal_cast_cost_with_targets(
+    def: &card_def::CardDef,
+    player: PlayerId,
+    targets: &[Target],
+    state: &GameState,
+) -> Cost {
+    static_adjusted_spell_cost(
+        printed_normal_cast_cost_with_targets(def, player, targets, state),
+        def.types,
+        player,
+        state,
+    )
+}
+
+/// Applies permanents' statics that make spells cost more or less (Thalia,
+/// Guardian of Thraben; Haughty Djinn) to one cast form's cost, given that
+/// form's card types. Increases apply before reductions (601.2f), and only
+/// the generic component changes. Flashback, Escape, Madness and
+/// alternative costs are not adjusted.
+fn static_adjusted_spell_cost(
+    cost: Cost,
+    types: &[CardType],
+    caster: PlayerId,
+    state: &GameState,
+) -> Cost {
+    #[cfg(feature = "standard-magezero-fixtures")]
+    let cost = {
+        let (increase, reduction) =
+            crate::standard_statics_v1::spell_cost_generic_modifiers(state, types, caster);
+        let mut cost = cost;
+        cost.generic = cost
+            .generic
+            .saturating_add(increase)
+            .saturating_sub(reduction);
+        cost
+    };
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
+    let _ = (types, caster, state);
+    cost
+}
+
+fn printed_normal_cast_cost_with_targets(
     def: &card_def::CardDef,
     player: PlayerId,
     targets: &[Target],
@@ -5300,7 +5430,18 @@ fn viable_pending_spell_forms(
             Keywords::NONE,
             pending,
             state,
-        ) && mana::can_pay(&bestow.cost, 0, pending.controller, state).is_some()
+        ) && mana::can_pay(
+            &static_adjusted_spell_cost(
+                bestow.cost,
+                &[CardType::Enchantment],
+                pending.controller,
+                state,
+            ),
+            0,
+            pending.controller,
+            state,
+        )
+        .is_some()
         {
             forms.push(1);
         }
@@ -5339,7 +5480,18 @@ fn viable_pending_spell_forms(
                 state,
             )
             && pending_cast_form_timing_ok(adventure.types, Keywords::NONE, pending, state)
-            && mana::can_pay(&adventure.cost, 0, pending.controller, state).is_some()
+            && mana::can_pay(
+                &static_adjusted_spell_cost(
+                    adventure.cost,
+                    adventure.types,
+                    pending.controller,
+                    state,
+                ),
+                0,
+                pending.controller,
+                state,
+            )
+            .is_some()
         {
             forms.push(1);
         }
@@ -5368,7 +5520,13 @@ fn viable_pending_spell_forms(
         targeting_source_for_object(state, pending.spell),
         state,
     ) && pending_cast_form_timing_ok(omen.types, Keywords::NONE, pending, state)
-        && mana::can_pay(&omen.cost, 0, pending.controller, state).is_some()
+        && mana::can_pay(
+            &static_adjusted_spell_cost(omen.cost, omen.types, pending.controller, state),
+            0,
+            pending.controller,
+            state,
+        )
+        .is_some()
     {
         forms.push(1);
     }
@@ -5409,9 +5567,13 @@ fn pending_cast_selected_mana_cost(
     state: &GameState,
 ) -> Option<Cost> {
     match pending.mode_chosen {
-        Some(1) if supported_bestow(def).is_some() => supported_bestow(def).map(|b| b.cost),
-        Some(1) if supported_omen(def).is_some() => supported_omen(def).map(|o| o.cost),
-        Some(1) if supported_adventure(def).is_some() => supported_adventure(def).map(|a| a.cost),
+        Some(1) if supported_bestow(def).is_some() => supported_bestow(def).map(|b| {
+            static_adjusted_spell_cost(b.cost, &[CardType::Enchantment], pending.controller, state)
+        }),
+        Some(1) if supported_omen(def).is_some() => supported_omen(def)
+            .map(|o| static_adjusted_spell_cost(o.cost, o.types, pending.controller, state)),
+        Some(1) if supported_adventure(def).is_some() => supported_adventure(def)
+            .map(|a| static_adjusted_spell_cost(a.cost, a.types, pending.controller, state)),
         Some(_) => Some(effective_normal_cast_cost_with_targets(
             def,
             pending.controller,
@@ -5528,7 +5690,13 @@ fn is_castable_now(
                             targeting_source_for_object(state, id),
                             state,
                         )
-                        && mana::can_pay(&omen.cost, 0, player, state).is_some()
+                        && mana::can_pay(
+                            &static_adjusted_spell_cost(omen.cost, omen.types, player, state),
+                            0,
+                            player,
+                            state,
+                        )
+                        .is_some()
                 })
             };
             let bestow_ok = || {
@@ -5547,7 +5715,18 @@ fn is_castable_now(
                             targeting_source_for_object(state, id),
                             state,
                         )
-                        && mana::can_pay(&bestow.cost, 0, player, state).is_some()
+                        && mana::can_pay(
+                            &static_adjusted_spell_cost(
+                                bestow.cost,
+                                &[CardType::Enchantment],
+                                player,
+                                state,
+                            ),
+                            0,
+                            player,
+                            state,
+                        )
+                        .is_some()
                 })
             };
             // The Adventure side is only ever offered from Hand -- unlike
@@ -5566,7 +5745,18 @@ fn is_castable_now(
                             targeting_source_for_object(state, id),
                             state,
                         )
-                        && mana::can_pay(&adventure.cost, 0, player, state).is_some()
+                        && mana::can_pay(
+                            &static_adjusted_spell_cost(
+                                adventure.cost,
+                                adventure.types,
+                                player,
+                                state,
+                            ),
+                            0,
+                            player,
+                            state,
+                        )
+                        .is_some()
                 })
             };
             main_ok || omen_ok() || bestow_ok() || adventure_ok()
@@ -6118,6 +6308,10 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
                 {
                     continue;
                 }
+                #[cfg(feature = "standard-magezero-fixtures")]
+                if !crate::standard_statics_v1::activation_condition_met(state, id, i) {
+                    continue;
+                }
                 if can_pay_activation_components(ability.cost, player, id, state)
                     && activation_target_prefix_can_complete(id, ability, &[], state)
                 {
@@ -6180,6 +6374,10 @@ fn land_drop_candidates(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
 fn can_attack(state: &GameState, id: ObjectId) -> bool {
     let obj = state.objects.get(id);
     let def = &card_def::CARD_DEFS[obj.card_def as usize];
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if crate::standard_statics_v1::cant_attack_or_block(state, id) {
+        return false;
+    }
     def.is_executable()
         && def.has_type(CardType::Creature)
         && !obj.tapped
@@ -6278,6 +6476,10 @@ fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
             }
             let def = &card_def::CARD_DEFS[obj.card_def as usize];
             if !def.is_executable() || !object_has_type(state, id, CardType::Creature) {
+                return false;
+            }
+            #[cfg(feature = "standard-magezero-fixtures")]
+            if crate::standard_statics_v1::cant_attack_or_block(state, id) {
                 return false;
             }
             if has_effective_keyword(state, attacker, Keywords::PROTECTION_FROM_MONOCOLORED)
@@ -6703,15 +6905,48 @@ fn remaining_cast_payment_is_payable(
         CastMethodV4::Plotted => true,
         CastMethodV4::Omen => {
             if let Some(adventure) = supported_adventure(def) {
-                mana::can_pay(&adventure.cost, x_value, pending.controller, state).is_some()
+                mana::can_pay(
+                    &static_adjusted_spell_cost(
+                        adventure.cost,
+                        adventure.types,
+                        pending.controller,
+                        state,
+                    ),
+                    x_value,
+                    pending.controller,
+                    state,
+                )
+                .is_some()
             } else {
                 supported_omen(def).is_some_and(|omen| {
-                    mana::can_pay(&omen.cost, x_value, pending.controller, state).is_some()
+                    mana::can_pay(
+                        &static_adjusted_spell_cost(
+                            omen.cost,
+                            omen.types,
+                            pending.controller,
+                            state,
+                        ),
+                        x_value,
+                        pending.controller,
+                        state,
+                    )
+                    .is_some()
                 })
             }
         }
         CastMethodV4::Bestow => supported_bestow(def).is_some_and(|bestow| {
-            mana::can_pay(&bestow.cost, x_value, pending.controller, state).is_some()
+            mana::can_pay(
+                &static_adjusted_spell_cost(
+                    bestow.cost,
+                    &[CardType::Enchantment],
+                    pending.controller,
+                    state,
+                ),
+                x_value,
+                pending.controller,
+                state,
+            )
+            .is_some()
         }),
     };
     base_payable
@@ -8715,11 +8950,12 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
                     .collect(),
             });
         }
-    } else if let Some((needed, filter)) = activation_permanent_sacrifice_needed(ability.cost) {
+    } else if let Some((needed, filter, tap)) = activation_controlled_object_cost(ability.cost) {
         if pending.object_cost_chosen.len() < usize::from(needed) {
-            let candidates = activation_sacrifice_cost_candidates(
+            let candidates = activation_controlled_cost_candidates(
                 pending.controller,
                 filter,
+                tap,
                 state,
                 &pending.object_cost_chosen,
             );
@@ -8737,7 +8973,11 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
             return Some(Decision::ChooseCostTargets {
                 player: pending.controller,
                 source: pending.source,
-                cost_kind: cost_kind_for_permanent_filter(filter),
+                cost_kind: if tap {
+                    CostKind::TapPermanents
+                } else {
+                    cost_kind_for_permanent_filter(filter)
+                },
                 remaining,
                 candidates: candidates
                     .into_iter()
@@ -8908,7 +9148,7 @@ pub(crate) fn validate_pending_activation(
 
     let return_filter = return_permanent_filter_in(ability.cost);
     let tap_cost_subtype = activation_tap_cost_subtype(ability.cost);
-    let sacrifice_cost = activation_permanent_sacrifice_needed(ability.cost);
+    let sacrifice_cost = activation_controlled_object_cost(ability.cost);
     let returns_unblocked_attacker = has_unblocked_attacker_return_cost(ability.cost);
     let interactive_families = usize::from(return_filter.is_some())
         + usize::from(tap_cost_subtype.is_some())
@@ -8962,7 +9202,7 @@ pub(crate) fn validate_pending_activation(
                 );
             }
         }
-    } else if let Some((needed, filter)) = sacrifice_cost {
+    } else if let Some((needed, filter, tap)) = sacrifice_cost {
         if pending.object_cost_chosen.len() > usize::from(needed) {
             return Err("pending activation has too many object-cost selections".to_string());
         }
@@ -8991,13 +9231,15 @@ pub(crate) fn validate_pending_activation(
                             &card_def::CARD_DEFS[live.card_def as usize],
                             filter,
                         )
+                        || (tap && live.tapped)
                 })
         }) {
             return Err("pending activation carries an illegal object-cost selection".to_string());
         }
-        let remaining = activation_sacrifice_cost_candidates(
+        let remaining = activation_controlled_cost_candidates(
             pending.controller,
             filter,
+            tap,
             state,
             &pending.object_cost_chosen,
         );
@@ -9826,7 +10068,15 @@ fn triggered_stack_item_expected_target_spec(
                             && (source.zone_change_count != zone_change_count
                                 || source.zone == Zone::Battlefield)
                     );
-                    source_def.ward_cost == Some(crate::card_def::WardCostDef::Generic(*generic))
+                    let printed_or_granted = source_def.ward_cost
+                        == Some(crate::card_def::WardCostDef::Generic(*generic));
+                    #[cfg(feature = "standard-magezero-fixtures")]
+                    let printed_or_granted = printed_or_granted
+                        || crate::standard_statics_v1::may_have_granted_ward(
+                            source_contract.card_def,
+                            *generic,
+                        );
+                    printed_or_granted
                         && *targeting_stack_item != StackItemId::default()
                         && source_contract_is_consistent
                 }
@@ -11040,6 +11290,15 @@ pub(crate) fn static_controlled_subtype_boost_for(
             power: 1,
             toughness: 1,
         }),
+        // "Each other Human you control gets +1/+0 and has ward {1}." The
+        // ward half is `standard_statics_v1::granted_ward_generics`.
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Coppercoat Vanguard" => Some(StaticControlledSubtypeBoostDef {
+            subtype: card_def::Subtype::Human,
+            exclude_source: true,
+            power: 1,
+            toughness: 0,
+        }),
         _ => None,
     }
 }
@@ -11194,8 +11453,19 @@ pub fn effective_name(state: &GameState, id: ObjectId) -> &str {
 
 pub fn effective_base_power(state: &GameState, id: ObjectId) -> Option<i32> {
     let obj = state.objects.get(id);
+    let characteristic_power = || -> Option<i32> {
+        #[cfg(feature = "standard-magezero-fixtures")]
+        {
+            crate::standard_statics_v1::characteristic_defining_power(state, id)
+        }
+        #[cfg(not(feature = "standard-magezero-fixtures"))]
+        {
+            None
+        }
+    };
     crate::continuous_characteristics_v1::creature_override(state, id)
         .map(|(characteristics, _)| i32::from(characteristics.power))
+        .or_else(characteristic_power)
         .or_else(|| {
             card_def::CARD_DEFS[obj.card_def as usize]
                 .power_for_face(obj.v4.face_index)
@@ -11221,6 +11491,10 @@ pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
         - obj.counters.minus1_minus1 as i32;
     power += bestow_host_counter_bonus(state, id);
     power += controlled_subtype_boost(state, id).0;
+    #[cfg(feature = "standard-magezero-fixtures")]
+    {
+        power += crate::standard_statics_v1::self_counter_boost(state, id).0;
+    }
     if def.is_executable()
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     {
@@ -11275,6 +11549,10 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
         - obj.counters.minus0_minus1 as i32;
     toughness += bestow_host_counter_bonus(state, id);
     toughness += controlled_subtype_boost(state, id).1;
+    #[cfg(feature = "standard-magezero-fixtures")]
+    {
+        toughness += crate::standard_statics_v1::self_counter_boost(state, id).1;
+    }
     if def.is_executable()
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     {
@@ -11348,6 +11626,10 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
         return true;
     }
     if printed_active && def.keywords_for_face(obj.v4.face_index).has(kw) {
+        return true;
+    }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if crate::standard_statics_v1::conditional_self_keywords(state, id).has(kw) {
         return true;
     }
     if obj.zone == Zone::Battlefield
@@ -13284,11 +13566,13 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
                 .object_cost_chosen
                 .push(binding);
             return Ok(());
-        } else if let Some((needed, filter)) = activation_permanent_sacrifice_needed(ability.cost) {
+        } else if let Some((needed, filter, tap)) = activation_controlled_object_cost(ability.cost)
+        {
             if pending.object_cost_chosen.len() < usize::from(needed) {
-                let candidates = activation_sacrifice_cost_candidates(
+                let candidates = activation_controlled_cost_candidates(
                     pending.controller,
                     filter,
+                    tap,
                     state,
                     &pending.object_cost_chosen,
                 );
@@ -14148,6 +14432,27 @@ fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> R
             state.engine.event_history.push(event);
         }
     }
+    if !state.engine.combat.attackers.is_empty() {
+        let attacker = state.active_player;
+        for source in state.players[attacker.index()].battlefield.clone() {
+            let object = state.objects.get(source);
+            if trigger::triggers_for(object.card_def).iter().any(|def| {
+                matches!(
+                    def.condition,
+                    trigger::TriggerCondition::ControllerAttacks
+                        | trigger::TriggerCondition::ControllerAttacksWithSubtype(_)
+                )
+            }) {
+                let event = CommittedEvent::ControllerAttacked {
+                    source,
+                    source_zone_change_count: object.zone_change_count,
+                    controller: attacker,
+                };
+                state.engine.event_log.push(event.clone());
+                state.engine.event_history.push(event);
+            }
+        }
+    }
     collect_and_queue_triggers(state);
     reset_priority(state);
     Ok(())
@@ -14853,13 +15158,14 @@ fn finalize_owned_cast(
             mana_spent = spent;
         }
         CastMethodV4::Omen => {
-            let cost = if let Some(adventure) = supported_adventure(def) {
-                adventure.cost
+            let (cost, types) = if let Some(adventure) = supported_adventure(def) {
+                (adventure.cost, adventure.types)
             } else {
-                supported_omen(def)
-                    .expect("validated Omen cast has definition-owned spell characteristics")
-                    .cost
+                let omen = supported_omen(def)
+                    .expect("validated Omen cast has definition-owned spell characteristics");
+                (omen.cost, omen.types)
             };
+            let cost = static_adjusted_spell_cost(cost, types, pending.controller, state);
             let Some(plan) = mana::can_pay(&cost, x_value, pending.controller, state) else {
                 abort_cast(state, pending, cast_method);
                 return Ok(());
@@ -14869,7 +15175,17 @@ fn finalize_owned_cast(
         CastMethodV4::Bestow => {
             let bestow = supported_bestow(def)
                 .expect("validated Bestow cast has definition-owned characteristics");
-            let Some(plan) = mana::can_pay(&bestow.cost, x_value, pending.controller, state) else {
+            let Some(plan) = mana::can_pay(
+                &static_adjusted_spell_cost(
+                    bestow.cost,
+                    &[CardType::Enchantment],
+                    pending.controller,
+                    state,
+                ),
+                x_value,
+                pending.controller,
+                state,
+            ) else {
                 abort_cast(state, pending, cast_method);
                 return Ok(());
             };
@@ -15451,7 +15767,15 @@ pub(crate) fn pay_plan(state: &mut GameState, player: PlayerId, plan: &mana::Pay
     for (i, &amt) in plan.pool_used.iter().enumerate() {
         state.players[player.index()].mana_pool[i] -= amt;
     }
-    state.players[player.index()].life -= plan.life_paid;
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if plan.life_paid > 0 {
+        event::propose_and_commit(state, ProposedEvent::life_payment(player, plan.life_paid));
+    }
+    // Preserve the existing event history in catalogs without Standard statics.
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
+    {
+        state.players[player.index()].life -= plan.life_paid;
+    }
     let pool_spent: u16 = plan.pool_used.iter().map(|&amount| u16::from(amount)).sum();
     u16::try_from(plan.taps.len())
         .unwrap_or(u16::MAX)

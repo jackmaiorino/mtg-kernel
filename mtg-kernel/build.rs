@@ -3026,6 +3026,10 @@ enum AbilityCostRecipe {
         count: u8,
         filter: PermanentFilterRecipe,
     },
+    TapControlled {
+        count: u8,
+        filter: PermanentFilterRecipe,
+    },
     ReturnControlledUnblockedAttacker,
     /// An arbitrary printed mana cost parsed by the same canonical cost
     /// grammar as spell costs. Twisted Landscape's Cycling is the first
@@ -3098,6 +3102,19 @@ enum AbilityEffectRecipe {
     EachPlayerControllingNamedPermanentDrawsCard(&'static str),
     /// The controller surveils this many cards (Rune-Sealed Wall).
     Surveil(u8),
+    /// One +1/+1 counter on the ability's own source while it remains the
+    /// same battlefield incarnation (Hired Claw).
+    PutPlusOneCounterOnSource,
+    /// The same counter, then the controller scries this many (Warden of
+    /// the Inner Sky).
+    PutPlusOneCounterOnSourceThenScry(u8),
+    /// Look at the top `count` cards, may put one creature card with mana
+    /// value at most `max_mana_value` from among them into hand, the rest on
+    /// the bottom (Recruitment Officer).
+    LookTopMayTakeCreatureToHandBottomRest {
+        count: u8,
+        max_mana_value: u16,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3885,6 +3902,23 @@ fn keywords_for(card: &CardJson) -> String {
         "Prideful Parent" => keywords.push("Keywords::VIGILANCE"),
         _ => {}
     }
+    // MageZero Standard family G, in printed keyword order.
+    match card.name.as_str() {
+        "Sentinel of the Nameless City" | "Sharp-Eyed Rookie" => {
+            keywords.push("Keywords::VIGILANCE")
+        }
+        "Deep-Cavern Bat" => {
+            keywords.push("Keywords::FLYING");
+            keywords.push("Keywords::LIFELINK");
+        }
+        "Unstoppable Slasher" => keywords.push("Keywords::DEATHTOUCH"),
+        "Extraction Specialist" => keywords.push("Keywords::LIFELINK"),
+        "Adeline, Resplendent Cathar" => keywords.push("Keywords::VIGILANCE"),
+        "Bloodletter of Aclazotz" | "Haughty Djinn" => keywords.push("Keywords::FLYING"),
+        "Thalia, Guardian of Thraben" => keywords.push("Keywords::FIRST_STRIKE"),
+        "Hullbreaker Horror" => keywords.push("Keywords::FLASH"),
+        _ => {}
+    }
     if card.name == "Treetop Snarespinner" {
         keywords.push("Keywords::REACH");
         keywords.push("Keywords::DEATHTOUCH");
@@ -4080,6 +4114,7 @@ fn kicker_cost_for(name: &str) -> String {
         "Sun-Blessed Healer" => cost_src("{1}{W}"),
         "Burst Lightning" => cost_src("{4}"),
         "Grow from the Ashes" => cost_src("{2}"),
+        "Gatekeeper of Malakir" => cost_src("{B}"),
         _ => "None".to_string(),
     }
 }
@@ -5022,6 +5057,40 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
                 max_activations_per_turn: None,
             },
         ],
+        // MageZero Standard family G.
+        "Hired Claw" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ManaCost("{1}{R}")],
+            effect: AbilityEffectRecipe::PutPlusOneCounterOnSource,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: Some(1),
+        }],
+        "Warden of the Inner Sky" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::TapControlled {
+                count: 3,
+                filter: PermanentFilterRecipe::ArtifactOrCreature,
+            }],
+            effect: AbilityEffectRecipe::PutPlusOneCounterOnSourceThenScry(1),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: true,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Recruitment Officer" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ManaCost("{3}{W}")],
+            effect: AbilityEffectRecipe::LookTopMayTakeCreatureToHandBottomRest {
+                count: 4,
+                max_mana_value: 3,
+            },
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         _ => &[],
     }
 }
@@ -5055,6 +5124,10 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
         ),
         AbilityCostRecipe::SacrificeControlled { count, filter } => format!(
             "CostComponent::SacrificeControlled {{ count: {count}, filter: {} }}",
+            permanent_filter_src(filter)
+        ),
+        AbilityCostRecipe::TapControlled { count, filter } => format!(
+            "CostComponent::TapControlled {{ count: {count}, filter: {} }}",
             permanent_filter_src(filter)
         ),
         AbilityCostRecipe::ReturnControlledUnblockedAttacker => {
@@ -5094,6 +5167,9 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
                 "sacrifice_controlled:{count}:{}",
                 permanent_filter_token(filter)
             )
+        }
+        AbilityCostRecipe::TapControlled { count, filter } => {
+            format!("tap_controlled:{count}:{}", permanent_filter_token(filter))
         }
         AbilityCostRecipe::ReturnControlledUnblockedAttacker => {
             "return_controlled_unblocked_attacker".to_string()
@@ -5180,6 +5256,18 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::AddMinusOneMinusOneCounter => {
             "add_minus_one_minus_one_counter".to_string()
         }
+        AbilityEffectRecipe::PutPlusOneCounterOnSource => {
+            "put_plus_one_counter_on_source".to_string()
+        }
+        AbilityEffectRecipe::PutPlusOneCounterOnSourceThenScry(count) => {
+            format!("put_plus_one_counter_on_source_then_scry:{count}")
+        }
+        AbilityEffectRecipe::LookTopMayTakeCreatureToHandBottomRest {
+            count,
+            max_mana_value,
+        } => format!(
+            "look_top_may_take_creature_mv_at_most_to_hand_bottom_rest:{count}:{max_mana_value}"
+        ),
         AbilityEffectRecipe::AddPlusOnePlusOneCounters(count) => format!("add_plus_one_plus_one_counters:{count}"),
         AbilityEffectRecipe::SearchLibraryToBattlefieldTapped { filter } => format!(
             "search_library_to_battlefield_tapped:{}",
@@ -5347,6 +5435,16 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::AddMinusOneMinusOneCounter => {
             "ability_effect_add_minus_one_minus_one_counter".to_string()
         }
+        AbilityEffectRecipe::PutPlusOneCounterOnSource => {
+            "ability_effect_put_plus_one_counter_on_source".to_string()
+        }
+        AbilityEffectRecipe::PutPlusOneCounterOnSourceThenScry(count) => {
+            format!("ability_effect_put_plus_one_counter_on_source_then_scry_{count}")
+        }
+        AbilityEffectRecipe::LookTopMayTakeCreatureToHandBottomRest {
+            count,
+            max_mana_value,
+        } => format!("ability_effect_look_top_{count}_may_take_creature_mv_{max_mana_value}"),
         AbilityEffectRecipe::AddPlusOnePlusOneCounters(count) => {
             format!("ability_effect_add_plus_one_plus_one_counters_{count}")
         }
@@ -5813,6 +5911,59 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Azure Fleet Admiral" => "etb:become_monarch",
         "Delver of Secrets" => {
             "upkeep_controller:look_top_may_reveal_instant_or_sorcery:transform_source_in_place"
+        }
+        // MageZero Standard family G.
+        "Novice Inspector" => "etb:investigate:1",
+        "Sentinel of the Nameless City" => "etb_and_attacks:create_map_token:1",
+        "Cenote Scout" => "etb:source_explores",
+        "Gatekeeper of Malakir" => "etb_if_kicked:target_player:sacrifice_creature",
+        "Deep-Cavern Bat" => {
+            "etb:target_opponent:look_at_hand:may_exile_nonland_until_source_leaves"
+        }
+        "Razorkin Needlehead" => "opponent_draws:damage_that_player:1",
+        "Quirion Beastcaller" => {
+            "cast_creature_spell:plus_one_counter_on_source:1;dies:distribute_source_plus_one_counters_among_controlled_creatures"
+        }
+        "Ascendant Packleader" => "cast_spell_mv_at_least_4:plus_one_counter_on_source:1",
+        "Sharp-Eyed Rookie" => {
+            "controlled_creature_enters_if_greater_power_or_toughness:plus_one_counter_on_source:1:investigate:1"
+        }
+        "Evolving Adaptive" => {
+            "another_controlled_creature_enters_if_greater_power_or_toughness:oil_counter_on_source:1"
+        }
+        "Unstoppable Slasher" => {
+            "combat_damage_player:that_player_loses_half_life_rounded_up;dies_if_no_counters:return_source_tapped_with_stun:2"
+        }
+        "Adeline, Resplendent Cathar" => "controller_attacks:create_token_tapped_attacking:Human Token:1",
+        "Hired Claw" => "controller_attacks_with_subtype:Lizard:target_opponent:damage:1",
+        "Extraction Specialist" => {
+            "etb:target_own_graveyard_creature_card_mv_at_most_2:return_to_battlefield:cant_attack_or_block_while_source_controlled"
+        }
+        "Hullbreaker Horror" => {
+            "cast_spell:mode_before_targets:spell_you_dont_control_to_owners_hand|nonland_permanent_to_owners_hand|no_mode"
+        }
+        _ => "none",
+    }
+}
+
+/// Static abilities implemented in `standard_statics_v1` (and the lord and
+/// ward tables they feed), named here so the Standard catalog identity covers
+/// them. Pauper and FDN canon never include this field.
+fn standard_static_recipe_for(name: &str) -> &'static str {
+    match name {
+        "Razorkin Needlehead" => "self_keyword:first_strike:controller_turn",
+        "Ascendant Packleader" => {
+            "enters_with_plus_one_counter_if_controls_permanent_mv_at_least_4"
+        }
+        "Evolving Adaptive" => "enters_with_oil_counter:1;self_boost_per_oil_counter:1:1",
+        "Coppercoat Vanguard" => "other_controlled_humans:boost:1:0;ward_generic:1",
+        "Adeline, Resplendent Cathar" => "cda_power:controlled_creatures",
+        "Bloodletter of Aclazotz" => "opponent_life_loss_doubled_during_controller_turn",
+        "Thalia, Guardian of Thraben" => "noncreature_spells_cost_generic_more:1",
+        "Hired Claw" => "activation_0_only_if_opponent_lost_life_this_turn",
+        "Warden of the Inner Sky" => "self_keywords:flying+vigilance:three_or_more_counters",
+        "Haughty Djinn" => {
+            "cda_power:controller_graveyard_instant_sorcery_cards;controller_instant_sorcery_spells_cost_generic_less:1"
         }
         _ => "none",
     }
@@ -6449,6 +6600,25 @@ fn codegen(cards: &[CardJson]) -> String {
                     "    EffectOp::AddMinusOneMinusOneCounter {{ object: ObjectRef::Target(0) }}"
                 )
                 .unwrap();
+            }
+            AbilityEffectRecipe::PutPlusOneCounterOnSource => {
+                writeln!(out, "    EffectOp::AddPlusOneCounterToAbilitySource").unwrap();
+            }
+            AbilityEffectRecipe::PutPlusOneCounterOnSourceThenScry(count) => {
+                writeln!(out, "    EffectOp::Sequence(vec![").unwrap();
+                writeln!(out, "        EffectOp::AddPlusOneCounterToAbilitySource,").unwrap();
+                writeln!(
+                    out,
+                    "        EffectOp::Scry {{ player: PlayerRef::Controller, count: {count} }},"
+                )
+                .unwrap();
+                writeln!(out, "    ])").unwrap();
+            }
+            AbilityEffectRecipe::LookTopMayTakeCreatureToHandBottomRest {
+                count,
+                max_mana_value,
+            } => {
+                writeln!(out, "    EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest {{ player: PlayerRef::Controller, count: {count}, max_mana_value: {max_mana_value} }}").unwrap();
             }
             AbilityEffectRecipe::SearchLibraryToBattlefieldTapped { filter } => {
                 let filter = library_search_filter_src(filter);
@@ -8717,7 +8887,7 @@ fn codegen(cards: &[CardJson]) -> String {
         // `standard-magezero-fixtures` builds: the Pauper prefix plus
         // `data/standard/magezero_v1/cards_v1.json`, versioned separately
         // from the FDN Limited catalog.
-        canon = String::from("kernel_carddb_standard/v2\n");
+        canon = String::from("kernel_carddb_standard/v3\n");
     }
     if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
         canon.push_str("counter_target_spell_guard=bound_stack_spell_can_be_countered\n");
@@ -8889,6 +9059,15 @@ fn codegen(cards: &[CardJson]) -> String {
         };
         canon.push_str(&bestow);
         canon.push('|');
+        if standard_magezero_fixtures() {
+            canon.push_str("standard_static=");
+            canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
+                standard_static_recipe_for(&c.name)
+            } else {
+                "none"
+            });
+            canon.push('|');
+        }
         canon.push_str("trigger=");
         canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
             trigger_recipe_for(&c.name)
@@ -9079,6 +9258,13 @@ fn subtype_variant(t: &str) -> &'static str {
         "Shark" => "Subtype::Shark",
         "Elk" => "Subtype::Elk",
         "Demon" => "Subtype::Demon",
+        "Scout" => "Subtype::Scout",
+        "Bat" => "Subtype::Bat",
+        "Mercenary" => "Subtype::Mercenary",
+        "Assassin" => "Subtype::Assassin",
+        "Wolf" => "Subtype::Wolf",
+        "Kraken" => "Subtype::Kraken",
+        "Djinn" => "Subtype::Djinn",
         "Pirate" => "Subtype::Pirate",
         "Plains" => "Subtype::Plains",
         "ROGUE" => "Subtype::RogueAllCaps",
