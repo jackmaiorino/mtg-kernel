@@ -573,6 +573,66 @@ fn fast_search_forward_matches_the_ordinary_forward_closely() {
     );
 }
 
+#[test]
+fn resume_refuses_mixed_forward_activation_modes() {
+    let ordinary = json!({"kind":"s4a_root","root_id":"ordinary","config":{}}).to_string() + "\n";
+    let fast = json!({"kind":"s4a_root","root_id":"fast","config":{"fast_search_forward":true}})
+        .to_string()
+        + "\n";
+    assert!(completed_roots(&ordinary, false)
+        .unwrap()
+        .contains("ordinary"));
+    assert!(completed_roots(&fast, true).unwrap().contains("fast"));
+    assert!(completed_roots(&ordinary, true).is_err());
+    assert!(completed_roots(&fast, false).is_err());
+    assert!(completed_roots(&(ordinary.clone() + &fast), false).is_err());
+    assert!(completed_roots(&(ordinary + &fast), true).is_err());
+    assert!(completed_roots(fast.trim_end(), false).unwrap().is_empty());
+}
+
+#[test]
+fn corpus_cannot_enable_unrecorded_fast_forward() {
+    assert!(validate_fast_forward_mode("s4a-corpus", true).is_err());
+    assert!(validate_fast_forward_mode("s4a-corpus", false).is_ok());
+    assert!(validate_fast_forward_mode("s4a-run", true).is_ok());
+}
+
+#[test]
+fn replay_roles_restore_ordinary_scoring_after_each_fast_root() {
+    let cfg = test_cfg();
+    let setup = game_setup(&cfg, 1, 0);
+    let session = new_session(&setup).unwrap();
+    let mut reference = fixture();
+    let expected = reference.score_fast_session_v1(&session).unwrap();
+    let mut roles = Roles {
+        focal: fixture(),
+        opps: vec![fixture()],
+        scorer: fixture(),
+        inner_focal: fixture(),
+        inner_opps: vec![fixture()],
+    };
+    for _ in 0..2 {
+        set_replay_forward(&mut roles, true);
+        set_replay_forward(&mut roles, false);
+        for policy in std::iter::once(&mut roles.focal).chain(roles.opps.iter_mut()) {
+            let actual = policy.score_fast_session_v1(&session).unwrap();
+            assert_eq!(
+                actual
+                    .logits
+                    .iter()
+                    .map(|v| v.to_bits())
+                    .collect::<Vec<_>>(),
+                expected
+                    .logits
+                    .iter()
+                    .map(|v| v.to_bits())
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(actual.value.to_bits(), expected.value.to_bits());
+        }
+    }
+}
+
 /// Per-call cost of policy scoring, ordinary vs fast search forward
 /// (manual: --ignored --nocapture).
 #[test]

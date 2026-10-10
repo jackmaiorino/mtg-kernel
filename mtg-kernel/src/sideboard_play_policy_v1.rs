@@ -1080,7 +1080,13 @@ impl FrozenPlayPolicyV1 {
     /// Outputs differ from the ordinary forward only in the last bits of
     /// each tanh; ordinary play, training and evaluation never set this.
     pub(crate) fn enable_fast_search_forward_v1(&mut self) {
-        self.fast_search_forward = true;
+        self.set_fast_search_forward_v1(true);
+    }
+
+    /// Frozen-root reconstruction uses ordinary play before the search driver
+    /// restores its explicitly declared activation mode.
+    pub(crate) fn set_fast_search_forward_v1(&mut self, enabled: bool) {
+        self.fast_search_forward = enabled;
     }
 
     /// A fork that plays another seat as a frozen policy: its declared

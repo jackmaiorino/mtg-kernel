@@ -81,6 +81,12 @@ struct Shared {
 }
 
 fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
+    let fast_forward = match std::env::var("S4A_FAST_FORWARD").as_deref() {
+        Ok("1") => true,
+        Ok("0") | Err(_) => false,
+        Ok(v) => return Err(format!("S4A_FAST_FORWARD must be 0 or 1, not {v}")),
+    };
+    validate_fast_forward_mode(&cfg.mode, fast_forward)?;
     let entries: Vec<(String, String)> = std::env::var("OPPONENTS")
         .map_err(|_| "OPPONENTS is required")?
         .split(',')
@@ -133,12 +139,55 @@ fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
         model,
         limits,
         prior: world::DeckPrior::new(&cfg.decks),
-        fast_forward: match std::env::var("S4A_FAST_FORWARD").as_deref() {
-            Ok("1") => true,
-            Ok("0") | Err(_) => false,
-            Ok(v) => return Err(format!("S4A_FAST_FORWARD must be 0 or 1, not {v}")),
-        },
+        fast_forward,
     })
+}
+
+fn validate_fast_forward_mode(mode: &str, fast_forward: bool) -> Result<(), String> {
+    if fast_forward && mode != "s4a-run" {
+        return Err(
+            "S4A_FAST_FORWARD=1 is supported only for s4a-run; corpus and replay remain ordinary"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// Only newline-terminated rows survive partial-tail recovery. Bind resumed
+/// results to the declared activation mode before truncating or opening output.
+fn completed_roots(rows: &str, fast_forward: bool) -> Result<HashSet<String>, String> {
+    let mut done = HashSet::new();
+    for line in rows
+        .split_inclusive('\n')
+        .filter(|line| line.ends_with('\n'))
+    {
+        let Ok(row) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if row["kind"] != "s4a_root" {
+            continue;
+        }
+        let recorded = match row["config"].get("fast_search_forward") {
+            None => false, // Historical ordinary rows omit the field.
+            Some(value) => value
+                .as_bool()
+                .ok_or("invalid resumed forward activation mode")?,
+        };
+        if recorded != fast_forward {
+            return Err("resume refused: forward activation mode differs; preserve output and use a fresh path".into());
+        }
+        if let Some(id) = row["root_id"].as_str() {
+            done.insert(id.to_owned());
+        }
+    }
+    Ok(done)
+}
+
+fn set_replay_forward(roles: &mut Roles, fast_forward: bool) {
+    roles.focal.set_fast_search_forward_v1(fast_forward);
+    for opponent in &mut roles.opps {
+        opponent.set_fast_search_forward_v1(fast_forward);
+    }
 }
 
 fn write_line(sink: &Mutex<std::fs::File>, row: &Value) -> Result<(), String> {
@@ -330,7 +379,12 @@ fn run_root(
         .as_str()
         .ok_or("root has no root_id")?
         .to_owned();
-    let (setup, session) = replay(cfg, shared, roles, root)?;
+    // Frozen roots were captured with ordinary play. Restore their trajectory
+    // with that mode on every root, then use the declared mode for search.
+    set_replay_forward(roles, false);
+    let replayed = replay(cfg, shared, roles, root);
+    set_replay_forward(roles, shared.fast_forward);
+    let (setup, session) = replayed?;
     let replay_secs = started.elapsed().as_secs_f64();
     let d = decision(&session).ok_or("root is terminal")?;
     let seeds = RootSeeds {
@@ -492,13 +546,10 @@ fn plain_roles(policy: &FrozenPlayPolicyV1, shared: &Shared) -> Result<Roles, St
 pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(), String> {
     let shared = load_shared(cfg)?;
     let done: HashSet<String> = if cfg.mode == "s4a-run" {
-        std::fs::read_to_string(&cfg.out)
-            .unwrap_or_default()
-            .lines()
-            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
-            .filter(|v| v["kind"] == "s4a_root")
-            .filter_map(|v| v["root_id"].as_str().map(str::to_owned))
-            .collect()
+        completed_roots(
+            &std::fs::read_to_string(&cfg.out).unwrap_or_default(),
+            shared.fast_forward,
+        )?
     } else {
         HashSet::new()
     };

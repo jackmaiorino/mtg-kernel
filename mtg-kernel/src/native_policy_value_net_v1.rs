@@ -38,10 +38,9 @@ pub(crate) enum ForwardActivationModeV1 {
     LibmTanh,
     KernelDeterministicTanh,
     /// Search-only: a branch-free rational tanh ([`fast_tanh_f32_v1`]) that
-    /// the compiler vectorizes. At most 4.7e-7 absolute error (8 ulp near
-    /// saturation) against the true tanh, where libm is within 2 ulp, so
-    /// outputs differ from `LibmTanh` only in their last bits. Never used by
-    /// training, evaluation or ordinary play.
+    /// the compiler vectorizes. The sampled accuracy regression requires
+    /// absolute error at most 5e-7 on its tested inputs; it is not a proof
+    /// over every finite f32. Never enabled by default for training or play.
     FastSearchTanh,
 }
 
@@ -1500,7 +1499,8 @@ unsafe fn fast_tanh_in_place_avx2_v1(values: &mut [f32]) {
 /// Branch-free rational tanh for the search-only forward: odd degree-13
 /// numerator over even degree-6 denominator on the input clamped to
 /// [-7.905311, 7.905311], and the identity below 4e-4 (the coefficients of
-/// Eigen's float tanh). Max absolute error 4.7e-7 over all finite f32.
+/// Eigen's float tanh). The sampled regression checks absolute error <=5e-7;
+/// it does not prove a bound over every finite f32.
 #[inline(always)]
 pub(crate) fn fast_tanh_f32_v1(x: f32) -> f32 {
     const CLAMP: f32 = 7.905_311;
