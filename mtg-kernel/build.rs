@@ -6196,6 +6196,8 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Angel of Finality" => "etb:target_player:exile_graveyard",
         "Bigfin Bouncer" => "etb:target_opponent_controlled_creature:return_to_owners_hand",
         "Tragic Banshee" => "etb:target_opponent_controlled_creature:resolution_morbid:pump_target:-13:-13_else:-1:-1:exact_incarnation_until_cleanup",
+        "Battlesong Berserker" => "controller_declares_at_least_one_attacker:once_per_declaration:target_controlled_creature:pump:1:0_then_grant_menace:exact_incarnation_until_cleanup",
+        "Scrawling Crawler" => "beginning_controller_upkeep:draw_controller:1_then_opponent:1;successful_opponent_draw:untargeted_opponent_loses_life:1",
         "Grappling Kraken" => "controlled_land_enters:target_opponent_controlled_creature:tap_then_stun_counter:1:exact_incarnation",
         "Rune-Scarred Demon" => "etb:search_library_any_card_to_hand_unrevealed",
         "Elvish Regrower" => "etb:return_target_own_graveyard_permanent_card_to_hand",

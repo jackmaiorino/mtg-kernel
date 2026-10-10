@@ -565,6 +565,22 @@ const GLEAMING_BARRIER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef
 }];
 const BIGFIN_BOUNCER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(bigfin_bouncer_effect)];
 const TRAGIC_BANSHEE_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(tragic_banshee_effect)];
+const BATTLESONG_BERSERKER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControllerAttacks,
+    ..etb_trigger(battlesong_berserker_effect)
+}];
+const SCRAWLING_CRAWLER_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::BeginningOfUpkeep {
+            controller_only: true,
+        },
+        ..etb_trigger(scrawling_crawler_upkeep_effect)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::OpponentDraws,
+        ..etb_trigger(scrawling_crawler_draw_effect)
+    },
+];
 const GRAPPLING_KRAKEN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::ControlledLandEnters,
     ..etb_trigger(grappling_kraken_effect)
@@ -664,6 +680,42 @@ fn grappling_kraken_effect() -> EffectOp {
             stun: 1,
         },
     ])
+}
+
+fn battlesong_berserker_effect() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::PumpTargetUntilEndOfTurnDynamic {
+            target: TargetRef::Target(0),
+            power: DynamicValueDef::Fixed(1),
+            toughness: DynamicValueDef::Fixed(0),
+        },
+        EffectOp::GrantKeywordTargetUntilEndOfTurn {
+            object: ObjectRef::Target(0),
+            keyword: Keywords::MENACE,
+        },
+    ])
+}
+
+fn scrawling_crawler_upkeep_effect() -> EffectOp {
+    // The trigger's controller is the active player for this upkeep.
+    // Sequential drawing therefore follows active-player, nonactive-player order.
+    EffectOp::Sequence(vec![
+        EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        },
+        EffectOp::DrawCards {
+            player: PlayerRef::Opponent,
+            count: 1,
+        },
+    ])
+}
+
+fn scrawling_crawler_draw_effect() -> EffectOp {
+    EffectOp::LoseLife {
+        player: PlayerRef::Opponent,
+        amount: 1,
+    }
 }
 
 const DRAGON_TRAINER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(dragon_trainer_effect)];
@@ -2939,6 +2991,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Angel of Finality" => &BOJUKA_BOG_TRIGGERS,
         "Bigfin Bouncer" => &BIGFIN_BOUNCER_TRIGGERS,
         "Tragic Banshee" => &TRAGIC_BANSHEE_TRIGGERS,
+        "Battlesong Berserker" => &BATTLESONG_BERSERKER_TRIGGERS,
+        "Scrawling Crawler" => &SCRAWLING_CRAWLER_TRIGGERS,
         "Grappling Kraken" => &GRAPPLING_KRAKEN_TRIGGERS,
         "Rune-Scarred Demon" => &RUNE_SCARRED_DEMON_TRIGGERS,
         "Elvish Regrower" => &ELVISH_REGROWER_TRIGGERS,
@@ -3099,6 +3153,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
             TargetSpec::OpponentControlledCreature
         }
         "Humbling Elder" => TargetSpec::OpponentControlledCreature,
+        "Battlesong Berserker" => TargetSpec::ControlledCreature,
         "Meteor Golem" => TargetSpec::OpponentNonlandPermanent,
         "Reclamation Sage" => TargetSpec::ArtifactOrEnchantmentPermanent,
         "Saiba Cryptomancer" | "Aloe Alchemist" => TargetSpec::Creature,
