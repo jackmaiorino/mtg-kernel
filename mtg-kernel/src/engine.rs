@@ -268,6 +268,68 @@ pub struct EngineState {
     /// ETB grant or a combat-damage transfer's attacking creature.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub monarch_source: Option<AbilitySourceContractV4>,
+    /// Opt-in runtime rules profile. Default (all off) is the historical
+    /// engine; omitted from snapshots and ignored by `Hash` while default.
+    #[serde(default, skip_serializing_if = "RuntimeRulesV1::is_default")]
+    pub runtime_rules: RuntimeRulesV1,
+}
+
+/// Opt-in rules-presentation options that change which choices the engine
+/// exposes, never the legal outcomes it allows. A session that turns one on
+/// is a new runtime identity: decision counts and random-stream use differ
+/// from the historical engine, so its trajectories are not comparable to
+/// earlier ones step for step.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeRulesV1 {
+    /// When several cards are put into one player's graveyard at once, the
+    /// owner orders them (404.3), and the engine asks one card at a time.
+    /// With this on, that ordering is never asked: the cards keep the order
+    /// the effect bound them in (library order, top first). In this engine
+    /// only Delve reads graveyard order (`mana::delve_payment_plan` exiles
+    /// the oldest cards first), so the profile is refused for any game that
+    /// contains a Delve card in any zone (`FastActorSessionV1::
+    /// set_runtime_rules_v1`). The rule is fixed for the whole game and
+    /// reads no hidden state, so whether an ordering stage appears tells the
+    /// other seat nothing about hidden cards.
+    pub auto_unobservable_graveyard_order: bool,
+}
+
+impl RuntimeRulesV1 {
+    /// The rules profile of the Spy resolution-boundary fix (collab
+    /// LANES/spy-fix-first-handoff-20261010).
+    pub const RESOLUTION_BOUNDARY_V1: Self = Self {
+        auto_unobservable_graveyard_order: true,
+    };
+
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+// Ignored by hashing so historical state fingerprints stay unchanged; the
+// profile is recorded as a runtime identity instead.
+impl Hash for RuntimeRulesV1 {
+    fn hash<H: std::hash::Hasher>(&self, _state: &mut H) {}
+}
+
+/// Whether the owner of a multi-card graveyard batch must be asked for its
+/// order (see `RuntimeRulesV1::auto_unobservable_graveyard_order`). The
+/// answer is constant for the whole game: it never reads hidden zones, so
+/// the presence of the ordering stage, which the other seat can observe,
+/// reveals nothing about anyone's hidden cards.
+pub(crate) fn graveyard_order_choice_exposed(state: &GameState, _owner: PlayerId) -> bool {
+    !state.engine.runtime_rules.auto_unobservable_graveyard_order
+}
+
+/// Whether any card in the game, in any zone and for either player, can
+/// read graveyard order (Delve, the only such reader in this engine). The
+/// profile may be enabled only when this is false.
+pub(crate) fn graveyard_order_readers_present(state: &GameState) -> bool {
+    state
+        .objects
+        .iter()
+        .any(|(_, object)| crate::card_def::CARD_DEFS[object.card_def as usize].delve)
 }
 
 fn next_stack_item_id(state: &mut GameState) -> StackItemId {
