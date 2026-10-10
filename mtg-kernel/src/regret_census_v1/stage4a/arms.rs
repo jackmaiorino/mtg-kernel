@@ -656,6 +656,10 @@ impl Roles {
     /// One E selection simulation on `world`. Returns the path, the new node
     /// (if any) and the ending; the tree is not modified.
     #[allow(clippy::type_complexity, reason = "one simulation's whole result")]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit roles, accounting and trace"
+    )]
     fn simulate(
         &mut self,
         ctx: &RootCtx,
@@ -701,7 +705,14 @@ impl Roles {
                             Found::Miss => {
                                 src = SelSrc::Expand;
                                 if let Some(t) = trace.as_deref_mut() {
-                                    t.node_created(&key, path.last(), &cn, &s, ctx.focal, &ctx.defs);
+                                    t.node_created(
+                                        &key,
+                                        path.last(),
+                                        &cn,
+                                        &s,
+                                        ctx.focal,
+                                        &ctx.defs,
+                                    );
                                 }
                                 let node = Node::new(
                                     &key,
@@ -728,7 +739,17 @@ impl Roles {
                         let at = matches!(src, SelSrc::Tree | SelSrc::Expand)
                             .then(|| path.last())
                             .flatten();
-                        t.sel_decision(&s, &d, a, depth, src, at, meter.spent, ctx.focal, &ctx.defs);
+                        t.sel_decision(
+                            &s,
+                            &d,
+                            a,
+                            depth,
+                            src,
+                            at,
+                            meter.spent,
+                            ctx.focal,
+                            &ctx.defs,
+                        );
                     }
                     observe(Some(suffix), &s, a, ctx.focal, &ctx.defs);
                     a
@@ -801,7 +822,9 @@ impl Roles {
             if let Some(t) = trace.as_deref_mut() {
                 let (end, new) = match &r {
                     Ok((_, new, End::Natural { win: true })) => ("win", new.as_ref().map(|x| &x.0)),
-                    Ok((_, new, End::Natural { win: false })) => ("loss", new.as_ref().map(|x| &x.0)),
+                    Ok((_, new, End::Natural { win: false })) => {
+                        ("loss", new.as_ref().map(|x| &x.0))
+                    }
                     Ok((_, _, End::NonNatural)) => ("nonnatural", None),
                     Err(PlayErr::Truncated) => ("truncated", None),
                     Err(PlayErr::Fault(_)) => ("fault", None),
@@ -830,7 +853,7 @@ impl Roles {
                 }
             }
         }
-        if let Some(t) = trace.as_deref_mut() {
+        if let Some(t) = trace {
             t.finish_tree(&tree);
         }
         sel.transitions = meter.spent;
@@ -960,7 +983,7 @@ impl Roles {
                     } else {
                         EvalSrc::AfterMiss
                     };
-                    let mut seen: Option<(Key, Option<(&Node, Option<usize>)>, usize)> = None;
+                    let mut seen: Option<Seen> = None;
                     let a = if matching && depth <= MAX_DEPTH {
                         let cn = canon(s, d)?;
                         let key = child_key(&parent.0, &parent.1, &cn);
@@ -1049,6 +1072,10 @@ impl Roles {
         }
     }
 }
+
+/// Trace only: the lookup key, the matched node with its frozen choice, and
+/// the chosen edge index of one frozen-execution decision.
+type Seen<'a> = (Key, Option<(&'a Node, Option<usize>)>, usize);
 
 /// E evaluation-time tree statistics.
 #[derive(Clone, Debug, Default)]

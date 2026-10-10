@@ -607,7 +607,16 @@ fn diagnostic_trace_is_passive_and_reconstructs_backups() {
             if let Some(t) = trace.as_mut() {
                 t.world_begin(w);
             }
-            let o = roles.evaluate_traced(&ctx, "E", &world.world, w, None, Some(&tree), &mut st, trace.as_mut());
+            let o = roles.evaluate_traced(
+                &ctx,
+                "E",
+                &world.world,
+                w,
+                None,
+                Some(&tree),
+                &mut st,
+                trace.as_mut(),
+            );
             if let Some(t) = trace.as_mut() {
                 t.world_end(o.json());
             }
@@ -634,7 +643,9 @@ fn diagnostic_trace_is_passive_and_reconstructs_backups() {
             _ => continue,
         };
         for p in l["path"].as_array().unwrap() {
-            let x = n.entry((p[0].as_u64().unwrap(), p[1].as_u64().unwrap())).or_default();
+            let x = n
+                .entry((p[0].as_u64().unwrap(), p[1].as_u64().unwrap()))
+                .or_default();
             x.0 += 1;
             x.1 += win;
         }
@@ -644,24 +655,55 @@ fn diagnostic_trace_is_passive_and_reconstructs_backups() {
     for node in &nodes {
         assert!(node.get("error").is_none(), "{node}");
         let id = node["id"].as_u64().unwrap();
-        for (e, (c, w)) in node["n"].as_array().unwrap().iter().zip(node["w"].as_array().unwrap()).enumerate() {
+        for (e, (c, w)) in node["n"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .zip(node["w"].as_array().unwrap())
+            .enumerate()
+        {
             let got = n.get(&(id, e as u64)).copied().unwrap_or_default();
-            assert_eq!(got, (c.as_u64().unwrap(), w.as_u64().unwrap()), "node {id} edge {e}");
+            assert_eq!(
+                got,
+                (c.as_u64().unwrap(), w.as_u64().unwrap()),
+                "node {id} edge {e}"
+            );
         }
     }
     // Execution sources agree with E's counters; a miss ends matching.
     for world in lines.iter().filter(|l| l["r"] == "eval") {
         let e = &world["out"]["e"];
         let decs = world["dec"].as_array().unwrap();
-        let count = |f: &dyn Fn(&serde_json::Value) -> bool| decs.iter().filter(|d| f(d)).count() as u64;
+        let count =
+            |f: &dyn Fn(&serde_json::Value) -> bool| decs.iter().filter(|d| f(d)).count() as u64;
         let looked = |d: &serde_json::Value| {
-            matches!(d["src"].as_str().unwrap(), "tree_edge" | "matched_no_qualified_plain" | "first_miss_plain")
+            matches!(
+                d["src"].as_str().unwrap(),
+                "tree_edge" | "matched_no_qualified_plain" | "first_miss_plain"
+            )
         };
-        let hit = |d: &serde_json::Value| matches!(d["src"].as_str().unwrap(), "tree_edge" | "matched_no_qualified_plain");
-        assert_eq!(count(&|d| d["root"] == false && looked(d)), e["nonroot_lookups"].as_u64().unwrap());
-        assert_eq!(count(&|d| d["root"] == false && hit(d)), e["nonroot_hits"].as_u64().unwrap());
-        assert_eq!(count(&|d| d["src"] == "matched_no_qualified_plain"), e["fallbacks"].as_u64().unwrap());
-        assert_eq!(count(&|d| d["src"] == "tree_edge"), e["executed"].as_array().unwrap().len() as u64);
+        let hit = |d: &serde_json::Value| {
+            matches!(
+                d["src"].as_str().unwrap(),
+                "tree_edge" | "matched_no_qualified_plain"
+            )
+        };
+        assert_eq!(
+            count(&|d| d["root"] == false && looked(d)),
+            e["nonroot_lookups"].as_u64().unwrap()
+        );
+        assert_eq!(
+            count(&|d| d["root"] == false && hit(d)),
+            e["nonroot_hits"].as_u64().unwrap()
+        );
+        assert_eq!(
+            count(&|d| d["src"] == "matched_no_qualified_plain"),
+            e["fallbacks"].as_u64().unwrap()
+        );
+        assert_eq!(
+            count(&|d| d["src"] == "tree_edge"),
+            e["executed"].as_array().unwrap().len() as u64
+        );
         let miss = decs.iter().position(|d| d["src"] == "first_miss_plain");
         for (i, d) in decs.iter().enumerate() {
             assert_eq!(d["mb"] == true, miss.is_none_or(|m| i <= m), "{d}");
