@@ -180,7 +180,7 @@ pub fn fields(name: &str, executable: bool) -> StandardLandFields {
             fields.restricted_mana_abilities = "&[RestrictedManaAbilityDef { colors: &[ManaColor::R], restriction: ManaSpendRestrictionDef::CreatureSpell }]".to_string();
         }
         "Mishra's Foundry" => {
-            fields.animation = "Some(AnimationDef { power: 2, toughness: 2, artifact: true, colors: &[], subtypes: &[Subtype::AssemblyWorker], keywords: Keywords::NONE, permanent: false })".to_string();
+            fields.animation = "Some(AnimationDef { power: 2, toughness: 2, artifact: true, colors: &[], subtypes: &[Subtype::AssemblyWorker], keywords: Keywords::NONE })".to_string();
         }
         "Eiganjo, Seat of the Empire" => {
             fields.activated_ability_generic_reductions = "&[ActivatedAbilityGenericReductionDef { ability_index: 0, per: ActivatedAbilityReductionCountDef::ControlledLegendaryCreatures }]".to_string();

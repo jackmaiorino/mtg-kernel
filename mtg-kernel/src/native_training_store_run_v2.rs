@@ -330,6 +330,36 @@ const FROZEN_CARD_DB_HASH_U64_HEX_FDN_EQUIPMENT_SEARCH_V1: &str = "a3ef5a41092d7
 const FROZEN_RUNTIME_CATALOG_SHA256_FDN_EQUIPMENT_SEARCH_V1: &str =
     "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
 
+// v56 adds FDN token makers, their tokens and static creature Auras.
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_TOKENS_AURAS_V1: &str = "280fffb03aa03e98";
+const FROZEN_RUNTIME_CATALOG_SHA256_FDN_TOKENS_AURAS_V1: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+
+// v57 adds FDN removal, damage and combat-trick spells and their creatures.
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_REMOVAL_TRICKS_V1: &str = "8720c2e331fcb66b";
+const FROZEN_RUNTIME_CATALOG_SHA256_FDN_REMOVAL_TRICKS_V1: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+
+// v58 adds FDN counterspells, a graveyard sorcery and simple trigger threats.
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_COUNTERS_THREATS_V1: &str = "f248c83c818bd26a";
+const FROZEN_RUNTIME_CATALOG_SHA256_FDN_COUNTERS_THREATS_V1: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+
+// v59 adds Campus Guide, Burnished Hart, Grow from the Ashes, Revenge of the Rats and the Rat token.
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_LIBRARY_SEARCH_V1: &str = "fd7a00c21413488b";
+const FROZEN_RUNTIME_CATALOG_SHA256_FDN_LIBRARY_SEARCH_V1: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+
+// v60 adds Zombify, Rune-Scarred Demon, Tatyova, Thrill of Possibility and Rune-Sealed Wall.
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_SIMPLE_TRIGGERS_V1: &str = "63e4c9bf208f49e0";
+const FROZEN_RUNTIME_CATALOG_SHA256_FDN_SIMPLE_TRIGGERS_V1: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+
+// v61 adds Shivan Dragon, Axgard Cavalry and Rogue's Passage.
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_ACTIVATED_COMBAT_V1: &str = "949beb8c995c006c";
+const FROZEN_RUNTIME_CATALOG_SHA256_FDN_ACTIVATED_COMBAT_V1: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+
 const FROZEN_PROTOCOL_V2: &str = "kernel_rl_jsonl";
 const FROZEN_PROTOCOL_VERSION_V2: u32 = 5;
 const FROZEN_SCHEMA_VERSION_V2: u32 = 5;
@@ -2040,6 +2070,12 @@ pub(crate) enum NativeRunCatalogProfileV1 {
     FdnGainlandsLifegain,
     FdnTriggersTricks,
     FdnEquipmentSearch,
+    FdnTokensAuras,
+    FdnRemovalTricks,
+    FdnCountersThreats,
+    FdnLibrarySearch,
+    FdnSimpleTriggers,
+    FdnActivatedCombat,
 }
 
 impl ValidatedTrainRunV2 {
@@ -2634,6 +2670,36 @@ fn classify_catalog_profile_from_identity_v1(
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_EQUIPMENT_SEARCH_V1,
             FROZEN_RUNTIME_CATALOG_SHA256_FDN_EQUIPMENT_SEARCH_V1,
             NativeRunCatalogProfileV1::FdnEquipmentSearch,
+        ),
+        (
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_TOKENS_AURAS_V1,
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_TOKENS_AURAS_V1,
+            NativeRunCatalogProfileV1::FdnTokensAuras,
+        ),
+        (
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_REMOVAL_TRICKS_V1,
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_REMOVAL_TRICKS_V1,
+            NativeRunCatalogProfileV1::FdnRemovalTricks,
+        ),
+        (
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_COUNTERS_THREATS_V1,
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_COUNTERS_THREATS_V1,
+            NativeRunCatalogProfileV1::FdnCountersThreats,
+        ),
+        (
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_LIBRARY_SEARCH_V1,
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_LIBRARY_SEARCH_V1,
+            NativeRunCatalogProfileV1::FdnLibrarySearch,
+        ),
+        (
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_SIMPLE_TRIGGERS_V1,
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_SIMPLE_TRIGGERS_V1,
+            NativeRunCatalogProfileV1::FdnSimpleTriggers,
+        ),
+        (
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_ACTIVATED_COMBAT_V1,
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_ACTIVATED_COMBAT_V1,
+            NativeRunCatalogProfileV1::FdnActivatedCombat,
         ),
         (
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_CELESTIAL_ARMOR_V1,
@@ -5396,6 +5462,38 @@ pub(crate) fn test_fixture_bytes_fdn_triggers_tricks_v1() -> Vec<u8> {
     tests::fixture_bytes_fdn_triggers_tricks()
 }
 
+#[cfg(all(test, feature = "limited-fdn-fixtures"))]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn test_fixture_bytes_fdn_equipment_search_v1() -> Vec<u8> {
+    tests::fixture_bytes_fdn_equipment_search()
+}
+
+#[cfg(all(test, feature = "limited-fdn-fixtures"))]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn test_fixture_bytes_fdn_tokens_auras_v1() -> Vec<u8> {
+    tests::fixture_bytes_fdn_tokens_auras()
+}
+#[cfg(all(test, feature = "limited-fdn-fixtures"))]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn test_fixture_bytes_fdn_removal_tricks_v1() -> Vec<u8> {
+    tests::fixture_bytes_fdn_removal_tricks()
+}
+#[cfg(all(test, feature = "limited-fdn-fixtures"))]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn test_fixture_bytes_fdn_counters_threats_v1() -> Vec<u8> {
+    tests::fixture_bytes_fdn_counters_threats()
+}
+#[cfg(all(test, feature = "limited-fdn-fixtures"))]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn test_fixture_bytes_fdn_library_search_v1() -> Vec<u8> {
+    tests::fixture_bytes_fdn_library_search()
+}
+
+#[cfg(all(test, feature = "limited-fdn-fixtures"))]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn test_fixture_bytes_fdn_simple_triggers_v1() -> Vec<u8> {
+    tests::fixture_bytes_fdn_simple_triggers()
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6000,23 +6098,23 @@ mod tests {
     }
 
     #[cfg(feature = "limited-fdn-fixtures")]
-    pub(super) fn fixture_bytes_fdn_gainlands_lifegain() -> Vec<u8> {
-        let mut record = fixture_record();
-        record.environment.card_db_hash_u64_hex =
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_GAINLANDS_LIFEGAIN_V1.to_owned();
-        record.environment.runtime_catalog_sha256 =
-            FROZEN_RUNTIME_CATALOG_SHA256_FDN_GAINLANDS_LIFEGAIN_V1.to_owned();
-        refresh_derived(&mut record);
-        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
-    }
-
-    #[cfg(feature = "limited-fdn-fixtures")]
     pub(super) fn fixture_bytes_fdn_keyword_creatures() -> Vec<u8> {
         let mut record = fixture_record();
         record.environment.card_db_hash_u64_hex =
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_KEYWORD_CREATURES_V1.to_owned();
         record.environment.runtime_catalog_sha256 =
             FROZEN_RUNTIME_CATALOG_SHA256_FDN_KEYWORD_CREATURES_V1.to_owned();
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(super) fn fixture_bytes_fdn_gainlands_lifegain() -> Vec<u8> {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_GAINLANDS_LIFEGAIN_V1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_GAINLANDS_LIFEGAIN_V1.to_owned();
         refresh_derived(&mut record);
         to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
     }
@@ -6039,6 +6137,72 @@ mod tests {
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_TRIGGERS_TRICKS_V1.to_owned();
         record.environment.runtime_catalog_sha256 =
             FROZEN_RUNTIME_CATALOG_SHA256_FDN_TRIGGERS_TRICKS_V1.to_owned();
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(super) fn fixture_bytes_fdn_equipment_search() -> Vec<u8> {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_EQUIPMENT_SEARCH_V1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_EQUIPMENT_SEARCH_V1.to_owned();
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(super) fn fixture_bytes_fdn_tokens_auras() -> Vec<u8> {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_TOKENS_AURAS_V1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_TOKENS_AURAS_V1.to_owned();
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(super) fn fixture_bytes_fdn_removal_tricks() -> Vec<u8> {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_REMOVAL_TRICKS_V1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_REMOVAL_TRICKS_V1.to_owned();
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(super) fn fixture_bytes_fdn_counters_threats() -> Vec<u8> {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_COUNTERS_THREATS_V1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_COUNTERS_THREATS_V1.to_owned();
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(super) fn fixture_bytes_fdn_library_search() -> Vec<u8> {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_LIBRARY_SEARCH_V1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_LIBRARY_SEARCH_V1.to_owned();
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(super) fn fixture_bytes_fdn_simple_triggers() -> Vec<u8> {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_SIMPLE_TRIGGERS_V1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_SIMPLE_TRIGGERS_V1.to_owned();
         refresh_derived(&mut record);
         to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
     }
@@ -7392,20 +7556,20 @@ mod tests {
     /// the frozen literals were typed wrong when this successor landed.
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn fdn_equipment_search_frozen_literal_matches_the_live_build_constant() {
+    fn fdn_activated_combat_frozen_literal_matches_the_live_build_constant() {
         use crate::card_def::KERNEL_CARDDB_HASH;
         use crate::runtime_decks::RUNTIME_DECK_CATALOG_FILE_SHA256;
         assert_eq!(
             format!("{KERNEL_CARDDB_HASH:016x}"),
             if cfg!(feature = "limited-fdn-fixtures") {
-                FROZEN_CARD_DB_HASH_U64_HEX_FDN_EQUIPMENT_SEARCH_V1
+                FROZEN_CARD_DB_HASH_U64_HEX_FDN_ACTIVATED_COMBAT_V1
             } else {
                 FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1
             }
         );
         assert_eq!(
             RUNTIME_DECK_CATALOG_FILE_SHA256,
-            FROZEN_RUNTIME_CATALOG_SHA256_FDN_EQUIPMENT_SEARCH_V1
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_ACTIVATED_COMBAT_V1
         );
     }
 
@@ -7678,6 +7842,36 @@ mod tests {
                 FROZEN_RUNTIME_CATALOG_SHA256_FDN_TRIGGERS_TRICKS_V1,
                 NativeRunCatalogProfileV1::FdnTriggersTricks,
             ),
+            (
+                FROZEN_CARD_DB_HASH_U64_HEX_FDN_EQUIPMENT_SEARCH_V1,
+                FROZEN_RUNTIME_CATALOG_SHA256_FDN_EQUIPMENT_SEARCH_V1,
+                NativeRunCatalogProfileV1::FdnEquipmentSearch,
+            ),
+            (
+                FROZEN_CARD_DB_HASH_U64_HEX_FDN_TOKENS_AURAS_V1,
+                FROZEN_RUNTIME_CATALOG_SHA256_FDN_TOKENS_AURAS_V1,
+                NativeRunCatalogProfileV1::FdnTokensAuras,
+            ),
+            (
+                FROZEN_CARD_DB_HASH_U64_HEX_FDN_REMOVAL_TRICKS_V1,
+                FROZEN_RUNTIME_CATALOG_SHA256_FDN_REMOVAL_TRICKS_V1,
+                NativeRunCatalogProfileV1::FdnRemovalTricks,
+            ),
+            (
+                FROZEN_CARD_DB_HASH_U64_HEX_FDN_COUNTERS_THREATS_V1,
+                FROZEN_RUNTIME_CATALOG_SHA256_FDN_COUNTERS_THREATS_V1,
+                NativeRunCatalogProfileV1::FdnCountersThreats,
+            ),
+            (
+                FROZEN_CARD_DB_HASH_U64_HEX_FDN_LIBRARY_SEARCH_V1,
+                FROZEN_RUNTIME_CATALOG_SHA256_FDN_LIBRARY_SEARCH_V1,
+                NativeRunCatalogProfileV1::FdnLibrarySearch,
+            ),
+            (
+                FROZEN_CARD_DB_HASH_U64_HEX_FDN_SIMPLE_TRIGGERS_V1,
+                FROZEN_RUNTIME_CATALOG_SHA256_FDN_SIMPLE_TRIGGERS_V1,
+                NativeRunCatalogProfileV1::FdnSimpleTriggers,
+            ),
         ] {
             let mut record = fixture_record();
             record.environment.card_db_hash_u64_hex = card_db.to_owned();
@@ -7696,22 +7890,22 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn fdn_equipment_search_fixture_decodes_with_its_own_profile_and_live_identity() {
+    fn fdn_activated_combat_fixture_decodes_with_its_own_profile_and_live_identity() {
         let validated = decode_train_run_v2(&fixture_bytes()).unwrap();
         assert_eq!(
             validated.catalog_profile_v1(),
-            NativeRunCatalogProfileV1::FdnEquipmentSearch
+            NativeRunCatalogProfileV1::FdnActivatedCombat
         );
         assert!(current_profile_matches_live_build_identity_v1(
             validated.record().environment()
         ));
         assert_ne!(
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_EQUIPMENT_SEARCH_V1,
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_ACTIVATED_COMBAT_V1,
             FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
         );
         assert_eq!(
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_EQUIPMENT_SEARCH_V1,
-            "a3ef5a41092d7924"
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_ACTIVATED_COMBAT_V1,
+            "949beb8c995c006c"
         );
     }
 
@@ -8021,7 +8215,7 @@ mod tests {
         assert_eq!(
             validated.catalog_profile_v1(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnEquipmentSearch
+                NativeRunCatalogProfileV1::FdnActivatedCombat
             } else {
                 NativeRunCatalogProfileV1::PauperMetaW1
             }

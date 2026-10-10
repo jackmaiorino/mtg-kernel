@@ -35,13 +35,22 @@ impl Scan<'_> {
             } => self.op(then) || otherwise.as_ref().is_some_and(|x| self.op(x)),
             MayExileFromPlayersGraveyardMatchingThen { then, .. }
             | MayPayManaThen { then, .. }
-            | LookAtTopMayRevealThen { then, .. } => self.op(then),
+            | LookAtTopMayRevealThen { then, .. }
+            | BindEntrantOutgrowsSourceThen { then } => self.op(then),
+            IfEntrantOutgrowsSourceThen {
+                entrant,
+                source,
+                then,
+            } => self.b(entrant) || self.b(source) || self.op(then),
             PutBoundObjectInOwnersLibrary { object, .. }
             | MoveBoundObject { object, .. }
             | PutPlusOnePlusOneCounterOnBoundObject { object }
             | DoublePlusOneCountersOnBoundObject { object }
+            | PutOilCounterOnBoundObject { object }
             | PutPlusOnePlusOneCounterOnTriggerEventObject { object }
-            | BoostBoundObjectUntilEndOfTurn { object, .. } => self.b(object),
+            | BoostBoundObjectUntilEndOfTurn { object, .. }
+            | WarpExileBoundObject { object } => self.b(object),
+            PutPlusOnePlusOneCounterOnTargetOtherThan { other_than } => self.raw(*other_than),
             PutBoundAuraOntoBattlefieldAttached { aura, host } => self.b(aura) || self.b(host),
             ResolveInitiativeTrigger { binding }
             | EnterUndercityRoom { binding, .. }
@@ -79,7 +88,11 @@ impl Scan<'_> {
             | PutObjectInOwnersLibraryTopOrBottom { .. }
             | SurveilOne { .. }
             | DestroyObject { .. }
+            | DestroyObjectThenCreateTokens { .. }
             | CounterUnlessPaysGeneric { .. }
+            | CounterUnlessCollectsEvidence { .. }
+            | CounterUnlessPaysLife { .. }
+            | CounterUnlessDiscardsCard { .. }
             | DamageEachCreatureWithoutSubtype { .. }
             | CounterTargetUnlessPaysGeneric { .. }
             | GainLifeDynamic { .. }
@@ -87,6 +100,10 @@ impl Scan<'_> {
             | AnimateSource
             | PumpTargetUntilEndOfTurnDynamic { .. }
             | LookTopSelectByTypeToHandBottomRest { .. }
+            | LookTopPickToHandBottomRest { .. }
+            | DrawCardsDynamic { .. }
+            | DiscardBasicLandOrCards { .. }
+            | LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. }
             | GainLifeEqualToPaidCostManaValue { .. }
             | MoveAllTargets { .. }
             | ExploreTarget { .. }
@@ -99,6 +116,7 @@ impl Scan<'_> {
             | ExilePlayersGraveyard { .. }
             | ExileOneFromPlayersGraveyard { .. }
             | ExileAllGraveyards
+            | DestroyAllCreatures
             | DamageAllTargets { .. }
             | ExileAllArtifactTargets
             | DealDamageByControlledCreatureCount { .. }
@@ -108,6 +126,7 @@ impl Scan<'_> {
             | BindPlusOnePlusOneCounterToTriggerSource
             | BindPlusOnePlusOneCounterToTriggerEventObject
             | BindDoublePlusOneCountersToTriggerSource
+            | BindOilCounterToTriggerSource
             | BindTemporaryBoostToTriggerSource { .. }
             | BoostControlledCreaturesUntilEndOfTurn { .. }
             | GainLifeByAttackingSubtypeCount { .. }
@@ -116,6 +135,21 @@ impl Scan<'_> {
             | PutSourceOntoBattlefieldAttachedToTarget { .. }
             | TapAttachedCreatureAndDamageControllerByPower
             | BoostAttachedCreatureUntilEndOfTurn { .. }
+            | BindWarpExileToTriggerSource
+            | BindIncubateToTriggerSpell
+            | BindDamageOpponentEqualToSourceLastPower
+            | PumpOtherAttackingCreaturesUntilEndOfTurn { .. }
+            | RevealTopCardToHandLoseLifeEqualToManaValue
+            | BindConvokedCreatureCountToLookTop { .. }
+            | LookTopTakeCreaturesManaValueAtMostThenShuffle { .. }
+            | Incubate { .. }
+            | BindPlusOneCounterOnAnotherTargetToTriggerTarget
+            | ReturnSourceFromGraveyardUnearthed
+            | ExileGraveyardTargetsDrainPerCreature { .. }
+            | RemoveTimeCounterFromSource
+            | ReturnSourceAsEnduringEnchantment
+            | SearchLibraryCardsToDestination { .. }
+            | CreateTokensDynamic { .. }
             | BackupTarget { .. }
             | PutSourceOntoBattlefieldTappedAndAttacking
             | UntapUpToLands { .. }
@@ -123,6 +157,11 @@ impl Scan<'_> {
             | SearchLibraryToBattlefieldTapped { .. }
             | RevealTargetHandChooseNoncreatureNonlandDiscard { .. }
             | ShuffleTriggerSourceIntoOwnersLibrary
+            | LoseHalfLifeRoundedUp { .. }
+            | CreateTokenTappedAndAttacking { .. }
+            | AddPlusOneCounterToAbilitySource
+            | ReturnTargetCreatureCardRestrictedWhileSourceControlled { .. }
+            | ReturnSourceFromGraveyardTappedWithStunCounters { .. }
             | MaterializeStormCopies
             | CreateStormCopies { .. }
             | DamageCannotBePreventedThisTurn
@@ -215,6 +254,11 @@ impl Scan<'_> {
                 original_prefix,
                 progress,
                 ..
+            }
+            | LookTopPickToHandBottomRest {
+                original_prefix,
+                progress,
+                ..
             } => {
                 self.bs(original_prefix)
                     || match progress {
@@ -228,6 +272,11 @@ impl Scan<'_> {
                     }
             }
             SearchLibraryToHandMany {
+                original_library,
+                selected,
+                ..
+            }
+            | SearchLibraryCardsToDestination {
                 original_library,
                 selected,
                 ..
@@ -283,6 +332,16 @@ impl Scan<'_> {
                 selected,
                 ..
             } => self.bs(original_hand) || self.bs(eligible) || self.b(selected),
+            DiscardBasicLandInstead {
+                original_hand,
+                eligible,
+                selected,
+                ..
+            } => {
+                self.bs(original_hand)
+                    || self.bs(eligible)
+                    || selected.as_ref().is_some_and(|b| self.b(b))
+            }
             BeginSearchLibraryToBattlefieldTapped {
                 expected_remaining_frames,
                 ..
@@ -365,10 +424,21 @@ impl Scan<'_> {
             | SearchLibraryToHandMany {
                 original_library, ..
             }
+            | SearchLibraryCardsToDestination {
+                original_library, ..
+            }
             | SearchLibraryToBattlefieldTapped {
                 original_library, ..
             } => self.bs(original_library),
+            LookTopTakeCreatureManaValueAtMostToHand {
+                original_prefix, ..
+            } => self.bs(original_prefix),
             LookTopSelectByTypeToHandBottomRest {
+                original_prefix,
+                stage,
+                ..
+            }
+            | LookTopPickToHandBottomRest {
                 original_prefix,
                 stage,
                 ..
@@ -397,6 +467,11 @@ impl Scan<'_> {
                 ..
             } => self.bs(original_candidates),
             DuressDiscard {
+                original_hand,
+                eligible,
+                ..
+            }
+            | DiscardBasicLandInstead {
                 original_hand,
                 eligible,
                 ..
@@ -584,13 +659,16 @@ pub(super) fn conflicts(
             | Sacrificed { object, .. }
             | Transformed { object, .. } => s.raw(*object),
             PlusOneCountersAdded { object, .. }
-            | PrintedAbilitiesRemovedBeforeZoneChange { object, .. } => s.raw(*object),
+            | PrintedAbilitiesRemovedBeforeZoneChange { object, .. }
+            | WasCreatureBeforeLeavingBattlefield { object, .. }
+            | PowerBeforeLeavingBattlefield { object, .. } => s.raw(*object),
             Draw { object, .. } => object.is_some_and(|id| s.raw(id)),
             SpellCast { spell, .. } => s.raw(*spell),
             Targeted { target, .. } => s.raw(*target),
             CombatDamageToPlayer { source, .. }
             | SagaChapter { source, .. }
-            | DeclaredAttacker { source, .. } => s.raw(*source),
+            | DeclaredAttacker { source, .. }
+            | ControllerAttacked { source, .. } => s.raw(*source),
             OptionalAdditionalCostPaid {
                 source,
                 paid_cost_refs,
@@ -602,6 +680,8 @@ pub(super) fn conflicts(
             | LifeGain { .. }
             | ManaAdded { .. }
             | UpkeepBegan { .. }
+            | CrimeCommitted { .. }
+            | BeginningOfCombat { .. }
             | BeginningEndStep { .. } => false,
         }
     })

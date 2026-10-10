@@ -1,0 +1,3735 @@
+{
+  "schema": "training-throughput-audit-combined/v1",
+  "inputs": [
+    {
+      "path": "desktop-profile.json",
+      "sha256": "818498be407e6ab3ad9f911fdb0571895f1af8185bdbaecdc627974564fca2de"
+    },
+    {
+      "path": "haley-block-stage-summary.json",
+      "sha256": "6718df86c2f57ab311b9f6ca4e32d3fff13383a74f92e36f73337a7998076d3e"
+    },
+    {
+      "path": "haley-update-collection-breakdown.json",
+      "sha256": "c996cb45a997b5851e738f07a4dadcd90b564e7b1ab6a7fe6e7ac9e8b4c7c28e"
+    },
+    {
+      "path": "local-r1-stages.json",
+      "sha256": "77208c2b94321db931030048e899c7863b4b3f2edb2e2677b42e3526c869bafd"
+    },
+    {
+      "path": "context.json",
+      "sha256": "f229bab0ba91190c67e08fb5d9bcaf0d83db323f916c6d156befff248db542fa"
+    }
+  ],
+  "accounting": "Exclusive process-wall attribution; not fleet calendar wall, CPU service time or physical I/O bytes.",
+  "summary": {
+    "all": {
+      "blocks": 120,
+      "updates": 19440,
+      "games": 194400,
+      "dispatch_process_seconds": 117318.72339360004,
+      "execution_process_seconds": 86525.70999310006,
+      "scheduler_seconds": {
+        "iteration_wall_seconds": 84416.7415611,
+        "collection_execution_seconds": 18386.2090757,
+        "update_execution_seconds": 47573.6660041,
+        "collection_validation_seconds": 11429.666759499998,
+        "update_validation_seconds": 6033.9695121,
+        "scheduler_other_seconds": 993.2302097000058
+      },
+      "update_seconds": {
+        "update_elapsed_seconds": 46965.155573000004,
+        "input_read_seconds": 6153.7736332,
+        "behavior_replay_seconds": 1937.9753851000005,
+        "learner_update_seconds": 32551.27671910001,
+        "checkpoint_io_seconds": 6322.034126100001,
+        "policy_substeps": 17047431.0,
+        "physical_decisions": 15622132.0,
+        "update_other_seconds": 0.0957095000006234
+      },
+      "exclusive_seconds": {
+        "GAE learner": 32551.27671910001,
+        "Post-execution validation/storage": 21733.02648300001,
+        "Scheduler validation": 17463.6362716,
+        "Collection": 18386.2090757,
+        "Recovery archive/readback": 9059.986917499979,
+        "Checkpoint and readback": 6322.034126100001,
+        "Input reading/setup": 6153.7736332,
+        "Outside iteration timers": 2108.9684320000524,
+        "Behavior replay": 1937.9753851000005,
+        "Other boundaries": 1601.8363502999855
+      },
+      "exclusive_percent": {
+        "GAE learner": 27.746020223806614,
+        "Post-execution validation/storage": 18.524772392967915,
+        "Scheduler validation": 14.88563442086745,
+        "Collection": 15.672015978229613,
+        "Recovery archive/readback": 7.722541343297824,
+        "Checkpoint and readback": 5.38876825729667,
+        "Input reading/setup": 5.245346569749412,
+        "Outside iteration timers": 1.7976401131851223,
+        "Behavior replay": 1.6518892543674923,
+        "Other boundaries": 1.3653714462318882
+      },
+      "component_2x_speedup": {
+        "GAE learner": 1.1610762216342203,
+        "Post-execution validation/storage": 1.102078794099003,
+        "Scheduler validation": 1.080413177952438,
+        "Collection": 1.08502244551418,
+        "Recovery archive/readback": 1.04016352929381,
+        "Checkpoint and readback": 1.027689913932723,
+        "Input reading/setup": 1.0269331000690465,
+        "Outside iteration timers": 1.0090697210376893,
+        "Behavior replay": 1.0083282328637146,
+        "Other boundaries": 1.0068737835702313
+      },
+      "elimination_ceiling_speedup": {
+        "GAE learner": 1.3840068091716176,
+        "Post-execution validation/storage": 1.2273669302565906,
+        "Scheduler validation": 1.174889800559319,
+        "Collection": 1.185845969876188,
+        "Recovery archive/readback": 1.0836882750751493,
+        "Checkpoint and readback": 1.056956961219483,
+        "Input reading/setup": 1.0553571395162196,
+        "Outside iteration timers": 1.0183054675596088,
+        "Behavior replay": 1.0167963496384789,
+        "Other boundaries": 1.0138427189948567
+      },
+      "native_logical_bytes": 1124157606027,
+      "recovery_bytes": 334429604094
+    },
+    "desktop": {
+      "blocks": 57,
+      "updates": 9234,
+      "games": 92340,
+      "dispatch_process_seconds": 40484.9273936,
+      "execution_process_seconds": 30714.665993100003,
+      "scheduler_seconds": {
+        "iteration_wall_seconds": 29636.973534200006,
+        "collection_execution_seconds": 6094.4108849,
+        "update_execution_seconds": 16572.142267500003,
+        "collection_validation_seconds": 4225.16641,
+        "update_validation_seconds": 2325.4082062000007,
+        "scheduler_other_seconds": 419.8457656000016
+      },
+      "update_seconds": {
+        "update_elapsed_seconds": 16332.609170399994,
+        "input_read_seconds": 2309.8058132,
+        "behavior_replay_seconds": 415.7460678,
+        "learner_update_seconds": 10872.190820899998,
+        "checkpoint_io_seconds": 2734.8352044,
+        "policy_substeps": 8088781.0,
+        "physical_decisions": 7429253.0,
+        "update_other_seconds": 0.031264100001237694
+      },
+      "exclusive_seconds": {
+        "GAE learner": 10872.190820899998,
+        "Post-execution validation/storage": 6528.836482999997,
+        "Scheduler validation": 6550.5746162000005,
+        "Collection": 6094.4108849,
+        "Recovery archive/readback": 3241.4249175000027,
+        "Checkpoint and readback": 2734.8352044,
+        "Input reading/setup": 2309.8058132,
+        "Outside iteration timers": 1077.6924588999973,
+        "Behavior replay": 415.7460678,
+        "Other boundaries": 659.4101268000086
+      },
+      "exclusive_percent": {
+        "GAE learner": 26.85491001428524,
+        "Post-execution validation/storage": 16.126585629080562,
+        "Scheduler validation": 16.18028001511382,
+        "Collection": 15.053530479749423,
+        "Recovery archive/readback": 8.006498038112866,
+        "Checkpoint and readback": 6.755193550951835,
+        "Input reading/setup": 5.705347550074011,
+        "Outside iteration timers": 2.6619597175574103,
+        "Behavior replay": 1.0269156808855302,
+        "Other boundaries": 1.628779324189304
+      },
+      "component_2x_speedup": {
+        "GAE learner": 1.1551006154231742,
+        "Post-execution validation/storage": 1.0877048249974253,
+        "Scheduler validation": 1.0880225473983105,
+        "Collection": 1.0813939866967892,
+        "Recovery archive/readback": 1.041701921972871,
+        "Checkpoint and readback": 1.0349566628727638,
+        "Input reading/setup": 1.02936440853175,
+        "Outside iteration timers": 1.0134893389725947,
+        "Behavior replay": 1.005161078365949,
+        "Other boundaries": 1.008210764236064
+      },
+      "elimination_ceiling_speedup": {
+        "GAE learner": 1.3671457649382892,
+        "Post-execution validation/storage": 1.1922729121025502,
+        "Scheduler validation": 1.193036674639707,
+        "Collection": 1.1772119614242564,
+        "Recovery archive/readback": 1.0870332998240457,
+        "Checkpoint and readback": 1.0724457887597534,
+        "Input reading/setup": 1.0605055260488263,
+        "Outside iteration timers": 1.0273475787044128,
+        "Behavior replay": 1.0103757065665904,
+        "Other boundaries": 1.016557478020498
+      },
+      "native_logical_bytes": 531893713703,
+      "recovery_bytes": 184601725162
+    },
+    "computehost": {
+      "blocks": 63,
+      "updates": 10206,
+      "games": 102060,
+      "dispatch_process_seconds": 76833.79600000003,
+      "execution_process_seconds": 55811.04400000005,
+      "scheduler_seconds": {
+        "collection_execution_seconds": 12291.7981908,
+        "collection_validation_seconds": 7204.500349499998,
+        "iteration_wall_seconds": 54779.76802690001,
+        "update_execution_seconds": 31001.523736599996,
+        "update_validation_seconds": 3708.5613058999998,
+        "scheduler_other_seconds": 573.3844441000042
+      },
+      "update_seconds": {
+        "input_read_seconds": 3843.9678199999985,
+        "behavior_replay_seconds": 1522.2293173000007,
+        "learner_update_seconds": 21679.0858982,
+        "checkpoint_io_seconds": 3587.1989216999996,
+        "update_elapsed_seconds": 30632.546402599997,
+        "physical_decisions": 8192879.0,
+        "policy_substeps": 8958650.0,
+        "update_other_seconds": 0.0644453999993857
+      },
+      "exclusive_seconds": {
+        "GAE learner": 21679.0858982,
+        "Post-execution validation/storage": 15204.190000000002,
+        "Scheduler validation": 10913.061655399997,
+        "Collection": 12291.7981908,
+        "Recovery archive/readback": 5818.561999999976,
+        "Checkpoint and readback": 3587.1989216999996,
+        "Input reading/setup": 3843.9678199999985,
+        "Outside iteration timers": 1031.2759731000406,
+        "Behavior replay": 1522.2293173000007,
+        "Other boundaries": 942.4262235000206
+      },
+      "exclusive_percent": {
+        "GAE learner": 28.21556011393735,
+        "Post-execution validation/storage": 19.7884144628231,
+        "Scheduler validation": 14.203465432581247,
+        "Collection": 15.997905649227581,
+        "Recovery archive/readback": 7.572920124888759,
+        "Checkpoint and readback": 4.6687774240647935,
+        "Input reading/setup": 5.002964867179017,
+        "Outside iteration timers": 1.3422166114245353,
+        "Behavior replay": 1.9811975934392205,
+        "Other boundaries": 1.226577720434404
+      },
+      "component_2x_speedup": {
+        "GAE learner": 1.1642498012779943,
+        "Post-execution validation/storage": 1.1098065610145849,
+        "Scheduler validation": 1.0764463420464245,
+        "Collection": 1.0869441497700019,
+        "Recovery archive/readback": 1.0393547526148799,
+        "Checkpoint and readback": 1.0239018491897771,
+        "Input reading/setup": 1.0256566201828212,
+        "Outside iteration timers": 1.0067564259931319,
+        "Behavior replay": 1.0100050983510724,
+        "Other boundaries": 1.0061707330203797
+      },
+      "elimination_ceiling_speedup": {
+        "GAE learner": 1.393059556621484,
+        "Post-execution validation/storage": 1.2467026967525965,
+        "Scheduler validation": 1.1655482415950051,
+        "Collection": 1.1904465093742091,
+        "Recovery archive/readback": 1.0819339974293398,
+        "Checkpoint and readback": 1.0489742740931065,
+        "Input reading/setup": 1.0526644316865688,
+        "Outside iteration timers": 1.01360477161886,
+        "Behavior replay": 1.0202124239920993,
+        "Other boundaries": 1.0124180947883201
+      },
+      "native_logical_bytes": 592263892324,
+      "recovery_bytes": 149827878932
+    }
+  },
+  "blocks": [
+    {
+      "run": "r1",
+      "block": 1,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1321.1410000000033,
+      "execution_seconds": 983.375,
+      "native_logical_bytes": 10042452361,
+      "recovery_bytes": 2471502364,
+      "scheduler": {
+        "collection_execution_seconds": 210.7278993999999,
+        "collection_validation_seconds": 154.35883550000003,
+        "iteration_wall_seconds": 978.0610183999997,
+        "update_execution_seconds": 544.3955673999999,
+        "update_validation_seconds": 59.451465099999986,
+        "scheduler_other_seconds": 9.127250999999887
+      },
+      "update": {
+        "input_read_seconds": 64.9407392,
+        "behavior_replay_seconds": 27.1372384,
+        "learner_update_seconds": 387.8331942,
+        "checkpoint_io_seconds": 57.5555608,
+        "update_elapsed_seconds": 537.4676463,
+        "physical_decisions": 140567,
+        "policy_substeps": 153755,
+        "update_other_seconds": 0.0009136999999554973
+      }
+    },
+    {
+      "run": "r1",
+      "block": 2,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1189.5470000000205,
+      "execution_seconds": 874.875,
+      "native_logical_bytes": 9075388733,
+      "recovery_bytes": 2291485695,
+      "scheduler": {
+        "collection_execution_seconds": 189.90536059999994,
+        "collection_validation_seconds": 126.25472720000002,
+        "iteration_wall_seconds": 868.7799174000004,
+        "update_execution_seconds": 484.3148386000001,
+        "update_validation_seconds": 59.16410289999998,
+        "scheduler_other_seconds": 9.140888100000325
+      },
+      "update": {
+        "input_read_seconds": 60.3041474,
+        "behavior_replay_seconds": 23.3563683,
+        "learner_update_seconds": 337.7586225,
+        "checkpoint_io_seconds": 57.060302,
+        "update_elapsed_seconds": 478.4803857,
+        "physical_decisions": 132839,
+        "policy_substeps": 143911,
+        "update_other_seconds": 0.0009455000000002656
+      }
+    },
+    {
+      "run": "r1",
+      "block": 3,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1178.1869999999763,
+      "execution_seconds": 865.6869999999763,
+      "native_logical_bytes": 9078402054,
+      "recovery_bytes": 2291935241,
+      "scheduler": {
+        "collection_execution_seconds": 188.61598469999998,
+        "collection_validation_seconds": 120.33351940000001,
+        "iteration_wall_seconds": 859.0746920999999,
+        "update_execution_seconds": 481.94302170000014,
+        "update_validation_seconds": 59.0122259,
+        "scheduler_other_seconds": 9.169940399999746
+      },
+      "update": {
+        "input_read_seconds": 60.3337151,
+        "behavior_replay_seconds": 23.0581999,
+        "learner_update_seconds": 335.8564362,
+        "checkpoint_io_seconds": 56.8968021,
+        "update_elapsed_seconds": 476.1460445,
+        "physical_decisions": 131251,
+        "policy_substeps": 142503,
+        "update_other_seconds": 0.0008912000000123044
+      }
+    },
+    {
+      "run": "r1",
+      "block": 4,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1218.75,
+      "execution_seconds": 897.1560000000172,
+      "native_logical_bytes": 9378270541,
+      "recovery_bytes": 2366453827,
+      "scheduler": {
+        "collection_execution_seconds": 193.49785700000004,
+        "collection_validation_seconds": 132.2360774,
+        "iteration_wall_seconds": 889.9620077000003,
+        "update_execution_seconds": 495.922603,
+        "update_validation_seconds": 59.063949099999995,
+        "scheduler_other_seconds": 9.241521200000307
+      },
+      "update": {
+        "input_read_seconds": 61.3618385,
+        "behavior_replay_seconds": 23.9669281,
+        "learner_update_seconds": 347.1664606,
+        "checkpoint_io_seconds": 57.0755456,
+        "update_elapsed_seconds": 489.5716904,
+        "physical_decisions": 132630,
+        "policy_substeps": 145065,
+        "update_other_seconds": 0.0009176000000366002
+      }
+    },
+    {
+      "run": "r1",
+      "block": 5,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1185.0630000000237,
+      "execution_seconds": 870.0320000000065,
+      "native_logical_bytes": 9061729082,
+      "recovery_bytes": 2286323270,
+      "scheduler": {
+        "collection_execution_seconds": 189.50031900000002,
+        "collection_validation_seconds": 124.52639420000006,
+        "iteration_wall_seconds": 862.3353436000001,
+        "update_execution_seconds": 479.6133052000003,
+        "update_validation_seconds": 59.433086299999985,
+        "scheduler_other_seconds": 9.262238899999716
+      },
+      "update": {
+        "input_read_seconds": 60.3318671,
+        "behavior_replay_seconds": 23.1580779,
+        "learner_update_seconds": 332.6157154,
+        "checkpoint_io_seconds": 57.4028367,
+        "update_elapsed_seconds": 473.5093796,
+        "physical_decisions": 130471,
+        "policy_substeps": 142479,
+        "update_other_seconds": 0.000882499999988795
+      }
+    },
+    {
+      "run": "r1",
+      "block": 6,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1165.4839999999967,
+      "execution_seconds": 852.2189999999828,
+      "native_logical_bytes": 8987780328,
+      "recovery_bytes": 2280035827,
+      "scheduler": {
+        "collection_execution_seconds": 187.30402419999993,
+        "collection_validation_seconds": 114.06558790000003,
+        "iteration_wall_seconds": 843.9775798,
+        "update_execution_seconds": 474.5241767999999,
+        "update_validation_seconds": 58.93608749999997,
+        "scheduler_other_seconds": 9.147703400000069
+      },
+      "update": {
+        "input_read_seconds": 59.6315342,
+        "behavior_replay_seconds": 22.7331745,
+        "learner_update_seconds": 329.2610044,
+        "checkpoint_io_seconds": 57.1204338,
+        "update_elapsed_seconds": 468.7470512,
+        "physical_decisions": 131569,
+        "policy_substeps": 142774,
+        "update_other_seconds": 0.0009043000000019674
+      }
+    },
+    {
+      "run": "r1",
+      "block": 7,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1173.7179999999935,
+      "execution_seconds": 857.9220000000205,
+      "native_logical_bytes": 9049167218,
+      "recovery_bytes": 2307843842,
+      "scheduler": {
+        "collection_execution_seconds": 188.81491979999984,
+        "collection_validation_seconds": 115.79623699999998,
+        "iteration_wall_seconds": 849.1919101999997,
+        "update_execution_seconds": 476.2386859999999,
+        "update_validation_seconds": 59.199628800000035,
+        "scheduler_other_seconds": 9.142438599999991
+      },
+      "update": {
+        "input_read_seconds": 60.0896975,
+        "behavior_replay_seconds": 22.6684761,
+        "learner_update_seconds": 330.5417983,
+        "checkpoint_io_seconds": 57.3437066,
+        "update_elapsed_seconds": 470.6445839,
+        "physical_decisions": 128520,
+        "policy_substeps": 139769,
+        "update_other_seconds": 0.0009054000000219276
+      }
+    },
+    {
+      "run": "r1",
+      "block": 8,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1132.594000000041,
+      "execution_seconds": 824.579000000027,
+      "native_logical_bytes": 8744473137,
+      "recovery_bytes": 2240934175,
+      "scheduler": {
+        "collection_execution_seconds": 183.45797040000002,
+        "collection_validation_seconds": 106.00020289999998,
+        "iteration_wall_seconds": 815.2002837999996,
+        "update_execution_seconds": 457.5667546000002,
+        "update_validation_seconds": 58.90667220000002,
+        "scheduler_other_seconds": 9.268683699999428
+      },
+      "update": {
+        "input_read_seconds": 58.6447615,
+        "behavior_replay_seconds": 21.4883496,
+        "learner_update_seconds": 314.4620476,
+        "checkpoint_io_seconds": 57.1798555,
+        "update_elapsed_seconds": 451.7758888,
+        "physical_decisions": 125740,
+        "policy_substeps": 136644,
+        "update_other_seconds": 0.000874600000031478
+      }
+    },
+    {
+      "run": "r1",
+      "block": 9,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1190.875,
+      "execution_seconds": 870.109999999986,
+      "native_logical_bytes": 9178402780,
+      "recovery_bytes": 2339428385,
+      "scheduler": {
+        "collection_execution_seconds": 189.31259859999994,
+        "collection_validation_seconds": 122.38630599999996,
+        "iteration_wall_seconds": 860.2241184999997,
+        "update_execution_seconds": 480.0233763000003,
+        "update_validation_seconds": 59.22574830000002,
+        "scheduler_other_seconds": 9.276089299999512
+      },
+      "update": {
+        "input_read_seconds": 60.5889562,
+        "behavior_replay_seconds": 23.2347889,
+        "learner_update_seconds": 333.3136277,
+        "checkpoint_io_seconds": 57.1604995,
+        "update_elapsed_seconds": 474.2987572,
+        "physical_decisions": 128453,
+        "policy_substeps": 140220,
+        "update_other_seconds": 0.0008849000000168417
+      }
+    },
+    {
+      "run": "r1",
+      "block": 10,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1153.625,
+      "execution_seconds": 840.5160000000033,
+      "native_logical_bytes": 8857179095,
+      "recovery_bytes": 2264204235,
+      "scheduler": {
+        "collection_execution_seconds": 186.97630510000002,
+        "collection_validation_seconds": 112.56858729999999,
+        "iteration_wall_seconds": 830.1650759999998,
+        "update_execution_seconds": 462.4542319000001,
+        "update_validation_seconds": 58.927257,
+        "scheduler_other_seconds": 9.238694699999655
+      },
+      "update": {
+        "input_read_seconds": 59.1665626,
+        "behavior_replay_seconds": 22.1946338,
+        "learner_update_seconds": 318.3677779,
+        "checkpoint_io_seconds": 57.3967714,
+        "update_elapsed_seconds": 457.1266469,
+        "physical_decisions": 126113,
+        "policy_substeps": 137222,
+        "update_other_seconds": 0.0009011999999870568
+      }
+    },
+    {
+      "run": "r1",
+      "block": 11,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1221.155999999959,
+      "execution_seconds": 896.0939999999828,
+      "native_logical_bytes": 9287756073,
+      "recovery_bytes": 2345019764,
+      "scheduler": {
+        "collection_execution_seconds": 193.2540319,
+        "collection_validation_seconds": 130.4320885,
+        "iteration_wall_seconds": 885.1639114999999,
+        "update_execution_seconds": 493.26874729999986,
+        "update_validation_seconds": 59.00205899999999,
+        "scheduler_other_seconds": 9.2069848000001
+      },
+      "update": {
+        "input_read_seconds": 61.4572383,
+        "behavior_replay_seconds": 23.9261963,
+        "learner_update_seconds": 344.440196,
+        "checkpoint_io_seconds": 57.3337752,
+        "update_elapsed_seconds": 487.1583309,
+        "physical_decisions": 130661,
+        "policy_substeps": 142518,
+        "update_other_seconds": 0.0009251000000176646
+      }
+    },
+    {
+      "run": "r1",
+      "block": 12,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1186.3119999999763,
+      "execution_seconds": 866.4529999999795,
+      "native_logical_bytes": 9160047288,
+      "recovery_bytes": 2348448839,
+      "scheduler": {
+        "collection_execution_seconds": 190.3255007999999,
+        "collection_validation_seconds": 118.20764500000003,
+        "iteration_wall_seconds": 855.0193042000003,
+        "update_execution_seconds": 478.1505612000003,
+        "update_validation_seconds": 59.13568290000001,
+        "scheduler_other_seconds": 9.199914300000046
+      },
+      "update": {
+        "input_read_seconds": 60.28343,
+        "behavior_replay_seconds": 22.8073233,
+        "learner_update_seconds": 332.3419935,
+        "checkpoint_io_seconds": 57.1597817,
+        "update_elapsed_seconds": 472.5934282,
+        "physical_decisions": 126786,
+        "policy_substeps": 138462,
+        "update_other_seconds": 0.0008996999999908439
+      }
+    },
+    {
+      "run": "r1",
+      "block": 13,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1192.5779999999795,
+      "execution_seconds": 870.780999999959,
+      "native_logical_bytes": 9101708762,
+      "recovery_bytes": 2325834023,
+      "scheduler": {
+        "collection_execution_seconds": 191.64775080000004,
+        "collection_validation_seconds": 119.45910399999998,
+        "iteration_wall_seconds": 858.7131944000008,
+        "update_execution_seconds": 479.04528089999997,
+        "update_validation_seconds": 59.19391320000002,
+        "scheduler_other_seconds": 9.367145500000788
+      },
+      "update": {
+        "input_read_seconds": 60.1976367,
+        "behavior_replay_seconds": 22.9131656,
+        "learner_update_seconds": 332.8547393,
+        "checkpoint_io_seconds": 57.556477,
+        "update_elapsed_seconds": 473.5229741,
+        "physical_decisions": 126903,
+        "policy_substeps": 139686,
+        "update_other_seconds": 0.000955499999975018
+      }
+    },
+    {
+      "run": "r1",
+      "block": 14,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1187.9370000000345,
+      "execution_seconds": 867.5620000000345,
+      "native_logical_bytes": 9073128554,
+      "recovery_bytes": 2314461283,
+      "scheduler": {
+        "collection_execution_seconds": 188.7414859000001,
+        "collection_validation_seconds": 116.89647260000002,
+        "iteration_wall_seconds": 851.4508722000004,
+        "update_execution_seconds": 477.3276848999997,
+        "update_validation_seconds": 59.200210399999975,
+        "scheduler_other_seconds": 9.285018400000581
+      },
+      "update": {
+        "input_read_seconds": 60.2547515,
+        "behavior_replay_seconds": 22.7404087,
+        "learner_update_seconds": 331.0755094,
+        "checkpoint_io_seconds": 57.2892144,
+        "update_elapsed_seconds": 471.3607891,
+        "physical_decisions": 126500,
+        "policy_substeps": 138361,
+        "update_other_seconds": 0.0009051000000113163
+      }
+    },
+    {
+      "run": "r1",
+      "block": 15,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1198.3280000000377,
+      "execution_seconds": 875.2179999999935,
+      "native_logical_bytes": 9179541999,
+      "recovery_bytes": 2345275975,
+      "scheduler": {
+        "collection_execution_seconds": 189.41652300000004,
+        "collection_validation_seconds": 120.29512900000006,
+        "iteration_wall_seconds": 861.3649214000002,
+        "update_execution_seconds": 483.1981074000001,
+        "update_validation_seconds": 59.11964780000002,
+        "scheduler_other_seconds": 9.335514200000034
+      },
+      "update": {
+        "input_read_seconds": 60.8732289,
+        "behavior_replay_seconds": 23.0728598,
+        "learner_update_seconds": 335.8835192,
+        "checkpoint_io_seconds": 57.5757808,
+        "update_elapsed_seconds": 477.4063011,
+        "physical_decisions": 127833,
+        "policy_substeps": 140023,
+        "update_other_seconds": 0.0009124000000042543
+      }
+    },
+    {
+      "run": "r1",
+      "block": 16,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1180.4070000000065,
+      "execution_seconds": 860.7189999999828,
+      "native_logical_bytes": 9071071652,
+      "recovery_bytes": 2322686587,
+      "scheduler": {
+        "collection_execution_seconds": 188.1687722000001,
+        "collection_validation_seconds": 117.76168410000004,
+        "iteration_wall_seconds": 846.7746607000006,
+        "update_execution_seconds": 472.5066596999998,
+        "update_validation_seconds": 59.030020700000016,
+        "scheduler_other_seconds": 9.307524000000626
+      },
+      "update": {
+        "input_read_seconds": 60.065083,
+        "behavior_replay_seconds": 22.5222417,
+        "learner_update_seconds": 326.9331901,
+        "checkpoint_io_seconds": 57.3794029,
+        "update_elapsed_seconds": 466.9009374,
+        "physical_decisions": 124324,
+        "policy_substeps": 136031,
+        "update_other_seconds": 0.0010196999999720902
+      }
+    },
+    {
+      "run": "r1",
+      "block": 17,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1138.984999999986,
+      "execution_seconds": 820.8910000000033,
+      "native_logical_bytes": 8711217516,
+      "recovery_bytes": 2244757475,
+      "scheduler": {
+        "collection_execution_seconds": 182.2550868,
+        "collection_validation_seconds": 104.310602,
+        "iteration_wall_seconds": 804.2202114999999,
+        "update_execution_seconds": 449.4198365000003,
+        "update_validation_seconds": 58.96733320000003,
+        "scheduler_other_seconds": 9.267352999999616
+      },
+      "update": {
+        "input_read_seconds": 58.3615639,
+        "behavior_replay_seconds": 21.311631,
+        "learner_update_seconds": 306.7049501,
+        "checkpoint_io_seconds": 57.3055339,
+        "update_elapsed_seconds": 443.6845726,
+        "physical_decisions": 121045,
+        "policy_substeps": 132071,
+        "update_other_seconds": 0.0008937000000059925
+      }
+    },
+    {
+      "run": "r1",
+      "block": 18,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1186.8439999999828,
+      "execution_seconds": 864.5779999999795,
+      "native_logical_bytes": 9051813521,
+      "recovery_bytes": 2313983022,
+      "scheduler": {
+        "collection_execution_seconds": 187.10549189999998,
+        "collection_validation_seconds": 117.8469934,
+        "iteration_wall_seconds": 849.5721315000004,
+        "update_execution_seconds": 476.3891224999998,
+        "update_validation_seconds": 58.9579845,
+        "scheduler_other_seconds": 9.272539200000665
+      },
+      "update": {
+        "input_read_seconds": 60.011514,
+        "behavior_replay_seconds": 22.7559489,
+        "learner_update_seconds": 330.7107762,
+        "checkpoint_io_seconds": 57.3008856,
+        "update_elapsed_seconds": 470.7800481,
+        "physical_decisions": 127722,
+        "policy_substeps": 138932,
+        "update_other_seconds": 0.0009233999999764819
+      }
+    },
+    {
+      "run": "r1",
+      "block": 19,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1159.5779999999795,
+      "execution_seconds": 842.0160000000033,
+      "native_logical_bytes": 8875241939,
+      "recovery_bytes": 2282379700,
+      "scheduler": {
+        "collection_execution_seconds": 183.11146860000002,
+        "collection_validation_seconds": 112.46112639999997,
+        "iteration_wall_seconds": 826.5505831000004,
+        "update_execution_seconds": 462.4844267999999,
+        "update_validation_seconds": 59.12314760000001,
+        "scheduler_other_seconds": 9.37041370000054
+      },
+      "update": {
+        "input_read_seconds": 59.4158572,
+        "behavior_replay_seconds": 22.1564362,
+        "learner_update_seconds": 317.9873389,
+        "checkpoint_io_seconds": 57.2875657,
+        "update_elapsed_seconds": 456.8480643,
+        "physical_decisions": 123301,
+        "policy_substeps": 134439,
+        "update_other_seconds": 0.0008662999999842214
+      }
+    },
+    {
+      "run": "r1",
+      "block": 20,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1131.3279999999795,
+      "execution_seconds": 819.6410000000033,
+      "native_logical_bytes": 8650551028,
+      "recovery_bytes": 2226174771,
+      "scheduler": {
+        "collection_execution_seconds": 183.57286689999995,
+        "collection_validation_seconds": 104.83516409999999,
+        "iteration_wall_seconds": 803.5905459000002,
+        "update_execution_seconds": 447.23843329999994,
+        "update_validation_seconds": 58.717748599999986,
+        "scheduler_other_seconds": 9.226333000000295
+      },
+      "update": {
+        "input_read_seconds": 58.270663,
+        "behavior_replay_seconds": 21.2260471,
+        "learner_update_seconds": 305.1370563,
+        "checkpoint_io_seconds": 57.2635481,
+        "update_elapsed_seconds": 441.8982071,
+        "physical_decisions": 121686,
+        "policy_substeps": 132030,
+        "update_other_seconds": 0.0008925999999860323
+      }
+    },
+    {
+      "run": "r2",
+      "block": 1,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1418.3910000000033,
+      "execution_seconds": 1061.0619999999763,
+      "native_logical_bytes": 10668586020,
+      "recovery_bytes": 2605070742,
+      "scheduler": {
+        "collection_execution_seconds": 221.15926410000014,
+        "collection_validation_seconds": 174.39069779999997,
+        "iteration_wall_seconds": 1055.7389058999997,
+        "update_execution_seconds": 591.0119918000004,
+        "update_validation_seconds": 59.82025460000003,
+        "scheduler_other_seconds": 9.35669759999928
+      },
+      "update": {
+        "input_read_seconds": 68.58301269999998,
+        "behavior_replay_seconds": 29.480213000000006,
+        "learner_update_seconds": 427.89672670000016,
+        "checkpoint_io_seconds": 57.305972599999976,
+        "update_elapsed_seconds": 583.2667481999998,
+        "physical_decisions": 145431.0,
+        "policy_substeps": 159801.0,
+        "update_other_seconds": 0.0008231999996723971
+      }
+    },
+    {
+      "run": "r2",
+      "block": 2,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1215.1410000000033,
+      "execution_seconds": 871.9529999999795,
+      "native_logical_bytes": 9453654381,
+      "recovery_bytes": 2376998875,
+      "scheduler": {
+        "collection_execution_seconds": 203.41155979999994,
+        "collection_validation_seconds": 103.49920459999993,
+        "iteration_wall_seconds": 866.4336360999997,
+        "update_execution_seconds": 492.40507139999977,
+        "update_validation_seconds": 58.335785300000026,
+        "scheduler_other_seconds": 8.782015000000115
+      },
+      "update": {
+        "input_read_seconds": 60.20978829999999,
+        "behavior_replay_seconds": 26.380406899999993,
+        "learner_update_seconds": 343.8399315999998,
+        "checkpoint_io_seconds": 56.47166500000004,
+        "update_elapsed_seconds": 486.9028656000001,
+        "physical_decisions": 134477.0,
+        "policy_substeps": 146441.0,
+        "update_other_seconds": 0.0010738000003129855
+      }
+    },
+    {
+      "run": "r2",
+      "block": 3,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1108.969000000041,
+      "execution_seconds": 800.2820000000065,
+      "native_logical_bytes": 8858833578,
+      "recovery_bytes": 2248919887,
+      "scheduler": {
+        "collection_execution_seconds": 188.88477810000006,
+        "collection_validation_seconds": 86.25450739999995,
+        "iteration_wall_seconds": 794.2140877000003,
+        "update_execution_seconds": 452.6724761999996,
+        "update_validation_seconds": 57.63763340000002,
+        "scheduler_other_seconds": 8.764692600000672
+      },
+      "update": {
+        "input_read_seconds": 57.39343550000004,
+        "behavior_replay_seconds": 24.04733130000001,
+        "learner_update_seconds": 310.4321118999998,
+        "checkpoint_io_seconds": 55.85935360000002,
+        "update_elapsed_seconds": 447.7333857000001,
+        "physical_decisions": 127346.0,
+        "policy_substeps": 138251.0,
+        "update_other_seconds": 0.0011534000001915956
+      }
+    },
+    {
+      "run": "r2",
+      "block": 4,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1165.1570000000065,
+      "execution_seconds": 844.2970000000205,
+      "native_logical_bytes": 9231907881,
+      "recovery_bytes": 2338100282,
+      "scheduler": {
+        "collection_execution_seconds": 195.73814980000003,
+        "collection_validation_seconds": 100.85214049999996,
+        "iteration_wall_seconds": 837.5887051999998,
+        "update_execution_seconds": 474.31432390000003,
+        "update_validation_seconds": 57.81140679999997,
+        "scheduler_other_seconds": 8.872684199999867
+      },
+      "update": {
+        "input_read_seconds": 59.0406259,
+        "behavior_replay_seconds": 25.466643500000007,
+        "learner_update_seconds": 328.0121614,
+        "checkpoint_io_seconds": 56.27157730000001,
+        "update_elapsed_seconds": 468.7921064000002,
+        "physical_decisions": 130354.0,
+        "policy_substeps": 141764.0,
+        "update_other_seconds": 0.0010983000001374421
+      }
+    },
+    {
+      "run": "r2",
+      "block": 5,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1165.75,
+      "execution_seconds": 844.1570000000065,
+      "native_logical_bytes": 9300857209,
+      "recovery_bytes": 2373509661,
+      "scheduler": {
+        "collection_execution_seconds": 198.0500763,
+        "collection_validation_seconds": 96.03681650000001,
+        "iteration_wall_seconds": 837.0570077000002,
+        "update_execution_seconds": 476.4413284,
+        "update_validation_seconds": 57.711068799999985,
+        "scheduler_other_seconds": 8.81771770000023
+      },
+      "update": {
+        "input_read_seconds": 59.0950186,
+        "behavior_replay_seconds": 25.357891399999993,
+        "learner_update_seconds": 330.69253820000006,
+        "checkpoint_io_seconds": 56.042069100000006,
+        "update_elapsed_seconds": 471.1886207999997,
+        "physical_decisions": 129585.0,
+        "policy_substeps": 141539.0,
+        "update_other_seconds": 0.001103499999601354
+      }
+    },
+    {
+      "run": "r2",
+      "block": 6,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1125.4839999999967,
+      "execution_seconds": 809.6719999999623,
+      "native_logical_bytes": 8992970111,
+      "recovery_bytes": 2308022040,
+      "scheduler": {
+        "collection_execution_seconds": 191.64272509999998,
+        "collection_validation_seconds": 90.33098359999998,
+        "iteration_wall_seconds": 802.0849271000001,
+        "update_execution_seconds": 453.77762059999986,
+        "update_validation_seconds": 57.56209979999999,
+        "scheduler_other_seconds": 8.771498000000292
+      },
+      "update": {
+        "input_read_seconds": 57.57998429999999,
+        "behavior_replay_seconds": 24.080139,
+        "learner_update_seconds": 310.45164059999985,
+        "checkpoint_io_seconds": 56.11303980000003,
+        "update_elapsed_seconds": 448.2259423,
+        "physical_decisions": 125069.0,
+        "policy_substeps": 136149.0,
+        "update_other_seconds": 0.0011386000001039065
+      }
+    },
+    {
+      "run": "r2",
+      "block": 7,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1135.3129999999655,
+      "execution_seconds": 818.2189999999828,
+      "native_logical_bytes": 9099643547,
+      "recovery_bytes": 2334608698,
+      "scheduler": {
+        "collection_execution_seconds": 192.6097609000001,
+        "collection_validation_seconds": 92.12559290000007,
+        "iteration_wall_seconds": 810.0636496999999,
+        "update_execution_seconds": 458.85663070000015,
+        "update_validation_seconds": 57.6726384,
+        "scheduler_other_seconds": 8.799026799999638
+      },
+      "update": {
+        "input_read_seconds": 58.20563230000002,
+        "behavior_replay_seconds": 24.825665999999995,
+        "learner_update_seconds": 314.73728810000006,
+        "checkpoint_io_seconds": 55.909294999999986,
+        "update_elapsed_seconds": 453.67894870000003,
+        "physical_decisions": 126092.0,
+        "policy_substeps": 137269.0,
+        "update_other_seconds": 0.001067299999988336
+      }
+    },
+    {
+      "run": "r2",
+      "block": 8,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1128.1560000000172,
+      "execution_seconds": 813.1089999999967,
+      "native_logical_bytes": 9039300285,
+      "recovery_bytes": 2325652277,
+      "scheduler": {
+        "collection_execution_seconds": 190.45777539999997,
+        "collection_validation_seconds": 90.64751589999997,
+        "iteration_wall_seconds": 804.4640827000001,
+        "update_execution_seconds": 455.82534590000006,
+        "update_validation_seconds": 58.113497699999975,
+        "scheduler_other_seconds": 9.419947800000045
+      },
+      "update": {
+        "input_read_seconds": 57.908180500000014,
+        "behavior_replay_seconds": 24.6094551,
+        "learner_update_seconds": 311.68499749999995,
+        "checkpoint_io_seconds": 56.254793699999986,
+        "update_elapsed_seconds": 450.4584653000002,
+        "physical_decisions": 126381.0,
+        "policy_substeps": 138071.0,
+        "update_other_seconds": 0.001038500000277054
+      }
+    },
+    {
+      "run": "r2",
+      "block": 9,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1112.4530000000377,
+      "execution_seconds": 801.4370000000345,
+      "native_logical_bytes": 8786437474,
+      "recovery_bytes": 2252532303,
+      "scheduler": {
+        "collection_execution_seconds": 190.49254340000002,
+        "collection_validation_seconds": 89.5540843,
+        "iteration_wall_seconds": 792.1477981000002,
+        "update_execution_seconds": 445.4409476000002,
+        "update_validation_seconds": 57.803243300000005,
+        "scheduler_other_seconds": 8.856979499999966
+      },
+      "update": {
+        "input_read_seconds": 57.25693200000001,
+        "behavior_replay_seconds": 23.817906900000008,
+        "learner_update_seconds": 303.503542,
+        "checkpoint_io_seconds": 55.95396489999998,
+        "update_elapsed_seconds": 440.53341070000005,
+        "physical_decisions": 124343.0,
+        "policy_substeps": 135584.0,
+        "update_other_seconds": 0.0010649000000739761
+      }
+    },
+    {
+      "run": "r2",
+      "block": 10,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1143.594000000041,
+      "execution_seconds": 825.1410000000033,
+      "native_logical_bytes": 9031749699,
+      "recovery_bytes": 2316335897,
+      "scheduler": {
+        "collection_execution_seconds": 193.5841409,
+        "collection_validation_seconds": 93.83796510000002,
+        "iteration_wall_seconds": 815.3902704000005,
+        "update_execution_seconds": 461.09510409999984,
+        "update_validation_seconds": 58.05460800000001,
+        "scheduler_other_seconds": 8.818452300000672
+      },
+      "update": {
+        "input_read_seconds": 58.054309999999994,
+        "behavior_replay_seconds": 24.929712900000013,
+        "learner_update_seconds": 317.11805870000006,
+        "checkpoint_io_seconds": 56.016538999999995,
+        "update_elapsed_seconds": 456.1197942999999,
+        "physical_decisions": 126488.0,
+        "policy_substeps": 137786.0,
+        "update_other_seconds": 0.0011736999998674946
+      }
+    },
+    {
+      "run": "r2",
+      "block": 11,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1121.4839999999967,
+      "execution_seconds": 807.1410000000033,
+      "native_logical_bytes": 8938694488,
+      "recovery_bytes": 2301590818,
+      "scheduler": {
+        "collection_execution_seconds": 190.24755440000004,
+        "collection_validation_seconds": 86.92733429999997,
+        "iteration_wall_seconds": 796.6752057999996,
+        "update_execution_seconds": 453.0132264000001,
+        "update_validation_seconds": 57.65716469999999,
+        "scheduler_other_seconds": 8.829925999999546
+      },
+      "update": {
+        "input_read_seconds": 57.490727700000015,
+        "behavior_replay_seconds": 24.214924900000014,
+        "learner_update_seconds": 310.3581859,
+        "checkpoint_io_seconds": 55.89792350000003,
+        "update_elapsed_seconds": 447.96285520000015,
+        "physical_decisions": 126015.0,
+        "policy_substeps": 137427.0,
+        "update_other_seconds": 0.0010932000000707376
+      }
+    },
+    {
+      "run": "r2",
+      "block": 12,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1174.4839999999967,
+      "execution_seconds": 847.4220000000205,
+      "native_logical_bytes": 9388408799,
+      "recovery_bytes": 2401318759,
+      "scheduler": {
+        "collection_execution_seconds": 197.2176163,
+        "collection_validation_seconds": 95.36894110000004,
+        "iteration_wall_seconds": 836.6082448000002,
+        "update_execution_seconds": 477.5659298999997,
+        "update_validation_seconds": 57.59959439999997,
+        "scheduler_other_seconds": 8.856163100000458
+      },
+      "update": {
+        "input_read_seconds": 59.332897900000006,
+        "behavior_replay_seconds": 26.020413100000006,
+        "learner_update_seconds": 331.2109906999999,
+        "checkpoint_io_seconds": 55.963294999999974,
+        "update_elapsed_seconds": 472.52869909999987,
+        "physical_decisions": 128841.0,
+        "policy_substeps": 141219.0,
+        "update_other_seconds": 0.0011023999999792977
+      }
+    },
+    {
+      "run": "r2",
+      "block": 13,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1167.1560000000172,
+      "execution_seconds": 843.7810000000172,
+      "native_logical_bytes": 9182457162,
+      "recovery_bytes": 2324990974,
+      "scheduler": {
+        "collection_execution_seconds": 195.0253821,
+        "collection_validation_seconds": 98.40518349999995,
+        "iteration_wall_seconds": 832.4748759,
+        "update_execution_seconds": 472.48299940000004,
+        "update_validation_seconds": 57.75941800000003,
+        "scheduler_other_seconds": 8.801892899999984
+      },
+      "update": {
+        "input_read_seconds": 58.74784070000001,
+        "behavior_replay_seconds": 25.616248299999995,
+        "learner_update_seconds": 326.89309699999995,
+        "checkpoint_io_seconds": 56.074468100000004,
+        "update_elapsed_seconds": 467.33269909999996,
+        "physical_decisions": 131132.0,
+        "policy_substeps": 142891.0,
+        "update_other_seconds": 0.001044999999976426
+      }
+    },
+    {
+      "run": "r2",
+      "block": 14,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1129.170999999973,
+      "execution_seconds": 812.125,
+      "native_logical_bytes": 8860789571,
+      "recovery_bytes": 2271498755,
+      "scheduler": {
+        "collection_execution_seconds": 190.5800403,
+        "collection_validation_seconds": 93.16560249999996,
+        "iteration_wall_seconds": 800.3253854000003,
+        "update_execution_seconds": 449.6637212000003,
+        "update_validation_seconds": 58.09872500000003,
+        "scheduler_other_seconds": 8.817296400000032
+      },
+      "update": {
+        "input_read_seconds": 57.305532999999976,
+        "behavior_replay_seconds": 24.316795299999992,
+        "learner_update_seconds": 306.5572324999999,
+        "checkpoint_io_seconds": 56.15492910000002,
+        "update_elapsed_seconds": 444.33556250000004,
+        "physical_decisions": 126903.0,
+        "policy_substeps": 137671.0,
+        "update_other_seconds": 0.0010726000001568536
+      }
+    },
+    {
+      "run": "r2",
+      "block": 15,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1107.7810000000172,
+      "execution_seconds": 795.9679999999935,
+      "native_logical_bytes": 8721726086,
+      "recovery_bytes": 2248575334,
+      "scheduler": {
+        "collection_execution_seconds": 189.89682040000005,
+        "collection_validation_seconds": 82.13891740000001,
+        "iteration_wall_seconds": 783.5745219999998,
+        "update_execution_seconds": 443.30845729999993,
+        "update_validation_seconds": 59.09913269999998,
+        "scheduler_other_seconds": 9.131194199999754
+      },
+      "update": {
+        "input_read_seconds": 57.10316310000001,
+        "behavior_replay_seconds": 23.633169100000014,
+        "learner_update_seconds": 300.35325150000006,
+        "checkpoint_io_seconds": 56.5699746,
+        "update_elapsed_seconds": 437.6606734000001,
+        "physical_decisions": 123384.0,
+        "policy_substeps": 134164.0,
+        "update_other_seconds": 0.0011151000000495515
+      }
+    },
+    {
+      "run": "r2",
+      "block": 16,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1141.2649999999558,
+      "execution_seconds": 822.5619999999763,
+      "native_logical_bytes": 8875589133,
+      "recovery_bytes": 2258629331,
+      "scheduler": {
+        "collection_execution_seconds": 196.3165438999999,
+        "collection_validation_seconds": 91.29378309999996,
+        "iteration_wall_seconds": 809.2251785,
+        "update_execution_seconds": 454.79751769999996,
+        "update_validation_seconds": 57.925212500000015,
+        "scheduler_other_seconds": 8.892121300000099
+      },
+      "update": {
+        "input_read_seconds": 57.44817510000002,
+        "behavior_replay_seconds": 24.7699686,
+        "learner_update_seconds": 310.99909980000024,
+        "checkpoint_io_seconds": 56.25559110000001,
+        "update_elapsed_seconds": 449.47396779999974,
+        "physical_decisions": 126959.0,
+        "policy_substeps": 137775.0,
+        "update_other_seconds": 0.0011331999994581565
+      }
+    },
+    {
+      "run": "r2",
+      "block": 17,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1151.625,
+      "execution_seconds": 830.0779999999795,
+      "native_logical_bytes": 9031761160,
+      "recovery_bytes": 2309299575,
+      "scheduler": {
+        "collection_execution_seconds": 193.62129520000008,
+        "collection_validation_seconds": 92.28133869999999,
+        "iteration_wall_seconds": 814.7070088999998,
+        "update_execution_seconds": 462.3557679999999,
+        "update_validation_seconds": 57.56372639999999,
+        "scheduler_other_seconds": 8.88488059999986
+      },
+      "update": {
+        "input_read_seconds": 58.14620680000002,
+        "behavior_replay_seconds": 24.956345300000002,
+        "learner_update_seconds": 318.1882577,
+        "checkpoint_io_seconds": 56.08192850000001,
+        "update_elapsed_seconds": 457.3738021000001,
+        "physical_decisions": 127697.0,
+        "policy_substeps": 139379.0,
+        "update_other_seconds": 0.001063800000054016
+      }
+    },
+    {
+      "run": "r2",
+      "block": 18,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1205.7660000000033,
+      "execution_seconds": 873.0779999999795,
+      "native_logical_bytes": 9390030180,
+      "recovery_bytes": 2383228849,
+      "scheduler": {
+        "collection_execution_seconds": 200.12206490000005,
+        "collection_validation_seconds": 102.76187440000001,
+        "iteration_wall_seconds": 856.1418790000002,
+        "update_execution_seconds": 486.41355739999995,
+        "update_validation_seconds": 57.99675239999997,
+        "scheduler_other_seconds": 8.847629900000243
+      },
+      "update": {
+        "input_read_seconds": 59.406407299999984,
+        "behavior_replay_seconds": 26.404260199999996,
+        "learner_update_seconds": 339.20304890000017,
+        "checkpoint_io_seconds": 56.200939499999976,
+        "update_elapsed_seconds": 481.2157305000002,
+        "physical_decisions": 131826.0,
+        "policy_substeps": 144050.0,
+        "update_other_seconds": 0.0010746000000381173
+      }
+    },
+    {
+      "run": "r2",
+      "block": 19,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1135.155999999959,
+      "execution_seconds": 816.3589999999967,
+      "native_logical_bytes": 8925073938,
+      "recovery_bytes": 2302879205,
+      "scheduler": {
+        "collection_execution_seconds": 192.76316730000005,
+        "collection_validation_seconds": 87.15193509999997,
+        "iteration_wall_seconds": 798.9930152,
+        "update_execution_seconds": 452.5114800999999,
+        "update_validation_seconds": 57.66717649999997,
+        "scheduler_other_seconds": 8.899256200000082
+      },
+      "update": {
+        "input_read_seconds": 57.56779230000001,
+        "behavior_replay_seconds": 24.603350799999994,
+        "learner_update_seconds": 308.60342560000026,
+        "checkpoint_io_seconds": 56.404136999999984,
+        "update_elapsed_seconds": 447.1798100999998,
+        "physical_decisions": 124453.0,
+        "policy_substeps": 135977.0,
+        "update_other_seconds": 0.0011043999995763443
+      }
+    },
+    {
+      "run": "r2",
+      "block": 20,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1148.9689999999828,
+      "execution_seconds": 825.0619999999763,
+      "native_logical_bytes": 8991363710,
+      "recovery_bytes": 2304159960,
+      "scheduler": {
+        "collection_execution_seconds": 193.6009743,
+        "collection_validation_seconds": 87.84362660000005,
+        "iteration_wall_seconds": 807.0044233000001,
+        "update_execution_seconds": 458.88725600000004,
+        "update_validation_seconds": 57.81664139999999,
+        "scheduler_other_seconds": 8.85592500000007
+      },
+      "update": {
+        "input_read_seconds": 57.71594349999998,
+        "behavior_replay_seconds": 24.92368579999999,
+        "learner_update_seconds": 314.77944610000003,
+        "checkpoint_io_seconds": 56.37815969999996,
+        "update_elapsed_seconds": 453.7983394999998,
+        "physical_decisions": 127496.0,
+        "policy_substeps": 138528.0,
+        "update_other_seconds": 0.0011043999998605614
+      }
+    },
+    {
+      "run": "r3",
+      "block": 1,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1583.8589999999967,
+      "execution_seconds": 1186.6089999999967,
+      "native_logical_bytes": 11234723897,
+      "recovery_bytes": 2729455387,
+      "scheduler": {
+        "collection_execution_seconds": 235.83677170000007,
+        "collection_validation_seconds": 172.08508220000004,
+        "iteration_wall_seconds": 1164.0267213000006,
+        "update_execution_seconds": 681.9774906,
+        "update_validation_seconds": 64.17638639999998,
+        "scheduler_other_seconds": 9.950990400000592
+      },
+      "update": {
+        "input_read_seconds": 76.82492290000005,
+        "behavior_replay_seconds": 30.299777799999998,
+        "learner_update_seconds": 504.9602180999999,
+        "checkpoint_io_seconds": 61.72530100000004,
+        "update_elapsed_seconds": 673.8112847999996,
+        "physical_decisions": 145699.0,
+        "policy_substeps": 160986.0,
+        "update_other_seconds": 0.0010649999995848702
+      }
+    },
+    {
+      "run": "r3",
+      "block": 2,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1642.655999999959,
+      "execution_seconds": 1219.25,
+      "native_logical_bytes": 12149969869,
+      "recovery_bytes": 2941173671,
+      "scheduler": {
+        "collection_execution_seconds": 246.51063949999994,
+        "collection_validation_seconds": 190.55154860000005,
+        "iteration_wall_seconds": 1199.4230892999992,
+        "update_execution_seconds": 690.142584299999,
+        "update_validation_seconds": 62.56120969999995,
+        "scheduler_other_seconds": 9.657107200000155
+      },
+      "update": {
+        "input_read_seconds": 78.0014395,
+        "behavior_replay_seconds": 32.19760280000001,
+        "learner_update_seconds": 512.1953640999999,
+        "checkpoint_io_seconds": 59.4664215,
+        "update_elapsed_seconds": 681.8619504000002,
+        "physical_decisions": 146848.0,
+        "policy_substeps": 164868.0,
+        "update_other_seconds": 0.001122500000292348
+      }
+    },
+    {
+      "run": "r3",
+      "block": 3,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1621.0779999999795,
+      "execution_seconds": 1197.875,
+      "native_logical_bytes": 12084179129,
+      "recovery_bytes": 2931926927,
+      "scheduler": {
+        "collection_execution_seconds": 239.70593499999995,
+        "collection_validation_seconds": 181.20005310000002,
+        "iteration_wall_seconds": 1175.6595897999998,
+        "update_execution_seconds": 682.4258812999998,
+        "update_validation_seconds": 62.698283200000006,
+        "scheduler_other_seconds": 9.629437199999984
+      },
+      "update": {
+        "input_read_seconds": 76.51664979999998,
+        "behavior_replay_seconds": 31.694543299999985,
+        "learner_update_seconds": 505.61933559999994,
+        "checkpoint_io_seconds": 59.898633500000024,
+        "update_elapsed_seconds": 673.7302476999998,
+        "physical_decisions": 143845.0,
+        "policy_substeps": 159361.0,
+        "update_other_seconds": 0.0010854999999310166
+      }
+    },
+    {
+      "run": "r3",
+      "block": 4,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1385.7189999999828,
+      "execution_seconds": 1008.75,
+      "native_logical_bytes": 10950849761,
+      "recovery_bytes": 2706438770,
+      "scheduler": {
+        "collection_execution_seconds": 209.20656070000013,
+        "collection_validation_seconds": 149.81307599999997,
+        "iteration_wall_seconds": 987.6200406000003,
+        "update_execution_seconds": 561.1674595000001,
+        "update_validation_seconds": 58.547818599999985,
+        "scheduler_other_seconds": 8.885125800000083
+      },
+      "update": {
+        "input_read_seconds": 66.13448720000002,
+        "behavior_replay_seconds": 26.936587499999998,
+        "learner_update_seconds": 404.92684379999986,
+        "checkpoint_io_seconds": 56.159772000000004,
+        "update_elapsed_seconds": 554.1587208999999,
+        "physical_decisions": 137974.0,
+        "policy_substeps": 153492.0,
+        "update_other_seconds": 0.0010304000001042368
+      }
+    },
+    {
+      "run": "r3",
+      "block": 5,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1430.9839999999967,
+      "execution_seconds": 1048.265000000014,
+      "native_logical_bytes": 11223286599,
+      "recovery_bytes": 2756838018,
+      "scheduler": {
+        "collection_execution_seconds": 217.04750059999998,
+        "collection_validation_seconds": 158.73534799999996,
+        "iteration_wall_seconds": 1026.6564708999997,
+        "update_execution_seconds": 583.2311421999998,
+        "update_validation_seconds": 58.66550880000001,
+        "scheduler_other_seconds": 8.976971299999946
+      },
+      "update": {
+        "input_read_seconds": 67.75204430000004,
+        "behavior_replay_seconds": 27.945163600000004,
+        "learner_update_seconds": 424.37573409999993,
+        "checkpoint_io_seconds": 56.04807129999999,
+        "update_elapsed_seconds": 576.1220868,
+        "physical_decisions": 140143.0,
+        "policy_substeps": 157396.0,
+        "update_other_seconds": 0.0010735000000750006
+      }
+    },
+    {
+      "run": "r3",
+      "block": 6,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1427.7820000000065,
+      "execution_seconds": 1046.969000000041,
+      "native_logical_bytes": 11159177552,
+      "recovery_bytes": 2736717264,
+      "scheduler": {
+        "collection_execution_seconds": 217.9637797000001,
+        "collection_validation_seconds": 156.57846129999996,
+        "iteration_wall_seconds": 1018.3775448000002,
+        "update_execution_seconds": 576.6415173,
+        "update_validation_seconds": 58.2386312,
+        "scheduler_other_seconds": 8.955155300000115
+      },
+      "update": {
+        "input_read_seconds": 67.41987479999997,
+        "behavior_replay_seconds": 28.159835800000007,
+        "learner_update_seconds": 417.5333713999999,
+        "checkpoint_io_seconds": 55.99675010000001,
+        "update_elapsed_seconds": 569.1108031000003,
+        "physical_decisions": 139184.0,
+        "policy_substeps": 155800.0,
+        "update_other_seconds": 0.0009710000003906316
+      }
+    },
+    {
+      "run": "r3",
+      "block": 7,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1399.1720000000205,
+      "execution_seconds": 1024.1410000000033,
+      "native_logical_bytes": 10857856346,
+      "recovery_bytes": 2675849470,
+      "scheduler": {
+        "collection_execution_seconds": 211.1545391,
+        "collection_validation_seconds": 152.70218080000006,
+        "iteration_wall_seconds": 1001.3960630000003,
+        "update_execution_seconds": 570.1727832000001,
+        "update_validation_seconds": 58.456616399999966,
+        "scheduler_other_seconds": 8.909943500000054
+      },
+      "update": {
+        "input_read_seconds": 66.22490359999998,
+        "behavior_replay_seconds": 27.303363099999988,
+        "learner_update_seconds": 413.1400073999999,
+        "checkpoint_io_seconds": 56.305420600000005,
+        "update_elapsed_seconds": 562.9747679999996,
+        "physical_decisions": 138642.0,
+        "policy_substeps": 154768.0,
+        "update_other_seconds": 0.0010732999996889703
+      }
+    },
+    {
+      "run": "r3",
+      "block": 8,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1285.3910000000033,
+      "execution_seconds": 931.75,
+      "native_logical_bytes": 9969484524,
+      "recovery_bytes": 2492065327,
+      "scheduler": {
+        "collection_execution_seconds": 199.2817258000001,
+        "collection_validation_seconds": 130.89242629999998,
+        "iteration_wall_seconds": 908.3243374999998,
+        "update_execution_seconds": 510.5682058999997,
+        "update_validation_seconds": 58.618018800000016,
+        "scheduler_other_seconds": 8.96396070000003
+      },
+      "update": {
+        "input_read_seconds": 62.68160440000002,
+        "behavior_replay_seconds": 24.565711199999992,
+        "learner_update_seconds": 360.304327,
+        "checkpoint_io_seconds": 56.45219190000001,
+        "update_elapsed_seconds": 504.00489019999986,
+        "physical_decisions": 133579.0,
+        "policy_substeps": 146650.0,
+        "update_other_seconds": 0.0010556999998243555
+      }
+    },
+    {
+      "run": "r3",
+      "block": 9,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1190.0780000000377,
+      "execution_seconds": 856.5929999999935,
+      "native_logical_bytes": 9211506391,
+      "recovery_bytes": 2321079620,
+      "scheduler": {
+        "collection_execution_seconds": 186.3209845,
+        "collection_validation_seconds": 106.82356189999996,
+        "iteration_wall_seconds": 832.4849761000003,
+        "update_execution_seconds": 472.4264202999998,
+        "update_validation_seconds": 57.97452700000001,
+        "scheduler_other_seconds": 8.939482400000543
+      },
+      "update": {
+        "input_read_seconds": 59.43248670000003,
+        "behavior_replay_seconds": 21.999387800000008,
+        "learner_update_seconds": 329.5238711999998,
+        "checkpoint_io_seconds": 55.910819800000006,
+        "update_elapsed_seconds": 466.86766489999985,
+        "physical_decisions": 131615.0,
+        "policy_substeps": 142586.0,
+        "update_other_seconds": 0.001099399999986872
+      }
+    },
+    {
+      "run": "r3",
+      "block": 10,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1190.6089999999967,
+      "execution_seconds": 855.6560000000172,
+      "native_logical_bytes": 9221967930,
+      "recovery_bytes": 2354601006,
+      "scheduler": {
+        "collection_execution_seconds": 186.3479558999999,
+        "collection_validation_seconds": 104.94435590000002,
+        "iteration_wall_seconds": 831.0942038,
+        "update_execution_seconds": 471.7264423000002,
+        "update_validation_seconds": 59.0447738,
+        "scheduler_other_seconds": 9.030675899999778
+      },
+      "update": {
+        "input_read_seconds": 59.791767099999994,
+        "behavior_replay_seconds": 21.823137800000005,
+        "learner_update_seconds": 327.624302,
+        "checkpoint_io_seconds": 56.90658450000001,
+        "update_elapsed_seconds": 466.1468966000001,
+        "physical_decisions": 128065.0,
+        "policy_substeps": 139444.0,
+        "update_other_seconds": 0.001105200000097284
+      }
+    },
+    {
+      "run": "r3",
+      "block": 11,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1148.0310000000172,
+      "execution_seconds": 817.75,
+      "native_logical_bytes": 9011759669,
+      "recovery_bytes": 2302616319,
+      "scheduler": {
+        "collection_execution_seconds": 177.51380000000003,
+        "collection_validation_seconds": 96.38428810000003,
+        "iteration_wall_seconds": 792.6708236000001,
+        "update_execution_seconds": 452.124373,
+        "update_validation_seconds": 57.76561419999998,
+        "scheduler_other_seconds": 8.882748300000003
+      },
+      "update": {
+        "input_read_seconds": 57.999997499999985,
+        "behavior_replay_seconds": 21.042765199999995,
+        "learner_update_seconds": 312.1340091000001,
+        "checkpoint_io_seconds": 55.74507160000002,
+        "update_elapsed_seconds": 446.92288629999996,
+        "physical_decisions": 125683.0,
+        "policy_substeps": 136841.0,
+        "update_other_seconds": 0.0010428999998453037
+      }
+    },
+    {
+      "run": "r3",
+      "block": 12,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1151.3119999999763,
+      "execution_seconds": 822.170999999973,
+      "native_logical_bytes": 8937344224,
+      "recovery_bytes": 2296071332,
+      "scheduler": {
+        "collection_execution_seconds": 182.5071002,
+        "collection_validation_seconds": 96.47654030000001,
+        "iteration_wall_seconds": 796.2971659000002,
+        "update_execution_seconds": 450.06625010000005,
+        "update_validation_seconds": 58.2395869,
+        "scheduler_other_seconds": 9.00768840000012
+      },
+      "update": {
+        "input_read_seconds": 57.9255288,
+        "behavior_replay_seconds": 20.85828650000001,
+        "learner_update_seconds": 310.4082908000001,
+        "checkpoint_io_seconds": 55.83294939999998,
+        "update_elapsed_seconds": 445.02599840000005,
+        "physical_decisions": 125212.0,
+        "policy_substeps": 136156.0,
+        "update_other_seconds": 0.0009428999999840926
+      }
+    },
+    {
+      "run": "r3",
+      "block": 13,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1191.75,
+      "execution_seconds": 844.3589999999967,
+      "native_logical_bytes": 9189402006,
+      "recovery_bytes": 2342421355,
+      "scheduler": {
+        "collection_execution_seconds": 184.2130138,
+        "collection_validation_seconds": 101.54663679999999,
+        "iteration_wall_seconds": 817.8879660999996,
+        "update_execution_seconds": 465.21403449999985,
+        "update_validation_seconds": 57.9933826,
+        "scheduler_other_seconds": 8.920898399999828
+      },
+      "update": {
+        "input_read_seconds": 58.9079973,
+        "behavior_replay_seconds": 21.64519059999999,
+        "learner_update_seconds": 323.4250871000002,
+        "checkpoint_io_seconds": 56.03755450000003,
+        "update_elapsed_seconds": 460.0169284000001,
+        "physical_decisions": 126285.0,
+        "policy_substeps": 137339.0,
+        "update_other_seconds": 0.0010988999998744475
+      }
+    },
+    {
+      "run": "r3",
+      "block": 14,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1170.7970000000205,
+      "execution_seconds": 837.9839999999967,
+      "native_logical_bytes": 9011706402,
+      "recovery_bytes": 2293553613,
+      "scheduler": {
+        "collection_execution_seconds": 184.53461570000002,
+        "collection_validation_seconds": 100.90456560000001,
+        "iteration_wall_seconds": 810.6264496999999,
+        "update_execution_seconds": 458.2035123999999,
+        "update_validation_seconds": 58.07053179999998,
+        "scheduler_other_seconds": 8.913224199999945
+      },
+      "update": {
+        "input_read_seconds": 58.2676736,
+        "behavior_replay_seconds": 21.226720099999994,
+        "learner_update_seconds": 316.90523359999986,
+        "checkpoint_io_seconds": 56.22642249999997,
+        "update_elapsed_seconds": 452.62713840000004,
+        "physical_decisions": 126377.0,
+        "policy_substeps": 137442.0,
+        "update_other_seconds": 0.0010886000002301444
+      }
+    },
+    {
+      "run": "r3",
+      "block": 15,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1217.1720000000205,
+      "execution_seconds": 876.3280000000377,
+      "native_logical_bytes": 9281788333,
+      "recovery_bytes": 2358779926,
+      "scheduler": {
+        "collection_execution_seconds": 189.01102040000004,
+        "collection_validation_seconds": 107.25761030000001,
+        "iteration_wall_seconds": 840.0366894999999,
+        "update_execution_seconds": 476.6920902,
+        "update_validation_seconds": 58.1510229,
+        "scheduler_other_seconds": 8.924945699999853
+      },
+      "update": {
+        "input_read_seconds": 59.47357799999999,
+        "behavior_replay_seconds": 22.088749899999996,
+        "learner_update_seconds": 332.7447631999998,
+        "checkpoint_io_seconds": 56.68159410000001,
+        "update_elapsed_seconds": 470.98970870000016,
+        "physical_decisions": 128831.0,
+        "policy_substeps": 140785.0,
+        "update_other_seconds": 0.0010235000003717687
+      }
+    },
+    {
+      "run": "r3",
+      "block": 16,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1224.875,
+      "execution_seconds": 882.4060000000172,
+      "native_logical_bytes": 9386804832,
+      "recovery_bytes": 2379350317,
+      "scheduler": {
+        "collection_execution_seconds": 188.66754579999994,
+        "collection_validation_seconds": 111.09930500000002,
+        "iteration_wall_seconds": 847.6635182,
+        "update_execution_seconds": 480.7795908,
+        "update_validation_seconds": 58.24292319999999,
+        "scheduler_other_seconds": 8.874153400000068
+      },
+      "update": {
+        "input_read_seconds": 60.03085140000001,
+        "behavior_replay_seconds": 22.510285600000007,
+        "learner_update_seconds": 336.34093260000003,
+        "checkpoint_io_seconds": 56.208875600000006,
+        "update_elapsed_seconds": 475.09201380000013,
+        "physical_decisions": 129518.0,
+        "policy_substeps": 141926.0,
+        "update_other_seconds": 0.0010686000000532658
+      }
+    },
+    {
+      "run": "r3",
+      "block": 17,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1182.25,
+      "execution_seconds": 845.7029999999795,
+      "native_logical_bytes": 9093222588,
+      "recovery_bytes": 2317776353,
+      "scheduler": {
+        "collection_execution_seconds": 184.39955770000003,
+        "collection_validation_seconds": 99.79606159999997,
+        "iteration_wall_seconds": 814.0339817000001,
+        "update_execution_seconds": 462.92310919999994,
+        "update_validation_seconds": 57.97986760000001,
+        "scheduler_other_seconds": 8.935385600000131
+      },
+      "update": {
+        "input_read_seconds": 58.47424420000003,
+        "behavior_replay_seconds": 21.590030300000006,
+        "learner_update_seconds": 321.1414602,
+        "checkpoint_io_seconds": 56.09347019999996,
+        "update_elapsed_seconds": 457.30032,
+        "physical_decisions": 124128.0,
+        "policy_substeps": 136582.0,
+        "update_other_seconds": 0.001115099999992708
+      }
+    },
+    {
+      "run": "r3",
+      "block": 18,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1193.4220000000205,
+      "execution_seconds": 852.0470000000205,
+      "native_logical_bytes": 9106271970,
+      "recovery_bytes": 2314875021,
+      "scheduler": {
+        "collection_execution_seconds": 182.58657280000006,
+        "collection_validation_seconds": 102.22247959999997,
+        "iteration_wall_seconds": 817.5033695,
+        "update_execution_seconds": 465.8225885,
+        "update_validation_seconds": 57.98845870000001,
+        "scheduler_other_seconds": 8.88326989999996
+      },
+      "update": {
+        "input_read_seconds": 58.86145829999998,
+        "behavior_replay_seconds": 21.852469300000003,
+        "learner_update_seconds": 323.0754521,
+        "checkpoint_io_seconds": 56.29948559999997,
+        "update_elapsed_seconds": 460.0899450999999,
+        "physical_decisions": 127111.0,
+        "policy_substeps": 139443.0,
+        "update_other_seconds": 0.0010797999999567764
+      }
+    },
+    {
+      "run": "r3",
+      "block": 19,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1205.6570000000065,
+      "execution_seconds": 862.0160000000615,
+      "native_logical_bytes": 9352442428,
+      "recovery_bytes": 2379131944,
+      "scheduler": {
+        "collection_execution_seconds": 188.1601148,
+        "collection_validation_seconds": 106.75641569999995,
+        "iteration_wall_seconds": 832.1144703999998,
+        "update_execution_seconds": 470.1283069,
+        "update_validation_seconds": 58.0816507,
+        "scheduler_other_seconds": 8.987982299999885
+      },
+      "update": {
+        "input_read_seconds": 59.71357679999997,
+        "behavior_replay_seconds": 22.254263199999993,
+        "learner_update_seconds": 326.31210589999995,
+        "checkpoint_io_seconds": 56.2169803,
+        "update_elapsed_seconds": 464.4979691999999,
+        "physical_decisions": 126428.0,
+        "policy_substeps": 138550.0,
+        "update_other_seconds": 0.0010429999999814754
+      }
+    },
+    {
+      "run": "r3",
+      "block": 20,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1232.719000000041,
+      "execution_seconds": 883.9370000000345,
+      "native_logical_bytes": 9479745085,
+      "recovery_bytes": 2386683128,
+      "scheduler": {
+        "collection_execution_seconds": 190.75939029999995,
+        "collection_validation_seconds": 109.24085340000002,
+        "iteration_wall_seconds": 853.4945208999999,
+        "update_execution_seconds": 486.5313237000001,
+        "update_validation_seconds": 58.01688779999999,
+        "scheduler_other_seconds": 8.94606569999985
+      },
+      "update": {
+        "input_read_seconds": 60.5329575,
+        "behavior_replay_seconds": 22.8576993,
+        "learner_update_seconds": 341.117821,
+        "checkpoint_io_seconds": 56.20279639999999,
+        "update_elapsed_seconds": 480.71231869999986,
+        "physical_decisions": 130073.0,
+        "policy_substeps": 142172.0,
+        "update_other_seconds": 0.0010444999998640014
+      }
+    },
+    {
+      "run": "r4",
+      "block": 1,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1355.25,
+      "execution_seconds": 1006.2030000000377,
+      "native_logical_bytes": 9519426027,
+      "recovery_bytes": 2371172614,
+      "scheduler": {
+        "collection_execution_seconds": 207.44922049999994,
+        "collection_validation_seconds": 124.44181950000001,
+        "iteration_wall_seconds": 981.7709930000004,
+        "update_execution_seconds": 575.4873914000002,
+        "update_validation_seconds": 64.3174865,
+        "scheduler_other_seconds": 10.075075100000277
+      },
+      "update": {
+        "input_read_seconds": 68.2447137,
+        "behavior_replay_seconds": 24.530598600000005,
+        "learner_update_seconds": 413.9995800999999,
+        "checkpoint_io_seconds": 62.02035840000001,
+        "update_elapsed_seconds": 568.7964006,
+        "physical_decisions": 136595.0,
+        "policy_substeps": 148031.0,
+        "update_other_seconds": 0.0011498000000074171
+      }
+    },
+    {
+      "run": "r4",
+      "block": 2,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1252.7969999999623,
+      "execution_seconds": 912.405999999959,
+      "native_logical_bytes": 9054553271,
+      "recovery_bytes": 2283380621,
+      "scheduler": {
+        "collection_execution_seconds": 194.46064309999988,
+        "collection_validation_seconds": 105.28695310000008,
+        "iteration_wall_seconds": 893.1860549000004,
+        "update_execution_seconds": 521.3203563000001,
+        "update_validation_seconds": 62.39357199999996,
+        "scheduler_other_seconds": 9.72453040000039
+      },
+      "update": {
+        "input_read_seconds": 63.53499459999997,
+        "behavior_replay_seconds": 22.278118200000012,
+        "learner_update_seconds": 369.2218578999999,
+        "checkpoint_io_seconds": 59.980778900000004,
+        "update_elapsed_seconds": 515.0168831999999,
+        "physical_decisions": 132369.0,
+        "policy_substeps": 144070.0,
+        "update_other_seconds": 0.0011336000000028434
+      }
+    },
+    {
+      "run": "r4",
+      "block": 3,
+      "host": "computehost",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 1256.7339999999967,
+      "execution_seconds": 908.5470000000205,
+      "native_logical_bytes": 9391265418,
+      "recovery_bytes": 2360830407,
+      "scheduler": {
+        "collection_execution_seconds": 197.02475269999994,
+        "collection_validation_seconds": 112.8601972,
+        "iteration_wall_seconds": 887.1138930999998,
+        "update_execution_seconds": 506.88470670000015,
+        "update_validation_seconds": 60.86479599999997,
+        "scheduler_other_seconds": 9.479440499999782
+      },
+      "update": {
+        "input_read_seconds": 63.043674700000004,
+        "behavior_replay_seconds": 23.6860083,
+        "learner_update_seconds": 355.29494369999986,
+        "checkpoint_io_seconds": 58.958722599999994,
+        "update_elapsed_seconds": 500.9844236999997,
+        "physical_decisions": 133489.0,
+        "policy_substeps": 145331.0,
+        "update_other_seconds": 0.0010743999998226172
+      }
+    },
+    {
+      "run": "r4",
+      "block": 4,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 716.0027531000003,
+      "execution_seconds": 546.1299709000002,
+      "native_logical_bytes": 9514616775,
+      "recovery_bytes": 3282391818,
+      "scheduler": {
+        "iteration_wall_seconds": 542.0756577999999,
+        "collection_execution_seconds": 114.62792270000003,
+        "update_execution_seconds": 301.3743486000001,
+        "collection_validation_seconds": 75.7526582,
+        "update_validation_seconds": 42.55169670000001,
+        "scheduler_other_seconds": 7.769031599999835
+      },
+      "update": {
+        "update_elapsed_seconds": 297.0707058999999,
+        "input_read_seconds": 41.55280390000002,
+        "behavior_replay_seconds": 7.392232899999998,
+        "learner_update_seconds": 199.21650080000003,
+        "checkpoint_io_seconds": 48.908580700000016,
+        "policy_substeps": 145419.0,
+        "physical_decisions": 132353.0,
+        "update_other_seconds": 0.0005875999998465886
+      }
+    },
+    {
+      "run": "r4",
+      "block": 5,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 708.2560681999998,
+      "execution_seconds": 542.8213599999999,
+      "native_logical_bytes": 9303442465,
+      "recovery_bytes": 3220508670,
+      "scheduler": {
+        "iteration_wall_seconds": 537.5254246000003,
+        "collection_execution_seconds": 112.4792833999999,
+        "update_execution_seconds": 298.18175169999995,
+        "collection_validation_seconds": 76.48219980000002,
+        "update_validation_seconds": 42.94056970000002,
+        "scheduler_other_seconds": 7.441620000000398
+      },
+      "update": {
+        "update_elapsed_seconds": 293.6171326,
+        "input_read_seconds": 41.30600349999999,
+        "behavior_replay_seconds": 7.5114172,
+        "learner_update_seconds": 195.8495927,
+        "checkpoint_io_seconds": 48.94958069999999,
+        "policy_substeps": 142498.0,
+        "physical_decisions": 130245.0,
+        "update_other_seconds": 0.0005385000000046603
+      }
+    },
+    {
+      "run": "r4",
+      "block": 6,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 743.6799283,
+      "execution_seconds": 551.9662321000001,
+      "native_logical_bytes": 9362143467,
+      "recovery_bytes": 3259259403,
+      "scheduler": {
+        "iteration_wall_seconds": 545.9295292999999,
+        "collection_execution_seconds": 111.68654740000004,
+        "update_execution_seconds": 302.8364012,
+        "collection_validation_seconds": 82.2732178000001,
+        "update_validation_seconds": 41.85388610000002,
+        "scheduler_other_seconds": 7.27947679999977
+      },
+      "update": {
+        "update_elapsed_seconds": 298.5503904999998,
+        "input_read_seconds": 48.207940199999996,
+        "behavior_replay_seconds": 7.811617600000001,
+        "learner_update_seconds": 193.37589809999997,
+        "checkpoint_io_seconds": 49.154392099999995,
+        "policy_substeps": 141225.0,
+        "physical_decisions": 128847.0,
+        "update_other_seconds": 0.0005424999998808744
+      }
+    },
+    {
+      "run": "r4",
+      "block": 7,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 683.6253849999994,
+      "execution_seconds": 521.9095265999995,
+      "native_logical_bytes": 9139652768,
+      "recovery_bytes": 3191708785,
+      "scheduler": {
+        "iteration_wall_seconds": 513.8218301999998,
+        "collection_execution_seconds": 105.79606050000004,
+        "update_execution_seconds": 286.9313372999998,
+        "collection_validation_seconds": 72.50520650000004,
+        "update_validation_seconds": 41.327980499999995,
+        "scheduler_other_seconds": 7.261245399999893
+      },
+      "update": {
+        "update_elapsed_seconds": 283.0898075000002,
+        "input_read_seconds": 40.767278399999995,
+        "behavior_replay_seconds": 7.3858922999999965,
+        "learner_update_seconds": 185.9857111999999,
+        "checkpoint_io_seconds": 48.95035860000002,
+        "policy_substeps": 140770.0,
+        "physical_decisions": 128944.0,
+        "update_other_seconds": 0.0005670000002737652
+      }
+    },
+    {
+      "run": "r4",
+      "block": 8,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 668.8351941000001,
+      "execution_seconds": 503.80481710000004,
+      "native_logical_bytes": 9020148557,
+      "recovery_bytes": 3177984772,
+      "scheduler": {
+        "iteration_wall_seconds": 494.02079770000006,
+        "collection_execution_seconds": 101.36988759999996,
+        "update_execution_seconds": 279.57839410000014,
+        "collection_validation_seconds": 64.00341159999999,
+        "update_validation_seconds": 41.38016049999997,
+        "scheduler_other_seconds": 7.688943900000027
+      },
+      "update": {
+        "update_elapsed_seconds": 275.6649909999999,
+        "input_read_seconds": 39.5366613,
+        "behavior_replay_seconds": 6.873383,
+        "learner_update_seconds": 180.17083780000004,
+        "checkpoint_io_seconds": 49.08350380000002,
+        "policy_substeps": 136942.0,
+        "physical_decisions": 126092.0,
+        "update_other_seconds": 0.0006050999998024054
+      }
+    },
+    {
+      "run": "r4",
+      "block": 9,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 670.0612116000002,
+      "execution_seconds": 512.0582703999999,
+      "native_logical_bytes": 9099140402,
+      "recovery_bytes": 3174357618,
+      "scheduler": {
+        "iteration_wall_seconds": 497.4821171000001,
+        "collection_execution_seconds": 103.21114670000001,
+        "update_execution_seconds": 277.714025,
+        "collection_validation_seconds": 69.23892960000002,
+        "update_validation_seconds": 40.1888456,
+        "scheduler_other_seconds": 7.12917020000009
+      },
+      "update": {
+        "update_elapsed_seconds": 273.58320260000005,
+        "input_read_seconds": 38.97963850000001,
+        "behavior_replay_seconds": 7.049187299999999,
+        "learner_update_seconds": 180.13441050000003,
+        "checkpoint_io_seconds": 47.41940300000001,
+        "policy_substeps": 139312.0,
+        "physical_decisions": 128442.0,
+        "update_other_seconds": 0.0005633000000102584
+      }
+    },
+    {
+      "run": "r4",
+      "block": 10,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 663.7640644000003,
+      "execution_seconds": 503.3642543999995,
+      "native_logical_bytes": 9026036813,
+      "recovery_bytes": 3142733457,
+      "scheduler": {
+        "iteration_wall_seconds": 489.9933327999999,
+        "collection_execution_seconds": 99.79385880000001,
+        "update_execution_seconds": 276.8882464999999,
+        "collection_validation_seconds": 65.82009210000001,
+        "update_validation_seconds": 40.096079,
+        "scheduler_other_seconds": 7.395056399999987
+      },
+      "update": {
+        "update_elapsed_seconds": 273.24506119999995,
+        "input_read_seconds": 38.8168513,
+        "behavior_replay_seconds": 6.947876500000001,
+        "learner_update_seconds": 180.62201869999996,
+        "checkpoint_io_seconds": 46.85780010000002,
+        "policy_substeps": 139777.0,
+        "physical_decisions": 128696.0,
+        "update_other_seconds": 0.0005145999999740525
+      }
+    },
+    {
+      "run": "r4",
+      "block": 11,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 684.9254486,
+      "execution_seconds": 519.3582223000003,
+      "native_logical_bytes": 9249738127,
+      "recovery_bytes": 3224702306,
+      "scheduler": {
+        "iteration_wall_seconds": 503.68215799999996,
+        "collection_execution_seconds": 103.59204880000004,
+        "update_execution_seconds": 283.16004789999994,
+        "collection_validation_seconds": 68.7879915,
+        "update_validation_seconds": 40.750970599999974,
+        "scheduler_other_seconds": 7.391099199999985
+      },
+      "update": {
+        "update_elapsed_seconds": 279.1381753000001,
+        "input_read_seconds": 39.41798579999999,
+        "behavior_replay_seconds": 7.186369800000002,
+        "learner_update_seconds": 185.3708967000001,
+        "checkpoint_io_seconds": 47.16239960000001,
+        "policy_substeps": 139534.0,
+        "physical_decisions": 128133.0,
+        "update_other_seconds": 0.0005234000000200467
+      }
+    },
+    {
+      "run": "r4",
+      "block": 12,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 653.0986565000003,
+      "execution_seconds": 492.029250900001,
+      "native_logical_bytes": 8871153617,
+      "recovery_bytes": 3116000453,
+      "scheduler": {
+        "iteration_wall_seconds": 474.546975,
+        "collection_execution_seconds": 98.24733659999994,
+        "update_execution_seconds": 270.38474599999995,
+        "collection_validation_seconds": 58.952353900000006,
+        "update_validation_seconds": 39.578329000000004,
+        "scheduler_other_seconds": 7.384209500000054
+      },
+      "update": {
+        "update_elapsed_seconds": 266.77823380000007,
+        "input_read_seconds": 38.192946999999975,
+        "behavior_replay_seconds": 6.687524199999999,
+        "learner_update_seconds": 174.98218869999994,
+        "checkpoint_io_seconds": 46.915030999999985,
+        "policy_substeps": 136317.0,
+        "physical_decisions": 125643.0,
+        "update_other_seconds": 0.0005429000001413442
+      }
+    },
+    {
+      "run": "r4",
+      "block": 13,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 669.8298584000004,
+      "execution_seconds": 502.6219777999995,
+      "native_logical_bytes": 8860806951,
+      "recovery_bytes": 3118012059,
+      "scheduler": {
+        "iteration_wall_seconds": 484.7508398000003,
+        "collection_execution_seconds": 102.7229073,
+        "update_execution_seconds": 270.9173083,
+        "collection_validation_seconds": 63.630987000000005,
+        "update_validation_seconds": 40.21042010000001,
+        "scheduler_other_seconds": 7.269217100000276
+      },
+      "update": {
+        "update_elapsed_seconds": 267.1506384000001,
+        "input_read_seconds": 38.4233492,
+        "behavior_replay_seconds": 6.848273199999997,
+        "learner_update_seconds": 174.34033400000004,
+        "checkpoint_io_seconds": 47.53812079999999,
+        "policy_substeps": 133916.0,
+        "physical_decisions": 123717.0,
+        "update_other_seconds": 0.0005612000001065098
+      }
+    },
+    {
+      "run": "r4",
+      "block": 14,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 664.2015590999999,
+      "execution_seconds": 501.9776450999998,
+      "native_logical_bytes": 8871885138,
+      "recovery_bytes": 3130917841,
+      "scheduler": {
+        "iteration_wall_seconds": 481.1605049,
+        "collection_execution_seconds": 101.1289286,
+        "update_execution_seconds": 271.18349979999994,
+        "collection_validation_seconds": 61.63493299999997,
+        "update_validation_seconds": 39.87941500000001,
+        "scheduler_other_seconds": 7.333728500000063
+      },
+      "update": {
+        "update_elapsed_seconds": 267.38421239999997,
+        "input_read_seconds": 38.149073300000026,
+        "behavior_replay_seconds": 6.733602400000001,
+        "learner_update_seconds": 175.31541719999984,
+        "checkpoint_io_seconds": 47.18558090000002,
+        "policy_substeps": 135369.0,
+        "physical_decisions": 124939.0,
+        "update_other_seconds": 0.0005386000000839886
+      }
+    },
+    {
+      "run": "r4",
+      "block": 15,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 686.3755753000005,
+      "execution_seconds": 516.5884361999997,
+      "native_logical_bytes": 9154508118,
+      "recovery_bytes": 3226660944,
+      "scheduler": {
+        "iteration_wall_seconds": 493.4656817000002,
+        "collection_execution_seconds": 102.80859459999998,
+        "update_execution_seconds": 277.0637666000002,
+        "collection_validation_seconds": 66.59539759999997,
+        "update_validation_seconds": 39.69318080000002,
+        "scheduler_other_seconds": 7.304742100000055
+      },
+      "update": {
+        "update_elapsed_seconds": 273.18268609999996,
+        "input_read_seconds": 39.18096829999999,
+        "behavior_replay_seconds": 6.904415300000001,
+        "learner_update_seconds": 179.83708519999993,
+        "checkpoint_io_seconds": 47.25967989999998,
+        "policy_substeps": 136332.0,
+        "physical_decisions": 125429.0,
+        "update_other_seconds": 0.0005374000000415435
+      }
+    },
+    {
+      "run": "r4",
+      "block": 16,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 688.5508988000001,
+      "execution_seconds": 518.9981144000012,
+      "native_logical_bytes": 8898892322,
+      "recovery_bytes": 3152095096,
+      "scheduler": {
+        "iteration_wall_seconds": 488.2404602000001,
+        "collection_execution_seconds": 101.23764390000004,
+        "update_execution_seconds": 276.2998742999999,
+        "collection_validation_seconds": 63.27756689999998,
+        "update_validation_seconds": 39.869332000000014,
+        "scheduler_other_seconds": 7.556043100000181
+      },
+      "update": {
+        "update_elapsed_seconds": 272.1066535000001,
+        "input_read_seconds": 38.5510074,
+        "behavior_replay_seconds": 6.831220900000001,
+        "learner_update_seconds": 178.76301760000007,
+        "checkpoint_io_seconds": 47.96087599999999,
+        "policy_substeps": 135051.0,
+        "physical_decisions": 124137.0,
+        "update_other_seconds": 0.0005316000000448184
+      }
+    },
+    {
+      "run": "r4",
+      "block": 17,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 690.8926907999994,
+      "execution_seconds": 527.1334695999994,
+      "native_logical_bytes": 8921991329,
+      "recovery_bytes": 3149671313,
+      "scheduler": {
+        "iteration_wall_seconds": 500.82654749999995,
+        "collection_execution_seconds": 105.08336920000002,
+        "update_execution_seconds": 279.8339269999999,
+        "collection_validation_seconds": 67.8060155,
+        "update_validation_seconds": 40.87754290000002,
+        "scheduler_other_seconds": 7.225692900000013
+      },
+      "update": {
+        "update_elapsed_seconds": 275.62875249999985,
+        "input_read_seconds": 39.8147971,
+        "behavior_replay_seconds": 7.125446699999997,
+        "learner_update_seconds": 180.23446239999998,
+        "checkpoint_io_seconds": 48.453465400000006,
+        "policy_substeps": 134363.0,
+        "physical_decisions": 124006.0,
+        "update_other_seconds": 0.0005808999998748732
+      }
+    },
+    {
+      "run": "r4",
+      "block": 18,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 698.8269977,
+      "execution_seconds": 530.3506281999998,
+      "native_logical_bytes": 8845239708,
+      "recovery_bytes": 3140989038,
+      "scheduler": {
+        "iteration_wall_seconds": 503.92015230000027,
+        "collection_execution_seconds": 105.46096750000005,
+        "update_execution_seconds": 280.38112049999995,
+        "collection_validation_seconds": 69.2929004,
+        "update_validation_seconds": 41.216790700000004,
+        "scheduler_other_seconds": 7.568373200000281
+      },
+      "update": {
+        "update_elapsed_seconds": 276.4634540999999,
+        "input_read_seconds": 40.278513999999994,
+        "behavior_replay_seconds": 6.9954059,
+        "learner_update_seconds": 180.67759009999986,
+        "checkpoint_io_seconds": 48.511381100000015,
+        "policy_substeps": 133117.0,
+        "physical_decisions": 122170.0,
+        "update_other_seconds": 0.0005630000000564905
+      }
+    },
+    {
+      "run": "r4",
+      "block": 19,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 726.9156166000012,
+      "execution_seconds": 535.6274981000006,
+      "native_logical_bytes": 8905106995,
+      "recovery_bytes": 3127395211,
+      "scheduler": {
+        "iteration_wall_seconds": 504.6382389999998,
+        "collection_execution_seconds": 104.36521190000003,
+        "update_execution_seconds": 286.0446403000001,
+        "collection_validation_seconds": 65.9913376,
+        "update_validation_seconds": 41.26929110000002,
+        "scheduler_other_seconds": 6.967758099999685
+      },
+      "update": {
+        "update_elapsed_seconds": 281.87332950000007,
+        "input_read_seconds": 39.88636889999999,
+        "behavior_replay_seconds": 7.347113599999997,
+        "learner_update_seconds": 184.53292379999993,
+        "checkpoint_io_seconds": 50.10633210000004,
+        "policy_substeps": 135416.0,
+        "physical_decisions": 124525.0,
+        "update_other_seconds": 0.0005911000001219691
+      }
+    },
+    {
+      "run": "r4",
+      "block": 20,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 700.3215805,
+      "execution_seconds": 535.8660297000006,
+      "native_logical_bytes": 8909759387,
+      "recovery_bytes": 3103959312,
+      "scheduler": {
+        "iteration_wall_seconds": 503.63878850000003,
+        "collection_execution_seconds": 106.60208829999996,
+        "update_execution_seconds": 281.45775380000003,
+        "collection_validation_seconds": 67.2279694,
+        "update_validation_seconds": 41.09670850000002,
+        "scheduler_other_seconds": 7.254268500000023
+      },
+      "update": {
+        "update_elapsed_seconds": 277.4259766999999,
+        "input_read_seconds": 39.46369080000003,
+        "behavior_replay_seconds": 7.209292399999998,
+        "learner_update_seconds": 182.38484060000005,
+        "checkpoint_io_seconds": 48.36760690000002,
+        "policy_substeps": 135790.0,
+        "physical_decisions": 125554.0,
+        "update_other_seconds": 0.0005459999998151943
+      }
+    },
+    {
+      "run": "r5",
+      "block": 1,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 831.3414344000001,
+      "execution_seconds": 627.3043652,
+      "native_logical_bytes": 10430088126,
+      "recovery_bytes": 3498824608,
+      "scheduler": {
+        "iteration_wall_seconds": 620.9755853000003,
+        "collection_execution_seconds": 127.46132430000004,
+        "update_execution_seconds": 341.50360920000014,
+        "collection_validation_seconds": 101.52963950000004,
+        "update_validation_seconds": 43.2159391,
+        "scheduler_other_seconds": 7.265073200000074
+      },
+      "update": {
+        "update_elapsed_seconds": 336.4773349000001,
+        "input_read_seconds": 45.41238380000001,
+        "behavior_replay_seconds": 8.766376600000001,
+        "learner_update_seconds": 232.92655169999995,
+        "checkpoint_io_seconds": 49.371443500000034,
+        "policy_substeps": 154498.0,
+        "physical_decisions": 140488.0,
+        "update_other_seconds": 0.0005793000000835491
+      }
+    },
+    {
+      "run": "r5",
+      "block": 2,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 803.5907440999999,
+      "execution_seconds": 627.2505479000001,
+      "native_logical_bytes": 10499806112,
+      "recovery_bytes": 3509826511,
+      "scheduler": {
+        "iteration_wall_seconds": 621.4492160000001,
+        "collection_execution_seconds": 126.86574159999995,
+        "update_execution_seconds": 340.23763290000016,
+        "collection_validation_seconds": 103.61651590000002,
+        "update_validation_seconds": 43.23137800000002,
+        "scheduler_other_seconds": 7.497947599999975
+      },
+      "update": {
+        "update_elapsed_seconds": 335.0388229000001,
+        "input_read_seconds": 45.32179030000001,
+        "behavior_replay_seconds": 8.745932400000004,
+        "learner_update_seconds": 231.40808130000002,
+        "checkpoint_io_seconds": 49.5624156,
+        "policy_substeps": 155951.0,
+        "physical_decisions": 142414.0,
+        "update_other_seconds": 0.0006033000000797983
+      }
+    },
+    {
+      "run": "r5",
+      "block": 3,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 776.2662358000002,
+      "execution_seconds": 584.4794706000002,
+      "native_logical_bytes": 9861208717,
+      "recovery_bytes": 3344558492,
+      "scheduler": {
+        "iteration_wall_seconds": 577.9667958999999,
+        "collection_execution_seconds": 117.6582659,
+        "update_execution_seconds": 322.7006921000002,
+        "collection_validation_seconds": 88.10496269999993,
+        "update_validation_seconds": 42.02356539999999,
+        "scheduler_other_seconds": 7.479309799999783
+      },
+      "update": {
+        "update_elapsed_seconds": 317.9870131999999,
+        "input_read_seconds": 49.624076699999975,
+        "behavior_replay_seconds": 8.1538384,
+        "learner_update_seconds": 211.16984259999992,
+        "checkpoint_io_seconds": 49.03873779999999,
+        "policy_substeps": 150236.0,
+        "physical_decisions": 136809.0,
+        "update_other_seconds": 0.0005177000000458065
+      }
+    },
+    {
+      "run": "r5",
+      "block": 4,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 750.9097634,
+      "execution_seconds": 583.9093825,
+      "native_logical_bytes": 9935130402,
+      "recovery_bytes": 3377830044,
+      "scheduler": {
+        "iteration_wall_seconds": 576.2135190000005,
+        "collection_execution_seconds": 115.9977727999999,
+        "update_execution_seconds": 317.9867215,
+        "collection_validation_seconds": 93.08097320000002,
+        "update_validation_seconds": 42.0422073,
+        "scheduler_other_seconds": 7.105844200000547
+      },
+      "update": {
+        "update_elapsed_seconds": 313.3779702000001,
+        "input_read_seconds": 43.1617141,
+        "behavior_replay_seconds": 8.235775699999998,
+        "learner_update_seconds": 213.47382190000008,
+        "checkpoint_io_seconds": 48.50608970000002,
+        "policy_substeps": 151868.0,
+        "physical_decisions": 138518.0,
+        "update_other_seconds": 0.0005687999999963722
+      }
+    },
+    {
+      "run": "r5",
+      "block": 5,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 755.5354698000001,
+      "execution_seconds": 582.2733586000004,
+      "native_logical_bytes": 10099673357,
+      "recovery_bytes": 3423238054,
+      "scheduler": {
+        "iteration_wall_seconds": 572.3394229999997,
+        "collection_execution_seconds": 116.22407639999999,
+        "update_execution_seconds": 315.88592159999985,
+        "collection_validation_seconds": 90.18916119999999,
+        "update_validation_seconds": 42.229020500000026,
+        "scheduler_other_seconds": 7.811243299999774
+      },
+      "update": {
+        "update_elapsed_seconds": 311.08139649999987,
+        "input_read_seconds": 42.57361620000002,
+        "behavior_replay_seconds": 8.2384821,
+        "learner_update_seconds": 211.99208869999987,
+        "checkpoint_io_seconds": 48.27668289999999,
+        "policy_substeps": 152518.0,
+        "physical_decisions": 139816.0,
+        "update_other_seconds": 0.0005266000000005988
+      }
+    },
+    {
+      "run": "r5",
+      "block": 6,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 746.8292772000004,
+      "execution_seconds": 573.3586895999997,
+      "native_logical_bytes": 10030418747,
+      "recovery_bytes": 3426755433,
+      "scheduler": {
+        "iteration_wall_seconds": 560.9410773000003,
+        "collection_execution_seconds": 113.84552149999998,
+        "update_execution_seconds": 310.7438935000001,
+        "collection_validation_seconds": 88.69664640000005,
+        "update_validation_seconds": 40.50701759999998,
+        "scheduler_other_seconds": 7.147998300000154
+      },
+      "update": {
+        "update_elapsed_seconds": 305.9131091,
+        "input_read_seconds": 42.08030260000001,
+        "behavior_replay_seconds": 7.925902700000001,
+        "learner_update_seconds": 207.79662799999997,
+        "checkpoint_io_seconds": 48.10973149999998,
+        "policy_substeps": 151324.0,
+        "physical_decisions": 138339.0,
+        "update_other_seconds": 0.0005443000000013853
+      }
+    },
+    {
+      "run": "r5",
+      "block": 7,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 713.4748488000005,
+      "execution_seconds": 533.4096007000007,
+      "native_logical_bytes": 9454215679,
+      "recovery_bytes": 3302755400,
+      "scheduler": {
+        "iteration_wall_seconds": 519.4122492,
+        "collection_execution_seconds": 109.52663449999993,
+        "update_execution_seconds": 288.09447650000004,
+        "collection_validation_seconds": 74.22163820000004,
+        "update_validation_seconds": 40.15694800000002,
+        "scheduler_other_seconds": 7.412552000000005
+      },
+      "update": {
+        "update_elapsed_seconds": 283.9288465,
+        "input_read_seconds": 39.72056860000001,
+        "behavior_replay_seconds": 7.168621699999999,
+        "learner_update_seconds": 190.1906721999999,
+        "checkpoint_io_seconds": 46.848442699999964,
+        "policy_substeps": 142135.0,
+        "physical_decisions": 130681.0,
+        "update_other_seconds": 0.0005413000001226465
+      }
+    },
+    {
+      "run": "r5",
+      "block": 8,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 721.7843390999997,
+      "execution_seconds": 544.8946000000005,
+      "native_logical_bytes": 9540745381,
+      "recovery_bytes": 3287322019,
+      "scheduler": {
+        "iteration_wall_seconds": 529.2244683000001,
+        "collection_execution_seconds": 109.35072899999999,
+        "update_execution_seconds": 296.7136031,
+        "collection_validation_seconds": 75.22370349999998,
+        "update_validation_seconds": 40.70847000000002,
+        "scheduler_other_seconds": 7.227962700000148
+      },
+      "update": {
+        "update_elapsed_seconds": 292.3796649999999,
+        "input_read_seconds": 40.82584530000003,
+        "behavior_replay_seconds": 7.280725900000001,
+        "learner_update_seconds": 197.03651070000006,
+        "checkpoint_io_seconds": 47.23604219999999,
+        "policy_substeps": 145667.0,
+        "physical_decisions": 134034.0,
+        "update_other_seconds": 0.0005408999998053332
+      }
+    },
+    {
+      "run": "r5",
+      "block": 9,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 697.3623785,
+      "execution_seconds": 535.1161190999992,
+      "native_logical_bytes": 9361326280,
+      "recovery_bytes": 3247477754,
+      "scheduler": {
+        "iteration_wall_seconds": 517.3488968000001,
+        "collection_execution_seconds": 106.20353410000006,
+        "update_execution_seconds": 291.5521564000002,
+        "collection_validation_seconds": 71.76876060000001,
+        "update_validation_seconds": 40.39026569999997,
+        "scheduler_other_seconds": 7.434179999999969
+      },
+      "update": {
+        "update_elapsed_seconds": 287.4545195000001,
+        "input_read_seconds": 40.18613059999999,
+        "behavior_replay_seconds": 7.346812599999999,
+        "learner_update_seconds": 191.62117940000005,
+        "checkpoint_io_seconds": 48.29985780000003,
+        "policy_substeps": 143810.0,
+        "physical_decisions": 132550.0,
+        "update_other_seconds": 0.0005391000000827262
+      }
+    },
+    {
+      "run": "r5",
+      "block": 10,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 702.7062427000001,
+      "execution_seconds": 535.7406720999988,
+      "native_logical_bytes": 9443787835,
+      "recovery_bytes": 3260200163,
+      "scheduler": {
+        "iteration_wall_seconds": 517.0853381,
+        "collection_execution_seconds": 104.49356370000007,
+        "update_execution_seconds": 290.4558336999999,
+        "collection_validation_seconds": 74.63203710000002,
+        "update_validation_seconds": 40.25412969999998,
+        "scheduler_other_seconds": 7.24977389999998
+      },
+      "update": {
+        "update_elapsed_seconds": 286.5432621000001,
+        "input_read_seconds": 40.040710100000005,
+        "behavior_replay_seconds": 7.361757099999997,
+        "learner_update_seconds": 192.13249650000014,
+        "checkpoint_io_seconds": 47.007757399999996,
+        "policy_substeps": 144510.0,
+        "physical_decisions": 132437.0,
+        "update_other_seconds": 0.0005409999999415049
+      }
+    },
+    {
+      "run": "r5",
+      "block": 11,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 710.8442787000004,
+      "execution_seconds": 542.0283285000005,
+      "native_logical_bytes": 9495089434,
+      "recovery_bytes": 3293137300,
+      "scheduler": {
+        "iteration_wall_seconds": 519.2494790999999,
+        "collection_execution_seconds": 105.15259510000001,
+        "update_execution_seconds": 288.7345388999999,
+        "collection_validation_seconds": 78.33068259999996,
+        "update_validation_seconds": 39.7403406,
+        "scheduler_other_seconds": 7.291321900000014
+      },
+      "update": {
+        "update_elapsed_seconds": 284.44122230000005,
+        "input_read_seconds": 39.664680699999984,
+        "behavior_replay_seconds": 7.210460400000005,
+        "learner_update_seconds": 190.6638135,
+        "checkpoint_io_seconds": 46.90175180000001,
+        "policy_substeps": 143496.0,
+        "physical_decisions": 131764.0,
+        "update_other_seconds": 0.0005159000000389824
+      }
+    },
+    {
+      "run": "r5",
+      "block": 12,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 756.9757983999989,
+      "execution_seconds": 578.2011693999993,
+      "native_logical_bytes": 9980029697,
+      "recovery_bytes": 3438078557,
+      "scheduler": {
+        "iteration_wall_seconds": 554.0755120000002,
+        "collection_execution_seconds": 110.44606260000003,
+        "update_execution_seconds": 310.51888679999996,
+        "collection_validation_seconds": 86.0710642,
+        "update_validation_seconds": 39.65534720000002,
+        "scheduler_other_seconds": 7.384151200000247
+      },
+      "update": {
+        "update_elapsed_seconds": 306.2168965,
+        "input_read_seconds": 41.75937790000001,
+        "behavior_replay_seconds": 7.734996999999999,
+        "learner_update_seconds": 209.6156693,
+        "checkpoint_io_seconds": 47.10629969999997,
+        "policy_substeps": 150088.0,
+        "physical_decisions": 135857.0,
+        "update_other_seconds": 0.000552600000048642
+      }
+    },
+    {
+      "run": "r5",
+      "block": 13,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 744.4191460000002,
+      "execution_seconds": 571.3655738999987,
+      "native_logical_bytes": 9779615600,
+      "recovery_bytes": 3391760143,
+      "scheduler": {
+        "iteration_wall_seconds": 544.9877562999998,
+        "collection_execution_seconds": 108.81900680000004,
+        "update_execution_seconds": 302.9638946999999,
+        "collection_validation_seconds": 85.22891439999997,
+        "update_validation_seconds": 40.88990930000003,
+        "scheduler_other_seconds": 7.086031099999786
+      },
+      "update": {
+        "update_elapsed_seconds": 298.73914709999985,
+        "input_read_seconds": 41.415924099999984,
+        "behavior_replay_seconds": 7.8375625,
+        "learner_update_seconds": 201.9150977999999,
+        "checkpoint_io_seconds": 47.56999,
+        "policy_substeps": 145700.0,
+        "physical_decisions": 133170.0,
+        "update_other_seconds": 0.0005726999999637883
+      }
+    },
+    {
+      "run": "r5",
+      "block": 14,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 738.3961555000005,
+      "execution_seconds": 562.395524900001,
+      "native_logical_bytes": 9420651240,
+      "recovery_bytes": 3263544961,
+      "scheduler": {
+        "iteration_wall_seconds": 534.6922440000001,
+        "collection_execution_seconds": 110.17630579999994,
+        "update_execution_seconds": 295.10485539999985,
+        "collection_validation_seconds": 80.79244440000002,
+        "update_validation_seconds": 41.08150360000001,
+        "scheduler_other_seconds": 7.537134800000217
+      },
+      "update": {
+        "update_elapsed_seconds": 291.03169170000007,
+        "input_read_seconds": 40.81846599999998,
+        "behavior_replay_seconds": 7.466757100000004,
+        "learner_update_seconds": 194.49494250000012,
+        "checkpoint_io_seconds": 48.25099039999999,
+        "policy_substeps": 141819.0,
+        "physical_decisions": 130374.0,
+        "update_other_seconds": 0.0005356999999435175
+      }
+    },
+    {
+      "run": "r5",
+      "block": 15,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 758.7112926999998,
+      "execution_seconds": 560.3594305000006,
+      "native_logical_bytes": 9315512247,
+      "recovery_bytes": 3242219258,
+      "scheduler": {
+        "iteration_wall_seconds": 528.840879,
+        "collection_execution_seconds": 108.69283709999999,
+        "update_execution_seconds": 296.80172710000005,
+        "collection_validation_seconds": 74.87289239999997,
+        "update_validation_seconds": 41.25598299999997,
+        "scheduler_other_seconds": 7.217439399999989
+      },
+      "update": {
+        "update_elapsed_seconds": 292.70795790000005,
+        "input_read_seconds": 41.332271700000014,
+        "behavior_replay_seconds": 7.7009395,
+        "learner_update_seconds": 195.1253115999999,
+        "checkpoint_io_seconds": 48.54888239999999,
+        "policy_substeps": 141676.0,
+        "physical_decisions": 130158.0,
+        "update_other_seconds": 0.0005527000001848137
+      }
+    },
+    {
+      "run": "r5",
+      "block": 16,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 740.3659159999988,
+      "execution_seconds": 562.8439729000002,
+      "native_logical_bytes": 9298029097,
+      "recovery_bytes": 3233807003,
+      "scheduler": {
+        "iteration_wall_seconds": 530.5750697999999,
+        "collection_execution_seconds": 108.7441509,
+        "update_execution_seconds": 296.14091779999995,
+        "collection_validation_seconds": 77.28006940000003,
+        "update_validation_seconds": 40.7438231,
+        "scheduler_other_seconds": 7.666108599999916
+      },
+      "update": {
+        "update_elapsed_seconds": 291.8214574,
+        "input_read_seconds": 40.810259499999965,
+        "behavior_replay_seconds": 7.786746800000002,
+        "learner_update_seconds": 195.2206903999999,
+        "checkpoint_io_seconds": 48.003175000000006,
+        "policy_substeps": 143045.0,
+        "physical_decisions": 131395.0,
+        "update_other_seconds": 0.0005857000001014967
+      }
+    },
+    {
+      "run": "r5",
+      "block": 17,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 690.8532042000006,
+      "execution_seconds": 523.7565377999999,
+      "native_logical_bytes": 9269594621,
+      "recovery_bytes": 3232717075,
+      "scheduler": {
+        "iteration_wall_seconds": 491.8054343000002,
+        "collection_execution_seconds": 99.14968019999996,
+        "update_execution_seconds": 280.0781998,
+        "collection_validation_seconds": 66.7306237,
+        "update_validation_seconds": 38.83780590000001,
+        "scheduler_other_seconds": 7.0091247000002
+      },
+      "update": {
+        "update_elapsed_seconds": 276.00886539999993,
+        "input_read_seconds": 38.72178289999999,
+        "behavior_replay_seconds": 6.931911600000001,
+        "learner_update_seconds": 183.79076479999992,
+        "checkpoint_io_seconds": 46.56390440000003,
+        "policy_substeps": 140992.0,
+        "physical_decisions": 129798.0,
+        "update_other_seconds": 0.0005016999999725158
+      }
+    },
+    {
+      "run": "r5",
+      "block": 18,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 684.1533057000015,
+      "execution_seconds": 514.8741990000017,
+      "native_logical_bytes": 9311522590,
+      "recovery_bytes": 3251265809,
+      "scheduler": {
+        "iteration_wall_seconds": 479.89151089999984,
+        "collection_execution_seconds": 94.59707610000002,
+        "update_execution_seconds": 272.7820702,
+        "collection_validation_seconds": 66.90583659999999,
+        "update_validation_seconds": 38.285146200000014,
+        "scheduler_other_seconds": 7.321381799999813
+      },
+      "update": {
+        "update_elapsed_seconds": 268.76590770000007,
+        "input_read_seconds": 38.02614100000002,
+        "behavior_replay_seconds": 6.433995000000003,
+        "learner_update_seconds": 178.69539010000003,
+        "checkpoint_io_seconds": 45.609896900000024,
+        "policy_substeps": 140161.0,
+        "physical_decisions": 128776.0,
+        "update_other_seconds": 0.00048470000001543667
+      }
+    },
+    {
+      "run": "r5",
+      "block": 19,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 716.8227305,
+      "execution_seconds": 546.1995329000019,
+      "native_logical_bytes": 9606446669,
+      "recovery_bytes": 3318815243,
+      "scheduler": {
+        "iteration_wall_seconds": 507.7350473,
+        "collection_execution_seconds": 101.28109259999995,
+        "update_execution_seconds": 287.08235799999983,
+        "collection_validation_seconds": 73.58062279999999,
+        "update_validation_seconds": 38.3284616,
+        "scheduler_other_seconds": 7.462512300000242
+      },
+      "update": {
+        "update_elapsed_seconds": 282.5253597,
+        "input_read_seconds": 38.78667089999998,
+        "behavior_replay_seconds": 6.704683900000002,
+        "learner_update_seconds": 191.46598340000003,
+        "checkpoint_io_seconds": 45.56750239999998,
+        "policy_substeps": 146281.0,
+        "physical_decisions": 134051.0,
+        "update_other_seconds": 0.0005191000000195345
+      }
+    },
+    {
+      "run": "r5",
+      "block": 20,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 707.3385832999993,
+      "execution_seconds": 535.2866122000014,
+      "native_logical_bytes": 9522845895,
+      "recovery_bytes": 3293611343,
+      "scheduler": {
+        "iteration_wall_seconds": 499.5683948000002,
+        "collection_execution_seconds": 98.92131559999999,
+        "update_execution_seconds": 281.4892878000001,
+        "collection_validation_seconds": 73.34558969999999,
+        "update_validation_seconds": 38.4441559,
+        "scheduler_other_seconds": 7.368045800000118
+      },
+      "update": {
+        "update_elapsed_seconds": 277.17819309999993,
+        "input_read_seconds": 38.759420899999974,
+        "behavior_replay_seconds": 6.709032799999999,
+        "learner_update_seconds": 185.66315559999995,
+        "checkpoint_io_seconds": 46.04608340000001,
+        "policy_substeps": 144945.0,
+        "physical_decisions": 133454.0,
+        "update_other_seconds": 0.0005004000000212727
+      }
+    },
+    {
+      "run": "r6",
+      "block": 1,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 847.2346343,
+      "execution_seconds": 637.856339,
+      "native_logical_bytes": 10560144128,
+      "recovery_bytes": 3519712146,
+      "scheduler": {
+        "iteration_wall_seconds": 631.3020436000002,
+        "collection_execution_seconds": 126.54792500000002,
+        "update_execution_seconds": 348.3116345999999,
+        "collection_validation_seconds": 105.90309359999999,
+        "update_validation_seconds": 43.180600700000014,
+        "scheduler_other_seconds": 7.358789700000216
+      },
+      "update": {
+        "update_elapsed_seconds": 343.11392950000004,
+        "input_read_seconds": 45.6414231,
+        "behavior_replay_seconds": 8.856892900000002,
+        "learner_update_seconds": 239.6764220999999,
+        "checkpoint_io_seconds": 48.93857050000001,
+        "policy_substeps": 156923.0,
+        "physical_decisions": 143478.0,
+        "update_other_seconds": 0.0006209000001149434
+      }
+    },
+    {
+      "run": "r6",
+      "block": 2,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 741.9169993,
+      "execution_seconds": 565.2184735999999,
+      "native_logical_bytes": 9629662306,
+      "recovery_bytes": 3294513486,
+      "scheduler": {
+        "iteration_wall_seconds": 561.5196788000001,
+        "collection_execution_seconds": 117.39888329999994,
+        "update_execution_seconds": 307.9642946,
+        "collection_validation_seconds": 85.63219239999998,
+        "update_validation_seconds": 42.699705200000004,
+        "scheduler_other_seconds": 7.824603300000149
+      },
+      "update": {
+        "update_elapsed_seconds": 303.5020425000001,
+        "input_read_seconds": 42.31225540000001,
+        "behavior_replay_seconds": 7.4762629999999985,
+        "learner_update_seconds": 204.8722007999999,
+        "checkpoint_io_seconds": 48.8407496,
+        "policy_substeps": 148613.0,
+        "physical_decisions": 136157.0,
+        "update_other_seconds": 0.0005737000001886372
+      }
+    },
+    {
+      "run": "r6",
+      "block": 3,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 723.0352648999997,
+      "execution_seconds": 562.6136517,
+      "native_logical_bytes": 9571943334,
+      "recovery_bytes": 3293218146,
+      "scheduler": {
+        "iteration_wall_seconds": 557.4245549999999,
+        "collection_execution_seconds": 117.91228370000002,
+        "update_execution_seconds": 308.94833660000006,
+        "collection_validation_seconds": 80.67680009999998,
+        "update_validation_seconds": 42.557883600000004,
+        "scheduler_other_seconds": 7.329250999999886
+      },
+      "update": {
+        "update_elapsed_seconds": 304.4431159,
+        "input_read_seconds": 43.31497389999999,
+        "behavior_replay_seconds": 7.704860300000003,
+        "learner_update_seconds": 203.98420079999994,
+        "checkpoint_io_seconds": 49.43850759999998,
+        "policy_substeps": 145093.0,
+        "physical_decisions": 133260.0,
+        "update_other_seconds": 0.0005733000000986976
+      }
+    },
+    {
+      "run": "r6",
+      "block": 4,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 704.1715694999998,
+      "execution_seconds": 534.9310421999999,
+      "native_logical_bytes": 9287491772,
+      "recovery_bytes": 3215570396,
+      "scheduler": {
+        "iteration_wall_seconds": 528.5724957,
+        "collection_execution_seconds": 106.50609080000004,
+        "update_execution_seconds": 297.5167712,
+        "collection_validation_seconds": 74.86460769999997,
+        "update_validation_seconds": 42.64407480000003,
+        "scheduler_other_seconds": 7.040951199999995
+      },
+      "update": {
+        "update_elapsed_seconds": 293.2883110999998,
+        "input_read_seconds": 40.60319440000001,
+        "behavior_replay_seconds": 7.213810200000001,
+        "learner_update_seconds": 191.24141449999996,
+        "checkpoint_io_seconds": 54.229368599999965,
+        "policy_substeps": 141602.0,
+        "physical_decisions": 130389.0,
+        "update_other_seconds": 0.0005233999999063599
+      }
+    },
+    {
+      "run": "r6",
+      "block": 5,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 685.3996599000002,
+      "execution_seconds": 524.5103743,
+      "native_logical_bytes": 9268256377,
+      "recovery_bytes": 3205412289,
+      "scheduler": {
+        "iteration_wall_seconds": 515.2770420000002,
+        "collection_execution_seconds": 106.81603609999998,
+        "update_execution_seconds": 286.53248529999996,
+        "collection_validation_seconds": 72.75516350000001,
+        "update_validation_seconds": 41.766621000000015,
+        "scheduler_other_seconds": 7.4067361000002165
+      },
+      "update": {
+        "update_elapsed_seconds": 282.2459128,
+        "input_read_seconds": 40.1719351,
+        "behavior_replay_seconds": 6.910402699999999,
+        "learner_update_seconds": 187.2917796,
+        "checkpoint_io_seconds": 47.87128050000001,
+        "policy_substeps": 140585.0,
+        "physical_decisions": 129446.0,
+        "update_other_seconds": 0.0005148999999846637
+      }
+    },
+    {
+      "run": "r6",
+      "block": 6,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 690.1769292999998,
+      "execution_seconds": 528.6170399000002,
+      "native_logical_bytes": 9300981047,
+      "recovery_bytes": 3208164571,
+      "scheduler": {
+        "iteration_wall_seconds": 518.3845525999997,
+        "collection_execution_seconds": 105.79126190000001,
+        "update_execution_seconds": 287.56474629999997,
+        "collection_validation_seconds": 76.90362290000003,
+        "update_validation_seconds": 40.71081399999999,
+        "scheduler_other_seconds": 7.414107499999659
+      },
+      "update": {
+        "update_elapsed_seconds": 283.2291414,
+        "input_read_seconds": 40.01055319999998,
+        "behavior_replay_seconds": 7.476511199999998,
+        "learner_update_seconds": 187.931391,
+        "checkpoint_io_seconds": 47.8101493,
+        "policy_substeps": 142949.0,
+        "physical_decisions": 131877.0,
+        "update_other_seconds": 0.0005367000000546795
+      }
+    },
+    {
+      "run": "r6",
+      "block": 7,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 705.2451549999996,
+      "execution_seconds": 537.5574666000002,
+      "native_logical_bytes": 9515264243,
+      "recovery_bytes": 3281223273,
+      "scheduler": {
+        "iteration_wall_seconds": 525.8226753,
+        "collection_execution_seconds": 106.78239369999999,
+        "update_execution_seconds": 293.3238207000002,
+        "collection_validation_seconds": 77.71330529999997,
+        "update_validation_seconds": 40.47836800000003,
+        "scheduler_other_seconds": 7.5247875999997405
+      },
+      "update": {
+        "update_elapsed_seconds": 288.99090199999983,
+        "input_read_seconds": 40.282073399999994,
+        "behavior_replay_seconds": 7.221205499999998,
+        "learner_update_seconds": 194.1754968,
+        "checkpoint_io_seconds": 47.31158670000001,
+        "policy_substeps": 145278.0,
+        "physical_decisions": 133610.0,
+        "update_other_seconds": 0.0005395999998540901
+      }
+    },
+    {
+      "run": "r6",
+      "block": 8,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 693.9300211999998,
+      "execution_seconds": 533.0517165000001,
+      "native_logical_bytes": 9442843326,
+      "recovery_bytes": 3257554844,
+      "scheduler": {
+        "iteration_wall_seconds": 519.3878886000001,
+        "collection_execution_seconds": 107.0516266,
+        "update_execution_seconds": 290.8726891999999,
+        "collection_validation_seconds": 73.67277109999995,
+        "update_validation_seconds": 40.5393439,
+        "scheduler_other_seconds": 7.251457800000253
+      },
+      "update": {
+        "update_elapsed_seconds": 286.76553580000007,
+        "input_read_seconds": 40.40826259999996,
+        "behavior_replay_seconds": 7.384731200000004,
+        "learner_update_seconds": 191.91568790000002,
+        "checkpoint_io_seconds": 47.05632089999997,
+        "policy_substeps": 144059.0,
+        "physical_decisions": 132522.0,
+        "update_other_seconds": 0.0005332000001203596
+      }
+    },
+    {
+      "run": "r6",
+      "block": 9,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 678.6400537,
+      "execution_seconds": 517.4323722999998,
+      "native_logical_bytes": 9051159890,
+      "recovery_bytes": 3144751592,
+      "scheduler": {
+        "iteration_wall_seconds": 503.0478526,
+        "collection_execution_seconds": 104.39916640000003,
+        "update_execution_seconds": 280.8890497000001,
+        "collection_validation_seconds": 69.92231669999997,
+        "update_validation_seconds": 40.26053880000001,
+        "scheduler_other_seconds": 7.576780999999869
+      },
+      "update": {
+        "update_elapsed_seconds": 276.7034015,
+        "input_read_seconds": 39.4292848,
+        "behavior_replay_seconds": 7.012250999999999,
+        "learner_update_seconds": 181.98880700000004,
+        "checkpoint_io_seconds": 48.272525200000004,
+        "policy_substeps": 139596.0,
+        "physical_decisions": 129070.0,
+        "update_other_seconds": 0.0005334999999604406
+      }
+    },
+    {
+      "run": "r6",
+      "block": 10,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 681.4289914999999,
+      "execution_seconds": 505.3898001000007,
+      "native_logical_bytes": 8925151267,
+      "recovery_bytes": 3116552937,
+      "scheduler": {
+        "iteration_wall_seconds": 489.2940213999998,
+        "collection_execution_seconds": 101.38452610000003,
+        "update_execution_seconds": 275.175639,
+        "collection_validation_seconds": 65.33606360000002,
+        "update_validation_seconds": 40.20980199999999,
+        "scheduler_other_seconds": 7.187990699999773
+      },
+      "update": {
+        "update_elapsed_seconds": 271.4205981999999,
+        "input_read_seconds": 38.94189119999997,
+        "behavior_replay_seconds": 6.981475100000001,
+        "learner_update_seconds": 177.72895069999993,
+        "checkpoint_io_seconds": 47.76771719999999,
+        "policy_substeps": 136706.0,
+        "physical_decisions": 125626.0,
+        "update_other_seconds": 0.0005639999999971224
+      }
+    },
+    {
+      "run": "r6",
+      "block": 11,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 665.9708604999996,
+      "execution_seconds": 507.03941009999835,
+      "native_logical_bytes": 8956807294,
+      "recovery_bytes": 3131056427,
+      "scheduler": {
+        "iteration_wall_seconds": 489.2810392000001,
+        "collection_execution_seconds": 102.47416729999998,
+        "update_execution_seconds": 274.66743679999985,
+        "collection_validation_seconds": 64.05341639999996,
+        "update_validation_seconds": 40.556245700000005,
+        "scheduler_other_seconds": 7.5297730000003185
+      },
+      "update": {
+        "update_elapsed_seconds": 270.54364210000006,
+        "input_read_seconds": 38.315318399999995,
+        "behavior_replay_seconds": 6.649124900000001,
+        "learner_update_seconds": 177.7404220999999,
+        "checkpoint_io_seconds": 47.8382366,
+        "policy_substeps": 138458.0,
+        "physical_decisions": 127223.0,
+        "update_other_seconds": 0.0005401000001370448
+      }
+    },
+    {
+      "run": "r6",
+      "block": 12,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 655.6116956000005,
+      "execution_seconds": 496.4985106999993,
+      "native_logical_bytes": 8740134903,
+      "recovery_bytes": 3074673490,
+      "scheduler": {
+        "iteration_wall_seconds": 477.5070437999999,
+        "collection_execution_seconds": 98.76105399999999,
+        "update_execution_seconds": 267.3450597000001,
+        "collection_validation_seconds": 63.8287811,
+        "update_validation_seconds": 40.11304350000002,
+        "scheduler_other_seconds": 7.459105499999794
+      },
+      "update": {
+        "update_elapsed_seconds": 263.5945524999999,
+        "input_read_seconds": 38.41654530000001,
+        "behavior_replay_seconds": 6.630829899999996,
+        "learner_update_seconds": 171.21956139999998,
+        "checkpoint_io_seconds": 47.327054299999986,
+        "policy_substeps": 134633.0,
+        "physical_decisions": 124251.0,
+        "update_other_seconds": 0.0005615999999122323
+      }
+    },
+    {
+      "run": "r6",
+      "block": 13,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 692.0413125000014,
+      "execution_seconds": 526.7532412,
+      "native_logical_bytes": 9220187671,
+      "recovery_bytes": 3201406065,
+      "scheduler": {
+        "iteration_wall_seconds": 506.3137576000001,
+        "collection_execution_seconds": 103.99594559999998,
+        "update_execution_seconds": 284.4441394,
+        "collection_validation_seconds": 70.58551059999998,
+        "update_validation_seconds": 39.806371799999994,
+        "scheduler_other_seconds": 7.481790200000148
+      },
+      "update": {
+        "update_elapsed_seconds": 279.8781650000002,
+        "input_read_seconds": 39.282608999999994,
+        "behavior_replay_seconds": 7.050259799999999,
+        "learner_update_seconds": 186.2852935999999,
+        "checkpoint_io_seconds": 47.259461900000026,
+        "policy_substeps": 143729.0,
+        "physical_decisions": 132646.0,
+        "update_other_seconds": 0.0005407000002719542
+      }
+    },
+    {
+      "run": "r6",
+      "block": 14,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 669.3868836000001,
+      "execution_seconds": 503.1554598999992,
+      "native_logical_bytes": 8890036845,
+      "recovery_bytes": 3114694080,
+      "scheduler": {
+        "iteration_wall_seconds": 480.34440499999994,
+        "collection_execution_seconds": 99.46595900000003,
+        "update_execution_seconds": 269.91752819999994,
+        "collection_validation_seconds": 63.49194540000005,
+        "update_validation_seconds": 40.1201055,
+        "scheduler_other_seconds": 7.348866899999905
+      },
+      "update": {
+        "update_elapsed_seconds": 266.1320440999997,
+        "input_read_seconds": 37.85519960000001,
+        "behavior_replay_seconds": 6.848141499999998,
+        "learner_update_seconds": 174.61993499999988,
+        "checkpoint_io_seconds": 46.808232,
+        "policy_substeps": 136418.0,
+        "physical_decisions": 126280.0,
+        "update_other_seconds": 0.0005359999997835985
+      }
+    },
+    {
+      "run": "r6",
+      "block": 15,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 674.8607658000001,
+      "execution_seconds": 512.1849170000005,
+      "native_logical_bytes": 8947952482,
+      "recovery_bytes": 3144604287,
+      "scheduler": {
+        "iteration_wall_seconds": 488.07194380000016,
+        "collection_execution_seconds": 99.10186300000001,
+        "update_execution_seconds": 275.15941640000005,
+        "collection_validation_seconds": 66.0620952,
+        "update_validation_seconds": 40.14994479999999,
+        "scheduler_other_seconds": 7.598624400000119
+      },
+      "update": {
+        "update_elapsed_seconds": 271.2795303000001,
+        "input_read_seconds": 38.8201395,
+        "behavior_replay_seconds": 6.796407099999994,
+        "learner_update_seconds": 178.25087020000007,
+        "checkpoint_io_seconds": 47.411567799999986,
+        "policy_substeps": 138660.0,
+        "physical_decisions": 127626.0,
+        "update_other_seconds": 0.0005457000000319567
+      }
+    },
+    {
+      "run": "r6",
+      "block": 16,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 699.0494939,
+      "execution_seconds": 526.7618707000001,
+      "native_logical_bytes": 9104235543,
+      "recovery_bytes": 3197171290,
+      "scheduler": {
+        "iteration_wall_seconds": 502.26139129999996,
+        "collection_execution_seconds": 105.14329309999998,
+        "update_execution_seconds": 281.1170592,
+        "collection_validation_seconds": 67.55859519999996,
+        "update_validation_seconds": 40.91271510000002,
+        "scheduler_other_seconds": 7.529728699999964
+      },
+      "update": {
+        "update_elapsed_seconds": 277.2904459000002,
+        "input_read_seconds": 39.64561849999999,
+        "behavior_replay_seconds": 7.356383899999998,
+        "learner_update_seconds": 182.1812352,
+        "checkpoint_io_seconds": 48.106649600000026,
+        "policy_substeps": 138636.0,
+        "physical_decisions": 127745.0,
+        "update_other_seconds": 0.0005587000001696651
+      }
+    },
+    {
+      "run": "r6",
+      "block": 17,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 715.4381374000004,
+      "execution_seconds": 540.9019877999999,
+      "native_logical_bytes": 9052408090,
+      "recovery_bytes": 3184512489,
+      "scheduler": {
+        "iteration_wall_seconds": 513.6716161999999,
+        "collection_execution_seconds": 107.36890129999999,
+        "update_execution_seconds": 286.6846928999999,
+        "collection_validation_seconds": 70.65860680000002,
+        "update_validation_seconds": 41.3760372,
+        "scheduler_other_seconds": 7.583377999999982
+      },
+      "update": {
+        "update_elapsed_seconds": 282.6080298,
+        "input_read_seconds": 39.821044600000015,
+        "behavior_replay_seconds": 7.268549999999997,
+        "learner_update_seconds": 186.67155490000005,
+        "checkpoint_io_seconds": 48.84631910000001,
+        "policy_substeps": 136912.0,
+        "physical_decisions": 125837.0,
+        "update_other_seconds": 0.0005611999999359796
+      }
+    },
+    {
+      "run": "r6",
+      "block": 18,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 724.8288634,
+      "execution_seconds": 534.4456004000003,
+      "native_logical_bytes": 8959596584,
+      "recovery_bytes": 3144300716,
+      "scheduler": {
+        "iteration_wall_seconds": 502.58969549999995,
+        "collection_execution_seconds": 104.34042869999998,
+        "update_execution_seconds": 283.1633758,
+        "collection_validation_seconds": 66.84451220000001,
+        "update_validation_seconds": 41.217241000000016,
+        "scheduler_other_seconds": 7.024137799999949
+      },
+      "update": {
+        "update_elapsed_seconds": 278.9676148,
+        "input_read_seconds": 39.91889879999999,
+        "behavior_replay_seconds": 7.200117300000001,
+        "learner_update_seconds": 183.2905116999999,
+        "checkpoint_io_seconds": 48.55748349999999,
+        "policy_substeps": 136649.0,
+        "physical_decisions": 126057.0,
+        "update_other_seconds": 0.0006035000000679247
+      }
+    },
+    {
+      "run": "r6",
+      "block": 19,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 689.2940868000005,
+      "execution_seconds": 522.3196967999993,
+      "native_logical_bytes": 8847527237,
+      "recovery_bytes": 3123897610,
+      "scheduler": {
+        "iteration_wall_seconds": 490.76599229999994,
+        "collection_execution_seconds": 104.01387140000003,
+        "update_execution_seconds": 274.8724856999998,
+        "collection_validation_seconds": 63.721093599999996,
+        "update_validation_seconds": 40.74764189999999,
+        "scheduler_other_seconds": 7.4108997000001295
+      },
+      "update": {
+        "update_elapsed_seconds": 270.9826625,
+        "input_read_seconds": 39.36485039999998,
+        "behavior_replay_seconds": 6.740331699999997,
+        "learner_update_seconds": 177.15076200000007,
+        "checkpoint_io_seconds": 47.72616970000001,
+        "policy_substeps": 134281.0,
+        "physical_decisions": 123728.0,
+        "update_other_seconds": 0.000548699999967539
+      }
+    },
+    {
+      "run": "r6",
+      "block": 20,
+      "host": "desktop",
+      "updates": 162,
+      "games": 1620,
+      "dispatch_seconds": 680.4213836999988,
+      "execution_seconds": 509.7736301999994,
+      "native_logical_bytes": 9011928699,
+      "recovery_bytes": 3171641762,
+      "scheduler": {
+        "iteration_wall_seconds": 472.0369111,
+        "collection_execution_seconds": 95.33411750000005,
+        "update_execution_seconds": 269.8691403,
+        "collection_validation_seconds": 61.5059697,
+        "update_validation_seconds": 38.558491199999985,
+        "scheduler_other_seconds": 6.769192399999952
+      },
+      "update": {
+        "update_elapsed_seconds": 266.0575504000001,
+        "input_read_seconds": 37.6817292,
+        "behavior_replay_seconds": 6.385935600000002,
+        "learner_update_seconds": 175.7819055,
+        "checkpoint_io_seconds": 46.20748359999998,
+        "policy_substeps": 137133.0,
+        "physical_decisions": 125670.0,
+        "update_other_seconds": 0.0004965000001107001
+      }
+    }
+  ]
+}

@@ -143,6 +143,7 @@ fn pass_until(state: &mut GameState, stop: impl Fn(&GameState, &Decision) -> boo
                 Action::OrderTriggers((0..pending.len()).collect())
             }
             Decision::ChooseEffectOption { .. } => Action::ChooseEffectOption(0),
+            Decision::ChooseTargets { legal_targets, .. } => Action::ChooseTarget(legal_targets[0]),
             other => panic!("unexpected decision: {other:?}"),
         };
         engine::step(state, action).unwrap();
@@ -244,7 +245,6 @@ fn every_land_in_the_batch_is_a_fully_supported_land() {
     assert_eq!((mite.power, mite.toughness), (Some(1), Some(1)));
     assert!(mite.colors.is_empty());
     assert!(mite.keywords.has(Keywords::TOXIC_1));
-    assert!(mite.keywords.has(Keywords::CANT_BLOCK));
 }
 
 #[test]
@@ -693,6 +693,149 @@ fn eiganjo_channels_four_damage_to_an_attacking_creature() {
     resolve_stack(&mut state);
     assert_eq!(pool(&state, PlayerId::P0), [0; 6]);
     assert_eq!(state.objects.get(elves).zone, Zone::Graveyard);
+}
+
+#[test]
+fn eiganjos_channel_costs_one_less_per_legendary_creature() {
+    let mut state = ready();
+    let eiganjo = put(
+        &mut state,
+        PlayerId::P0,
+        "Eiganjo, Seat of the Empire",
+        Zone::Hand,
+    );
+    let elves = put(
+        &mut state,
+        PlayerId::P0,
+        "Llanowar Elves",
+        Zone::Battlefield,
+    );
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Adeline, Resplendent Cathar",
+        Zone::Battlefield,
+    );
+    // An opponent's legendary creature never counts.
+    put(
+        &mut state,
+        PlayerId::P1,
+        "Adeline, Resplendent Cathar",
+        Zone::Battlefield,
+    );
+    pass_until(&mut state, |_, d| {
+        matches!(d, Decision::DeclareAttackers { .. })
+    });
+    engine::step(&mut state, Action::DeclareAttackers(vec![elves])).unwrap();
+    pass_until(&mut state, |state, d| {
+        matches!(
+            d,
+            Decision::CastSpellOrPass {
+                player: PlayerId::P0,
+                ..
+            }
+        ) && state.step == Step::DeclareAttackers
+    });
+    state.players[0].mana_pool = [1, 0, 0, 0, 0, 0];
+    assert!(!activatable(&mut state).contains(&(eiganjo, 0)));
+    state.players[0].mana_pool = [1, 0, 0, 0, 0, 1];
+    assert!(activatable(&mut state).contains(&(eiganjo, 0)));
+    engine::step(&mut state, Action::ActivateAbility(eiganjo, 0)).unwrap();
+    let Decision::ChooseTargets { legal_targets, .. } = next(&mut state) else {
+        panic!("expected targets")
+    };
+    assert!(legal_targets.contains(&Target::Object(elves)));
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(elves))).unwrap();
+    next(&mut state);
+    assert_eq!(state.objects.get(eiganjo).zone, Zone::Graveyard);
+    assert_eq!(pool(&state, PlayerId::P0), [0; 6], "paid {{1}}{{W}}");
+}
+
+#[test]
+fn rockface_village_gives_a_mouse_plus_one_and_haste_at_sorcery_speed() {
+    let mut state = ready();
+    let village = put(
+        &mut state,
+        PlayerId::P0,
+        "Rockface Village",
+        Zone::Battlefield,
+    );
+    let mouse = put(
+        &mut state,
+        PlayerId::P0,
+        "Manifold Mouse",
+        Zone::Battlefield,
+    );
+    let elves = put(
+        &mut state,
+        PlayerId::P0,
+        "Llanowar Elves",
+        Zone::Battlefield,
+    );
+    state.objects.get_mut(mouse).summoning_sick = true;
+    state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+    assert!(activatable(&mut state).contains(&(village, 0)));
+    engine::step(&mut state, Action::ActivateAbility(village, 0)).unwrap();
+    let Decision::ChooseTargets { legal_targets, .. } = next(&mut state) else {
+        panic!("expected targets")
+    };
+    assert_eq!(
+        legal_targets,
+        vec![Target::Object(mouse)],
+        "not the Elf {elves:?}"
+    );
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(mouse))).unwrap();
+    resolve_stack(&mut state);
+    assert_eq!(engine::effective_power(&state, mouse), 2);
+    assert_eq!(engine::effective_toughness(&state, mouse), 2);
+    assert!(engine::has_effective_keyword(
+        &state,
+        mouse,
+        Keywords::HASTE
+    ));
+    let Decision::DeclareAttackers { eligible, .. } = pass_until(&mut state, |_, d| {
+        matches!(d, Decision::DeclareAttackers { .. })
+    }) else {
+        unreachable!()
+    };
+    assert!(eligible.contains(&mouse));
+
+    // Not at instant speed.
+    let mut state = ready();
+    let village = put(
+        &mut state,
+        PlayerId::P0,
+        "Rockface Village",
+        Zone::Battlefield,
+    );
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Manifold Mouse",
+        Zone::Battlefield,
+    );
+    pass_until(&mut state, |_, d| {
+        matches!(d, Decision::DeclareAttackers { .. })
+    });
+    engine::step(&mut state, Action::DeclareAttackers(Vec::new())).unwrap();
+    state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+    let decision = pass_until(&mut state, |_, d| {
+        matches!(
+            d,
+            Decision::CastSpellOrPass {
+                player: PlayerId::P0,
+                ..
+            }
+        )
+    });
+    let Decision::CastSpellOrPass {
+        activatable_abilities,
+        ..
+    } = decision
+    else {
+        unreachable!()
+    };
+    assert!(!activatable_abilities.contains(&(village, 0)));
 }
 
 #[test]

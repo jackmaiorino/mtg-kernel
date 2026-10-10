@@ -86,21 +86,23 @@ the activation affordability check and payment.
 colorless Phyrexian Mite artifact creature with toxic 1 and "This creature can't block".
 Players gain `poison_counters`; combat damage a creature with toxic N deals to a player also
 gives that player N poison counters (702.164c), and a player with ten or more poison
-counters loses the game as a state-based action (704.5c). `Keywords::TOXIC_1` and
-`Keywords::CANT_BLOCK` are new keyword bits.
+counters loses the game as a state-based action (704.5c). `Keywords::TOXIC_1` is a new
+keyword bit. "Can't block" reuses family D's name-keyed rule
+(`standard_keywords_v1::cant_block`, Forsaken Miner's).
 
 Rockface Village's `{R}, {T}` sorcery-speed ability gives target Lizard, Mouse, Otter or
 Raccoon you control +1/+0 and haste until end of turn
-(`TargetSpec::ControlledPermanentWithAnySubtype`).
+(`TargetSpec::ControlledPermanentWithAnySubtype`, stable id 56; Foundry's
+`AttackingCreatureWithSubtype` is 55).
 
 ## Identity
 
-New subtypes append to `Subtype` (Assembly-Worker, Mite, Mouse, Otter, Sphere, Town); the
-creature types are added to `CREATURE_TYPES` only under the Standard feature. New `CardDef`
+New subtypes append to `Subtype` (Assembly-Worker, Mite, Otter, Sphere, Town; family D
+already added Mouse); the creature types are added to `CREATURE_TYPES` only under the Standard feature. New `CardDef`
 fields are appended with empty defaults and enter the catalog contract only when a card
 sets them, so the Pauper (`kernel_carddb/v34`) and FDN Limited identities do not move. The
 Standard catalog moves to `kernel_carddb_standard/v5`. New object and player state
-(`animation`, `entered_battlefield_this_turn`, `poison_counters`) is skipped on the wire
+(`animation_timestamp`, `entered_battlefield_this_turn`, `poison_counters`) is skipped on the wire
 and in state hashes while empty, so existing states keep their bytes.
 
 ## Tests
@@ -109,10 +111,15 @@ and in state hashes while empty, so existing states keep their bytes.
 condition on both sides of its threshold, painland damage per color, verge and Mirrex
 conditions, Starting Town's life payment, Rockface Village's red mana paying a creature
 spell and not a noncreature spell, Foundry animating, attacking, being pumped and reverting
-at cleanup (including summoning sickness and lethal damage), Eiganjo's channel with and
-without legendary creatures, triome cycling, surveil-land entry, and a Mite's toxic damage
-and blocking restriction through the poison loss.
+at cleanup (including summoning sickness and lethal damage), Eiganjo's channel at full
+cost and one cheaper with Adeline, Resplendent Cathar (an opponent's legend never counts),
+Rockface Village pumping Manifold Mouse at sorcery speed, triome cycling, surveil-land
+entry, and a Mite's toxic damage and blocking restriction through the poison loss.
 
-Two paths have no catalog card to exercise them yet: Eiganjo's reduction needs a legendary
-creature, and Rockface Village's pump needs a Lizard, Mouse, Otter or Raccoon. Both get a
-test in the batch that adds the first such card.
+## Rules vector
+
+The rules-vector extractor (`rules_vector_v1`) reads every new field: the entry conditions
+and Eiganjo's reduction as static abilities, the verge and Mirrex conditions on their mana
+abilities, Rockface's creature-only red as a conditional mana ability, Starting Town's life
+payment as a cost, and Mishra's Foundry's animation in the definition record with
+`EffectOp::AnimateSource` in its own meaning slice (`meaning/effect_i.rs`).

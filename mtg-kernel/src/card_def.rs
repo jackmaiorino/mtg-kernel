@@ -262,10 +262,40 @@ pub enum Subtype {
     Lizard,
     /// Appended for the FDN equipment and library-search batch.
     Golem,
+    /// Appended for Eager Trufflesnout; existing ids remain fixed.
+    Boar,
+    /// Appended for Crackling Cyclops; existing ids remain fixed.
+    Cyclops,
+    /// Appended for Bigfin Bouncer; existing ids remain fixed.
+    Shark,
+    /// Appended for Burnished Hart; existing ids remain fixed.
+    Elk,
+    /// Appended for Rune-Scarred Demon; existing ids remain fixed.
+    Demon,
+    /// Appended for Axgard Cavalry; existing ids remain fixed.
+    Dwarf,
+    Berserker,
+    /// Appended for the MageZero Standard family G creatures; existing ids
+    /// remain fixed.
+    Scout,
+    Bat,
+    Mercenary,
+    Assassin,
+    Wolf,
+    Kraken,
+    Djinn,
+    /// Appended for MageZero Standard family D (new set keywords).
+    Mouse,
+    /// Artifact type of the Incubator token.
+    Incubator,
+    Werewolf,
+    Rabbit,
+    Avatar,
+    Glimmer,
+    Sheep,
     /// MageZero Standard lands batch; existing ids remain fixed.
     AssemblyWorker,
     Mite,
-    Mouse,
     Otter,
     /// Mirrex's land subtype. Not a creature type.
     Sphere,
@@ -372,14 +402,66 @@ impl Subtype {
         Subtype::Lizard,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Golem,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Boar,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Cyclops,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Shark,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Elk,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Demon,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Dwarf,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Berserker,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Scout,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Bat,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Mercenary,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Assassin,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Wolf,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Kraken,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Djinn,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Mouse,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Werewolf,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Rabbit,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Avatar,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Glimmer,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Sheep,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::AssemblyWorker,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Mite,
         #[cfg(feature = "standard-magezero-fixtures")]
-        Subtype::Mouse,
-        #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Otter,
+    ];
+
+    /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
+    /// present in the build. Changelings carry every listed type through
+    /// their effective subtype set.
+    pub const OUTLAW_TYPES: &'static [Subtype] = &[
+        Subtype::Pirate,
+        Subtype::Rogue,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Warlock,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Assassin,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Mercenary,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -510,9 +592,26 @@ impl Subtype {
                 | Subtype::Archer
                 | Subtype::Lizard
                 | Subtype::Golem
+                | Subtype::Shark
+                | Subtype::Elk
+                | Subtype::Demon
+                | Subtype::Dwarf
+                | Subtype::Berserker
+                | Subtype::Scout
+                | Subtype::Bat
+                | Subtype::Mercenary
+                | Subtype::Assassin
+                | Subtype::Wolf
+                | Subtype::Kraken
+                | Subtype::Djinn
+                | Subtype::Mouse
+                | Subtype::Werewolf
+                | Subtype::Rabbit
+                | Subtype::Avatar
+                | Subtype::Glimmer
+                | Subtype::Sheep
                 | Subtype::AssemblyWorker
                 | Subtype::Mite
-                | Subtype::Mouse
                 | Subtype::Otter
         )
     }
@@ -664,6 +763,44 @@ pub enum TargetSpec {
     ControlledCreatureThenOpponentCreatureOrPlaneswalker,
     AttackingOrBlockingCreature,
     NonlandPermanentCardInOwnGraveyardManaValueAtMost(u16),
+    /// One creature or planeswalker on either battlefield (Hero's Downfall).
+    CreatureOrPlaneswalker,
+    /// One artifact, enchantment, or creature with flying (Broken Wings).
+    ArtifactEnchantmentOrFlyingCreature,
+    /// One artifact, enchantment, or creature with power 4 or greater
+    /// (Make Your Move).
+    ArtifactEnchantmentOrCreaturePowerAtLeastFour,
+    /// One nonland permanent an opponent controls (Meteor Golem).
+    OpponentNonlandPermanent,
+    /// A creature spell on the stack (Essence Scatter).
+    CreatureSpellOnStack,
+    /// Exactly one creature that is not an outlaw (Assassin, Mercenary,
+    /// Pirate, Rogue or Warlock, counting changelings as every type).
+    /// Shoot the Sheriff is the first consumer. Ids 42-46 are claimed by
+    /// in-flight FDN batches, so MageZero Standard specs start at 47.
+    NonOutlawCreature,
+    /// Exactly one creature whose current toughness is 4 or greater (Destroy
+    /// Evil's first mode).
+    CreatureToughnessAtLeastFour,
+    /// Exactly one creature, enchantment, or planeswalker (Get Lost).
+    CreatureEnchantmentOrPlaneswalker,
+    /// A creature card in the controller's own graveyard with at most this
+    /// printed mana value (Extraction Specialist).
+    CreatureCardInOwnGraveyardManaValueAtMost(u16),
+    /// Exactly 1 target: a spell on the stack controlled by someone other
+    /// than the targeting player (Hullbreaker Horror).
+    SpellYouDontControl,
+    // MageZero Standard family D (stable ids 52-54).
+    /// Exactly one creature the announcing player controls other than the
+    /// targeting source, or other than the creature a trigger names
+    /// ("target creature you control other than that creature").
+    AnotherControlledCreature,
+    /// Exactly one creature with this subtype the announcing player
+    /// controls ("target Mouse you control").
+    ControlledCreatureWithSubtype(Subtype),
+    /// Zero or one nontoken card in either graveyard.
+    UpToOneCardInGraveyards,
+    // MageZero Standard lands batch (stable ids 55-56).
     /// Exactly one attacking creature with the named effective subtype
     /// (Mishra's Foundry's "target attacking Assembly-Worker").
     AttackingCreatureWithSubtype(Subtype),
@@ -721,8 +858,21 @@ impl TargetSpec {
             TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker => 39,
             TargetSpec::AttackingOrBlockingCreature => 40,
             TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_) => 41,
-            TargetSpec::AttackingCreatureWithSubtype(_) => 42,
-            TargetSpec::ControlledPermanentWithAnySubtype(_) => 43,
+            TargetSpec::CreatureOrPlaneswalker => 42,
+            TargetSpec::ArtifactEnchantmentOrFlyingCreature => 43,
+            TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour => 44,
+            TargetSpec::OpponentNonlandPermanent => 45,
+            TargetSpec::CreatureSpellOnStack => 46,
+            TargetSpec::NonOutlawCreature => 47,
+            TargetSpec::CreatureToughnessAtLeastFour => 48,
+            TargetSpec::CreatureEnchantmentOrPlaneswalker => 49,
+            TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_) => 50,
+            TargetSpec::SpellYouDontControl => 51,
+            TargetSpec::AnotherControlledCreature => 52,
+            TargetSpec::ControlledCreatureWithSubtype(_) => 53,
+            TargetSpec::UpToOneCardInGraveyards => 54,
+            TargetSpec::AttackingCreatureWithSubtype(_) => 55,
+            TargetSpec::ControlledPermanentWithAnySubtype(_) => 56,
         }
     }
 }
@@ -766,8 +916,6 @@ impl Keywords {
     /// gives that player a poison counter. The Phyrexian Mite token is the
     /// first consumer.
     pub const TOXIC_1: Keywords = Keywords(1 << 17);
-    /// "This creature can't block." Read by `engine::legal_blockers_for`.
-    pub const CANT_BLOCK: Keywords = Keywords(1 << 18);
 
     pub const fn has(self, other: Keywords) -> bool {
         self.0 & other.0 != 0
@@ -905,6 +1053,25 @@ pub enum CostComponent {
     /// controls or one creature card in their hand. A hand choice is
     /// publicly revealed and the exact incarnation is frozen on the spell.
     ChooseControlledCreatureOrRevealCreatureCardFromHand,
+    /// Tap `count` untapped permanents the payer controls matching `filter`
+    /// (Warden of the Inner Sky: "Tap three untapped artifacts and/or
+    /// creatures you control"). The source itself qualifies, and creatures
+    /// tap regardless of summoning sickness because this is not {T}.
+    /// Activations only; staged one pick at a time like
+    /// `SacrificeControlled`.
+    TapControlled { count: u8, filter: PermanentFilter },
+    /// Remove `n` +1/+1 counters from among creatures the payer controls
+    /// (MageZero Standard, Hopeful Initiate). Paid without a choice: each
+    /// counter comes off the controlled creature with the most +1/+1
+    /// counters, earliest on the battlefield first on ties.
+    RemovePlusOneCountersFromControlledCreatures(u8),
+    /// Convoke (MageZero Standard, Knight-Errant of Eos), carried as the
+    /// card's alternative cost: pay this mana cost with as many untapped
+    /// creatures the payer controls as `standard_keywords_v1::convoke_plan`
+    /// can use (at least one), the rest with mana. The creatures are chosen
+    /// deterministically; whether to convoke at all is the ordinary cast
+    /// mode choice.
+    ConvokeMana(crate::mana::Cost),
 }
 
 /// Optional additional costs chosen while announcing a spell. The selected
@@ -917,6 +1084,10 @@ pub enum OptionalAdditionalCostDef {
     CollectEvidence { minimum_mana_value: u16 },
     /// Sacrifice one controlled artifact, enchantment, or token.
     Bargain,
+    /// Casualty N: sacrifice one controlled creature with power N or
+    /// greater; when the spell is cast this way it is copied
+    /// (MageZero Standard, Make Disappear).
+    Casualty(u8),
 }
 
 /// Static rules carried by a permanent while it is attached. The host link
@@ -924,17 +1095,33 @@ pub enum OptionalAdditionalCostDef {
 /// definition describes what a valid attachment requires and grants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttachmentDef {
-    AuraCreature { prevents_untap: bool },
+    AuraCreature {
+        prevents_untap: bool,
+    },
     AuraCreatureOverride(CreatureCharacteristicsOverrideDef),
+    /// Enchanted creature gets a static power/toughness bonus and keywords.
+    AuraCreatureStatic(AuraCreatureStaticDef),
 }
 
 impl AttachmentDef {
     pub const fn is_creature_aura(self) -> bool {
         matches!(
             self,
-            Self::AuraCreature { .. } | Self::AuraCreatureOverride(_)
+            Self::AuraCreature { .. } | Self::AuraCreatureOverride(_) | Self::AuraCreatureStatic(_)
         )
     }
+}
+
+/// Layer 6 keywords and layer 7c power/toughness granted to the enchanted
+/// creature. With `per_controlled_subtype`, the bonus is multiplied by the
+/// number of permanents of that subtype the Aura's controller controls
+/// (Blanchwood Armor's Forests); otherwise it applies once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AuraCreatureStaticDef {
+    pub power: i16,
+    pub toughness: i16,
+    pub keywords: Keywords,
+    pub per_controlled_subtype: Option<Subtype>,
 }
 
 /// Layer 3 through 7b characteristics supplied by an attached creature Aura.
@@ -974,6 +1161,15 @@ pub enum AltCostCondition {
     /// The caster must control a permanent with the named subtype (Snuff
     /// Out: "If you control a Swamp...").
     ControlsPermanentWithSubtype(Subtype),
+    /// Warp: "You may cast this card from your hand for its warp cost."
+    /// A permanent spell cast this way is exiled at the beginning of the
+    /// next end step and may be cast from exile on a later turn
+    /// (`standard_keywords_v1`).
+    WarpFromHand,
+    /// Impending N: cast from hand for this cost, the permanent enters with
+    /// N time counters and isn't a creature while it has any
+    /// (`ObjectStateV4::time_counters_v1`, `standard_keywords_v1`).
+    ImpendingFromHand { time_counters: u8 },
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -1101,6 +1297,10 @@ pub enum DynamicValueDef {
         amount_when_met: u8,
         amount_otherwise: u8,
     },
+    /// Count battlefield permanents the evaluating controller controls whose
+    /// effective subtypes include the named subtype (Flow of Knowledge's
+    /// "each Island you control").
+    ControlledPermanentsWithSubtype(Subtype),
 }
 
 /// Two subtypes a *single* permanent must carry at once, e.g. the Urza's
@@ -1203,9 +1403,6 @@ pub struct AnimationDef {
     pub colors: &'static [ManaColor],
     pub subtypes: &'static [Subtype],
     pub keywords: Keywords,
-    /// False for "until end of turn"; true for an animation that lasts while
-    /// the permanent remains on the battlefield.
-    pub permanent: bool,
 }
 
 /// Reduces the generic mana of one printed activated ability, by
@@ -1300,6 +1497,14 @@ pub struct GenericCostReductionDef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WardCostDef {
     Generic(u8),
+    /// Ward—Collect evidence N (MageZero Standard, Axebane Ferox).
+    CollectEvidence(u16),
+    /// Ward—Pay N life, printed on the transform back face only
+    /// (MageZero Standard, Moonrage Brute).
+    BackFacePayLife(u8),
+    /// Ward—Discard a card, printed on both faces (MageZero Standard,
+    /// Graveyard Trespasser).
+    DiscardCard,
 }
 
 /// Alternate battlefield characteristics for a transforming permanent's
@@ -1416,6 +1621,9 @@ pub struct CardDef {
     /// Printed protection applying to this card as a spell, including copies.
     /// It does not protect the permanent's activated or triggered abilities.
     pub spell_cannot_be_countered: bool,
+    /// The spell's program reads the amount of mana spent to cast it, so the
+    /// cast records it on the stack item (`StackStateV4::mana_spent`).
+    pub records_mana_spent: bool,
     /// Printed Equipment behavior shared by attachments, effective
     /// characteristics, cast triggers, and RL continuous-effect projection.
     pub equipment: Option<EquipmentDef>,
@@ -1951,11 +2159,11 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 275 (equipment, kicker and library-search cards).
+        // batches append through id 329 (activated combat abilities).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                276
+                330
             } else {
                 192
             }
@@ -2015,6 +2223,23 @@ mod tests {
                 39,
             ),
             (TargetSpec::AttackingOrBlockingCreature, 40),
+            (TargetSpec::CreatureOrPlaneswalker, 42),
+            (TargetSpec::ArtifactEnchantmentOrFlyingCreature, 43),
+            (
+                TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour,
+                44,
+            ),
+            (TargetSpec::OpponentNonlandPermanent, 45),
+            (TargetSpec::CreatureSpellOnStack, 46),
+            (TargetSpec::NonOutlawCreature, 47),
+            (TargetSpec::CreatureToughnessAtLeastFour, 48),
+            (TargetSpec::CreatureEnchantmentOrPlaneswalker, 49),
+            (TargetSpec::AnotherControlledCreature, 52),
+            (
+                TargetSpec::ControlledCreatureWithSubtype(Subtype::Mouse),
+                53,
+            ),
+            (TargetSpec::UpToOneCardInGraveyards, 54),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);
@@ -2044,8 +2269,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v55_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0xa3ef_5a41_092d_7924;
+    fn card_db_hash_v61_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x949b_eb8c_995c_006c;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
@@ -2198,6 +2423,13 @@ mod tests {
             );
             match def.ward_cost.unwrap() {
                 WardCostDef::Generic(amount) => assert_ne!(amount, 0, "{} has Ward 0", def.name),
+                WardCostDef::CollectEvidence(amount) => {
+                    assert_ne!(amount, 0, "{} has Ward 0", def.name)
+                }
+                WardCostDef::BackFacePayLife(amount) => {
+                    assert_ne!(amount, 0, "{} has Ward 0", def.name)
+                }
+                WardCostDef::DiscardCard => {}
             }
         }
     }

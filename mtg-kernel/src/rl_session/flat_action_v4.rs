@@ -46,11 +46,59 @@
 //! raw, unconditional `card_ref` this function reads as input.
 
 use super::*;
+#[cfg(test)]
+pub(crate) use search_state::library_tests::fixture as search_library_fixture_v3;
+
+/// Census keeps physical slots and may relabel unknown card definitions.
+/// Frozen source provenance must never point at a relabeled incarnation.
+pub(super) fn census_hidden_source_conflicts_v1(
+    state: &crate::state::GameState,
+    changed: &[ObjectId],
+) -> bool {
+    // A frozen source can survive its move into a hidden zone. Relabeling
+    // that physical object is unsafe even after its generation has advanced.
+    let same = |id: ObjectId, _generation: u32| changed.contains(&id);
+    let ability = |source: &crate::state::AbilitySourceContractV4| {
+        same(source.source, source.zone_change_count)
+            || source
+                .attached_to
+                .is_some_and(|x| same(x.object, x.zone_change_count))
+    };
+    let stack = |item: &crate::state::StackItem| {
+        item.v4
+            .ability_source_contract
+            .as_ref()
+            .is_some_and(&ability)
+            || item.v4.granted_by.as_ref().is_some_and(&ability)
+            || item
+                .v4
+                .hidden_ability_source
+                .is_some_and(|x| same(x.object, x.zone_change_count))
+            || item
+                .v4
+                .madness_source_contract
+                .is_some_and(|x| same(x.source, x.zone_change_count))
+            || item
+                .v4
+                .source_contract
+                .as_ref()
+                .is_some_and(|x| same(x.source, x.zone_change_count))
+    };
+    state.engine.pending_triggers.iter().any(|trigger| {
+        trigger.source_contract.as_ref().is_some_and(&ability)
+            || trigger.granted_by.as_ref().is_some_and(&ability)
+    }) || state.stack.iter().any(&stack)
+        || state
+            .engine
+            .pending_effect
+            .as_ref()
+            .is_some_and(|pending| stack(&pending.resolving_item))
+}
 mod search_state;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::Zone;
+pub(crate) use search_state::V4SearchActionTokenV1;
 pub(crate) use search_state::V4SearchSampleMode;
-#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub(crate) use search_state::V4SearchStateErrorV1;
 
 /// Local (V4-only) analog of `FlatResolvedActionObjectV2`. Two real defects
@@ -653,6 +701,30 @@ impl FastActorSessionV1 {
         let (observation, actions, _) =
             self.human_current_decision_input_v4(expected, expected.acting_player)?;
         Ok((observation, actions))
+    }
+
+    /// The acting player's V4 observation with the legal menu in the
+    /// scorer's frozen-source form (a pending trigger whose source is hidden
+    /// names the source's public incarnation, not the relabeled hidden card),
+    /// as the V4 search sampler's boundary uses it.
+    pub(crate) fn actor_visible_decision_v4(
+        &self,
+        expected: FastActorDecisionV1,
+    ) -> Result<
+        (
+            crate::policy_observation_v6::ObservationV6,
+            Vec<ActionSemanticV1>,
+        ),
+        FlatActionDecisionSliceErrorV1,
+    > {
+        let (observation, semantics) = self.diagnostic_current_decision_input_v4(expected)?;
+        Ok((
+            observation,
+            semantics
+                .into_iter()
+                .map(|x| frozen_pending_trigger_semantic_v4(&self.state, x))
+                .collect(),
+        ))
     }
 
     /// Fixed-seat live human input validated by the cache-free V4 encoder.

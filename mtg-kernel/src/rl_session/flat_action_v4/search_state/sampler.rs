@@ -132,6 +132,23 @@ pub(super) fn redeterminize_with_library_plan(
     seed: u64,
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> Result<(), Error> {
+    redeterminize_with_library_plan_inner(state, actor, seed, plan, false)
+}
+pub(super) fn redeterminize_with_library_plan_classified(
+    state: &mut GameState,
+    actor: PlayerId,
+    seed: u64,
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+) -> Result<(), Error> {
+    redeterminize_with_library_plan_inner(state, actor, seed, plan, true)
+}
+fn redeterminize_with_library_plan_inner(
+    state: &mut GameState,
+    actor: PlayerId,
+    seed: u64,
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+    classified: bool,
+) -> Result<(), Error> {
     let mut rng = SplitMix64::seed(seed);
     for owner in [PlayerId::P0, PlayerId::P1] {
         // Slots are canonical: owner order, then hand indices, then library indices.
@@ -160,8 +177,15 @@ pub(super) fn redeterminize_with_library_plan(
         }
         let mut pool: Vec<_> = slots.iter().map(|x| x.2).collect();
         pool.sort_unstable();
-        if pool.windows(2).any(|x| x[0] == x[1]) || conflicts(state, &pool, plan) {
+        if pool.windows(2).any(|x| x[0] == x[1]) {
             return Err(Error::HiddenStateContract);
+        }
+        if conflicts(state, &pool, plan) {
+            return Err(if classified {
+                Error::HiddenReferenceConflict
+            } else {
+                Error::HiddenStateContract
+            });
         }
         for &(zone, _, id) in &slots {
             let obj = state.objects.get(id);

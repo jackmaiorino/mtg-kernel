@@ -2277,6 +2277,9 @@ fn policy_observation_extensions_with_text_v6(
             let library_owner = match purpose {
                 EffectTargetSelectionPurpose::SearchLibraryToHand { player, .. }
                 | EffectTargetSelectionPurpose::SearchLibraryToHandMany { player, .. }
+                | EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
+                    player, ..
+                }
                 | EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
                     player, ..
                 } => Some(*player),
@@ -2807,17 +2810,14 @@ fn core_surface_action_candidates_v1(
                     )?;
                 }
                 if *can_finish {
-                    let selected_count = state
-                        .engine
-                        .pending_cast
-                        .as_ref()
-                        .filter(|pending| pending.spell == *spell)
-                        .map(|pending| pending.targets_chosen.len() as u16)
-                        .ok_or_else(|| {
-                            RlContractError(
-                                "optional cast target decision lost its pending cast".to_string(),
-                            )
-                        })?;
+                    let selected_count = crate::engine::optional_targets_selected_count(
+                        state, *spell,
+                    )
+                    .ok_or_else(|| {
+                        RlContractError(
+                            "optional cast target decision lost its pending cast".to_string(),
+                        )
+                    })?;
                     push_action(
                         &mut out,
                         ActionSemanticV1::FinishTargetSelection {
@@ -6240,6 +6240,14 @@ fn exile_play_permissions_public_v2(state: &GameState) -> Result<Vec<ExilePlayPe
                 } => PlayPermissionExpiryV2::UntilHoldersNextTurn {
                     holder_turn_started,
                 },
+                // The frozen V2 projection has no unbounded expiry. Warp's
+                // later-turn permission is projected as a not-yet-started
+                // multi-turn permission, its nearest public meaning.
+                PlayPermissionExpiry::LaterTurn { .. } => {
+                    PlayPermissionExpiryV2::UntilHoldersNextTurn {
+                        holder_turn_started: false,
+                    }
+                }
             },
         });
     }
@@ -6542,7 +6550,19 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
                                 ..
                             }
+                            | crate::effect::EffectTargetSelectionPurpose::LookTopPickToHandBottomRest {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::DiscardBasicLandInstead {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand {
+                                ..
+                            }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
                                 ..
                             }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
@@ -6552,14 +6572,15 @@ fn pending_effect_semantic_v4(
                     let search_for_chooser = matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
-                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. } | crate::effect::EffectTargetSelectionPurpose::SearchLibraryCardsToDestination { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped { .. }
                     ) && acting_player == *player;
                     let redact_search_shape = matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
                             | crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest { .. }
-                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. } | crate::effect::EffectTargetSelectionPurpose::SearchLibraryCardsToDestination { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped { .. }
                     ) && acting_player != *player;
                     let visible_targets = |candidates: &[crate::effect::EffectTargetCandidate]| {
@@ -6640,6 +6661,9 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany {
                                 ..
                             }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
+                                ..
+                            }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
                                 ..
                             } => TargetSelectionPurposeV4::SearchResult,
@@ -6650,6 +6674,10 @@ fn pending_effect_semantic_v4(
                                 ..
                             } => TargetSelectionPurposeV4::PermanentSelection,
                             crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
+                                stage,
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::LookTopPickToHandBottomRest {
                                 stage,
                                 ..
                             } => match stage {
@@ -6672,7 +6700,13 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::DuressDiscard {
                                 ..
                             }
+                            | crate::effect::EffectTargetSelectionPurpose::DiscardBasicLandInstead {
+                                ..
+                            }
                             | crate::effect::EffectTargetSelectionPurpose::UndercityThroneCreature {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand {
                                 ..
                             } => TargetSelectionPurposeV4::CardSelection,
                             crate::effect::EffectTargetSelectionPurpose::SacrificeCreature {

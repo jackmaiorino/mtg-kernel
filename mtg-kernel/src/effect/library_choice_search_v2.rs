@@ -32,6 +32,12 @@ fn parts(
             original_library,
             ..
         }
+        | EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
+            player,
+            filter,
+            original_library,
+            ..
+        }
         | EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
             player,
             filter,
@@ -182,6 +188,10 @@ impl Plan {
             }
             | EffectTargetSelectionPurpose::SearchLibraryToHandMany {
                 original_library, ..
+            }
+            | EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
+                original_library,
+                ..
             }
             | EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
                 original_library,

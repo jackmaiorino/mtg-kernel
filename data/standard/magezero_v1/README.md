@@ -27,9 +27,8 @@ MIT licensed, Copyright (c) 2025 Will Wroble.
 
 `card_names.json` lists every distinct nonbasic card in those decks. `cards_v1.json` holds the
 Standard definitions appended after the unchanged 192-definition Pauper registry: Plains and
-Burst Lightning, whose behavior is shared with the FDN build, then the first lands batch
-(`docs/design/standard_lands_v1.md`). FDN definitions are not included, so FDN batches never
-move Standard card ids.
+Burst Lightning, whose behavior is shared with the FDN build, then each Standard batch in merge
+order. FDN definitions are not included, so FDN batches never move Standard card ids.
 
 Build with `cargo build --locked -p mtg-kernel --features standard-magezero-fixtures`. The feature
 also enables `limited-fdn-fixtures` for its rules behavior, but `build.rs` appends this file
@@ -46,3 +45,5 @@ python python/tools/limited_decks_v1.py inventory --registry-extension data/stan
 
 `docs/reports/standard_magezero_inventory_v1.md` lists the missing cards by mechanic family and which
 thread owns each family.
+
+The tracked pool has 52 Full nonbasic cards, 19 Partial cards and 154 missing cards. No complete MageZero deck resolves yet. Full deck admission refuses every Partial definition. Their current behavior remains available for development; see `docs/design/standard_family_g_v1.md` and `docs/design/standard_family_d_keywords_v1.md` for the missing mechanics.
