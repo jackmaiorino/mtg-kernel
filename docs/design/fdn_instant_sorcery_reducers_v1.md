@@ -39,8 +39,11 @@ Source 64607708 prepares immutable Delve payment from the complete adjusted
 total, preserving minimum-exile and oldest-first choices while excluding
 reserved objects. It also sums mandatory life costs with Phyrexian payment and
 preserves zero-life payment at negative life. Three new regressions cover these
-risks. Execution and review are pending. Convoke still explicitly refuses this
-planner until its complete adapter is implemented.
+risks. Read-only review found that post-solve life checking could reject a legal
+mana allocation. Repair 41a74348 puts the remaining life budget inside pip
+backtracking and adds the exact Aquifer/Swamp regression. Native execution and
+repair review are pending. Convoke still explicitly refuses this planner until
+its complete adapter is implemented.
 
 Remaining work: Convoke adapter; offer/pending/X/final-payment integration;
 atomic nonmana payment; actual card gameplay and restore tests; metadata and
