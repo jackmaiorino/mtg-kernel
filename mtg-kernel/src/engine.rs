@@ -4399,16 +4399,15 @@ fn pay_cost_components_with_x(
     .is_some()
 }
 
-/// Pays a component cost like `pay_cost_components_with_x`, returning the
-/// mana it spent on success.
-fn pay_cost_components_spending_mana(
-    state: &mut GameState,
+/// Validate selected component objects without deriving mana or changing state.
+/// Return tap-cost sources that a separate mana planner must reserve.
+fn validate_cost_component_choices_v1(
+    state: &GameState,
     player: PlayerId,
     source: ObjectId,
     components: &[CostComponent],
     object_cost_chosen: &[ObjectId],
-    x_value: u8,
-) -> Option<u16> {
+) -> Option<Vec<ObjectId>> {
     if !component_payment_shape_supported(components) {
         return None;
     }
@@ -4594,10 +4593,6 @@ fn pay_cost_components_spending_mana(
         return None;
     }
 
-    // Derive the sole mana plan before applying any state-changing component.
-    // This keeps a restored or forward-generated unaffordable shape from
-    // partially paying life/discard-adjacent components before failing.
-    let mana_cost = activation_mana_cost(components);
     let mut reserved = Vec::new();
     if components
         .iter()
@@ -4611,6 +4606,25 @@ fn pay_cost_components_spending_mana(
     if tap_filter.is_some() || tap_controlled.is_some() {
         reserved.extend(object_cost_chosen.iter().copied());
     }
+    Some(reserved)
+}
+
+/// Pays a component cost like `pay_cost_components_with_x`, returning the
+/// mana it spent on success.
+fn pay_cost_components_spending_mana(
+    state: &mut GameState,
+    player: PlayerId,
+    source: ObjectId,
+    components: &[CostComponent],
+    object_cost_chosen: &[ObjectId],
+    x_value: u8,
+) -> Option<u16> {
+    let reserved =
+        validate_cost_component_choices_v1(state, player, source, components, object_cost_chosen)?;
+    // Derive the sole mana plan before applying any state-changing component.
+    // This keeps a restored or forward-generated unaffordable shape from
+    // partially paying life/discard-adjacent components before failing.
+    let mana_cost = activation_mana_cost(components);
     let mana_plan = mana_cost.map(|cost| {
         let cost = &reduced_activation_mana_cost(cost, components, player, source, state);
         if reserved.is_empty() {

@@ -348,6 +348,76 @@ mod tests {
     }
 
     #[test]
+    fn selected_component_choices_reject_missing_land_without_paying_mana_or_life() {
+        let mut state = ready();
+        let source = state.draw_card(PlayerId::P0).unwrap();
+        state.players[0].mana_pool[5] = 3;
+        let before = serde_json::to_value(&state).unwrap();
+        let components = [CostComponent::PayLife(1), CostComponent::SacrificeLands(1)];
+        assert!(super::super::validate_cost_component_choices_v1(
+            &state,
+            PlayerId::P0,
+            source,
+            &components,
+            &[source],
+        )
+        .is_none());
+        assert_eq!(serde_json::to_value(&state).unwrap(), before);
+        assert!(state.move_hand_to_battlefield(PlayerId::P0, source));
+        let before = serde_json::to_value(&state).unwrap();
+        assert_eq!(
+            super::super::validate_cost_component_choices_v1(
+                &state,
+                PlayerId::P0,
+                source,
+                &components,
+                &[source],
+            ),
+            Some(Vec::new())
+        );
+        assert_eq!(serde_json::to_value(&state).unwrap(), before);
+    }
+
+    #[test]
+    fn selected_tap_cost_reservation_prevents_one_land_paying_two_components() {
+        let mut state = ready();
+        let source = state.draw_card(PlayerId::P0).unwrap();
+        assert!(state.move_hand_to_battlefield(PlayerId::P0, source));
+        let components = [
+            CostComponent::Tap,
+            CostComponent::Mana(Cost {
+                pips: &[mana::Pip::Colored(mana::ManaColor::G)],
+                generic: 0,
+                x_count: 0,
+            }),
+        ];
+        let reserved = super::super::validate_cost_component_choices_v1(
+            &state,
+            PlayerId::P0,
+            source,
+            &components,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(reserved, vec![source]);
+        let pips = [mana::Pip::Colored(mana::ManaColor::G)];
+        assert!(
+            mana::plan_spell_mana_total_v1(&pips, 0, PlayerId::P0, &state, false, &[], 0).is_some()
+        );
+        assert!(mana::plan_spell_mana_total_v1(
+            &pips,
+            0,
+            PlayerId::P0,
+            &state,
+            false,
+            &reserved,
+            0
+        )
+        .is_none());
+        assert!(!state.objects.get(source).tapped);
+    }
+
+    #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
     fn selected_convoke_pays_total_after_x_and_tax_reduction_adjustment() {
         let mut selected = selected("Fireblast", CastMethodV4::Alternative, false);
