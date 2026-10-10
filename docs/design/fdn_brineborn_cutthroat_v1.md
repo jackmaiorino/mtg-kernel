@@ -21,10 +21,12 @@ No new public observation field, effect opcode or subtype is required.
 
 Two primitive regressions cover both seats, spell types, turn/caster matrices,
 serialized-state equivalence, changed control and stale source incarnations.
-Native13 at b42370ef passed both primitive tests in the Limited configuration.
-The combined configuration is still running under supported guard
-0fd098388a7449f597dbf38080d96709 on Haley cores12-13 BelowNormal with pinned
-Rust1.94.1/MSVC19.50.35725. No combined or terminal result is claimed yet.
+Native13 at b42370ef passed both primitive tests in each configuration, four
+executions total. Supported guard0fd098388a7449f597dbf38080d96709 ran on Haley
+cores12-13 BelowNormal with pinned Rust1.94.1/MSVC19.50.35725. Command and guard
+ended0. Only its proven job-bound idle VCTIP helper156604 was stopped after
+exact two-member job membership, executable/start-time verification and stable
+CPU/start-time sampling. The original qualification log remains retained.
 Four additional card fixture groups cover metadata and colored Flash payment,
 the two-seat caster/turn/spell-type matrix, departure and return, and ability
 removal before trigger resolution. Each restores and compares serialized states.
