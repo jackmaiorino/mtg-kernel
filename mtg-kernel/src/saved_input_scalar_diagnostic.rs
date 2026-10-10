@@ -4,17 +4,19 @@ use crate::native_policy_value_net_v1::{
     NativeEncodedDecisionSchemaV1, NativeEncodedDecisionViewV1, NativePolicyValueModelConfigV1,
     NativePolicyValueNetV1,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::io::{self, Read};
+
+mod suite_v1;
 
 const CHECKPOINT_SHA: &str = "88c0b997708c2b5156b44f3940ad9d5d682f78ac24d346978bb3c9f34c59e8d1";
 const WEIGHTS_SHA: &str = "e2ca2f2b5dd750a59e24c71a4bac325ed7449d97b5892a79a80132e45d538333";
 const PARAMETER_SHA: &str = "614326d2ec55c94583b1b050451f770ce9404e03bc21b9fb5fb6cb4f7d32263f";
 const EMBEDDING_SHA: &str = "9f2ba50d7097345caf1930edd2e911bad87383524b30bbe09726fb344096f2bb";
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Input {
     float_encoding: String,
@@ -137,6 +139,9 @@ fn validate_counts(request: &Request) -> Result<(), String> {
 
 pub fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args().collect();
+    if args.len() == 3 && args[1] == "--suite" {
+        return suite_v1::run(std::path::Path::new(&args[2]));
+    }
     if args.len() != 2 {
         return Err("usage: saved_input_scalar_diagnostic CHECKPOINT < request.json".into());
     }
