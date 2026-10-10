@@ -754,7 +754,12 @@ fn scripted_cast(
     for _ in 0..400 {
         let Some(d) = play::decision(&s) else { break };
         let g = s.game_state();
-        if cast && g.stack.is_empty() && g.engine.pending_effect.is_none() {
+        if cast
+            && g.stack.is_empty()
+            && g.engine.pending_effect.is_none()
+            && g.engine.pending_triggers.is_empty()
+            && g.engine.pending_cast.is_none()
+        {
             break;
         }
         let sem = s.diagnostic_current_action_semantics().unwrap();
@@ -884,6 +889,10 @@ fn resolution_boundary_stops_at_the_first_land_like_the_historical_engine() {
     assert!(
         !new.players[0].library.is_empty(),
         "the land stops the reveal"
+    );
+    assert!(
+        new.players[0].graveyard.len() >= 2,
+        "the prefix through the land is milled"
     );
     assert_eq!(
         zone_names(&old, &old.players[0].library, false),
