@@ -21,3 +21,9 @@ opponent-only targeting, pending discard restore, invalid discard refusal,
 empty/one-card hands, zero-toughness state actions, final-stack restore and
 real cleanup. They have not executed. Registration, fixture, generated
 catalog/profile and gameplay qualification await serial admission.
+
+Read-only review of `629b777e0c1cb365ba345fa1666bee9c05f2dd56` found no
+actionable findings across the pinned modes, staged discard, current
+control/type sampling, incarnation binding, restore, state actions,
+cleanup and rules facets. Source diff check passed; this review did not
+execute the prepared tests.
