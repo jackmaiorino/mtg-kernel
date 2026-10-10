@@ -1,7 +1,7 @@
 # Training speedup implementation and comparison
 
 Status: implementation verified and 16 short qualifications complete on two PCs.
-Full-block end-to-end speedup remains unmeasured.
+The full ABBA comparison is running; total end-to-end speedup remains unmeasured.
 
 This follows the completed [throughput audit](../training_throughput_20261009/README.md).
 Three GPT-6.1 Sol agents implemented learner arithmetic, collection/model reuse,
@@ -162,8 +162,26 @@ physical projections are below 15.67 GB and logical projections below
 conservative 16 GiB physical and 32 GiB logical projections, a 160 GiB
 desktop allowance and 32 GiB reserved for existing Haley artifacts.
 
-No full block has launched. The remaining comparison uses balanced baseline,
-candidate, candidate, baseline order, including inspection, verified recovery
-on the separate physical E: disk and retention. Local recovery is explicit;
-the original remote mode remains available. The frozen binaries and training
+The full comparison launched at 12:35:51 UTC on October 10, using balanced
+baseline, candidate, candidate, baseline order. The first native baseline
+process started at 12:35:57 UTC through the supported reserved launcher.
+Inspection, verified recovery on the separate physical E: disk, retention
+and late metadata copies are included. Local recovery is explicit; the
+original remote mode remains available. The frozen binaries and training
 inputs are unchanged by these storage and orchestration repairs.
+
+The bounded coordinator is PID 46196, identified by its start time and SHA
+in `desktop/formal-launch.json`. Its authoritative state is
+`D:/training-speedups-20261009/desktop/formal-v2/coordinator/state.json`.
+It stops on a failed phase or full fingerprint mismatch and preserves the
+attempt. Completion or an error is the next inspection condition; no new
+campaign or automatic retry is authorized. Short qualification extrapolation
+suggests roughly 1.5-2.5 hours including recovery, with substantial uncertainty.
+
+All four public `check-choice` calls passed. Eight affected recovery tests
+passed on the desktop, including real local plan construction. Review also
+repaired full-block reconciliation to use the allocation helper's raw inventory
+API; its CLI intentionally accepts only the one-update qualification sample.
+The raw API check completed across 1,050 files without errors. First-block
+reconciliation is separate audit overhead. Results will report phase totals
+and the actual coordinator wall envelope without adding nested timers twice.
