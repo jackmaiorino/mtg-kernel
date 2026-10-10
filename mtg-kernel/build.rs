@@ -9813,6 +9813,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Giant" => "Subtype::Giant",
         "Spawn" => "Subtype::Spawn",
         "Phyrexian" => "Subtype::Phyrexian",
+        "Construct" => "Subtype::Construct",
         "Horror" => "Subtype::Horror",
         "Nightmare" => "Subtype::Nightmare",
         "Clue" => "Subtype::Clue",

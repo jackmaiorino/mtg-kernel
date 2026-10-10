@@ -10,7 +10,9 @@ per successful opponent draw. The upkeep controller draws first, followed by
 the opponent. Empty-library attempts do not match the opponent-draw condition.
 
 Both reuse existing trigger conditions, stack contracts and effect primitives.
-No enum variant or state/continuation field is added. Tentative IDs359-360
+Construct is appended after the retained Elephant subtype, preserving all
+accepted subtype IDs, and gains the existing creature-type/codegen mapping.
+No effect variant or state/continuation field is added. Tentative IDs359-360
 follow the retained morbid/landfall preparation. The definition-owned trigger
 recipe strings bind these semantics when catalog registration is qualified.
 Primary references are pinned XMage

@@ -304,6 +304,8 @@ pub enum Subtype {
     Town,
     /// Appended for unregistered Apothecary Stomper after accepted Standard ids.
     Elephant,
+    /// Appended for unregistered Scrawling Crawler, preserving accepted ids.
+    Construct,
 }
 
 impl Subtype {
@@ -423,6 +425,8 @@ impl Subtype {
         Subtype::Otter,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Elephant,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Construct,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Scout,
         #[cfg(feature = "standard-magezero-fixtures")]
@@ -592,6 +596,7 @@ impl Subtype {
                 | Subtype::Octopus
                 | Subtype::Otter
                 | Subtype::Elephant
+                | Subtype::Construct
                 | Subtype::Hyena
                 | Subtype::Raccoon
                 | Subtype::Citizen
