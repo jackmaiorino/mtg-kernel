@@ -1,5 +1,8 @@
 //! Prepared fixtures. Sprite/Archmage admission and gameplay qualification remain pending.
-#![cfg(feature = "limited-fdn-fixtures")]
+#![cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 
 use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardType, Keywords, Subtype, CARD_DEFS,
