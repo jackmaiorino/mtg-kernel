@@ -82,3 +82,11 @@ reference import and wires the nine focused gameplay cases into CI.
 All35 affected Python3.13.14 cases pass. Candidate coverage is138 full,
 one partial and147 missing; accepted coverage remains136 pending native
 gameplay, observed generated identity, live-profile qualification and merge.
+
+Sourcefe7ab696 generated catalog identity42bf6f9ca62d6615 in47.93 seconds
+under supported guard40956da4c5df4c98847e6214be702705, terminal exit0.
+Rust1.94.1/MSVC19.50.35725 and the source SHA are logged. Generated IDs and
+both names were checked. FdnStaticTeamBoosts uses this observed live identity,
+retains v64 readability and adds rejection before stale resume/publication
+mutations. Metadata/deck and planned profile migration review found no
+actionable defects. Focused native gameplay and hosted qualification are next.
