@@ -1,0 +1,8 @@
+{
+  "pid": 45476,
+  "started_utc": "2026-10-10T13:05:47.1353056Z",
+  "coordinator_sha256": "8d3d0fae7372f5273540581bcf7804a122cfba5fbfeb12b9f50fabe1c6e30fe5",
+  "state": "D:/training-speedups-20261009/desktop/formal-v2/coordinator-resume/state.json",
+  "prior_state": "D:/training-speedups-20261009/desktop/formal-v2/coordinator/state.json",
+  "failed_inspection_preserved": "D:/training-speedups-20261009/desktop/measure/failed-maintenance/block-01-baseline-inspect-attempt1"
+}

@@ -121,6 +121,27 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
             changed = copy.deepcopy(self.config); changed[key] = value
             self.assertNotEqual(dispatch.workload(changed, "training"), dispatch.workload(self.config, "training"))
 
+    def test_single_pass_pinned_reader_rejects_same_path_replacement(self):
+        item = self.save({"value": 1})
+        validated = {}
+        self.assertEqual(dispatch.read_pinned_json(item, validated_files=validated), {"value": 1})
+        self.assertEqual(validated[str(Path(item["path"]).resolve())], item["sha256"])
+        Path(item["path"]).write_text('{"value": 2}', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "changed pinned input"):
+            dispatch.read_pinned_json(item, validated_files=validated)
+
+    def test_single_pass_recovery_reader_checks_local_bytes(self):
+        source = self.root / "absent-source"
+        recovered = self.root / "recovered"
+        recovered.mkdir()
+        local = self.save({"value": 1}, recovered / "checkpoint.json")
+        item = {**local, "path": str(source / "checkpoint.json")}
+        resolver = dispatch.artifact_reader([{"source_root": str(source), "local_root": str(recovered)}])
+        self.assertEqual(dispatch.read_pinned_json(item, resolver), {"value": 1})
+        Path(local["path"]).write_text('{"value": 2}', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "changed pinned input"):
+            dispatch.read_pinned_json(item, resolver)
+
     def test_serial_parallel_identical_saved_learning_outputs(self):
         first, second = dispatch.read(self.trial(1, 10)["path"]), dispatch.read(self.trial(2, 6)["path"])
         self.assertEqual(first["fingerprint"], second["fingerprint"])
@@ -128,6 +149,10 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
         receipt = dispatch.read(result["iterations"][0]["path"])
         update = dispatch.read(receipt["update"]["path"])
         checkpoint = dispatch.read(update["checkpoint"]["path"])
+        legacy_checkpoint = copy.deepcopy(checkpoint)
+        legacy_checkpoint["trajectories"] = [item["sha256"] for item in checkpoint["trajectories"]]
+        self.assertEqual(second["fingerprint"]["iterations"][0]["checkpoint_bits"],
+                         dispatch.digest(legacy_checkpoint))
         checkpoint["first_moments"][0] += 1
         update["checkpoint"] = self.save(checkpoint)
         receipt["update"] = self.save(update)
@@ -150,6 +175,77 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
         collection = self.save({"complete": True, "trajectories": [trajectory]})
         with self.assertRaisesRegex(ValueError, "non-natural"):
             dispatch.collection_fingerprint(collection, 1)
+
+    def test_profile_gae_is_boolean_and_training_only(self):
+        request = self.request(1)
+        self.assertFalse(dispatch.profile_gae_requested(request))
+        for value in (True, False):
+            request["profile_gae"] = value
+            self.assertEqual(dispatch.profile_gae_requested(request), value)
+        for value in (1, 0, "true", None, [], {}):
+            request["profile_gae"] = value
+            with self.assertRaisesRegex(ValueError, "profile_gae must be Boolean"):
+                # Validation rejects malformed requests before runtime admission.
+                dispatch.validate_request(request, True)
+        request["kind"] = "evaluation"
+        for value in (True, False):
+            request["profile_gae"] = value
+            with self.assertRaisesRegex(ValueError, "training requests only"):
+                dispatch.validate_request(request, True)
+        del request["profile_gae"]
+        self.assertFalse(dispatch.profile_gae_requested(request))
+
+    def test_native_child_environment_sets_or_clears_profile_flag(self):
+        request = self.request(1)
+        with patch.dict(os.environ, {"MTG_KERNEL_PROFILE_GAE_V1": "inherited", "PROFILE_TEST_KEEP": "yes"}):
+            environment = dispatch.native_child_environment(request)
+            self.assertNotIn("MTG_KERNEL_PROFILE_GAE_V1", environment)
+            self.assertEqual(environment["PROFILE_TEST_KEEP"], "yes")
+            request["profile_gae"] = True
+            self.assertEqual(dispatch.native_child_environment(request)["MTG_KERNEL_PROFILE_GAE_V1"], "1")
+            request["profile_gae"] = False
+            self.assertNotIn("MTG_KERNEL_PROFILE_GAE_V1", dispatch.native_child_environment(request))
+            self.assertEqual(os.environ["MTG_KERNEL_PROFILE_GAE_V1"], "inherited")
+        with patch.dict(os.environ, {}, clear=True):
+            request["profile_gae"] = True
+            self.assertEqual(dispatch.native_child_environment(request), {"MTG_KERNEL_PROFILE_GAE_V1": "1"})
+
+    def test_execute_passes_request_profile_flag_to_native_child(self):
+        for index, value in enumerate((None, False, True)):
+            request = self.request(1)
+            request["root"] += f"-profile-{index}"
+            request["cold_root"] += f"-profile-{index}"
+            if value is not None:
+                request["profile_gae"] = value
+            request_ref = self.save(request)
+            # Stop immediately after the mocked spawn. No native process or
+            # fingerprint/archive work is performed by this propagation check.
+            with patch.dict(os.environ, {"MTG_HOST_RESERVATION_TOKEN": "test-token",
+                                         "MTG_KERNEL_PROFILE_GAE_V1": "inherited"}), \
+                    patch.object(dispatch, "validate_request", return_value=(self.config, self.runtime)), \
+                    patch.object(dispatch, "set_affinity"), \
+                    patch("host_reservation_v1.status", return_value={"token_fate": "holds"}), \
+                    patch("host_reservation_v1.record_descendant", side_effect=RuntimeError("mocked spawn complete")), \
+                    patch.object(dispatch.subprocess, "Popen") as spawn:
+                with self.assertRaisesRegex(RuntimeError, "mocked spawn complete"):
+                    dispatch.execute(Path(request_ref["path"]), True)
+                environment = spawn.call_args.kwargs["env"]
+                if value:
+                    self.assertEqual(environment["MTG_KERNEL_PROFILE_GAE_V1"], "1")
+                else:
+                    self.assertNotIn("MTG_KERNEL_PROFILE_GAE_V1", environment)
+
+    def test_fastest_choice_rejects_profiled_qualification(self):
+        choice = self.choice()
+        request = self.request(2)
+        report = dispatch.read(choice["qualifications"][0]["path"])
+        original = dispatch.read(report["request"]["path"])
+        original["profile_gae"] = True
+        report["request"] = self.save(original)
+        choice["qualifications"][0] = self.save(report)
+        with patch.object(dispatch, "validate_request", return_value=(self.config, self.runtime)):
+            with self.assertRaisesRegex(ValueError, "profiled qualification"):
+                dispatch.require_choice(self.save(choice), request)
 
     def test_fastest_choice_requires_complete_serial_parallel_evidence(self):
         choice = self.choice()

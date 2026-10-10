@@ -1,0 +1,55 @@
+{
+  "schema": "training-speedups-analysis-recovery/v1",
+  "complete": true,
+  "files": [
+    {
+      "source": {
+        "path": "D:\\training-speedups-20261009\\desktop\\formal-v4\\analysis\\case-manifest.json",
+        "sha256": "a90be624c6d36dee1625903d11cbfb1b15cf3ebace64ff9b8aab2bc371ab2f35"
+      },
+      "destination": {
+        "path": "E:\\training-speedups-20261009\\formal-v4-analysis\\case-manifest.json",
+        "sha256": "a90be624c6d36dee1625903d11cbfb1b15cf3ebace64ff9b8aab2bc371ab2f35"
+      },
+      "bytes": 10236,
+      "verified": true
+    },
+    {
+      "source": {
+        "path": "D:\\training-speedups-20261009\\desktop\\formal-v4\\analysis\\compact-analysis.json",
+        "sha256": "c995e6357bffee601a8cf92f93e1614971433e3616cc493b1a50488b8db66ca6"
+      },
+      "destination": {
+        "path": "E:\\training-speedups-20261009\\formal-v4-analysis\\compact-analysis.json",
+        "sha256": "c995e6357bffee601a8cf92f93e1614971433e3616cc493b1a50488b8db66ca6"
+      },
+      "bytes": 27589,
+      "verified": true
+    },
+    {
+      "source": {
+        "path": "D:\\training-speedups-20261009\\desktop\\formal-v4\\analysis\\raw-summary.json",
+        "sha256": "52bd4b9990f3cd779854a99d77067e24c9d62c72c3fb309835ee844fec59464e"
+      },
+      "destination": {
+        "path": "E:\\training-speedups-20261009\\formal-v4-analysis\\raw-summary.json",
+        "sha256": "52bd4b9990f3cd779854a99d77067e24c9d62c72c3fb309835ee844fec59464e"
+      },
+      "bytes": 3944132,
+      "verified": true
+    },
+    {
+      "source": {
+        "path": "D:\\training-speedups-20261009\\desktop\\formal-v4\\analysis\\summary-table.txt",
+        "sha256": "0e4293b45ccf286d988594a7ff5516d3428e785eb4e7854ab070d866db68a3e3"
+      },
+      "destination": {
+        "path": "E:\\training-speedups-20261009\\formal-v4-analysis\\summary-table.txt",
+        "sha256": "0e4293b45ccf286d988594a7ff5516d3428e785eb4e7854ab070d866db68a3e3"
+      },
+      "bytes": 576,
+      "verified": true
+    }
+  ],
+  "method": "Existing cold_copy with fsync and full destination SHA-256 readback"
+}

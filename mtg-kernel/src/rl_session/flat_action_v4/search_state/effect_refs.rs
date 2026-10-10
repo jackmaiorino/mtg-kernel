@@ -97,6 +97,7 @@ impl Scan<'_> {
             | CounterTargetUnlessPaysGeneric { .. }
             | GainLifeDynamic { .. }
             | UntapObject { .. }
+            | AnimateSource
             | PumpTargetUntilEndOfTurnDynamic { .. }
             | LookTopSelectByTypeToHandBottomRest { .. }
             | LookTopPickToHandBottomRest { .. }

@@ -2832,6 +2832,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Harrier Strix" => &HARRIER_STRIX_TRIGGERS,
         "Bojuka Bog" => &BOJUKA_BOG_TRIGGERS,
         "Conduit Pylons" => &CONDUIT_PYLONS_TRIGGERS,
+        "Elegant Parlor" | "Lush Portico" | "Underground Mortuary" => &CONDUIT_PYLONS_TRIGGERS,
         "Humbling Elder" => &HUMBLING_ELDER_TRIGGERS,
         "Meteor Golem" => &METEOR_GOLEM_TRIGGERS,
         "Dauntless Veteran" => &DAUNTLESS_VETERAN_TRIGGERS,
@@ -3485,11 +3486,12 @@ fn sba_fixed_point_with_protected_triggers(
             changed = true;
         }
 
-        // 704.5a: a player with 0 or less life loses. 704.5c: a player who
-        // attempted to draw from an empty library loses.
+        // 704.5a: a player with 0 or less life loses. 704.5b: a player who
+        // attempted to draw from an empty library loses. 704.5c: a player
+        // with ten or more poison counters loses.
         for p in [PlayerId::P0, PlayerId::P1] {
             let ps = &mut state.players[p.index()];
-            if !ps.has_lost && (ps.life <= 0 || ps.drew_from_empty) {
+            if !ps.has_lost && (ps.life <= 0 || ps.drew_from_empty || ps.poison_counters.0 >= 10) {
                 ps.has_lost = true;
                 changed = true;
             }
@@ -4019,8 +4021,7 @@ fn triggers_from_events(
         for (host, host_live) in state.objects.iter() {
             if host_live.controller != *caster
                 || host_live.zone != Zone::Battlefield
-                || !crate::card_def::CARD_DEFS[host_live.card_def as usize]
-                    .has_type(CardType::Creature)
+                || !crate::engine::object_has_type(state, host, CardType::Creature)
             {
                 continue;
             }

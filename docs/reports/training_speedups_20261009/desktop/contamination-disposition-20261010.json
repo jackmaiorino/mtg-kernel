@@ -1,0 +1,105 @@
+{
+  "schema": "training-speedup-contamination-disposition/v1",
+  "recorded_utc": "2026-10-10T13:13:05.436828+00:00",
+  "notice": {
+    "path": "C:\\Users\\Jack\\IdeaProjects\\collab\\TO-CODEX.md",
+    "sha256": "b0501ce6823662e535616c3388abf50799300b0a2dcec9f1dc4258846be0913f",
+    "line": 21958,
+    "notice_text_sha256": "10a22373b8faafd7cb83f587aad9dbedcf14ae6d3f48a25511c3a2b68f666c34"
+  },
+  "reported_contention": {
+    "start_utc": "2026-10-10T12:37:17Z",
+    "end_utc": "2026-10-10T12:38:40Z",
+    "end_approximate": true,
+    "description": "Two unpinned cargo release builds overlapped declared timed P-core allocation; notice reports subsequent restriction to untimed CPUs16-17."
+  },
+  "first_dispatch": {
+    "case": "block-01-baseline",
+    "report": {
+      "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\block-01-baseline\\report.json",
+      "sha256": "e61f64483db199cf9c1352e46bbb1b7ce3739abeb49685224d935168a2b3116e"
+    },
+    "coordinator": {
+      "path": "D:\\training-speedups-20261009\\desktop\\formal-v2\\coordinator\\state.json",
+      "sha256": "8025260f737e38503e798c8339b502d9fc42c9249f2b7af25cc3a5f1f7390592"
+    },
+    "started_utc": "2026-10-10T12:35:52.176570+00:00",
+    "finished_utc": "2026-10-10T12:49:15.474019+00:00",
+    "exit_code": 0,
+    "overlaps_reported_contention": true
+  },
+  "disposition": {
+    "timing_valid": false,
+    "include_in_clean_ABBA": false,
+    "numerical_reference_preserved": true,
+    "numerical_fingerprint_sha256": "e0f06e3ee762e715a3bbc0650470e4abf439865ff883e9781891078a05f36231",
+    "independent_recovery_receipt": {
+      "path": "D:\\training-speedups-20261009\\desktop\\measure\\maintenance\\block-01-baseline\\cold-copy-receipt.json",
+      "sha256": "c478f5755e8c15910bf190a4253d74d0ca0404bc2e2e68143e6ad09dab3a2ae9"
+    },
+    "recovery_receipt_complete": true,
+    "action": "Preserve original evidence; run freshly named four-case matched ABBA through existing supported guard."
+  },
+  "resume": {
+    "state": {
+      "path": "D:\\training-speedups-20261009\\desktop\\formal-v2\\coordinator-resume\\state.json",
+      "sha256": "15926fee47254dd2f643527b370fb2d9423e6db626e2a111061b988c94f545c0"
+    },
+    "finished_utc": "2026-10-10T13:09:53.255380+00:00",
+    "error": "ValueError: phase failed; preserved receipts: block-02-candidate/dispatch",
+    "phases": [
+      {
+        "case": "block-01-baseline",
+        "phase": "inspect",
+        "started_utc": "2026-10-10T13:05:47.565521+00:00",
+        "finished_utc": "2026-10-10T13:07:42.533120+00:00",
+        "exit_code": 0
+      },
+      {
+        "case": "block-01-baseline",
+        "phase": "copy",
+        "started_utc": "2026-10-10T13:07:42.593849+00:00",
+        "finished_utc": "2026-10-10T13:08:20.645366+00:00",
+        "exit_code": 0
+      },
+      {
+        "case": "block-01-baseline",
+        "phase": "retain",
+        "started_utc": "2026-10-10T13:08:20.704858+00:00",
+        "finished_utc": "2026-10-10T13:08:53.130640+00:00",
+        "exit_code": 0
+      },
+      {
+        "case": "block-02-candidate",
+        "phase": "dispatch",
+        "started_utc": "2026-10-10T13:09:50.130753+00:00",
+        "finished_utc": "2026-10-10T13:09:53.247383+00:00",
+        "exit_code": 1
+      }
+    ],
+    "healthy_native_interrupted": false,
+    "basis": "Coordinator stopped on candidate dispatch refusal before native execution; original completed baseline recovery retained."
+  },
+  "reservation_snapshot": {
+    "state": "free",
+    "host": "DESKTOP-DJ1C40R",
+    "root": "C:/mtg-node/host-lock",
+    "basis": "Single authoritative host_reservation_v1.status observation earlier in this task; actual launch still requires atomic guard."
+  },
+  "wait_path": {
+    "source": {
+      "path": "D:\\training-speedups-20261009\\resume_qualifications.py",
+      "sha256": "ca85d21d973beb57c47455f7585114a08c77bf0403c6429a535f4c1c07e60593"
+    },
+    "reusable_symbols": [
+      "DirectoryChangeWait",
+      "await_free"
+    ],
+    "condition": "canonical status free after event; never absence of immutable acquirer",
+    "watch_armed_before_status": true,
+    "max_wait_seconds": 7200,
+    "event_wait_seconds": 60,
+    "fallback_status_seconds": 600,
+    "main_not_reusable": "Haley-only eight-qualification dispatcher; parent must adapt only wait primitives."
+  }
+}

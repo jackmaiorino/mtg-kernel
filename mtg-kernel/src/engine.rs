@@ -1535,7 +1535,9 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::CreatureEnchantmentOrPlaneswalker
         | TargetSpec::AnotherControlledCreature
         | TargetSpec::ControlledCreatureWithSubtype(_)
-        | TargetSpec::UpToOneCardInGraveyards => 1,
+        | TargetSpec::UpToOneCardInGraveyards
+        | TargetSpec::AttackingCreatureWithSubtype(_)
+        | TargetSpec::ControlledPermanentWithAnySubtype(_) => 1,
         TargetSpec::PlayerThenTheirCreature
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
@@ -2806,7 +2808,7 @@ fn legal_targets_for_controller_from_source(
             .filter_map(|(id, object)| {
                 (object.controller == controller
                     && object.zone == Zone::Battlefield
-                    && card_def::CARD_DEFS[object.card_def as usize].has_type(CardType::Creature))
+                    && object_has_type(state, id, CardType::Creature))
                 .then_some(id)
             })
             .map(Target::Object)
@@ -2908,6 +2910,29 @@ fn legal_targets_for_controller_from_source(
             })
             .map(Target::Object)
             .collect(),
+        TargetSpec::AttackingCreatureWithSubtype(subtype) => battlefield_objects(state)
+            .filter(|&id| {
+                state.engine.combat.attackers.contains(&id)
+                    && object_has_type(state, id, CardType::Creature)
+                    && has_effective_subtype(state, id, subtype)
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::ControlledPermanentWithAnySubtype(subtypes) => state.players
+            [controller.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|&id| {
+            let object = state.objects.get(id);
+            object.zone == Zone::Battlefield
+                && object.controller == controller
+                && subtypes
+                    .iter()
+                    .any(|&subtype| has_effective_subtype(state, id, subtype))
+        })
+        .map(Target::Object)
+        .collect(),
         TargetSpec::ArtifactOrEnchantmentPermanent => state
             .players
             .iter()
@@ -2926,11 +2951,10 @@ fn legal_targets_for_controller_from_source(
         .copied()
         .filter(|&id| {
             let object = state.objects.get(id);
-            let definition = &card_def::CARD_DEFS[object.card_def as usize];
             object.zone == Zone::Battlefield
                 && object.controller == controller.opponent()
-                && (definition.has_type(CardType::Artifact)
-                    || definition.has_type(CardType::Enchantment))
+                && (object_has_type(state, id, CardType::Artifact)
+                    || object_has_type(state, id, CardType::Enchantment))
         })
         .map(Target::Object)
         .collect(),
@@ -2965,8 +2989,8 @@ fn legal_targets_for_controller_from_source(
             .collect(),
         TargetSpec::NoncreatureArtifactPermanent => battlefield_objects(state)
             .filter(|&id| {
-                let definition = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
-                definition.has_type(CardType::Artifact) && !definition.has_type(CardType::Creature)
+                object_has_type(state, id, CardType::Artifact)
+                    && !object_has_type(state, id, CardType::Creature)
             })
             .map(Target::Object)
             .collect(),
@@ -3728,7 +3752,8 @@ fn unblocked_attacker_return_candidates(
             let definition = card_def::CARD_DEFS.get(object.card_def as usize)?;
             (object.zone == Zone::Battlefield
                 && object.controller == player
-                && definition.has_type(CardType::Creature)
+                && definition.is_executable()
+                && object_has_type(state, attacker, CardType::Creature)
                 && !already_chosen
                     .iter()
                     .any(|binding| binding.object == attacker))
@@ -3746,6 +3771,51 @@ fn activation_mana_cost(components: &[CostComponent]) -> Option<&Cost> {
         CostComponent::Mana(cost) => Some(cost),
         _ => None,
     })
+}
+
+/// `cost` net of `CardDef::activated_ability_generic_reductions` when
+/// `components` is the cost of one of `source`'s reduced activated abilities
+/// (Eiganjo's channel: `{1}` less per legendary creature its activator
+/// controls). Only generic mana is reduced, never below zero. Activated
+/// ability costs are generated `'static` slices, so the ability is identified
+/// by the identity of its cost slice.
+fn reduced_activation_mana_cost(
+    cost: &Cost,
+    components: &[CostComponent],
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+) -> Cost {
+    let def = &card_def::CARD_DEFS[state.objects.get(source).card_def as usize];
+    let mut reduced = *cost;
+    for reduction in def.activated_ability_generic_reductions {
+        let Some(ability) = def
+            .activated_abilities
+            .get(usize::from(reduction.ability_index))
+        else {
+            continue;
+        };
+        if !std::ptr::eq(ability.cost, components) {
+            continue;
+        }
+        let count = match reduction.per {
+            card_def::ActivatedAbilityReductionCountDef::ControlledLegendaryCreatures => state
+                .players[player.index()]
+            .battlefield
+            .iter()
+            .filter(|&&id| {
+                object_has_type(state, id, CardType::Creature)
+                    && card_def::CARD_DEFS[state.objects.get(id).card_def as usize]
+                        .supertypes
+                        .contains(&card_def::Supertype::Legendary)
+            })
+            .count(),
+        };
+        reduced.generic = reduced
+            .generic
+            .saturating_sub(u8::try_from(count).unwrap_or(u8::MAX));
+    }
+    reduced
 }
 
 fn payable_activation_cost_object_candidates(
@@ -3999,6 +4069,7 @@ fn can_pay_activation_components_with_x(
         return !unblocked_attacker_return_candidates(player, state, &[]).is_empty();
     }
     if let Some(cost) = activation_mana_cost(components) {
+        let cost = &reduced_activation_mana_cost(cost, components, player, source, state);
         let plan = if components
             .iter()
             .any(|component| matches!(component, CostComponent::Tap))
@@ -4037,10 +4108,10 @@ fn permanent_matches_return_filter(
             definition.has_type(CardType::Land) && has_effective_subtype(state, object_id, subtype)
         }
         PermanentFilterDef::CreatureWithColor(color) => {
-            definition.has_type(CardType::Creature)
+            object_has_type(state, object_id, CardType::Creature)
                 && object_color_mask(state, object_id) & card_def::mana_color_mask(color) != 0
         }
-        PermanentFilterDef::Artifact => definition.has_type(CardType::Artifact),
+        PermanentFilterDef::Artifact => object_has_type(state, object_id, CardType::Artifact),
     }
 }
 
@@ -4112,12 +4183,12 @@ fn can_pay_components(
         let ok = match c {
             CostComponent::Tap => {
                 let obj = state.objects.get(source);
-                let def = &card_def::CARD_DEFS[obj.card_def as usize];
                 // 302.6: a *creature's* tap-cost ability needs continuous
                 // control since the turn began, unless it has haste
-                // (702.10c; Fanatical Firebrand).
+                // (702.10c; Fanatical Firebrand). That includes a land
+                // animated into a creature (Mishra's Foundry).
                 !(obj.tapped
-                    || (def.has_type(CardType::Creature)
+                    || (object_has_type(state, source, CardType::Creature)
                         && obj.summoning_sick
                         && !has_effective_keyword(state, source, Keywords::HASTE)))
             }
@@ -4155,7 +4226,13 @@ fn can_pay_components(
             CostComponent::ReturnControlledUnblockedAttackerToOwnersHand => {
                 !unblocked_attacker_return_candidates(player, state, &[]).is_empty()
             }
-            CostComponent::Mana(cost) => mana::can_pay(cost, 0, player, state).is_some(),
+            CostComponent::Mana(cost) => mana::can_pay(
+                &reduced_activation_mana_cost(cost, components, player, source, state),
+                0,
+                player,
+                state,
+            )
+            .is_some(),
             CostComponent::PayLife(amount) => {
                 state.players[player.index()].life >= i32::from(*amount)
             }
@@ -4337,10 +4414,7 @@ fn pay_cost_components_spending_mana(
                 || state.objects.try_get(*id).is_none_or(|object| {
                     object.controller != player
                         || object.zone != Zone::Battlefield
-                        || !permanent_matches_filter(
-                            &card_def::CARD_DEFS[object.card_def as usize],
-                            filter,
-                        )
+                        || !permanent_matches_filter(state, *id, filter)
                 })
         });
         let aliases_source_departure = object_cost_chosen.contains(&source)
@@ -4454,6 +4528,7 @@ fn pay_cost_components_spending_mana(
         reserved.extend(object_cost_chosen.iter().copied());
     }
     let mana_plan = mana_cost.map(|cost| {
+        let cost = &reduced_activation_mana_cost(cost, components, player, source, state);
         if reserved.is_empty() {
             mana::can_pay(cost, x_value, player, state)
         } else {
@@ -5014,14 +5089,21 @@ fn sacrificeable_lands(
 /// `pub(crate)` so `effect::execute` (`EffectOp::PumpAllUntilEndOfTurn`) can
 /// reuse the identical type-matching predicate a `SacrificeControlled` cost
 /// uses to find candidates, rather than duplicating it.
-pub(crate) fn permanent_matches_filter(def: &card_def::CardDef, filter: PermanentFilter) -> bool {
+pub(crate) fn permanent_matches_filter(
+    state: &GameState,
+    id: ObjectId,
+    filter: PermanentFilter,
+) -> bool {
     match filter {
         PermanentFilter::ArtifactOrCreature => {
-            def.has_type(CardType::Artifact) || def.has_type(CardType::Creature)
+            object_has_type(state, id, CardType::Artifact)
+                || object_has_type(state, id, CardType::Creature)
         }
-        PermanentFilter::Artifact => def.has_type(CardType::Artifact),
-        PermanentFilter::Creature => def.has_type(CardType::Creature),
-        PermanentFilter::Land => def.is_land,
+        PermanentFilter::Artifact => object_has_type(state, id, CardType::Artifact),
+        PermanentFilter::Creature => object_has_type(state, id, CardType::Creature),
+        PermanentFilter::Land => {
+            card_def::CARD_DEFS[state.objects.get(id).card_def as usize].is_land
+        }
     }
 }
 
@@ -5044,7 +5126,7 @@ fn sacrificeable_controlled_permanents(
             let object = state.objects.get(id);
             object.zone == Zone::Battlefield
                 && object.controller == player
-                && permanent_matches_filter(&card_def::CARD_DEFS[object.card_def as usize], filter)
+                && permanent_matches_filter(state, id, filter)
         })
         .collect()
 }
@@ -5363,10 +5445,9 @@ fn printed_normal_cast_cost_with_targets(
             let mut lacks_subtype = false;
             for &object_id in &state.players[player.index()].battlefield {
                 let object = state.objects.get(object_id);
-                let def = &card_def::CARD_DEFS[object.card_def as usize];
                 if object.zone != Zone::Battlefield
                     || object.controller != player
-                    || !def.has_type(CardType::Creature)
+                    || !object_has_type(state, object_id, CardType::Creature)
                 {
                     continue;
                 }
@@ -5492,10 +5573,11 @@ fn normal_cost_is_payable(
     player: PlayerId,
     state: &GameState,
 ) -> bool {
+    let creature_spell = def.has_type(CardType::Creature);
     if def.delve {
-        mana::delve_payment_plan(normal_cost, x_value, player, state).is_some()
+        mana::delve_payment_plan(normal_cost, x_value, player, state, creature_spell).is_some()
     } else {
-        mana::can_pay(normal_cost, x_value, player, state).is_some()
+        mana::can_pay_spell(normal_cost, x_value, player, state, creature_spell).is_some()
     }
 }
 
@@ -5663,7 +5745,14 @@ fn viable_pending_spell_forms(
             targeting_source_for_object(state, pending.spell),
             state,
         ) && pending_cast_form_timing_ok(def.types, def.keywords, pending, state)
-            && mana::can_pay(&def.cost, 0, pending.controller, state).is_some()
+            && mana::can_pay_spell(
+                &def.cost,
+                0,
+                pending.controller,
+                state,
+                def.has_type(CardType::Creature),
+            )
+            .is_some()
         {
             forms.push(0);
         }
@@ -5705,7 +5794,14 @@ fn viable_pending_spell_forms(
             targeting_source_for_object(state, pending.spell),
             state,
         ) && pending_cast_form_timing_ok(def.types, def.keywords, pending, state)
-            && mana::can_pay(&normal_cost, 0, pending.controller, state).is_some()
+            && mana::can_pay_spell(
+                &normal_cost,
+                0,
+                pending.controller,
+                state,
+                def.has_type(CardType::Creature),
+            )
+            .is_some()
         {
             forms.push(0);
         }
@@ -5757,7 +5853,14 @@ fn viable_pending_spell_forms(
         targeting_source_for_object(state, pending.spell),
         state,
     ) && pending_cast_form_timing_ok(def.types, def.keywords, pending, state)
-        && mana::can_pay(&normal_cost, 0, pending.controller, state).is_some()
+        && mana::can_pay_spell(
+            &normal_cost,
+            0,
+            pending.controller,
+            state,
+            def.has_type(CardType::Creature),
+        )
+        .is_some()
     {
         forms.push(0);
     }
@@ -5798,7 +5901,14 @@ fn payable_cast_modes(
         ),
     );
     if pending_cast_form_timing_ok(def.types, def.keywords, pending, state)
-        && mana::can_pay(&normal, 0, pending.controller, state).is_some()
+        && mana::can_pay_spell(
+            &normal,
+            0,
+            pending.controller,
+            state,
+            def.has_type(CardType::Creature),
+        )
+        .is_some()
     {
         modes.push(CastMode::Normal);
     }
@@ -6178,7 +6288,6 @@ fn rich_mana_ability_is_payable(
     state: &GameState,
 ) -> bool {
     let object = state.objects.get(source);
-    let def = &card_def::CARD_DEFS[object.card_def as usize];
     if rich.max_activations_per_turn.is_some_and(|limit| {
         mana_ability_use_count(state, source, ability_index) >= u16::from(limit)
     }) {
@@ -6191,7 +6300,16 @@ fn rich_mana_ability_is_payable(
     }
     match rich.cost {
         ManaAbilityCostDef::TapSelf | ManaAbilityCostDef::TapAndSacrificeSelf => {
-            !(object.tapped || def.has_type(CardType::Creature) && object.summoning_sick)
+            !(object.tapped
+                || object_has_type(state, source, CardType::Creature) && object.summoning_sick)
+        }
+        ManaAbilityCostDef::TapSelfPayLife(life) => {
+            !(object.tapped
+                || object_has_type(state, source, CardType::Creature) && object.summoning_sick)
+                && mana::life_payment_affordable(
+                    i32::from(life),
+                    state.players[player.index()].life,
+                )
         }
         ManaAbilityCostDef::SacrificeSelf
         | ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf
@@ -6201,8 +6319,31 @@ fn rich_mana_ability_is_payable(
             // cheap checks: the flat-encode zero-allocation contract counts
             // on the short-circuit (tests/flat_action_allocation.rs).
             !(object.tapped
-                || def.has_type(CardType::Creature) && object.summoning_sick
+                || object_has_type(state, source, CardType::Creature) && object.summoning_sick
                 || mana_ability_cost_targets(player, source, state).is_empty())
+        }
+    }
+}
+
+/// Whether an additional mana ability's printed activation condition holds.
+/// Non-allocating: flat-action validation reaches it.
+fn mana_ability_condition_holds(
+    player: PlayerId,
+    source: ObjectId,
+    condition: card_def::ManaAbilityConditionDef,
+    state: &GameState,
+) -> bool {
+    match condition {
+        card_def::ManaAbilityConditionDef::ControllerControlsPermanentWithEitherSubtype {
+            first,
+            second,
+        } => state.players[player.index()].battlefield.iter().any(|&id| {
+            state.objects.get(id).zone == Zone::Battlefield
+                && (has_effective_subtype(state, id, first)
+                    || has_effective_subtype(state, id, second))
+        }),
+        card_def::ManaAbilityConditionDef::SourceEnteredThisTurn => {
+            state.objects.get(source).v4.entered_battlefield_this_turn
         }
     }
 }
@@ -6241,7 +6382,8 @@ pub(crate) fn available_mana_ability_choices_into(
     let primary_payable = if let Some(rich) = def.mana_ability_def {
         rich_mana_ability_is_payable(player, source, 0, rich, None, state)
     } else {
-        !(object.tapped || def.has_type(CardType::Creature) && object.summoning_sick)
+        !(object.tapped
+            || object_has_type(state, source, CardType::Creature) && object.summoning_sick)
     };
     if primary_payable {
         for &color in primary.as_slice() {
@@ -6266,14 +6408,22 @@ pub(crate) fn available_mana_ability_choices_into(
             *out = ManaColorSetV1::new();
             return;
         };
-        if rich_mana_ability_is_payable(
-            player,
-            source,
-            primary_ability_count + index,
-            additional.ability,
-            Some(additional.mana_cost),
-            state,
-        ) {
+        let condition_holds = def
+            .additional_mana_ability_conditions
+            .get(usize::from(index))
+            .copied()
+            .flatten()
+            .is_none_or(|condition| mana_ability_condition_holds(player, source, condition, state));
+        if condition_holds
+            && rich_mana_ability_is_payable(
+                player,
+                source,
+                primary_ability_count + index,
+                additional.ability,
+                Some(additional.mana_cost),
+                state,
+            )
+        {
             for &color in additional.colors {
                 if out.contains(color) {
                     *out = ManaColorSetV1::new();
@@ -6355,7 +6505,7 @@ pub(crate) fn mana_ability_cost_targets(
             object.controller == player
                 && object.zone == Zone::Battlefield
                 && !object.tapped
-                && card_def::CARD_DEFS[object.card_def as usize].has_type(CardType::Creature)
+                && object_has_type(state, candidate, CardType::Creature)
         })
         .collect()
 }
@@ -6434,8 +6584,7 @@ fn activate_mana_ability_for(
             .battlefield
             .iter()
             .filter(|&&candidate| {
-                let object = state.objects.get(candidate);
-                card_def::CARD_DEFS[object.card_def as usize].has_type(CardType::Creature)
+                object_has_type(state, candidate, CardType::Creature)
                     && has_effective_keyword(state, candidate, keyword)
             })
             .count()
@@ -6473,6 +6622,10 @@ fn activate_mana_ability_for(
             ManaAbilityCostDef::TapAndSacrificeSelf => {
                 event::propose_and_commit(state, ProposedEvent::tap(source));
                 commit_sacrifice(state, &[source]);
+            }
+            ManaAbilityCostDef::TapSelfPayLife(life) => {
+                event::propose_and_commit(state, ProposedEvent::tap(source));
+                event::propose_and_commit(state, ProposedEvent::life_loss(player, i32::from(life)));
             }
             ManaAbilityCostDef::None => {}
         }
@@ -6652,7 +6805,7 @@ fn can_attack(state: &GameState, id: ObjectId) -> bool {
         return false;
     }
     def.is_executable()
-        && def.has_type(CardType::Creature)
+        && object_has_type(state, id, CardType::Creature)
         && !obj.tapped
         && !has_effective_keyword(state, id, Keywords::DEFENDER)
         && (!obj.summoning_sick || has_effective_keyword(state, id, Keywords::HASTE))
@@ -7163,8 +7316,14 @@ fn remaining_cast_payment_is_payable(
             );
             if pending.kicked == Some(true) {
                 def.kicker_cost.is_some_and(|kicker| {
-                    mana::can_pay_combined(&[&normal, &kicker], 0, pending.controller, state)
-                        .is_some()
+                    mana::can_pay_combined_spell(
+                        &[&normal, &kicker],
+                        0,
+                        pending.controller,
+                        state,
+                        def.has_type(CardType::Creature),
+                    )
+                    .is_some()
                 })
             } else {
                 normal_cost_is_payable(def, &normal, x_value, pending.controller, state)
@@ -8617,9 +8776,14 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     if let Some(kicker_cost) = def.kicker_cost {
         if pending.kicked.is_none() {
             let normal_cost = effective_normal_cast_cost(def, pending.controller, state);
-            let payable =
-                mana::can_pay_combined(&[&normal_cost, &kicker_cost], 0, pending.controller, state)
-                    .is_some();
+            let payable = mana::can_pay_combined_spell(
+                &[&normal_cost, &kicker_cost],
+                0,
+                pending.controller,
+                state,
+                def.has_type(CardType::Creature),
+            )
+            .is_some();
             if payable {
                 return Some(Decision::ChooseKicker {
                     player: pending.controller,
@@ -9519,10 +9683,7 @@ pub(crate) fn validate_pending_activation(
                         || !state.players[pending.controller.index()]
                             .battlefield
                             .contains(&binding.object)
-                        || !permanent_matches_filter(
-                            &card_def::CARD_DEFS[live.card_def as usize],
-                            filter,
-                        )
+                        || !permanent_matches_filter(state, binding.object, filter)
                         || (tap && live.tapped)
                 })
         }) {
@@ -11434,6 +11595,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             state.players[1].spells_cast_this_turn = 0;
             for (_, object) in state.objects.iter_mut() {
                 object.v4.ability_uses_this_turn.clear();
+                object.v4.entered_battlefield_this_turn = false;
             }
             state.trigger_uses_v1 = None;
             #[cfg(feature = "limited-fdn-fixtures")]
@@ -11596,6 +11758,8 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             for (_, obj) in state.objects.iter_mut() {
                 obj.damage = 0;
                 obj.v4.deathtouch_damage = false;
+                // 514.2: every land animation lasts until end of turn.
+                obj.v4.animation_timestamp = None;
             }
             state.engine.until_end_of_turn.clear();
             state.engine.active_replacements.retain(|replacement| {
@@ -11721,7 +11885,7 @@ fn controls_an_artifact(controller: PlayerId, state: &GameState) -> bool {
         .iter()
         .any(|&id| {
             let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
-            def.is_executable() && def.has_type(CardType::Artifact)
+            def.is_executable() && object_has_type(state, id, CardType::Artifact)
         })
 }
 
@@ -11783,6 +11947,15 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
     if crate::continuous_characteristics_v1::creature_override(state, id).is_some() {
         return card_type == CardType::Creature;
     }
+    // An animated land keeps its printed types and gains Creature (and
+    // Artifact for Mishra's Foundry).
+    if let Some((animation, _)) = crate::continuous_characteristics_v1::animation(state, id) {
+        if card_type == CardType::Creature
+            || (animation.artifact && card_type == CardType::Artifact)
+        {
+            return true;
+        }
+    }
     state.objects.try_get(id).is_some_and(|object| {
         card_def::CARD_DEFS
             .get(object.card_def as usize)
@@ -11803,6 +11976,13 @@ pub fn object_color_mask(state: &GameState, id: ObjectId) -> u8 {
         crate::continuous_characteristics_v1::creature_override(state, id)
     {
         return card_def::mana_colors_mask(characteristics.colors);
+    }
+    // An animation with listed colors sets them; one without leaves the
+    // object's colors unchanged (XMage only sets a colored token's color).
+    if let Some((animation, _)) = crate::continuous_characteristics_v1::animation(state, id) {
+        if !animation.colors.is_empty() {
+            return card_def::mana_colors_mask(animation.colors);
+        }
     }
     state
         .objects
@@ -11853,6 +12033,10 @@ pub fn effective_base_power(state: &GameState, id: ObjectId) -> Option<i32> {
         .map(|(characteristics, _)| i32::from(characteristics.power))
         .or_else(characteristic_power)
         .or_else(|| {
+            crate::continuous_characteristics_v1::animation(state, id)
+                .map(|(animation, _)| i32::from(animation.power))
+        })
+        .or_else(|| {
             card_def::CARD_DEFS[obj.card_def as usize]
                 .power_for_face(obj.v4.face_index)
                 .map(i32::from)
@@ -11863,6 +12047,10 @@ pub fn effective_base_toughness(state: &GameState, id: ObjectId) -> Option<i32> 
     let obj = state.objects.get(id);
     crate::continuous_characteristics_v1::creature_override(state, id)
         .map(|(characteristics, _)| i32::from(characteristics.toughness))
+        .or_else(|| {
+            crate::continuous_characteristics_v1::animation(state, id)
+                .map(|(animation, _)| i32::from(animation.toughness))
+        })
         .or_else(|| {
             card_def::CARD_DEFS[obj.card_def as usize]
                 .toughness_for_face(obj.v4.face_index)
@@ -12021,6 +12209,11 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
         return true;
     }
     if printed_active && def.keywords_for_face(obj.v4.face_index).has(kw) {
+        return true;
+    }
+    if crate::continuous_characteristics_v1::animation(state, id)
+        .is_some_and(|(animation, _)| animation.keywords.has(kw))
+    {
         return true;
     }
     #[cfg(feature = "standard-magezero-fixtures")]
@@ -12426,6 +12619,9 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
         || object.v4.effective_subtype_ids.clone(),
         |(characteristics, _)| vec![characteristics.subtype.stable_id()],
     );
+    if let Some((animation, _)) = crate::continuous_characteristics_v1::animation(state, id) {
+        subtype_ids.extend(animation.subtypes.iter().map(|subtype| subtype.stable_id()));
+    }
     subtype_ids.extend(
         attached_equipment_profiles(state, id)
             .filter(|(equipment_id, _)| {
@@ -12456,6 +12652,14 @@ pub fn has_effective_subtype(state: &GameState, id: ObjectId, subtype: card_def:
         |(characteristics, _)| characteristics.subtype.same_subtype_as(subtype),
     );
     base_has_subtype
+        || crate::continuous_characteristics_v1::animation(state, id).is_some_and(
+            |(animation, _)| {
+                animation
+                    .subtypes
+                    .iter()
+                    .any(|&added| added.same_subtype_as(subtype))
+            },
+        )
         || attached_equipment_profiles(state, id).any(|(equipment_id, equipment)| {
             override_effect.is_none_or(|(_, timestamp)| {
                 state
@@ -12613,6 +12817,13 @@ pub(crate) fn commit_combat_damage_events(state: &mut GameState, events: Vec<Pro
         .collect::<Vec<_>>();
     for (source, source_zone_change_count, player, amount) in combat_player_damage {
         event::log_combat_damage_to_player(state, source, source_zone_change_count, player, amount);
+        // 702.164c: combat damage a creature with toxic N deals to a player
+        // also gives that player N poison counters.
+        #[cfg(feature = "standard-magezero-fixtures")]
+        if has_effective_keyword(state, source, Keywords::TOXIC_1) {
+            let poison = &mut state.players[player.index()].poison_counters;
+            poison.0 = poison.0.saturating_add(1);
+        }
     }
     if let Some(holder) = state.initiative {
         let transfer_player = state.engine.event_log[event_start..]
@@ -13287,7 +13498,15 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
                 .kicker_cost
                 .ok_or("this spell has no kicker choice")?;
             let normal = effective_normal_cast_cost(def, pending.controller, state);
-            if mana::can_pay_combined(&[&normal, &kicker], 0, pending.controller, state).is_none() {
+            if mana::can_pay_combined_spell(
+                &[&normal, &kicker],
+                0,
+                pending.controller,
+                state,
+                def.has_type(CardType::Creature),
+            )
+            .is_none()
+            {
                 return Err("the kicker choice is no longer payable".to_string());
             }
             state
@@ -15646,9 +15865,13 @@ fn finalize_owned_cast(
                 // `delve_payment_plan` re-derives, at payment time, the same
                 // "smallest k that's affordable, oldest cards first" plan
                 // `normal_cost_is_payable` already checked at offer time.
-                let Some((plan, exiled)) =
-                    mana::delve_payment_plan(&normal_cost, x_value, pending.controller, state)
-                else {
+                let Some((plan, exiled)) = mana::delve_payment_plan(
+                    &normal_cost,
+                    x_value,
+                    pending.controller,
+                    state,
+                    def.has_type(CardType::Creature),
+                ) else {
                     abort_cast(state, pending, cast_method);
                     return Ok(());
                 };
@@ -15659,14 +15882,21 @@ fn finalize_owned_cast(
                     let kicker_cost = def
                         .kicker_cost
                         .expect("validated kicked cast has a definition-owned kicker cost");
-                    mana::can_pay_combined(
+                    mana::can_pay_combined_spell(
                         &[&normal_cost, &kicker_cost],
                         x_value,
                         pending.controller,
                         state,
+                        def.has_type(CardType::Creature),
                     )
                 } else {
-                    mana::can_pay(&normal_cost, x_value, pending.controller, state)
+                    mana::can_pay_spell(
+                        &normal_cost,
+                        x_value,
+                        pending.controller,
+                        state,
+                        def.has_type(CardType::Creature),
+                    )
                 };
                 let Some(plan) = plan else {
                     abort_cast(state, pending, cast_method);

@@ -1331,6 +1331,9 @@ pub enum EffectOp {
         targeting_stack_item: StackItemId,
         life: u8,
     },
+    /// The resolving ability's source becomes its `CardDef::animation`
+    /// creature, if it is still the activating battlefield incarnation.
+    AnimateSource,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -11382,10 +11385,10 @@ fn creature_sacrifice_bindings(
         if object.controller != player || object.v4.face_index != 0 {
             continue;
         }
-        let def = crate::card_def::CARD_DEFS
+        crate::card_def::CARD_DEFS
             .get(object.card_def as usize)
             .ok_or_else(|| "creature-sacrifice card definition is missing".to_string())?;
-        if def.has_type(CardType::Creature) {
+        if crate::engine::object_has_type(state, object_id, CardType::Creature) {
             bindings.push(EffectObjectBinding {
                 object: object_id,
                 expected_zone: Zone::Battlefield,
@@ -12348,8 +12351,9 @@ fn creature_matches_filter(
     caster: PlayerId,
 ) -> bool {
     let live = state.objects.get(object);
-    let def = &crate::card_def::CARD_DEFS[live.card_def as usize];
-    if live.zone != Zone::Battlefield || !def.has_type(CardType::Creature) {
+    if live.zone != Zone::Battlefield
+        || !crate::engine::object_has_type(state, object, CardType::Creature)
+    {
         return false;
     }
     match filter {
@@ -12470,8 +12474,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             };
             if target_index.is_some_and(|index| !ctx.target_incarnation_matches(index, state))
                 || state.objects.get(object_id).zone != Zone::Battlefield
-                || !crate::card_def::CARD_DEFS[state.objects.get(object_id).card_def as usize]
-                    .has_type(CardType::Creature)
+                || !crate::engine::object_has_type(state, object_id, CardType::Creature)
             {
                 return;
             }
@@ -12498,8 +12501,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             };
             if target_index.is_some_and(|index| !ctx.target_incarnation_matches(index, state))
                 || state.objects.get(object_id).zone != Zone::Battlefield
-                || !crate::card_def::CARD_DEFS[state.objects.get(object_id).card_def as usize]
-                    .has_type(CardType::Creature)
+                || !crate::engine::object_has_type(state, object_id, CardType::Creature)
             {
                 return;
             }
@@ -12684,8 +12686,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             let source_is_stack = state.objects.get(ctx.source).zone == Zone::Stack;
             let target_is_creature = ctx.target_incarnation_matches(target_index, state)
                 && state.objects.get(target).zone == Zone::Battlefield
-                && crate::card_def::CARD_DEFS[state.objects.get(target).card_def as usize]
-                    .has_type(CardType::Creature);
+                && crate::engine::object_has_type(state, target, CardType::Creature);
             if !source_is_stack || !target_is_creature {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -12746,8 +12747,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             };
             if attached.zone != Zone::Battlefield
                 || attached.zone_change_count != link.zone_change_count
-                || !crate::card_def::CARD_DEFS[attached.card_def as usize]
-                    .has_type(CardType::Creature)
+                || !crate::engine::object_has_type(state, link.object, CardType::Creature)
                 || (source_is_same_battlefield_incarnation
                     && !attached.attachments.contains(&ctx.source))
             {
@@ -13460,14 +13460,12 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             let events = [PlayerId::P0, PlayerId::P1]
                 .into_iter()
                 .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
-                .filter_map(|id| {
-                    let object = state.objects.get(id);
-                    let def = &crate::card_def::CARD_DEFS[object.card_def as usize];
-                    (def.has_type(crate::card_def::CardType::Creature)
+                .filter(|&id| {
+                    crate::engine::object_has_type(state, id, CardType::Creature)
                         && !excluded_subtype
-                            .is_in_subtype_ids(&crate::engine::effective_subtype_ids(state, id)))
-                    .then(|| event::ProposedEvent::damage(ctx.source, Target::Object(id), *amount))
+                            .is_in_subtype_ids(&crate::engine::effective_subtype_ids(state, id))
                 })
+                .map(|id| event::ProposedEvent::damage(ctx.source, Target::Object(id), *amount))
                 .collect();
             event::propose_and_commit_batch(state, events);
         }
@@ -13509,6 +13507,24 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 state.objects.get_mut(object).tapped = false;
             }
         }
+        EffectOp::AnimateSource => {
+            let Some(contract) = ctx.ability_source_contract else {
+                return;
+            };
+            let Some(source) = state.objects.try_get(ctx.source) else {
+                return;
+            };
+            if source.zone != Zone::Battlefield
+                || source.zone_change_count != contract.zone_change_count
+                || crate::card_def::CARD_DEFS[source.card_def as usize]
+                    .animation
+                    .is_none()
+            {
+                return;
+            }
+            let timestamp = crate::engine::next_timestamp(state);
+            state.objects.get_mut(ctx.source).v4.animation_timestamp = Some(timestamp);
+        }
         EffectOp::SkipNextUntap { object } => {
             let object = ctx.resolve_object(*object);
             state.objects.get_mut(object).v4.skip_next_untap = true;
@@ -13536,8 +13552,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             let target_live = state.objects.get(target);
             let target_zone_change_count = target_live.zone_change_count;
             let target_is_creature = target_live.zone == Zone::Battlefield
-                && crate::card_def::CARD_DEFS[target_live.card_def as usize]
-                    .has_type(CardType::Creature);
+                && crate::engine::object_has_type(state, target, CardType::Creature);
             let source_is_equipment = state.objects.try_get(ctx.source).is_some_and(|live| {
                 live.card_def == source.card_def
                     && live.owner == source.owner
@@ -13587,7 +13602,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             }
             let live = state.objects.get(object);
             if live.zone != Zone::Battlefield
-                || !crate::card_def::CARD_DEFS[live.card_def as usize].has_type(CardType::Creature)
+                || !crate::engine::object_has_type(state, object, CardType::Creature)
                 || *plus1_plus1 < 0
                 || *lifelink < 0
                 || *stun < 0
@@ -13840,12 +13855,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     .battlefield
                     .iter()
                     .copied()
-                    .filter_map(|id| {
-                        let def =
-                            &crate::card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
-                        def.has_type(crate::card_def::CardType::Creature).then(|| {
-                            event::ProposedEvent::damage(ctx.source, Target::Object(id), *amount)
-                        })
+                    .filter(|&id| crate::engine::object_has_type(state, id, CardType::Creature))
+                    .map(|id| {
+                        event::ProposedEvent::damage(ctx.source, Target::Object(id), *amount)
                     }),
             );
             event::propose_and_commit_batch(state, events);
@@ -13908,8 +13920,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     let live = state.objects.try_get(object)?;
                     (ctx.target_incarnation_matches(index, state)
                         && live.zone == Zone::Battlefield
-                        && crate::card_def::CARD_DEFS[live.card_def as usize]
-                            .has_type(crate::card_def::CardType::Creature))
+                        && crate::engine::object_has_type(state, object, CardType::Creature))
                     .then(|| event::ProposedEvent::damage(ctx.source, target, *amount))
                 })
                 .collect();
@@ -13928,8 +13939,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     let live = state.objects.try_get(object)?;
                     (ctx.target_incarnation_matches(index, state)
                         && live.zone == Zone::Battlefield
-                        && crate::card_def::CARD_DEFS[live.card_def as usize]
-                            .has_type(crate::card_def::CardType::Artifact))
+                        && crate::engine::object_has_type(state, object, CardType::Artifact))
                     .then(|| {
                         event::ProposedEvent::zone_change_preserving_known_identity(
                             object,
@@ -13945,8 +13955,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 .battlefield
                 .iter()
                 .filter(|&&object| {
-                    crate::card_def::CARD_DEFS[state.objects.get(object).card_def as usize]
-                        .has_type(crate::card_def::CardType::Creature)
+                    crate::engine::object_has_type(state, object, CardType::Creature)
                 })
                 .count()
                 .try_into()
@@ -14039,8 +14048,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 .iter()
                 .copied()
                 .filter(|&id| {
-                    let def = &crate::card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
-                    if !def.has_type(crate::card_def::CardType::Creature) {
+                    if !crate::engine::object_has_type(state, id, CardType::Creature) {
                         return false;
                     }
                     creature_matches_filter(state, id, filter, ctx.controller)
@@ -14087,10 +14095,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 .battlefield
                 .iter()
                 .copied()
-                .filter(|&id| {
-                    let def = &crate::card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
-                    crate::engine::permanent_matches_filter(def, *filter)
-                })
+                .filter(|&id| crate::engine::permanent_matches_filter(state, id, *filter))
                 .collect();
             if !object_ids.is_empty() {
                 let timestamp = crate::engine::next_timestamp(state);
@@ -14179,8 +14184,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             let target = ctx.resolve_object(*target);
             let target_is_creature = state.objects.try_get(target).is_some_and(|object| {
                 object.zone == Zone::Battlefield
-                    && crate::card_def::CARD_DEFS[object.card_def as usize]
-                        .has_type(crate::card_def::CardType::Creature)
+                    && crate::engine::object_has_type(state, target, CardType::Creature)
             });
             if target_is_creature {
                 let amount = state.players[ctx.controller.index()]
@@ -14919,10 +14923,7 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
             let count = state.players[ctx.controller.index()]
                 .battlefield
                 .iter()
-                .filter(|&&id| {
-                    let def = &crate::card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
-                    def.has_type(crate::card_def::CardType::Artifact)
-                })
+                .filter(|&&id| crate::engine::object_has_type(state, id, CardType::Artifact))
                 .count();
             count >= *n as usize
         }

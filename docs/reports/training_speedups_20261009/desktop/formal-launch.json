@@ -1,0 +1,12 @@
+{
+  "pid": 46196,
+  "started_utc": "2026-10-10T12:35:51.6849452Z",
+  "coordinator": "D:/training-speedups-20261009/desktop/run_formal.py",
+  "coordinator_sha256": "4155ccdfdbc276ea08fa3a6a0e6aecd607338c5ab86215a4a2c17beffb58a09a",
+  "plan": "D:/training-speedups-20261009/desktop/formal-v2/seal.plan.json",
+  "plan_sha256": "fd35c322067811d2c7ce51888d1206839ba2a7af7d15538896efae6de81e2386",
+  "source_commit": "c09d704ea982938b114ffd2a431bd70d4d3e421f",
+  "state": "D:/training-speedups-20261009/desktop/formal-v2/coordinator/state.json",
+  "stdout": "D:/training-speedups-20261009/formal-comparison-20261010.stdout",
+  "stderr": "D:/training-speedups-20261009/formal-comparison-20261010.stderr"
+}

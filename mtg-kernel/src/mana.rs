@@ -232,7 +232,21 @@ pub fn can_pay(
     player: PlayerId,
     state: &GameState,
 ) -> Option<PaymentPlan> {
-    let sources = gather_sources(player, state);
+    can_pay_spell(cost, x_value, player, state, false)
+}
+
+/// `can_pay` for the total cost of a spell. While `creature_spell` holds,
+/// mana restricted to creature spells (`CardDef::restricted_mana_abilities`,
+/// Rockface Village) joins its source's choices. That mana is never floated,
+/// so it can only ever be spent inside the payment it was produced for.
+pub fn can_pay_spell(
+    cost: &Cost,
+    x_value: u8,
+    player: PlayerId,
+    state: &GameState,
+    creature_spell: bool,
+) -> Option<PaymentPlan> {
+    let sources = gather_sources_for_spell(player, state, creature_spell);
     let pool = state.players[player.index()].mana_pool;
     solve(cost, x_value, pool, &sources)
         .filter(|plan| life_payment_affordable(plan.life_paid, state.players[player.index()].life))
@@ -278,7 +292,18 @@ pub fn can_pay_combined(
     player: PlayerId,
     state: &GameState,
 ) -> Option<PaymentPlan> {
-    let sources = gather_sources(player, state);
+    can_pay_combined_spell(costs, x_value, player, state, false)
+}
+
+/// `can_pay_combined` for a spell's total cost; see `can_pay_spell`.
+pub fn can_pay_combined_spell(
+    costs: &[&Cost],
+    x_value: u8,
+    player: PlayerId,
+    state: &GameState,
+    creature_spell: bool,
+) -> Option<PaymentPlan> {
+    let sources = gather_sources_for_spell(player, state, creature_spell);
     let pool = state.players[player.index()].mana_pool;
     let combined_pips: Vec<Pip> = costs.iter().flat_map(|c| c.pips.iter().copied()).collect();
     let generic: u32 = costs.iter().map(|c| c.generic as u32).sum();
@@ -347,6 +372,7 @@ pub fn delve_payment_plan(
     x_value: u8,
     player: PlayerId,
     state: &GameState,
+    creature_spell: bool,
 ) -> Option<(PaymentPlan, Vec<ObjectId>)> {
     let graveyard = &state.players[player.index()].graveyard;
     let max_k = graveyard.len().min(usize::from(cost.generic));
@@ -356,7 +382,7 @@ pub fn delve_payment_plan(
             generic: cost.generic - k as u8,
             x_count: cost.x_count,
         };
-        if let Some(plan) = can_pay(&reduced, x_value, player, state) {
+        if let Some(plan) = can_pay_spell(&reduced, x_value, player, state, creature_spell) {
             return Some((plan, graveyard[..k].to_vec()));
         }
     }
@@ -387,6 +413,15 @@ fn conditional_tap_yield(
 }
 
 pub fn gather_sources(player: PlayerId, state: &GameState) -> Vec<ManaSource> {
+    gather_sources_for_spell(player, state, false)
+}
+
+/// `gather_sources`, adding creature-spell-only mana when `creature_spell`.
+pub fn gather_sources_for_spell(
+    player: PlayerId,
+    state: &GameState,
+    creature_spell: bool,
+) -> Vec<ManaSource> {
     let mut sources = Vec::new();
     for &id in &state.players[player.index()].battlefield {
         let obj = state.objects.get(id);
@@ -401,12 +436,32 @@ pub fn gather_sources(player: PlayerId, state: &GameState) -> Vec<ManaSource> {
         // contract, including an incarnation-local chosen color. A creature
         // source also obeys summoning sickness for the tap symbol in its
         // activation cost.
-        if def.is_automatic_payment_mana_source()
-            && !(def.has_type(crate::card_def::CardType::Creature) && obj.summoning_sick)
+        if crate::engine::object_has_type(state, id, crate::card_def::CardType::Creature)
+            && obj.summoning_sick
         {
+            continue;
+        }
+        let mut choices = if def.is_automatic_payment_mana_source() {
+            def.primary_mana_ability_choices(obj.v4.chosen_color)
+        } else {
+            Vec::new()
+        };
+        if creature_spell {
+            for restricted in def.restricted_mana_abilities {
+                match restricted.restriction {
+                    crate::card_def::ManaSpendRestrictionDef::CreatureSpell => {}
+                }
+                for &color in restricted.colors {
+                    if !choices.contains(&color) {
+                        choices.push(color);
+                    }
+                }
+            }
+        }
+        if !choices.is_empty() {
             sources.push(ManaSource {
                 id,
-                choices: def.primary_mana_ability_choices(obj.v4.chosen_color),
+                choices,
                 yield_per_tap: conditional_tap_yield(def, obj.controller, state),
             });
         }

@@ -289,7 +289,7 @@ static OPPONENT_CACHE: OnceLock<Mutex<VecDeque<CachedOpponentV1>>> = OnceLock::n
 
 /// Load one opponent, forking it from the cache when its source is cached;
 /// the flag reports a cache hit.
-fn load_opponent_cached_v1(
+pub(super) fn load_opponent_cached_v1(
     source: &ExpandedModelSourceV1,
 ) -> Result<(LoadedOpponentV1, bool), String> {
     let cache = OPPONENT_CACHE.get_or_init(|| Mutex::new(VecDeque::new()));
@@ -330,6 +330,12 @@ fn load_opponent_cached_v1(
             let mut entries = cache
                 .lock()
                 .map_err(|_| "opponent cache poisoned".to_string())?;
+            // Concurrent collectors can miss the same source before either
+            // load finishes. Keep one template per descriptor rather than
+            // letting duplicate insertions evict the rest of the roster.
+            if let Some(index) = entries.iter().position(|entry| &entry.source == source) {
+                entries.remove(index);
+            }
             while entries.len() >= OPPONENT_CACHE_ENTRIES {
                 entries.pop_front();
             }

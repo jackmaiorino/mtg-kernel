@@ -1,0 +1,10 @@
+{
+  "pid": 12416,
+  "creation_time": 134361138182948719,
+  "actual_mask": 21845,
+  "expected_mask": 21845,
+  "process_image": "E:\\pinned-binaries\\f252f0867338ab5731612957fbaee94c4b7dcd03ea1d7478fb5f0efd7b51925d\\native_expanded_training_run_v1.exe",
+  "verified": true,
+  "scope": "Read-only initial native affinity; no affinity mutation",
+  "observed_utc": "2026-10-10T13:50:18.366171+00:00"
+}

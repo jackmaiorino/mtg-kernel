@@ -1,0 +1,11 @@
+{
+  "bytes": 5287511627.0,
+  "files": 1439,
+  "stop_receipt": "D:/training-speedups-20261009/desktop/formal-v3/affinity-stop.json",
+  "destination": "D:\\training-speedups-20261009\\desktop\\measure\\failed-native\\formal-v3-affinity-prefix",
+  "moved_utc": "2026-10-10T13:45:14.9980428Z",
+  "reason": "Preserve stopped native prefix after observed affinity mismatch; no files deleted",
+  "run_json_sha256": "26557ce75cca76255d45a34acad0bb7ef87b0516be57b52c7b0058cda53f4ffb",
+  "source": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\matched-native",
+  "schema": "owned-artifact-move/v1"
+}
