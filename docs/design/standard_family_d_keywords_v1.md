@@ -156,7 +156,10 @@ These development approximations remain in the recipes:
 `mtg-kernel/tests/standard_family_d_v1.rs` covers implemented behavior,
 capability refusals, all three Spree mode payments, two pending Incubator
 activations, battle cry across zone changes, Seedshark with an Omen spell,
-and a stolen Enduring creature's death trigger and owner return. The targeted
+and a stolen Enduring creature's death trigger and owner return. Casualty's
+transformed-Incubator regression exercises effective creature eligibility
+and paid provenance after the sacrifice resets its face. The targeted
 Standard event library test checks suppression of Heartfire's death ability
-from the pre-departure ability snapshot. Native results remain pending at
-the repaired head; original-head CI is not repair qualification.
+from the pre-departure ability snapshot. Hosted CI runs these groups on
+Linux and Windows. Integration requires passing checks at the reviewed
+head; earlier-head CI alone does not qualify a changed implementation.
