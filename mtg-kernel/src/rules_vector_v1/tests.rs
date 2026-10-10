@@ -795,6 +795,16 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
     (
         "engine.rs",
+        "Anthem of Champions",
+        "read via engine::static_controlled_creature_boost_for_v1",
+    ),
+    (
+        "engine.rs",
+        "Empyrean Eagle",
+        "read via engine::static_controlled_creature_boost_for_v1",
+    ),
+    (
+        "engine.rs",
         "Cephalid Inkmage",
         "read via engine::static_graveyard_threshold_keyword_for",
     ),

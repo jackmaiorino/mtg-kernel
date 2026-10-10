@@ -889,6 +889,44 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         });
     }
 
+    if let Some(boost) = crate::engine::static_controlled_creature_boost_for_v1(name) {
+        walk.rec(
+            "static_controlled_creature_boost",
+            json!({"filter": format!("{:?}", boost.filter), "exclude_source": boost.exclude_source,
+                   "power": boost.power, "toughness": boost.toughness}),
+        );
+        walk.ability(CtxF::Static, |out| {
+            out.effect(
+                EffectAtom::new(EvF::StatChange)
+                    .player(RelF::You)
+                    .obj(ObjF::Typed(CardTypeF::Creature))
+                    .amount(AmtF::stat(
+                        i64::from(boost.power),
+                        i64::from(boost.toughness),
+                    ))
+                    .duration(DurF::WhileOnBattlefield),
+            );
+            if boost.exclude_source
+                || matches!(
+                    boost.filter,
+                    crate::engine::StaticControlledCreatureFilterV1::WithKeyword(_)
+                )
+            {
+                // V1 cannot encode a recipient keyword predicate or source exclusion.
+                out.atoms.push(Atom::Opaque);
+            }
+        });
+        if boost.exclude_source
+            || matches!(
+                boost.filter,
+                crate::engine::StaticControlledCreatureFilterV1::WithKeyword(_)
+            )
+        {
+            walk.opaque
+                .push("controlled creature boost recipient predicate and source exclusion");
+        }
+    }
+
     if let Some((minimum, keywords)) = crate::engine::static_graveyard_threshold_keyword_for(name) {
         walk.rec(
             "static_graveyard_threshold_keyword",

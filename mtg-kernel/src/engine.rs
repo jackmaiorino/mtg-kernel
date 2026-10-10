@@ -11710,19 +11710,20 @@ fn controlled_subtype_boost(state: &GameState, recipient: ObjectId) -> (i32, i32
 
 /// A layer-7c team bonus whose recipient predicate reads layer-6 keywords.
 /// Kept separate from the historical subtype-lord binding and its catalog token.
-enum StaticControlledCreatureFilterV1 {
+#[derive(Debug)]
+pub(crate) enum StaticControlledCreatureFilterV1 {
     All,
     WithKeyword(Keywords),
 }
 
-struct StaticControlledCreatureBoostDefV1 {
-    filter: StaticControlledCreatureFilterV1,
-    exclude_source: bool,
-    power: i32,
-    toughness: i32,
+pub(crate) struct StaticControlledCreatureBoostDefV1 {
+    pub filter: StaticControlledCreatureFilterV1,
+    pub exclude_source: bool,
+    pub power: i32,
+    pub toughness: i32,
 }
 
-fn static_controlled_creature_boost_for_v1(
+pub(crate) fn static_controlled_creature_boost_for_v1(
     name: &str,
 ) -> Option<StaticControlledCreatureBoostDefV1> {
     let (filter, exclude_source) = match name {

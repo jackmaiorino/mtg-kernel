@@ -49,3 +49,9 @@ after source departure, actual unblocked combat, and pending-cast JSON/snapshot
 restore. These tests are unexecuted and require the future registry definitions.
 Pinned Rust 1.94.1 formatting and diff checks are the available source checks.
 No desktop native run, experiment, paid work or reservation action occurs.
+
+The source is now staged on `codex/fdn-next-families` with existing Standard
+P/T modifiers preserved. Rules-vector extraction reads the same team-bonus
+table as the engine. Eagle's recipient keyword predicate and source exclusion
+remain explicit opaque facts because the v1 facets cannot express them.
+Registration and native qualification remain deferred behind v62-v64.
