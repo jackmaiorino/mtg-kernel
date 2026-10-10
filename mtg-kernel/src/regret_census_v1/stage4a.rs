@@ -85,6 +85,11 @@ struct Shared {
     /// E's selection rule (`S4A_SELECT`): None is the formal untried-first
     /// rule; `fpu-1.5` the finite-urgency candidate.
     select_urgency: Option<f64>,
+    /// Search-seed replicate (`S4A_SEARCH_REP`, default 0): replicate k > 0
+    /// draws E's selection seeds from the root label `<root_id>#search<k>`;
+    /// evaluation worlds and evaluation policy seeds always use the root id,
+    /// so replicates and treatments share their evaluation worlds.
+    search_rep: u32,
 }
 
 fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
@@ -95,6 +100,14 @@ fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
     };
     let runtime_rules = parse_runtime_rules(&cfg.mode, runtime_setting.as_deref())?;
     let select_urgency = parse_select_rule(&cfg.mode, std::env::var("S4A_SELECT"))?;
+    let search_rep = match std::env::var("S4A_SEARCH_REP") {
+        Err(std::env::VarError::NotPresent) => 0,
+        Ok(v) if cfg.mode == "s4a-diag" => v
+            .parse::<u32>()
+            .map_err(|_| format!("bad S4A_SEARCH_REP {v}"))?,
+        Ok(v) => return Err(format!("S4A_SEARCH_REP {v} is supported only for s4a-diag")),
+        Err(e) => return Err(format!("invalid S4A_SEARCH_REP: {e}")),
+    };
     let entries: Vec<(String, String)> = std::env::var("OPPONENTS")
         .map_err(|_| "OPPONENTS is required")?
         .split(',')
@@ -149,6 +162,7 @@ fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
         prior: world::DeckPrior::new(&cfg.decks),
         runtime_rules,
         select_urgency,
+        search_rep,
     })
 }
 
@@ -202,6 +216,17 @@ fn completed_identity_roots(
     runtime_rules: Option<crate::engine::RuntimeRulesV1>,
     select_rule: Option<&str>,
 ) -> Result<HashSet<String>, String> {
+    completed_identity_roots_rep(bytes, row_kind, runtime_rules, select_rule, 0)
+}
+
+/// `completed_identity_roots` that also binds the search-seed replicate.
+fn completed_identity_roots_rep(
+    bytes: &[u8],
+    row_kind: &str,
+    runtime_rules: Option<crate::engine::RuntimeRulesV1>,
+    select_rule: Option<&str>,
+    search_rep: u32,
+) -> Result<HashSet<String>, String> {
     let keep = bytes
         .iter()
         .rposition(|&byte| byte == b'\n')
@@ -236,6 +261,12 @@ fn completed_identity_roots(
         if recorded_select != select_rule {
             return Err(
                 "resume refused: selection rule differs; preserve output and use a fresh path"
+                    .into(),
+            );
+        }
+        if row.get("search_rep").and_then(Value::as_u64).unwrap_or(0) != u64::from(search_rep) {
+            return Err(
+                "resume refused: search replicate differs; preserve output and use a fresh path"
                     .into(),
             );
         }
@@ -589,6 +620,14 @@ fn run_root_diag(
         model: shared.model.clone(),
         root: root_id.clone(),
     };
+    let search_seeds = RootSeeds {
+        model: shared.model.clone(),
+        root: if shared.search_rep == 0 {
+            root_id.clone()
+        } else {
+            format!("{root_id}#search{}", shared.search_rep)
+        },
+    };
     let probs = arms::softmax(&roles.scorer.score_fast_session_v1(&session)?.logits);
     let cast_root = match root["stratum"].as_str() {
         Some("cast") => true,
@@ -601,6 +640,20 @@ fn run_root_diag(
         focal: crate::ids::PlayerId(setup.focal as u8),
         opp: setup.model,
         seeds: &seeds,
+        prior: &shared.prior,
+        defs: spy_defs(),
+        cast_root,
+        probs: probs.clone(),
+        limits: shared.limits,
+        urgency: shared.select_urgency,
+    };
+    // Selection uses the replicate's seeds; evaluation keeps `ctx` (root id).
+    let search_ctx = RootCtx {
+        root: &session,
+        d,
+        focal: crate::ids::PlayerId(setup.focal as u8),
+        opp: setup.model,
+        seeds: &search_seeds,
         prior: &shared.prior,
         defs: spy_defs(),
         cast_root,
@@ -622,7 +675,7 @@ fn run_root_diag(
             "event_bits":"1 spy resolved, 2 self-target resolved, 4 DR->Giant resolved, 8 DR->Giant on stack",
             "action_bits":"1 cast Spy, 2 Spy targets focal, 4 DR targets Giant, 8 Spy targets other, 16 DR targets other"}));
     }
-    let (e_sel, e_tree) = roles.select_e_traced(&ctx, trace.as_mut());
+    let (e_sel, e_tree) = roles.select_e_traced(&search_ctx, trace.as_mut());
     let eval_started = Instant::now();
     let mut eval_sampler = SamplerStats::default();
     let mut worlds = Vec::new();
@@ -686,7 +739,7 @@ fn run_root_diag(
         "config":{"limits":shared.limits.json(),"sampler":world::SAMPLER_VERSION,
             "prior_decks":shared.prior.ids(),"opponents":shared.labels,"seed_namespace":seeds::NAMESPACE},
         "arms":arms_json,"eval_worlds":worlds,"rejected_eval_worlds":rejected_worlds,
-        "eval_sampler":eval_sampler.json(),"invalid":invalid,"runtime_rules":runtime.map(|_| "resolution-boundary-v1"),"select_rule":shared.select_urgency.map(|_| "fpu-1.5"),
+        "eval_sampler":eval_sampler.json(),"invalid":invalid,"runtime_rules":runtime.map(|_| "resolution-boundary-v1"),"select_rule":shared.select_urgency.map(|_| "fpu-1.5"),"search_rep":shared.search_rep,
         "cost":{"selection_transitions":e_sel.transitions,"selection_inference_calls":e_sel.inference,
             "eval_transitions":summary.4},
         "timing":{"replay":replay_secs,"selection_wall":{"E":e_sel.wall},
@@ -737,11 +790,12 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(error) => return Err(error.to_string()),
         };
-        completed_identity_roots(
+        completed_identity_roots_rep(
             &bytes,
             row_kind,
             shared.runtime_rules,
             shared.select_urgency.map(|_| "fpu-1.5"),
+            shared.search_rep,
         )?
     } else {
         HashSet::new()

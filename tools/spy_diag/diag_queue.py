@@ -115,9 +115,9 @@ def start(job, runs):
     if out.exists() or logfile.exists() or traces.exists():
         raise ValueError('preserve existing job outputs; use a fresh attempt name')
     env = {k: v for k, v in os.environ.items()
-           if k not in ("S4A_LIMITS", "ROOTS", "S4A_TRACE", "S4A_RUNTIME", "S4A_MILLOBS", "S4A_SELECT")}
+           if k not in ("S4A_LIMITS", "ROOTS", "S4A_TRACE", "S4A_RUNTIME", "S4A_MILLOBS", "S4A_SELECT", "S4A_SEARCH_REP")}
     extra = job.get("env", {})
-    if set(extra) - {"S4A_RUNTIME", "S4A_LIMITS", "S4A_MILLOBS", "S4A_SELECT"}:
+    if set(extra) - {"S4A_RUNTIME", "S4A_LIMITS", "S4A_MILLOBS", "S4A_SELECT", "S4A_SEARCH_REP"}:
         raise ValueError("only S4A_RUNTIME, S4A_LIMITS, S4A_MILLOBS and S4A_SELECT may be set per job")
     env.update({k: str(v) for k, v in extra.items()})
     env.update(OPPONENTS=f"T1={SRC}/t1-source.json,A48={SRC}/a48-source.json", S4A_MODEL=job["model"],

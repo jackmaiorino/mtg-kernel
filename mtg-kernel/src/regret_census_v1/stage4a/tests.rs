@@ -1306,3 +1306,16 @@ fn resolution_boundary_is_refused_when_any_card_reads_graveyard_order() {
     let (menus, _) = scripted_cast(RuntimeRulesV1::default(), "Balustrade Spy", &lib);
     assert!(order_menus(&menus) >= 3, "{menus:?}");
 }
+
+#[test]
+fn resume_refuses_a_different_search_replicate() {
+    let row = |rep: u32| {
+        format!(
+            "{{\"kind\":\"s4a_diag_root\",\"root_id\":\"a\",\"runtime_rules\":null,\"select_rule\":null,\"search_rep\":{rep}}}\n"
+        )
+    };
+    let kind = "s4a_diag_root";
+    assert!(completed_identity_roots_rep(row(1).as_bytes(), kind, None, None, 1).is_ok());
+    assert!(completed_identity_roots_rep(row(1).as_bytes(), kind, None, None, 0).is_err());
+    assert!(completed_identity_roots_rep(row(0).as_bytes(), kind, None, None, 1).is_err());
+}
