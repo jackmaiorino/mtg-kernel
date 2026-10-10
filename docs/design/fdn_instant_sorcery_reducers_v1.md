@@ -85,6 +85,29 @@ no newer source tests or card games are claimed as passed. Jack's older
 Native27 queue and observer remain intact. The later local Native28 command
 has not been submitted.
 
+Source b492cadd adds immutable group preflight with separately assigned object
+choices, tap-source reservations and mandatory/optional graveyard exclusions
+for Delve. The caller supplies modifiers frozen before payment; projected
+post-discard resources cannot recompute those modifiers. The caller must also
+collect own_generic_reduction before costs and independently authenticate
+discard, chosen-creature and optional-cost bindings. Two unexecuted regressions
+cover a completed discard with shared life/frozen modifiers and graveyard
+choices that must not double-pay or supply Delve. Source b086137a extends the
+frozen-modifier assertion. Source 98758bf1 separates the legacy component
+commit loop from mana derivation, preserving every mutation and Convoke arm.
+Exact read-only review of 98758bf152060fdc4ed6b904f71ddd79a9197a43 found no
+actionable defects; diff checks pass. These increments remain unqualified and
+unwired. Haley's running sequence stays on the earlier exact source892e828f.
+
+Runtime integration must prepare an ephemeral payment before apply_discard
+mutates cards, then consume it without recomputing reductions. Preserve the
+base/additional choice partition, Escape ordering, chosen-creature power and
+paid-cost provenance. Validate optional sacrifices/exiles against mandatory
+resource use. Sacrificed lands may produce mana first; tap costs cannot reuse
+their source for mana or Convoke. A future discard-plus-Delve shape needs a
+projected resource state while preserving its pre-discard frozen cost. No
+serialized PendingCast payment attestation is introduced.
+
 Remaining work: offer/pending/X/final-payment integration;
 atomic nonmana payment; actual card gameplay and restore tests; metadata and
 catalog admission; live profile qualification; CI and default-branch acceptance.
