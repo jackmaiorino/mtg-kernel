@@ -5521,6 +5521,56 @@ fn static_adjusted_spell_cost(
     cost
 }
 
+pub(crate) fn static_instant_sorcery_reduction_for_v1(name: &str) -> Option<u32> {
+    if !cfg!(feature = "limited-fdn-fixtures") {
+        return None;
+    }
+    match name {
+        "Mocking Sprite" | "Archmage of Runes" => Some(1),
+        _ => None,
+    }
+}
+
+// Selected-cost collection precedes casting-route integration.
+#[allow(dead_code)]
+fn spell_cost_generic_modifiers_v1(
+    state: &GameState,
+    types: &[CardType],
+    caster: PlayerId,
+) -> (u32, u32) {
+    #[cfg(feature = "standard-magezero-fixtures")]
+    let (increase, reduction) = {
+        let (increase, reduction) =
+            crate::standard_statics_v1::spell_cost_generic_modifiers(state, types, caster);
+        (u32::from(increase), u32::from(reduction))
+    };
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
+    let (increase, reduction) = (0, 0);
+    if !(types.contains(&CardType::Instant) || types.contains(&CardType::Sorcery)) {
+        return (increase, reduction);
+    }
+    let reduction = state
+        .objects
+        .iter()
+        .fold(reduction, |total, (source, object)| {
+            if object.zone != Zone::Battlefield
+                || object.controller != caster
+                || object.v4.face_index != 0
+                || !crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+            {
+                return total;
+            }
+            let definition = &card_def::CARD_DEFS[object.card_def as usize];
+            if !definition.is_executable() {
+                return total;
+            }
+            total.saturating_add(
+                static_instant_sorcery_reduction_for_v1(definition.name).unwrap_or(0),
+            )
+        });
+    (increase, reduction)
+}
+
 fn printed_normal_cast_cost_with_targets(
     def: &card_def::CardDef,
     player: PlayerId,

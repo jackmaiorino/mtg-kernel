@@ -502,6 +502,11 @@ const ARMASAUR_GUIDE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
 
 const ARBITER_OF_WOE_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(arbiter_of_woe_effect)];
 
+const ARCHMAGE_OF_RUNES_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastInstantOrSorcery,
+    ..etb_trigger(draw_one_effect)
+}];
+
 fn arbiter_of_woe_effect() -> EffectOp {
     EffectOp::Sequence(vec![
         burglar_rat_effect(),
@@ -3097,6 +3102,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Felidar Savior" => &FELIDAR_SAVIOR_TRIGGERS,
         "Armasaur Guide" => &ARMASAUR_GUIDE_TRIGGERS,
         "Arbiter of Woe" => &ARBITER_OF_WOE_TRIGGERS,
+        "Archmage of Runes" => &ARCHMAGE_OF_RUNES_TRIGGERS,
         "Burglar Rat" => &BURGLAR_RAT_TRIGGERS,
         "Infestation Sage" => &INFESTATION_SAGE_TRIGGERS,
         "Wary Thespian" => &WARY_THESPIAN_TRIGGERS,

@@ -37,6 +37,20 @@ are wired. Six focused collector regressions use existing registered cards;
 native execution and read-only review are pending. The collector is not yet
 wired into the engine's offer, pending-decision or payment paths.
 
+Source preparation also binds Mocking Sprite's Flying, Archmage's existing
+instant/sorcery cast draw-one trigger, and both source static fingerprints.
+The new live modifier query stacks executable front-face battlefield sources
+with the caster's current control and active printed abilities; it combines
+raw Standard modifiers without flooring the selected total. Rules-vector
+extraction reads the shared static definition and represents the two spell
+type reductions. No new metadata rows or catalog IDs are admitted. These
+bindings and live query still need compilation/review and actual card games.
+
+Native27 remains queued under supported guard7eb5daccdc9848b68f8cc430b0010f2b,
+supervisor51012. Current live host admission shows no free eligible cores:
+existing CI owns18-23 and Claude's fast-forward claims own16 and17. The
+existing queue/observer remains active; no duplicate or raw launch was made.
+
 Remaining implementation must derive live source modifiers and route every
 offer, pending choice, X maximum and final payment through one spell-only
 planner. It must include Adventure/Omen types, Plotted taxes, optional costs,

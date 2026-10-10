@@ -20,6 +20,17 @@ pub(super) struct SelectedSpellManaCostsV1 {
 }
 
 impl SelectedSpellManaCostsV1 {
+    pub(super) fn live_mana_only_plan(
+        &self,
+        x: u8,
+        player: PlayerId,
+        state: &GameState,
+    ) -> Option<mana::PaymentPlan> {
+        let (increase, reduction) =
+            super::spell_cost_generic_modifiers_v1(state, self.types, player);
+        self.mana_only_plan(x, player, state, increase, reduction)
+    }
+
     fn components(&mut self, components: &'static [CostComponent]) {
         for component in components {
             match component {

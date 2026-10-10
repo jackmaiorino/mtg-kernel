@@ -3700,6 +3700,7 @@ fn effect_recipe_for(card: &CardJson) -> String {
             let static_bonus = match card.name.as_str() {
                 "Dwynen, Gilt-Leaf Daen" => ";static=boost_other_controlled_elf_creatures:1:1",
                 "Anthem of Champions" => ";static=boost_live_controlled_creatures:1:1:layer7c:printed_source_abilities",
+                "Mocking Sprite" | "Archmage of Runes" => ";static=controller_instant_or_sorcery_spells_cost_generic_less:1:total_cost_after_additional_and_x_before_one_floor:printed_source_abilities",
                 "Empyrean Eagle" => ";static=boost_other_live_controlled_creatures_with_effective_flying:1:1:layer7c:printed_source_abilities",
                 "Billowing Shriekmass" => ";static=controller_graveyard_cards_at_least:7:boost_source:2:1:layer7c:printed_source_abilities",
                 "Dreadwing Scavenger" => ";static=controller_graveyard_cards_at_least:7:boost_source:1:1:layer7c:deathtouch:printed_source_abilities",
@@ -3928,6 +3929,7 @@ fn keywords_for(card: &CardJson) -> String {
     match card.name.as_str() {
         "Masked Meower" | "Clockwork Percussionist" => keywords.push("Keywords::HASTE"),
         "Balmor, Battlemage Captain"
+        | "Mocking Sprite"
         | "Firespitter Whelp"
         | "Sneaky Snacker"
         | "Healer's Hawk"
@@ -6164,6 +6166,7 @@ fn delve_for(name: &str) -> bool {
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
         "Wardens of the Cycle" => "controller_end_step:intervening_if_creature_died_this_turn:mode_at_placement:gain_controller_life:2|draw_controller:1_then_lose_controller_life:1:recheck_morbid_in_each_branch:untargeted",
+        "Archmage of Runes" => "cast_instant_or_sorcery:draw_controller:1",
         "Billowing Shriekmass" => "etb:mill_controller_library:3:private_ordering_exact_incarnations",
         "Dreadwing Scavenger" => "etb_or_source_declared_attacker:draw_controller:1:then_discard_controller:1",
         "Mischievous Pup" => "etb:return_up_to_one_other_controlled_permanent_to_owners_hand:source_incarnation_exclusion",
