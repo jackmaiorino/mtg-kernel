@@ -303,6 +303,31 @@ pub fn can_pay_combined_spell(
     state: &GameState,
     creature_spell: bool,
 ) -> Option<PaymentPlan> {
+    can_pay_combined_spell_with_generic_modifiers_v1(
+        costs,
+        x_value,
+        player,
+        state,
+        creature_spell,
+        0,
+        0,
+    )
+}
+
+/// Determine a spell's complete mana payment after total-cost increases and
+/// reductions (CR 601.2f). Callers supply every selected base/additional mana
+/// cost together. X contributes before the final generic floor, while colored,
+/// hybrid and Phyrexian pips retain their ordinary payment requirements.
+/// This does not apply spell modifiers to activation or resolution payments.
+pub(crate) fn can_pay_combined_spell_with_generic_modifiers_v1(
+    costs: &[&Cost],
+    x_value: u8,
+    player: PlayerId,
+    state: &GameState,
+    creature_spell: bool,
+    generic_increase: u32,
+    generic_reduction: u32,
+) -> Option<PaymentPlan> {
     let sources = gather_sources_for_spell(player, state, creature_spell);
     let pool = state.players[player.index()].mana_pool;
     let combined_pips: Vec<Pip> = costs.iter().flat_map(|c| c.pips.iter().copied()).collect();
@@ -323,7 +348,9 @@ pub fn can_pay_combined_spell(
         return None;
     }
     if !pay_generic(
-        generic + x_count * u32::from(x_value),
+        (generic + x_count * u32::from(x_value))
+            .saturating_add(generic_increase)
+            .saturating_sub(generic_reduction),
         &sources,
         &mut used,
         &mut pool_remaining,
@@ -855,6 +882,96 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(solve(&cost, 2, [0; 6], &sources).is_some());
         assert!(solve(&cost, 3, [0; 6], &sources).is_none());
+    }
+
+    #[test]
+    fn spell_total_generic_modifiers_include_kicker_and_x_before_one_floor() {
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        let mut state = GameState::new_from_libraries(&[forest], &[forest], |_| "Forest".into(), 1);
+        let base = Cost {
+            pips: &[Pip::Colored(ManaColor::U)],
+            generic: 0,
+            x_count: 2,
+        };
+        let kicker = Cost {
+            pips: &[Pip::Colored(ManaColor::R)],
+            generic: 4,
+            x_count: 0,
+        };
+        for (x, increase, reduction, needed) in
+            [(0, 0, 1, 3), (2, 0, 1, 7), (2, 3, 5, 6), (0, 2, 9, 0)]
+        {
+            state.players[0].mana_pool = [0, 1, 0, 1, 0, needed];
+            let payment = can_pay_combined_spell_with_generic_modifiers_v1(
+                &[&base, &kicker],
+                x,
+                PlayerId::P0,
+                &state,
+                false,
+                increase,
+                reduction,
+            )
+            .expect("complete selected cost should be exactly payable");
+            assert_eq!(payment.pool_used, state.players[0].mana_pool);
+            if needed > 0 {
+                state.players[0].mana_pool[5] -= 1;
+                assert!(can_pay_combined_spell_with_generic_modifiers_v1(
+                    &[&base, &kicker],
+                    x,
+                    PlayerId::P0,
+                    &state,
+                    false,
+                    increase,
+                    reduction,
+                )
+                .is_none());
+            }
+            // Generic reduction cannot replace either colored requirement.
+            state.players[0].mana_pool = [0, 0, 0, 1, 0, 255];
+            assert!(can_pay_combined_spell_with_generic_modifiers_v1(
+                &[&base, &kicker],
+                x,
+                PlayerId::P0,
+                &state,
+                false,
+                increase,
+                reduction,
+            )
+            .is_none());
+        }
+    }
+
+    #[test]
+    fn spell_total_generic_modifiers_do_not_truncate_large_combined_costs() {
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        let mut state = GameState::new_from_libraries(&[forest], &[forest], |_| "Forest".into(), 2);
+        state.players[0].mana_pool[5] = 254;
+        let cost = Cost {
+            pips: &[],
+            generic: 255,
+            x_count: 0,
+        };
+        let payment = can_pay_combined_spell_with_generic_modifiers_v1(
+            &[&cost, &cost],
+            0,
+            PlayerId::P0,
+            &state,
+            false,
+            0,
+            256,
+        )
+        .expect("510 minus256 generic needs254");
+        assert_eq!(payment.pool_used[5], 254);
+        assert!(can_pay_combined_spell_with_generic_modifiers_v1(
+            &[&cost, &cost],
+            0,
+            PlayerId::P0,
+            &state,
+            false,
+            0,
+            255,
+        )
+        .is_none());
     }
 
     #[test]
