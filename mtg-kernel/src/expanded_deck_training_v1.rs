@@ -29,6 +29,9 @@ use crate::native_policy_train_step_v1::{
 use crate::native_policy_value_net_v1::{
     NativeNamedParameterV1, NativePolicyValueModelConfigV1, NativePolicyValueNetV1,
 };
+use crate::native_training_phase_diagnostic_v1::{
+    NativeTrainingPhaseProfileV1, NativeTrainingPhaseRecorderV1,
+};
 use crate::paired_bo1_harness_v1::paired_policy_seeds_v1;
 use crate::rl::{
     terminal_tuple_is_valid_v1, PlayerSeatV1, TerminalClassificationV1, TerminalSafeCodeV2,
@@ -527,34 +530,147 @@ struct LoadedOpponentV1 {
     behavior: ExpandedSeatBehaviorV1,
 }
 
-/// Keep only the most recently used opponent. Evict before loading a new
-/// source so a population roster cannot retain unbounded model/Adam copies.
+/// Private inference policies, keyed by the entire content-pinned descriptor.
+/// Keep a small population working set without retaining optimizer snapshots.
+/// Least-recently-used entries are evicted before any replacement is loaded.
+const OPPONENT_CACHE_CAPACITY_V1: usize = 8;
+
 #[derive(Default)]
 struct OpponentCacheV1 {
-    entry: Option<LoadedOpponentV1>,
+    entries: Vec<LoadedOpponentV1>,
+    verified_sources: Vec<ExpandedModelSourceV1>,
 }
 
 impl OpponentCacheV1 {
-    fn load(&mut self, source: &ExpandedModelSourceV1) -> Result<&mut LoadedOpponentV1, String> {
-        if !self
-            .entry
-            .as_ref()
-            .is_some_and(|e| e.behavior.source == *source)
-        {
-            self.entry = None;
-            let (policy, identity) = load_expanded_inference_v1(source)?;
-            self.entry = Some(LoadedOpponentV1 {
-                policy,
-                behavior: ExpandedSeatBehaviorV1 {
-                    source: source.clone(),
-                    identity,
-                },
-            });
+    fn for_collection(verified_sources: Vec<ExpandedModelSourceV1>) -> Self {
+        Self {
+            entries: Vec::new(),
+            verified_sources,
         }
-        self.entry
-            .as_mut()
+    }
+
+    fn contains(&self, source: &ExpandedModelSourceV1) -> bool {
+        self.entries
+            .iter()
+            .any(|entry| entry.behavior.source == *source)
+    }
+
+    fn insert(&mut self, entry: LoadedOpponentV1) {
+        if let Some(index) = self
+            .entries
+            .iter()
+            .position(|old| old.behavior.source == entry.behavior.source)
+        {
+            self.entries.remove(index);
+        }
+        if self.entries.len() == OPPONENT_CACHE_CAPACITY_V1 {
+            self.entries.remove(0);
+        }
+        self.entries.push(entry);
+    }
+
+    fn load(&mut self, source: &ExpandedModelSourceV1) -> Result<&mut LoadedOpponentV1, String> {
+        if let Some(index) = self
+            .entries
+            .iter()
+            .position(|entry| entry.behavior.source == *source)
+        {
+            // Moving an entry preserves its private scratch. Each episode
+            // independently resets physical-seat sampling before any action.
+            let entry = self.entries.remove(index);
+            self.entries.push(entry);
+        } else {
+            if self.entries.len() == OPPONENT_CACHE_CAPACITY_V1 {
+                self.entries.remove(0);
+            }
+            let opponent = if self.verified_sources.contains(source) {
+                ordered_update_preparation::load_opponent_cached_v1(source)?.0
+            } else {
+                // Unrecognized import schemas retain their original complete
+                // loader validation rather than trusting a process cache hit.
+                let (policy, identity) = load_expanded_inference_v1(source)?;
+                LoadedOpponentV1 {
+                    policy,
+                    behavior: ExpandedSeatBehaviorV1 {
+                        source: source.clone(),
+                        identity,
+                    },
+                }
+            };
+            self.insert(opponent);
+        }
+        self.entries
+            .last_mut()
             .ok_or_else(|| "opponent cache is empty".into())
     }
+}
+
+/// Revalidate every external byte pin once at a collection boundary before
+/// reusing a process-cached model. Schema-specific semantic validation remains
+/// the cache miss loader's responsibility; changed bytes cannot hit that cache.
+fn verify_collection_opponent_sources_v1(
+    episodes: &[ExpandedEpisodeV1],
+) -> Result<Vec<ExpandedModelSourceV1>, String> {
+    let mut verified = Vec::new();
+    let mut checked = Vec::new();
+    for source in episodes
+        .iter()
+        .filter_map(|episode| episode.opponent.as_ref())
+    {
+        if checked.contains(source) {
+            continue;
+        }
+        checked.push(source.clone());
+        let bytes = read_pinned_bytes(&source.play_import)?;
+        if let Some(pin) = &source.checkpoint {
+            read_pinned_bytes(pin)?;
+        }
+        let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
+        let schema = probe.get("schema").and_then(Value::as_str);
+        if schema == Some(fresh_initialization_source::SOURCE_SCHEMA) {
+            let descriptor = fresh_initialization_source::parse_source_v1(&bytes)?;
+            read_pinned_bytes(&descriptor.initialization)?;
+            read_pinned_bytes(&descriptor.parameters)?;
+        } else if schema.is_none() {
+            let import: FrozenPlayPolicyImportV1 = serde_json::from_slice(&bytes).map_err(err)?;
+            let metadata = read_pinned_bytes(&PinnedFileV1 {
+                path: import.export_directory.join("metadata.json"),
+                sha256: import.expected_metadata_sha256,
+            })?;
+            let metadata: Value = serde_json::from_slice(&metadata).map_err(err)?;
+            for (path, expected) in [
+                (
+                    import.source_run_path,
+                    metadata
+                        .pointer("/identity/loaded_run_sha256")
+                        .and_then(Value::as_str)
+                        .ok_or("source run pin missing")?
+                        .to_owned(),
+                ),
+                (
+                    import.source_registry_path,
+                    import.expected_source_registry_sha256,
+                ),
+                (
+                    import.export_directory.join("parameters.f32le"),
+                    metadata
+                        .pointer("/parameter_section_sha256")
+                        .and_then(Value::as_str)
+                        .ok_or("parameter pin missing")?
+                        .to_owned(),
+                ),
+            ] {
+                read_pinned_bytes(&PinnedFileV1 {
+                    path,
+                    sha256: expected,
+                })?;
+            }
+        } else {
+            continue;
+        }
+        verified.push(source.clone());
+    }
+    Ok(verified)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1041,12 +1157,10 @@ fn initialize_with_transfer_context(
         return Err(REGISTRY_EVOLUTION_LEARNER_REFUSAL_V1.into());
     }
     let mut policy = load_ordinary_policy_v1(source, &bytes)?;
-    let mut model =
-        NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
-            .map_err(err)?;
-    model
-        .replace_parameter_snapshot_v1(&policy.training_parameters_v3())
-        .map_err(err)?;
+    // The validated policy already owns the exact contract model. A private
+    // clone retains every bit and derived transpose without rebuilding a
+    // deterministic template and converting/installing all parameters again.
+    let model = policy.training_model_v3();
     let state = if let Some(pin) = &source.checkpoint {
         let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
         restore_checkpoint_state_v1(&saved, &mut policy, model)?
@@ -2364,7 +2478,8 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 identity: inference_identity_v1(&source, &policy, &state)?,
             };
             drop(state);
-            let mut opponent_cache = OpponentCacheV1::default();
+            let verified_sources = verify_collection_opponent_sources_v1(&episodes)?;
+            let mut opponent_cache = OpponentCacheV1::for_collection(verified_sources);
             let initialization_seconds = collection_started.elapsed().as_secs_f64();
             fs::create_dir(&output_directory).map_err(err)?;
             let mut outputs = Vec::new();
@@ -2944,6 +3059,14 @@ fn execute_update_v1(
         _ => None,
     };
     let learner_started = std::time::Instant::now();
+    // In-memory diagnostics are opt-in and never enter model/checkpoint bits.
+    let profile_gae = std::env::var_os("MTG_KERNEL_PROFILE_GAE_V1").is_some();
+    let mut gae_phase_profile = NativeTrainingPhaseProfileV1::default();
+    let mut gae_phase_recorder = if profile_gae {
+        NativeTrainingPhaseRecorderV1::enabled_v1(&mut gae_phase_profile)
+    } else {
+        NativeTrainingPhaseRecorderV1::disabled_v1()
+    };
     let mut line_b_auxiliary = None;
     let mut exploration_report = None;
     #[cfg_attr(
@@ -3088,38 +3211,23 @@ fn execute_update_v1(
                     line_b_auxiliary = Some(auxiliary);
                     result
                 }
-                (ExpandedUpdateBackendV1::Cpu, FreshLineageGenerationV1::V3) => state
-                    .train_step_gae_feature_transfer_v3(
+                (ExpandedUpdateBackendV1::Cpu, _) => state
+                    .train_step_gae_feature_transfer_profiled_v1(
+                        generation,
                         &groups,
                         &gae.value_targets,
                         &gae.advantages,
                         value_coefficient,
                         learning_rate,
+                        match backward_execution {
+                            UpdateBackwardExecutionV1::Sequential => None,
+                            UpdateBackwardExecutionV1::FixedPartition4 => {
+                                Some(fixed_partition_backward_worker_limit_v1())
+                            }
+                        },
+                        &mut gae_phase_recorder,
                     )
                     .map_err(err)?,
-                (ExpandedUpdateBackendV1::Cpu, FreshLineageGenerationV1::V4) => {
-                    match backward_execution {
-                        UpdateBackwardExecutionV1::Sequential => state
-                            .train_step_gae_feature_transfer_v4(
-                                &groups,
-                                &gae.value_targets,
-                                &gae.advantages,
-                                value_coefficient,
-                                learning_rate,
-                            )
-                            .map_err(err)?,
-                        UpdateBackwardExecutionV1::FixedPartition4 => state
-                            .train_step_gae_feature_transfer_v4_fixed_partition_v1(
-                                &groups,
-                                &gae.value_targets,
-                                &gae.advantages,
-                                value_coefficient,
-                                learning_rate,
-                                fixed_partition_backward_worker_limit_v1(),
-                            )
-                            .map_err(err)?,
-                    }
-                }
                 (ExpandedUpdateBackendV1::Cuda { device_ordinal }, _)
                     if matches!(line_b_teacher, Some((_, Some(_)))) =>
                 {
@@ -3223,7 +3331,10 @@ fn execute_update_v1(
             }
         }
     };
-    let learner_update_seconds = learner_started.elapsed().as_secs_f64();
+    let learner_elapsed = learner_started.elapsed();
+    gae_phase_recorder
+        .finish_update_v1(u64::try_from(learner_elapsed.as_nanos()).unwrap_or(u64::MAX));
+    let learner_update_seconds = learner_elapsed.as_secs_f64();
     // Restore every frozen tensor and its moments before any publication;
     // from_snapshot_v1 revalidates the manifest and the canonical gauge.
     let frozen_tensor_sha256 = match masked_before {
@@ -3404,6 +3515,15 @@ fn execute_update_v1(
     result["input_read_seconds"] = json!(input_read_seconds);
     result["behavior_replay_seconds"] = json!(behavior_replay_seconds);
     result["learner_update_seconds"] = json!(learner_update_seconds);
+    if profile_gae && !gae_phase_profile.records_v1().is_empty() {
+        result["gae_phase_profile"] = json!({
+            "update_elapsed_ns": gae_phase_profile.update_elapsed_ns_v1(),
+            "records": gae_phase_profile.records_v1().iter().map(|record| json!({
+                "phase": record.phase.label_v1(),
+                "elapsed_ns": record.elapsed_ns,
+            })).collect::<Vec<_>>(),
+        });
+    }
     result["checkpoint_io_seconds"] = json!(checkpoint_started.elapsed().as_secs_f64());
     result["update_elapsed_seconds"] = json!(update_started.elapsed().as_secs_f64());
     // Timings include checkpoint readback, but not this final receipt's
@@ -3506,6 +3626,189 @@ pub(crate) mod tests {
         "037ef43b1b0bd4eb247790378957fa37591cc5e9b19b1bb99ac2c394cd59f1a5";
     use super::*;
     use crate::sideboard::checked_in_pauper_registered_deck_by_id_v1;
+
+    #[test]
+    fn opponent_cache_retains_alternating_pins_and_evicts_lru() {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let (_, behavior, _) = replay_fixture(&mut policy, None, 0, &[0, 1]);
+        let entry = |index: usize| {
+            let mut behavior = behavior.clone();
+            behavior.source.play_import.path = format!("cache-fixture-{index}.json").into();
+            LoadedOpponentV1 {
+                policy: policy.fork_for_collection_v3().unwrap(),
+                behavior,
+            }
+        };
+        let mut cache = OpponentCacheV1::default();
+        for index in 0..OPPONENT_CACHE_CAPACITY_V1 {
+            cache.insert(entry(index));
+        }
+        let first = cache.entries[0].behavior.source.clone();
+        let second = cache.entries[1].behavior.source.clone();
+        // No file exists for these fixture pins: a cache miss would fail.
+        assert_eq!(cache.load(&first).unwrap().behavior.source, first);
+        assert_eq!(cache.load(&second).unwrap().behavior.source, second);
+        assert_eq!(cache.load(&first).unwrap().behavior.source, first);
+        let evicted = cache.entries[0].behavior.source.clone();
+        cache.insert(entry(OPPONENT_CACHE_CAPACITY_V1));
+        assert_eq!(cache.entries.len(), OPPONENT_CACHE_CAPACITY_V1);
+        assert!(!cache.contains(&evicted));
+        assert!(cache.contains(&first));
+        assert!(cache.contains(&second));
+        let mut changed = first.clone();
+        changed.play_import.sha256 = "b".repeat(64);
+        assert!(!cache.contains(&changed));
+        assert!(cache.load(&changed).is_err());
+        changed = first.clone();
+        changed.checkpoint = Some(PinnedFileV1 {
+            path: "changed-checkpoint.json".into(),
+            sha256: "c".repeat(64),
+        });
+        assert!(!cache.contains(&changed));
+        assert!(cache.load(&changed).is_err());
+    }
+
+    #[test]
+    fn collection_cache_boundary_rejects_same_path_mutation_of_all_pins() {
+        let root = std::env::temp_dir().join(format!(
+            "collection-cache-pins-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        fs::create_dir(&root).unwrap();
+        let write_pin = |name: &str, bytes: &[u8]| {
+            let path = root.join(name);
+            fs::write(&path, bytes).unwrap();
+            PinnedFileV1 {
+                path,
+                sha256: sha(bytes),
+            }
+        };
+        let initialization = write_pin("initialization.json", b"initialization fixture");
+        let parameters = write_pin("parameters.f32le", b"parameter fixture");
+        let checkpoint = write_pin("checkpoint.json", b"checkpoint fixture");
+        let descriptor = json!({
+            "schema": fresh_initialization_source::SOURCE_SCHEMA,
+            "initialization": initialization,
+            "parameters": parameters,
+        });
+        let import = write_pin("source.json", &serde_json::to_vec(&descriptor).unwrap());
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let (mut trajectory, mut behavior, _) = replay_fixture(&mut policy, None, 0, &[0, 1]);
+        behavior.source.play_import = import.clone();
+        behavior.source.checkpoint = Some(checkpoint.clone());
+        trajectory.episode.opponent = Some(behavior.source.clone());
+        let episodes = [trajectory.episode];
+        let verified = verify_collection_opponent_sources_v1(&episodes).unwrap();
+        let mut cache = OpponentCacheV1::for_collection(verified);
+        cache.insert(LoadedOpponentV1 {
+            policy,
+            behavior: behavior.clone(),
+        });
+        assert!(cache.contains(&behavior.source));
+        for pin in [import, initialization, parameters, checkpoint] {
+            let original = fs::read(&pin.path).unwrap();
+            fs::write(&pin.path, b"changed at the same path").unwrap();
+            // The cached policy still exists. A new collection must reject
+            // changed pinned bytes before that cached entry can be used.
+            assert!(cache.contains(&behavior.source));
+            assert!(verify_collection_opponent_sources_v1(&episodes)
+                .unwrap_err()
+                .contains("input file SHA differs"));
+            fs::write(&pin.path, original).unwrap();
+        }
+        assert_eq!(
+            verify_collection_opponent_sources_v1(&episodes).unwrap(),
+            vec![behavior.source]
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn cloned_training_model_matches_snapshot_installation() {
+        for policy in [
+            FrozenPlayPolicyV1::training_fixture_v3(),
+            distinct_opponent(),
+        ] {
+            let installed = test_state(&policy);
+            assert_eq!(
+                policy.training_model_v3().config_v1(),
+                installed.model_v1().config_v1()
+            );
+            let parameter_bits_json = |model: &NativePolicyValueNetV1| {
+                serde_json::to_value(
+                    model
+                        .parameter_snapshot_v1()
+                        .iter()
+                        .map(ParameterBitsV1::from_native)
+                        .collect::<Vec<_>>(),
+                )
+                .unwrap()
+            };
+            assert_eq!(
+                parameter_bits_json(&policy.training_model_v3()),
+                parameter_bits_json(installed.model_v1())
+            );
+            let cloned = NativePolicyValueTrainStateV1::new_v1(policy.training_model_v3()).unwrap();
+            assert_eq!(
+                installed.state_sha256_v1().unwrap(),
+                cloned.state_sha256_v1().unwrap()
+            );
+            let mut updated = cloned.model_v1().parameter_snapshot_v1();
+            updated
+                .iter_mut()
+                .find(|p| p.name == "value_head.2.bias")
+                .unwrap()
+                .values[0] += 1.0;
+            let mut private_model = policy.training_model_v3();
+            private_model
+                .replace_parameter_snapshot_v1(&updated)
+                .unwrap();
+            assert_eq!(
+                installed.state_sha256_v1().unwrap(),
+                test_state(&policy).state_sha256_v1().unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn checkpoint_restore_does_not_need_imported_template_values() {
+        let (policy, imported_model, saved) = checkpoint_fixture_v1();
+        let mut imported_policy = policy.fork_for_collection_v3().unwrap();
+        let imported_state =
+            restore_checkpoint_state_v1(&saved, &mut imported_policy, imported_model).unwrap();
+        let mut default_policy = policy.fork_for_collection_v3().unwrap();
+        let default_model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let default_state =
+            restore_checkpoint_state_v1(&saved, &mut default_policy, default_model).unwrap();
+        assert_eq!(
+            imported_state.state_sha256_v1().unwrap(),
+            default_state.state_sha256_v1().unwrap(),
+        );
+        assert_eq!(
+            serde_json::to_value(
+                imported_policy
+                    .training_parameters_v3()
+                    .iter()
+                    .map(ParameterBitsV1::from_native)
+                    .collect::<Vec<_>>()
+            )
+            .unwrap(),
+            serde_json::to_value(
+                default_policy
+                    .training_parameters_v3()
+                    .iter()
+                    .map(ParameterBitsV1::from_native)
+                    .collect::<Vec<_>>()
+            )
+            .unwrap(),
+        );
+    }
 
     #[test]
     fn wide_trajectory_sampler_receipt_is_required_only_for_wide_decisions() {

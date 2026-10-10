@@ -1,0 +1,12 @@
+{
+  "coordinator_state": "D:/training-speedups-20261009/desktop/formal-v3/coordinator/state.json",
+  "heartbeat": "finish-training-throughput-comparison",
+  "script": {
+    "path": "D:/training-speedups-20261009/desktop/launch_clean_when_free.py",
+    "sha256": "e2beeab500661672950ce55509941de0ccb41876dbe27f1d05ecb87f446eb9fd"
+  },
+  "state": "D:/training-speedups-20261009/desktop/formal-v3-launcher/state.json",
+  "started_utc": "2026-10-10T13:22:50.2134199Z",
+  "pid": 12604,
+  "schema": "training-speedups-queued-job/v1"
+}

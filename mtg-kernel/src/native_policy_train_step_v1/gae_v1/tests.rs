@@ -735,3 +735,46 @@ fn line_b_permuted_targets_rotate_and_move_the_auxiliary_gradient() {
     let (_, single_loss) = gradients(&single);
     assert_ne!(within_loss.to_bits(), single_loss.to_bits());
 }
+
+#[test]
+fn gae_profile_preserves_complete_update_and_records_actual_phases() {
+    use crate::native_training_phase_diagnostic_v1::NativeTrainingPhaseProfileV1;
+    let base = model();
+    let fixture = Fixture::capture(&base);
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let mut ordinary = NativePolicyValueTrainStateV1::new_v1(base).unwrap();
+    let mut profiled = ordinary.clone();
+    let expected = ordinary
+        .train_step_gae_feature_transfer_v3(&groups, &[0.3, -0.2], &[0.15, -0.4], VC, LR)
+        .unwrap();
+    let mut profile = NativeTrainingPhaseProfileV1::default();
+    let actual = profiled
+        .train_step_gae_feature_transfer_profiled_v1(
+            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3,
+            &groups,
+            &[0.3, -0.2],
+            &[0.15, -0.4],
+            VC,
+            LR,
+            None,
+            &mut NativeTrainingPhaseRecorderV1::enabled_v1(&mut profile),
+        )
+        .unwrap();
+    assert_eq!(actual, expected);
+    assert_eq!(state_bits(&profiled), state_bits(&ordinary));
+    assert_eq!(
+        profile
+            .records_v1()
+            .iter()
+            .map(|r| r.phase)
+            .collect::<Vec<_>>(),
+        vec![
+            NativeTrainingPhaseV1::SetupValidation,
+            NativeTrainingPhaseV1::ForwardLoss,
+            NativeTrainingPhaseV1::BackwardGauge,
+            NativeTrainingPhaseV1::AdamMath,
+            NativeTrainingPhaseV1::FinalizationCloning,
+        ]
+    );
+}

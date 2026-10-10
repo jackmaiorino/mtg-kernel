@@ -607,6 +607,12 @@ fn power_toughness_changes_keep_their_sign() {
 /// or `event_time_trigger_programs`; token names are reached through
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
+    "Wardens of the Cycle",
+    "Tragic Banshee",
+    "Grappling Kraken",
+    "Battlesong Berserker",
+    "Scrawling Crawler",
+    "Affectionate Indrik",
     "Vampire Soulcaller",
     "Billowing Shriekmass",
     "Apothecary Stomper",

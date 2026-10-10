@@ -70,14 +70,34 @@ def artifact_reader(mappings):
     """Resolve verified recovery copies without rewriting captured native pins."""
     pairs = [(Path(m["source_root"]).resolve(), Path(m["local_root"]).resolve()) for m in mappings]
     require(len({p[0] for p in pairs}) == len(pairs), "duplicate recovery mapping")
-    def resolve(item):
+    def target_path(item):
         source = Path(item["path"]).resolve()
         matches = [(a, b) for a, b in pairs if source.is_relative_to(a)]
         require(len(matches) <= 1, "ambiguous recovery mapping")
         target = matches[0][1] / source.relative_to(matches[0][0]) if matches else source
-        checked({"path": str(target), "sha256": item["sha256"]})
         return target
+    def resolve(item):
+        return checked({"path": str(target_path(item)), "sha256": item["sha256"]})
+    resolve.target_path = target_path
     return resolve
+
+
+def read_pinned_json(item, resolve=checked, validated_files=None):
+    """Hash and parse the same bytes, without a separate full-file hash read.
+
+    Recovery resolution remains path-only until these exact bytes are checked.
+    Unknown custom resolvers retain their existing verification contract.
+    No path/stat cache is used: each call detects same-path modifications.
+    """
+    path = (Path(item["path"]) if resolve is checked else
+            resolve.target_path(item) if hasattr(resolve, "target_path") else resolve(item))
+    payload = path.read_bytes()
+    require(hashlib.sha256(payload).hexdigest() == item["sha256"],
+            "changed pinned input: " + str(path))
+    document = json.loads(payload)
+    if validated_files is not None:
+        validated_files[str(path.resolve())] = item["sha256"]
+    return document
 
 
 def require(ok, message):
@@ -257,9 +277,29 @@ def require_host(request):
         require(WINDOWS and HOSTS[host] == platform.node().upper(), "wrong target host")
 
 
+def profile_gae_requested(request):
+    """Explicit request control survives environment-free WMI supervisors."""
+    require("profile_gae" not in request or request["kind"] == "training",
+            "GAE profiling applies to training requests only")
+    value = request.get("profile_gae", False)
+    require(type(value) is bool, "profile_gae must be Boolean")
+    return value
+
+
+def native_child_environment(request):
+    environment = os.environ.copy()
+    # A shell or supervisor's inherited diagnostic flag cannot silently profile
+    # an unprofiled request or contaminate its allocation timing receipt.
+    environment.pop("MTG_KERNEL_PROFILE_GAE_V1", None)
+    if profile_gae_requested(request):
+        environment["MTG_KERNEL_PROFILE_GAE_V1"] = "1"
+    return environment
+
+
 def validate_request(request, qualification):
     require(request["schema"] == SCHEMA, "unsupported request")
     require(request["kind"] in ("training", "evaluation"), "unsupported native workload")
+    profile_gae_requested(request)
     runtime = runtime_for(request)
     host_runtime(runtime)
     config = read(checked(request["config"]))
@@ -339,7 +379,7 @@ def placed_config(request, config, qualification):
     return result
 
 
-def collection_fingerprint(path, expected, resolve=checked, ledgers=None):
+def collection_fingerprint(path, expected, resolve=checked, ledgers=None, validated_files=None):
     """Ordered trajectory hashes of a complete, all-natural collection.
 
     A tolerant training collection may also pin a non-natural ledger of
@@ -347,12 +387,12 @@ def collection_fingerprint(path, expected, resolve=checked, ledgers=None):
     Its SHA256 is appended to ``ledgers`` so serial/parallel parity covers the
     discarded attempts too; without ``ledgers`` any ledger is refused.
     """
-    collection = read(resolve(path))
+    collection = read_pinned_json(path, resolve, validated_files)
     require(collection["complete"] and len(collection["trajectories"]) == expected,
             "incomplete ordered collection")
     if "non_natural_ledger" in collection:
         require(ledgers is not None, "non-natural collection attempt")
-        ledger = read(resolve(collection["non_natural_ledger"]))
+        ledger = read_pinned_json(collection["non_natural_ledger"], resolve, validated_files)
         require(ledger["schema"] == "mtg-kernel-non-natural-collection-ledger/v1"
                 and all(0 <= entry["slot"] < expected for entry in ledger["entries"]),
                 "invalid non-natural ledger")
@@ -361,19 +401,20 @@ def collection_fingerprint(path, expected, resolve=checked, ledgers=None):
         ledgers.append(None)
     hashes = []
     for item in collection["trajectories"]:
-        trajectory = read(resolve(item))
+        trajectory = read_pinned_json(item, resolve, validated_files)
         require(trajectory["terminal"]["terminal_classification"] == "natural",
                 "non-natural terminal")
         hashes.append(item["sha256"])
     return hashes
 
 
-def output_fingerprint(config, kind, result, runtime, qualification, resolve=checked, collection_ref=None, run_ref=None):
+def output_fingerprint(config, kind, result, runtime, qualification, resolve=checked, collection_ref=None, run_ref=None, validated_files=None, timing=None):
     if kind == "evaluation":
         return {"trajectories": collection_fingerprint(
-            collection_ref or pin(Path(config["output_directory"])/"collection.json"), len(config["episodes"]), resolve)}
+            collection_ref or pin(Path(config["output_directory"])/"collection.json"), len(config["episodes"]), resolve,
+            validated_files=validated_files)}
     root = Path(config["output_directory"])
-    run = read(resolve(run_ref)) if run_ref else read(root/"run.json")
+    run = read_pinned_json(run_ref, resolve) if run_ref else read(root/"run.json")
     require(run["git_commit"] == runtime["engine_commit"]
             and run["tracked_tree_sha256"] == runtime["tracked_tree_sha256"],
             "compiled native runtime differs from binding")
@@ -385,21 +426,39 @@ def output_fingerprint(config, kind, result, runtime, qualification, resolve=che
             "incomplete native update coverage")
     tolerant = config.get("max_non_natural_episode_fraction", 0) > 0
     fingerprints = []
+    if timing is not None:
+        timing.update(collection_seconds=0.0, checkpoint_read_hash_parse_seconds=0.0,
+                      checkpoint_encode_hash_seconds=0.0, receipt_read_hash_parse_seconds=0.0)
     for index, item in enumerate(result["iterations"]):
-        receipt = read(resolve(item))
+        phase_started = time.monotonic()
+        receipt = read_pinned_json(item, resolve, validated_files)
+        if timing is not None:
+            timing["receipt_read_hash_parse_seconds"] += time.monotonic() - phase_started
         require(receipt["iteration"] == index, "unordered update receipts")
         ledgers = [] if tolerant else None
+        phase_started = time.monotonic()
         trajectories = collection_fingerprint(receipt["collection"],
-                                              len(config["iterations"][index]["episodes"]), resolve, ledgers)
-        update = read(resolve(receipt["update"]))
+                                              len(config["iterations"][index]["episodes"]), resolve, ledgers, validated_files)
+        if timing is not None:
+            timing["collection_seconds"] += time.monotonic() - phase_started
+        phase_started = time.monotonic()
+        update = read_pinned_json(receipt["update"], resolve, validated_files)
+        if timing is not None:
+            timing["receipt_read_hash_parse_seconds"] += time.monotonic() - phase_started
         require(update["complete"], "incomplete optimizer update")
-        checkpoint = read(resolve(update["checkpoint"]))
+        phase_started = time.monotonic()
+        checkpoint = read_pinned_json(update["checkpoint"], resolve, validated_files)
+        if timing is not None:
+            timing["checkpoint_read_hash_parse_seconds"] += time.monotonic() - phase_started
         require([t["sha256"] for t in checkpoint["trajectories"]] == trajectories,
                 "optimizer used different ordered trajectories")
         # Read the complete parameter and Adam tensors. Only the output-root
         # metadata in trajectory pins differs between serial/parallel trials.
         checkpoint["trajectories"] = trajectories
+        phase_started = time.monotonic()
         entry = {"trajectories": trajectories, "checkpoint_bits": digest(checkpoint)}
+        if timing is not None:
+            timing["checkpoint_encode_hash_seconds"] += time.monotonic() - phase_started
         if tolerant:
             entry["non_natural_ledger"] = ledgers[0]
         fingerprints.append(entry)
@@ -438,6 +497,8 @@ def require_choice(path, request, verify_outputs=False):
         require(report["schema"] == SCHEMA and report["qualification"] and report["complete"],
                 "not completed qualification")
         original = read(resolve(report["request"]))
+        require(not profile_gae_requested(original),
+                "profiled qualification cannot select production allocation")
         actual_config = read(resolve(report["executed_config"]))
         original_config = read(resolve(original["config"]))
         other_runtime = runtime_for(original, resolve)
@@ -607,7 +668,9 @@ def execute(request_path, qualification):
         # Linux: nice 10 before exec, so every native thread inherits it.
         options = ({"creationflags": subprocess.BELOW_NORMAL_PRIORITY_CLASS | subprocess.CREATE_NO_WINDOW}
                    if WINDOWS else {"preexec_fn": lambda: os.nice(10)})
-        child = subprocess.Popen(command, stdout=stdout, stderr=stderr, **options)
+        child_started = time.monotonic()
+        child = subprocess.Popen(command, stdout=stdout, stderr=stderr,
+                                 env=native_child_environment(request), **options)
         reservations.record_descendant(token, child.pid)
         write(root/"started.json", {"pid": child.pid, "started_unix": time.time(),
                                     "placement": request["placement"], "request": pin(request_path)})
@@ -632,7 +695,9 @@ def execute(request_path, qualification):
                 child.kill()
             child.wait()
         finally:
+            child_seconds = time.monotonic() - child_started
             write(root/"execution.json", {"exit_code": child.returncode, "error": failure,
+                                         "child_seconds": child_seconds,
                                          "seconds": time.monotonic() - started})
     if failure:
         raise RuntimeError(failure + "; preserve failed outputs at " + str(root))
@@ -643,12 +708,21 @@ def execute(request_path, qualification):
                 last = json.loads(line)
     require(last is not None, "missing native result")
     write(root/"native-result.json", last)
-    fingerprint = output_fingerprint(placed, request["kind"], last, runtime, qualification)
+    fingerprint_started = time.monotonic()
+    validated_files = {}
+    fingerprint_timing = {}
+    fingerprint = output_fingerprint(placed, request["kind"], last, runtime, qualification,
+                                     validated_files=validated_files, timing=fingerprint_timing)
+    fingerprint_seconds = time.monotonic() - fingerprint_started
+    storage_started = time.monotonic()
     validate_storage(request["storage"], 0)
+    storage_validation_seconds = time.monotonic() - storage_started
     # Existing checked, durable, two-shard archive includes full readback. Raw
     # outputs remain. Both locations count against the same campaign allowance.
-    archive = archive_native(Path(placed["output_directory"]), cold)
+    archive = archive_native(Path(placed["output_directory"]), cold, validated_files)
+    storage_started = time.monotonic()
     validate_storage(request["storage"], 0)
+    storage_validation_seconds += time.monotonic() - storage_started
     games = len(placed["iterations"][0]["episodes"]) if request["kind"] == "training" and qualification else (
         sum(len(i["episodes"]) for i in placed["iterations"]) if request["kind"] == "training" else len(placed["episodes"]))
     report = {"schema": SCHEMA, "qualification": qualification, "complete": True,
@@ -660,6 +734,10 @@ def execute(request_path, qualification):
               "completed_games": games, "completed_updates": (1 if qualification else len(config["iterations"]))
                   if request["kind"] == "training" else 0,
               "seconds": time.monotonic() - started, "archive": pin(cold/"archive.json"),
+              "artifact_timing": {"fingerprint_seconds": fingerprint_seconds,
+                                  "fingerprint_phases": fingerprint_timing,
+                                  "storage_validation_seconds": storage_validation_seconds,
+                                  "archive_seconds": archive["seconds"]},
               "native_logical_bytes": archive["source_bytes"], "recovery_bytes": archive["compressed_bytes"],
               "selected": selected}
     if request["kind"] == "evaluation":

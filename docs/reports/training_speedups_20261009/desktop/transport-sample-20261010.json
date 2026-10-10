@@ -1,0 +1,57 @@
+{
+  "schema": "training-speedup-local-transport-sample/v1",
+  "complete": true,
+  "observed_utc": "2026-10-10T12:29:15.405105+00:00",
+  "source_device": {
+    "drive": "D:",
+    "partition_guid": "{507839e9-c960-4c6f-955d-cc0868365902}",
+    "disk_number": 2,
+    "disk_unique_id": "500253F854700348",
+    "disk_serial": "S75BNL0X700842B",
+    "host": "DESKTOP-DJ1C40R"
+  },
+  "destination_device": {
+    "drive": "E:",
+    "partition_guid": "{fbe9f6b7-5078-431f-a1a2-daf1a384af79}",
+    "disk_number": 1,
+    "disk_unique_id": "5000C500FD4D0B65",
+    "disk_serial": "ZFN5T2LG",
+    "host": "DESKTOP-DJ1C40R"
+  },
+  "files": [
+    {
+      "source": {
+        "path": "D:\\training-speedups-20261009\\desktop\\measure\\cold\\qual-baseline-w8\\native-0.zip",
+        "sha256": "c029ebab2be5588582b6f9125fd003aaed2b4d8d886d0950772f0959170de268"
+      },
+      "destination": {
+        "path": "E:\\training-speedups-20261009\\desktop-transport-sample-20261010\\native-0.zip",
+        "sha256": "c029ebab2be5588582b6f9125fd003aaed2b4d8d886d0950772f0959170de268"
+      },
+      "bytes": 9898141,
+      "d_verify_seconds": 0.005660299997543916,
+      "e_copy_fsync_seconds": 0.17403339999145828,
+      "e_verify_seconds": 0.012813400011509657
+    },
+    {
+      "source": {
+        "path": "D:\\training-speedups-20261009\\desktop\\measure\\cold\\qual-baseline-w8\\native-1.zip",
+        "sha256": "7eadd20f294521bb6e850c8ad5f4d31060a6a8ca296989b48a535db4e2698d0a"
+      },
+      "destination": {
+        "path": "E:\\training-speedups-20261009\\desktop-transport-sample-20261010\\native-1.zip",
+        "sha256": "7eadd20f294521bb6e850c8ad5f4d31060a6a8ca296989b48a535db4e2698d0a"
+      },
+      "bytes": 17328027,
+      "d_verify_seconds": 0.010370800009695813,
+      "e_copy_fsync_seconds": 0.501093899976695,
+      "e_verify_seconds": 0.015821700013475493
+    }
+  ],
+  "bytes": 27226168,
+  "seconds": 0.7204605999868363,
+  "projected_recovery_bytes": 34359738368,
+  "projected_transport_seconds": 909.2295955861288,
+  "projection_method": "linear extrapolation of D SHA plus E copy/fsync plus E SHA; conservative 32GiB logical upper bound",
+  "limitation": "bounded qualification archives, cache and full-block scaling may differ; formal actual copy time separately measured"
+}

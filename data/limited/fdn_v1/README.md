@@ -124,3 +124,8 @@ coverage counts.
 `FDN_reference_casting_triggers.dck` prepares Balmor and Firespitter Whelp
 with noncreature cast support. Serial catalog v66 qualification is pending;
 see `docs/design/fdn_casting_triggers_v1.md` for the source-preparation scope.
+
+`FDN_reference_first_lifegain.dck` is a synthetic 40-card fixture containing
+Vanguard Seraph, Cat Collector and 38 Plains. It resolves the candidate v63
+registry; gameplay and store-profile qualification remain required. See
+`docs/design/fdn_first_lifegain_v1.md`.

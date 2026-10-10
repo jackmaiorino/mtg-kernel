@@ -48,7 +48,9 @@ pending-trigger hash compatibility requirement; these must be repaired at
 integration. Existing Standard Wolf subtype support must be preserved when
 integrating Ambush Wolf. Prepared source does not establish supported gameplay.
 
-October 10 delivery plan: retain the explicitly recorded v63, v64 and v65
+October 10 delivery plan: v63 merged in PR208 at bc23a8da, with all23 head
+checks passed and33 affected Python cases passed on the actual default commit.
+Accepted coverage is134 full, one partial and151 missing. Retain v64 and v65
 order. The unregistered source families tentatively labeled v66 through v81
 can form one coherent later catalog batch, IDs 338-363, after those prerequisites
 integrate. Their tentative version labels are preparation labels, not frozen

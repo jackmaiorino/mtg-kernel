@@ -1,0 +1,43 @@
+{
+  "schema": "training-speedups-partial-maintenance-observation/v1",
+  "observation_window_utc": ["2026-10-10T14:26:11Z", "2026-10-10T14:26:48Z"],
+  "case": "clean4-01-baseline",
+  "scope": "Read-only partial diagnostic. Final case timing and parity remain pending.",
+  "coordinator": {
+    "pid": 36080,
+    "parent_pid": 7360,
+    "started_utc": "2026-10-10T13:50:07.3350446Z",
+    "state": "D:/training-speedups-20261009/desktop/formal-v4/coordinator/state.json",
+    "complete": false,
+    "error": null
+  },
+  "completed_phase_seconds": {
+    "dispatch": 833.1084648000251,
+    "inspect": 137.8682108000212,
+    "copy": 204.72258989998954,
+    "retain": 46.80397680000169
+  },
+  "retain_finished_utc": "2026-10-10T14:10:32.179934Z",
+  "maintenance_source": {
+    "path": "D:/training-speedups-20261009/desktop/measure/maintenance/clean4-01-baseline",
+    "files": 1187,
+    "bytes": 151082394,
+    "note": "Late copy also includes the controller JSON outside this tree."
+  },
+  "late_destination_snapshot": {
+    "path": "E:/training-speedups-20261009/clean4-01-baseline/late",
+    "files": 318,
+    "bytes": 26402072,
+    "latest_write_utc": "2026-10-10T14:25:48.9479922Z"
+  },
+  "physical_disk_samples": [
+    {"utc": "2026-10-10T14:26:46.8807295Z", "disk": "1 E:", "average_write_seconds": 0.1958, "queue_length": 4, "writes_per_second": 16.9731, "write_bytes_per_second": 69521.9398},
+    {"utc": "2026-10-10T14:26:47.9322034Z", "disk": "1 E:", "average_write_seconds": 0.2560, "queue_length": 4, "writes_per_second": 19.0188, "write_bytes_per_second": 77900.9720},
+    {"utc": "2026-10-10T14:26:46.8807295Z", "disk": "2 D:", "average_write_seconds": 0.0008, "queue_length": 0, "writes_per_second": 10.9826, "write_bytes_per_second": 3946392.4661},
+    {"utc": "2026-10-10T14:26:47.9322034Z", "disk": "2 D:", "average_write_seconds": 0.0018, "queue_length": 0, "writes_per_second": 16.1660, "write_bytes_per_second": 5297752.9773}
+  ],
+  "measurement_method": "Get-CimInstance Win32_Process; recursive file metadata enumeration of the two exact case roots; Get-Counter PhysicalDisk average write latency, current queue length, writes/sec and write bytes/sec, two samples one second apart. Values rounded to four decimal places.",
+  "limitations": "Disk counters cover all activity on each disk, not just this coordinator. They cannot attribute latency to fsync, filesystem, device firmware, antivirus or competing I/O. File counts are partial progress snapshots.",
+  "source_observation": "The frozen coordinator copies its controller and every maintenance file individually. cold_copy creates each E file, copies it, flushes and fsyncs it; the coordinator hashes each source and fully rereads each destination.",
+  "future_candidate": "Bundle the identical late file inventory in a STORE ZIP, fsync the bundle, and verify exact E member inventory, sizes and SHA-256s. This is a proposed optimization, not an executed or validated speedup."
+}

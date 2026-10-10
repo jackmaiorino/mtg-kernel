@@ -1,11 +1,43 @@
 # FDN first actual life gain each turn
 
-Source preparation for issue #110, claimed in
+Integration preparation for issue #110, originally claimed in
 [comment 6087899788](https://github.com/jackmaiorino/mtg-kernel/issues/110#issuecomment-6087899788).
-The coordinator tentatively reserves v63 / IDs 332-333 after v61 activated
-combat and v62 surveil. Registry append, live profile pins, focused CI wiring
-and native qualification remain pending serial integration. No card support
-or passing native check is claimed by this preparation.
+V62 is accepted on default branch at `8e65be54`. The owned v63 candidate
+appends IDs 332-333 and wires its focused gameplay test into CI. Its 40-card
+fixture and candidate registry pass 27 deck tests and six frozen booster-target
+tests with Python 3.13.14. Candidate metadata covers 134 full target names;
+accepted default-branch coverage remains 132. The guarded two-core native
+catalog check passed and generated identity `f388a3a4265b37ef`. The appended
+`FdnFirstLifeGain` live store profile pins that identity and the unchanged
+catalog SHA-256 `68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851`.
+Historical v62 `FdnSurveil` stores remain readable; publication and resume
+require the current catalog. Corrected native gameplay qualification passed
+at `a8a812d8` under the supported two-core launcher: 14 card cases, five
+ledger cases, 23 rules-vector cases (one ignored), 48 catalog cases and
+146 store-profile cases (three ignored). All 236 executed cases passed.
+
+The first guarded gameplay attempt at `bc3c349e` completed with 11 passing
+cases and three fixture failures: the settle helper and private-surveil case
+expected a target prompt for count one, whose preserved protocol is the
+two-option keep/graveyard prompt. Commit `527c565a` uses that actual prompt
+and checks nonchooser public and typed projections across hidden top-card
+changes. The failed output is retained alongside the corrected passing log
+`fdn110-v63-gameplay-checks-2.log` in the coordinator scratch directory.
+The corrected launcher exited zero after release of its verified owned
+idle VCTIP helper. Current-head Windows production-profile CI then passed
+all three publication/resume/round-trip checks, with 59 passing cases across
+the three existing filters in
+[job 114249932766](https://github.com/jackmaiorino/mtg-kernel/actions/runs/38063880908/job/114249932766).
+It tested head `2511f978` merged into main `7723122b`; the CI helper builds
+with `--release --locked` and both Limited/production features. That evidence
+replaces the redundant suspended standalone production build.
+
+The same run's default-feature Linux workspace failed five ledger fixtures
+at their Plains lookup. Plains belongs to the optional catalog. The fixtures
+now use default-catalog Forest while preserving all five assertions and the
+hidden Swamp substitution. No ledger/runtime behavior or catalog identity
+changed. The failed job/log remain retained; corrected default-feature and
+Limited checks must pass before integration.
 
 | Card | Exact printed behavior | Existing effect |
 | --- | --- | --- |
@@ -58,10 +90,10 @@ source control changes, Food costs, Cat identity, pending capture/surveil
 restore, stale capture replay after drain, and valid captures followed by
 later atomic events. The next-turn regression passes the real End window
 through Cleanup and Untap, verifying Cleanup's damage reset before checking
-the new ledger anchor. Hosted tests will supply actual results after the prior versions
-integrate. Pinned rustfmt and diff checks are the only local Rust checks;
-Stage4a's desktop reservation, paid-run authority and frozen evidence remain
-untouched.
+the new ledger anchor. These gameplay and restore cases passed. The
+supported host-slot launcher runs native checks on two available cores at
+BelowNormal priority; Stage4a's reservation, paid-run authority and frozen
+evidence remain untouched.
 
 October 10 integration preparation preserves the recent Standard event/state
 fields, appends the new trigger/halt variants after the existing variants,
@@ -69,5 +101,18 @@ and maps Vanguard Seraph's flying keyword. The rules-vector record retains
 the exact first-gain condition. Its existing vocabulary represents the life
 gain and turn-history read, but the global event ordinal and own-turn gate
 are explicitly reported as opaque. This does not reduce gameplay support;
-it records the extractor's representational limit. Registration, catalog
-admission and gameplay qualification still await v62 integration.
+it records the extractor's representational limit. Registry wiring, generated
+identity and the separate profile are committed. Production-profile checks
+passed on the preceding receipt head; corrected current-head CI remains an
+integration prerequisite. The earlier malformed build
+claim was reported to its owner through the shared mailbox and collaboration
+PR137 and has since been released. No reservation or other owner's process
+was changed.
+
+Default-branch acceptance, October10: PR208 merged reviewed headffb6676e at
+bc23a8da89d6b57d5c8ca0afd480a9ae50c4e292. All23 head checks passed. The actual
+merge treeffee360661264d8ba5829625be8db69bb82ee45c equals the independently
+reviewed composition against main30d00b0b. All33 affected Python cases pass on
+that default commit with Python3.13.14, and frozen286-name inventory is134
+full, one partial and151 missing. This supersedes the earlier pending status;
+the full-pool umbrella remains open. No playing-strength result is claimed.

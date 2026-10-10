@@ -4056,19 +4056,49 @@ fn linear_forward_into_arena_v1(
         let input = input.values_v1(input_arena);
         let output_values = &mut output_arena[..output.len];
         for row in 0..rows {
-            let input_begin = row * input_dim;
-            for (output_index, bias_value) in bias.iter().copied().enumerate() {
-                let weight_begin = output_index * input_dim;
-                let mut value = bias_value;
-                for input_index in 0..input_dim {
-                    value += input[input_begin + input_index] * weight[weight_begin + input_index];
-                }
-                output_values[row * output_dim + output_index] = value;
-            }
+            let input_row = &input[row * input_dim..(row + 1) * input_dim];
+            let output_row = &mut output_values[row * output_dim..(row + 1) * output_dim];
+            linear_forward_ordered_v1(weight, bias, input_row, output_row);
         }
     }
     validate_finite_slice("linear_forward", output.values_v1(arena))?;
     Ok(output)
+}
+
+// Four independent dot products expose instruction-level parallelism while
+// retaining the exact input order of every accumulator, including its bias.
+fn linear_forward_ordered_v1(weight: &[f32], bias: &[f32], input: &[f32], output: &mut [f32]) {
+    let width = input.len();
+    let tiled = bias.len() / 4 * 4;
+    for first in (0..tiled).step_by(4) {
+        let w0 = &weight[first * width..(first + 1) * width];
+        let w1 = &weight[(first + 1) * width..(first + 2) * width];
+        let w2 = &weight[(first + 2) * width..(first + 3) * width];
+        let w3 = &weight[(first + 3) * width..(first + 4) * width];
+        let mut a = [
+            bias[first],
+            bias[first + 1],
+            bias[first + 2],
+            bias[first + 3],
+        ];
+        for ((((x, w0), w1), w2), w3) in input.iter().zip(w0).zip(w1).zip(w2).zip(w3) {
+            a[0] += *x * *w0;
+            a[1] += *x * *w1;
+            a[2] += *x * *w2;
+            a[3] += *x * *w3;
+        }
+        output[first..first + 4].copy_from_slice(&a);
+    }
+    for index in tiled..bias.len() {
+        let mut value = bias[index];
+        for (x, w) in input
+            .iter()
+            .zip(&weight[index * width..(index + 1) * width])
+        {
+            value += *x * *w;
+        }
+        output[index] = value;
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4103,10 +4133,21 @@ fn linear_backward_into(
                 gradients[bias_index][output_index] += d_value;
             }
             let weight_begin = output_index * input_dim;
-            for input_index in 0..input_dim {
-                gradients[weight_index][weight_begin + input_index] +=
-                    d_value * input[input_begin + input_index];
-                d_input[input_begin + input_index] += d_value * weight[weight_begin + input_index];
+            // Independent input lanes may vectorize; each lane still visits rows
+            // and outputs in the original order. No floating-point reduction
+            // is reassociated and no fused multiply-add is requested.
+            let weight_row = &weight[weight_begin..weight_begin + input_dim];
+            let gradient_row = &mut gradients[weight_index][weight_begin..weight_begin + input_dim];
+            let input_row = &input[input_begin..input_begin + input_dim];
+            let d_input_row = &mut d_input[input_begin..input_begin + input_dim];
+            for (((gradient, d_input), input), weight) in gradient_row
+                .iter_mut()
+                .zip(d_input_row)
+                .zip(input_row)
+                .zip(weight_row)
+            {
+                *gradient += d_value * *input;
+                *d_input += d_value * *weight;
             }
         }
     }
@@ -4949,6 +4990,117 @@ pub(crate) fn finite_scalar(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn ordered_linear_forward_matches_scalar_bits_across_shapes() {
+        for input_dim in [0, 1, 3, 16, 47, 64, 97] {
+            for output_dim in [0, 1, 3, 4, 5, 16, 63, 64] {
+                let values = |len: usize, offset: usize| -> Vec<f32> {
+                    (0..len)
+                        .map(|i| {
+                            let sign = if (i + offset).is_multiple_of(3) {
+                                -1.0
+                            } else {
+                                1.0
+                            };
+                            sign * (((i * 31 + offset * 13) % 127) as f32 - 63.0) / 37.0
+                        })
+                        .collect()
+                };
+                let input = values(input_dim, 1);
+                let weight = values(input_dim * output_dim, 2);
+                let bias = values(output_dim, 3);
+                let mut actual = vec![0.0; output_dim];
+                linear_forward_ordered_v1(&weight, &bias, &input, &mut actual);
+                let expected: Vec<u32> = (0..output_dim)
+                    .map(|out| {
+                        let mut value = bias[out];
+                        for index in 0..input_dim {
+                            value += input[index] * weight[out * input_dim + index];
+                        }
+                        value.to_bits()
+                    })
+                    .collect();
+                assert_eq!(
+                    actual.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                    expected,
+                    "shape {input_dim} x {output_dim}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ordered_linear_backward_matches_scalar_bits() {
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let parameters = model.parameter_snapshot_v1();
+        for (weight_index, bias_index, input_dim, output_dim) in [
+            (
+                SCORER_FIRST_WEIGHT,
+                SCORER_FIRST_BIAS,
+                SCORER_INPUT,
+                HIDDEN_DIM_V1,
+            ),
+            (SCORER_SECOND_WEIGHT, SCORER_SECOND_BIAS, HIDDEN_DIM_V1, 1),
+        ] {
+            for rows in [0, 1, 3, 7] {
+                let input: Vec<f32> = (0..rows * input_dim)
+                    .map(|i| (i % 19) as f32 / 13.0 - 0.7)
+                    .collect();
+                let d_output: Vec<f32> = (0..rows * output_dim)
+                    .map(|i| (i % 7) as f32 / 11.0 - 0.2)
+                    .collect();
+                let mut actual: Vec<Vec<f32>> = parameters
+                    .iter()
+                    .map(|p| vec![0.125; p.values.len()])
+                    .collect();
+                let mut expected = actual.clone();
+                let mut d_input = Vec::new();
+                linear_backward_into(
+                    &parameters,
+                    &mut actual,
+                    weight_index,
+                    bias_index,
+                    &input,
+                    rows,
+                    input_dim,
+                    output_dim,
+                    &d_output,
+                    &mut d_input,
+                )
+                .unwrap();
+                let mut expected_input = vec![0.0; rows * input_dim];
+                for row in 0..rows {
+                    for out in 0..output_dim {
+                        let d = d_output[row * output_dim + out];
+                        if weight_index != SCORER_SECOND_WEIGHT {
+                            expected[bias_index][out] += d;
+                        }
+                        for index in 0..input_dim {
+                            expected[weight_index][out * input_dim + index] +=
+                                d * input[row * input_dim + index];
+                            expected_input[row * input_dim + index] +=
+                                d * parameters[weight_index].values[out * input_dim + index];
+                        }
+                    }
+                }
+                if weight_index == SCORER_SECOND_WEIGHT {
+                    for out in 0..output_dim {
+                        for row in (0..rows).rev() {
+                            expected[bias_index][out] += d_output[row * output_dim + out];
+                        }
+                    }
+                }
+                let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+                assert_eq!(bits(&d_input), bits(&expected_input));
+                for (a, b) in actual.iter().zip(&expected) {
+                    assert_eq!(bits(a), bits(b));
+                }
+            }
+        }
+    }
     use super::*;
     use crate::native_policy_value_net_v1::{
         NativeEncodedDecisionSchemaV1, NativePolicyValueModelConfigV1,
