@@ -705,14 +705,9 @@ pub enum EffectOp {
     ExploreTarget {
         object: ObjectRef,
     },
-    /// Looks at the top `count` cards of `player`'s library, one at a time,
-    /// and for each offers a keep-on-top-or-put-into-graveyard choice
-    /// (Conduit Pylons' "surveil 1"). A card kept on top stays there in its
-    /// original relative position; this pool's only consumer surveils
-    /// exactly one card, where the general "any order among kept cards"
-    /// ruling is unobservable. `count` decrements by one per card looked at,
-    /// re-entering this same operation until it reaches zero or the library
-    /// empties. Appended for pauper meta wave 2 Task 3.
+    /// Privately looks at the top `count` cards, puts any chosen cards into
+    /// the graveyard, and orders the kept cards on top. The original count-1
+    /// prompt remains unchanged for existing Pauper and Limited consumers.
     Surveil {
         player: PlayerRef,
         count: u8,
@@ -1686,6 +1681,16 @@ pub enum EffectFrame {
         path: Vec<u16>,
         canonical_path: Vec<u16>,
     },
+    /// Appended so existing continuation Hash discriminants remain fixed.
+    SurveilLibraryMany {
+        player: PlayerId,
+        requested_count: u8,
+        original_library: Vec<EffectObjectBinding>,
+        graveyard_order: Vec<EffectObjectBinding>,
+        kept_order: Option<Vec<EffectObjectBinding>>,
+        path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -1950,6 +1955,17 @@ pub enum EffectTargetSelectionPurpose {
         original_prefix: Vec<EffectObjectBinding>,
         canonical_path: Vec<u16>,
     },
+    /// Appended so existing choice Hash discriminants remain fixed.
+    SurveilLibraryMany {
+        player: PlayerId,
+        requested_count: u8,
+        original_library: Vec<EffectObjectBinding>,
+        /// None selects and orders the graveyard subset; Some orders only
+        /// the kept complement. Both stages precede every zone change.
+        graveyard_order: Option<Vec<EffectObjectBinding>>,
+        canonical_path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -2200,6 +2216,9 @@ pub enum EffectAnsweredChoiceGuard {
         remaining_frames: Vec<EffectFrame>,
     },
     SurveilLibraryOne {
+        frame: Box<EffectFrame>,
+    },
+    SurveilLibraryMany {
         frame: Box<EffectFrame>,
     },
 }
@@ -3315,6 +3334,36 @@ fn complete_resumable_target_selection(
                 });
             continuation.frames.push(frame);
         }
+        EffectTargetSelectionPurpose::SurveilLibraryMany {
+            player,
+            requested_count,
+            original_library,
+            graveyard_order,
+            canonical_path,
+            expected_remaining_frames,
+        } => {
+            if path != canonical_path || continuation.frames != expected_remaining_frames {
+                return Err("surveil batch answer changed its path or continuation".into());
+            }
+            let (graveyard_order, kept_order) = match graveyard_order {
+                None => (objects, None),
+                Some(graveyard) => (graveyard, Some(objects)),
+            };
+            let frame = EffectFrame::SurveilLibraryMany {
+                player,
+                requested_count,
+                original_library,
+                graveyard_order,
+                kept_order,
+                path,
+                expected_remaining_frames,
+            };
+            continuation.answered_choice_guard =
+                Some(EffectAnsweredChoiceGuard::SurveilLibraryMany {
+                    frame: Box::new(frame.clone()),
+                });
+            continuation.frames.push(frame);
+        }
         EffectTargetSelectionPurpose::ScryLibrary {
             player,
             requested_count,
@@ -3973,6 +4022,8 @@ fn surveil_top_card(
             .is_some_and(|object| !crate::card_def::CARD_DEFS[object.card_def as usize].is_token)
     })
 }
+
+mod surveil_many;
 
 fn validate_surveil_one_metadata(
     state: &GameState,
@@ -5574,6 +5625,21 @@ fn validate_answered_choice_guard(
             }
             validate_surveil_one_frame(state, pending, frame)?;
         }
+        Some(EffectAnsweredChoiceGuard::SurveilLibraryMany { frame }) => {
+            let EffectFrame::SurveilLibraryMany {
+                expected_remaining_frames,
+                ..
+            } = frame.as_ref()
+            else {
+                return Err("surveil batch answer guard changed frame kind".into());
+            };
+            let mut expected = expected_remaining_frames.clone();
+            expected.push((**frame).clone());
+            if pending.choice.is_some() || pending.frames != expected {
+                return Err("surveil batch answered continuation changed".into());
+            }
+            surveil_many::validate_frame(state, pending, frame)?;
+        }
         Some(EffectAnsweredChoiceGuard::CounterUnlessPaysGeneric { frame }) => {
             if pending.choice.is_some() {
                 return Err("answered Ward guard still carries a live choice".to_string());
@@ -6008,6 +6074,9 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                                 .to_string(),
                         );
                     }
+                }
+                EffectTargetSelectionPurpose::SurveilLibraryMany { .. } => {
+                    surveil_many::validate_choice(state, pending)?;
                 }
                 EffectTargetSelectionPurpose::ScryLibrary {
                     player: library_player,
@@ -8471,6 +8540,12 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         );
                     }
                 }
+                frame @ EffectFrame::SurveilLibraryMany { .. } => {
+                    if surveil_many::resume(state, &mut continuation, frame)? {
+                        state.engine.pending_effect = Some(continuation);
+                        return Ok(ResumableProgress::Suspended);
+                    }
+                }
                 EffectFrame::OwnerLibraryPlacement {
                     object,
                     owner,
@@ -9804,6 +9879,13 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
             EffectOp::Surveil { player, count } => {
                 let player = continuation.ctx.resolve_player(player, state);
                 if count == 0 {
+                    continue;
+                }
+                if count > 1 {
+                    if surveil_many::begin(state, &mut continuation, player, count, path)? {
+                        state.engine.pending_effect = Some(continuation);
+                        return Ok(ResumableProgress::Suspended);
+                    }
                     continue;
                 }
                 let Some(top) = bind_library_top(state, player, 1).into_iter().next() else {
