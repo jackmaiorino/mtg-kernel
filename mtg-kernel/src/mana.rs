@@ -449,7 +449,7 @@ pub(crate) fn plan_spell_mana_total_with_convoke_v1(
         convoke: Vec::new(),
     };
     for creature in creatures {
-        let colors = state.objects.get(creature).v4.effective_color_mask;
+        let colors = crate::engine::object_color_mask(state, creature);
         // Colorless is not a creature color. A colorless creature can pay
         // generic via Convoke, but cannot pay a {C} pip.
         let choices = [
@@ -1255,6 +1255,53 @@ mod tests {
         assert_eq!(plan.pool_used[4], 1);
         assert!(!state.objects.get(elf).tapped);
         assert_eq!(state.players[0].mana_pool[4], 1);
+    }
+
+    #[test]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    fn convoke_uses_live_witness_colors_and_ignores_a_stale_attachment() {
+        let (mut state, elf) = ready_convoke_elf();
+        let witness = crate::card_def::card_id_by_name("Witness Protection").unwrap();
+        let mut aura = state.objects.get(elf).clone();
+        aura.card_def = witness;
+        aura.name = "Witness Protection".into();
+        aura.v4 = crate::state::ObjectStateV4::from_card_def(witness);
+        aura.v4.attached_to = Some(crate::state::ObjectLinkV4 {
+            object: elf,
+            zone_change_count: state.objects.get(elf).zone_change_count,
+        });
+        let aura = state.objects.push(aura);
+        state.players[0].battlefield.push(aura);
+        state.objects.get_mut(elf).attachments.push(aura);
+        let white = [Pip::Colored(ManaColor::W)];
+        assert_eq!(
+            state.objects.get(elf).v4.effective_color_mask,
+            crate::card_def::mana_color_mask(ManaColor::G)
+        );
+        assert!(
+            crate::engine::object_color_mask(&state, elf)
+                & crate::card_def::mana_color_mask(ManaColor::W)
+                != 0
+        );
+        let (plan, convoked) =
+            plan_spell_mana_total_with_convoke_v1(&white, 0, PlayerId::P0, &state, false, &[], 0)
+                .unwrap();
+        assert_eq!(convoked, vec![elf]);
+        assert!(plan.taps.is_empty());
+        state.objects.get_mut(elf).zone_change_count += 1;
+        assert!(plan_spell_mana_total_with_convoke_v1(
+            &white,
+            0,
+            PlayerId::P0,
+            &state,
+            false,
+            &[],
+            0
+        )
+        .is_none());
     }
 
     #[test]
