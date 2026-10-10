@@ -25,9 +25,10 @@ exit 0, Rust 1.94.1 and MSVC 19.50.35725. Read-only review found no defects.
 
 Source 02dc1469 collects every selected casting route and original nonmana
 component groups. Six collector tests use existing registered cards. Native27
-is queued under guard 7eb5daccdc9848b68f8cc430b0010f2b, supervisor 51012, with
-the existing observer retained. At 20:00 UTC eligible cores were occupied by
-CI and Claude's fast-forward claims; no duplicate or raw launch was made.
+guard7eb5daccdc9848b68f8cc430b0010f2b expired unstarted with no_room after its
+one-hour admission window; supervisor51012 is absent and no command log was
+created. Observer27842 ended at its observation deadline, which alone is not
+terminal evidence. Jack's occupied reservations were preserved.
 
 Source 5c231a1c binds Flying, Archmage's existing cast-draw trigger, static
 fingerprints, rules-vector extraction and live modifiers. Sources must be
@@ -97,7 +98,28 @@ frozen-modifier assertion. Source 98758bf1 separates the legacy component
 commit loop from mana derivation, preserving every mutation and Convoke arm.
 Exact read-only review of 98758bf152060fdc4ed6b904f71ddd79a9197a43 found no
 actionable defects; diff checks pass. These increments remain unqualified and
-unwired. Haley's running sequence stays on the earlier exact source892e828f.
+unwired until the successor native sequence executes them.
+
+The earlier Haley Native6 sequence at892e828f passed both feature test
+compilations and25 mana cases. Collector execution passed10 and failed one:
+selected_tap_cost_reservation_prevents_one_land_paying_two_components listed
+Tap before Mana, violating the existing Mana-first shape validator. The
+subsequent rules, frozen identity and prior card games were not reached.
+Repair10570d76 preserves the double-payment refusal assertion while ordering
+the fixture components correctly. Exact read-only review found no defects.
+The original source and command/guard logs are retained; guardcb559b02 ended101
+after its owned idle VCTIP helper was identified by job membership, executable,
+start time and stable CPU sample and stopped. No peer process was stopped.
+
+Merge37c1a353beaa5933c6047f9c2eee377e206eaf64 incorporates accepted default
+32080f8; read-only review confirms its payment planner files match the first
+parent. After observing terminal Native6, the owned Haley checkout advanced
+using bundle SHA256b691d1c3267dfe55258ae5281de69a0e382f8af7e421e1d6a703beb9bc91ddc6.
+Supported Native9 guard0b4308d568e240baa8e3eb4583d722d6, supervisor154668,
+admitted cores14-15 BelowNormal. The actual log confirms source37c1a353,
+Rust1.94.1/MSVC19.50.35725 and compilation. Observer5388 monitors both feature
+compilations,25 mana cases,13 collector/preflight cases, rules vectors, frozen
+v65 and17 prior card games. Results remain pending. Native28 was not submitted.
 
 Runtime integration must prepare an ephemeral payment before apply_discard
 mutates cards, then consume it without recomputing reductions. Preserve the
