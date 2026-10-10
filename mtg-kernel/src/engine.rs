@@ -284,13 +284,14 @@ pub struct EngineState {
 pub struct RuntimeRulesV1 {
     /// When several cards are put into one player's graveyard at once, the
     /// owner orders them (404.3), and the engine asks one card at a time.
-    /// With this on, that ordering is not asked when no object the owner
-    /// owns can observe graveyard order: the cards keep the order the
-    /// effect bound them in (library order, top first). In this engine only
-    /// Delve reads graveyard order (`mana::delve_payment_plan` exiles the
-    /// oldest cards first), so the choice stays whenever the owner owns any
-    /// Delve card, in any zone. The predicate reads only the owner's own
-    /// cards, which the owner knows from their own registration.
+    /// With this on, that ordering is never asked: the cards keep the order
+    /// the effect bound them in (library order, top first). In this engine
+    /// only Delve reads graveyard order (`mana::delve_payment_plan` exiles
+    /// the oldest cards first), so the profile is refused for any game that
+    /// contains a Delve card in any zone (`FastActorSessionV1::
+    /// set_runtime_rules_v1`). The rule is fixed for the whole game and
+    /// reads no hidden state, so whether an ordering stage appears tells the
+    /// other seat nothing about hidden cards.
     pub auto_unobservable_graveyard_order: bool,
 }
 
@@ -313,12 +314,22 @@ impl Hash for RuntimeRulesV1 {
 }
 
 /// Whether the owner of a multi-card graveyard batch must be asked for its
-/// order (see `RuntimeRulesV1::auto_unobservable_graveyard_order`).
-pub(crate) fn graveyard_order_choice_exposed(state: &GameState, owner: PlayerId) -> bool {
+/// order (see `RuntimeRulesV1::auto_unobservable_graveyard_order`). The
+/// answer is constant for the whole game: it never reads hidden zones, so
+/// the presence of the ordering stage, which the other seat can observe,
+/// reveals nothing about anyone's hidden cards.
+pub(crate) fn graveyard_order_choice_exposed(state: &GameState, _owner: PlayerId) -> bool {
     !state.engine.runtime_rules.auto_unobservable_graveyard_order
-        || state.objects.iter().any(|(_, object)| {
-            object.owner == owner && crate::card_def::CARD_DEFS[object.card_def as usize].delve
-        })
+}
+
+/// Whether any card in the game, in any zone and for either player, can
+/// read graveyard order (Delve, the only such reader in this engine). The
+/// profile may be enabled only when this is false.
+pub(crate) fn graveyard_order_readers_present(state: &GameState) -> bool {
+    state
+        .objects
+        .iter()
+        .any(|(_, object)| crate::card_def::CARD_DEFS[object.card_def as usize].delve)
 }
 
 fn next_stack_item_id(state: &mut GameState) -> StackItemId {
