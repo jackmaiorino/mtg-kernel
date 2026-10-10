@@ -9128,20 +9128,17 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     // card in this pool with `kicker_cost` has no `alt_cost`, so checking
     // against the effective normal cost (never `def.alt_cost`) is exhaustive
     // here.
-    if def.kicker_cost.is_some() {
-        if pending.kicked.is_none() {
-            let payable =
-                pending_cast_quote_v1(def, &pending, CastMethodV4::Normal, true, 0, state)
-                    .is_some();
-            if payable {
-                return Some(Decision::ChooseKicker {
-                    player: pending.controller,
-                    spell: pending.spell,
-                });
-            }
-            state.engine.pending_cast.as_mut().unwrap().kicked = Some(false);
-            return drain_pending_cast_or_decide(state);
+    if def.kicker_cost.is_some() && pending.kicked.is_none() {
+        let payable =
+            pending_cast_quote_v1(def, &pending, CastMethodV4::Normal, true, 0, state).is_some();
+        if payable {
+            return Some(Decision::ChooseKicker {
+                player: pending.controller,
+                spell: pending.spell,
+            });
         }
+        state.engine.pending_cast.as_mut().unwrap().kicked = Some(false);
+        return drain_pending_cast_or_decide(state);
     }
 
     if let Some(kind) = def.optional_additional_cost {

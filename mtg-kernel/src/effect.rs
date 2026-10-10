@@ -13646,13 +13646,13 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             let events = state
                 .objects
                 .iter()
-                .filter_map(|(id, object)| {
-                    (object.zone == Zone::Battlefield
-                        && state.engine.combat.attackers.contains(&id)
-                        && crate::engine::object_has_type(state, id, CardType::Creature))
-                    .then(|| {
-                        event::ProposedEvent::zone_change_preserving_known_identity(id, Zone::Hand)
-                    })
+                .filter(|(id, object)| {
+                    object.zone == Zone::Battlefield
+                        && state.engine.combat.attackers.contains(id)
+                        && crate::engine::object_has_type(state, *id, CardType::Creature)
+                })
+                .map(|(id, _)| {
+                    event::ProposedEvent::zone_change_preserving_known_identity(id, Zone::Hand)
                 })
                 .collect();
             event::propose_and_commit_batch(state, events);

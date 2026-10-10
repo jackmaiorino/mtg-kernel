@@ -185,7 +185,7 @@ object family is completed before quoting; tap picks reserve mana sources,
 sacrificed lands may produce mana first, and exile picks cannot overlap separate
 graveyard costs. Four added regressions cover discard/source exclusion,
 sacrifice completion, Escape reservations, and malformed reveal-only hands.
-These new regressions have not executed. Review including Plotted and the new
+All four new regressions passed in Native14. Review including Plotted and the new
 cases found one orphaned wrapper with only test callers; sourceeab7cae9 gates
 it with cfg(test) to preserve strict lint. No other actionable finding remains.
 After clean-checkout/prior-terminal verification, bundle
@@ -194,7 +194,20 @@ advanced the owned remote checkout to eab7cae9a0f745395acd3b242fa623116b975e4b.
 Native14 guard9a4d7a309fa6448da8756b9a94e42554, supervisor157364, actually
 admitted cores14-15 BelowNormal and compilation began with the same logged
 pins. Observer66937 retains both feature engine tests, prior gameplay and
-strict lint results. Native14 remains pending.
+strict lint results. Native14 passed173 Limited engine cases, then failed one
+combined-feature Koma fixture because the Standard registry excludes Koma.
+Guard9a4d7a309fa6448da8756b9a94e42554 ended101. Later gameplay/lint commands
+were not reached. The retained source and failure log remain evidence.
+
+Sourced511c514 gates the Koma fixture and seven future Sprite/Archmage fixtures
+to the actual Limited registry. Native15 passed both feature test compilations
+and340 executions:173 Limited engine,149 combined engine,8 graveyard,9 static
+team andone Hacker. Its strict lint failed on the inherited Aetherize collector
+and a new nested kicker conditional; guard88d93b68a5c841839ac7a517b837f961
+ended101. The equivalent filter/map and collapsed conditional repairs preserve
+behavior. The next exact-source lint and regression qualification remains
+pending. The seven new card fixtures are executable source but were only type
+checked, because Sprite/Archmage remain unregistered. No card coverage is added.
 
 Remaining work: finish native qualification of runtime integration and quotes;
 actual Sprite/Archmage gameplay and restore tests; metadata/catalog admission;
