@@ -4,7 +4,6 @@
 use mtg_kernel::card_def::{card_id_by_name, CardCapability, CardType, DynamicValueDef, CARD_DEFS};
 use mtg_kernel::effect::{EffectOp, PlayerRef};
 use mtg_kernel::engine::{self, Action, Decision};
-use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::{ManaColor, Pip};
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Zone};
