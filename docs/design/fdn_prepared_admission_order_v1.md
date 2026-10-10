@@ -106,3 +106,20 @@ correctness sequence generates the candidate identity, checks both feature
 configurations, then executes all25 new card-fixture targets. Observer20100
 is retained. No new card result, live v66 profile or increased accepted
 coverage is claimed while it runs.
+
+The first candidate sequence above exited101 before any generated identity or
+card games: program_target_spec_src lacked NoncreatureSpellOnStack for Offer.
+Guard743bf99568f246e3b0a1da3057103dcb records terminal101; its command/guard
+logs remain retained. Repaira00325417fa89180be22d584a78b7989660e68ce adds
+that mapping and the two other missing existing-variant mappings found by
+auditing all program/mode declarations: TargetOpponent for Pilfer/Folly and
+ControlledCreatureThenOpponentCreature for Bushwhack. Exact read-only review
+confirmed all17 program target strings now map, without enum identity changes.
+
+After verifying the prior terminal guard, the owned remote checkout was
+fast-forwarded from662b8343 to repaira0032541 using SHA256-verified bundle
+f8c396e07ad41efbf03495b2512156e5ceaab1e98dc8b6c51148f695a16ccaeb.
+Retry guard4a0f751ea5ea4e6699633f479e6f1e7a, supervisor155376, admitted
+cores12-13 BelowNormal and actual compilation restarted with the same pinned
+tools. Observer11056 is retained. The generated identity,25 card targets and
+profile migration remain pending; the failed build is not a gameplay pass.
