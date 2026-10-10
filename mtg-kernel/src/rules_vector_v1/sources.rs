@@ -882,6 +882,30 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         });
     }
 
+    if let Some((minimum, keywords)) = crate::engine::static_graveyard_threshold_keyword_for(name) {
+        walk.rec(
+            "static_graveyard_threshold_keyword",
+            json!({"minimum_cards": minimum, "keywords": keywords.0}),
+        );
+        walk.ability(CtxF::Static, |out| {
+            out.control(ControlF::Conditional);
+            out.read(
+                RelF::You,
+                Some(ZoneF::Graveyard),
+                Some(ObjF::AnyCard),
+                AggF::AtLeast(bucket(i64::from(minimum))),
+            );
+            for bit in keyword_bits(keywords) {
+                out.effect(
+                    EffectAtom::new(EvF::GrantKeyword)
+                        .obj(ObjF::ThisObject)
+                        .duration(DurF::WhileOnBattlefield)
+                        .keyword(bit),
+                );
+            }
+        });
+    }
+
     #[cfg(feature = "standard-magezero-fixtures")]
     standard_statics(name, &mut walk);
     #[cfg(feature = "standard-magezero-fixtures")]

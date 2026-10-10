@@ -230,12 +230,20 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
             );
         }
         EffectOp::Surveil { player, count } => {
-            // One card at a time: a private look, then keep on top or put
-            // into the graveyard, re-entering until `count` cards are seen.
+            // A private look and graveyard subset, then ordering the kept
+            // complement for counts greater than one.
             let player = player_ref(*player);
             let amount = AmtF::fixed(i64::from(*count));
             out.effect(library_view(EvF::Look, player, ObjF::AnyCard, amount));
             out.control(ControlF::ChooseObjects);
+            if *count > 1 {
+                let mut reorder = EffectAtom::new(EvF::Reorder)
+                    .player(player)
+                    .obj(ObjF::AnyCard)
+                    .amount(amount);
+                reorder.from = Some(ZoneF::Library);
+                out.effect(reorder);
+            }
             out.effect(
                 EffectAtom::moving(Some(ZoneF::Library), ZoneF::Graveyard)
                     .player(player)

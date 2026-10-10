@@ -99,7 +99,17 @@ fn enter(state: &mut GameState, name: &str) -> ObjectId {
 }
 
 fn choose_order(state: &mut GameState, objects: &[ObjectId]) {
-    for &object in objects {
+    for (index, &object) in objects.iter().enumerate() {
+        if state
+            .engine
+            .pending_effect
+            .as_ref()
+            .is_some_and(|pending| pending.choice.is_none())
+        {
+            // The engine automatically appends the forced final ordering card.
+            assert_eq!(index + 1, objects.len());
+            break;
+        }
         engine::step(state, Action::ChooseEffectTarget(Target::Object(object))).unwrap();
     }
     if state
@@ -417,8 +427,20 @@ fn nonchooser_public_and_typed_contexts_match_across_subsets_and_all_private_sta
         if kept.len() >= 2 {
             settle(&mut copy).unwrap();
             check(&copy);
-            for &card in kept.iter().rev() {
-                engine::step(&mut copy, Action::ChooseEffectTarget(Target::Object(card))).unwrap();
+            for (index, &card) in kept.iter().rev().enumerate() {
+                if copy
+                    .engine
+                    .pending_effect
+                    .as_ref()
+                    .unwrap()
+                    .choice
+                    .is_some()
+                {
+                    engine::step(&mut copy, Action::ChooseEffectTarget(Target::Object(card)))
+                        .unwrap();
+                } else {
+                    assert_eq!(index + 1, kept.len());
+                }
                 check(&copy);
             }
         }
