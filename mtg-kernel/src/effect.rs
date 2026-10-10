@@ -12583,6 +12583,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             event::propose_and_commit(state, event::ProposedEvent::life_gain(player, amount));
         }
         EffectOp::LoseOpponentsLifeXThenGainLifeLost => {
+            if ctx.x_value == 0 {
+                return;
+            }
             let opponent = ctx.controller.opponent();
             let start = state.engine.event_history.len();
             event::propose_and_commit(
@@ -15148,6 +15151,7 @@ mod tests {
                 ctx.x_value = x;
                 let mut restored: GameState =
                     serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                let before = state.state_hash();
                 for branch in [&mut state, &mut restored] {
                     execute(&EffectOp::LoseOpponentsLifeXThenGainLifeLost, &ctx, branch);
                     assert_eq!(branch.players[player.index()].life, 20 + i32::from(x));
@@ -15162,6 +15166,9 @@ mod tests {
                         .any(|event| matches!(event, CommittedEvent::Damage { .. })));
                 }
                 assert_eq!(state.state_hash(), restored.state_hash());
+                if x == 0 {
+                    assert_eq!(state.state_hash(), before, "zero X commits no life events");
+                }
             }
         }
     }
