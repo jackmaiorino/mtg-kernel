@@ -12,15 +12,24 @@ from collections import Counter
 def rows(d):
     out = {}
     for f in glob.glob(f"{d}/*.jsonl"):
-        for line in open(f, encoding="utf-8"):
-            r = json.loads(line)
-            if r.get("kind") == "s4a_diag_root" and r.get("diag", {}).get("trace"):
-                out[r["root_id"]] = r
+        with open(f, encoding="utf-8") as stream:
+            for line in stream:
+                r = json.loads(line)
+                if r.get("kind") == "s4a_diag_root" and r.get("diag", {}).get("trace"):
+                    rid = r["root_id"]
+                    if rid in out:
+                        raise ValueError(f"duplicate diagnostic root {rid}")
+                    out[rid] = r
     return out
 
 
-def tree_giant(nodes_lab):
-    return nodes_lab
+def validate_panel(before, after, before_rows, after_rows):
+    keys = set(before)
+    if not keys or any(set(panel) != keys for panel in (after, before_rows, after_rows)):
+        raise ValueError("comparison requires the same nonempty root set in both analyses and row sets")
+    for rid in keys:
+        if before[rid]["role"] != after[rid]["role"]:
+            raise ValueError(f"comparison role differs for {rid}")
 
 
 def side(a, r):
@@ -59,6 +68,7 @@ def side(a, r):
 def main():
     before, after = json.load(open(sys.argv[1])), json.load(open(sys.argv[2]))
     rb, ra = rows(sys.argv[3]), rows(sys.argv[4])
+    validate_panel(before, after, rb, ra)
     out = []
     for rid in sorted(after, key=lambda k: after[k]["role"]):
         out.append({"root_id": rid, "role": after[rid]["role"],

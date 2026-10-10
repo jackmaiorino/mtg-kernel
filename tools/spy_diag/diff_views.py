@@ -9,6 +9,16 @@ import json
 import sys
 
 
+def validate_capture(record):
+    view = record.get("view")
+    if not isinstance(view, dict):
+        raise ValueError("capture has no complete view")
+    for part in ("canon_obs", "canon_menu", "raw_obs", "raw_menu"):
+        if view.get(part) is None:
+            raise ValueError(f"capture has missing/failed {part} projection")
+    return record
+
+
 def walk(a, b, path, out):
     if type(a) is not type(b):
         out.append((path, a, b))
@@ -27,7 +37,7 @@ def walk(a, b, path, out):
 def main():
     recs = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if '"r":"millobs"' in l]
     for phase in ("selection_start", "after_selection"):
-        rs = [r for r in recs if r["phase"] == phase]
+        rs = [validate_capture(r) for r in recs if r["phase"] == phase]
         if len(rs) < 2:
             continue
         base = rs[0]

@@ -81,9 +81,16 @@ struct Shared {
     model: String,
     limits: Limits,
     prior: world::DeckPrior,
+    runtime_rules: Option<crate::engine::RuntimeRulesV1>,
 }
 
 fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
+    let runtime_setting = match std::env::var("S4A_RUNTIME") {
+        Ok(value) => Some(value),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(error) => return Err(format!("invalid S4A_RUNTIME: {error}")),
+    };
+    let runtime_rules = parse_runtime_rules(&cfg.mode, runtime_setting.as_deref())?;
     let entries: Vec<(String, String)> = std::env::var("OPPONENTS")
         .map_err(|_| "OPPONENTS is required")?
         .split(',')
@@ -136,7 +143,64 @@ fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
         model,
         limits,
         prior: world::DeckPrior::new(&cfg.decks),
+        runtime_rules,
     })
+}
+
+fn parse_runtime_rules(
+    mode: &str,
+    setting: Option<&str>,
+) -> Result<Option<crate::engine::RuntimeRulesV1>, String> {
+    match setting {
+        None | Some("") | Some("historical") => Ok(None),
+        Some("resolution-boundary-v1") if mode == "s4a-diag" => {
+            Ok(Some(crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1))
+        }
+        Some("resolution-boundary-v1") => {
+            Err("S4A_RUNTIME=resolution-boundary-v1 is supported only for s4a-diag".into())
+        }
+        Some(other) => Err(format!("unknown S4A_RUNTIME {other}")),
+    }
+}
+
+/// Admit only completed rows of this runtime before truncation or append.
+/// Missing/null identity is historical; an interrupted final row is disposable.
+fn completed_runtime_roots(
+    bytes: &[u8],
+    row_kind: &str,
+    runtime_rules: Option<crate::engine::RuntimeRulesV1>,
+) -> Result<HashSet<String>, String> {
+    let keep = bytes
+        .iter()
+        .rposition(|&byte| byte == b'\n')
+        .map_or(0, |i| i + 1);
+    let rows = std::str::from_utf8(&bytes[..keep])
+        .map_err(|error| format!("invalid retained Stage4a UTF8: {error}"))?;
+    let mut done = HashSet::new();
+    for line in rows.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let row = serde_json::from_str::<Value>(line)
+            .map_err(|error| format!("invalid retained Stage4a JSON: {error}"))?;
+        if row["kind"] != row_kind {
+            continue;
+        }
+        let recorded = match row.get("runtime_rules") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(value)) if value == "resolution-boundary-v1" => {
+                Some(crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1)
+            }
+            _ => return Err("invalid resumed runtime rules identity".into()),
+        };
+        if recorded != runtime_rules {
+            return Err("resume refused: runtime rules identity differs; preserve output and use a fresh path".into());
+        }
+        if let Some(id) = row["root_id"].as_str() {
+            done.insert(id.to_owned());
+        }
+    }
+    Ok(done)
 }
 
 fn write_line(sink: &Mutex<std::fs::File>, row: &Value) -> Result<(), String> {
@@ -471,13 +535,7 @@ fn run_root_diag(
     let (setup, mut session) = replay(cfg, shared, roles, root)?;
     // `S4A_RUNTIME=resolution-boundary-v1`: continue from the replayed root
     // under the opt-in rules profile (a new runtime identity).
-    let runtime = match std::env::var("S4A_RUNTIME").ok().as_deref() {
-        None | Some("") | Some("historical") => None,
-        Some("resolution-boundary-v1") => {
-            Some(crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1)
-        }
-        Some(other) => return Err(format!("unknown S4A_RUNTIME {other}")),
-    };
+    let runtime = shared.runtime_rules;
     if let Some(r) = runtime {
         session.set_runtime_rules_v1(r);
     }
@@ -629,13 +687,12 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
         "s4a_root"
     };
     let done: HashSet<String> = if cfg.mode != "s4a-corpus" {
-        std::fs::read_to_string(&cfg.out)
-            .unwrap_or_default()
-            .lines()
-            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
-            .filter(|v| v["kind"] == row_kind)
-            .filter_map(|v| v["root_id"].as_str().map(str::to_owned))
-            .collect()
+        let bytes = match std::fs::read(&cfg.out) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(error) => return Err(error.to_string()),
+        };
+        completed_runtime_roots(&bytes, row_kind, shared.runtime_rules)?
     } else {
         HashSet::new()
     };

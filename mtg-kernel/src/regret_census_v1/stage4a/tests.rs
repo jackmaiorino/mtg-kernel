@@ -4,6 +4,76 @@ use super::*;
 use crate::ids::PlayerId;
 use std::collections::BTreeMap;
 
+#[test]
+fn runtime_resume_requires_matching_identity_and_preserves_legacy_rows() {
+    let kind = "s4a_diag_root";
+    let active = Some(crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1);
+    let legacy = b"{\"kind\":\"s4a_diag_root\",\"root_id\":\"a\"}\n";
+    let historical = b"{\"kind\":\"s4a_diag_root\",\"root_id\":\"b\",\"runtime_rules\":null}\n";
+    let current = b"{\"kind\":\"s4a_diag_root\",\"root_id\":\"c\",\"runtime_rules\":\"resolution-boundary-v1\"}\n";
+    assert!(completed_runtime_roots(legacy, kind, None)
+        .unwrap()
+        .contains("a"));
+    assert!(completed_runtime_roots(historical, kind, None)
+        .unwrap()
+        .contains("b"));
+    assert!(completed_runtime_roots(current, kind, active)
+        .unwrap()
+        .contains("c"));
+    assert!(completed_runtime_roots(legacy, kind, active).is_err());
+    assert!(completed_runtime_roots(historical, kind, active).is_err());
+    assert!(completed_runtime_roots(current, kind, None).is_err());
+    let mixed = [legacy.as_slice(), current.as_slice()].concat();
+    assert!(completed_runtime_roots(&mixed, kind, None).is_err());
+    assert!(completed_runtime_roots(&mixed, kind, active).is_err());
+    for invalid in ["true", "12", "\"future-runtime\""] {
+        let row = format!(
+            "{{\"kind\":\"s4a_diag_root\",\"root_id\":\"d\",\"runtime_rules\":{invalid}}}\n"
+        );
+        assert!(completed_runtime_roots(row.as_bytes(), kind, None).is_err());
+    }
+}
+
+#[test]
+fn runtime_resume_ignores_only_partial_tail_and_other_row_kinds() {
+    let mut bytes = b"{\"kind\":\"s4a_diag_root\",\"root_id\":\"a\"}\n".to_vec();
+    bytes.extend_from_slice(b"{\"runtime_rules\":\"resolution-boundary-v1\",\"unfinished\":\"");
+    bytes.push(0xf0);
+    assert!(completed_runtime_roots(&bytes, "s4a_diag_root", None)
+        .unwrap()
+        .contains("a"));
+    assert!(completed_runtime_roots(
+        &bytes,
+        "s4a_diag_root",
+        Some(crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1)
+    )
+    .is_err());
+    bytes.push(b'\n');
+    assert!(completed_runtime_roots(&bytes, "s4a_diag_root", None).is_err());
+    assert!(completed_runtime_roots(b"{broken completed row}\n", "s4a_diag_root", None).is_err());
+    let other = b"{\"kind\":\"error\",\"root_id\":\"a\",\"runtime_rules\":true}\n";
+    assert!(completed_runtime_roots(other, "s4a_diag_root", None)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn runtime_setting_refuses_unknown_identity_and_unsupported_modes() {
+    for setting in [None, Some(""), Some("historical")] {
+        for mode in ["s4a-corpus", "s4a-run", "s4a-diag"] {
+            assert_eq!(parse_runtime_rules(mode, setting).unwrap(), None);
+        }
+    }
+    assert_eq!(
+        parse_runtime_rules("s4a-diag", Some("resolution-boundary-v1")).unwrap(),
+        Some(crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1)
+    );
+    for mode in ["s4a-corpus", "s4a-run"] {
+        assert!(parse_runtime_rules(mode, Some("resolution-boundary-v1")).is_err());
+    }
+    assert!(parse_runtime_rules("s4a-diag", Some("unknown")).is_err());
+}
+
 fn test_cfg() -> CensusConfigV1 {
     CensusConfigV1 {
         source: String::new(),
