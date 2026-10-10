@@ -34,22 +34,25 @@ Current integration owner: Codex issue #110 goal. The v62 surveil batch
 merged in [PR #204](https://github.com/jackmaiorino/mtg-kernel/pull/204), and
 v63 Vanguard Seraph/Cat Collector merged in
 [PR #208](https://github.com/jackmaiorino/mtg-kernel/pull/208) at `bc23a8da`.
-That accepted default composition covers 134 full, one partial and 151
-missing names, with 33 affected Python cases passing on the actual merge.
-The next catalog is v64, Elvish Regrower/Ambush Wolf, IDs 334-335, on
-`codex/fdn-graveyard-admission-v64`. Its 136-name candidate still requires
-native gameplay, generated identity, live-profile checks and integration.
+V64 Elvish Regrower/Ambush Wolf, IDs334-335, is now accepted in
+[PR #210](https://github.com/jackmaiorino/mtg-kernel/pull/210) at53fab604.
+All23 reviewed-head checks passed, its actual merge tree matches the reviewed
+composition, and34 affected Python cases pass on that default commit.
+Accepted coverage is136 full, one partial and149 missing names of286.
+The current v65 Anthem/Eagle candidate has138 full names and requires native
+gameplay, observed generated identity, live-profile checks and integration.
 
 Later prepared families remain retained in their original worktrees: v65
 Anthem of Champions/Empyrean Eagle (336-337), then one coherent admission
-for prepared IDs 338-363, beginning with Balmor/Firespitter Whelp. The later
-preparations include Wardens of the Cycle, Arcane Epiphany and Claws Out.
+for prepared IDs338-367, beginning with Balmor/Firespitter Whelp. The later
+preparations include Wardens of the Cycle, Arcane Epiphany, Claws Out,
+Dreadwing Scavenger, Mischievous Pup, Felidar Savior and Armasaur Guide.
 They require serial registration, generated
 catalog identities, gameplay verification and integration. Source review
 identified Vanguard Seraph's missing flying mapping and the graveyard batch's
-pending-trigger hash compatibility requirement; these must be repaired at
-integration. Existing Standard Wolf subtype support must be preserved when
-integrating Ambush Wolf. Prepared source does not establish supported gameplay.
+pending-trigger hash compatibility requirement; both were repaired before
+their accepted integration. Standard Wolf subtype support is preserved.
+Prepared source does not establish supported gameplay.
 
 Leyline Axe (game-start leyline step) and Electroduplicate (token copies)
 remain unclaimed engine work. Full coverage, fair Limited search and DraftZero
