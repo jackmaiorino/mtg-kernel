@@ -27,3 +27,12 @@ incarnations and changed control/type. Rules facets record both power reads
 and damage directions; exact reciprocal binding/simultaneity is opaque in
 v1's fixed vocabulary. The cases have not executed. Registry, fixture,
 generated catalog/profile and gameplay qualification await serial admission.
+
+Read-only review of source `61e59e1e` found two fixture issues: CardDef uses
+`mode2`/`mode3` fields, and a search-only battlefield automatically selects
+Bushwhack's sole viable mode. Repairs `d07a4a98` and `a748b187` use the actual
+metadata fields and provide legal creatures for explicit mode selection.
+Confirmation at `a748b187` found no remaining actionable defects. Supported
+native source/primitive checks run from a separate exact-head checkout on
+Haley's PC, under a two-core BelowNormal claim that respects timed reservations.
+Their results remain pending and do not qualify the unregistered card cases.
