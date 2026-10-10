@@ -68,6 +68,8 @@ for ax in axes:
     ax.set_axisbelow(True)
     ax.grid(axis="x", alpha=.15)
 fig.text(.11, .045, "Observed completed-phase ratio: 2.49x, strongly affected by recovery variability. Dispatch: 1.35x.\nAll cases retained; learner timings are nested inside dispatch and must not be added to the left chart.", fontsize=10, color="#40464b")
-fig.savefig(ROOT / "formal-v4-timing.svg", metadata={"Date": None})
+svg = ROOT / "formal-v4-timing.svg"
+fig.savefig(svg, metadata={"Date": None})
+svg.write_text("\n".join(line.rstrip() for line in svg.read_text(encoding="utf-8").splitlines()) + "\n", encoding="utf-8", newline="\n")
 if args.preview:
     fig.savefig(args.preview, dpi=150)
