@@ -3852,7 +3852,8 @@ fn keywords_for(card: &CardJson) -> String {
         | "Spellstutter Sprite"
         | "Glint Hawk"
         | "Fang Dragon"
-        | "Shivan Dragon" => keywords.push("Keywords::FLYING"),
+        | "Shivan Dragon"
+        | "Vanguard Seraph" => keywords.push("Keywords::FLYING"),
         "Generous Ent"
         | "Writhing Chrysalis"
         | "Vitu-Ghazi Inspector"

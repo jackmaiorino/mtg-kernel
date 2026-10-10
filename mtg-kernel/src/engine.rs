@@ -609,6 +609,7 @@ pub enum UnsupportedMechanic {
     /// definitions must never reach this at runtime.
     InvalidEffectContinuation,
     /// First-life-gain matching has missing or inconsistent turn history.
+    /// Appended to preserve prior unsupported-state discriminants.
     InvalidFirstLifeGainHistory,
 }
 
