@@ -286,3 +286,64 @@ pub(crate) fn record_attack_block_restriction(
     }
     state.attack_block_restrictions_v1 = (!restrictions.is_empty()).then_some(restrictions);
 }
+
+/// One static ability above, as the rules-vector extractor describes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StandardStaticV1 {
+    /// The permanent has these keywords while a printed condition holds.
+    ConditionalSelfKeywords(Keywords),
+    /// Enters with a +1/+1 counter if its controller controls another
+    /// permanent with mana value 4 or greater.
+    EntersWithPlusOneCounterIfControlsManaValueFour,
+    /// Enters with an oil counter.
+    EntersWithOilCounter,
+    /// Gets +1/+1 for each oil counter on it.
+    PlusOnePerOilCounter,
+    /// Each other Human its controller controls has ward {1}.
+    GrantsWardToOtherHumans,
+    /// Power equals the number of creatures its controller controls.
+    PowerEqualsControlledCreatures,
+    /// Power equals the number of instant and sorcery cards in its
+    /// controller's graveyard.
+    PowerEqualsGraveyardInstantsAndSorceries,
+    /// An opponent's life loss during its controller's turn doubles.
+    DoublesOpponentLifeLossOnYourTurn,
+    /// Noncreature spells cost {1} more.
+    NoncreatureSpellsCostOneMore,
+    /// Its controller's instant and sorcery spells cost {1} less.
+    YourInstantsAndSorceriesCostOneLess,
+    /// Its first activated ability needs an opponent to have lost life this
+    /// turn, once per turn.
+    FirstAbilityNeedsOpponentLifeLossThisTurn,
+}
+
+/// The statics this module applies for the definition named `name`. Every
+/// name keyed above except the counter last-known-information bookkeeping
+/// (`reads_counter_lki`) has an entry.
+pub(crate) fn rules_vector_statics(name: &str) -> &'static [StandardStaticV1] {
+    match name {
+        "Razorkin Needlehead" => &[StandardStaticV1::ConditionalSelfKeywords(
+            Keywords::FIRST_STRIKE,
+        )],
+        "Warden of the Inner Sky" => &[StandardStaticV1::ConditionalSelfKeywords(Keywords(
+            Keywords::FLYING.0 | Keywords::VIGILANCE.0,
+        ))],
+        "Ascendant Packleader" => {
+            &[StandardStaticV1::EntersWithPlusOneCounterIfControlsManaValueFour]
+        }
+        "Evolving Adaptive" => &[
+            StandardStaticV1::EntersWithOilCounter,
+            StandardStaticV1::PlusOnePerOilCounter,
+        ],
+        "Coppercoat Vanguard" => &[StandardStaticV1::GrantsWardToOtherHumans],
+        "Adeline, Resplendent Cathar" => &[StandardStaticV1::PowerEqualsControlledCreatures],
+        "Haughty Djinn" => &[
+            StandardStaticV1::PowerEqualsGraveyardInstantsAndSorceries,
+            StandardStaticV1::YourInstantsAndSorceriesCostOneLess,
+        ],
+        "Bloodletter of Aclazotz" => &[StandardStaticV1::DoublesOpponentLifeLossOnYourTurn],
+        "Thalia, Guardian of Thraben" => &[StandardStaticV1::NoncreatureSpellsCostOneMore],
+        "Hired Claw" => &[StandardStaticV1::FirstAbilityNeedsOpponentLifeLossThisTurn],
+        _ => &[],
+    }
+}

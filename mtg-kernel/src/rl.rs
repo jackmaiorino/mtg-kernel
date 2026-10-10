@@ -2277,6 +2277,9 @@ fn policy_observation_extensions_with_text_v6(
             let library_owner = match purpose {
                 EffectTargetSelectionPurpose::SearchLibraryToHand { player, .. }
                 | EffectTargetSelectionPurpose::SearchLibraryToHandMany { player, .. }
+                | EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
+                    player, ..
+                }
                 | EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
                     player, ..
                 } => Some(*player),
@@ -6542,10 +6545,19 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
                                 ..
                             }
+                            | crate::effect::EffectTargetSelectionPurpose::LookTopPickToHandBottomRest {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::DiscardBasicLandInstead {
+                                ..
+                            }
                             | crate::effect::EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand {
                                 ..
                             }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
                                 ..
                             }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
@@ -6555,15 +6567,15 @@ fn pending_effect_semantic_v4(
                     let search_for_chooser = matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
-                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. } | crate::effect::EffectTargetSelectionPurpose::SearchLibraryCardsToDestination { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped { .. }
                     ) && acting_player == *player;
                     let redact_search_shape = matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
                             | crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. } | crate::effect::EffectTargetSelectionPurpose::SearchLibraryCardsToDestination { .. }
                             | crate::effect::EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand { .. }
-                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped { .. }
                     ) && acting_player != *player;
                     let visible_targets = |candidates: &[crate::effect::EffectTargetCandidate]| {
@@ -6644,6 +6656,9 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany {
                                 ..
                             }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
+                                ..
+                            }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
                                 ..
                             } => TargetSelectionPurposeV4::SearchResult,
@@ -6654,6 +6669,10 @@ fn pending_effect_semantic_v4(
                                 ..
                             } => TargetSelectionPurposeV4::PermanentSelection,
                             crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
+                                stage,
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::LookTopPickToHandBottomRest {
                                 stage,
                                 ..
                             } => match stage {
@@ -6674,6 +6693,9 @@ fn pending_effect_semantic_v4(
                                 ..
                             }
                             | crate::effect::EffectTargetSelectionPurpose::DuressDiscard {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::DiscardBasicLandInstead {
                                 ..
                             }
                             | crate::effect::EffectTargetSelectionPurpose::UndercityThroneCreature {

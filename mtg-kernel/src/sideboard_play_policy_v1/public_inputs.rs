@@ -243,6 +243,99 @@ mod evaluation_tests {
     use super::*;
 
     #[test]
+    fn v3_spell_target_evaluation_resolves_departed_linked_exile_source() {
+        use crate::ids::PlayerId;
+        use crate::policy_observation_v6::tests::put;
+        use crate::state::Zone;
+        let mut outputs = Vec::new();
+        let mut tensors = Vec::new();
+        for variant in 0..2 {
+            let mut state = crate::rl_session::linked_exile_target_fixture_v1();
+            put(
+                &mut state,
+                PlayerId::P1,
+                if variant == 0 { "Island" } else { "Mountain" },
+                Zone::Hand,
+            );
+            put(&mut state, PlayerId::P1, "Mountain", Zone::Library);
+            if variant == 1 {
+                state.players[1].library.reverse();
+            }
+            let session = FastActorSessionV1::from_v3_fixture_state(state);
+            let response = session.current_response();
+            let FastActorResponseV1::Decision(decision) = response else {
+                panic!("expected a live priority choice: {response:?}");
+            };
+            assert_eq!(decision.acting_player, PlayerId::P0.into());
+            assert_eq!(decision.legal_action_count, 2);
+            let input = PairedBo1PolicyInputV1::new(&session, decision);
+            let (observation, _) = input.diagnostic_visible_v1().unwrap();
+            assert!(observation.extensions.historical_public_sources.is_empty());
+            assert!(observation
+                .projection
+                .surface
+                .object_relations
+                .iter()
+                .any(|relation| {
+                    matches!(relation, crate::rl::ObjectRelationPublicV4::ExiledBy { .. })
+                }));
+            let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+            policy.reset_sampling_v1([123, 456]);
+            assert!(policy
+                .select_paired_with_scores_v1(&input)
+                .unwrap_err()
+                .to_string()
+                .contains("InvalidReference"));
+            let expected = select_spell_adapter_v3_for_evaluation(&mut policy, &input).unwrap();
+            assert!(expected.2);
+            assert_eq!(expected.1.logits.len(), 2);
+            assert!(expected.1.logits.iter().all(|x| x.is_finite()));
+            assert!(expected.1.value.is_finite());
+            tensors.push(policy.successor.as_ref().unwrap().tensor.clone());
+            outputs.push((
+                expected.0,
+                expected.1.logits.clone(),
+                expected.1.value.to_bits(),
+            ));
+            policy.reset_sampling_v1([123, 456]);
+            let replay = select_spell_adapter_v3_for_evaluation(&mut policy, &input).unwrap();
+            assert_eq!(replay.0, expected.0);
+            assert_eq!(replay.1.logits, expected.1.logits);
+            assert_eq!(replay.1.value.to_bits(), expected.1.value.to_bits());
+            assert_eq!(
+                policy.successor.as_ref().unwrap().tensor,
+                *tensors.last().unwrap()
+            );
+            assert_eq!(session.current_response(), response);
+            let mut stale = decision;
+            stale.step += 1;
+            assert!(select_spell_adapter_v3_for_evaluation(
+                &mut policy,
+                &PairedBo1PolicyInputV1::new(&session, stale)
+            )
+            .is_err());
+        }
+        assert_eq!(outputs[0], outputs[1]);
+        assert_eq!(tensors[0], tensors[1]);
+    }
+
+    #[test]
+    fn v3_spell_target_evaluation_rejects_unauthenticated_linked_exile_source() {
+        let mut state = crate::rl_session::linked_exile_target_fixture_v1();
+        state.engine.linked_exile_records[0].source.card_def = 0;
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let FastActorResponseV1::Decision(decision) = session.current_response() else {
+            panic!("expected a live priority choice");
+        };
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        assert!(select_spell_adapter_v3_for_evaluation(
+            &mut policy,
+            &PairedBo1PolicyInputV1::new(&session, decision)
+        )
+        .is_err());
+    }
+
+    #[test]
     fn public_v4_spell_target_features_preserve_zero_control_and_hidden_invariance() {
         use crate::ids::PlayerId;
         use crate::policy_observation_v6::tests::put;

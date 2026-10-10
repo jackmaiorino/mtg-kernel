@@ -262,11 +262,23 @@ pub enum Subtype {
     Lizard,
     /// Appended for the FDN equipment and library-search batch.
     Golem,
+    /// Appended for Eager Trufflesnout; existing ids remain fixed.
+    Boar,
+    /// Appended for Crackling Cyclops; existing ids remain fixed.
+    Cyclops,
+    /// Appended for Bigfin Bouncer; existing ids remain fixed.
+    Shark,
+    /// Appended for Burnished Hart; existing ids remain fixed.
+    Elk,
+    /// Appended for Rune-Scarred Demon; existing ids remain fixed.
+    Demon,
+    /// Appended for Axgard Cavalry; existing ids remain fixed.
+    Dwarf,
+    Berserker,
     /// Appended for the MageZero Standard family G creatures; existing ids
     /// remain fixed.
     Scout,
     Bat,
-    Demon,
     Mercenary,
     Assassin,
     Wolf,
@@ -373,12 +385,24 @@ impl Subtype {
         Subtype::Lizard,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Golem,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Boar,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Cyclops,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Shark,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Elk,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Demon,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Dwarf,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Berserker,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Scout,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Bat,
-        #[cfg(feature = "standard-magezero-fixtures")]
-        Subtype::Demon,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Mercenary,
         #[cfg(feature = "standard-magezero-fixtures")]
@@ -389,6 +413,20 @@ impl Subtype {
         Subtype::Kraken,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Djinn,
+    ];
+
+    /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
+    /// present in the build. Changelings carry every listed type through
+    /// their effective subtype set.
+    pub const OUTLAW_TYPES: &'static [Subtype] = &[
+        Subtype::Pirate,
+        Subtype::Rogue,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Warlock,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Assassin,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Mercenary,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -519,9 +557,13 @@ impl Subtype {
                 | Subtype::Archer
                 | Subtype::Lizard
                 | Subtype::Golem
+                | Subtype::Shark
+                | Subtype::Elk
+                | Subtype::Demon
+                | Subtype::Dwarf
+                | Subtype::Berserker
                 | Subtype::Scout
                 | Subtype::Bat
-                | Subtype::Demon
                 | Subtype::Mercenary
                 | Subtype::Assassin
                 | Subtype::Wolf
@@ -677,6 +719,27 @@ pub enum TargetSpec {
     ControlledCreatureThenOpponentCreatureOrPlaneswalker,
     AttackingOrBlockingCreature,
     NonlandPermanentCardInOwnGraveyardManaValueAtMost(u16),
+    /// One creature or planeswalker on either battlefield (Hero's Downfall).
+    CreatureOrPlaneswalker,
+    /// One artifact, enchantment, or creature with flying (Broken Wings).
+    ArtifactEnchantmentOrFlyingCreature,
+    /// One artifact, enchantment, or creature with power 4 or greater
+    /// (Make Your Move).
+    ArtifactEnchantmentOrCreaturePowerAtLeastFour,
+    /// One nonland permanent an opponent controls (Meteor Golem).
+    OpponentNonlandPermanent,
+    /// A creature spell on the stack (Essence Scatter).
+    CreatureSpellOnStack,
+    /// Exactly one creature that is not an outlaw (Assassin, Mercenary,
+    /// Pirate, Rogue or Warlock, counting changelings as every type).
+    /// Shoot the Sheriff is the first consumer. Ids 42-46 are claimed by
+    /// in-flight FDN batches, so MageZero Standard specs start at 47.
+    NonOutlawCreature,
+    /// Exactly one creature whose current toughness is 4 or greater (Destroy
+    /// Evil's first mode).
+    CreatureToughnessAtLeastFour,
+    /// Exactly one creature, enchantment, or planeswalker (Get Lost).
+    CreatureEnchantmentOrPlaneswalker,
     /// A creature card in the controller's own graveyard with at most this
     /// printed mana value (Extraction Specialist).
     CreatureCardInOwnGraveyardManaValueAtMost(u16),
@@ -733,6 +796,14 @@ impl TargetSpec {
             TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker => 39,
             TargetSpec::AttackingOrBlockingCreature => 40,
             TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_) => 41,
+            TargetSpec::CreatureOrPlaneswalker => 42,
+            TargetSpec::ArtifactEnchantmentOrFlyingCreature => 43,
+            TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour => 44,
+            TargetSpec::OpponentNonlandPermanent => 45,
+            TargetSpec::CreatureSpellOnStack => 46,
+            TargetSpec::NonOutlawCreature => 47,
+            TargetSpec::CreatureToughnessAtLeastFour => 48,
+            TargetSpec::CreatureEnchantmentOrPlaneswalker => 49,
             TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_) => 50,
             TargetSpec::SpellYouDontControl => 51,
         }
@@ -937,17 +1008,33 @@ pub enum OptionalAdditionalCostDef {
 /// definition describes what a valid attachment requires and grants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttachmentDef {
-    AuraCreature { prevents_untap: bool },
+    AuraCreature {
+        prevents_untap: bool,
+    },
     AuraCreatureOverride(CreatureCharacteristicsOverrideDef),
+    /// Enchanted creature gets a static power/toughness bonus and keywords.
+    AuraCreatureStatic(AuraCreatureStaticDef),
 }
 
 impl AttachmentDef {
     pub const fn is_creature_aura(self) -> bool {
         matches!(
             self,
-            Self::AuraCreature { .. } | Self::AuraCreatureOverride(_)
+            Self::AuraCreature { .. } | Self::AuraCreatureOverride(_) | Self::AuraCreatureStatic(_)
         )
     }
+}
+
+/// Layer 6 keywords and layer 7c power/toughness granted to the enchanted
+/// creature. With `per_controlled_subtype`, the bonus is multiplied by the
+/// number of permanents of that subtype the Aura's controller controls
+/// (Blanchwood Armor's Forests); otherwise it applies once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AuraCreatureStaticDef {
+    pub power: i16,
+    pub toughness: i16,
+    pub keywords: Keywords,
+    pub per_controlled_subtype: Option<Subtype>,
 }
 
 /// Layer 3 through 7b characteristics supplied by an attached creature Aura.
@@ -1110,6 +1197,10 @@ pub enum DynamicValueDef {
         amount_when_met: u8,
         amount_otherwise: u8,
     },
+    /// Count battlefield permanents the evaluating controller controls whose
+    /// effective subtypes include the named subtype (Flow of Knowledge's
+    /// "each Island you control").
+    ControlledPermanentsWithSubtype(Subtype),
 }
 
 /// Two subtypes a *single* permanent must carry at once, e.g. the Urza's
@@ -1347,6 +1438,9 @@ pub struct CardDef {
     /// Printed protection applying to this card as a spell, including copies.
     /// It does not protect the permanent's activated or triggered abilities.
     pub spell_cannot_be_countered: bool,
+    /// The spell's program reads the amount of mana spent to cast it, so the
+    /// cast records it on the stack item (`StackStateV4::mana_spent`).
+    pub records_mana_spent: bool,
     /// Printed Equipment behavior shared by attachments, effective
     /// characteristics, cast triggers, and RL continuous-effect projection.
     pub equipment: Option<EquipmentDef>,
@@ -1868,11 +1962,11 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 275 (equipment, kicker and library-search cards).
+        // batches append through id 329 (activated combat abilities).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                276
+                330
             } else {
                 192
             }
@@ -1932,6 +2026,17 @@ mod tests {
                 39,
             ),
             (TargetSpec::AttackingOrBlockingCreature, 40),
+            (TargetSpec::CreatureOrPlaneswalker, 42),
+            (TargetSpec::ArtifactEnchantmentOrFlyingCreature, 43),
+            (
+                TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour,
+                44,
+            ),
+            (TargetSpec::OpponentNonlandPermanent, 45),
+            (TargetSpec::CreatureSpellOnStack, 46),
+            (TargetSpec::NonOutlawCreature, 47),
+            (TargetSpec::CreatureToughnessAtLeastFour, 48),
+            (TargetSpec::CreatureEnchantmentOrPlaneswalker, 49),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);
@@ -1961,8 +2066,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v55_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0xa3ef_5a41_092d_7924;
+    fn card_db_hash_v61_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x949b_eb8c_995c_006c;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

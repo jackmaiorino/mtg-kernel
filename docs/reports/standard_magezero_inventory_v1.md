@@ -1,6 +1,6 @@
 # MageZero Standard pool inventory
 
-The `standard-magezero-fixtures` catalog targets the 16-deck Standard opponent pool MageZero trains against (`data/standard/magezero_v1/`). As of `kernel_carddb_standard/v1` the decks use 225 distinct nonbasic cards; 6 are supported (Burst Lightning, Duress, Llanowar Elves, Spell Pierce, Tolarian Terror, Voldaren Epicure) and no deck resolves yet. `mtg-kernel/tests/standard_magezero_catalog_v1.rs` and `python/tests/test_standard_decks_v1.py` track the supported list.
+The `standard-magezero-fixtures` catalog targets the 16-deck Standard opponent pool MageZero trains against (`data/standard/magezero_v1/`). As of `kernel_carddb_standard/v3` the decks use 225 distinct nonbasic cards; 40 are fully supported (Adeline, Resplendent Cathar, Ascendant Packleader, Bloodletter of Aclazotz, Burst Lightning, Cenote Scout, Consider, Coppercoat Vanguard, Deep-Cavern Bat, Destroy Evil, Dissipate, Duress, Evolving Adaptive, Extraction Specialist, Fading Hope, Flow of Knowledge, Gatekeeper of Malakir, Get Lost, Hard-Hitting Question, Haughty Djinn, Hired Claw, Hullbreaker Horror, Impulse, Lightning Strike, Llanowar Elves, Negate, Novice Inspector, Opt, Quirion Beastcaller, Razorkin Needlehead, Sentinel of the Nameless City, Sharp-Eyed Rookie, Shock, Shoot the Sheriff, Spell Pierce, Thalia, Guardian of Thraben, Thirst for Discovery, Tolarian Terror, Unstoppable Slasher, Voldaren Epicure, Warden of the Inner Sky) and no deck resolves yet. `mtg-kernel/tests/standard_magezero_catalog_v1.rs` and `python/tests/test_standard_decks_v1.py` track the supported list.
 
 ## Order of work
 
@@ -42,6 +42,8 @@ The 5-color deck's legends (family H) wait until those land.
 
 ### C. Removal, counters and card selection (35 cards; 15 needed by a mono deck)
 
+`kernel_carddb_standard/v2` fully supports the mono cards here except the FDN-owned Essence Scatter and Partial Memory Deluge, plus Opt. Shoot the Sheriff counts every outlaw subtype: Pirate, Rogue and Warlock, plus Assassin and Mercenary since family G appended them in v3. Memory Deluge's bottom-order approximation is excluded from full deck admission.
+
 - **Removal and burn**: Cut Down, Go for the Throat, Lightning Strike (mono), Shock (mono), Destroy Evil (mono), Sheoldred's Edict, Shoot the Sheriff (mono), Hard-Hitting Question (mono), Maelstrom Pulse, Tear Asunder, Witchstalker Frenzy, Fading Hope (mono), Get Lost (mono), Anoint with Affliction, Gleeful Demolition, Invoke Despair, Gix's Command, Abrade, Boltwave
 - **Counterspells**: Dissipate (mono), Essence Scatter (mono), Negate (mono)
 - **Card selection and draw**: Consider (mono), Opt, Impulse (mono), Sleight of Hand, Stock Up, Thirst for Discovery (mono), Flow of Knowledge (mono), Memory Deluge (mono), Big Score, United Battlefront, Kayla's Reconstruction
@@ -73,6 +75,8 @@ The 5-color deck's legends (family H) wait until those land.
 
 ### G. Creatures with triggered and static abilities (48 cards; 22 needed by a mono deck)
 
+`kernel_carddb_standard/v3` fully supports the mono cards here except the FDN-owned Kellan, Planar Trailblazer and Partial Recruitment Officer, whose bottom-order approximation is excluded from full deck admission like Memory Deluge's (`docs/design/standard_family_g_v1.md`).
+
 - **ETB / dies / attack triggers**: Deep-Cavern Bat (mono), Sentinel of the Nameless City (mono), Spyglass Siren, Bloodtithe Harvester, Brightglass Gearhulk, Extraction Specialist (mono), Faerie Dreamthief, Floodpits Drowner, Gatekeeper of Malakir (mono), Glissa Sunslayer, Hired Claw (mono), Preacher of the Schism, Recruitment Officer (mono), Resolute Reinforcements, Sandstorm Salvager, Tersa Lightshatter, Tishana's Tidebinder, Tranquil Frillback, Unstoppable Slasher (mono), Zoraline, Cosmos Caller, Cenote Scout (mono), Novice Inspector (mono), Sharp-Eyed Rookie (mono), Dark Confidant, Essence Channeler, Kellan, Planar Trailblazer (mono)
 - **Spell-cast and counter growth**: Ascendant Packleader (mono), Evolving Adaptive (mono), Quirion Beastcaller (mono), Teething Wurmlet, Hullbreaker Horror (mono), Surrak, Elusive Hunter, Warden of the Inner Sky (mono)
 - **Statics and anthems**: Adeline, Resplendent Cathar (mono), Sheoldred, the Apocalypse, Thalia, Guardian of Thraben (mono), Bloodletter of Aclazotz (mono), Coppercoat Vanguard (mono), Haughty Djinn (mono), Razorkin Needlehead (mono), Regal Bunnicorn, Surge Engine, Gingerbrute, Tough Cookie
@@ -81,3 +85,5 @@ The 5-color deck's legends (family H) wait until those land.
 ### H. Legends for the 5-color deck (11 cards; 0 needed by a mono deck)
 
 - **Legends**: Jodah, the Unifier, Katilda, Dawnhart Prime, Lagrella, the Magpie, Shanna, Purifying Blade, Melira, the Living Cure, Gwenna, Eyes of Gaea, Hajar, Loyal Bodyguard, Halana and Alena, Partners, Djeru and Hazoret, Ertai Resurrected, Skrelv, Defector Mite
+
+Memory Deluge is Partial: its current implementation keeps the bottomed cards in looked-at order, so full deck admission refuses it until subset randomization is implemented. The registry retains its definition and flashback behavior for development.

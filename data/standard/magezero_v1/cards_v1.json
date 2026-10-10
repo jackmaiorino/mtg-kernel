@@ -67,6 +67,424 @@
       "java_file": "Mage.Sets/src/mage/cards/b/BurstLightning.java"
     },
     {
+      "name": "Shock",
+      "engine_capability": "full",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "burn"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/Shock.java"
+    },
+    {
+      "name": "Lightning Strike",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoR.dck",
+        "Standard16-RG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "burn"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LightningStrike.java"
+    },
+    {
+      "name": "Negate",
+      "engine_capability": "full",
+      "mana_cost": "{1}{U}",
+      "mana_value": 2,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoU.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "counterspell"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/n/Negate.java"
+    },
+    {
+      "name": "Opt",
+      "engine_capability": "full",
+      "mana_cost": "{U}",
+      "mana_value": 1,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "scry",
+        "card_draw"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/o/Opt.java"
+    },
+    {
+      "name": "Consider",
+      "engine_capability": "full",
+      "mana_cost": "{U}",
+      "mana_value": 1,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoU.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "surveil",
+        "card_draw"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/Consider.java"
+    },
+    {
+      "name": "Impulse",
+      "engine_capability": "full",
+      "mana_cost": "{1}{U}",
+      "mana_value": 2,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoU.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "library_selection"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/i/Impulse.java"
+    },
+    {
+      "name": "Dissipate",
+      "engine_capability": "full",
+      "mana_cost": "{1}{U}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoU.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "counterspell"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/Dissipate.java"
+    },
+    {
+      "name": "Thirst for Discovery",
+      "engine_capability": "full",
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoU.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "card_draw",
+        "discard"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/ThirstForDiscovery.java"
+    },
+    {
+      "name": "Flow of Knowledge",
+      "engine_capability": "full",
+      "mana_cost": "{4}{U}",
+      "mana_value": 5,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoU.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "card_draw",
+        "discard"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FlowOfKnowledge.java"
+    },
+    {
+      "name": "Memory Deluge",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{U}{U}",
+      "mana_value": 4,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoU.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "library_selection",
+        "flashback",
+        "mana_spent"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MemoryDeluge.java"
+    },
+    {
+      "name": "Destroy Evil",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "modal",
+        "removal"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DestroyEvil.java"
+    },
+    {
+      "name": "Shoot the Sheriff",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "removal"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/ShootTheSheriff.java"
+    },
+    {
+      "name": "Hard-Hitting Question",
+      "engine_capability": "full",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "fight_like",
+        "removal"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HardHittingQuestion.java"
+    },
+    {
+      "name": "Fading Hope",
+      "engine_capability": "full",
+      "mana_cost": "{U}",
+      "mana_value": 1,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoU.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "bounce",
+        "scry"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FadingHope.java"
+    },
+    {
+      "name": "Get Lost",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoW.dck",
+        "Standard16-RW.dck",
+        "Standard16-UW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "removal",
+        "token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GetLost.java"
+    },
+    {
       "name": "Novice Inspector",
       "engine_capability": "full",
       "mana_cost": "{W}",
@@ -751,7 +1169,7 @@
     },
     {
       "name": "Recruitment Officer",
-      "engine_capability": "full",
+      "engine_capability": "partial",
       "mana_cost": "{W}",
       "mana_value": 1,
       "colors": [

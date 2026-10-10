@@ -15,6 +15,16 @@ verification remain pending. See
 [the gameplay validation matrix](../reports/fdn_fixture_gameplay_v1_validation.md).
 Milestones 5 through 7 remain separate work.
 
+October 9 target decision: Jack selected the complete Foundations Play
+Booster pool, now frozen in `data/limited/fdn_v1/booster_pool_v1.json`.
+The product-derived 286 names equal the historical reference exactly,
+including all ten Special Guests. See `fdn_booster_target_v1.md`.
+The original fixture milestone's final main CI run 37440121764 has all eight
+jobs successful; final retained evidence integration in collaboration PR
+#92 is merged at `f5e220570aecd0dda7b66294e747347d698944b1`.
+This updates the older qualification status above
+without changing any frozen measurements.
+
 | Milestone | Concrete work | Acceptance |
 | --- | --- | --- |
 | 1. Inputs and coverage | Import `.dck` files; separate mainboard and sideboard; inspect capabilities; resolve fully supported mainboards; pin two DraftZero fixtures and its reference names. | Reject unknown/partial/no-effect cards and tokens; preserve row/copy order; accept 40+ cards and duplicate counts; deterministic output. Implemented in this PR. |
@@ -40,9 +50,15 @@ fixture name. Milestone 5's first batch adds seven keyword-only creatures
 (`fdn_keyword_creatures_v1.md`), reaching 50/286, and the second adds
 gainlands and life-gain creatures (`fdn_gainlands_lifegain_v1.md`), reaching
 61/286, the third adds trigger creatures and three instants
-(`fdn_triggers_tricks_v1.md`), reaching 73/286, and the equipment, kicker and
-library-search batch (`fdn_equipment_search_v1.md`) reaches **81/286**. One
-reference planeswalker remains partial and 204 names are
+(`fdn_triggers_tricks_v1.md`), reaching 73/286, the equipment, kicker and
+library-search batch (`fdn_equipment_search_v1.md`) reaches 81/286, token
+makers and creature Auras (`fdn_tokens_auras_v1.md`) reach 90/286, and removal,
+damage and combat tricks (`fdn_removal_tricks_v1.md`) reach 108/286, and
+counterspells and simple threats (`fdn_counters_threats_v1.md`) reach
+118/286, the library-search, kicker and flashback follow-up
+(`fdn_library_search_v1.md`) reaches 122/286, and simple triggers and
+graveyard spells (`fdn_simple_triggers_v1.md`) reach **127/286**. One
+reference planeswalker remains partial and 158 names are
 missing from the wider reference; `../reports/fdn_remaining_pool_inventory_v1.md` sizes them.
 
 Milestone 3's opt-in engine priority presentation is implemented on

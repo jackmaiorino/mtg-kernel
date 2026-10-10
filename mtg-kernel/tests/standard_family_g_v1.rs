@@ -307,7 +307,14 @@ fn appended_definitions_match_their_printed_characteristics() {
     for &(name, subtypes, (power, toughness), keywords, triggers) in CARDS {
         let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} missing"));
         let def = &CARD_DEFS[id as usize];
-        assert_eq!(def.capability, CardCapability::Full, "{name}");
+        // Recruitment Officer keeps the bottomed cards in looked-at order
+        // instead of a random one, so it is Partial like Memory Deluge.
+        let expected = if name == "Recruitment Officer" {
+            CardCapability::Partial
+        } else {
+            CardCapability::Full
+        };
+        assert_eq!(def.capability, expected, "{name}");
         assert_eq!(def.subtypes, subtypes, "{name}");
         assert_eq!(
             (def.power, def.toughness),

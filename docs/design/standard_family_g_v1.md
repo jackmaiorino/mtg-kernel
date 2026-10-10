@@ -10,7 +10,9 @@ left for a later batch.
 Every definition appends to `data/standard/magezero_v1/cards_v1.json`. The
 behavior tables in `build.rs` (keywords, `trigger_recipe_for`,
 `standard_static_recipe_for`, activated recipes) name each card, so the Standard
-catalog identity covers them. Pauper and FDN canon never include the Standard
+catalog identity covers them. The batch moves the Standard catalog to
+`kernel_carddb_standard/v3` (`0x34c514a6e676a7c9`); Assassin and Mercenary join
+`Subtype::OUTLAW_TYPES` for Shoot the Sheriff. Pauper and FDN canon never include the Standard
 static field. New engine state and rules are cfg-gated to
 `standard-magezero-fixtures` wherever a default build would otherwise change. The
 trigger tables live in `mtg-kernel/src/trigger/standard_family_g_v1.rs` and the
@@ -71,10 +73,16 @@ Human Token (1/1 white Human) is appended for Adeline.
   forms pass their cost through one static adjustment. Increases apply first,
   and a reduction only reduces generic mana.
 
+- The rules-vector extractor maps the new effect ops in a new slice,
+  `rules_vector_v1/meaning/effect_g.rs`, and the new trigger conditions, cost
+  component and target specs in the existing tables.
+
 ## Deviations from the printed cards
 
-- Quirion Beastcaller distributes at resolution among the creatures its
-  controller controls then, one counter at a time, without targeting.
+- Quirion Beastcaller does not target. When its dies trigger is created, it
+  fixes the creatures its controller controls then; at resolution the
+  controller places the counters one at a time among them, and a creature that
+  has left by then receives nothing.
 - Ward granted by Coppercoat Vanguard is not shown in observation features.
   Stack validation accepts a ward {1} trigger from any Human creature
   definition, because the grant may have ended by the time the trigger is
@@ -85,11 +93,11 @@ Human Token (1/1 white Human) is appended for Adeline.
   incarnation and its controller at resolution. If that player loses and then
   regains control of the same Specialist, the restriction applies again.
 - Recruitment Officer puts the rest on the bottom in the order they were looked
-  at, not a random order. The kernel only advances randomness through library
-  shuffles, and the order of the bottom cards matters only in games that draw
-  through the whole library.
-- Target spec stable ids 50 and 51 skip the ids that in-flight FDN (42 to 46)
-  and Standard family C (47 to 49) branches have claimed.
+  at, not a random order, because the kernel only advances randomness through
+  library shuffles. Like Memory Deluge, it is therefore `Partial`, and full
+  deck admission refuses it until subset randomization exists.
+- Target spec stable ids 50 and 51 follow FDN (42 to 46) and Standard family C
+  (47 to 49).
 
 ## Tests
 

@@ -367,10 +367,126 @@ const SPITFIRE_LAGAC_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::ControlledLandEnters,
     ..etb_trigger(kessig_flamebreather_effect)
 }];
+const ELEMENTALIST_ADEPT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastNoncreatureSpell,
+    ..etb_trigger(prowess_effect)
+}];
+const CRYPT_FEASTER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::AttacksWithControllerGraveyardCardCountAtLeast(7),
+    ..etb_trigger(crypt_feaster_threshold_effect)
+}];
+const ERUDITE_WIZARD_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::DrawNth(2),
+    ..etb_trigger(writhing_chrysalis_counter_marker_effect)
+}];
+const PHYREXIAN_ARENA_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningOfUpkeep {
+        controller_only: true,
+    },
+    ..etb_trigger(phyrexian_arena_effect)
+}];
+const GLEAMING_BARRIER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::LeftBattlefieldToGraveyard,
+    home_zone: Zone::Graveyard,
+    ..etb_trigger(gleaming_barrier_effect)
+}];
+const BIGFIN_BOUNCER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(bigfin_bouncer_effect)];
+const RUNE_SCARRED_DEMON_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(rune_scarred_demon_effect)];
+const TATYOVA_BENTHIC_DRUID_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControlledLandEnters,
+    ..etb_trigger(tatyova_benthic_druid_effect)
+}];
+
+/// Prowess (702.108a): "Whenever you cast a noncreature spell, this
+/// creature gets +1/+1 until end of turn."
+fn prowess_effect() -> EffectOp {
+    EffectOp::BindTemporaryBoostToTriggerSource {
+        power: 1,
+        toughness: 1,
+    }
+}
+
+/// Threshold is an intervening-if clause, so it is rechecked on resolution.
+fn crypt_feaster_threshold_effect() -> EffectOp {
+    EffectOp::Conditional {
+        cond: EffectCond::ControllerGraveyardCardCountAtLeast(7),
+        then: Box::new(EffectOp::BindTemporaryBoostToTriggerSource {
+            power: 2,
+            toughness: 0,
+        }),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    }
+}
+
+fn phyrexian_arena_effect() -> EffectOp {
+    EffectOp::Sequence(vec![
+        ichor_wellspring_draw_effect(),
+        EffectOp::LoseLife {
+            player: PlayerRef::Controller,
+            amount: 1,
+        },
+    ])
+}
+
+/// Rune-Scarred Demon: "When this creature enters, search your library for
+/// a card, put it into your hand, then shuffle." The found card is not
+/// revealed, matching Grim Tutor's search.
+fn rune_scarred_demon_effect() -> EffectOp {
+    EffectOp::SearchLibraryToHand {
+        player: PlayerRef::Controller,
+        filter: crate::effect::LibraryCardFilter::AnyCard,
+    }
+}
+
+/// Tatyova, Benthic Druid: "Whenever a land you control enters, you gain 1
+/// life and draw a card."
+fn tatyova_benthic_druid_effect() -> EffectOp {
+    EffectOp::Sequence(vec![gain_one_life_effect(), ichor_wellspring_draw_effect()])
+}
+
+fn gleaming_barrier_effect() -> EffectOp {
+    EffectOp::CreateToken {
+        token_def: crate::card_def::card_id_by_name("Treasure Token")
+            .expect("Treasure Token in CARD_DEFS"),
+        controller: PlayerRef::Controller,
+    }
+}
+
+fn bigfin_bouncer_effect() -> EffectOp {
+    EffectOp::MoveObject {
+        object: ObjectRef::Target(0),
+        to_zone: Zone::Hand,
+    }
+}
+
+const DRAGON_TRAINER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(dragon_trainer_effect)];
+const RESOLUTE_REINFORCEMENTS_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(resolute_reinforcements_effect)];
+const ELFSWORN_GIANT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControlledLandEnters,
+    ..etb_trigger(elfsworn_giant_effect)
+}];
+const EAGER_TRUFFLESNOUT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::DealsCombatDamageToPlayer,
+    ..etb_trigger(generous_ent_effect)
+}];
+const RITE_OF_THE_DRAGONCALLER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastInstantOrSorcery,
+    ..etb_trigger(rite_of_the_dragoncaller_effect)
+}];
 
 fn prideful_parent_effect() -> EffectOp {
     EffectOp::CreateToken {
         token_def: crate::card_def::card_id_by_name("Cat Token").expect("Cat Token in CARD_DEFS"),
+        controller: PlayerRef::Controller,
+    }
+}
+
+fn create_controller_token_effect(name: &str) -> EffectOp {
+    EffectOp::CreateToken {
+        token_def: crate::card_def::card_id_by_name(name)
+            .unwrap_or_else(|| panic!("{name} in CARD_DEFS")),
         controller: PlayerRef::Controller,
     }
 }
@@ -403,6 +519,22 @@ fn infestation_sage_effect() -> EffectOp {
             .expect("Insect Token in CARD_DEFS"),
         controller: PlayerRef::Controller,
     }
+}
+
+fn dragon_trainer_effect() -> EffectOp {
+    create_controller_token_effect("Dragon Token")
+}
+
+fn resolute_reinforcements_effect() -> EffectOp {
+    create_controller_token_effect("Soldier Token")
+}
+
+fn elfsworn_giant_effect() -> EffectOp {
+    create_controller_token_effect("Elf Warrior Token")
+}
+
+fn rite_of_the_dragoncaller_effect() -> EffectOp {
+    create_controller_token_effect("Dragon 5/5 Token")
 }
 
 fn opponent_loses_one_life_effect() -> EffectOp {
@@ -509,6 +641,47 @@ fn sylvan_scavenging_effect() -> EffectOp {
             .into_iter()
             .map(|(_, effect)| effect)
             .collect(),
+    }
+}
+
+/// Trigger programs chosen when the event happens instead of being returned
+/// by `triggers_for` (Moon-Circuit Hacker skips its discard on the turn it
+/// entered). Variants replace the owning trigger's default inventory program.
+pub fn event_time_trigger_programs(card_def: u16, condition: TriggerCondition) -> Vec<EffectOp> {
+    let Some(card) = crate::card_def::CARD_DEFS.get(card_def as usize) else {
+        return Vec::new();
+    };
+    if card.name == "Moon-Circuit Hacker"
+        && matches!(condition, TriggerCondition::DealsCombatDamageToPlayer)
+    {
+        [false, true]
+            .into_iter()
+            .map(moon_circuit_hacker_combat_effect_for_entered_this_turn)
+            .collect()
+    } else {
+        Vec::new()
+    }
+}
+
+/// Whether this trigger's program is built when the trigger is created, from
+/// the dying incarnation's last-known +1/+1 counters and its controller's
+/// creatures (Quirion Beastcaller), so the definition's own program is an
+/// empty stand-in. The rules-vector extractor describes it through this.
+pub fn distributes_last_known_plus_one_counters(
+    card_def: u16,
+    condition: TriggerCondition,
+) -> bool {
+    #[cfg(feature = "standard-magezero-fixtures")]
+    {
+        crate::card_def::CARD_DEFS
+            .get(card_def as usize)
+            .is_some_and(|card| card.name == "Quirion Beastcaller")
+            && matches!(condition, TriggerCondition::LeftBattlefieldToGraveyard)
+    }
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
+    {
+        let _ = (card_def, condition);
+        false
     }
 }
 
@@ -1143,6 +1316,18 @@ fn solemn_simulacrum_etb_effect() -> EffectOp {
     }
 }
 
+fn campus_guide_etb_effect() -> EffectOp {
+    // "When this creature enters, you may search your library for a basic
+    // land card, reveal it, then shuffle and put that card on top." The
+    // zero-card selection is the "may".
+    EffectOp::SearchLibraryCardsToDestination {
+        player: PlayerRef::Controller,
+        filter: crate::effect::LibraryCardFilter::BasicLand,
+        max_targets: 1,
+        destination: crate::effect::LibrarySearchDestinationV1::LibraryTopAfterShuffle,
+    }
+}
+
 fn solemn_simulacrum_dies_effect() -> EffectOp {
     // "When this creature dies, you may draw a card."
     EffectOp::Choice {
@@ -1215,6 +1400,29 @@ fn humbling_elder_etb_effect() -> EffectOp {
         target: TargetRef::Target(0),
         power: DynamicValueDef::Fixed(-2),
         toughness: DynamicValueDef::Fixed(0),
+    }
+}
+
+/// Meteor Golem: "When this creature enters, destroy target nonland
+/// permanent an opponent controls."
+fn meteor_golem_etb_effect() -> EffectOp {
+    EffectOp::Conditional {
+        cond: EffectCond::TargetInZone(0, Zone::Battlefield),
+        then: Box::new(EffectOp::DestroyObject {
+            object: ObjectRef::Target(0),
+        }),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    }
+}
+
+/// Reclamation Sage: "When this creature enters, you may destroy target
+/// artifact or enchantment." The target is chosen when the trigger is put
+/// on the stack; the controller decides whether to destroy on resolution,
+/// with declining as the first printed option (Kiora's optional shape).
+fn reclamation_sage_etb_effect() -> EffectOp {
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: vec![EffectOp::Sequence(vec![]), meteor_golem_etb_effect()],
     }
 }
 
@@ -1518,6 +1726,14 @@ const GOLDVEIN_PICK_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     effect: goldvein_pick_combat_damage_effect,
 }];
 
+const CAMPUS_GUIDE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: campus_guide_etb_effect,
+}];
+
 const SOLEMN_SIMULACRUM_TRIGGERS: [TriggeredAbilityDef; 2] = [
     TriggeredAbilityDef {
         condition: TriggerCondition::Etb,
@@ -1589,6 +1805,51 @@ const HUMBLING_ELDER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
     effect: humbling_elder_etb_effect,
+}];
+
+/// Dauntless Veteran: "Whenever this creature attacks, creatures you
+/// control get +1/+1 until end of turn."
+fn dauntless_veteran_attack_effect() -> EffectOp {
+    EffectOp::BoostControlledCreaturesUntilEndOfTurn {
+        power: 1,
+        toughness: 1,
+        keywords: Keywords::NONE,
+    }
+}
+
+const DAUNTLESS_VETERAN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Attacks,
+    ..etb_trigger(dauntless_veteran_attack_effect)
+}];
+
+/// Crackling Cyclops: "Whenever you cast a noncreature spell, this creature
+/// gets +3/+0 until end of turn."
+fn crackling_cyclops_effect() -> EffectOp {
+    EffectOp::BindTemporaryBoostToTriggerSource {
+        power: 3,
+        toughness: 0,
+    }
+}
+
+const CRACKLING_CYCLOPS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastNoncreatureSpell,
+    ..etb_trigger(crackling_cyclops_effect)
+}];
+
+const METEOR_GOLEM_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: meteor_golem_etb_effect,
+}];
+
+const RECLAMATION_SAGE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: reclamation_sage_etb_effect,
 }];
 
 const MOON_CIRCUIT_HACKER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
@@ -1768,6 +2029,20 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Wary Thespian" => &WARY_THESPIAN_TRIGGERS,
         "Firebrand Archer" => &KESSIG_FLAMEBREATHER_TRIGGERS,
         "Spitfire Lagac" => &SPITFIRE_LAGAC_TRIGGERS,
+        "Dragon Trainer" => &DRAGON_TRAINER_TRIGGERS,
+        "Resolute Reinforcements" => &RESOLUTE_REINFORCEMENTS_TRIGGERS,
+        "Elfsworn Giant" => &ELFSWORN_GIANT_TRIGGERS,
+        "Eager Trufflesnout" => &EAGER_TRUFFLESNOUT_TRIGGERS,
+        "Rite of the Dragoncaller" => &RITE_OF_THE_DRAGONCALLER_TRIGGERS,
+        "Elementalist Adept" => &ELEMENTALIST_ADEPT_TRIGGERS,
+        "Crypt Feaster" => &CRYPT_FEASTER_TRIGGERS,
+        "Erudite Wizard" => &ERUDITE_WIZARD_TRIGGERS,
+        "Phyrexian Arena" => &PHYREXIAN_ARENA_TRIGGERS,
+        "Gleaming Barrier" => &GLEAMING_BARRIER_TRIGGERS,
+        "Angel of Finality" => &BOJUKA_BOG_TRIGGERS,
+        "Bigfin Bouncer" => &BIGFIN_BOUNCER_TRIGGERS,
+        "Rune-Scarred Demon" => &RUNE_SCARRED_DEMON_TRIGGERS,
+        "Tatyova, Benthic Druid" => &TATYOVA_BENTHIC_DRUID_TRIGGERS,
         "Dazzling Angel" => &DAZZLING_ANGEL_TRIGGERS,
         "Clinquant Skymage" => &CLINQUANT_SKYMAGE_TRIGGERS,
         "Mischievous Mystic" => &MISCHIEVOUS_MYSTIC_TRIGGERS,
@@ -1809,6 +2084,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Faerie Seer" => &FAERIE_SEER_TRIGGERS,
         "Outlaw Medic" => &OUTLAW_MEDIC_TRIGGERS,
         "Solemn Simulacrum" => &SOLEMN_SIMULACRUM_TRIGGERS,
+        "Campus Guide" => &CAMPUS_GUIDE_TRIGGERS,
         "Adventuring Gear" => &ADVENTURING_GEAR_TRIGGERS,
         "Goldvein Pick" => &GOLDVEIN_PICK_TRIGGERS,
         "Refurbished Familiar" => &REFURBISHED_FAMILIAR_TRIGGERS,
@@ -1818,6 +2094,10 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Bojuka Bog" => &BOJUKA_BOG_TRIGGERS,
         "Conduit Pylons" => &CONDUIT_PYLONS_TRIGGERS,
         "Humbling Elder" => &HUMBLING_ELDER_TRIGGERS,
+        "Meteor Golem" => &METEOR_GOLEM_TRIGGERS,
+        "Dauntless Veteran" => &DAUNTLESS_VETERAN_TRIGGERS,
+        "Crackling Cyclops" => &CRACKLING_CYCLOPS_TRIGGERS,
+        "Reclamation Sage" => &RECLAMATION_SAGE_TRIGGERS,
         "Moon-Circuit Hacker" => &MOON_CIRCUIT_HACKER_TRIGGERS,
         "Ninja of the Deep Hours" => &NINJA_OF_THE_DEEP_HOURS_TRIGGERS,
         "Saiba Cryptomancer" => &SAIBA_CRYPTOMANCER_TRIGGERS,
@@ -1878,8 +2158,11 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         "Balustrade Spy" => TargetSpec::AnyPlayer,
         "Lotleth Giant" => TargetSpec::TargetOpponent,
         "Harrier Strix" => TargetSpec::AnyPermanent,
-        "Bojuka Bog" => TargetSpec::AnyPlayer,
+        "Bojuka Bog" | "Angel of Finality" => TargetSpec::AnyPlayer,
+        "Bigfin Bouncer" => TargetSpec::OpponentControlledCreature,
         "Humbling Elder" => TargetSpec::OpponentControlledCreature,
+        "Meteor Golem" => TargetSpec::OpponentNonlandPermanent,
+        "Reclamation Sage" => TargetSpec::ArtifactOrEnchantmentPermanent,
         "Saiba Cryptomancer" => TargetSpec::Creature,
         "Spellstutter Sprite" => TargetSpec::SpellManaValueAtMostControlledSubtypes {
             first: Subtype::Faerie,

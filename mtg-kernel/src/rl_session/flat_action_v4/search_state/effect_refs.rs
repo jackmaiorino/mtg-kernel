@@ -86,6 +86,7 @@ impl Scan<'_> {
             | PutObjectInOwnersLibraryTopOrBottom { .. }
             | SurveilOne { .. }
             | DestroyObject { .. }
+            | DestroyObjectThenCreateTokens { .. }
             | CounterUnlessPaysGeneric { .. }
             | DamageEachCreatureWithoutSubtype { .. }
             | CounterTargetUnlessPaysGeneric { .. }
@@ -93,6 +94,9 @@ impl Scan<'_> {
             | UntapObject { .. }
             | PumpTargetUntilEndOfTurnDynamic { .. }
             | LookTopSelectByTypeToHandBottomRest { .. }
+            | LookTopPickToHandBottomRest { .. }
+            | DrawCardsDynamic { .. }
+            | DiscardBasicLandOrCards { .. }
             | LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. }
             | GainLifeEqualToPaidCostManaValue { .. }
             | MoveAllTargets { .. }
@@ -106,6 +110,7 @@ impl Scan<'_> {
             | ExilePlayersGraveyard { .. }
             | ExileOneFromPlayersGraveyard { .. }
             | ExileAllGraveyards
+            | DestroyAllCreatures
             | DamageAllTargets { .. }
             | ExileAllArtifactTargets
             | DealDamageByControlledCreatureCount { .. }
@@ -124,6 +129,8 @@ impl Scan<'_> {
             | PutSourceOntoBattlefieldAttachedToTarget { .. }
             | TapAttachedCreatureAndDamageControllerByPower
             | BoostAttachedCreatureUntilEndOfTurn { .. }
+            | SearchLibraryCardsToDestination { .. }
+            | CreateTokensDynamic { .. }
             | BackupTarget { .. }
             | PutSourceOntoBattlefieldTappedAndAttacking
             | UntapUpToLands { .. }
@@ -228,6 +235,11 @@ impl Scan<'_> {
                 original_prefix,
                 progress,
                 ..
+            }
+            | LookTopPickToHandBottomRest {
+                original_prefix,
+                progress,
+                ..
             } => {
                 self.bs(original_prefix)
                     || match progress {
@@ -241,6 +253,11 @@ impl Scan<'_> {
                     }
             }
             SearchLibraryToHandMany {
+                original_library,
+                selected,
+                ..
+            }
+            | SearchLibraryCardsToDestination {
                 original_library,
                 selected,
                 ..
@@ -296,6 +313,16 @@ impl Scan<'_> {
                 selected,
                 ..
             } => self.bs(original_hand) || self.bs(eligible) || self.b(selected),
+            DiscardBasicLandInstead {
+                original_hand,
+                eligible,
+                selected,
+                ..
+            } => {
+                self.bs(original_hand)
+                    || self.bs(eligible)
+                    || selected.as_ref().is_some_and(|b| self.b(b))
+            }
             BeginSearchLibraryToBattlefieldTapped {
                 expected_remaining_frames,
                 ..
@@ -378,6 +405,9 @@ impl Scan<'_> {
             | SearchLibraryToHandMany {
                 original_library, ..
             }
+            | SearchLibraryCardsToDestination {
+                original_library, ..
+            }
             | SearchLibraryToBattlefieldTapped {
                 original_library, ..
             } => self.bs(original_library),
@@ -385,6 +415,11 @@ impl Scan<'_> {
                 original_prefix, ..
             } => self.bs(original_prefix),
             LookTopSelectByTypeToHandBottomRest {
+                original_prefix,
+                stage,
+                ..
+            }
+            | LookTopPickToHandBottomRest {
                 original_prefix,
                 stage,
                 ..
@@ -413,6 +448,11 @@ impl Scan<'_> {
                 ..
             } => self.bs(original_candidates),
             DuressDiscard {
+                original_hand,
+                eligible,
+                ..
+            }
+            | DiscardBasicLandInstead {
                 original_hand,
                 eligible,
                 ..

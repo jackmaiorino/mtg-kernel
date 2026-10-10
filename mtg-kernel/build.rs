@@ -2446,6 +2446,11 @@ enum Special {
     /// Counter target spell, with the target pool selected independently
     /// from the shared generated counter effect.
     CounterTarget(StackSpellFilter),
+    /// Counter target spell, then draw a card and discard a card (Refute).
+    CounterTargetThenLoot,
+    /// Return up to two target creature cards from your graveyard to your
+    /// hand, then discard a card (Macabre Waltz).
+    ReturnCreatureCardsThenDiscard,
     /// Counter a target spell unless its controller pays a fixed generic
     /// amount. Target eligibility remains definition data rather than a
     /// runtime card-name branch.
@@ -2487,6 +2492,13 @@ enum Special {
     /// "Kicker {4}. Burst Lightning deals 2 damage to any target. If this
     /// spell was kicked, it deals 4 damage instead." (FDN Burst Lightning).
     BurstLightning,
+    /// "Create a tapped 1/1 black Rat creature token for each creature card
+    /// in your graveyard. Flashback {2}{B}{B}" (FDN Revenge of the Rats).
+    RevengeOfTheRats,
+    /// "Kicker {2}. Search your library for a basic land card, put it onto
+    /// the battlefield, then shuffle. If this spell was kicked, instead
+    /// search for two basic land cards" (FDN Grow from the Ashes).
+    GrowFromTheAshes,
     /// "Create two 1/1 white Human Soldier creature tokens. Humans you
     /// control gain haste until end of turn." (Rally at the Hornburg,
     /// Rally-only -- the card the deck is named for).
@@ -2679,6 +2691,45 @@ enum Special {
         toughness: i32,
         keyword: &'static str,
     },
+    /// Creates `count` copies of `token`, then boosts every creature the
+    /// controller controls at that point (the new tokens included) until
+    /// end of turn. Heroic Reinforcements is the sole consumer.
+    CreateTokensThenBoostControlled {
+        token: &'static str,
+        count: u8,
+        power: i32,
+        toughness: i32,
+        keyword: &'static str,
+    },
+    /// Two printed modes: creatures you control get `power`/`toughness`
+    /// until end of turn, or create `count` copies of `token`. Goblin
+    /// Surprise is the sole consumer.
+    BoostControlledOrCreateTokens {
+        power: i32,
+        toughness: i32,
+        token: &'static str,
+        count: u8,
+    },
+    /// A spell program composed only from existing generic `EffectOp`s.
+    /// `recipe` is the stable semantic token hashed into the card database;
+    /// `effect` and the optional second mode's effect are the emitted Rust
+    /// expressions, which are not hashed. FDN removal and combat-trick
+    /// batches add their cards through `fdn_program_for`, and MageZero
+    /// Standard batches through `standard_program_for`, so each card is one
+    /// table row rather than a new enum variant and four codegen sites.
+    Program {
+        target: &'static str,
+        recipe: &'static str,
+        effect: &'static str,
+        mode2: Option<ProgramMode>,
+    },
+}
+
+#[derive(Clone, Copy)]
+struct ProgramMode {
+    target: &'static str,
+    recipe: &'static str,
+    effect: &'static str,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -2695,6 +2746,7 @@ enum StackSpellFilter {
     Sorcery,
     Noncreature,
     Artifact,
+    Creature,
 }
 
 impl MillPlayer {
@@ -2715,6 +2767,7 @@ impl StackSpellFilter {
             StackSpellFilter::Sorcery => "sorcery",
             StackSpellFilter::Noncreature => "noncreature",
             StackSpellFilter::Artifact => "artifact",
+            StackSpellFilter::Creature => "creature",
         }
     }
 
@@ -2728,6 +2781,7 @@ impl StackSpellFilter {
             StackSpellFilter::Sorcery => "TargetSpec::SorcerySpellOnStack",
             StackSpellFilter::Noncreature => "TargetSpec::NoncreatureSpellOnStack",
             StackSpellFilter::Artifact => "TargetSpec::ArtifactSpellOnStack",
+            StackSpellFilter::Creature => "TargetSpec::CreatureSpellOnStack",
         }
     }
 }
@@ -2818,6 +2872,10 @@ impl Special {
             Special::CounterTarget(filter) => {
                 format!("counter_target:{}", filter.canonical_token())
             }
+            Special::CounterTargetThenLoot => "counter_target_then_draw_discard:any:1:1".to_string(),
+            Special::ReturnCreatureCardsThenDiscard => {
+                "return_up_to_two_own_graveyard_creature_cards_to_hand_then_discard:1".to_string()
+            }
             Special::CounterUnlessPaysGeneric { filter, generic } => format!(
                 "counter_unless_pays_generic:{}:{generic}",
                 filter.canonical_token()
@@ -2892,6 +2950,8 @@ impl Special {
             }
             Special::SearchForestToHand => "search_forest_to_hand".to_string(),
             Special::GrimTutor => "grim_tutor".to_string(),
+            Special::RevengeOfTheRats => "revenge_of_the_rats".to_string(),
+            Special::GrowFromTheAshes => "grow_from_the_ashes".to_string(),
             Special::AddPlusOnePlusOneAndLifelinkCounters => {
                 "add_plus_one_plus_one_and_lifelink_counters".to_string()
             }
@@ -2931,6 +2991,16 @@ impl Special {
             Special::BoostControlledCreatures { power, toughness, keyword } => {
                 format!("boost_controlled_creatures:{power}:{toughness}:{keyword}:exact_incarnations")
             }
+            Special::CreateTokensThenBoostControlled { token, count, power, toughness, keyword } => {
+                format!("create_tokens_then_boost_controlled:{token}:{count}:{power}:{toughness}:{keyword}:exact_incarnations")
+            }
+            Special::BoostControlledOrCreateTokens { power, toughness, token, count } => {
+                format!("boost_controlled_or_create_tokens:{power}:{toughness}:exact_incarnations|{token}:{count}")
+            }
+            Special::Program { recipe, mode2, .. } => match mode2 {
+                Some(mode) => format!("program:{recipe}:mode2:{}", mode.recipe),
+                None => format!("program:{recipe}"),
+            },
         }
     }
 }
@@ -2970,6 +3040,11 @@ enum AbilityCostRecipe {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AbilityEffectRecipe {
     DrawCards(u8),
+    PumpSourceUntilEndOfTurn {
+        power: i32,
+        toughness: i32,
+    },
+    GrantTargetKeywordUntilEndOfTurn(&'static str),
     GainLife(u8),
     CreateToken(&'static str),
     DamageTarget(u8),
@@ -3012,12 +3087,21 @@ enum AbilityEffectRecipe {
     SearchLibraryToBattlefieldTapped {
         filter: LibrarySearchFilterRecipe,
     },
+    /// Search for up to `max` matching cards and put them onto the
+    /// battlefield (Burnished Hart: two basic lands, tapped).
+    SearchLibraryUpToToBattlefield {
+        filter: LibrarySearchFilterRecipe,
+        max: u8,
+        tapped: bool,
+    },
     /// Each player who controls a permanent with this exact printed name
     /// draws a card (Bonder's Ornament). The printed name is fixed at
     /// codegen time; the generated function resolves it to this card's own
     /// numeric definition id at runtime via a generated `card_id_by_name`
     /// call.
     EachPlayerControllingNamedPermanentDrawsCard(&'static str),
+    /// The controller surveils this many cards (Rune-Sealed Wall).
+    Surveil(u8),
     /// One +1/+1 counter on the ability's own source while it remains the
     /// same battlefield incarnation (Hired Claw).
     PutPlusOneCounterOnSource,
@@ -3081,6 +3165,7 @@ fn special_for(name: &str) -> Special {
         },
         "Thoughtcast" => Special::DrawCards(2),
         "Think Twice" => Special::DrawCards(1),
+        "Thrill of Possibility" => Special::DrawCards(2),
         "Giant Growth" => Special::PumpCreature {
             power: 3,
             toughness: 3,
@@ -3115,6 +3200,9 @@ fn special_for(name: &str) -> Special {
         "Dispel" => Special::CounterTarget(StackSpellFilter::Instant),
         "Annul" => Special::CounterTarget(StackSpellFilter::ArtifactOrEnchantment),
         "Envelop" => Special::CounterTarget(StackSpellFilter::Sorcery),
+        "Essence Scatter" => Special::CounterTarget(StackSpellFilter::Creature),
+        "Refute" => Special::CounterTargetThenLoot,
+        "Macabre Waltz" => Special::ReturnCreatureCardsThenDiscard,
         "Force Spike" => Special::CounterUnlessPaysGeneric {
             filter: StackSpellFilter::Any,
             generic: 1,
@@ -3196,11 +3284,15 @@ fn special_for(name: &str) -> Special {
             amount: 2,
             excluded_subtype: "Dragon",
         },
-        "Dread Return" => Special::ReturnOwnGraveyardCreatureToBattlefield,
+        "Dread Return" | "Zombify" => Special::ReturnOwnGraveyardCreatureToBattlefield,
         "Land Grant" => Special::SearchForestToHand,
         "Grim Tutor" => Special::GrimTutor,
+        "Revenge of the Rats" => Special::RevengeOfTheRats,
+        "Grow from the Ashes" => Special::GrowFromTheAshes,
         "Unexpected Fangs" => Special::AddPlusOnePlusOneAndLifelinkCounters,
-        "Bind the Monster" | "Witness Protection" => Special::BindTheMonster,
+        "Bind the Monster" | "Witness Protection" | "Twinblade Blessing" | "Blanchwood Armor" => {
+            Special::BindTheMonster
+        }
         "Snap" => Special::Snap,
         "Flaring Pain" => Special::DamageCannotBePreventedThisTurn,
         "Prismatic Strands" => Special::PrismaticStrands,
@@ -3214,13 +3306,259 @@ fn special_for(name: &str) -> Special {
         "Fleeting Flight" => Special::FleetingFlight,
         "Joust Through" => Special::JoustThrough,
         "Nyxborn Hydra" => Special::NyxbornHydra,
+        "Heroic Reinforcements" => Special::CreateTokensThenBoostControlled {
+            token: "Soldier Token",
+            count: 2,
+            power: 1,
+            toughness: 1,
+            keyword: "HASTE",
+        },
+        "Goblin Surprise" => Special::BoostControlledOrCreateTokens {
+            power: 2,
+            toughness: 0,
+            token: "Goblin Token",
+            count: 2,
+        },
         "Overrun" => Special::BoostControlledCreatures {
             power: 3,
             toughness: 3,
             keyword: "TRAMPLE",
         },
-        _ => Special::None,
+        _ => fdn_program_for(name)
+            .or_else(|| standard_program_for(name))
+            .unwrap_or(Special::None),
     }
+}
+
+/// FDN removal, damage and combat-trick spells that compose existing
+/// generic effect operations. Characteristics and rules text were read from
+/// the XMage card files named in each `cards_v1.json` entry.
+fn fdn_program_for(name: &str) -> Option<Special> {
+    let program = |target, recipe, effect| Special::Program {
+        target,
+        recipe,
+        effect,
+        mode2: None,
+    };
+    Some(match name {
+        // Target creature gets +3/+0 and gains first strike until end of turn.
+        "Sure Strike" => program(
+            "Creature",
+            "Sequence(PumpTargetUntilEndOfTurn(3,0),GrantKeywordTargetUntilEndOfTurn(Target0,FirstStrike))",
+            "EffectOp::Sequence(vec![EffectOp::PumpTargetUntilEndOfTurnDynamic { target: TargetRef::Target(0), power: DynamicValueDef::Fixed(3), toughness: DynamicValueDef::Fixed(0) }, EffectOp::GrantKeywordTargetUntilEndOfTurn { object: ObjectRef::Target(0), keyword: Keywords::FIRST_STRIKE }])",
+        ),
+        // Put a +1/+1 counter on target creature you control. It gains
+        // hexproof until end of turn.
+        "Snakeskin Veil" => program(
+            "ControlledCreature",
+            "Sequence(AddCounters(Target0,PlusOnePlusOne,1),GrantKeywordTargetUntilEndOfTurn(Target0,Hexproof))",
+            "EffectOp::Sequence(vec![EffectOp::AddCountersToTarget { target_index: 0, optional: false, plus1_plus1: 1, lifelink: 0, stun: 0 }, EffectOp::GrantKeywordTargetUntilEndOfTurn { object: ObjectRef::Target(0), keyword: Keywords::HEXPROOF }])",
+        ),
+        // Deals 2 damage to each creature without flying.
+        "Seismic Rupture" => program(
+            "None",
+            "DamageAllCreatures(WithoutKeyword(Flying),2)",
+            "EffectOp::DamageAllCreatures { filter: CreatureFilter::WithoutKeyword(Keywords::FLYING), amount: 2 }",
+        ),
+        // Deals 3 damage to each opponent.
+        "Boltwave" => program(
+            "None",
+            "DealDamage(Opponent,3)",
+            "EffectOp::DealDamage { target: TargetRef::Opponent, amount: 3 }",
+        ),
+        // Destroy all creatures.
+        "Day of Judgment" => program(
+            "None",
+            "DestroyAllCreatures",
+            "EffectOp::DestroyAllCreatures",
+        ),
+        // Deals 6 damage to target creature. You may discard a card. If you
+        // do, draw a card.
+        "Incinerating Blast" => program(
+            "Creature",
+            "Sequence(DealDamage(Target0,6),MayPayCostThen(Discard1,DrawCards(Controller,1)))",
+            "EffectOp::Sequence(vec![EffectOp::DealDamage { target: TargetRef::Target(0), amount: 6 }, EffectOp::MayPayCostThen { discard: 1, sacrifice_lands: 0, return_permanent: None, then: Box::new(EffectOp::DrawCards { player: PlayerRef::Controller, count: 1 }), otherwise: None }])",
+        ),
+        // Choose one -- 3 damage to each creature; or 3 damage to each player.
+        "Slagstorm" => Special::Program {
+            target: "None",
+            recipe: "DamageAllCreatures(All,3)",
+            effect: "EffectOp::DamageAllCreatures { filter: CreatureFilter::All, amount: 3 }",
+            mode2: Some(ProgramMode {
+                target: "None",
+                recipe: "Sequence(DealDamage(Controller,3),DealDamage(Opponent,3))",
+                effect: "EffectOp::Sequence(vec![EffectOp::DealDamage { target: TargetRef::Controller, amount: 3 }, EffectOp::DealDamage { target: TargetRef::Opponent, amount: 3 }])",
+            }),
+        },
+        // Choose one -- 3 damage to target creature; or destroy target artifact.
+        "Abrade" => Special::Program {
+            target: "Creature",
+            recipe: "DealDamage(Target0,3)",
+            effect: "EffectOp::DealDamage { target: TargetRef::Target(0), amount: 3 }",
+            mode2: Some(ProgramMode {
+                target: "ArtifactPermanent",
+                recipe: "Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0))",
+                effect: "EffectOp::Conditional { cond: EffectCond::TargetInZone(0, Zone::Battlefield), then: Box::new(EffectOp::DestroyObject { object: ObjectRef::Target(0) }), else_: Box::new(EffectOp::Sequence(vec![])) }",
+            }),
+        },
+        // Creatures you control get +10/+10 and gain vigilance until end of turn.
+        "Preposterous Proportions" => program(
+            "None",
+            "BoostControlledCreatures(10,10,VIGILANCE,exact_incarnations)",
+            "EffectOp::BoostControlledCreaturesUntilEndOfTurn { power: 10, toughness: 10, keywords: Keywords::VIGILANCE }",
+        ),
+        // Destroy target creature. Create a Food token.
+        "Bake into a Pie" => program(
+            "Creature",
+            "Sequence(Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0)),CreateToken(FoodToken,Controller))",
+            "EffectOp::Sequence(vec![EffectOp::Conditional { cond: EffectCond::TargetInZone(0, Zone::Battlefield), then: Box::new(EffectOp::DestroyObject { object: ObjectRef::Target(0) }), else_: Box::new(EffectOp::Sequence(vec![])) }, EffectOp::CreateToken { token_def: crate::card_def::card_id_by_name(\"Food Token\").expect(\"Food Token in CARD_DEFS\"), controller: PlayerRef::Controller }])",
+        ),
+        // Destroy target creature or planeswalker.
+        "Hero's Downfall" => program("CreatureOrPlaneswalker", "Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0))", "EffectOp::Conditional { cond: EffectCond::TargetInZone(0, Zone::Battlefield), then: Box::new(EffectOp::DestroyObject { object: ObjectRef::Target(0) }), else_: Box::new(EffectOp::Sequence(vec![])) }"),
+        // Destroy target artifact, enchantment, or creature with flying.
+        "Broken Wings" => program("ArtifactEnchantmentOrFlyingCreature", "Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0))", "EffectOp::Conditional { cond: EffectCond::TargetInZone(0, Zone::Battlefield), then: Box::new(EffectOp::DestroyObject { object: ObjectRef::Target(0) }), else_: Box::new(EffectOp::Sequence(vec![])) }"),
+        // Destroy target artifact, enchantment, or creature with power 4 or greater.
+        "Make Your Move" => program("ArtifactEnchantmentOrCreaturePowerAtLeastFour", "Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0))", "EffectOp::Conditional { cond: EffectCond::TargetInZone(0, Zone::Battlefield), then: Box::new(EffectOp::DestroyObject { object: ObjectRef::Target(0) }), else_: Box::new(EffectOp::Sequence(vec![])) }"),
+        _ => return None,
+    })
+}
+
+const DESTROY_TARGET0_ON_BATTLEFIELD: &str = "EffectOp::Conditional { cond: EffectCond::TargetInZone(0, Zone::Battlefield), then: Box::new(EffectOp::DestroyObject { object: ObjectRef::Target(0) }), else_: Box::new(EffectOp::Sequence(vec![])) }";
+
+/// MageZero Standard spells that compose generic effect operations.
+/// Characteristics and rules text were read from the XMage card files named
+/// in each `data/standard/magezero_v1/cards_v1.json` entry. These names do
+/// not occur in the Pauper or FDN registries, so those catalogs never select
+/// a row here.
+fn standard_program_for(name: &str) -> Option<Special> {
+    let program = |target, recipe, effect| Special::Program {
+        target,
+        recipe,
+        effect,
+        mode2: None,
+    };
+    Some(match name {
+        // Shock and Lightning Strike deal 2 and 3 damage to any target;
+        // Negate counters target noncreature spell; Opt is scry 1, then draw
+        // a card. Each reuses the Pauper recipe of the same shape.
+        "Shock" => Special::BurnAnyTarget(2),
+        "Lightning Strike" => Special::BurnAnyTarget(3),
+        "Negate" => Special::CounterTarget(StackSpellFilter::Noncreature),
+        "Opt" => Special::ScryThenDraw { scry: 1, draw: 1 },
+        // Counter target spell. If that spell is countered this way, exile it
+        // instead of putting it into its owner's graveyard.
+        "Dissipate" => program(
+            "AnySpellOnStack",
+            "Conditional(TargetSpellCanBeCountered(0),MoveObject(Target0,Exile))",
+            "EffectOp::Conditional { cond: EffectCond::TargetSpellCanBeCountered(0), then: Box::new(EffectOp::MoveObject { object: ObjectRef::Target(0), to_zone: Zone::Exile }), else_: Box::new(EffectOp::Sequence(vec![])) }",
+        ),
+        // Look at the top card of your library. You may put that card into
+        // your graveyard. Draw a card.
+        "Consider" => program(
+            "None",
+            "Sequence(Surveil(Controller,1),DrawCards(Controller,1))",
+            "EffectOp::Sequence(vec![EffectOp::Surveil { player: PlayerRef::Controller, count: 1 }, EffectOp::DrawCards { player: PlayerRef::Controller, count: 1 }])",
+        ),
+        // Target creature you control deals damage equal to its power to
+        // target creature or planeswalker you don't control.
+        "Hard-Hitting Question" => program(
+            "ControlledCreatureThenOpponentCreatureOrPlaneswalker",
+            "CreatureTargetPowerDamage(0,1,counter=0)",
+            "EffectOp::CreatureTargetPowerDamage { source_index: 0, target_index: 1, plus1_plus1: 0, target_spec: TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker }",
+        ),
+        // Destroy target non-outlaw creature.
+        "Shoot the Sheriff" => program(
+            "NonOutlawCreature",
+            "Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0))",
+            DESTROY_TARGET0_ON_BATTLEFIELD,
+        ),
+        // Choose one -- Destroy target creature with toughness 4 or greater;
+        // or destroy target enchantment.
+        "Destroy Evil" => Special::Program {
+            target: "CreatureToughnessAtLeastFour",
+            recipe: "Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0))",
+            effect: DESTROY_TARGET0_ON_BATTLEFIELD,
+            mode2: Some(ProgramMode {
+                target: "EnchantmentPermanent",
+                recipe: "Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0))",
+                effect: DESTROY_TARGET0_ON_BATTLEFIELD,
+            }),
+        },
+        // Destroy target creature, enchantment, or planeswalker. Its
+        // controller creates two Map tokens.
+        "Get Lost" => program(
+            "CreatureEnchantmentOrPlaneswalker",
+            "Sequence(Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0)),CreateToken(MapToken,ObjectController(Target0)),CreateToken(MapToken,ObjectController(Target0)))",
+            "EffectOp::DestroyObjectThenCreateTokens { object: ObjectRef::Target(0), token_def: crate::card_def::card_id_by_name(\"Map Token\").expect(\"Map Token in CARD_DEFS\"), count: 2 }",
+        ),
+        // Return target creature to its owner's hand. If its mana value was
+        // 3 or less, scry 1. The mana value is read before the move.
+        "Fading Hope" => program(
+            "Creature",
+            "Conditional(TargetManaValueAtMost(0,3),Sequence(MoveObject(Target0,Hand),Scry(Controller,1)),MoveObject(Target0,Hand))",
+            "EffectOp::Conditional { cond: EffectCond::TargetManaValueAtMost(0, 3), then: Box::new(EffectOp::Sequence(vec![EffectOp::MoveObject { object: ObjectRef::Target(0), to_zone: Zone::Hand }, EffectOp::Scry { player: PlayerRef::Controller, count: 1 }])), else_: Box::new(EffectOp::MoveObject { object: ObjectRef::Target(0), to_zone: Zone::Hand }) }",
+        ),
+        // Draw a card for each Island you control, then discard two cards.
+        "Flow of Knowledge" => program(
+            "None",
+            "Sequence(DrawCardsDynamic(Controller,ControlledPermanentsWithSubtype(Island)),DiscardCards(Controller,2))",
+            "EffectOp::Sequence(vec![EffectOp::DrawCardsDynamic { player: PlayerRef::Controller, count: DynamicValueDef::ControlledPermanentsWithSubtype(Subtype::Island) }, EffectOp::DiscardCards { player: PlayerRef::Controller, count: 2 }])",
+        ),
+        // Draw three cards. Then discard two cards unless you discard a basic
+        // land card.
+        "Thirst for Discovery" => program(
+            "None",
+            "Sequence(DrawCards(Controller,3),DiscardBasicLandOrCards(Controller,2))",
+            "EffectOp::Sequence(vec![EffectOp::DrawCards { player: PlayerRef::Controller, count: 3 }, EffectOp::DiscardBasicLandOrCards { player: PlayerRef::Controller, otherwise: 2 }])",
+        ),
+        // Look at the top four cards of your library. Put one of them into
+        // your hand and the rest on the bottom of your library in any order.
+        "Impulse" => program(
+            "None",
+            "LookTopPickToHandBottomRest(Controller,Fixed(4),pick=1,rest=Chosen)",
+            "EffectOp::LookTopPickToHandBottomRest { player: PlayerRef::Controller, count: crate::effect::LibraryLookCount::Fixed(4), pick: 1, choose_rest_order: true }",
+        ),
+        // Look at the top X cards of your library, where X is the amount of
+        // mana spent to cast this spell. Put two of them into your hand and
+        // the rest on the bottom of your library in a random order.
+        // Flashback {5}{U}{U} is modeled in `flashback_for`.
+        "Memory Deluge" => program(
+            "None",
+            "LookTopPickToHandBottomRest(Controller,ManaSpentToCast,pick=2,rest=LookedAt)",
+            "EffectOp::LookTopPickToHandBottomRest { player: PlayerRef::Controller, count: crate::effect::LibraryLookCount::ManaSpentToCast, pick: 2, choose_rest_order: false }",
+        ),
+        _ => return None,
+    })
+}
+
+fn program_target_spec_src(target: &str) -> &'static str {
+    match target {
+        "None" => "TargetSpec::None",
+        "Creature" => "TargetSpec::Creature",
+        "ControlledCreature" => "TargetSpec::ControlledCreature",
+        "ArtifactPermanent" => "TargetSpec::ArtifactPermanent",
+        "CreatureOrPlaneswalker" => "TargetSpec::CreatureOrPlaneswalker",
+        "ArtifactEnchantmentOrFlyingCreature" => "TargetSpec::ArtifactEnchantmentOrFlyingCreature",
+        "ArtifactEnchantmentOrCreaturePowerAtLeastFour" => {
+            "TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour"
+        }
+        "AnySpellOnStack" => "TargetSpec::AnySpellOnStack",
+        "EnchantmentPermanent" => "TargetSpec::EnchantmentPermanent",
+        "ControlledCreatureThenOpponentCreatureOrPlaneswalker" => {
+            "TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker"
+        }
+        "NonOutlawCreature" => "TargetSpec::NonOutlawCreature",
+        "CreatureToughnessAtLeastFour" => "TargetSpec::CreatureToughnessAtLeastFour",
+        "CreatureEnchantmentOrPlaneswalker" => "TargetSpec::CreatureEnchantmentOrPlaneswalker",
+        other => panic!("unsupported program target spec {other}"),
+    }
+}
+
+fn program_function_suffix(name: &str) -> String {
+    name.to_ascii_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect()
 }
 
 /// Stable, gameplay-semantic description of the generated spell target,
@@ -3252,6 +3590,12 @@ fn effect_recipe_for(card: &CardJson) -> String {
         }
         Special::BoostControlledCreatures { power, toughness, keyword } => {
             format!("target=None;spell=BoostControlledCreatures({power},{toughness},{keyword},exact_incarnations);mana=None")
+        }
+        Special::CreateTokensThenBoostControlled { token, count, power, toughness, keyword } => {
+            format!("target=None;spell=Sequence(CreateToken({token},{count}),BoostControlledCreatures({power},{toughness},{keyword},exact_incarnations));mana=None")
+        }
+        Special::BoostControlledOrCreateTokens { power, toughness, token, count } => {
+            format!("target=None;spell=BoostControlledCreatures({power},{toughness},NONE,exact_incarnations);mode2=CreateToken({token},{count});mana=None")
         }
         Special::GreatFurnace => "target=None;spell=None;mana=AddMana(R)".to_string(),
         Special::DrawCards(count) => {
@@ -3288,6 +3632,8 @@ fn effect_recipe_for(card: &CardJson) -> String {
                 .target_spec()
                 .trim_start_matches("TargetSpec::")
         ),
+        Special::CounterTargetThenLoot => "target=AnySpellOnStack;spell=Sequence(CounterTarget,DrawCards(Controller,1),DiscardCards(Controller,1));mana=None".to_string(),
+        Special::ReturnCreatureCardsThenDiscard => "target=UpToTwoCreatureCardsInOwnGraveyard;spell=Sequence(MoveAllTargets(Hand),DiscardCards(Controller,1));mana=None".to_string(),
         Special::CounterUnlessPaysGeneric { filter, generic } => format!(
             "target={};spell=CounterTargetUnlessPaysGeneric({generic});mana=None",
             filter
@@ -3389,6 +3735,8 @@ fn effect_recipe_for(card: &CardJson) -> String {
         Special::ReturnOwnGraveyardCreatureToBattlefield => "target=CreatureCardInOwnGraveyard;spell=MoveObject(Target0,Battlefield);mana=None".to_string(),
         Special::SearchForestToHand => "target=None;spell=SearchLibraryToHand(Controller,LandWithSubtype(Forest));mana=None".to_string(),
         Special::GrimTutor => "target=None;spell=Sequence(SearchLibraryToHand(Controller,AnyCard,unrevealed),LoseLife(Controller,3));mana=None".to_string(),
+        Special::RevengeOfTheRats => "target=None;spell=CreateTokensDynamic(Rat Token,Controller,ControllerGraveyardCardsWithType(Creature),tapped);mana=None".to_string(),
+        Special::GrowFromTheAshes => "target=None;spell=Conditional(WasKicked,SearchLibraryCardsToDestination(Controller,BasicLand,2,battlefield_untapped),SearchLibraryCardsToDestination(Controller,BasicLand,1,battlefield_untapped));mana=None".to_string(),
         Special::AddPlusOnePlusOneAndLifelinkCounters => "target=Creature;spell=AddCounters(Target0,+1/+1=1,lifelink=1);mana=None".to_string(),
         Special::BindTheMonster => {
             "target=Creature;spell=PutSourceOntoBattlefieldAttachedToTarget(Target0);mana=None"
@@ -3426,6 +3774,13 @@ fn effect_recipe_for(card: &CardJson) -> String {
         // `Special::CleansingWildfire`'s own recipe two lines above, the
         // first and (until Raze) only consumer of that same target spec.
         Special::DestroyLand => "target=Land;spell=DestroyObject(Target0);mana=None".to_string(),
+        Special::Program { target, recipe, mode2, .. } => match mode2 {
+            Some(mode) => format!(
+                "target={target};spell={recipe};mode2_target={};mode2={};mana=None",
+                mode.target, mode.recipe
+            ),
+            None => format!("target={target};spell={recipe};mana=None"),
+        },
     }
 }
 
@@ -3472,7 +3827,8 @@ fn keywords_for(card: &CardJson) -> String {
         | "Balustrade Spy"
         | "Spellstutter Sprite"
         | "Glint Hawk"
-        | "Fang Dragon" => keywords.push("Keywords::FLYING"),
+        | "Fang Dragon"
+        | "Shivan Dragon" => keywords.push("Keywords::FLYING"),
         "Generous Ent"
         | "Writhing Chrysalis"
         | "Vitu-Ghazi Inspector"
@@ -3486,8 +3842,12 @@ fn keywords_for(card: &CardJson) -> String {
         | "Guarded Heir"
         | "Sun-Blessed Healer" => keywords.push("Keywords::LIFELINK"),
         "Guardian of the Guildpact" => keywords.push("Keywords::PROTECTION_FROM_MONOCOLORED"),
-        "Brazen Scourge" => keywords.push("Keywords::HASTE"),
+        "Brazen Scourge" | "Fanatical Firebrand" => keywords.push("Keywords::HASTE"),
         "Samurai Token" => keywords.push("Keywords::VIGILANCE"),
+        "Dragon Token" | "Dragon 5/5 Token" => keywords.push("Keywords::FLYING"),
+        "Resolute Reinforcements" | "Twinblade Blessing" => keywords.push("Keywords::FLASH"),
+        "Elfsworn Giant" => keywords.push("Keywords::REACH"),
+        "Eager Trufflesnout" => keywords.push("Keywords::TRAMPLE"),
         _ => {}
     }
     if card.name == "Nyxborn Hydra" {
@@ -3534,7 +3894,11 @@ fn keywords_for(card: &CardJson) -> String {
             keywords.push("Keywords::DEATHTOUCH");
             keywords.push("Keywords::LIFELINK");
         }
-        "Icewind Elemental" | "Insect Token" => keywords.push("Keywords::FLYING"),
+        "Icewind Elemental" | "Insect Token" | "Angel of Finality" | "Rune-Scarred Demon" => {
+            keywords.push("Keywords::FLYING")
+        }
+        "Elementalist Adept" => keywords.push("Keywords::FLASH"),
+        "Crypt Feaster" => keywords.push("Keywords::MENACE"),
         "Prideful Parent" => keywords.push("Keywords::VIGILANCE"),
         _ => {}
     }
@@ -3749,6 +4113,7 @@ fn kicker_cost_for(name: &str) -> String {
         "Gnarlid Colony" => cost_src("{2}{G}"),
         "Sun-Blessed Healer" => cost_src("{1}{W}"),
         "Burst Lightning" => cost_src("{4}"),
+        "Grow from the Ashes" => cost_src("{2}"),
         "Gatekeeper of Malakir" => cost_src("{B}"),
         _ => "None".to_string(),
     }
@@ -3789,7 +4154,7 @@ fn alt_cost_for(name: &str) -> &'static str {
 /// cast this spell, discard a card.").
 fn additional_cost_for(name: &str) -> &'static str {
     match name {
-        "Grab the Prize" => "Some(&[CostComponent::DiscardCards(1)])",
+        "Grab the Prize" | "Thrill of Possibility" => "Some(&[CostComponent::DiscardCards(1)])",
         "Fanatical Offering" | "Reckoner's Bargain" | "Eviscerator's Insight" => {
             "Some(&[CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::ArtifactOrCreature }])"
         }
@@ -3837,6 +4202,20 @@ fn flashback_for(name: &str) -> String {
             let (pips, generic, x_count) = parse_cost("{1}{U}");
             format!(
                 "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }}), CostComponent::PayLife(3)] }})",
+                pips.join(", ")
+            )
+        }
+        "Revenge of the Rats" => {
+            let (pips, generic, x_count) = parse_cost("{2}{B}{B}");
+            format!(
+                "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})] }})",
+                pips.join(", ")
+            )
+        }
+        "Memory Deluge" => {
+            let (pips, generic, x_count) = parse_cost("{5}{U}{U}");
+            format!(
+                "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})] }})",
                 pips.join(", ")
             )
         }
@@ -3918,6 +4297,45 @@ fn escape_for(name: &str) -> String {
 /// then resolve the reusable typed library search.
 fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
+        "Shivan Dragon" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: Some("R"),
+                generic: 0,
+            }],
+            effect: AbilityEffectRecipe::PumpSourceUntilEndOfTurn {
+                power: 1,
+                toughness: 0,
+            },
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Axgard Cavalry" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Tap],
+            effect: AbilityEffectRecipe::GrantTargetKeywordUntilEndOfTurn("HASTE"),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "Creature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Rogue's Passage" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 4,
+                },
+                AbilityCostRecipe::Tap,
+            ],
+            effect: AbilityEffectRecipe::GrantTargetKeywordUntilEndOfTurn("CANT_BE_BLOCKED"),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "Creature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Cathar Commando" => &[ActivatedAbilityRecipe {
             cost: &[
                 AbilityCostRecipe::Mana {
@@ -3930,6 +4348,15 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_zone: "Battlefield",
             sorcery_speed_only: false,
             target_spec: "ArtifactOrEnchantmentPermanent",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Rune-Sealed Wall" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Tap],
+            effect: AbilityEffectRecipe::Surveil(1),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
@@ -4001,6 +4428,16 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
                     filter: PermanentFilterRecipe::ArtifactOrCreature,
                 },
             ],
+            effect: AbilityEffectRecipe::DealDamageAnyTarget(1),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "AnyTarget",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        // {T}, Sacrifice this creature: It deals 1 damage to any target.
+        "Fanatical Firebrand" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Tap, AbilityCostRecipe::SacrificeSelf],
             effect: AbilityEffectRecipe::DealDamageAnyTarget(1),
             activation_zone: "Battlefield",
             sorcery_speed_only: false,
@@ -4449,6 +4886,25 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
+        "Burnished Hart" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 3,
+                },
+                AbilityCostRecipe::SacrificeSelf,
+            ],
+            effect: AbilityEffectRecipe::SearchLibraryUpToToBattlefield {
+                filter: LibrarySearchFilterRecipe::BasicLand,
+                max: 2,
+                tapped: true,
+            },
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Evolving Wilds" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Tap, AbilityCostRecipe::SacrificeSelf],
             effect: AbilityEffectRecipe::SearchLibraryToBattlefieldTapped {
@@ -4738,7 +5194,10 @@ fn permanent_filter_token(filter: PermanentFilterRecipe) -> &'static str {
 
 fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
     match effect {
+        AbilityEffectRecipe::PumpSourceUntilEndOfTurn { power, toughness } => format!("pump_source_until_end_of_turn:{power}:{toughness}:exact_incarnation"),
+        AbilityEffectRecipe::GrantTargetKeywordUntilEndOfTurn(keyword) => format!("grant_target_keyword_until_end_of_turn:{keyword}:exact_incarnation"),
         AbilityEffectRecipe::DrawCards(count) => format!("draw_cards:{count}"),
+        AbilityEffectRecipe::Surveil(count) => format!("surveil:{count}"),
         AbilityEffectRecipe::GainLife(amount) => format!("gain_life:{amount}"),
         AbilityEffectRecipe::CreateToken(name) => format!("create_token:{name}"),
         AbilityEffectRecipe::DamageTarget(amount) => format!("damage_target:{amount}"),
@@ -4814,6 +5273,11 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
             "search_library_to_battlefield_tapped:{}",
             library_search_filter_token(filter)
         ),
+        AbilityEffectRecipe::SearchLibraryUpToToBattlefield { filter, max, tapped } => format!(
+            "search_library_up_to_to_battlefield:{}:{max}:{}",
+            library_search_filter_token(filter),
+            if tapped { "tapped" } else { "untapped" }
+        ),
         AbilityEffectRecipe::EachPlayerControllingNamedPermanentDrawsCard(name) => {
             format!("each_player_controlling_named_permanent_draws_card:{name}")
         }
@@ -4862,7 +5326,15 @@ fn library_search_filter_src(filter: LibrarySearchFilterRecipe) -> String {
 
 fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
     match effect {
+        AbilityEffectRecipe::PumpSourceUntilEndOfTurn { power, toughness } => {
+            format!("ability_effect_pump_source_{power}_{toughness}")
+        }
+        AbilityEffectRecipe::GrantTargetKeywordUntilEndOfTurn(keyword) => format!(
+            "ability_effect_grant_target_{}",
+            keyword.to_ascii_lowercase()
+        ),
         AbilityEffectRecipe::DrawCards(count) => format!("ability_effect_draw_{count}"),
+        AbilityEffectRecipe::Surveil(count) => format!("ability_effect_surveil_{count}"),
         AbilityEffectRecipe::GainLife(amount) => format!("ability_effect_gain_life_{amount}"),
         AbilityEffectRecipe::CreateToken("Samurai Token") => {
             "ability_effect_create_samurai_token".to_string()
@@ -4981,6 +5453,17 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
             library_search_filter_token(filter)
                 .replace([':', '|'], "_")
                 .to_ascii_lowercase()
+        ),
+        AbilityEffectRecipe::SearchLibraryUpToToBattlefield {
+            filter,
+            max,
+            tapped,
+        } => format!(
+            "ability_effect_search_up_to_{max}_{}_to_battlefield_{}",
+            library_search_filter_token(filter)
+                .replace([':', '|'], "_")
+                .to_ascii_lowercase(),
+            if tapped { "tapped" } else { "untapped" }
         ),
         AbilityEffectRecipe::EachPlayerControllingNamedPermanentDrawsCard(name) => {
             format!(
@@ -5101,6 +5584,15 @@ fn mode2_for(name: &str) -> String {
         Special::PiracyCharm => "Some(ModeDef { target_spec: TargetSpec::Creature, effect: mode2_effect_piracy_charm_pump })".to_string(),
         Special::CastIntoTheFire => "Some(ModeDef { target_spec: TargetSpec::ArtifactPermanent, effect: mode2_effect_cast_into_the_fire_exile_artifact })".to_string(),
         Special::ThrabenCharm => "Some(ModeDef { target_spec: TargetSpec::EnchantmentPermanent, effect: mode2_effect_thraben_charm_destroy_enchantment })".to_string(),
+        Special::BoostControlledOrCreateTokens { .. } => format!(
+            "Some(ModeDef {{ target_spec: TargetSpec::None, effect: mode2_effect_create_tokens_{} }})",
+            name.to_ascii_lowercase().replace([' ', '\''], "_")
+        ),
+        Special::Program { mode2: Some(mode), .. } => format!(
+            "Some(ModeDef {{ target_spec: {}, effect: mode2_effect_program_{} }})",
+            program_target_spec_src(mode.target),
+            program_function_suffix(name)
+        ),
         _ => "None".to_string(),
     }
 }
@@ -5223,6 +5715,13 @@ fn generic_cost_reduction_for(name: &str) -> &'static str {
     }
 }
 
+/// Whether the spell program reads "the amount of mana spent to cast this
+/// spell". Derived from the hashed program recipe, so it needs no separate
+/// canonical token.
+fn records_mana_spent_for(name: &str) -> bool {
+    matches!(special_for(name), Special::Program { recipe, .. } if recipe.contains("ManaSpentToCast"))
+}
+
 fn spell_cannot_be_countered_for(card: &CardJson) -> bool {
     card.mechanics
         .iter()
@@ -5271,6 +5770,8 @@ fn attachment_for(name: &str) -> &'static str {
     match name {
         "Bind the Monster" => "Some(AttachmentDef::AuraCreature { prevents_untap: true })",
         "Witness Protection" => "Some(AttachmentDef::AuraCreatureOverride(CreatureCharacteristicsOverrideDef { name: \"Legitimate Businessperson\", subtype: Subtype::Citizen, colors: &[ManaColor::G, ManaColor::W], power: 1, toughness: 1, loses_abilities: true }))",
+        "Twinblade Blessing" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 0, toughness: 0, keywords: Keywords::DOUBLE_STRIKE, per_controlled_subtype: None }))",
+        "Blanchwood Armor" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 1, toughness: 1, keywords: Keywords::NONE, per_controlled_subtype: Some(Subtype::Forest) }))",
         _ => "None",
     }
 }
@@ -5330,6 +5831,20 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Wary Thespian" => "etb_and_dies:surveil:1",
         "Firebrand Archer" => "cast_noncreature:damage_opponent:1",
         "Spitfire Lagac" => "controlled_land_enters:damage_opponent:1",
+        "Dragon Trainer" => "etb:create_red_4_4_flying_dragon:1",
+        "Resolute Reinforcements" => "etb:create_white_1_1_soldier:1",
+        "Elfsworn Giant" => "controlled_land_enters:create_elf_warrior:1",
+        "Eager Trufflesnout" => "source_combat_damage_to_player:create_food:1",
+        "Rite of the Dragoncaller" => "cast_instant_or_sorcery:create_red_5_5_flying_dragon:1",
+        "Elementalist Adept" => "cast_noncreature:pump_bound_source:1:1:end_of_turn",
+        "Crypt Feaster" => "attacks_if_controller_graveyard_cards_at_least:7:recheck_threshold:pump_bound_source:2:0:end_of_turn",
+        "Erudite Wizard" => "controller_draws_nth_card_this_turn:2:counter_on_bound_source:1",
+        "Phyrexian Arena" => "beginning_controller_upkeep:draw:1:then_controller_loses_life:1",
+        "Gleaming Barrier" => "dies:create_treasure_token:1",
+        "Angel of Finality" => "etb:target_player:exile_graveyard",
+        "Bigfin Bouncer" => "etb:target_opponent_controlled_creature:return_to_owners_hand",
+        "Rune-Scarred Demon" => "etb:search_library_any_card_to_hand_unrevealed",
+        "Tatyova, Benthic Druid" => "controlled_land_enters:gain_life:1:then_draw:1",
         "Dazzling Angel" => "other_controlled_creature_enters:gain_life:1",
         "Beast-Kin Ranger" => "other_controlled_creature_enters:pump_bound_source:1:0:end_of_turn",
         "Dwynen, Gilt-Leaf Daen" => "source_declared_attacker:gain_life_current_attacking_elf_count",
@@ -5359,6 +5874,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Faerie Seer" => "etb:scry:2",
         "Outlaw Medic" => "dies:draw:1",
         "Solemn Simulacrum" => "etb:search_basic_land_to_battlefield_tapped;dies:may_draw:1",
+        "Campus Guide" => "etb:may_search_basic_land_reveal_shuffle_put_on_top",
         "Adventuring Gear" => "controlled_land_enters:boost_attached_creature:2:2:end_of_turn",
         "Goldvein Pick" => "equipped_creature_combat_damage_player:create_treasure_token:1",
         "Refurbished Familiar" => "etb:opponent_discard_else_draw",
@@ -5368,6 +5884,10 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Bojuka Bog" => "etb:target_player:exile_graveyard",
         "Conduit Pylons" => "etb:surveil:1",
         "Humbling Elder" => "etb:target_opponent_creature:pump:-2:0:eot",
+        "Meteor Golem" => "etb:target_opponent_nonland_permanent:destroy",
+        "Dauntless Veteran" => "source_declared_attacker:boost_controlled_creatures:1:1:none:end_of_turn",
+        "Crackling Cyclops" => "cast_noncreature:pump_bound_source:3:0:end_of_turn",
+        "Reclamation Sage" => "etb:target_artifact_or_enchantment:may_destroy",
         "Moon-Circuit Hacker" => {
             "combat_damage_player:may_draw:discard_unless_source_entered_this_turn:lki"
         }
@@ -5909,6 +6429,12 @@ fn codegen(cards: &[CardJson]) -> String {
         let function_name = ability_effect_fn_name(effect);
         writeln!(out, "fn {function_name}() -> EffectOp {{").unwrap();
         match effect {
+            AbilityEffectRecipe::PumpSourceUntilEndOfTurn { power, toughness } => {
+                writeln!(out, "    EffectOp::PumpTargetUntilEndOfTurnDynamic {{ target: TargetRef::ThisSource, power: DynamicValueDef::Fixed({power}), toughness: DynamicValueDef::Fixed({toughness}) }}").unwrap();
+            }
+            AbilityEffectRecipe::GrantTargetKeywordUntilEndOfTurn(keyword) => {
+                writeln!(out, "    EffectOp::GrantKeywordTargetUntilEndOfTurn {{ object: ObjectRef::Target(0), keyword: Keywords::{keyword} }}").unwrap();
+            }
             AbilityEffectRecipe::DrawCards(count) => {
                 writeln!(
                     out,
@@ -5920,6 +6446,13 @@ fn codegen(cards: &[CardJson]) -> String {
                 writeln!(
                     out,
                     "    EffectOp::GainLife {{ player: PlayerRef::Controller, amount: {amount} }}"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::Surveil(count) => {
+                writeln!(
+                    out,
+                    "    EffectOp::Surveil {{ player: PlayerRef::Controller, count: {count} }}"
                 )
                 .unwrap();
             }
@@ -6090,6 +6623,14 @@ fn codegen(cards: &[CardJson]) -> String {
             AbilityEffectRecipe::SearchLibraryToBattlefieldTapped { filter } => {
                 let filter = library_search_filter_src(filter);
                 writeln!(out, "    EffectOp::SearchLibraryToBattlefieldTapped {{ player: PlayerRef::Controller, filter: {filter} }}").unwrap();
+            }
+            AbilityEffectRecipe::SearchLibraryUpToToBattlefield {
+                filter,
+                max,
+                tapped,
+            } => {
+                let filter = library_search_filter_src(filter);
+                writeln!(out, "    EffectOp::SearchLibraryCardsToDestination {{ player: PlayerRef::Controller, filter: {filter}, max_targets: {max}, destination: crate::effect::LibrarySearchDestinationV1::Battlefield {{ tapped: {tapped} }} }}").unwrap();
             }
             AbilityEffectRecipe::EachPlayerControllingNamedPermanentDrawsCard(name) => {
                 writeln!(out, "    let named = crate::card_def::card_id_by_name({name:?}).expect(\"{name} in CARD_DEFS\");").unwrap();
@@ -6919,6 +7460,59 @@ fn codegen(cards: &[CardJson]) -> String {
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
 
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::CounterTargetThenLoot))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_counter_target_then_loot() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+        writeln!(out, "        counter_target_spell_effect(),").unwrap();
+        writeln!(
+            out,
+            "        EffectOp::DrawCards {{ player: PlayerRef::Controller, count: 1 }},"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        EffectOp::DiscardCards {{ player: PlayerRef::Controller, count: 1 }},"
+        )
+        .unwrap();
+        writeln!(out, "    ]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards.iter().any(|card| {
+        matches!(
+            special_for(&card.name),
+            Special::ReturnCreatureCardsThenDiscard
+        )
+    }) {
+        writeln!(
+            out,
+            "fn spell_effect_return_creature_cards_then_discard() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+        writeln!(
+            out,
+            "        EffectOp::MoveAllTargets {{ to_zone: Zone::Hand }},"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        EffectOp::DiscardCards {{ player: PlayerRef::Controller, count: 1 }},"
+        )
+        .unwrap();
+        writeln!(out, "    ]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
     let mut counter_unless_generics = cards
         .iter()
         .filter_map(|card| match special_for(&card.name) {
@@ -7216,6 +7810,36 @@ fn codegen(cards: &[CardJson]) -> String {
 
     if cards
         .iter()
+        .any(|card| matches!(special_for(&card.name), Special::RevengeOfTheRats))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_revenge_of_the_rats() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    let token = crate::card_def::card_id_by_name(\"Rat Token\").expect(\"Rat Token in CARD_DEFS\");").unwrap();
+        writeln!(out, "    Some(EffectOp::CreateTokensDynamic {{ token_def: token, controller: PlayerRef::Controller, count: DynamicValueDef::ControllerGraveyardCardsWithType(CardType::Creature), tapped: true }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::GrowFromTheAshes))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_grow_from_the_ashes() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    let search = |max_targets| EffectOp::SearchLibraryCardsToDestination {{ player: PlayerRef::Controller, filter: LibraryCardFilter::BasicLand, max_targets, destination: crate::effect::LibrarySearchDestinationV1::Battlefield {{ tapped: false }} }};").unwrap();
+        writeln!(out, "    Some(EffectOp::Conditional {{ cond: EffectCond::WasKicked, then: Box::new(search(2)), else_: Box::new(search(1)) }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
         .any(|card| matches!(special_for(&card.name), Special::GrimTutor))
     {
         writeln!(out, "fn spell_effect_grim_tutor() -> Option<EffectOp> {{").unwrap();
@@ -7373,6 +7997,52 @@ fn codegen(cards: &[CardJson]) -> String {
     }
 
     for (card_index, card) in cards.iter().enumerate() {
+        match special_for(&card.name) {
+            Special::CreateTokensThenBoostControlled {
+                token,
+                count,
+                power,
+                toughness,
+                keyword,
+            } => {
+                // Tokens first, so the resolution-time snapshot of
+                // controlled creatures includes them.
+                writeln!(
+                    out,
+                    "fn spell_effect_controlled_boost_{card_index}() -> Option<EffectOp> {{"
+                )
+                .unwrap();
+                writeln!(out, "    let token = crate::card_def::card_id_by_name({token:?}).expect(\"{token} in CARD_DEFS\");").unwrap();
+                writeln!(out, "    let mut ops = vec![EffectOp::CreateToken {{ token_def: token, controller: PlayerRef::Controller }}; {count}];").unwrap();
+                writeln!(out, "    ops.push(EffectOp::BoostControlledCreaturesUntilEndOfTurn {{ power: {power}, toughness: {toughness}, keywords: Keywords::{keyword} }});").unwrap();
+                writeln!(out, "    Some(EffectOp::Sequence(ops))").unwrap();
+                writeln!(out, "}}").unwrap();
+            }
+            Special::BoostControlledOrCreateTokens {
+                power,
+                toughness,
+                token,
+                count,
+            } => {
+                let function = card.name.to_ascii_lowercase().replace([' ', '\''], "_");
+                writeln!(
+                    out,
+                    "fn spell_effect_controlled_boost_{card_index}() -> Option<EffectOp> {{"
+                )
+                .unwrap();
+                writeln!(out, "    Some(EffectOp::BoostControlledCreaturesUntilEndOfTurn {{ power: {power}, toughness: {toughness}, keywords: Keywords::NONE }})").unwrap();
+                writeln!(out, "}}").unwrap();
+                writeln!(
+                    out,
+                    "fn mode2_effect_create_tokens_{function}() -> EffectOp {{"
+                )
+                .unwrap();
+                writeln!(out, "    let token = crate::card_def::card_id_by_name({token:?}).expect(\"{token} in CARD_DEFS\");").unwrap();
+                writeln!(out, "    EffectOp::Sequence(vec![EffectOp::CreateToken {{ token_def: token, controller: PlayerRef::Controller }}; {count}])").unwrap();
+                writeln!(out, "}}").unwrap();
+            }
+            _ => {}
+        }
         if let Special::BoostControlledCreatures {
             power,
             toughness,
@@ -7386,6 +8056,25 @@ fn codegen(cards: &[CardJson]) -> String {
             .unwrap();
             writeln!(out, "    Some(EffectOp::BoostControlledCreaturesUntilEndOfTurn {{ power: {power}, toughness: {toughness}, keywords: Keywords::{keyword} }})").unwrap();
             writeln!(out, "}}").unwrap();
+        }
+    }
+
+    for card in cards {
+        if let Special::Program { effect, mode2, .. } = special_for(&card.name) {
+            let suffix = program_function_suffix(&card.name);
+            writeln!(
+                out,
+                "fn spell_effect_program_{suffix}() -> Option<EffectOp> {{"
+            )
+            .unwrap();
+            writeln!(out, "    Some({effect})").unwrap();
+            writeln!(out, "}}").unwrap();
+            if let Some(mode) = mode2 {
+                writeln!(out, "fn mode2_effect_program_{suffix}() -> EffectOp {{").unwrap();
+                writeln!(out, "    {}", mode.effect).unwrap();
+                writeln!(out, "}}").unwrap();
+            }
+            writeln!(out).unwrap();
         }
     }
 
@@ -7532,6 +8221,16 @@ fn codegen(cards: &[CardJson]) -> String {
             Special::CounterUnlessPaysGeneric { filter, generic } => (
                 filter.target_spec(),
                 format!("spell_effect_counter_target_unless_pays_generic_{generic}"),
+                "no_effect".to_string(),
+            ),
+            Special::CounterTargetThenLoot => (
+                StackSpellFilter::Any.target_spec(),
+                "spell_effect_counter_target_then_loot".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::ReturnCreatureCardsThenDiscard => (
+                "TargetSpec::UpToTwoCreatureCardsInOwnGraveyard",
+                "spell_effect_return_creature_cards_then_discard".to_string(),
                 "no_effect".to_string(),
             ),
             Special::ColorBlast {
@@ -7726,6 +8425,16 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_grim_tutor".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::RevengeOfTheRats => (
+                "TargetSpec::None",
+                "spell_effect_revenge_of_the_rats".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::GrowFromTheAshes => (
+                "TargetSpec::None",
+                "spell_effect_grow_from_the_ashes".to_string(),
+                "no_effect".to_string(),
+            ),
             Special::AddPlusOnePlusOneAndLifelinkCounters => (
                 "TargetSpec::Creature",
                 "spell_effect_add_plus_one_plus_one_and_lifelink_counters".to_string(),
@@ -7796,7 +8505,9 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_joust_through".to_string(),
                 "no_effect".to_string(),
             ),
-            Special::BoostControlledCreatures { .. } => (
+            Special::BoostControlledCreatures { .. }
+            | Special::CreateTokensThenBoostControlled { .. }
+            | Special::BoostControlledOrCreateTokens { .. } => (
                 "TargetSpec::None",
                 format!("spell_effect_controlled_boost_{card_index}"),
                 "no_effect".to_string(),
@@ -7804,6 +8515,11 @@ fn codegen(cards: &[CardJson]) -> String {
             Special::NyxbornHydra => (
                 "TargetSpec::None",
                 "spell_effect_nyxborn_hydra".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::Program { target, .. } => (
+                program_target_spec_src(target),
+                format!("spell_effect_program_{}", program_function_suffix(&c.name)),
                 "no_effect".to_string(),
             ),
         };
@@ -7884,6 +8600,12 @@ fn codegen(cards: &[CardJson]) -> String {
             out,
             "        spell_cannot_be_countered: {},",
             spell_cannot_be_countered_for(c)
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        records_mana_spent: {},",
+            records_mana_spent_for(&c.name)
         )
         .unwrap();
         writeln!(
@@ -8156,7 +8878,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v55\n"
+            "kernel_carddb/v61\n"
         } else {
             "kernel_carddb/v34\n"
         },
@@ -8165,7 +8887,7 @@ fn codegen(cards: &[CardJson]) -> String {
         // `standard-magezero-fixtures` builds: the Pauper prefix plus
         // `data/standard/magezero_v1/cards_v1.json`, versioned separately
         // from the FDN Limited catalog.
-        canon = String::from("kernel_carddb_standard/v1\n");
+        canon = String::from("kernel_carddb_standard/v3\n");
     }
     if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
         canon.push_str("counter_target_spell_guard=bound_stack_spell_can_be_countered\n");
@@ -8491,6 +9213,8 @@ fn subtype_variant(t: &str) -> &'static str {
         "Cat" => "Subtype::Cat",
         "Detective" => "Subtype::Detective",
         "Dragon" => "Subtype::Dragon",
+        "Dwarf" => "Subtype::Dwarf",
+        "Berserker" => "Subtype::Berserker",
         "Drone" => "Subtype::Drone",
         "Druid" => "Subtype::Druid",
         "Eldrazi" => "Subtype::Eldrazi",
@@ -8529,9 +9253,13 @@ fn subtype_variant(t: &str) -> &'static str {
         "Archer" => "Subtype::Archer",
         "Lizard" => "Subtype::Lizard",
         "Golem" => "Subtype::Golem",
+        "Boar" => "Subtype::Boar",
+        "Cyclops" => "Subtype::Cyclops",
+        "Shark" => "Subtype::Shark",
+        "Elk" => "Subtype::Elk",
+        "Demon" => "Subtype::Demon",
         "Scout" => "Subtype::Scout",
         "Bat" => "Subtype::Bat",
-        "Demon" => "Subtype::Demon",
         "Mercenary" => "Subtype::Mercenary",
         "Assassin" => "Subtype::Assassin",
         "Wolf" => "Subtype::Wolf",

@@ -27,8 +27,8 @@ MIT licensed, Copyright (c) 2025 Will Wroble.
 
 `card_names.json` lists every distinct nonbasic card in those decks. `cards_v1.json` holds the
 Standard definitions appended after the unchanged 192-definition Pauper registry: Plains and
-Burst Lightning so far, whose behavior is shared with the FDN build. FDN definitions are not
-included, so FDN batches never move Standard card ids.
+Burst Lightning, whose behavior is shared with the FDN build, then each Standard batch in merge
+order. FDN definitions are not included, so FDN batches never move Standard card ids.
 
 Build with `cargo build --locked -p mtg-kernel --features standard-magezero-fixtures`. The feature
 also enables `limited-fdn-fixtures` for its rules behavior, but `build.rs` appends this file
@@ -45,3 +45,5 @@ python python/tools/limited_decks_v1.py inventory --registry-extension data/stan
 
 `docs/reports/standard_magezero_inventory_v1.md` lists the missing cards by mechanic family and which
 thread owns each family.
+
+Memory Deluge and Recruitment Officer are Partial: their current implementations keep the bottomed cards in looked-at order, so full deck admission refuses them until subset randomization is implemented. The registry retains their definitions and behavior for development.

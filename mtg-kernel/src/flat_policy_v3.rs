@@ -139,7 +139,7 @@ impl FastActorSessionV1 {
     ) -> Result<FlatDecisionV3, FlatDecisionErrorV2> {
         encoder
             .common
-            .build_scoring_owned_v3(self, expected, buffers)
+            .build_scoring_owned_v3(self, expected, buffers, false)
             .inspect_err(|error| {
                 // Opt-in backend evidence only. Preserve the first failure and
                 // capture only the projection belonging to the acting player.
@@ -158,6 +158,18 @@ impl FastActorSessionV1 {
                     }
                 }
             })
+    }
+
+    #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+    pub(crate) fn encode_current_flat_scoring_v3_evaluation_adapter(
+        &self,
+        expected: FastActorDecisionV1,
+        encoder: &mut FlatDecisionEncoderV3,
+        buffers: &mut FlatScoringOwnedBuffersV2<'_>,
+    ) -> Result<FlatDecisionV3, FlatDecisionErrorV2> {
+        encoder
+            .common
+            .build_scoring_owned_v3(self, expected, buffers, true)
     }
 }
 

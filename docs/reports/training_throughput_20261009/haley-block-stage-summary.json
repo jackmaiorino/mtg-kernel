@@ -1,0 +1,4239 @@
+{
+  "blocks": [
+    {
+      "run": "r1",
+      "block": "b01-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1321.1410000000033,
+      "execution_seconds": 983.375,
+      "post_execution_seconds": 337.76600000000326,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 210.7278993999999,
+        "collection_validation_seconds": 154.35883550000003,
+        "iteration_wall_seconds": 978.0610183999997,
+        "update_execution_seconds": 544.3955673999999,
+        "update_validation_seconds": 59.451465099999986
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b01-a1\\dispatch\\report.json",
+          "sha256": "a7dc64c6fb669a776769fb50e957bcb8e8f6ec44422f2883897cfa56b97e8a27",
+          "bytes": 171503
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b01-a1\\dispatch\\execution.json",
+          "sha256": "a97527edfa1e57621beb633f4a867e7ae3f922cf424a16c78f3750c728fe3c39",
+          "bytes": 63
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b01-a1\\dispatch\\stdout.jsonl",
+          "sha256": "cb24ab057a48df8b9284b2218cff73865d2126660d333b15d88522abf43dbc45",
+          "bytes": 142626
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b01-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "d783dfca810a47ddef433d244a17a31c894e1aff6d8b722e72f055a98ef717d8",
+          "bytes": 4906
+        }
+      },
+      "native_logical_bytes": 10042452361,
+      "recovery_bytes": 2471502364,
+      "state_timing": {
+        "started": "2026-10-07T16:48:56.512873+00:00",
+        "finished": "2026-10-07T17:11:31.354271+00:00",
+        "run_updated": "2026-10-08T00:14:20.693070+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r1.json",
+          "sha256": "78278cd2eea6061fbd885fab5fc6a09a87301c6ac92a81fbd71a86ed77922427",
+          "bytes": 51238
+        }
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b02-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1189.5470000000205,
+      "execution_seconds": 874.875,
+      "post_execution_seconds": 314.6720000000205,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 189.90536059999994,
+        "collection_validation_seconds": 126.25472720000002,
+        "iteration_wall_seconds": 868.7799174000004,
+        "update_execution_seconds": 484.3148386000001,
+        "update_validation_seconds": 59.16410289999998
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b02-a1\\dispatch\\report.json",
+          "sha256": "1347111ce36f839d5eac9cccf8db0c744c49ad57bf5530c4887cd041464d3736",
+          "bytes": 171502
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b02-a1\\dispatch\\execution.json",
+          "sha256": "9040d0e613a87f99d7c6f2e3d13a4e791c64b7b30701408880f2d1b85c4bc852",
+          "bytes": 63
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b02-a1\\dispatch\\stdout.jsonl",
+          "sha256": "30336aa2da5fe2a064effbb9ba8d28be6d16beeeb142df013b0fcc87d989fcbd",
+          "bytes": 142778
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b02-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "7c9b32b8357b79c10987ff27200d9207fd90af840c6e041c7f7ead951207c6b5",
+          "bytes": 4294
+        }
+      },
+      "native_logical_bytes": 9075388733,
+      "recovery_bytes": 2291485695,
+      "state_timing": {
+        "started": "2026-10-07T17:14:01.671909+00:00",
+        "finished": "2026-10-07T17:34:07.480185+00:00",
+        "run_updated": "2026-10-08T00:14:20.693070+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r1.json",
+          "sha256": "78278cd2eea6061fbd885fab5fc6a09a87301c6ac92a81fbd71a86ed77922427",
+          "bytes": 51238
+        }
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b03-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1178.1869999999763,
+      "execution_seconds": 865.6869999999763,
+      "post_execution_seconds": 312.5,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 188.61598469999998,
+        "collection_validation_seconds": 120.33351940000001,
+        "iteration_wall_seconds": 859.0746920999999,
+        "update_execution_seconds": 481.94302170000014,
+        "update_validation_seconds": 59.0122259
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b03-a1\\dispatch\\report.json",
+          "sha256": "caf5bb02d12ad4aa60bfa2cf2fd048846027a82ebdbf2be486c9352fb8737850",
+          "bytes": 171502
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b03-a1\\dispatch\\execution.json",
+          "sha256": "a9bec6866d937499f20060d70844f5fb1c1bd4949c24c64a4defdf9057e5c3b1",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b03-a1\\dispatch\\stdout.jsonl",
+          "sha256": "78c165a4579152beca8768bf044109be5373928f945f4d2a2cead9bc992c551c",
+          "bytes": 142583
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b03-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "2c2708c53ddbae5f5319e358577458f669ddee569bf13fb009cb2810ec717dd0",
+          "bytes": 4145
+        }
+      },
+      "native_logical_bytes": 9078402054,
+      "recovery_bytes": 2291935241,
+      "state_timing": {
+        "started": "2026-10-07T17:36:16.729043+00:00",
+        "finished": "2026-10-07T17:56:23.059618+00:00",
+        "run_updated": "2026-10-08T00:14:20.693070+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r1.json",
+          "sha256": "78278cd2eea6061fbd885fab5fc6a09a87301c6ac92a81fbd71a86ed77922427",
+          "bytes": 51238
+        }
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b04-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1218.75,
+      "execution_seconds": 897.1560000000172,
+      "post_execution_seconds": 321.59399999998277,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 193.49785700000004,
+        "collection_validation_seconds": 132.2360774,
+        "iteration_wall_seconds": 889.9620077000003,
+        "update_execution_seconds": 495.922603,
+        "update_validation_seconds": 59.063949099999995
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b04-a1\\dispatch\\report.json",
+          "sha256": "f9caa75f0bed9ede9961319bac7e153433e1c1f86639c4470b88dc8665444008",
+          "bytes": 171491
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b04-a1\\dispatch\\execution.json",
+          "sha256": "c8259f419d6e3fae5d759715db37d721c0d59826ab6c834777b36a20c030135b",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b04-a1\\dispatch\\stdout.jsonl",
+          "sha256": "11b2a651b2216e4337bc3bd2199aae845c8216ba2c033b2b5c9b330e49a78898",
+          "bytes": 142610
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b04-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "6dc6c4fca8baa9d495931a3dc49f148975a51915c091d633479b20d0d8dd840c",
+          "bytes": 4299
+        }
+      },
+      "native_logical_bytes": 9378270541,
+      "recovery_bytes": 2366453827,
+      "state_timing": {
+        "started": "2026-10-07T17:58:32.687029+00:00",
+        "finished": "2026-10-07T18:19:09.685125+00:00",
+        "run_updated": "2026-10-08T00:14:20.693070+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r1.json",
+          "sha256": "78278cd2eea6061fbd885fab5fc6a09a87301c6ac92a81fbd71a86ed77922427",
+          "bytes": 51238
+        }
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b05-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1185.0630000000237,
+      "execution_seconds": 870.0320000000065,
+      "post_execution_seconds": 315.03100000001723,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 189.50031900000002,
+        "collection_validation_seconds": 124.52639420000006,
+        "iteration_wall_seconds": 862.3353436000001,
+        "update_execution_seconds": 479.6133052000003,
+        "update_validation_seconds": 59.433086299999985
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b05-a1\\dispatch\\report.json",
+          "sha256": "6268dc1c2d1a252d4e11b0f9db4bd37164668a881961ec84e9e7d17041b6d104",
+          "bytes": 171502
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b05-a1\\dispatch\\execution.json",
+          "sha256": "5df0d3fa77937d7a1b3f20c10c9dbfb6709d7ab2e7bde1cdee54f1934f4c6b78",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b05-a1\\dispatch\\stdout.jsonl",
+          "sha256": "397cce55d9f0105dca2cb1ae87490a05047ad201dbad91db8d28695fc3196262",
+          "bytes": 142583
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b05-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "83d04844f7b60df40e7788fec79e9fe7302e967b80bdfa8216fd8071ca841bf4",
+          "bytes": 4112
+        }
+      },
+      "native_logical_bytes": 9061729082,
+      "recovery_bytes": 2286323270,
+      "state_timing": {
+        "started": "2026-10-07T18:21:24.986727+00:00",
+        "finished": "2026-10-07T18:41:32.487053+00:00",
+        "run_updated": "2026-10-08T00:14:20.693070+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r1.json",
+          "sha256": "78278cd2eea6061fbd885fab5fc6a09a87301c6ac92a81fbd71a86ed77922427",
+          "bytes": 51238
+        }
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b06-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1165.4839999999967,
+      "execution_seconds": 852.2189999999828,
+      "post_execution_seconds": 313.26500000001397,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 187.30402419999993,
+        "collection_validation_seconds": 114.06558790000003,
+        "iteration_wall_seconds": 843.9775798,
+        "update_execution_seconds": 474.5241767999999,
+        "update_validation_seconds": 58.93608749999997
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b06-a1\\dispatch\\report.json",
+          "sha256": "8f017f3de5525b466c8a10034456e79bae2394134b9ecc6621198ca8c0a1fb28",
+          "bytes": 171502
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b06-a1\\dispatch\\execution.json",
+          "sha256": "4c2b0429c315460d1eb21f938832973a8ff70a49edb9dac987f9a3bb90de35e1",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b06-a1\\dispatch\\stdout.jsonl",
+          "sha256": "5663f92f5a017b2063da904deab093fa90846a4e116ecbe6cea1563496dd6199",
+          "bytes": 142574
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b06-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "78b130ce7cd98d95b3ea00749d65a13d04ecffc2f6713e68b716024b0e9b7d8e",
+          "bytes": 3960
+        }
+      },
+      "native_logical_bytes": 8987780328,
+      "recovery_bytes": 2280035827,
+      "state_timing": {
+        "started": "2026-10-07T18:43:41.870751+00:00",
+        "finished": "2026-10-07T19:03:19.851115+00:00",
+        "run_updated": "2026-10-08T00:14:20.693070+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r1.json",
+          "sha256": "78278cd2eea6061fbd885fab5fc6a09a87301c6ac92a81fbd71a86ed77922427",
+          "bytes": 51238
+        }
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b07-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1173.7179999999935,
+      "execution_seconds": 857.9220000000205,
+      "post_execution_seconds": 315.795999999973,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 188.81491979999984,
+        "collection_validation_seconds": 115.79623699999998,
+        "iteration_wall_seconds": 849.1919101999997,
+        "update_execution_seconds": 476.2386859999999,
+        "update_validation_seconds": 59.199628800000035
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b07-a1\\dispatch\\report.json",
+          "sha256": "64410f4df69dc14e0f4fe2bd8552132fcbc0608cfba06914352c7f7ce7728f67",
+          "bytes": 171502
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b07-a1\\dispatch\\execution.json",
+          "sha256": "c5e56873be3d38c9b1de20f55313c04649478afc0a0e1641340ae202f7a24dad",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b07-a1\\dispatch\\stdout.jsonl",
+          "sha256": "62abbc2967ff1d8300314771928b8b32703df12bb3248d7fc180ac54a3ccbdf8",
+          "bytes": 142676
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b07-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "e96332b1f6a12383d2329dd50ff9b88ebd1f3ebd79944bbc4d71bf68f16a77a8",
+          "bytes": 3987
+        }
+      },
+      "native_logical_bytes": 9049167218,
+      "recovery_bytes": 2307843842,
+      "state_timing": {
+        "started": "2026-10-07T19:05:26.991471+00:00",
+        "finished": "2026-10-07T19:25:35.654824+00:00",
+        "run_updated": "2026-10-08T00:14:20.693070+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r1.json",
+          "sha256": "78278cd2eea6061fbd885fab5fc6a09a87301c6ac92a81fbd71a86ed77922427",
+          "bytes": 51238
+        }
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b08-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1132.594000000041,
+      "execution_seconds": 824.579000000027,
+      "post_execution_seconds": 308.01500000001397,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 183.45797040000002,
+        "collection_validation_seconds": 106.00020289999998,
+        "iteration_wall_seconds": 815.2002837999996,
+        "update_execution_seconds": 457.5667546000002,
+        "update_validation_seconds": 58.90667220000002
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b08-a1\\dispatch\\report.json",
+          "sha256": "85dba57f11c3233a084a05a372e0e7614dda8671b6e635a280bd12a147c2e0dd",
+          "bytes": 171501
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b08-a1\\dispatch\\execution.json",
+          "sha256": "a88284027639ffc350dcb463da11d5d809261340dcdfb3672a05e30b4f9b818c",
+          "bytes": 72
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b08-a1\\dispatch\\stdout.jsonl",
+          "sha256": "faf759f6b4a7087a77f0f57101626f5a8c7f0e32cbdb2023f9dd2ff6d3c81151",
+          "bytes": 142660
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b08-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "2d940e8321a6a4b13865d07d2e15680c4c833592cb4d118a92e4321fa16b9fe6",
+          "bytes": 3835
+        }
+      },
+      "native_logical_bytes": 8744473137,
+      "recovery_bytes": 2240934175,
+      "state_timing": {
+        "started": "2026-10-07T19:27:43.360355+00:00",
+        "finished": "2026-10-07T19:46:52.383696+00:00",
+        "run_updated": "2026-10-08T00:14:20.693070+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r1.json",
+          "sha256": "78278cd2eea6061fbd885fab5fc6a09a87301c6ac92a81fbd71a86ed77922427",
+          "bytes": 51238
+        }
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b09-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1190.875,
+      "execution_seconds": 870.109999999986,
+      "post_execution_seconds": 320.76500000001397,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 189.31259859999994,
+        "collection_validation_seconds": 122.38630599999996,
+        "iteration_wall_seconds": 860.2241184999997,
+        "update_execution_seconds": 480.0233763000003,
+        "update_validation_seconds": 59.22574830000002
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b09-a1\\dispatch\\report.json",
+          "sha256": "7577e5fd33441f8a48b21cece345a7988f20c22a1c1e2c19d500a5d5ebdf9266",
+          "bytes": 171492
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b09-a1\\dispatch\\execution.json",
+          "sha256": "edae406a9fab2c7ad1a1777cab3f79fbfed50e01ac8b8be48d0650810b3f1fed",
+          "bytes": 72
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b09-a1\\dispatch\\stdout.jsonl",
+          "sha256": "d15b7d89ead1e7f64d6089a490e255791bb05fd7387962e1c5d58de61cf7f3b0",
+          "bytes": 142657
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b09-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "b4a6222762ab0d250c69971a410375058dd4065bf67c6990fac8bd65024fbb3d",
+          "bytes": 3957
+        }
+      },
+      "native_logical_bytes": 9178402780,
+      "recovery_bytes": 2339428385,
+      "state_timing": {
+        "started": "2026-10-07T19:48:54.496035+00:00",
+        "finished": "2026-10-07T20:09:04.106392+00:00",
+        "run_updated": "2026-10-08T00:14:20.693070+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r1.json",
+          "sha256": "78278cd2eea6061fbd885fab5fc6a09a87301c6ac92a81fbd71a86ed77922427",
+          "bytes": 51238
+        }
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b10-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1153.625,
+      "execution_seconds": 840.5160000000033,
+      "post_execution_seconds": 313.10899999999674,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 186.97630510000002,
+        "collection_validation_seconds": 112.56858729999999,
+        "iteration_wall_seconds": 830.1650759999998,
+        "update_execution_seconds": 462.4542319000001,
+        "update_validation_seconds": 58.927257
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b10-a1\\dispatch\\report.json",
+          "sha256": "a9b73854d71e5dc3f838df85a257794dcd6b8d3b254aa1f28906c1fcdc327c7e",
+          "bytes": 171492
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b10-a1\\dispatch\\execution.json",
+          "sha256": "a447aef470fdd53d1837243e4681940dc2471ea9934c73bba7af272ffaf7977a",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b10-a1\\dispatch\\stdout.jsonl",
+          "sha256": "ac066ad32c4a9d46a7c845d2aee99e96d8232c0e500177908c166e6447043fc4",
+          "bytes": 142610
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b10-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "8bfd0abde56be5d58f86fe8a28b3b84d3512b755ecf3957cea76cc877d3a9159",
+          "bytes": 3842
+        }
+      },
+      "native_logical_bytes": 8857179095,
+      "recovery_bytes": 2264204235,
+      "state_timing": {
+        "started": "2026-10-07T20:11:14.502200+00:00",
+        "finished": "2026-10-07T20:30:54.648507+00:00",
+        "run_updated": "2026-10-08T00:14:20.693070+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r1.json",
+          "sha256": "78278cd2eea6061fbd885fab5fc6a09a87301c6ac92a81fbd71a86ed77922427",
+          "bytes": 51238
+        }
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b11-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1221.155999999959,
+      "execution_seconds": 896.0939999999828,
+      "post_execution_seconds": 325.06199999997625,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 193.2540319,
+        "collection_validation_seconds": 130.4320885,
+        "iteration_wall_seconds": 885.1639114999999,
+        "update_execution_seconds": 493.26874729999986,
+        "update_validation_seconds": 59.00205899999999
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b11-a1\\dispatch\\report.json",
+          "sha256": "3a88337f96d09a4bfa7b6723ce3d2507aded03ee825d982681623811e1d9acbd",
+          "bytes": 171501
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b11-a1\\dispatch\\execution.json",
+          "sha256": "4a6d0547de380cac88a41995b9f8eb222032a2d5e90745c550a21925bfe16d82",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b11-a1\\dispatch\\stdout.jsonl",
+          "sha256": "08d00a7a84a617c112c8f11f65b4ae20bbccf2ae7659165073e316020d2e6d16",
+          "bytes": 142717
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b11-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "3c183b0700437ceb5832feb46e71722534133e5372bcc47fc2ab346a9135b21c",
+          "bytes": 3979
+        }
+      },
+      "native_logical_bytes": 9287756073,
+      "recovery_bytes": 2345019764,
+      "state_timing": {
+        "started": "2026-10-07T20:32:58.969261+00:00",
+        "finished": "2026-10-07T20:53:39.618216+00:00",
+        "run_updated": "2026-10-08T00:14:20.693070+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r1.json",
+          "sha256": "78278cd2eea6061fbd885fab5fc6a09a87301c6ac92a81fbd71a86ed77922427",
+          "bytes": 51238
+        }
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b12-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1186.3119999999763,
+      "execution_seconds": 866.4529999999795,
+      "post_execution_seconds": 319.85899999999674,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 190.3255007999999,
+        "collection_validation_seconds": 118.20764500000003,
+        "iteration_wall_seconds": 855.0193042000003,
+        "update_execution_seconds": 478.1505612000003,
+        "update_validation_seconds": 59.13568290000001
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b12-a1\\dispatch\\report.json",
+          "sha256": "bf501b83a8e7d5ae5e60a5f0f10707636b3ae4c358d8aef5128f31e83fa3dcd3",
+          "bytes": 171502
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b12-a1\\dispatch\\execution.json",
+          "sha256": "c3bf3c1aa4141e0e4bcb759eaf36701d3271f0efd2b9b8e2c6e29e68e0fe45de",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b12-a1\\dispatch\\stdout.jsonl",
+          "sha256": "3708884ad226913e8df2be3545b1f856e0df0ec241c659e2487bf63190b708ae",
+          "bytes": 142642
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b12-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "49d037d53563304e4f7d993b97d5d8d01fc5d3d1cf8aafb4ba4c3dd4262c5f55",
+          "bytes": 3810
+        }
+      },
+      "native_logical_bytes": 9160047288,
+      "recovery_bytes": 2348448839,
+      "state_timing": {
+        "started": "2026-10-07T20:55:52.556355+00:00",
+        "finished": "2026-10-07T21:16:03.716270+00:00",
+        "run_updated": "2026-10-08T00:14:20.693070+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r1.json",
+          "sha256": "78278cd2eea6061fbd885fab5fc6a09a87301c6ac92a81fbd71a86ed77922427",
+          "bytes": 51238
+        }
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b13-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1192.5779999999795,
+      "execution_seconds": 870.780999999959,
+      "post_execution_seconds": 321.7970000000205,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 191.64775080000004,
+        "collection_validation_seconds": 119.45910399999998,
+        "iteration_wall_seconds": 858.7131944000008,
+        "update_execution_seconds": 479.04528089999997,
+        "update_validation_seconds": 59.19391320000002
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b13-a1\\dispatch\\report.json",
+          "sha256": "cf7ad65fb01e1e0592ad3b34b929231755875948e1d59f8d28bbc4176f372c3f",
+          "bytes": 171502
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b13-a1\\dispatch\\execution.json",
+          "sha256": "ccd76dce26efd30e249a7e6e43e630728b6a9bd5e267d329fa158d6625849ca3",
+          "bytes": 72
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b13-a1\\dispatch\\stdout.jsonl",
+          "sha256": "3364aa01876fb485a6001cd47c11445fe7488f9b991cda87e0b601b50327989e",
+          "bytes": 142724
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b13-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "6e17c1bbaeffe5487df84cb9f378a58ecb07037579d0f13a9dc30980cce71614",
+          "bytes": 3844
+        }
+      },
+      "native_logical_bytes": 9101708762,
+      "recovery_bytes": 2325834023,
+      "state_timing": {
+        "started": "2026-10-07T21:18:13.011850+00:00",
+        "finished": "2026-10-07T21:38:24.888177+00:00",
+        "run_updated": "2026-10-08T00:14:20.693070+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r1.json",
+          "sha256": "78278cd2eea6061fbd885fab5fc6a09a87301c6ac92a81fbd71a86ed77922427",
+          "bytes": 51238
+        }
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b14-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1187.9370000000345,
+      "execution_seconds": 867.5620000000345,
+      "post_execution_seconds": 320.375,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 188.7414859000001,
+        "collection_validation_seconds": 116.89647260000002,
+        "iteration_wall_seconds": 851.4508722000004,
+        "update_execution_seconds": 477.3276848999997,
+        "update_validation_seconds": 59.200210399999975
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b14-a1\\dispatch\\report.json",
+          "sha256": "c835f725080637809f747812dd78d6b894ed1a14913cd340d2fbdfb8d16dc548",
+          "bytes": 171502
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b14-a1\\dispatch\\execution.json",
+          "sha256": "0919db8058cfae1dfd8ee9aa7dca4c48e858c315281a5fa180a76434003142d6",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b14-a1\\dispatch\\stdout.jsonl",
+          "sha256": "914c33544c591edd5b4aa79cc362c39350d227979dae20b141608819cb7b5746",
+          "bytes": 142647
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b14-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "1885078d649b8b0c76419a94f1fb35f4c8060f93695fc8ed21478b2f0aa9de80",
+          "bytes": 3848
+        }
+      },
+      "native_logical_bytes": 9073128554,
+      "recovery_bytes": 2314461283,
+      "state_timing": {
+        "started": "2026-10-07T21:40:33.471003+00:00",
+        "finished": "2026-10-07T22:00:46.198018+00:00",
+        "run_updated": "2026-10-08T00:14:20.693070+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r1.json",
+          "sha256": "78278cd2eea6061fbd885fab5fc6a09a87301c6ac92a81fbd71a86ed77922427",
+          "bytes": 51238
+        }
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b15-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1198.3280000000377,
+      "execution_seconds": 875.2179999999935,
+      "post_execution_seconds": 323.11000000004424,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 189.41652300000004,
+        "collection_validation_seconds": 120.29512900000006,
+        "iteration_wall_seconds": 861.3649214000002,
+        "update_execution_seconds": 483.1981074000001,
+        "update_validation_seconds": 59.11964780000002
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b15-a1\\dispatch\\report.json",
+          "sha256": "1132329b0be426140b7fd5aeb94afe988b221a1c0ae58f43de4186892c5da8a4",
+          "bytes": 171502
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b15-a1\\dispatch\\execution.json",
+          "sha256": "4c740d56ee399ae0993425838f274c21ee8fb62c9f53e773c89cec1d9e3ec6d6",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b15-a1\\dispatch\\stdout.jsonl",
+          "sha256": "da13e0fff3721305a626c0d10cc70df41f74d6fd3896d7d23f0d8b5944dd365b",
+          "bytes": 142606
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b15-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "5b5842cd64f675d18efc8b3b172d6e384d0c3bb386f1825ec9fb0e527c76dbe5",
+          "bytes": 3837
+        }
+      },
+      "native_logical_bytes": 9179541999,
+      "recovery_bytes": 2345275975,
+      "state_timing": {
+        "started": "2026-10-07T22:02:54.040220+00:00",
+        "finished": "2026-10-07T22:23:07.076266+00:00",
+        "run_updated": "2026-10-08T00:14:20.693070+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r1.json",
+          "sha256": "78278cd2eea6061fbd885fab5fc6a09a87301c6ac92a81fbd71a86ed77922427",
+          "bytes": 51238
+        }
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b16-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1180.4070000000065,
+      "execution_seconds": 860.7189999999828,
+      "post_execution_seconds": 319.68800000002375,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 188.1687722000001,
+        "collection_validation_seconds": 117.76168410000004,
+        "iteration_wall_seconds": 846.7746607000006,
+        "update_execution_seconds": 472.5066596999998,
+        "update_validation_seconds": 59.030020700000016
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b16-a1\\dispatch\\report.json",
+          "sha256": "1a179d899584c97a0621dfe15de23d67f5106a710d207785b719561da6078f4b",
+          "bytes": 171502
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b16-a1\\dispatch\\execution.json",
+          "sha256": "13375152e539019004909639eafc8ff0d9d79b6a78b12c1050c3fe241afc6a2f",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b16-a1\\dispatch\\stdout.jsonl",
+          "sha256": "2516e24c6a8c59351d543cfe204fdc29aaeddbeb46a65718278c6f2d61bb8eaa",
+          "bytes": 142604
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b16-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "7c3c9c4ef8e048ff144eff0cc32b7c38bcb599e072bc1c827d73ef874c4deb98",
+          "bytes": 3692
+        }
+      },
+      "native_logical_bytes": 9071071652,
+      "recovery_bytes": 2322686587,
+      "state_timing": {
+        "started": "2026-10-07T22:25:17.287800+00:00",
+        "finished": "2026-10-07T22:45:30.965661+00:00",
+        "run_updated": "2026-10-08T00:14:20.693070+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r1.json",
+          "sha256": "78278cd2eea6061fbd885fab5fc6a09a87301c6ac92a81fbd71a86ed77922427",
+          "bytes": 51238
+        }
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b17-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1138.984999999986,
+      "execution_seconds": 820.8910000000033,
+      "post_execution_seconds": 318.09399999998277,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 182.2550868,
+        "collection_validation_seconds": 104.310602,
+        "iteration_wall_seconds": 804.2202114999999,
+        "update_execution_seconds": 449.4198365000003,
+        "update_validation_seconds": 58.96733320000003
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b17-a1\\dispatch\\report.json",
+          "sha256": "39c56b83a2dd84dde2e37b31f680d46dfad43696596f1e69ee5239428af2e846",
+          "bytes": 171501
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b17-a1\\dispatch\\execution.json",
+          "sha256": "95a053e3e7891ca9594740e65891883a373982e72421d0d03cc02ec4ffe8655c",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b17-a1\\dispatch\\stdout.jsonl",
+          "sha256": "728b9fdf52f1204c32b04079bb23fb425e38b72fe75f64721d567be6ef8dc3a6",
+          "bytes": 142625
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b17-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "b1d9438145e52d6f8f1946bd722c673067b22952165585394f29625e2f1983de",
+          "bytes": 3536
+        }
+      },
+      "native_logical_bytes": 8711217516,
+      "recovery_bytes": 2244757475,
+      "state_timing": {
+        "started": "2026-10-07T22:47:38.781702+00:00",
+        "finished": "2026-10-07T23:06:52.890400+00:00",
+        "run_updated": "2026-10-08T00:14:20.693070+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r1.json",
+          "sha256": "78278cd2eea6061fbd885fab5fc6a09a87301c6ac92a81fbd71a86ed77922427",
+          "bytes": 51238
+        }
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b18-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1186.8439999999828,
+      "execution_seconds": 864.5779999999795,
+      "post_execution_seconds": 322.26600000000326,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 187.10549189999998,
+        "collection_validation_seconds": 117.8469934,
+        "iteration_wall_seconds": 849.5721315000004,
+        "update_execution_seconds": 476.3891224999998,
+        "update_validation_seconds": 58.9579845
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b18-a1\\dispatch\\report.json",
+          "sha256": "b44c714449f01ea6360b596f7e638b66f9c736a40047ae60b07881664e1baac5",
+          "bytes": 171502
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b18-a1\\dispatch\\execution.json",
+          "sha256": "ab167a2d8526d3e5943f738b00fbebf594b8096f325b4b91f806d41020a3e92f",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b18-a1\\dispatch\\stdout.jsonl",
+          "sha256": "819cd3c088997f32ea473b3d6e95c4ee1902d2b618dddd0985affc4b0ef9d17d",
+          "bytes": 142529
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b18-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "ac064ab768898930feca857248f17213edfb76c50422b6f1aa18a5cced6afb73",
+          "bytes": 3694
+        }
+      },
+      "native_logical_bytes": 9051813521,
+      "recovery_bytes": 2313983022,
+      "state_timing": {
+        "started": "2026-10-07T23:08:53.950127+00:00",
+        "finished": "2026-10-07T23:29:08.654748+00:00",
+        "run_updated": "2026-10-08T00:14:20.693070+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r1.json",
+          "sha256": "78278cd2eea6061fbd885fab5fc6a09a87301c6ac92a81fbd71a86ed77922427",
+          "bytes": 51238
+        }
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b19-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1159.5779999999795,
+      "execution_seconds": 842.0160000000033,
+      "post_execution_seconds": 317.56199999997625,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 183.11146860000002,
+        "collection_validation_seconds": 112.46112639999997,
+        "iteration_wall_seconds": 826.5505831000004,
+        "update_execution_seconds": 462.4844267999999,
+        "update_validation_seconds": 59.12314760000001
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b19-a1\\dispatch\\report.json",
+          "sha256": "f20daeb1f49027ccea3d6e73b8ba854ffae24ba4904acf1af29dbd8492fe552c",
+          "bytes": 171502
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b19-a1\\dispatch\\execution.json",
+          "sha256": "9b6532d3091a72f0a7609409a58b16e1e5b0e564d8bd20c7c199a549d7e604e4",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b19-a1\\dispatch\\stdout.jsonl",
+          "sha256": "95c4e9dbf9a818b082905c482325c08a4533fa6bc9f5ef5cd57b0238cfd3451a",
+          "bytes": 142676
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b19-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "a55b53437053bdae548029db22b53c6d2134427df4a9bdd3c901925273eff304",
+          "bytes": 3548
+        }
+      },
+      "native_logical_bytes": 8875241939,
+      "recovery_bytes": 2282379700,
+      "state_timing": {
+        "started": "2026-10-07T23:31:16.065757+00:00",
+        "finished": "2026-10-07T23:51:01.286686+00:00",
+        "run_updated": "2026-10-08T00:14:20.693070+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r1.json",
+          "sha256": "78278cd2eea6061fbd885fab5fc6a09a87301c6ac92a81fbd71a86ed77922427",
+          "bytes": 51238
+        }
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b20-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1131.3279999999795,
+      "execution_seconds": 819.6410000000033,
+      "post_execution_seconds": 311.68699999997625,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 183.57286689999995,
+        "collection_validation_seconds": 104.83516409999999,
+        "iteration_wall_seconds": 803.5905459000002,
+        "update_execution_seconds": 447.23843329999994,
+        "update_validation_seconds": 58.717748599999986
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b20-a1\\dispatch\\report.json",
+          "sha256": "9a9975c5990c0979fd278a24553649518b74b1cbc889d481373f5114d60336db",
+          "bytes": 171502
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b20-a1\\dispatch\\execution.json",
+          "sha256": "f9b73155f4b551acbf19cd5e7845c248d5ce86ce55e30c4af02d276cc308001b",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b20-a1\\dispatch\\stdout.jsonl",
+          "sha256": "04bcbaac67baff35dc70194a9f4ffdb7ce05c57234fc4681d24ed18a5f047cf0",
+          "bytes": 142592
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b20-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "e147eb96b94fd73e5542a3528d54be019cb2a551cf0b6c4f4367f63b0193c599",
+          "bytes": 3362
+        }
+      },
+      "native_logical_bytes": 8650551028,
+      "recovery_bytes": 2226174771,
+      "state_timing": {
+        "started": "2026-10-07T23:53:05.284241+00:00",
+        "finished": "2026-10-08T00:12:21.166629+00:00",
+        "run_updated": "2026-10-08T00:14:20.693070+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r1.json",
+          "sha256": "78278cd2eea6061fbd885fab5fc6a09a87301c6ac92a81fbd71a86ed77922427",
+          "bytes": 51238
+        }
+      }
+    },
+    {
+      "run": "r2",
+      "block": "b01-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1418.3910000000033,
+      "execution_seconds": 1061.0619999999763,
+      "post_execution_seconds": 357.329000000027,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 221.15926410000014,
+        "collection_validation_seconds": 174.39069779999997,
+        "iteration_wall_seconds": 1055.7389058999997,
+        "update_execution_seconds": 591.0119918000004,
+        "update_validation_seconds": 59.82025460000003
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b01-a1\\dispatch\\report.json",
+          "sha256": "b93f7108d9a78f386061699d90b12d3addb66992a26486da7dd219ffed555ae7",
+          "bytes": 171503
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b01-a1\\dispatch\\execution.json",
+          "sha256": "571dc93eace2d4af96086ce11dfea44a8869d45c3a44dc71a1afb208e0e3ff5a",
+          "bytes": 74
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b01-a1\\dispatch\\stdout.jsonl",
+          "sha256": "e017b66e19cc15793e14f69d13dfc3c791835f3465d8b79d61c6320daf8404fc",
+          "bytes": 142641
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b01-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "6c233701ae59f7b1e425a3bba84f2171675b05e00aed280d6f8bb70bdcc2ebb7",
+          "bytes": 5218
+        }
+      },
+      "native_logical_bytes": 10668586020,
+      "recovery_bytes": 2605070742,
+      "state_timing": {
+        "started": "2026-10-08T00:24:19.070711+00:00",
+        "finished": "2026-10-08T00:48:24.015085+00:00",
+        "run_updated": "2026-10-08T07:56:33.318781+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r2.json",
+          "sha256": "f005212cc7dc3996a79e53833149cad5c2ae2c2790208d117a145a1e790bdce7",
+          "bytes": 51311
+        }
+      }
+    },
+    {
+      "run": "r2",
+      "block": "b02-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1215.1410000000033,
+      "execution_seconds": 871.9529999999795,
+      "post_execution_seconds": 343.18800000002375,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 203.41155979999994,
+        "collection_validation_seconds": 103.49920459999993,
+        "iteration_wall_seconds": 866.4336360999997,
+        "update_execution_seconds": 492.40507139999977,
+        "update_validation_seconds": 58.335785300000026
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b02-a1\\dispatch\\report.json",
+          "sha256": "e1b8f40615c7871ebbaa1f9cb7e316f4205573e272b7474f8b089511d14f2572",
+          "bytes": 171367
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b02-a1\\dispatch\\execution.json",
+          "sha256": "63052b6760e19f8c75ab70782d4e16c03c152105a024db59f464e0e85248c4b9",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b02-a1\\dispatch\\stdout.jsonl",
+          "sha256": "53e174c25e61bca154f080fc4c8e50b02f40e91199249fe6f58907bc6a5f9962",
+          "bytes": 142573
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b02-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "ac70a87f3dc332095d25cab6b75882157d28253ac6a70c6938d0b66861486f64",
+          "bytes": 4302
+        }
+      },
+      "native_logical_bytes": 9453654381,
+      "recovery_bytes": 2376998875,
+      "state_timing": {
+        "started": "2026-10-08T01:05:16.425021+00:00",
+        "finished": "2026-10-08T01:25:51.648773+00:00",
+        "run_updated": "2026-10-08T07:56:33.318781+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r2.json",
+          "sha256": "f005212cc7dc3996a79e53833149cad5c2ae2c2790208d117a145a1e790bdce7",
+          "bytes": 51311
+        }
+      }
+    },
+    {
+      "run": "r2",
+      "block": "b03-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1108.969000000041,
+      "execution_seconds": 800.2820000000065,
+      "post_execution_seconds": 308.68700000003446,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 188.88477810000006,
+        "collection_validation_seconds": 86.25450739999995,
+        "iteration_wall_seconds": 794.2140877000003,
+        "update_execution_seconds": 452.6724761999996,
+        "update_validation_seconds": 57.63763340000002
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b03-a1\\dispatch\\report.json",
+          "sha256": "a210543cc5bd6b84ee1f9b52d1aa61b60acce51e48a76b941b13e1581054a8bb",
+          "bytes": 171366
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b03-a1\\dispatch\\execution.json",
+          "sha256": "17152dd1a4865408d6cbb39fad30699a2412d856fa8ac1f7db73b28c21fce6f2",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b03-a1\\dispatch\\stdout.jsonl",
+          "sha256": "35569436ebb3bf08d28a4787b4f03d2f6b416c3ca24a355d474ee192a548ea1a",
+          "bytes": 142584
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b03-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "f347224d568fe40884fa9a5a75642136ff18fe271cf1c2f40d333f02087ac3ed",
+          "bytes": 3851
+        }
+      },
+      "native_logical_bytes": 8858833578,
+      "recovery_bytes": 2248919887,
+      "state_timing": {
+        "started": "2026-10-08T01:28:08.664360+00:00",
+        "finished": "2026-10-08T01:46:45.080511+00:00",
+        "run_updated": "2026-10-08T07:56:33.318781+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r2.json",
+          "sha256": "f005212cc7dc3996a79e53833149cad5c2ae2c2790208d117a145a1e790bdce7",
+          "bytes": 51311
+        }
+      }
+    },
+    {
+      "run": "r2",
+      "block": "b04-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1165.1570000000065,
+      "execution_seconds": 844.2970000000205,
+      "post_execution_seconds": 320.85999999998603,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 195.73814980000003,
+        "collection_validation_seconds": 100.85214049999996,
+        "iteration_wall_seconds": 837.5887051999998,
+        "update_execution_seconds": 474.31432390000003,
+        "update_validation_seconds": 57.81140679999997
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b04-a1\\dispatch\\report.json",
+          "sha256": "f6cce0608cd9e3b51e5b7e1f226c056d7d2a1af2b8ac8bde0cd53672de140949",
+          "bytes": 171367
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b04-a1\\dispatch\\execution.json",
+          "sha256": "5a3c2532ad334f3a1ba88d90a20830ecbbe1eabc6a6d9c8afa160ed3fc1201e8",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b04-a1\\dispatch\\stdout.jsonl",
+          "sha256": "6f3a72b774f163fd1d5f603032c6d92c83da17df3ab5f30e4e553dd25fc7bc0c",
+          "bytes": 142618
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b04-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "b5986947f056a4f8d49953cc4537917929222141edc0f167a933efdc5a22f8fd",
+          "bytes": 3993
+        }
+      },
+      "native_logical_bytes": 9231907881,
+      "recovery_bytes": 2338100282,
+      "state_timing": {
+        "started": "2026-10-08T01:48:50.527231+00:00",
+        "finished": "2026-10-08T02:08:26.901925+00:00",
+        "run_updated": "2026-10-08T07:56:33.318781+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r2.json",
+          "sha256": "f005212cc7dc3996a79e53833149cad5c2ae2c2790208d117a145a1e790bdce7",
+          "bytes": 51311
+        }
+      }
+    },
+    {
+      "run": "r2",
+      "block": "b05-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1165.75,
+      "execution_seconds": 844.1570000000065,
+      "post_execution_seconds": 321.5929999999935,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 198.0500763,
+        "collection_validation_seconds": 96.03681650000001,
+        "iteration_wall_seconds": 837.0570077000002,
+        "update_execution_seconds": 476.4413284,
+        "update_validation_seconds": 57.711068799999985
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b05-a1\\dispatch\\report.json",
+          "sha256": "1ba60acdebdc81260f22b291d6f1618d7b17b955085c30404494cc37055dfe08",
+          "bytes": 171356
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b05-a1\\dispatch\\execution.json",
+          "sha256": "e5b23196cc3b1f748517f503f0bde103f44e12dc9d469c5c4192f8ade7360b8a",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b05-a1\\dispatch\\stdout.jsonl",
+          "sha256": "5abdff15819e6834c23e32eecab2e264e13aff6b20b151e73b3bcc63659ca2b4",
+          "bytes": 142699
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b05-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "f7da4809a725ef84809e4cbb916d34b795464c3bc40c84efad4beae842d6e184",
+          "bytes": 3997
+        }
+      },
+      "native_logical_bytes": 9300857209,
+      "recovery_bytes": 2373509661,
+      "state_timing": {
+        "started": "2026-10-08T02:10:39.525776+00:00",
+        "finished": "2026-10-08T02:30:16.355198+00:00",
+        "run_updated": "2026-10-08T07:56:33.318781+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r2.json",
+          "sha256": "f005212cc7dc3996a79e53833149cad5c2ae2c2790208d117a145a1e790bdce7",
+          "bytes": 51311
+        }
+      }
+    },
+    {
+      "run": "r2",
+      "block": "b06-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1125.4839999999967,
+      "execution_seconds": 809.6719999999623,
+      "post_execution_seconds": 315.81200000003446,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 191.64272509999998,
+        "collection_validation_seconds": 90.33098359999998,
+        "iteration_wall_seconds": 802.0849271000001,
+        "update_execution_seconds": 453.77762059999986,
+        "update_validation_seconds": 57.56209979999999
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b06-a1\\dispatch\\report.json",
+          "sha256": "23d02befa3ce3df51d841b57f6e163d6366c75fa01321e87dc05e6333777db7d",
+          "bytes": 171367
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b06-a1\\dispatch\\execution.json",
+          "sha256": "e841a9f4711be22b939f7fef1f78ed8da781cda2b37e1da8ce24608b6640f304",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b06-a1\\dispatch\\stdout.jsonl",
+          "sha256": "29670608a0045c223102e8c3a89c9dd04118042965b5cb8658aad23f36d9ba7b",
+          "bytes": 142576
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b06-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "f376ee997257dc768baf3e60ea43a93b046acf2e517d2b37971d4019546d8b4e",
+          "bytes": 3838
+        }
+      },
+      "native_logical_bytes": 8992970111,
+      "recovery_bytes": 2308022040,
+      "state_timing": {
+        "started": "2026-10-08T02:32:28.821644+00:00",
+        "finished": "2026-10-08T02:51:36.209281+00:00",
+        "run_updated": "2026-10-08T07:56:33.318781+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r2.json",
+          "sha256": "f005212cc7dc3996a79e53833149cad5c2ae2c2790208d117a145a1e790bdce7",
+          "bytes": 51311
+        }
+      }
+    },
+    {
+      "run": "r2",
+      "block": "b07-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1135.3129999999655,
+      "execution_seconds": 818.2189999999828,
+      "post_execution_seconds": 317.09399999998277,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 192.6097609000001,
+        "collection_validation_seconds": 92.12559290000007,
+        "iteration_wall_seconds": 810.0636496999999,
+        "update_execution_seconds": 458.85663070000015,
+        "update_validation_seconds": 57.6726384
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b07-a1\\dispatch\\report.json",
+          "sha256": "02c0fd43a90782cdacbc9a6a769ed26853d08f311437f0704fb279545a5dd9a2",
+          "bytes": 171367
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b07-a1\\dispatch\\execution.json",
+          "sha256": "73e3faa7d9442105e56fb2ac420b4cfe49d57af8b245896fa9f732e26725fe33",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b07-a1\\dispatch\\stdout.jsonl",
+          "sha256": "ddafa0e1d0c49d113852056bf65095a3289baf2747f32c4559d0dfbaa96dd7c3",
+          "bytes": 142663
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b07-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "3d17ede93ac68d265efc0cf1bbefef59c85d1b2f749b1130060300609d118a40",
+          "bytes": 3829
+        }
+      },
+      "native_logical_bytes": 9099643547,
+      "recovery_bytes": 2334608698,
+      "state_timing": {
+        "started": "2026-10-08T02:53:42.179528+00:00",
+        "finished": "2026-10-08T03:12:50.072969+00:00",
+        "run_updated": "2026-10-08T07:56:33.318781+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r2.json",
+          "sha256": "f005212cc7dc3996a79e53833149cad5c2ae2c2790208d117a145a1e790bdce7",
+          "bytes": 51311
+        }
+      }
+    },
+    {
+      "run": "r2",
+      "block": "b08-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1128.1560000000172,
+      "execution_seconds": 813.1089999999967,
+      "post_execution_seconds": 315.0470000000205,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 190.45777539999997,
+        "collection_validation_seconds": 90.64751589999997,
+        "iteration_wall_seconds": 804.4640827000001,
+        "update_execution_seconds": 455.82534590000006,
+        "update_validation_seconds": 58.113497699999975
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b08-a1\\dispatch\\report.json",
+          "sha256": "e41d879a16ae492fbe941c753a631e06fb722b0384c0cd586edda40fbc388fef",
+          "bytes": 171367
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b08-a1\\dispatch\\execution.json",
+          "sha256": "8308027d867e440c311348600a259782645d0667aefbe457577b4310696f80cb",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b08-a1\\dispatch\\stdout.jsonl",
+          "sha256": "b43630b94a6fc7cfa90596d23fa0b5737fdab0614c43e16c2ffc251380974f0f",
+          "bytes": 142799
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b08-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "755949afcff72cef1fc433ca960af9263d17c9f69c0d367fbe8ba17d606d3144",
+          "bytes": 3681
+        }
+      },
+      "native_logical_bytes": 9039300285,
+      "recovery_bytes": 2325652277,
+      "state_timing": {
+        "started": "2026-10-08T03:14:58.482348+00:00",
+        "finished": "2026-10-08T03:34:06.898615+00:00",
+        "run_updated": "2026-10-08T07:56:33.318781+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r2.json",
+          "sha256": "f005212cc7dc3996a79e53833149cad5c2ae2c2790208d117a145a1e790bdce7",
+          "bytes": 51311
+        }
+      }
+    },
+    {
+      "run": "r2",
+      "block": "b09-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1112.4530000000377,
+      "execution_seconds": 801.4370000000345,
+      "post_execution_seconds": 311.01600000000326,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 190.49254340000002,
+        "collection_validation_seconds": 89.5540843,
+        "iteration_wall_seconds": 792.1477981000002,
+        "update_execution_seconds": 445.4409476000002,
+        "update_validation_seconds": 57.803243300000005
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b09-a1\\dispatch\\report.json",
+          "sha256": "808b6fdffef9b6eaa4b440c5932ed1c64ab1dba3b944e814071d4d0461a6d820",
+          "bytes": 171367
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b09-a1\\dispatch\\execution.json",
+          "sha256": "0194f4a5993c0c9394571fdea784811421c2e97210a07d5ee39a4632ffdc5c08",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b09-a1\\dispatch\\stdout.jsonl",
+          "sha256": "50b5bdef17508368a13648acf0e66de9bdf4d592ecc0295c5131a1eaed3055d9",
+          "bytes": 142614
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b09-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "2d3a414e2b17d2d0493dd028bdf2653a32f4ed53b648a8883f22439fff4b0ee3",
+          "bytes": 3680
+        }
+      },
+      "native_logical_bytes": 8786437474,
+      "recovery_bytes": 2252532303,
+      "state_timing": {
+        "started": "2026-10-08T03:36:14.436513+00:00",
+        "finished": "2026-10-08T03:55:23.412739+00:00",
+        "run_updated": "2026-10-08T07:56:33.318781+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r2.json",
+          "sha256": "f005212cc7dc3996a79e53833149cad5c2ae2c2790208d117a145a1e790bdce7",
+          "bytes": 51311
+        }
+      }
+    },
+    {
+      "run": "r2",
+      "block": "b10-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1143.594000000041,
+      "execution_seconds": 825.1410000000033,
+      "post_execution_seconds": 318.4530000000377,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 193.5841409,
+        "collection_validation_seconds": 93.83796510000002,
+        "iteration_wall_seconds": 815.3902704000005,
+        "update_execution_seconds": 461.09510409999984,
+        "update_validation_seconds": 58.05460800000001
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b10-a1\\dispatch\\report.json",
+          "sha256": "1b32ccab72a687cb80e3b58fc97fd788a68e13f70e6703d1c612903488ed93f8",
+          "bytes": 171366
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b10-a1\\dispatch\\execution.json",
+          "sha256": "3e10fbd403f11afd0e4bbc9e884d73a01a1205af8d4a6526aaf33e3a08401cad",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b10-a1\\dispatch\\stdout.jsonl",
+          "sha256": "790964314d3a6027c2e331317c5b3689de1535c6919b88ac2df2060d1f47b029",
+          "bytes": 142622
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b10-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "e16ad45dd953798420d23f5dd6d6dcb92b3c705fbd26f2bd69b24e7f7b449705",
+          "bytes": 3687
+        }
+      },
+      "native_logical_bytes": 9031749699,
+      "recovery_bytes": 2316335897,
+      "state_timing": {
+        "started": "2026-10-08T03:57:25.975172+00:00",
+        "finished": "2026-10-08T04:17:05.520730+00:00",
+        "run_updated": "2026-10-08T07:56:33.318781+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r2.json",
+          "sha256": "f005212cc7dc3996a79e53833149cad5c2ae2c2790208d117a145a1e790bdce7",
+          "bytes": 51311
+        }
+      }
+    },
+    {
+      "run": "r2",
+      "block": "b11-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1121.4839999999967,
+      "execution_seconds": 807.1410000000033,
+      "post_execution_seconds": 314.3429999999935,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 190.24755440000004,
+        "collection_validation_seconds": 86.92733429999997,
+        "iteration_wall_seconds": 796.6752057999996,
+        "update_execution_seconds": 453.0132264000001,
+        "update_validation_seconds": 57.65716469999999
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b11-a1\\dispatch\\report.json",
+          "sha256": "98d36612d09da44b9c3051de7a3304a4cbae3b5c037d8b90ecb0d73e2dae43d3",
+          "bytes": 171367
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b11-a1\\dispatch\\execution.json",
+          "sha256": "abc71b104677dc0a858e84c069ee84c091d94996e46ef86ca8e0a94407d26058",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b11-a1\\dispatch\\stdout.jsonl",
+          "sha256": "36f03eaa3a318e58beb458f1ea4b8b16f01e15b104064e1936963723f56617dc",
+          "bytes": 142703
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b11-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "de2fb076fd9d7c398cc72a072557d9e46538f6085e607d464fff04ec9ba9061f",
+          "bytes": 3537
+        }
+      },
+      "native_logical_bytes": 8938694488,
+      "recovery_bytes": 2301590818,
+      "state_timing": {
+        "started": "2026-10-08T04:19:12.986654+00:00",
+        "finished": "2026-10-08T04:38:23.274407+00:00",
+        "run_updated": "2026-10-08T07:56:33.318781+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r2.json",
+          "sha256": "f005212cc7dc3996a79e53833149cad5c2ae2c2790208d117a145a1e790bdce7",
+          "bytes": 51311
+        }
+      }
+    },
+    {
+      "run": "r2",
+      "block": "b12-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1174.4839999999967,
+      "execution_seconds": 847.4220000000205,
+      "post_execution_seconds": 327.06199999997625,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 197.2176163,
+        "collection_validation_seconds": 95.36894110000004,
+        "iteration_wall_seconds": 836.6082448000002,
+        "update_execution_seconds": 477.5659298999997,
+        "update_validation_seconds": 57.59959439999997
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b12-a1\\dispatch\\report.json",
+          "sha256": "02dcd70059ca634d283b7bbc1c3ca78ab7f61e8a0d2700be2820e2bcba4bd2e3",
+          "bytes": 171367
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b12-a1\\dispatch\\execution.json",
+          "sha256": "3172517993b6aebe99bf75a09a4b45b2af6403c3cf010c411e51ca62fd1eb11e",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b12-a1\\dispatch\\stdout.jsonl",
+          "sha256": "bfda6aca0d6c26156f88d0a5fb297d5cc1d6b44805599708c21fcba2fec184fe",
+          "bytes": 142561
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b12-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "014e7ae2dc16d14ee62b743242c6774670c35b7f124fa23735dd6a0c8a2c46be",
+          "bytes": 3678
+        }
+      },
+      "native_logical_bytes": 9388408799,
+      "recovery_bytes": 2401318759,
+      "state_timing": {
+        "started": "2026-10-08T04:40:28.551193+00:00",
+        "finished": "2026-10-08T05:00:39.164002+00:00",
+        "run_updated": "2026-10-08T07:56:33.318781+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r2.json",
+          "sha256": "f005212cc7dc3996a79e53833149cad5c2ae2c2790208d117a145a1e790bdce7",
+          "bytes": 51311
+        }
+      }
+    },
+    {
+      "run": "r2",
+      "block": "b13-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1167.1560000000172,
+      "execution_seconds": 843.7810000000172,
+      "post_execution_seconds": 323.375,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 195.0253821,
+        "collection_validation_seconds": 98.40518349999995,
+        "iteration_wall_seconds": 832.4748759,
+        "update_execution_seconds": 472.48299940000004,
+        "update_validation_seconds": 57.75941800000003
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b13-a1\\dispatch\\report.json",
+          "sha256": "fcb5b3da426898104624418c14d0f42d60b72d3292ac434e6cb194ce2f8727a6",
+          "bytes": 171367
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b13-a1\\dispatch\\execution.json",
+          "sha256": "4420ce1405b36255fb22d5b76412ab13bb9a0b2dd6c4f7f494acc93f7be9ca34",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b13-a1\\dispatch\\stdout.jsonl",
+          "sha256": "cbb6bf711568598f1242e435ac462c0fb8b82f00f83ebcc16a83377694a0de78",
+          "bytes": 142698
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b13-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "423e6fe00a7e4184ee7099e9350761ccdd5de01b539850d7f974bb1f8291e422",
+          "bytes": 3692
+        }
+      },
+      "native_logical_bytes": 9182457162,
+      "recovery_bytes": 2324990974,
+      "state_timing": {
+        "started": "2026-10-08T05:02:52.506024+00:00",
+        "finished": "2026-10-08T05:22:33.833120+00:00",
+        "run_updated": "2026-10-08T07:56:33.318781+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r2.json",
+          "sha256": "f005212cc7dc3996a79e53833149cad5c2ae2c2790208d117a145a1e790bdce7",
+          "bytes": 51311
+        }
+      }
+    },
+    {
+      "run": "r2",
+      "block": "b14-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1129.170999999973,
+      "execution_seconds": 812.125,
+      "post_execution_seconds": 317.045999999973,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 190.5800403,
+        "collection_validation_seconds": 93.16560249999996,
+        "iteration_wall_seconds": 800.3253854000003,
+        "update_execution_seconds": 449.6637212000003,
+        "update_validation_seconds": 58.09872500000003
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b14-a1\\dispatch\\report.json",
+          "sha256": "85e8dc39e83edca9f21b091c22819e651aaafb5ae2aaae66d3ae5928da481eed",
+          "bytes": 171366
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b14-a1\\dispatch\\execution.json",
+          "sha256": "7e2693d12b6b8f616668bd0b4e4480020dece9bcb1615b64f6c76023a2c2a6e3",
+          "bytes": 63
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b14-a1\\dispatch\\stdout.jsonl",
+          "sha256": "737a273ed9f3386180909a338c864aaa0f86082adbc2089776374300c24462ad",
+          "bytes": 142646
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b14-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "d9d7caa8e296548a7eb19e19fef5fe4ad25c55197d65e047990f65b26e3324e0",
+          "bytes": 3518
+        }
+      },
+      "native_logical_bytes": 8860789571,
+      "recovery_bytes": 2271498755,
+      "state_timing": {
+        "started": "2026-10-08T05:24:44.543130+00:00",
+        "finished": "2026-10-08T05:43:56.225130+00:00",
+        "run_updated": "2026-10-08T07:56:33.318781+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r2.json",
+          "sha256": "f005212cc7dc3996a79e53833149cad5c2ae2c2790208d117a145a1e790bdce7",
+          "bytes": 51311
+        }
+      }
+    },
+    {
+      "run": "r2",
+      "block": "b15-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1107.7810000000172,
+      "execution_seconds": 795.9679999999935,
+      "post_execution_seconds": 311.81300000002375,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 189.89682040000005,
+        "collection_validation_seconds": 82.13891740000001,
+        "iteration_wall_seconds": 783.5745219999998,
+        "update_execution_seconds": 443.30845729999993,
+        "update_validation_seconds": 59.09913269999998
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b15-a1\\dispatch\\report.json",
+          "sha256": "3572766c6da25757e70d73ebec1e361d95388b06e227c740facc7e70c21d36ab",
+          "bytes": 171367
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b15-a1\\dispatch\\execution.json",
+          "sha256": "ccd92cebcd76f041b93cbe6320b9acde3cd595e69288ec26e9f92404104e3fd9",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b15-a1\\dispatch\\stdout.jsonl",
+          "sha256": "42a4ff9e27e1bfc8d60fa2e0c1f8f60bd46fca3266876527841c97f31501fdf8",
+          "bytes": 142546
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b15-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "fac751b07c73d929eda70699e3713b263e46d62b5a97673c7c832fecca9557cd",
+          "bytes": 3384
+        }
+      },
+      "native_logical_bytes": 8721726086,
+      "recovery_bytes": 2248575334,
+      "state_timing": {
+        "started": "2026-10-08T05:45:59.916499+00:00",
+        "finished": "2026-10-08T06:04:42.192088+00:00",
+        "run_updated": "2026-10-08T07:56:33.318781+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r2.json",
+          "sha256": "f005212cc7dc3996a79e53833149cad5c2ae2c2790208d117a145a1e790bdce7",
+          "bytes": 51311
+        }
+      }
+    },
+    {
+      "run": "r2",
+      "block": "b16-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1141.2649999999558,
+      "execution_seconds": 822.5619999999763,
+      "post_execution_seconds": 318.7029999999795,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 196.3165438999999,
+        "collection_validation_seconds": 91.29378309999996,
+        "iteration_wall_seconds": 809.2251785,
+        "update_execution_seconds": 454.79751769999996,
+        "update_validation_seconds": 57.925212500000015
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b16-a1\\dispatch\\report.json",
+          "sha256": "4196412e5c127cf8cfea1f428fdd6f2cb9007296343030ac3d0df9980f87db33",
+          "bytes": 171367
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b16-a1\\dispatch\\execution.json",
+          "sha256": "265f31efd39ff8d5f8963141d32ba596f89e056d98bf4c6e7fe0963bb65b6aaa",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b16-a1\\dispatch\\stdout.jsonl",
+          "sha256": "47e3a414d9105e0d4aa01b84c6b459377d76e81cb89964d7d86a5f4e038a8738",
+          "bytes": 142706
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b16-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "0acfcfb277c1deef8b14b007dde47d65fc8a2399575f5851900f935152b66476",
+          "bytes": 3550
+        }
+      },
+      "native_logical_bytes": 8875589133,
+      "recovery_bytes": 2258629331,
+      "state_timing": {
+        "started": "2026-10-08T06:06:43.218475+00:00",
+        "finished": "2026-10-08T06:26:26.276308+00:00",
+        "run_updated": "2026-10-08T07:56:33.318781+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r2.json",
+          "sha256": "f005212cc7dc3996a79e53833149cad5c2ae2c2790208d117a145a1e790bdce7",
+          "bytes": 51311
+        }
+      }
+    },
+    {
+      "run": "r2",
+      "block": "b17-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1151.625,
+      "execution_seconds": 830.0779999999795,
+      "post_execution_seconds": 321.5470000000205,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 193.62129520000008,
+        "collection_validation_seconds": 92.28133869999999,
+        "iteration_wall_seconds": 814.7070088999998,
+        "update_execution_seconds": 462.3557679999999,
+        "update_validation_seconds": 57.56372639999999
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b17-a1\\dispatch\\report.json",
+          "sha256": "241ae1faec5d186f05d7d9164d914201fb9b3a9c6bab91b2f4c615de00befdd0",
+          "bytes": 171357
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b17-a1\\dispatch\\execution.json",
+          "sha256": "b4a6115ca682e5fa394d50baa3c17a72a8e8339c9ac490d7683840d1e8da4b7a",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b17-a1\\dispatch\\stdout.jsonl",
+          "sha256": "6514ce89efe6c30ae544998e4c5f880870c6eba61fca29cdec7d37b56a026222",
+          "bytes": 142626
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b17-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "1aa05a92f6618d5dc2db3013ac69223351f9270756d184decc4bff2a62f400a0",
+          "bytes": 3518
+        }
+      },
+      "native_logical_bytes": 9031761160,
+      "recovery_bytes": 2309299575,
+      "state_timing": {
+        "started": "2026-10-08T06:28:31.999243+00:00",
+        "finished": "2026-10-08T06:48:15.470327+00:00",
+        "run_updated": "2026-10-08T07:56:33.318781+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r2.json",
+          "sha256": "f005212cc7dc3996a79e53833149cad5c2ae2c2790208d117a145a1e790bdce7",
+          "bytes": 51311
+        }
+      }
+    },
+    {
+      "run": "r2",
+      "block": "b18-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1205.7660000000033,
+      "execution_seconds": 873.0779999999795,
+      "post_execution_seconds": 332.68800000002375,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 200.12206490000005,
+        "collection_validation_seconds": 102.76187440000001,
+        "iteration_wall_seconds": 856.1418790000002,
+        "update_execution_seconds": 486.41355739999995,
+        "update_validation_seconds": 57.99675239999997
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b18-a1\\dispatch\\report.json",
+          "sha256": "a7bc4dec2ba461f1c6c4d684687cde75e18ae90843a37f4743a90df46c052d4c",
+          "bytes": 171367
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b18-a1\\dispatch\\execution.json",
+          "sha256": "6e0a63f880d2eefdfa003d3b7ccc28f41d90fba6a9aa25dbcef3fd5a7b5e67b5",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b18-a1\\dispatch\\stdout.jsonl",
+          "sha256": "adb3eb77e8e3b6bc4f59e3a1744e0a75e37b8edfdedf8361ccc45aa9b38f7136",
+          "bytes": 142690
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b18-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "34d1f7e3b140600b357de5efb1054f0eb3c9eca4fe56f7ffbc767a381e7573d9",
+          "bytes": 3695
+        }
+      },
+      "native_logical_bytes": 9390030180,
+      "recovery_bytes": 2383228849,
+      "state_timing": {
+        "started": "2026-10-08T06:50:23.108944+00:00",
+        "finished": "2026-10-08T07:11:07.506706+00:00",
+        "run_updated": "2026-10-08T07:56:33.318781+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r2.json",
+          "sha256": "f005212cc7dc3996a79e53833149cad5c2ae2c2790208d117a145a1e790bdce7",
+          "bytes": 51311
+        }
+      }
+    },
+    {
+      "run": "r2",
+      "block": "b19-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1135.155999999959,
+      "execution_seconds": 816.3589999999967,
+      "post_execution_seconds": 318.7969999999623,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 192.76316730000005,
+        "collection_validation_seconds": 87.15193509999997,
+        "iteration_wall_seconds": 798.9930152,
+        "update_execution_seconds": 452.5114800999999,
+        "update_validation_seconds": 57.66717649999997
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b19-a1\\dispatch\\report.json",
+          "sha256": "fd12519b75ff49176e895aad845e01a1efdcd832d8798d8510dee065db0fabc2",
+          "bytes": 171366
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b19-a1\\dispatch\\execution.json",
+          "sha256": "c1908f7c649061b325c9ffdcbe237085c52867257da470ecf3bdac378892584f",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b19-a1\\dispatch\\stdout.jsonl",
+          "sha256": "344fdb874031df1b5af3423b6ebe13992464cfc428ca7ab7576d3805faa2bfda",
+          "bytes": 142670
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b19-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "2d6fb20e3f187addad2a14263b6914518f9d77d1ec5456d7263c17c7e3ca6779",
+          "bytes": 3387
+        }
+      },
+      "native_logical_bytes": 8925073938,
+      "recovery_bytes": 2302879205,
+      "state_timing": {
+        "started": "2026-10-08T07:13:22.074339+00:00",
+        "finished": "2026-10-08T07:32:37.027190+00:00",
+        "run_updated": "2026-10-08T07:56:33.318781+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r2.json",
+          "sha256": "f005212cc7dc3996a79e53833149cad5c2ae2c2790208d117a145a1e790bdce7",
+          "bytes": 51311
+        }
+      }
+    },
+    {
+      "run": "r2",
+      "block": "b20-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1148.9689999999828,
+      "execution_seconds": 825.0619999999763,
+      "post_execution_seconds": 323.9070000000065,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 193.6009743,
+        "collection_validation_seconds": 87.84362660000005,
+        "iteration_wall_seconds": 807.0044233000001,
+        "update_execution_seconds": 458.88725600000004,
+        "update_validation_seconds": 57.81664139999999
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b20-a1\\dispatch\\report.json",
+          "sha256": "4975fff4a17a611de434a31667320b525ff4a328b992206b6ec7999910e6687a",
+          "bytes": 171367
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b20-a1\\dispatch\\execution.json",
+          "sha256": "554571b507038fbaf38b76f56f6ce0988b4696face562af7cd02ddff0f775723",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b20-a1\\dispatch\\stdout.jsonl",
+          "sha256": "792a866404248d0a64bb8cb39bdbfc97dc25b7188d084f520f8d12a76b817d9c",
+          "bytes": 142647
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b20-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "82408ee2ad902ea1df9600e013127b0a330010470cfdc6de5422e1df7ac19b56",
+          "bytes": 3361
+        }
+      },
+      "native_logical_bytes": 8991363710,
+      "recovery_bytes": 2304159960,
+      "state_timing": {
+        "started": "2026-10-08T07:34:41.538322+00:00",
+        "finished": "2026-10-08T07:54:27.415892+00:00",
+        "run_updated": "2026-10-08T07:56:33.318781+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r2.json",
+          "sha256": "f005212cc7dc3996a79e53833149cad5c2ae2c2790208d117a145a1e790bdce7",
+          "bytes": 51311
+        }
+      }
+    },
+    {
+      "run": "r3",
+      "block": "b01-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1583.8589999999967,
+      "execution_seconds": 1186.6089999999967,
+      "post_execution_seconds": 397.25,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 235.83677170000007,
+        "collection_validation_seconds": 172.08508220000004,
+        "iteration_wall_seconds": 1164.0267213000006,
+        "update_execution_seconds": 681.9774906,
+        "update_validation_seconds": 64.17638639999998
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b01-a1\\dispatch\\report.json",
+          "sha256": "e9967012638358aa994d31772bd3671029af69e543e2eac1be37ecc291e87562",
+          "bytes": 171420
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b01-a1\\dispatch\\execution.json",
+          "sha256": "f1b261d56b070cd687ba59ad9da443ec9947b8fbc5936cd71ca382d67ae186f2",
+          "bytes": 74
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b01-a1\\dispatch\\stdout.jsonl",
+          "sha256": "a00757153168c48c8f756b623aec794c9aae414d17b120bca2bd3d021f0bdb69",
+          "bytes": 142589
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b01-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "e3e0459905c627ec7746ceba87a22a629469f2f327be6e2bc02bfea3e4471d91",
+          "bytes": 4322
+        }
+      },
+      "native_logical_bytes": 11234723897,
+      "recovery_bytes": 2729455387,
+      "state_timing": {
+        "started": "2026-10-08T07:57:39.700188+00:00",
+        "finished": "2026-10-08T08:24:32.585900+00:00",
+        "run_updated": "2026-10-08T16:14:43.402745+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r3.json",
+          "sha256": "aa6e41a56106b2f38809dc6b7c0b5679ef2e9b37254a68cb848fe203852f0a74",
+          "bytes": 51322
+        }
+      }
+    },
+    {
+      "run": "r3",
+      "block": "b02-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1642.655999999959,
+      "execution_seconds": 1219.25,
+      "post_execution_seconds": 423.405999999959,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 246.51063949999994,
+        "collection_validation_seconds": 190.55154860000005,
+        "iteration_wall_seconds": 1199.4230892999992,
+        "update_execution_seconds": 690.142584299999,
+        "update_validation_seconds": 62.56120969999995
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b02-a1\\dispatch\\report.json",
+          "sha256": "01ec0e5a65e7e48dd9b07b68538a39293ecbbe552cfb2d1216470a75d4d9414c",
+          "bytes": 171419
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b02-a1\\dispatch\\execution.json",
+          "sha256": "546608cfe85d4a5823e115c1e1740d144709a1037b1f90358d1e293f6dcfeca4",
+          "bytes": 63
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b02-a1\\dispatch\\stdout.jsonl",
+          "sha256": "f9b9262c299b3fadc3b26e166f521019864ac35dd4fec48c0a3dd4d315333cea",
+          "bytes": 142556
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b02-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "e91ba9b4315a19d29113628d4457343a84bd2695556ad84ce3aa9254280df632",
+          "bytes": 4780
+        }
+      },
+      "native_logical_bytes": 12149969869,
+      "recovery_bytes": 2941173671,
+      "state_timing": {
+        "started": "2026-10-08T08:27:34.971865+00:00",
+        "finished": "2026-10-08T08:55:25.207874+00:00",
+        "run_updated": "2026-10-08T16:14:43.402745+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r3.json",
+          "sha256": "aa6e41a56106b2f38809dc6b7c0b5679ef2e9b37254a68cb848fe203852f0a74",
+          "bytes": 51322
+        }
+      }
+    },
+    {
+      "run": "r3",
+      "block": "b03-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1621.0779999999795,
+      "execution_seconds": 1197.875,
+      "post_execution_seconds": 423.2029999999795,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 239.70593499999995,
+        "collection_validation_seconds": 181.20005310000002,
+        "iteration_wall_seconds": 1175.6595897999998,
+        "update_execution_seconds": 682.4258812999998,
+        "update_validation_seconds": 62.698283200000006
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b03-a1\\dispatch\\report.json",
+          "sha256": "0133bd71d102800b947f515675aed3ae7586ba94d9814660d1c6fce5fd6adfd5",
+          "bytes": 171420
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b03-a1\\dispatch\\execution.json",
+          "sha256": "93ce16a4f6d86b468b3a6c3b00be0efd599d8097076d2a7b58ae0cdb533c5ddc",
+          "bytes": 64
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b03-a1\\dispatch\\stdout.jsonl",
+          "sha256": "bdcc00538792bc4ac3d0122a5d6852c2a5fed4f3f007a973a69dbbe86ccbd41f",
+          "bytes": 142618
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b03-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "43992852704e24157143ddedab8ebc3fa61690bbd96004c71230a9b56c894ac7",
+          "bytes": 4469
+        }
+      },
+      "native_logical_bytes": 12084179129,
+      "recovery_bytes": 2931926927,
+      "state_timing": {
+        "started": "2026-10-08T08:58:43.456419+00:00",
+        "finished": "2026-10-08T09:26:36.042803+00:00",
+        "run_updated": "2026-10-08T16:14:43.402745+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r3.json",
+          "sha256": "aa6e41a56106b2f38809dc6b7c0b5679ef2e9b37254a68cb848fe203852f0a74",
+          "bytes": 51322
+        }
+      }
+    },
+    {
+      "run": "r3",
+      "block": "b04-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1385.7189999999828,
+      "execution_seconds": 1008.75,
+      "post_execution_seconds": 376.96899999998277,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 209.20656070000013,
+        "collection_validation_seconds": 149.81307599999997,
+        "iteration_wall_seconds": 987.6200406000003,
+        "update_execution_seconds": 561.1674595000001,
+        "update_validation_seconds": 58.547818599999985
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b04-a1\\dispatch\\report.json",
+          "sha256": "2f1eebd5bd8b5f129e95cc39ae33944354c4cadd0b172c383109350be56d062e",
+          "bytes": 171420
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b04-a1\\dispatch\\execution.json",
+          "sha256": "cdd47e054eb448d724886f6e23276c21e61632b4afab0ff1a6240d3b231210da",
+          "bytes": 63
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b04-a1\\dispatch\\stdout.jsonl",
+          "sha256": "011656be6f9eb552ae8a6f32a9cd3b84699972eb34c214c375014eca9dc21e95",
+          "bytes": 142507
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b04-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "011ed6f1ba39780a87fdbbb9c37c0ef0fac55075261cb5c14bf6c11af245722d",
+          "bytes": 3850
+        }
+      },
+      "native_logical_bytes": 10950849761,
+      "recovery_bytes": 2706438770,
+      "state_timing": {
+        "started": "2026-10-08T09:29:43.042394+00:00",
+        "finished": "2026-10-08T09:53:33.962398+00:00",
+        "run_updated": "2026-10-08T16:14:43.402745+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r3.json",
+          "sha256": "aa6e41a56106b2f38809dc6b7c0b5679ef2e9b37254a68cb848fe203852f0a74",
+          "bytes": 51322
+        }
+      }
+    },
+    {
+      "run": "r3",
+      "block": "b05-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1430.9839999999967,
+      "execution_seconds": 1048.265000000014,
+      "post_execution_seconds": 382.71899999998277,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 217.04750059999998,
+        "collection_validation_seconds": 158.73534799999996,
+        "iteration_wall_seconds": 1026.6564708999997,
+        "update_execution_seconds": 583.2311421999998,
+        "update_validation_seconds": 58.66550880000001
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b05-a1\\dispatch\\report.json",
+          "sha256": "2aa18fc6931b8927c853a7a3e0c9dbf1f5db9e241d2d260d04914e62040acd34",
+          "bytes": 171420
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b05-a1\\dispatch\\execution.json",
+          "sha256": "522c09cb292f165aad0b1682f09a1c095faad035eafd9ea448393f8d546d2c46",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b05-a1\\dispatch\\stdout.jsonl",
+          "sha256": "e312247b8a458954a0a91a36b0eb4c6a048ed63dd9b1dd5319c9447d6a510a98",
+          "bytes": 142619
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b05-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "6729970104af4d4692433555ab2f70cf30fe319a74b28a1c7e988f5f545d2254",
+          "bytes": 4018
+        }
+      },
+      "native_logical_bytes": 11223286599,
+      "recovery_bytes": 2756838018,
+      "state_timing": {
+        "started": "2026-10-08T09:56:17.491968+00:00",
+        "finished": "2026-10-08T10:20:38.804440+00:00",
+        "run_updated": "2026-10-08T16:14:43.402745+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r3.json",
+          "sha256": "aa6e41a56106b2f38809dc6b7c0b5679ef2e9b37254a68cb848fe203852f0a74",
+          "bytes": 51322
+        }
+      }
+    },
+    {
+      "run": "r3",
+      "block": "b06-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1427.7820000000065,
+      "execution_seconds": 1046.969000000041,
+      "post_execution_seconds": 380.81299999996554,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 217.9637797000001,
+        "collection_validation_seconds": 156.57846129999996,
+        "iteration_wall_seconds": 1018.3775448000002,
+        "update_execution_seconds": 576.6415173,
+        "update_validation_seconds": 58.2386312
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b06-a1\\dispatch\\report.json",
+          "sha256": "26941a289fe9ed1fa4c948fa0ad1665290d92ce94181342df36ad3e629bbcd16",
+          "bytes": 171420
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b06-a1\\dispatch\\execution.json",
+          "sha256": "241aeb8ae10345c847d94ef1f2671864fb511c73da2e7e570ac93dbb3e896db4",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b06-a1\\dispatch\\stdout.jsonl",
+          "sha256": "47bfe5a1cab85fedeb4f36f38845470182e977b13529a27aaff4b2d5fe21ae24",
+          "bytes": 142516
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b06-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "10529f720421d42d62247cf61a2e654bff05ab82d48599f66d7c4c72f052c754",
+          "bytes": 4005
+        }
+      },
+      "native_logical_bytes": 11159177552,
+      "recovery_bytes": 2736717264,
+      "state_timing": {
+        "started": "2026-10-08T10:23:29.162535+00:00",
+        "finished": "2026-10-08T10:47:50.982990+00:00",
+        "run_updated": "2026-10-08T16:14:43.402745+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r3.json",
+          "sha256": "aa6e41a56106b2f38809dc6b7c0b5679ef2e9b37254a68cb848fe203852f0a74",
+          "bytes": 51322
+        }
+      }
+    },
+    {
+      "run": "r3",
+      "block": "b07-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1399.1720000000205,
+      "execution_seconds": 1024.1410000000033,
+      "post_execution_seconds": 375.03100000001723,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 211.1545391,
+        "collection_validation_seconds": 152.70218080000006,
+        "iteration_wall_seconds": 1001.3960630000003,
+        "update_execution_seconds": 570.1727832000001,
+        "update_validation_seconds": 58.456616399999966
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b07-a1\\dispatch\\report.json",
+          "sha256": "8669047b72043ac0dd7af59759b4b778af6766e5a5eb7f3804f0e743c3ecd144",
+          "bytes": 171420
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b07-a1\\dispatch\\execution.json",
+          "sha256": "40c782ecb8f693c20a8247760035359b4e738e5e122ea729a5ebab37ceb8ea54",
+          "bytes": 74
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b07-a1\\dispatch\\stdout.jsonl",
+          "sha256": "df1721b41fcb0b367d6af00da305faaf6bbde63a8edacdcac84eeb37463a01cd",
+          "bytes": 142722
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b07-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "0e880e9a49d2289d14f80df6eb3dfefd1b50045f03c508f83ef2420e5d7a733a",
+          "bytes": 3826
+        }
+      },
+      "native_logical_bytes": 10857856346,
+      "recovery_bytes": 2675849470,
+      "state_timing": {
+        "started": "2026-10-08T10:50:39.612677+00:00",
+        "finished": "2026-10-08T11:14:32.157531+00:00",
+        "run_updated": "2026-10-08T16:14:43.402745+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r3.json",
+          "sha256": "aa6e41a56106b2f38809dc6b7c0b5679ef2e9b37254a68cb848fe203852f0a74",
+          "bytes": 51322
+        }
+      }
+    },
+    {
+      "run": "r3",
+      "block": "b08-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1285.3910000000033,
+      "execution_seconds": 931.75,
+      "post_execution_seconds": 353.64100000000326,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 199.2817258000001,
+        "collection_validation_seconds": 130.89242629999998,
+        "iteration_wall_seconds": 908.3243374999998,
+        "update_execution_seconds": 510.5682058999997,
+        "update_validation_seconds": 58.618018800000016
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b08-a1\\dispatch\\report.json",
+          "sha256": "1d7b0c89144f0fe3573612ac1e445e3c33afc295f90c22718e77e8d5ded5c1f5",
+          "bytes": 171419
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b08-a1\\dispatch\\execution.json",
+          "sha256": "6f36bc67e36d2b3d1ac2374e19254a1ee1be15228257173d57f8b04c2ded3337",
+          "bytes": 62
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b08-a1\\dispatch\\stdout.jsonl",
+          "sha256": "92d31b083bbafd80aae3c801668078163574c207601ddd435169589461e23b44",
+          "bytes": 142666
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b08-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "179e6305c8689c9f51593519b3193d7d9453e5b52103bb196aea45c18cc474cd",
+          "bytes": 3388
+        }
+      },
+      "native_logical_bytes": 9969484524,
+      "recovery_bytes": 2492065327,
+      "state_timing": {
+        "started": "2026-10-08T11:17:16.226062+00:00",
+        "finished": "2026-10-08T11:39:09.371201+00:00",
+        "run_updated": "2026-10-08T16:14:43.402745+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r3.json",
+          "sha256": "aa6e41a56106b2f38809dc6b7c0b5679ef2e9b37254a68cb848fe203852f0a74",
+          "bytes": 51322
+        }
+      }
+    },
+    {
+      "run": "r3",
+      "block": "b09-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1190.0780000000377,
+      "execution_seconds": 856.5929999999935,
+      "post_execution_seconds": 333.48500000004424,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 186.3209845,
+        "collection_validation_seconds": 106.82356189999996,
+        "iteration_wall_seconds": 832.4849761000003,
+        "update_execution_seconds": 472.4264202999998,
+        "update_validation_seconds": 57.97452700000001
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b09-a1\\dispatch\\report.json",
+          "sha256": "6baf656ffe45178f4aee46035f7a96dc6cbfe46ba97612bcaf63ef7cbcc226ad",
+          "bytes": 171419
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b09-a1\\dispatch\\execution.json",
+          "sha256": "615572dcb642d6292deac0c8532a6261e01912f4e9bd1ae0b34ddc7235f4d333",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b09-a1\\dispatch\\stdout.jsonl",
+          "sha256": "2641198ad35916e9e0b25f0c0c9c6d6cc10da73a10a3681e76c3149e48575fdc",
+          "bytes": 142521
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b09-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "366e354d4158cec0f1e422b4e9c034410004b9edc6bbeea8efdfff364cd6182f",
+          "bytes": 3089
+        }
+      },
+      "native_logical_bytes": 9211506391,
+      "recovery_bytes": 2321079620,
+      "state_timing": {
+        "started": "2026-10-08T11:41:35.513372+00:00",
+        "finished": "2026-10-08T12:01:59.285432+00:00",
+        "run_updated": "2026-10-08T16:14:43.402745+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r3.json",
+          "sha256": "aa6e41a56106b2f38809dc6b7c0b5679ef2e9b37254a68cb848fe203852f0a74",
+          "bytes": 51322
+        }
+      }
+    },
+    {
+      "run": "r3",
+      "block": "b10-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1190.6089999999967,
+      "execution_seconds": 855.6560000000172,
+      "post_execution_seconds": 334.9529999999795,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 186.3479558999999,
+        "collection_validation_seconds": 104.94435590000002,
+        "iteration_wall_seconds": 831.0942038,
+        "update_execution_seconds": 471.7264423000002,
+        "update_validation_seconds": 59.0447738
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b10-a1\\dispatch\\report.json",
+          "sha256": "4b7534f58193b12d09c32c73c54f7890e16a0c0c35ce85d7d6db7e99ffb6d09f",
+          "bytes": 171419
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b10-a1\\dispatch\\execution.json",
+          "sha256": "63dd813178ec932306acd93a475791b9ee2374179d36e11658d6354e654c5a66",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b10-a1\\dispatch\\stdout.jsonl",
+          "sha256": "6095530e1de3fc0ccde5296fe76af281c5128177fc8380c54e7db83a5b80019a",
+          "bytes": 142675
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b10-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "dcee7ee87b3ea0eaea1bda5a720dc2edeac78bb6c0999a21423f4d1661be1c23",
+          "bytes": 3062
+        }
+      },
+      "native_logical_bytes": 9221967930,
+      "recovery_bytes": 2354601006,
+      "state_timing": {
+        "started": "2026-10-08T12:04:11.154798+00:00",
+        "finished": "2026-10-08T12:24:35.585944+00:00",
+        "run_updated": "2026-10-08T16:14:43.402745+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r3.json",
+          "sha256": "aa6e41a56106b2f38809dc6b7c0b5679ef2e9b37254a68cb848fe203852f0a74",
+          "bytes": 51322
+        }
+      }
+    },
+    {
+      "run": "r3",
+      "block": "b11-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1148.0310000000172,
+      "execution_seconds": 817.75,
+      "post_execution_seconds": 330.28100000001723,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 177.51380000000003,
+        "collection_validation_seconds": 96.38428810000003,
+        "iteration_wall_seconds": 792.6708236000001,
+        "update_execution_seconds": 452.124373,
+        "update_validation_seconds": 57.76561419999998
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b11-a1\\dispatch\\report.json",
+          "sha256": "541d7b002fb6d149eca0da9e74bfc955cdab3e4620a0b23924818e0645e4ab5b",
+          "bytes": 171419
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b11-a1\\dispatch\\execution.json",
+          "sha256": "8f3e25ba23eabe6967012b72cab969dc6df97ea9ee3a815d770a0af0dee68ab3",
+          "bytes": 62
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b11-a1\\dispatch\\stdout.jsonl",
+          "sha256": "6ca1a7679d8dc3dc5bf072e9835b46b2780a7ec4ee052bbe5b1c2ae1257cbc6b",
+          "bytes": 142650
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b11-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "d63901309e3af13d21f15dce0838d0c72c8be8ae8eb541d4383e5f2e4a3d94fd",
+          "bytes": 2923
+        }
+      },
+      "native_logical_bytes": 9011759669,
+      "recovery_bytes": 2302616319,
+      "state_timing": {
+        "started": "2026-10-08T12:26:47.297720+00:00",
+        "finished": "2026-10-08T12:46:42.142106+00:00",
+        "run_updated": "2026-10-08T16:14:43.402745+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r3.json",
+          "sha256": "aa6e41a56106b2f38809dc6b7c0b5679ef2e9b37254a68cb848fe203852f0a74",
+          "bytes": 51322
+        }
+      }
+    },
+    {
+      "run": "r3",
+      "block": "b12-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1151.3119999999763,
+      "execution_seconds": 822.170999999973,
+      "post_execution_seconds": 329.14100000000326,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 182.5071002,
+        "collection_validation_seconds": 96.47654030000001,
+        "iteration_wall_seconds": 796.2971659000002,
+        "update_execution_seconds": 450.06625010000005,
+        "update_validation_seconds": 58.2395869
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b12-a1\\dispatch\\report.json",
+          "sha256": "984d0a3712bc32bf3bdbfa4b5138602818c0f95669b5d96c4fb4bf926be9f6f7",
+          "bytes": 171419
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b12-a1\\dispatch\\execution.json",
+          "sha256": "c44438c48bf57ab109c8de3f9946a34eea71dcb1ae51cd576d78ca9064c4e501",
+          "bytes": 72
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b12-a1\\dispatch\\stdout.jsonl",
+          "sha256": "87dd8e53993894cc80cf230053edeedf42a0d712a8c57cc6e96bc1e6cb77c426",
+          "bytes": 142722
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b12-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "02fe0e687e257f5c680db2ad514ef3d899f485e329e5b8a177ce3b92aa1b895f",
+          "bytes": 2919
+        }
+      },
+      "native_logical_bytes": 8937344224,
+      "recovery_bytes": 2296071332,
+      "state_timing": {
+        "started": "2026-10-08T12:48:48.678857+00:00",
+        "finished": "2026-10-08T13:08:44.347449+00:00",
+        "run_updated": "2026-10-08T16:14:43.402745+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r3.json",
+          "sha256": "aa6e41a56106b2f38809dc6b7c0b5679ef2e9b37254a68cb848fe203852f0a74",
+          "bytes": 51322
+        }
+      }
+    },
+    {
+      "run": "r3",
+      "block": "b13-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1191.75,
+      "execution_seconds": 844.3589999999967,
+      "post_execution_seconds": 347.39100000000326,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 184.2130138,
+        "collection_validation_seconds": 101.54663679999999,
+        "iteration_wall_seconds": 817.8879660999996,
+        "update_execution_seconds": 465.21403449999985,
+        "update_validation_seconds": 57.9933826
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b13-a1\\dispatch\\report.json",
+          "sha256": "aaad43a3a77c958e5d766d4e837d93796b3c6442122d38f3a813d39423df4467",
+          "bytes": 171408
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b13-a1\\dispatch\\execution.json",
+          "sha256": "edec00a6948c235bce273a88a0cf80c8eccb5e81eb0fbb921df31351254ceb0c",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b13-a1\\dispatch\\stdout.jsonl",
+          "sha256": "27c6395ac78d701376245abec02823f1b449e5f30f45a2d4b2952dcc58705895",
+          "bytes": 142563
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b13-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "dcf00186cd3e21cde6311c0cf31b2aa3f207a6e16ca5b84b51ce015b269f6970",
+          "bytes": 2924
+        }
+      },
+      "native_logical_bytes": 9189402006,
+      "recovery_bytes": 2342421355,
+      "state_timing": {
+        "started": "2026-10-08T13:10:50.323625+00:00",
+        "finished": "2026-10-08T13:31:16.633188+00:00",
+        "run_updated": "2026-10-08T16:14:43.402745+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r3.json",
+          "sha256": "aa6e41a56106b2f38809dc6b7c0b5679ef2e9b37254a68cb848fe203852f0a74",
+          "bytes": 51322
+        }
+      }
+    },
+    {
+      "run": "r3",
+      "block": "b14-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1170.7970000000205,
+      "execution_seconds": 837.9839999999967,
+      "post_execution_seconds": 332.81300000002375,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 184.53461570000002,
+        "collection_validation_seconds": 100.90456560000001,
+        "iteration_wall_seconds": 810.6264496999999,
+        "update_execution_seconds": 458.2035123999999,
+        "update_validation_seconds": 58.07053179999998
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b14-a1\\dispatch\\report.json",
+          "sha256": "a115a1c3b110eb320aa9aaa2da88761f7256d963eb707a531d1f1aa5db768226",
+          "bytes": 171419
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b14-a1\\dispatch\\execution.json",
+          "sha256": "6442cc2fc0da8327211be5d61a0536c6f89cca43597a8ca3dbac7323b0c27d5b",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b14-a1\\dispatch\\stdout.jsonl",
+          "sha256": "c195a5ce6c2028707d4bdcb6abbcb65c53743127e692c539714ecfc60c3529ff",
+          "bytes": 142612
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b14-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "c1a2ad8cefcbfa5e312d18ecc301255f763f8f298c4dd99096e7bdae0acfa49e",
+          "bytes": 2917
+        }
+      },
+      "native_logical_bytes": 9011706402,
+      "recovery_bytes": 2293553613,
+      "state_timing": {
+        "started": "2026-10-08T13:33:28.137868+00:00",
+        "finished": "2026-10-08T13:53:56.515867+00:00",
+        "run_updated": "2026-10-08T16:14:43.402745+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r3.json",
+          "sha256": "aa6e41a56106b2f38809dc6b7c0b5679ef2e9b37254a68cb848fe203852f0a74",
+          "bytes": 51322
+        }
+      }
+    },
+    {
+      "run": "r3",
+      "block": "b15-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1217.1720000000205,
+      "execution_seconds": 876.3280000000377,
+      "post_execution_seconds": 340.84399999998277,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 189.01102040000004,
+        "collection_validation_seconds": 107.25761030000001,
+        "iteration_wall_seconds": 840.0366894999999,
+        "update_execution_seconds": 476.6920902,
+        "update_validation_seconds": 58.1510229
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b15-a1\\dispatch\\report.json",
+          "sha256": "e10fe06945cebb2cf24693da124c041e9e27377bfd00f11520c639b3ed9f3bc6",
+          "bytes": 171419
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b15-a1\\dispatch\\execution.json",
+          "sha256": "25bed671d1f9b552afdb001eddbdd8d0a65439f8bea3d930d077d978b4c674bb",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b15-a1\\dispatch\\stdout.jsonl",
+          "sha256": "06cc1f012b44c108ca706018b5627ee185a40e2fa01ce65821f50748e0e23591",
+          "bytes": 142604
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b15-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "bfbfa3fc21ec3d0d09ec00fc502be116ce13163ab50356549388abcbf3bbc1ed",
+          "bytes": 3067
+        }
+      },
+      "native_logical_bytes": 9281788333,
+      "recovery_bytes": 2358779926,
+      "state_timing": {
+        "started": "2026-10-08T13:56:03.674663+00:00",
+        "finished": "2026-10-08T14:17:01.307360+00:00",
+        "run_updated": "2026-10-08T16:14:43.402745+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r3.json",
+          "sha256": "aa6e41a56106b2f38809dc6b7c0b5679ef2e9b37254a68cb848fe203852f0a74",
+          "bytes": 51322
+        }
+      }
+    },
+    {
+      "run": "r3",
+      "block": "b16-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1224.875,
+      "execution_seconds": 882.4060000000172,
+      "post_execution_seconds": 342.46899999998277,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 188.66754579999994,
+        "collection_validation_seconds": 111.09930500000002,
+        "iteration_wall_seconds": 847.6635182,
+        "update_execution_seconds": 480.7795908,
+        "update_validation_seconds": 58.24292319999999
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b16-a1\\dispatch\\report.json",
+          "sha256": "ffbc6296d1bcac78e4cc3efc50d84515e921a887631e8cd65050e291d7c0b246",
+          "bytes": 171409
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b16-a1\\dispatch\\execution.json",
+          "sha256": "81e253fa9d7416954ee540aebf5dfe9a79d277df6e28db43bd1d18c4c3892bf8",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b16-a1\\dispatch\\stdout.jsonl",
+          "sha256": "36dc20216b5b3b6c7917545ad2d0ecfabd71f00bfbee914d2fd275172178ebbb",
+          "bytes": 142723
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b16-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "b87b89396895fbd2225c14e0536052a8d01a1dc12eec0bff58caac3408183a99",
+          "bytes": 3086
+        }
+      },
+      "native_logical_bytes": 9386804832,
+      "recovery_bytes": 2379350317,
+      "state_timing": {
+        "started": "2026-10-08T14:19:13.307276+00:00",
+        "finished": "2026-10-08T14:40:11.230528+00:00",
+        "run_updated": "2026-10-08T16:14:43.402745+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r3.json",
+          "sha256": "aa6e41a56106b2f38809dc6b7c0b5679ef2e9b37254a68cb848fe203852f0a74",
+          "bytes": 51322
+        }
+      }
+    },
+    {
+      "run": "r3",
+      "block": "b17-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1182.25,
+      "execution_seconds": 845.7029999999795,
+      "post_execution_seconds": 336.5470000000205,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 184.39955770000003,
+        "collection_validation_seconds": 99.79606159999997,
+        "iteration_wall_seconds": 814.0339817000001,
+        "update_execution_seconds": 462.92310919999994,
+        "update_validation_seconds": 57.97986760000001
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b17-a1\\dispatch\\report.json",
+          "sha256": "a3ce574cd31854a567dd417bfbe831cbc1e40b5e44c35c6c377a4f2849a3dced",
+          "bytes": 171408
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b17-a1\\dispatch\\execution.json",
+          "sha256": "43499275b73124ad3c8971c1fbca5efa9805bc6e08a26adbdfa6e887fded4f75",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b17-a1\\dispatch\\stdout.jsonl",
+          "sha256": "41b52312e304b92dfab314c5d0832c04837fb0b14b7a87f895759c4bd611cdd3",
+          "bytes": 142728
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b17-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "6184ae1081c7b6ef96268ee4daf07baa0f845c4bd0c74d1eb5b87f2f7076b6a4",
+          "bytes": 2927
+        }
+      },
+      "native_logical_bytes": 9093222588,
+      "recovery_bytes": 2317776353,
+      "state_timing": {
+        "started": "2026-10-08T14:42:25.749289+00:00",
+        "finished": "2026-10-08T15:02:54.451496+00:00",
+        "run_updated": "2026-10-08T16:14:43.402745+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r3.json",
+          "sha256": "aa6e41a56106b2f38809dc6b7c0b5679ef2e9b37254a68cb848fe203852f0a74",
+          "bytes": 51322
+        }
+      }
+    },
+    {
+      "run": "r3",
+      "block": "b18-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1193.4220000000205,
+      "execution_seconds": 852.0470000000205,
+      "post_execution_seconds": 341.375,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 182.58657280000006,
+        "collection_validation_seconds": 102.22247959999997,
+        "iteration_wall_seconds": 817.5033695,
+        "update_execution_seconds": 465.8225885,
+        "update_validation_seconds": 57.98845870000001
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b18-a1\\dispatch\\report.json",
+          "sha256": "dc306b7fa60a37af48549beed5f20536e1b8bd20c29d8e8af7c7d1462718eab5",
+          "bytes": 171419
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b18-a1\\dispatch\\execution.json",
+          "sha256": "db9e1b5ce48c7a9d2946332a3a4778a6c9560080370a6e0606f5ac5c2e90b50f",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b18-a1\\dispatch\\stdout.jsonl",
+          "sha256": "29e86df7933756c736aa1b20dbe4242a0c3ced9e516eb56ef6d8151d34cb6e57",
+          "bytes": 142565
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b18-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "3fe70eb5aff0b6333b8650e42a09634ac88d0547c569210f48912a3813e34905",
+          "bytes": 2931
+        }
+      },
+      "native_logical_bytes": 9106271970,
+      "recovery_bytes": 2314875021,
+      "state_timing": {
+        "started": "2026-10-08T15:05:03.566325+00:00",
+        "finished": "2026-10-08T15:25:32.700335+00:00",
+        "run_updated": "2026-10-08T16:14:43.402745+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r3.json",
+          "sha256": "aa6e41a56106b2f38809dc6b7c0b5679ef2e9b37254a68cb848fe203852f0a74",
+          "bytes": 51322
+        }
+      }
+    },
+    {
+      "run": "r3",
+      "block": "b19-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1205.6570000000065,
+      "execution_seconds": 862.0160000000615,
+      "post_execution_seconds": 343.64099999994505,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 188.1601148,
+        "collection_validation_seconds": 106.75641569999995,
+        "iteration_wall_seconds": 832.1144703999998,
+        "update_execution_seconds": 470.1283069,
+        "update_validation_seconds": 58.0816507
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b19-a1\\dispatch\\report.json",
+          "sha256": "cf58509c742f2a67fddda723d441d4a786d69137b097c11e890c77527ffd2327",
+          "bytes": 171419
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b19-a1\\dispatch\\execution.json",
+          "sha256": "b9a37555aff7e68b10bbe376ddaf9fb9467ba120c1fcbcedca4384844efba196",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b19-a1\\dispatch\\stdout.jsonl",
+          "sha256": "76566548837436f54ada887dfabb6dda5ac8c5d5059d65462c763e9f8a492e72",
+          "bytes": 142717
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b19-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "86fd46f0da0e24c936ca294f48c55ac68dba0712f11acc454e6dded601fdab1c",
+          "bytes": 2898
+        }
+      },
+      "native_logical_bytes": 9352442428,
+      "recovery_bytes": 2379131944,
+      "state_timing": {
+        "started": "2026-10-08T15:27:42.024872+00:00",
+        "finished": "2026-10-08T15:48:41.686832+00:00",
+        "run_updated": "2026-10-08T16:14:43.402745+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r3.json",
+          "sha256": "aa6e41a56106b2f38809dc6b7c0b5679ef2e9b37254a68cb848fe203852f0a74",
+          "bytes": 51322
+        }
+      }
+    },
+    {
+      "run": "r3",
+      "block": "b20-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1232.719000000041,
+      "execution_seconds": 883.9370000000345,
+      "post_execution_seconds": 348.7820000000065,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 190.75939029999995,
+        "collection_validation_seconds": 109.24085340000002,
+        "iteration_wall_seconds": 853.4945208999999,
+        "update_execution_seconds": 486.5313237000001,
+        "update_validation_seconds": 58.01688779999999
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b20-a1\\dispatch\\report.json",
+          "sha256": "95576ae06d6ff25ec88ae768b49ca8e18e6c419a33eaa701ec7c9e73a6ad22aa",
+          "bytes": 171418
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b20-a1\\dispatch\\execution.json",
+          "sha256": "9877740a9dfb221a1d29334ece14bc06b755a83fe243c9a7d075ee1fe543f3d5",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b20-a1\\dispatch\\stdout.jsonl",
+          "sha256": "d3dfeb653d1b0fc2f24faed789dfa32d31a44919ad49d72c5c53c953c2c677dc",
+          "bytes": 142591
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b20-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "0b9749abb798af9fb92f4a131eec1e6329e01b2b974b4cf854a75707e61bfa80",
+          "bytes": 2910
+        }
+      },
+      "native_logical_bytes": 9479745085,
+      "recovery_bytes": 2386683128,
+      "state_timing": {
+        "started": "2026-10-08T15:50:55.698861+00:00",
+        "finished": "2026-10-08T16:12:26.040318+00:00",
+        "run_updated": "2026-10-08T16:14:43.402745+00:00",
+        "state_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r3.json",
+          "sha256": "aa6e41a56106b2f38809dc6b7c0b5679ef2e9b37254a68cb848fe203852f0a74",
+          "bytes": 51322
+        }
+      }
+    },
+    {
+      "run": "r4",
+      "block": "b01-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1355.25,
+      "execution_seconds": 1006.2030000000377,
+      "post_execution_seconds": 349.0469999999623,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 207.44922049999994,
+        "collection_validation_seconds": 124.44181950000001,
+        "iteration_wall_seconds": 981.7709930000004,
+        "update_execution_seconds": 575.4873914000002,
+        "update_validation_seconds": 64.3174865
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r4\\b01-a1\\dispatch\\report.json",
+          "sha256": "6f6122a4e9812d52db948769d6c553cd7441f7458638c8fc207d50963125f9fb",
+          "bytes": 171408
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r4\\b01-a1\\dispatch\\execution.json",
+          "sha256": "66fa13bfa7691878de54bb967b142c5684e8e61482947cc69451300412d05bfa",
+          "bytes": 74
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r4\\b01-a1\\dispatch\\stdout.jsonl",
+          "sha256": "c9c2b7c9dcff294f61ef2f163bd264d1b7f598d02a385f0c7b9fee7a964aea9c",
+          "bytes": 142695
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r4\\b01-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "3934928ef311546cae854bc7e7d65618cb23b331e5d34b84ef377878d8f2b526",
+          "bytes": 3702
+        }
+      },
+      "native_logical_bytes": 9519426027,
+      "recovery_bytes": 2371172614
+    },
+    {
+      "run": "r4",
+      "block": "b02-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1252.7969999999623,
+      "execution_seconds": 912.405999999959,
+      "post_execution_seconds": 340.39100000000326,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 194.46064309999988,
+        "collection_validation_seconds": 105.28695310000008,
+        "iteration_wall_seconds": 893.1860549000004,
+        "update_execution_seconds": 521.3203563000001,
+        "update_validation_seconds": 62.39357199999996
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r4\\b02-a1\\dispatch\\report.json",
+          "sha256": "d4487d3448d8c9b69eefcda49b8ff9d3e95a4a7682c2ef53b912930983dc64b8",
+          "bytes": 171419
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r4\\b02-a1\\dispatch\\execution.json",
+          "sha256": "da51105bda47cd20d01bd317d435dd29149272e143e68841b183f7c960c03bf9",
+          "bytes": 72
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r4\\b02-a1\\dispatch\\stdout.jsonl",
+          "sha256": "bad6124355073651f197140f7b644646a880f276455f3f526c4c711e7d5003e1",
+          "bytes": 142655
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r4\\b02-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "7f626025a62d70ed41c326821cc2cb09f416744c59d73c5724e52433d3ebf4b9",
+          "bytes": 3551
+        }
+      },
+      "native_logical_bytes": 9054553271,
+      "recovery_bytes": 2283380621
+    },
+    {
+      "run": "r4",
+      "block": "b03-a1",
+      "updates": 162,
+      "completed_games": 1620,
+      "report_seconds": 1256.7339999999967,
+      "execution_seconds": 908.5470000000205,
+      "post_execution_seconds": 348.18699999997625,
+      "placement": {
+        "cpu_affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "host": "computehost",
+        "memory_bytes": 8589934592,
+        "preparation_workers": 4,
+        "workers": 4
+      },
+      "scheduler_sums": {
+        "collection_execution_seconds": 197.02475269999994,
+        "collection_validation_seconds": 112.8601972,
+        "iteration_wall_seconds": 887.1138930999998,
+        "update_execution_seconds": 506.88470670000015,
+        "update_validation_seconds": 60.86479599999997
+      },
+      "pins": {
+        "report.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r4\\b03-a1\\dispatch\\report.json",
+          "sha256": "69f2db749af7b703acbe913eb46a0c49f9a32e24722567ca1cf4b960cc89d10d",
+          "bytes": 171419
+        },
+        "execution.json": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r4\\b03-a1\\dispatch\\execution.json",
+          "sha256": "cf80109f8bf64959ee39d0ea1d4f6d865cc4587f5a8cf67a7405192605558611",
+          "bytes": 73
+        },
+        "stdout.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r4\\b03-a1\\dispatch\\stdout.jsonl",
+          "sha256": "b1fe4b4e302cec456384c2f303d5a78b6cf67743f4a950b3c2f382ab224eab00",
+          "bytes": 142680
+        },
+        "telemetry.jsonl": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r4\\b03-a1\\dispatch\\telemetry.jsonl",
+          "sha256": "149ddb69153aedce5aa302dc3f82ca75aa148fabb69107002f5260a583a5ea19",
+          "bytes": 3394
+        }
+      },
+      "native_logical_bytes": 9391265418,
+      "recovery_bytes": 2360830407
+    }
+  ],
+  "missing": [
+    {
+      "run": "r4",
+      "block": "b04-a1",
+      "available_files": [
+        "config.json",
+        "execution.json",
+        "started.json",
+        "stderr.log",
+        "stdout.jsonl",
+        "telemetry.jsonl"
+      ]
+    }
+  ],
+  "note": "execution.seconds includes dispatcher preflight before the child as well as native execution."
+}

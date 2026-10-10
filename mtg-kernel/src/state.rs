@@ -928,7 +928,14 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::Land
                 | TargetSpec::OpponentArtifactOrEnchantmentPermanent
                 | TargetSpec::ArtifactOrEnchantmentPermanent
-                | TargetSpec::AttackingOrBlockingCreature,
+                | TargetSpec::AttackingOrBlockingCreature
+                | TargetSpec::CreatureOrPlaneswalker
+                | TargetSpec::ArtifactEnchantmentOrFlyingCreature
+                | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour
+                | TargetSpec::OpponentNonlandPermanent
+                | TargetSpec::NonOutlawCreature
+                | TargetSpec::CreatureToughnessAtLeastFour
+                | TargetSpec::CreatureEnchantmentOrPlaneswalker,
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Battlefield,
@@ -976,6 +983,7 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::ArtifactOrEnchantmentSpellOnStack
                 | TargetSpec::SorcerySpellOnStack
                 | TargetSpec::NoncreatureSpellOnStack
+                | TargetSpec::CreatureSpellOnStack
                 | TargetSpec::ArtifactSpellOnStack
                 | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. }
                 | TargetSpec::SpellYouDontControl,
@@ -1078,6 +1086,33 @@ pub struct StackStateV4 {
     /// physical payments through `paid_cost_refs`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub optional_additional_cost_paid: Option<crate::card_def::OptionalAdditionalCostDef>,
+    /// Mana spent to cast this spell (CR 601.2h), recorded only for a
+    /// definition with `CardDef::records_mana_spent` (Memory Deluge's "X is
+    /// the amount of mana spent to cast this spell"). Zero, and absent from
+    /// serialized state, for every other stack item.
+    #[serde(default, skip_serializing_if = "ManaSpentV1::is_zero")]
+    pub mana_spent: ManaSpentV1,
+}
+
+/// Mana spent to cast a spell. Zero contributes nothing to the in-process
+/// `Hash`, so stack items that never record it keep their prior
+/// `GameState::state_hash`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ManaSpentV1(pub u16);
+
+impl ManaSpentV1 {
+    pub fn is_zero(&self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl Hash for ManaSpentV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if self.0 != 0 {
+            self.0.hash(state);
+        }
+    }
 }
 
 impl StackStateV4 {
@@ -2381,9 +2416,9 @@ impl GameState {
         copy
     }
 
-    /// D3 search only: install an independent future stream on an already
-    /// disposable clone. The sole production caller is the additive V3 search
-    /// sampler. Never derive `seed` from this state's real random stream.
+    /// Install an independent future stream on an already disposable analysis
+    /// clone: additive V3 search and opt-in census future V2. Never derive
+    /// `seed` from this state's real random stream.
     /// Preserve mode and past physical-owner shuffle counters.
     pub(crate) fn resample_future_randomness_for_search_v3(&mut self, seed: u64) {
         match &mut self.randomness {
