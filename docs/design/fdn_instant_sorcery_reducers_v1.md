@@ -223,6 +223,13 @@ Guardff52b27d4bad479d82cf983b5a37e306 ended101. The equivalent question-mark
 rewrite preserves the prior340 runtime receipts. Both feature lint checks on
 the repaired source remain required; no pending check is a pass.
 
+Native18 at d9e347ed reached the combined catalog all-target lint and failed
+on three fixed Limited-only indices in fdn_activated_combat_v1. Those cards
+are excluded by the Standard catalog. Gate that fixture to its actual Limited
+catalog, as with the Koma and new reducer fixtures. The command ended101;
+its log is retained. The Limited strict-lint and340 runtime receipts remain
+compatible. Combined all-target lint on this repair is still pending.
+
 Remaining work: finish native qualification of runtime integration and quotes;
 actual Sprite/Archmage gameplay and restore tests; metadata/catalog admission;
 live profile qualification; CI and default-branch acceptance. Accepted booster
