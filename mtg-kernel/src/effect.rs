@@ -1331,6 +1331,11 @@ pub enum EffectOp {
         targeting_stack_item: StackItemId,
         life: u8,
     },
+    /// Return the exact graveyard incarnation that activated this ability
+    /// under its owner's control. Unlike Unearth, this adds no exile rule.
+    ReturnAbilitySourceFromGraveyard {
+        tapped: bool,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -12863,6 +12868,29 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 *counters = counters.saturating_sub(1);
             }
         }
+        EffectOp::ReturnAbilitySourceFromGraveyard { tapped } => {
+            let Some(contract) = ctx.ability_source_contract else {
+                return;
+            };
+            if contract.source != ctx.source
+                || contract.zone != Zone::Graveyard
+                || !state
+                    .objects
+                    .try_get(contract.source)
+                    .is_some_and(|object| {
+                        object.zone == Zone::Graveyard
+                            && object.zone_change_count == contract.zone_change_count
+                    })
+            {
+                return;
+            }
+            let proposed = if *tapped {
+                event::ProposedEvent::zone_change_to_battlefield_tapped(contract.source)
+            } else {
+                event::ProposedEvent::zone_change(contract.source, Zone::Battlefield)
+            };
+            event::propose_and_commit(state, proposed);
+        }
         EffectOp::ReturnSourceFromGraveyardUnearthed => {
             let still_there = ctx.ability_source_contract.is_some_and(|contract| {
                 let object = state.objects.get(contract.source);
@@ -15033,6 +15061,60 @@ mod tests {
 
     fn two_card_libraries() -> GameState {
         GameState::new_from_libraries(&[1, 2], &[3, 4], |c| format!("card-{c}"), 1)
+    }
+
+    #[test]
+    fn return_ability_source_from_graveyard_uses_exact_activation_incarnation() {
+        let card = crate::card_def::card_id_by_name("Faerie Miscreant").unwrap();
+        for player in [PlayerId::P0, PlayerId::P1] {
+            for tapped in [false, true] {
+                let mut state = GameState::new_from_libraries(
+                    &[card; 7],
+                    &[card; 7],
+                    |_| "Faerie Miscreant".into(),
+                    710,
+                );
+                let source = state.players[player.index()].hand[0];
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change(source, Zone::Graveyard),
+                );
+                let mut ctx = ExecCtx::no_targets(source, player);
+                ctx.ability_source_contract =
+                    Some(AbilitySourceContractV4::capture(&state, source));
+                let saved = serde_json::to_vec(&state).unwrap();
+                let mut restored: GameState = serde_json::from_slice(&saved).unwrap();
+                for branch in [&mut state, &mut restored] {
+                    execute(
+                        &EffectOp::ReturnAbilitySourceFromGraveyard { tapped },
+                        &ctx,
+                        branch,
+                    );
+                    let live = branch.objects.get(source);
+                    assert_eq!(live.zone, Zone::Battlefield);
+                    assert_eq!(live.controller, player);
+                    assert_eq!(live.tapped, tapped);
+                    assert!(live.summoning_sick);
+                    assert!(!live.v4.unearthed_v1);
+                }
+                assert_eq!(state.state_hash(), restored.state_hash());
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change(source, Zone::Graveyard),
+                );
+                let before = state.state_hash();
+                execute(
+                    &EffectOp::ReturnAbilitySourceFromGraveyard { tapped },
+                    &ctx,
+                    &mut state,
+                );
+                assert_eq!(
+                    state.state_hash(),
+                    before,
+                    "old activation cannot return a later graveyard incarnation"
+                );
+            }
+        }
     }
 
     #[test]

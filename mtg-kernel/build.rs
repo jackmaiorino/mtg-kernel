@@ -3117,6 +3117,9 @@ enum AbilityEffectRecipe {
     TransformSource,
     /// Unearth: return the source from its graveyard; it gains haste.
     Unearth,
+    ReturnSourceFromGraveyard {
+        tapped: bool,
+    },
     /// The controller surveils this many cards (Rune-Sealed Wall).
     Surveil(u8),
     /// One +1/+1 counter on the ability's own source while it remains the
@@ -4381,6 +4384,18 @@ fn escape_for(name: &str) -> String {
 /// then resolve the reusable typed library search.
 fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
+        "Reassembling Skeleton" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: Some("B"),
+                generic: 1,
+            }],
+            effect: AbilityEffectRecipe::ReturnSourceFromGraveyard { tapped: true },
+            activation_zone: "Graveyard",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Hungry Ghoul" => &[ActivatedAbilityRecipe {
             cost: &[
                 AbilityCostRecipe::Mana {
@@ -5435,6 +5450,8 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
         }
         AbilityEffectRecipe::TransformSource => "transform_source".to_string(),
         AbilityEffectRecipe::Unearth => "unearth".to_string(),
+        AbilityEffectRecipe::ReturnSourceFromGraveyard { tapped } =>
+            format!("return_ability_source_from_graveyard:exact_incarnation:tapped={tapped}:owners_control"),
         AbilityEffectRecipe::PutPlusOneCounterOnSource => {
             "put_plus_one_counter_on_source".to_string()
         }
@@ -5616,6 +5633,9 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
         }
         AbilityEffectRecipe::TransformSource => "ability_effect_transform_source".to_string(),
         AbilityEffectRecipe::Unearth => "ability_effect_unearth".to_string(),
+        AbilityEffectRecipe::ReturnSourceFromGraveyard { tapped } => {
+            format!("ability_effect_return_source_from_graveyard_tapped_{tapped}")
+        }
         AbilityEffectRecipe::PutPlusOneCounterOnSource => {
             "ability_effect_put_plus_one_counter_on_source".to_string()
         }
@@ -6823,6 +6843,13 @@ fn codegen(cards: &[CardJson]) -> String {
                 writeln!(out, "        EffectOp::ReturnSourceFromGraveyardUnearthed,").unwrap();
                 writeln!(out, "        EffectOp::GrantKeywordTargetUntilEndOfTurn {{ object: ObjectRef::ThisSource, keyword: Keywords::HASTE }},").unwrap();
                 writeln!(out, "    ])").unwrap();
+            }
+            AbilityEffectRecipe::ReturnSourceFromGraveyard { tapped } => {
+                writeln!(
+                    out,
+                    "    EffectOp::ReturnAbilitySourceFromGraveyard {{ tapped: {tapped} }}"
+                )
+                .unwrap();
             }
             AbilityEffectRecipe::AddPlusOnePlusOneCounters(count) => {
                 writeln!(out, "    EffectOp::AddCountersToTarget {{ target_index: 0, optional: false, plus1_plus1: {count}, lifelink: 0, stun: 0 }}").unwrap();

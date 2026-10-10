@@ -213,6 +213,16 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
             // meaning is emitted there.
             let _ = other_than; // engine-internal object id
         }
+        EffectOp::ReturnAbilitySourceFromGraveyard { tapped } => {
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Graveyard), ZoneF::Battlefield)
+                    .player(RelF::You)
+                    .obj(ObjF::ThisObject),
+            );
+            if *tapped {
+                out.effect(EffectAtom::new(EvF::Tap).obj(ObjF::ThisObject));
+            }
+        }
         EffectOp::ReturnSourceFromGraveyardUnearthed => {
             // Unearth: the source returns from the graveyard to the
             // battlefield, marked to be exiled at the next end step or if

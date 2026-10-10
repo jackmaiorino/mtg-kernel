@@ -232,6 +232,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::BindPlusOneCounterOnAnotherTargetToTriggerTarget
         | EffectOp::PutPlusOnePlusOneCounterOnTargetOtherThan { .. }
         | EffectOp::ReturnSourceFromGraveyardUnearthed
+        | EffectOp::ReturnAbilitySourceFromGraveyard { .. }
         | EffectOp::ExileGraveyardTargetsDrainPerCreature { .. }
         | EffectOp::RemoveTimeCounterFromSource
         | EffectOp::ReturnSourceAsEnduringEnchantment => effect_h::effect_op(op, env, out),

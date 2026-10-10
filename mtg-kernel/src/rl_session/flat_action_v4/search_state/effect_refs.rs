@@ -144,6 +144,7 @@ impl Scan<'_> {
             | Incubate { .. }
             | BindPlusOneCounterOnAnotherTargetToTriggerTarget
             | ReturnSourceFromGraveyardUnearthed
+            | ReturnAbilitySourceFromGraveyard { .. }
             | ExileGraveyardTargetsDrainPerCreature { .. }
             | RemoveTimeCounterFromSource
             | ReturnSourceAsEnduringEnchantment
