@@ -832,6 +832,8 @@ pub enum TargetSpec {
     /// Zero or one controlled battlefield permanent other than the exact
     /// source incarnation captured by this ability.
     UpToOneOtherControlledPermanent,
+    /// Zero to two controlled creatures other than the captured source incarnation.
+    UpToTwoOtherControlledCreatures,
 }
 
 impl TargetSpec {
@@ -899,6 +901,7 @@ impl TargetSpec {
             TargetSpec::ControlledPermanentWithAnySubtype(_) => 56,
             TargetSpec::PermanentCardInOwnGraveyard => 57,
             TargetSpec::UpToOneOtherControlledPermanent => 58,
+            TargetSpec::UpToTwoOtherControlledCreatures => 59,
         }
     }
 }
@@ -2295,6 +2298,7 @@ mod tests {
             ),
             (TargetSpec::PermanentCardInOwnGraveyard, 57),
             (TargetSpec::UpToOneOtherControlledPermanent, 58),
+            (TargetSpec::UpToTwoOtherControlledCreatures, 59),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);

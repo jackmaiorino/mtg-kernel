@@ -3968,6 +3968,7 @@ fn keywords_for(card: &CardJson) -> String {
         | "Sacred Cat"
         | "Sacred Cat Embalmed Token"
         | "Guarded Heir"
+        | "Felidar Savior"
         | "Sun-Blessed Healer" => keywords.push("Keywords::LIFELINK"),
         "Guardian of the Guildpact" => keywords.push("Keywords::PROTECTION_FROM_MONOCOLORED"),
         "Brazen Scourge" | "Fanatical Firebrand" => keywords.push("Keywords::HASTE"),
@@ -6162,6 +6163,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Billowing Shriekmass" => "etb:mill_controller_library:3:private_ordering_exact_incarnations",
         "Dreadwing Scavenger" => "etb_or_source_declared_attacker:draw_controller:1:then_discard_controller:1",
         "Mischievous Pup" => "etb:return_up_to_one_other_controlled_permanent_to_owners_hand:source_incarnation_exclusion",
+        "Felidar Savior" => "etb:up_to_two_other_controlled_creatures:one_plus_one_counter_each:captured_source_incarnation:individual_full_target_legality",
         "Apothecary Stomper" => "etb:mode_before_targets:controlled_creature_plus_one_counters:2|gain_controller_life:4",
         "Celestial Armor" => "etb:target_controlled_creature:attach_exact_source:then_grant_hexproof_indestructible_until_end_of_turn",
         "Mossborn Hydra" => "controlled_land_enters:double_plus_one_counters_on_bound_source",

@@ -614,6 +614,7 @@ fn power_toughness_changes_keep_their_sign() {
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Mischievous Pup",
+    "Felidar Savior",
     "Dreadwing Scavenger",
     "Wardens of the Cycle",
     "Tragic Banshee",

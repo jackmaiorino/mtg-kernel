@@ -489,6 +489,29 @@ fn mischievous_pup_effect() -> EffectOp {
         to_zone: Zone::Hand,
     }
 }
+
+const FELIDAR_SAVIOR_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(felidar_savior_effect)];
+
+fn felidar_savior_effect() -> EffectOp {
+    EffectOp::Sequence(
+        (0..2)
+            .map(|target_index| EffectOp::Conditional {
+                cond: EffectCond::TargetIsLegalForAbility {
+                    index: target_index,
+                    spec: TargetSpec::UpToTwoOtherControlledCreatures,
+                },
+                then: Box::new(EffectOp::AddCountersToTarget {
+                    target_index,
+                    optional: true,
+                    plus1_plus1: 1,
+                    lifelink: 0,
+                    stun: 0,
+                }),
+                else_: Box::new(EffectOp::Sequence(vec![])),
+            })
+            .collect(),
+    )
+}
 const BURGLAR_RAT_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(burglar_rat_effect)];
 const INFESTATION_SAGE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::LeftBattlefieldToGraveyard,
@@ -3035,6 +3058,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Icewind Elemental" => &ICEWIND_ELEMENTAL_TRIGGERS,
         "Dreadwing Scavenger" => &DREADWING_SCAVENGER_TRIGGERS,
         "Mischievous Pup" => &MISCHIEVOUS_PUP_TRIGGERS,
+        "Felidar Savior" => &FELIDAR_SAVIOR_TRIGGERS,
         "Burglar Rat" => &BURGLAR_RAT_TRIGGERS,
         "Infestation Sage" => &INFESTATION_SAGE_TRIGGERS,
         "Wary Thespian" => &WARY_THESPIAN_TRIGGERS,
@@ -3210,6 +3234,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         "Sun-Blessed Healer" => TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(2),
         "Elvish Regrower" => TargetSpec::PermanentCardInOwnGraveyard,
         "Mischievous Pup" => TargetSpec::UpToOneOtherControlledPermanent,
+        "Felidar Savior" => TargetSpec::UpToTwoOtherControlledCreatures,
         "Vampire Soulcaller" => TargetSpec::CreatureCardInOwnGraveyard,
         "Affectionate Indrik" => TargetSpec::OpponentControlledCreature,
         "Ambush Wolf" => TargetSpec::UpToOneCardInGraveyards,

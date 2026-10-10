@@ -10,7 +10,7 @@ family, preserve all prior readable profiles and reject stale store writes.
 
 The exact printing and Oracle identifiers remain in the frozen booster
 manifest. The table below was checked against that manifest and the current
-registry. All28 names are in the target and absent from this registry.
+registry. All29 names are in the target and absent from this registry.
 
 | Reserved ID | Name | Frozen printing |
 | --- | --- | --- |
@@ -42,10 +42,11 @@ registry. All28 names are in the target and absent from this registry.
 | 363 | Claws Out | FDN 6 |
 | 364 | Dreadwing Scavenger | FDN 118 |
 | 365 | Mischievous Pup | FDN 144 |
+| 366 | Felidar Savior | FDN 12 |
 
 Native source checks and reviews qualify only the observed primitive
 or compilation scope. They do not execute these unregistered card games.
-The proposed admission would reach166 full names only if all28 and both
-predecessor batches pass gameplay/profile checks and merge. The frozen286
+The proposed admission would reach167 full names only if all29 and both
+predecessor batches pass gameplay/profile checks and merge. The frozen296
 name target, remaining rules work, cross-color/reference comparisons and
 Limited search/DraftZero acceptance remain unchanged.

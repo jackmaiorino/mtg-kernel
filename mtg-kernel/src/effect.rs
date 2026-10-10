@@ -320,6 +320,12 @@ pub enum EffectCond {
         index: u8,
         life: i32,
     },
+    /// Full current legality of an incarnation-bound target, using the
+    /// captured ability source rather than the source's current incarnation.
+    TargetIsLegalForAbility {
+        index: u8,
+        spec: crate::card_def::TargetSpec,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -15187,6 +15193,21 @@ pub(crate) fn controller_graveyard_card_count(state: &GameState, controller: Pla
 fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
     match cond {
         EffectCond::Always => true,
+        EffectCond::TargetIsLegalForAbility { index, spec } => {
+            ctx.target_incarnation_matches(usize::from(*index), state)
+                && ctx.ability_source_contract.is_some_and(|source| {
+                    source.source == ctx.source
+                        && source.controller == ctx.controller
+                        && crate::engine::effect_target_is_legal_from_ability_source(
+                            state,
+                            source,
+                            ctx.controller,
+                            *spec,
+                            &ctx.targets,
+                            usize::from(*index),
+                        )
+                })
+        }
         EffectCond::Never => false,
         EffectCond::DiscardedNonLandForCost => ctx.discarded.iter().any(|&id| {
             let def_idx = state.objects.get(id).card_def;
@@ -15372,6 +15393,134 @@ mod tests {
     use super::*;
     use crate::event::CommittedEvent;
     use crate::ids::PlayerId;
+
+    #[test]
+    fn individual_ability_target_guards_skip_illegal_targets_and_keep_captured_source() {
+        use crate::card_def::{card_id_by_name, TargetSpec};
+        for player in [PlayerId::P0, PlayerId::P1] {
+            for change in 0..5 {
+                let source_def = card_id_by_name("Voldaren Epicure").unwrap();
+                let creature = card_id_by_name("Faerie Miscreant").unwrap();
+                let mut state = GameState::new_from_libraries(
+                    &[source_def, creature, creature],
+                    &[source_def, creature, creature],
+                    |c| format!("card-{c}"),
+                    839,
+                );
+                let ids = state.players[player.index()].library.clone();
+                let (source, first, second) = (ids[0], ids[1], ids[2]);
+                for &id in &ids {
+                    event::propose_and_commit(
+                        &mut state,
+                        event::ProposedEvent::zone_change(id, Zone::Battlefield),
+                    );
+                }
+                let mut ctx = ExecCtx::no_targets(source, player);
+                ctx.ability_source_contract =
+                    Some(AbilitySourceContractV4::capture(&state, source));
+                ctx.targets = vec![Target::Object(first), Target::Object(second)];
+                ctx.target_contracts = ctx
+                    .targets
+                    .iter()
+                    .map(|&target| StackTargetContractV4::capture(&state, target))
+                    .collect();
+                let op = EffectOp::Sequence(
+                    (0..2)
+                        .map(|index| EffectOp::Conditional {
+                            cond: EffectCond::TargetIsLegalForAbility {
+                                index,
+                                spec: TargetSpec::UpToTwoOtherControlledCreatures,
+                            },
+                            then: Box::new(EffectOp::AddCountersToTarget {
+                                target_index: index,
+                                optional: true,
+                                plus1_plus1: 1,
+                                lifelink: 0,
+                                stun: 0,
+                            }),
+                            else_: Box::new(EffectOp::Sequence(vec![])),
+                        })
+                        .collect(),
+                );
+                match change {
+                    0 => {}
+                    1 => {
+                        state.players[player.index()]
+                            .battlefield
+                            .retain(|&id| id != second);
+                        state.players[player.opponent().index()]
+                            .battlefield
+                            .push(second);
+                        state.objects.get_mut(second).controller = player.opponent();
+                    }
+                    2 => {
+                        event::propose_and_commit(
+                            &mut state,
+                            event::ProposedEvent::zone_change(second, Zone::Exile),
+                        );
+                    }
+                    3 => {
+                        event::propose_and_commit(
+                            &mut state,
+                            event::ProposedEvent::zone_change(second, Zone::Exile),
+                        );
+                        event::propose_and_commit(
+                            &mut state,
+                            event::ProposedEvent::zone_change(second, Zone::Battlefield),
+                        );
+                    }
+                    4 => execute(
+                        &EffectOp::GrantKeywordTargetUntilEndOfTurn {
+                            object: ObjectRef::Target(1),
+                            keyword: Keywords::PROTECTION_FROM_MONOCOLORED,
+                        },
+                        &ctx,
+                        &mut state,
+                    ),
+                    _ => unreachable!(),
+                }
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change(source, Zone::Exile),
+                );
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change(source, Zone::Battlefield),
+                );
+                let mut replay: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                for current in [&mut state, &mut replay] {
+                    execute(&op, &ctx, current);
+                    assert_eq!(current.objects.get(first).counters.plus1_plus1, 1);
+                    assert_eq!(
+                        current.objects.get(second).counters.plus1_plus1,
+                        if change == 0 { 1 } else { 0 }
+                    );
+                    assert!(current.engine.halted.is_none());
+                }
+                assert_eq!(
+                    state.diagnostic_state_hash(),
+                    replay.diagnostic_state_hash()
+                );
+                // The original incarnation is excluded; its returned card is eligible.
+                let cond = EffectCond::TargetIsLegalForAbility {
+                    index: 0,
+                    spec: TargetSpec::UpToTwoOtherControlledCreatures,
+                };
+                ctx.targets = vec![Target::Object(source)];
+                ctx.target_contracts = vec![StackTargetContractV4::capture(&state, ctx.targets[0])];
+                assert!(eval_cond(&cond, &ctx, &state));
+                ctx.ability_source_contract =
+                    Some(AbilitySourceContractV4::capture(&state, source));
+                assert!(!eval_cond(&cond, &ctx, &state));
+                ctx.ability_source_contract = None;
+                assert!(!eval_cond(&cond, &ctx, &state));
+                ctx.targets.clear();
+                ctx.target_contracts.clear();
+                assert!(!eval_cond(&cond, &ctx, &state));
+            }
+        }
+    }
 
     #[test]
     fn graveyard_mass_return_filters_cards_and_current_mana_values_for_both_seats() {

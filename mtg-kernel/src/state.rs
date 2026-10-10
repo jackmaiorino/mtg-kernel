@@ -1053,6 +1053,7 @@ pub fn stack_target_contract_is_structurally_valid(
             },
         ) | (
             TargetSpec::UpToTwoCreatures
+                | TargetSpec::UpToTwoOtherControlledCreatures
                 | TargetSpec::ExactlyTwoArtifactPermanents
                 | TargetSpec::ControlledCreatureThenOpponentCreature
                 | TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker,

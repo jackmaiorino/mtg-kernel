@@ -261,6 +261,17 @@ pub(crate) fn effect_cond(cond: &EffectCond, env: &Env, out: &mut Collector) {
                 AggF::Characteristic,
             );
         }
+        EffectCond::TargetIsLegalForAbility { index, spec } => {
+            let _ = spec;
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(env.target_obj(*index)),
+                AggF::Characteristic,
+            );
+            // Full legality also includes captured incarnation and protection.
+            out.atoms.push(Atom::Opaque);
+        }
     }
 }
 

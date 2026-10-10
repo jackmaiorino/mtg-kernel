@@ -25,6 +25,12 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
             // Vocabulary has no exact-source-incarnation exclusion facet.
             out.atoms.push(Atom::Opaque);
         }
+        TargetSpec::UpToTwoOtherControlledCreatures => {
+            object(out, creature(), Some(RelF::You), ZoneF::Battlefield);
+            out.target(TargetAtom::MultipleTargets);
+            out.target(TargetAtom::UpTo);
+            out.atoms.push(Atom::Opaque);
+        }
         // Both players, plus every creature on either battlefield (creatures
         // only: planeswalkers are not in the engine's "any target" pool).
         TargetSpec::AnyTarget => {
@@ -427,7 +433,8 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
             let _ = (maximum, slot);
             ObjF::NonlandPermanent
         }
-        TargetSpec::Creature
+        TargetSpec::UpToTwoOtherControlledCreatures
+        | TargetSpec::Creature
         | TargetSpec::NonlegendaryCreature
         | TargetSpec::ControlledCreature
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard

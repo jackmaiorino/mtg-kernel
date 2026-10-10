@@ -27,3 +27,13 @@ tokens ceasing, pending/answered/stack restore, forged pending self-target,
 source departure, control changes and stale target incarnations. They require
 actual registration before execution. Native source checks and read-only
 review are pending; no experiment or paid execution is included.
+
+Source59436bb2 failed compilation on a misspelled existing destination field.
+Read-only review also found missing Ajani loyalty initialization and a borrowed
+land fixture's inconsistent controller/index membership. Repairs820842fd and
+bf6ef8ac resolve all three findings; the exact repair diff passed review.
+Correctedbf6ef8ac passed both test-compilation configurations, the registered
+captured-incarnation unit,23 rules-vector cases (one existing ignore) and the
+frozen v63 catalog case under guardaad7e0df127448a281a2ea9e4c57f182, exit0.
+The failed guard9d7737e11fe64926823a0943ff8fc00f/log remain retained. The six
+Pup card fixtures compiled but remain unexecuted until registration.

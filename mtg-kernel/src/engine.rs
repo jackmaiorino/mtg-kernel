@@ -1493,6 +1493,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::AttackingCreatureWithSubtype(_)
         | TargetSpec::ControlledPermanentWithAnySubtype(_) => 1,
         TargetSpec::PlayerThenTheirCreature
+        | TargetSpec::UpToTwoOtherControlledCreatures
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
         | TargetSpec::ExactlyTwoArtifactPermanents
@@ -1511,6 +1512,7 @@ fn target_min_count(spec: TargetSpec) -> u8 {
         | TargetSpec::UpToTwoCardsInGraveyards
         | TargetSpec::UpToOneCardInGraveyards
         | TargetSpec::UpToOneOtherControlledPermanent
+        | TargetSpec::UpToTwoOtherControlledCreatures
         | TargetSpec::UpToOneTappedCreature => 0,
         _ => target_count(spec),
     }
@@ -2614,7 +2616,8 @@ fn legal_targets_for_controller_from_source(
 ) -> Vec<Target> {
     let mut targets = match spec {
         TargetSpec::None => Vec::new(),
-        TargetSpec::UpToOneOtherControlledPermanent => battlefield_objects(state)
+        TargetSpec::UpToOneOtherControlledPermanent
+        | TargetSpec::UpToTwoOtherControlledCreatures => battlefield_objects(state)
             .filter(|&id| {
                 let object = state.objects.get(id);
                 source.is_some_and(|source| {
@@ -2623,15 +2626,19 @@ fn legal_targets_for_controller_from_source(
                         && source.zone_change_count == object.zone_change_count)
                 }) && object.controller == controller
                     && !targets_chosen.contains(&Target::Object(id))
-                    && [
-                        CardType::Land,
-                        CardType::Creature,
-                        CardType::Artifact,
-                        CardType::Enchantment,
-                        CardType::Planeswalker,
-                    ]
-                    .into_iter()
-                    .any(|kind| object_has_type(state, id, kind))
+                    && (if spec == TargetSpec::UpToTwoOtherControlledCreatures {
+                        object_has_type(state, id, CardType::Creature)
+                    } else {
+                        [
+                            CardType::Land,
+                            CardType::Creature,
+                            CardType::Artifact,
+                            CardType::Enchantment,
+                            CardType::Planeswalker,
+                        ]
+                        .into_iter()
+                        .any(|kind| object_has_type(state, id, kind))
+                    })
             })
             .map(Target::Object)
             .collect(),
@@ -3129,6 +3136,34 @@ pub(crate) fn effect_target_is_legal(
             &targets[..index],
             controller,
             targeting_source_for_object(state, source),
+            state,
+        )
+        .contains(target)
+    })
+}
+
+/// Per-target legality for effects whose source provenance was captured when
+/// the ability triggered. The original incarnation remains the exclusion.
+pub(crate) fn effect_target_is_legal_from_ability_source(
+    state: &GameState,
+    source: AbilitySourceContractV4,
+    controller: PlayerId,
+    spec: TargetSpec,
+    targets: &[Target],
+    index: usize,
+) -> bool {
+    targets.get(index).is_some_and(|target| {
+        legal_targets_for_controller_from_source(
+            spec,
+            &targets[..index],
+            controller,
+            Some(TargetingSource {
+                object: source.source,
+                card_def: source.card_def,
+                zone: source.zone,
+                zone_change_count: source.zone_change_count,
+                other_than: None,
+            }),
             state,
         )
         .contains(target)
@@ -10122,7 +10157,11 @@ fn validate_pending_trigger(state: &GameState, pending: &PendingTrigger) -> Resu
     }
     let mut prefix = Vec::new();
     for &target in &pending.targets {
-        let legal = if expected == TargetSpec::UpToOneOtherControlledPermanent {
+        let legal = if matches!(
+            expected,
+            TargetSpec::UpToOneOtherControlledPermanent
+                | TargetSpec::UpToTwoOtherControlledCreatures
+        ) {
             completable_next_targets_for_controller_and_source(
                 expected,
                 &prefix,
