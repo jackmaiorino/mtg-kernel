@@ -59,3 +59,9 @@ getter, rules-vector extraction and repaired gameplay fixtures. This brings
 only the two already admitted candidate names into this source branch;
 all31 names in the table remain absent. Source qualification is next and
 their metadata admission still waits for v65 acceptance.
+
+Read-only port review found a duplicate imported Regrower/Wolf definition
+block and the predecessor definition-count pin. The redundant identical
+block is removed; v65 repair21814662 supplies338 definitions. It also retains
+the latest pending-cast replay fixture and both failed native receipts.
+Native source qualification remains pending; this is not card gameplay support.

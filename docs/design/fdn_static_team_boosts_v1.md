@@ -105,3 +105,11 @@ assertions. The saved snapshot also replays from before finalization. No
 engine/catalog/profile identity changes.
 Failed local-22, guardb563c1890d8a4791858ff6f0b176fed7 and exit101 remain
 retained. Qualification is retried on the corrected fixture head.
+
+Local-23 atece2e318 passed all31 focused gameplay cases and47 card-definition
+cases, including frozen v65 identity. The remaining definition case retained
+the predecessor's336-entry assertion instead of338. That count and its comment
+now include IDs336-337. The runtime/catalog/profile remain unchanged. Local-23
+guard18a3645066f14ebd94bf43f2c66947e8 terminated exit101; its full log remains
+retained. The final pending-cast replay refinement and count repair qualify
+together in the next full focused run.

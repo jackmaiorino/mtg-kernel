@@ -1267,18 +1267,6 @@ fn double_counter_marker_effect() -> EffectOp {
     EffectOp::BindDoublePlusOneCountersToTriggerSource
 }
 
-const ELVISH_REGROWER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(elvish_regrower_effect)];
-fn elvish_regrower_effect() -> EffectOp {
-    EffectOp::MoveAllTargets {
-        to_zone: Zone::Hand,
-    }
-}
-const AMBUSH_WOLF_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(ambush_wolf_effect)];
-fn ambush_wolf_effect() -> EffectOp {
-    EffectOp::MoveAllTargets {
-        to_zone: Zone::Exile,
-    }
-}
 const DWYNEN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Attacks,
     ..etb_trigger(dwynen_attack_effect)
