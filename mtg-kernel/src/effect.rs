@@ -5915,6 +5915,35 @@ fn validate_answered_choice_guard(
     Ok(())
 }
 
+fn definition_has_nonterminal_discard(state: &GameState, pending: &EffectContinuation) -> bool {
+    let nonterminal = |op: &EffectOp| matches!(op, EffectOp::Sequence(ops) if ops.iter().take(ops.len().saturating_sub(1)).any(|op| matches!(op, EffectOp::DiscardCards { .. })));
+    let Some(source) = state.objects.try_get(pending.resolving_item.source) else {
+        return false;
+    };
+    if pending.resolving_item.kind == crate::state::StackItemKind::TriggeredAbility {
+        // Classify from declared recipes, without imposing stricter root
+        // reconstruction on old event-time Generic choices.
+        return crate::trigger::triggers_for(source.card_def)
+            .iter()
+            .any(|trigger| nonterminal(&(trigger.effect)()));
+    }
+    if pending.resolving_item.kind == crate::state::StackItemKind::Spell {
+        let definition = &crate::card_def::CARD_DEFS[source.card_def as usize];
+        return (definition.spell_effect)()
+            .as_ref()
+            .is_some_and(nonterminal)
+            || definition
+                .mode2
+                .as_ref()
+                .is_some_and(|mode| nonterminal(&(mode.effect)()))
+            || definition
+                .mode3
+                .as_ref()
+                .is_some_and(|mode| nonterminal(&(mode.effect)()));
+    }
+    false
+}
+
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(());
@@ -5945,17 +5974,16 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::engine::validated_stack_item_target_spec(&pending.resolving_item, state)
         .map_err(|error| format!("effect continuation has invalid stack provenance: {error}"))?;
     validate_answered_choice_guard(state, pending)?;
-    if pending.choice.is_none() && pending.answered_choice_guard.is_none() {
-        let root = validated_definition_owned_root_effect(state, pending)?;
-        if matches!(root.as_ref(), EffectOp::Sequence(ops) if ops.iter().take(ops.len().saturating_sub(1)).any(|op| matches!(op, EffectOp::DiscardCards { .. })))
-        {
-            let discard = state
-                .engine
-                .pending_discard
-                .as_ref()
-                .ok_or("nonterminal discard continuation lost its pending hand answer")?;
-            validate_resumable_discard_details(state, pending, discard)?;
-        }
+    if pending.choice.is_none()
+        && pending.answered_choice_guard.is_none()
+        && definition_has_nonterminal_discard(state, pending)
+    {
+        let discard = state
+            .engine
+            .pending_discard
+            .as_ref()
+            .ok_or("nonterminal discard continuation lost its pending hand answer")?;
+        validate_resumable_discard_details(state, pending, discard)?;
     }
     let Some(choice) = pending.choice.as_ref() else {
         return Ok(());
