@@ -2277,7 +2277,7 @@ fn stolen_enduring_death_triggers_for_its_controller_and_returns_to_its_owner() 
         assert_eq!(trigger.controller, PlayerId::P1);
         let contract = trigger
             .v4
-            .source_contract
+            .ability_source_contract
             .expect("graveyard return binding");
         assert_eq!(contract.controller, PlayerId::P1);
         assert_eq!(contract.zone, Zone::Graveyard);
