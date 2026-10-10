@@ -61,6 +61,11 @@ use crate::trigger::{self, PendingTrigger};
 use serde::{Deserialize, Serialize};
 use std::hash::Hash;
 
+// Shared selected-cost collection is prepared separately from route wiring.
+#[path = "spell_costs_v1.rs"]
+#[allow(dead_code)]
+mod spell_costs_v1;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EngineState {
     /// Last allocated private stack-incarnation id. Zero remains reserved for

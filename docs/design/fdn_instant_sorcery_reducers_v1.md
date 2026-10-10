@@ -28,6 +28,15 @@ guardab5c3985b65b40339b8c63a979a7eabd on cores16-17 at BelowNormal priority,
 command sequence exit0. Rust1.94.1 and MSVC19.50.35725 are logged. This
 qualifies the combined solver increment; casting-path integration is pending.
 
+The next increment collects selected normal/alternative/flashback/Escape/
+Madness/Plotted/Adventure/Omen/Bestow mana costs, kicker and Spree surcharge
+before adjustment. It retains original nonmana component groups and separates
+selected spell-face types from printed creature types. Delve and Convoke stay
+explicit and refuse the ordinary mana-only solver until their payment adapters
+are wired. Six focused collector regressions use existing registered cards;
+native execution and read-only review are pending. The collector is not yet
+wired into the engine's offer, pending-decision or payment paths.
+
 Remaining implementation must derive live source modifiers and route every
 offer, pending choice, X maximum and final payment through one spell-only
 planner. It must include Adventure/Omen types, Plotted taxes, optional costs,
