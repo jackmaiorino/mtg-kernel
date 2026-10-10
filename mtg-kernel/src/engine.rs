@@ -5590,6 +5590,7 @@ fn checked_graveyard_exile_candidates(
 /// cost calculation for this certified shape. A future reducer paired with
 /// Kicker or another generic additional cost must deliberately extend this
 /// helper across the combined total rather than silently reusing it.
+#[cfg(test)]
 fn effective_normal_cast_cost(
     def: &card_def::CardDef,
     player: PlayerId,
