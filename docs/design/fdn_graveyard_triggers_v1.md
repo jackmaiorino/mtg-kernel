@@ -43,3 +43,43 @@ The staged source and integration tests compile under Rust 1.94.1 with the
 Limited feature at `275709b4`; this is a type check, not gameplay qualification.
 The active-effect precedence fixture was then aligned with the reused Standard
 behavior. Gameplay execution still awaits registration.
+
+October10 admission preparation begins from accepted defaultbc23a8da after
+PR208 merged and its33 affected Python cases passed. The candidate appends
+only IDs334-335, adds its exact40-card import case and focused CI target, and
+reuses the source-reviewed current optional-target engine primitive without
+adding a PendingTrigger field. Candidate coverage is136 full, one partial and
+149 missing; accepted coverage remains134 until gameplay and profile checks
+pass and this batch merges. Native catalog generation supplies the new hash
+before any live-profile pin is finalized. No paid/formal run is started.
+
+The v64 candidate at150aee3099d95829eaa45a284ac8a56845214ea7 generated
+catalog identityf2a1adba0b3c68c4 under supported guard
+06e7fb0bbf5d4838a689c48714155423, exit zero, in46.97 seconds.
+Rust1.94.1/MSVC19.50.35725 and the source SHA are logged. The generated
+catalog binds both trigger recipes, Wolf's Flash and IDs334-335. The successor
+FdnGraveyardTriggers live profile uses that observed identity, preserves the
+frozen v63 identity and adds historical readability plus rejection before
+resume/publication mutations. Separate source review of150aee30 found no
+findings. All34 affected Python cases, formatting and diff checks pass.
+Native gameplay and current-head hosted qualification remain pending.
+
+The first focused native attempt atf753523a passed all14 accepted v63
+regressions and seven of eight new graveyard cases. The remaining permanent
+card-class fixture named Rancor, absent from this catalog; it now uses the
+registered Witness Protection Aura. The fixture lookup now reports the missing
+name explicitly. Local-12's exit101 and full log are retained. This repairs
+only the fixture, preserving engine/catalog/profile identity. Focused checks
+are retried on the repaired head.
+
+Source8603ef7f then passed240 focused native executions with four existing
+ignores under supported guarde290f3e56ee24d60804d70713ce18813, terminal
+exit0. All23 reviewed-head checks in CI38074650616 passed, including eight
+new gameplay cases on both platforms, frozen v64 identity and147 profile
+cases (three existing ignores), plus61 Windows production-profile executions.
+PR210 merged at53fab6045b4ee305ffea31bbdce77399c6469f44. Its parents are
+acceptedbc23a8da and reviewed8603ef7f; actual tree
+6bad54b8d53b3e6e128fe74fc01563bad7c9adbb matches the reviewed composition.
+All34 affected Python3.13.14 cases pass on that actual default merge.
+V64 is accepted at136 full, one partial and149 missing names of286.
+The failed local-12 attempt remains retained. Issue110 stays open.

@@ -12069,15 +12069,18 @@ pub(crate) enum StaticControlledCreatureFilterV1 {
 }
 
 pub(crate) struct StaticControlledCreatureBoostDefV1 {
-    pub filter: StaticControlledCreatureFilterV1,
-    pub exclude_source: bool,
-    pub power: i32,
-    pub toughness: i32,
+    pub(crate) filter: StaticControlledCreatureFilterV1,
+    pub(crate) exclude_source: bool,
+    pub(crate) power: i32,
+    pub(crate) toughness: i32,
 }
 
 pub(crate) fn static_controlled_creature_boost_for_v1(
     name: &str,
 ) -> Option<StaticControlledCreatureBoostDefV1> {
+    if !cfg!(feature = "limited-fdn-fixtures") {
+        return None;
+    }
     let (filter, exclude_source) = match name {
         "Anthem of Champions" => (StaticControlledCreatureFilterV1::All, false),
         "Empyrean Eagle" => (

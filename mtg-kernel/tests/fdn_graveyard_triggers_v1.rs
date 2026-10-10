@@ -21,7 +21,8 @@ fn ready() -> GameState {
     state
 }
 fn put(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -> ObjectId {
-    let card_def = card_id_by_name(name).unwrap();
+    let card_def =
+        card_id_by_name(name).unwrap_or_else(|| panic!("unregistered fixture card: {name}"));
     let id = state.objects.push(GameObject {
         card_def,
         name: CARD_DEFS[card_def as usize].object_name.into(),
@@ -171,7 +172,7 @@ fn regrower_targets_only_own_permanent_cards_including_lands() {
         "Forest",
         "Llanowar Elves",
         "Lembas",
-        "Rancor",
+        "Witness Protection",
         "Ajani, Caller of the Pride",
     ] {
         let mut state = ready();

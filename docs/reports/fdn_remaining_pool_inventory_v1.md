@@ -30,36 +30,38 @@ Merged batches take one catalog version each: keyword creatures and gainlands (n
 The v61 activated-combat batch merged in [PR #195](https://github.com/jackmaiorino/mtg-kernel/pull/195).
 Its default-branch inventory is 130 full, one partial and 155 missing names.
 
-Current integration owner: Codex issue #110 goal. Catalog v62, Lightshell Duo
-and Cephalid Inkmage, IDs 330-331, merged in
-[PR #204](https://github.com/jackmaiorino/mtg-kernel/pull/204) at
-8e65be54477cb658d0729d998bf7306146371115. All 23 reviewed-head checks passed;
-the merge tree matched the reviewed composition and all 32 affected Python
-tests passed on that actual default commit. Accepted coverage is 132 full,
-one partial and 153 missing names. Original preparation branches remain retained.
+Current integration owner: Codex issue #110 goal. The v62 surveil batch
+merged in [PR #204](https://github.com/jackmaiorino/mtg-kernel/pull/204), and
+v63 Vanguard Seraph/Cat Collector merged in
+[PR #208](https://github.com/jackmaiorino/mtg-kernel/pull/208) at `bc23a8da`.
+V64 Elvish Regrower/Ambush Wolf, IDs334-335, is now accepted in
+[PR #210](https://github.com/jackmaiorino/mtg-kernel/pull/210) at53fab604.
+All23 reviewed-head checks passed, its actual merge tree matches the reviewed
+composition, and34 affected Python cases pass on that default commit.
+Accepted coverage is136 full, one partial and149 missing names of286.
+The current v65 Anthem/Eagle candidate has138 full names and requires native
+gameplay, observed generated identity, live-profile checks and integration.
 
-Later prepared families remain retained in their original worktrees: v63
-Vanguard Seraph/Cat Collector (IDs 332-333), v64 Elvish Regrower/Ambush Wolf
-(334-335), v65 Anthem of Champions/Empyrean Eagle (336-337), and v66
-Balmor/Firespitter Whelp (338-339). They require serial registration, generated
+Later prepared families remain retained in their original worktrees: v65
+Anthem of Champions/Empyrean Eagle (336-337), then one coherent admission
+for prepared IDs338-368, beginning with Balmor/Firespitter Whelp. The later
+preparations include Wardens of the Cycle, Arcane Epiphany, Claws Out,
+Dreadwing Scavenger, Mischievous Pup, Felidar Savior, Armasaur Guide and
+Arbiter of Woe.
+They require serial registration, generated
 catalog identities, gameplay verification and integration. Source review
 identified Vanguard Seraph's missing flying mapping and the graveyard batch's
-pending-trigger hash compatibility requirement; these must be repaired at
-integration. Existing Standard Wolf subtype support must be preserved when
-integrating Ambush Wolf. Prepared source does not establish supported gameplay.
+pending-trigger hash compatibility requirement; both were repaired before
+their accepted integration. Standard Wolf subtype support is preserved.
+Prepared source does not establish supported gameplay.
 
-October 10 delivery plan: v63 merged in PR208 at bc23a8da, with all23 head
-checks passed and33 affected Python cases passed on the actual default commit.
-Accepted coverage is134 full, one partial and151 missing. Retain v64 and v65
-order. The unregistered source families tentatively labeled v66 through v81
-can form one coherent later catalog batch, IDs 338-363, after those prerequisites
-integrate. Their tentative version labels are preparation labels, not frozen
-catalog identities. This avoids a separate full CI cycle for each one-card
-family while preserving focused tests for every card, stable card IDs and one
-serial catalog/profile publication. The consolidated batch has no accepted
-coverage, registry, fixture or live-profile change yet. Its exact source still
-requires native primitive execution, card registration, focused gameplay/restore
-qualification, generated identities, current-head review and CI before merging.
+The31 prepared names share one later catalog admission after v65 integrates.
+Their original tentative version labels describe preparation order, not frozen
+catalog identities. Every card still needs focused gameplay/restore execution,
+with one generated catalog/profile publication for the coherent batch.
+The source port now incorporates the v65 candidate's static-team extraction,
+live profile and repaired fixtures. It registers none of the31 new names and
+still requires source compilation/review before later admission.
 
 Leyline Axe (game-start leyline step) and Electroduplicate (token copies)
 remain unclaimed engine work. Full coverage, fair Limited search and DraftZero

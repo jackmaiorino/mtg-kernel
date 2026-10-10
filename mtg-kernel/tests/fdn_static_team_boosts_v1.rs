@@ -402,11 +402,18 @@ fn static_team_real_costs_and_pending_cast_restore_match() {
             if castable_spells.contains(&spell))
         );
         engine::step(&mut state, Action::CastSpell(spell)).unwrap();
-        assert_eq!(state.players[0].mana_pool, [0; 6]);
-        assert_eq!(stats(&state, hawk), (1, 1));
+        assert!(state.engine.pending_cast.is_some());
         let saved = state.snapshot();
         let bytes = serde_json::to_vec(&state).unwrap();
         let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        assert!(matches!(
+            next(&mut restored),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(state.players[0].mana_pool, [0; 6]);
+        assert_eq!(restored.players[0].mana_pool, [0; 6]);
+        assert_eq!(stats(&state, hawk), (1, 1));
         settle(&mut state);
         settle(&mut restored);
         assert_eq!(stats(&state, hawk), expected);

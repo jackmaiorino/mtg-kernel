@@ -4238,6 +4238,132 @@
       "java_file": "Mage.Sets/src/mage/cards/c/CatCollector.java",
       "scryfall_id": "526fe356-bff1-4211-9e88-bf913ac76b1d",
       "oracle_id": "52f1b5a4-62ff-44de-80da-503d4e52d312"
+    },
+    {
+      "name": "Elvish Regrower",
+      "engine_capability": "full",
+      "mana_cost": "{2}{G}{G}",
+      "mana_value": 4,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elf",
+        "Druid"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_graveyard_triggers.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "etb_trigger",
+        "graveyard_recursion"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/ElvishRegrower.java"
+    },
+    {
+      "name": "Ambush Wolf",
+      "engine_capability": "full",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Wolf"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_graveyard_triggers.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flash",
+        "etb_trigger",
+        "graveyard_exile"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AmbushWolf.java"
+    },
+    {
+      "name": "Anthem of Champions",
+      "engine_capability": "full",
+      "mana_cost": "{G}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W",
+        "G"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_static_team.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "static_team_boost"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AnthemOfChampions.java",
+      "scryfall_id": "42fe3a40-9cbe-4235-86f9-32576aaebba8",
+      "oracle_id": "f1d8e9a6-1903-4be5-8609-1009a463f393"
+    },
+    {
+      "name": "Empyrean Eagle",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}{U}",
+      "mana_value": 3,
+      "colors": [
+        "W",
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bird",
+        "Spirit"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_static_team.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying",
+        "static_other_flying_team_boost"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/EmpyreanEagle.java",
+      "scryfall_id": "577e99a7-4a55-4314-8f08-2ae0c33b85c7",
+      "oracle_id": "270d14b2-07bc-46bc-918f-658102265ccf"
     }
   ]
 }

@@ -836,7 +836,7 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
     (
         "engine.rs",
         "Empyrean Eagle",
-        "read via engine::static_controlled_creature_boost_for_v1",
+        "read via engine::static_controlled_creature_boost_for_v1 (predicate opaque)",
     ),
     (
         "engine.rs",

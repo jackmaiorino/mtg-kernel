@@ -52,3 +52,10 @@ The proposed admission would reach169 full names only if all31 and both
 predecessor batches pass gameplay/profile checks and merge. The frozen286
 name target, remaining rules work, cross-color/reference comparisons and
 Limited search/DraftZero acceptance remain unchanged.
+
+The source port incorporates v65 candidatef2cf66f1 from draft PR212,
+preserving its accepted v64 predecessor, live v65 profile, feature-off static
+getter, rules-vector extraction and repaired gameplay fixtures. This brings
+only the two already admitted candidate names into this source branch;
+all31 names in the table remain absent. Source qualification is next and
+their metadata admission still waits for v65 acceptance.
