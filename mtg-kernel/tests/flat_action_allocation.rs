@@ -3,28 +3,39 @@ use mtg_kernel::rl_session::{
     FlatActionObjectV1, FlatActionRefV1, CANONICAL_RALLY_DECK_ID,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 struct CountingAllocator;
 
 static TRACK_ALLOCATIONS: AtomicBool = AtomicBool::new(false);
 static ALLOCATION_COUNT: AtomicUsize = AtomicUsize::new(0);
+static ENCODER_THREAD_ALLOCATION_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+thread_local! {
+    static ENCODER_THREAD: Cell<bool> = const { Cell::new(false) };
+}
+
+fn record_allocation() {
+    if TRACK_ALLOCATIONS.load(Ordering::Relaxed) {
+        ALLOCATION_COUNT.fetch_add(1, Ordering::Relaxed);
+        if ENCODER_THREAD.try_with(Cell::get).unwrap_or(false) {
+            ENCODER_THREAD_ALLOCATION_COUNT.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
 
 #[global_allocator]
 static GLOBAL_ALLOCATOR: CountingAllocator = CountingAllocator;
 
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if TRACK_ALLOCATIONS.load(Ordering::Relaxed) {
-            ALLOCATION_COUNT.fetch_add(1, Ordering::Relaxed);
-        }
+        record_allocation();
         unsafe { System.alloc(layout) }
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        if TRACK_ALLOCATIONS.load(Ordering::Relaxed) {
-            ALLOCATION_COUNT.fetch_add(1, Ordering::Relaxed);
-        }
+        record_allocation();
         unsafe { System.alloc_zeroed(layout) }
     }
 
@@ -33,9 +44,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 
     unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if TRACK_ALLOCATIONS.load(Ordering::Relaxed) {
-            ALLOCATION_COUNT.fetch_add(1, Ordering::Relaxed);
-        }
+        record_allocation();
         unsafe { System.realloc(pointer, layout, new_size) }
     }
 }
@@ -56,6 +65,8 @@ fn assert_admitted_flat_action_slice_encode_allocates_nothing(mut session: FastA
         // intentionally outside the tracked region; this test is solely the
         // admitted flat encoder's no-allocation contract.
         ALLOCATION_COUNT.store(0, Ordering::SeqCst);
+        ENCODER_THREAD_ALLOCATION_COUNT.store(0, Ordering::SeqCst);
+        ENCODER_THREAD.set(true);
         TRACK_ALLOCATIONS.store(true, Ordering::SeqCst);
         let encoded = std::hint::black_box(&session)
             .encode_current_flat_action_slice_v1(
@@ -68,24 +79,35 @@ fn assert_admitted_flat_action_slice_encode_allocates_nothing(mut session: FastA
             )
             .unwrap();
         TRACK_ALLOCATIONS.store(false, Ordering::SeqCst);
-        let allocation_count = ALLOCATION_COUNT.load(Ordering::SeqCst);
+        ENCODER_THREAD.set(false);
 
         std::hint::black_box((&actions, &refs, &objects));
         assert!(encoded.active_action_count > 0);
-        assert_eq!(allocation_count, 0, "decision {encoded_decisions}");
+        // The encoder is synchronous; harness allocations on other threads
+        // do not test this contract. Keep the process total for diagnosis.
+        assert_eq!(
+            ENCODER_THREAD_ALLOCATION_COUNT.load(Ordering::SeqCst),
+            0,
+            "decision {encoded_decisions}; process allocations {}",
+            ALLOCATION_COUNT.load(Ordering::SeqCst)
+        );
 
         #[cfg(feature = "flat-action-diagnostic")]
         {
             ALLOCATION_COUNT.store(0, Ordering::SeqCst);
+            ENCODER_THREAD_ALLOCATION_COUNT.store(0, Ordering::SeqCst);
+            ENCODER_THREAD.set(true);
             TRACK_ALLOCATIONS.store(true, Ordering::SeqCst);
             let rebuilt_commitment = std::hint::black_box(&mut session)
                 .diagnostic_rebuild_current_flat_action_cache_v1()
                 .unwrap();
             TRACK_ALLOCATIONS.store(false, Ordering::SeqCst);
+            ENCODER_THREAD.set(false);
             assert_eq!(
-                ALLOCATION_COUNT.load(Ordering::SeqCst),
+                ENCODER_THREAD_ALLOCATION_COUNT.load(Ordering::SeqCst),
                 0,
-                "cache rebuild at decision {encoded_decisions}"
+                "cache rebuild at decision {encoded_decisions}; process allocations {}",
+                ALLOCATION_COUNT.load(Ordering::SeqCst)
             );
             assert_eq!(
                 rebuilt_commitment,
