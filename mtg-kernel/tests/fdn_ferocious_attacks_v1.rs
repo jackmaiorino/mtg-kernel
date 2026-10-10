@@ -440,13 +440,24 @@ fn restored_actual_trigger_refuses_redirected_boost_zone_generation_or_missing_c
                         _ => unreachable!(),
                     }
                 }
-                let before = serde_json::to_vec(&forged).unwrap();
-                assert!(engine::step(&mut forged, Action::Pass).is_err());
-                assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
-                assert!(matches!(
-                    engine::advance_until_decision(&mut forged),
-                    Decision::Halted { .. }
-                ));
+                let mut halted = false;
+                for _ in 0..8 {
+                    match engine::advance_until_decision(&mut forged) {
+                        Decision::Halted { .. } => {
+                            halted = true;
+                            break;
+                        }
+                        Decision::CastSpellOrPass { .. } => {
+                            engine::step(&mut forged, Action::Pass).unwrap()
+                        }
+                        other => panic!("unexpected forged resolution decision {other:?}"),
+                    }
+                }
+                assert!(halted, "forged source binding did not halt at resolution");
+                assert_eq!(
+                    engine::effective_power(&forged, source),
+                    if name == "Ruby, Daring Tracker" { 1 } else { 2 }
+                );
                 assert_eq!(engine::effective_power(&forged, other), 1);
                 assert!(!engine::has_effective_keyword(
                     &forged,

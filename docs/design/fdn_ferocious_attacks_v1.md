@@ -50,8 +50,9 @@ automatic payment after restore, without clearing summoning sickness.
 
 An actual printed-trigger restore regression also forges the bound boost object,
 zone, generation and missing source contract for both cards and seats. It
-requires action refusal without mutation and halted continuation before damage
-or grants. This fifth group remains uncompiled and unexecuted.
+requires halted resolution before any boost or grant. Ordinary priority passes
+do not authenticate an ordinary stack item; the existing resolution validator
+provides the boundary exercised here. This fifth group remains uncompiled and unexecuted.
 
 A sixth actual fixture group installs registered Witness Protection at the
 trigger boundary with its next layer timestamp. It checks printed-trigger and
