@@ -63,3 +63,13 @@ and +1/+1 while the source is on the battlefield. Eagle's effective Flying
 predicate/source exclusion are explicitly Opaque where the facet vocabulary
 cannot express them. The default non-Limited getter returns no team rule.
 Both keyed names are inventoried. This repair awaits native qualification.
+
+Read-only review ofafcbd786 confirms the omission resolved. That exact source
+passed Limited-only and combined Standard/Limited test compilation,23
+rules-vector cases (one existing ignore), including the source inventory,
+and the frozen v64 catalog case under supported guard
+15200372022b42bdbf1e4be2456af6e6, command exit0. Its owned idle telemetry
+child was released after verifying the completed sequence. All other static
+fixture card names were checked against the registry; the two candidate
+printings and behaviors were reread from the pinned primary Mage source.
+The nine static-team card cases remain unexecuted until registration.
