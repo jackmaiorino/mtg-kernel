@@ -613,6 +613,9 @@ fn power_toughness_changes_keep_their_sign() {
 /// or `event_time_trigger_programs`; token names are reached through
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
+    "Ruby, Daring Tracker",
+    "Courageous Goblin",
+    "Brineborn Cutthroat",
     "Arbiter of Woe",
     "Armasaur Guide",
     "Mischievous Pup",

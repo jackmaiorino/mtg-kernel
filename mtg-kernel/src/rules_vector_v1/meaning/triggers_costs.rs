@@ -186,6 +186,13 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
             // The source's exact incarnation is declared as an attacker.
             out.trigger(TrigF::Attacks);
         }
+        TriggerCondition::AttacksWhileControllerHasPowerFourCreature => {
+            out.trigger(TrigF::Attacks);
+            out.control(ControlF::Conditional);
+            // The vocabulary cannot express the existence of a controlled
+            // creature with a threshold on its live effective power.
+            out.atoms.push(Atom::Opaque);
+        }
         TriggerCondition::ControlledLandEnters => {
             // A land enters under the controller's control. The matcher does
             // not exclude the source, but no other class is nearer.
