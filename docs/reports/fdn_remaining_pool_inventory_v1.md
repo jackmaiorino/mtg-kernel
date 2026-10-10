@@ -30,13 +30,13 @@ Merged batches take one catalog version each: keyword creatures and gainlands (n
 The v61 activated-combat batch merged in [PR #195](https://github.com/jackmaiorino/mtg-kernel/pull/195).
 Its default-branch inventory is 130 full, one partial and 155 missing names.
 
-Current integration owner: Codex issue #110 goal, branch `codex/fdn-issue110`.
-The next catalog is v62, Lightshell Duo and Cephalid Inkmage, IDs 330-331,
-with private multi-card surveil and threshold. Its source registry resolves
-132 names, but those two additions remain pending gameplay and hosted
-qualification before that number counts as accepted default-branch coverage.
-The preparation commits on `codex/limited-surveil-batch-20261009` are retained
-and integrated into the owner's branch.
+Current integration owner: Codex issue #110 goal. Catalog v62, Lightshell Duo
+and Cephalid Inkmage, IDs 330-331, merged in
+[PR #204](https://github.com/jackmaiorino/mtg-kernel/pull/204) at
+8e65be54477cb658d0729d998bf7306146371115. All 23 reviewed-head checks passed;
+the merge tree matched the reviewed composition and all 32 affected Python
+tests passed on that actual default commit. Accepted coverage is 132 full,
+one partial and 153 missing names. Original preparation branches remain retained.
 
 Later prepared families remain retained in their original worktrees: v63
 Vanguard Seraph/Cat Collector (IDs 332-333), v64 Elvish Regrower/Ambush Wolf
@@ -47,6 +47,17 @@ identified Vanguard Seraph's missing flying mapping and the graveyard batch's
 pending-trigger hash compatibility requirement; these must be repaired at
 integration. Existing Standard Wolf subtype support must be preserved when
 integrating Ambush Wolf. Prepared source does not establish supported gameplay.
+
+October 10 delivery plan: retain the explicitly recorded v63, v64 and v65
+order. The unregistered source families tentatively labeled v66 through v81
+can form one coherent later catalog batch, IDs 338-356, after those prerequisites
+integrate. Their tentative version labels are preparation labels, not frozen
+catalog identities. This avoids a separate full CI cycle for each one-card
+family while preserving focused tests for every card, stable card IDs and one
+serial catalog/profile publication. The consolidated batch has no accepted
+coverage, registry, fixture or live-profile change yet. Its exact source still
+requires native primitive execution, card registration, focused gameplay/restore
+qualification, generated identities, current-head review and CI before merging.
 
 Leyline Axe (game-start leyline step) and Electroduplicate (token copies)
 remain unclaimed engine work. Full coverage, fair Limited search and DraftZero
