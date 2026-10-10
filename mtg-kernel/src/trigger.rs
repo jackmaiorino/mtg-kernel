@@ -500,6 +500,23 @@ const ARMASAUR_GUIDE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     ..etb_trigger(armasaur_guide_effect)
 }];
 
+const ARBITER_OF_WOE_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(arbiter_of_woe_effect)];
+
+fn arbiter_of_woe_effect() -> EffectOp {
+    EffectOp::Sequence(vec![
+        burglar_rat_effect(),
+        EffectOp::LoseLife {
+            player: PlayerRef::Opponent,
+            amount: 2,
+        },
+        ichor_wellspring_draw_effect(),
+        EffectOp::GainLife {
+            player: PlayerRef::Controller,
+            amount: 2,
+        },
+    ])
+}
+
 fn armasaur_guide_effect() -> EffectOp {
     EffectOp::AddCountersToTarget {
         target_index: 0,
@@ -3078,6 +3095,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Mischievous Pup" => &MISCHIEVOUS_PUP_TRIGGERS,
         "Felidar Savior" => &FELIDAR_SAVIOR_TRIGGERS,
         "Armasaur Guide" => &ARMASAUR_GUIDE_TRIGGERS,
+        "Arbiter of Woe" => &ARBITER_OF_WOE_TRIGGERS,
         "Burglar Rat" => &BURGLAR_RAT_TRIGGERS,
         "Infestation Sage" => &INFESTATION_SAGE_TRIGGERS,
         "Wary Thespian" => &WARY_THESPIAN_TRIGGERS,
