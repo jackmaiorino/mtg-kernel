@@ -969,3 +969,72 @@ fn resolution_boundary_profile_survives_world_sampling_and_is_hash_neutral() {
         RuntimeRulesV1::RESOLUTION_BOUNDARY_V1
     );
 }
+
+/// Zone-change and trigger events of a scripted run, order-free (the
+/// profile may only change the order in which a batch is committed).
+fn event_multiset(st: &crate::state::GameState) -> Vec<String> {
+    let mut v: Vec<String> = st
+        .engine
+        .event_history
+        .iter()
+        .map(|e| format!("{e:?}"))
+        .collect();
+    v.sort();
+    v
+}
+
+#[test]
+fn resolution_boundary_preserves_events_and_bound_order_for_spy() {
+    use crate::engine::RuntimeRulesV1;
+    let lib = [
+        "Dread Return",
+        "Lotleth Giant",
+        "Balustrade Spy",
+        "Dread Return",
+    ];
+    let (_, old) = scripted_cast(RuntimeRulesV1::default(), "Balustrade Spy", &lib);
+    let (_, new) = scripted_cast(
+        RuntimeRulesV1::RESOLUTION_BOUNDARY_V1,
+        "Balustrade Spy",
+        &lib,
+    );
+    assert_eq!(event_multiset(&old), event_multiset(&new));
+    assert_eq!(
+        old.engine.pending_triggers.len(),
+        new.engine.pending_triggers.len()
+    );
+    // The profile keeps the order the effect bound: library order, which the
+    // fixture pushed bottom to top, so the graveyard reads it either way.
+    let gy = zone_names(&new, &new.players[0].graveyard, false);
+    let milled: Vec<String> = gy
+        .iter()
+        .filter(|n| lib.contains(&n.as_str()))
+        .cloned()
+        .collect();
+    let fwd: Vec<String> = lib.iter().map(|s| s.to_string()).collect();
+    let rev: Vec<String> = fwd.iter().rev().cloned().collect();
+    assert!(milled == fwd || milled == rev, "{gy:?}");
+}
+
+#[test]
+fn resolution_boundary_covers_plain_mills() {
+    use crate::engine::RuntimeRulesV1;
+    let lib = ["Lotleth Giant", "Dread Return", "Swamp", "Balustrade Spy"];
+    let (old_menus, old) = scripted_cast(RuntimeRulesV1::default(), "Thought Scour", &lib);
+    let (new_menus, new) = scripted_cast(
+        RuntimeRulesV1::RESOLUTION_BOUNDARY_V1,
+        "Thought Scour",
+        &lib,
+    );
+    assert!(order_menus(&old_menus) >= 1, "{old_menus:?}");
+    assert_eq!(order_menus(&new_menus), 0, "{new_menus:?}");
+    assert_eq!(
+        zone_names(&old, &old.players[0].graveyard, true),
+        zone_names(&new, &new.players[0].graveyard, true)
+    );
+    assert_eq!(
+        zone_names(&old, &old.players[0].hand, true),
+        zone_names(&new, &new.players[0].hand, true)
+    );
+    assert_eq!(event_multiset(&old), event_multiset(&new));
+}
