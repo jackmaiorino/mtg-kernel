@@ -16709,7 +16709,7 @@ mod tests {
     #[test]
     fn sacrifice_other_creature_cost_rejects_source_opponent_and_noncreature_atomically() {
         let mut state = ready_game_in_main1(0);
-        let source = put_on_battlefield(&mut state, PlayerId::P0, "Monastery Swiftspear");
+        let source = put_on_battlefield(&mut state, PlayerId::P0, "Faerie Miscreant");
         let opponent = put_on_battlefield(&mut state, PlayerId::P1, "Faerie Seer");
         let artifact = put_on_battlefield(&mut state, PlayerId::P0, "Blood Token");
         state.players[0].mana_pool[ManaColor::C.pool_index()] = 1;
@@ -16773,7 +16773,7 @@ mod tests {
     #[test]
     fn sacrifice_other_creature_cost_uses_current_control_and_incarnation_bindings() {
         let mut state = ready_game_in_main1(0);
-        let source = put_on_battlefield(&mut state, PlayerId::P0, "Monastery Swiftspear");
+        let source = put_on_battlefield(&mut state, PlayerId::P0, "Faerie Miscreant");
         let borrowed = put_on_battlefield(&mut state, PlayerId::P1, "Faerie Seer");
         state.objects.get_mut(borrowed).controller = PlayerId::P0;
         let components = [CostComponent::SacrificeOtherControlledCreatures(1)];
@@ -16823,7 +16823,7 @@ mod tests {
     #[test]
     fn sacrifice_other_creature_cost_rejects_zero_count_duplicates_and_wrong_count() {
         let mut state = ready_game_in_main1(0);
-        let source = put_on_battlefield(&mut state, PlayerId::P0, "Monastery Swiftspear");
+        let source = put_on_battlefield(&mut state, PlayerId::P0, "Faerie Miscreant");
         let first = put_on_battlefield(&mut state, PlayerId::P0, "Faerie Seer");
         let second = put_on_battlefield(&mut state, PlayerId::P0, "Faerie Seer");
         let before = state.clone();
