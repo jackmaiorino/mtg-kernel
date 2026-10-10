@@ -13,7 +13,7 @@ use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::{self, ManaColor, Pip};
-use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
+use mtg_kernel::state::{GameObject, GameState, ObjectLinkV4, ObjectStateV4, Step, Target, Zone};
 
 fn ready(active: PlayerId) -> GameState {
     let forest = card_id_by_name("Forest").unwrap();
@@ -454,6 +454,84 @@ fn restored_actual_trigger_refuses_redirected_boost_zone_generation_or_missing_c
                     Keywords::MENACE
                 ));
             }
+        }
+    }
+}
+
+fn witness_at_boundary(state: &mut GameState, source: ObjectId) {
+    // Install the registered Aura relationship at the chosen trigger boundary.
+    // Its ordinary cast/attachment behavior is independently qualified. Assign
+    // the next real layer timestamp so ordering against subsequent grants holds.
+    let aura = put(
+        state,
+        state.active_player.opponent(),
+        "Witness Protection",
+        Zone::Battlefield,
+    );
+    let timestamp = state.engine.next_effect_timestamp;
+    state.engine.next_effect_timestamp += 1;
+    let link = ObjectLinkV4 {
+        object: source,
+        zone_change_count: state.objects.get(source).zone_change_count,
+    };
+    state.objects.get_mut(aura).v4.attached_to = Some(link);
+    state.objects.get_mut(aura).v4.layer_timestamp = Some(timestamp);
+    state.objects.get_mut(source).attachments.push(aura);
+}
+
+#[test]
+fn ability_removal_prevents_new_attacks_and_pending_menace_respects_timestamps() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for name in ["Ruby, Daring Tracker", "Courageous Goblin"] {
+            let mut removed = ready(player);
+            let source = put(&mut removed, player, name, Zone::Battlefield);
+            put(&mut removed, player, "Tolarian Terror", Zone::Battlefield);
+            witness_at_boundary(&mut removed, source);
+            assert!(!engine::has_effective_keyword(
+                &removed,
+                source,
+                Keywords::HASTE
+            ));
+            assert!(mana::gather_sources(player, &removed)
+                .iter()
+                .all(|candidate| candidate.id != source));
+            assert!(
+                matches!(next(&mut removed), Decision::CastSpellOrPass { mana_abilities, .. } if !mana_abilities.contains(&source))
+            );
+            attack(&mut removed, source);
+            assert!(removed.engine.pending_triggers.is_empty());
+        }
+        for attach_before_resolution in [false, true] {
+            let mut state = ready(player);
+            let source = put(&mut state, player, "Courageous Goblin", Zone::Battlefield);
+            put(&mut state, player, "Tolarian Terror", Zone::Battlefield);
+            attack(&mut state, source);
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            assert_eq!(state.stack.len(), 1);
+            if attach_before_resolution {
+                witness_at_boundary(&mut state, source);
+            }
+            let mut replay = restored(&state);
+            for current in [&mut state, &mut replay] {
+                settle(current);
+                if !attach_before_resolution {
+                    witness_at_boundary(current, source);
+                }
+                assert_eq!(engine::effective_power(current, source), 2);
+                assert_eq!(engine::effective_toughness(current, source), 1);
+                assert_eq!(
+                    engine::has_effective_keyword(current, source, Keywords::MENACE),
+                    attach_before_resolution
+                );
+                cleanup(current);
+                assert_eq!(engine::effective_power(current, source), 1);
+                assert!(!engine::has_effective_keyword(
+                    current,
+                    source,
+                    Keywords::MENACE
+                ));
+            }
+            same(&state, &replay);
         }
     }
 }
