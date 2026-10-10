@@ -139,7 +139,11 @@ BelowNormal with pinned Rust1.94.1/MSVC19.50.35725. Observer71399 reports
 command exit0: both feature test compilations and81 actual executions pass
 (25 mana,15 collector/preflight,23 rules-vector, frozen v65,8 graveyard and9
 static-team cases), with one existing rules-vector ignore. Guard release still
-requires terminal verification. This qualifies the preparatory primitives only;
+requires terminal verification in that initial command receipt. Subsequent
+membership inspection identified only supervisor151276 and idle VCTIP18796.
+Its executable/start time and stable ten-second CPU sample verified ownership;
+stopping that helper released the guard with observed terminal0. No peer process
+was stopped. This qualifies the preparatory primitives only;
 the runtime casting paths have not been changed and Sprite/Archmage stay absent
 from the registry.
 
