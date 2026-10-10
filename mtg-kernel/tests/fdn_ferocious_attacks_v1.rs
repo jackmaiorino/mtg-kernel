@@ -8,6 +8,7 @@ use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardType, Keywords, Subtype, CARD_DEFS,
 };
 use mtg_kernel::combat_damage_v1::enable_foundations_combat_v1;
+use mtg_kernel::effect::EffectOp;
 use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
@@ -400,5 +401,59 @@ fn courageous_menace_refuses_one_blocker_and_accepts_two_after_restore() {
             .unwrap();
         }
         same(&state, &replay);
+    }
+}
+
+#[test]
+fn restored_actual_trigger_refuses_redirected_boost_zone_generation_or_missing_contract() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for name in ["Ruby, Daring Tracker", "Courageous Goblin"] {
+            let mut state = ready(player);
+            let source = put(&mut state, player, name, Zone::Battlefield);
+            put(&mut state, player, "Tolarian Terror", Zone::Battlefield);
+            let other = put(
+                &mut state,
+                player.opponent(),
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            attack(&mut state, source);
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            assert_eq!(state.stack.len(), 1);
+            for repair in 0..4 {
+                let mut forged = restored(&state);
+                if repair == 3 {
+                    forged.stack[0].v4.ability_source_contract = None;
+                } else {
+                    let effect = forged.stack[0].inline_effect.as_mut().unwrap();
+                    let effect = match effect {
+                        EffectOp::Sequence(steps) => &mut steps[0],
+                        other => other,
+                    };
+                    let EffectOp::BoostBoundObjectUntilEndOfTurn { object, .. } = effect else {
+                        panic!("printed bound boost absent")
+                    };
+                    match repair {
+                        0 => object.object = other,
+                        1 => object.expected_zone = Zone::Graveyard,
+                        2 => object.expected_zone_change_count += 1,
+                        _ => unreachable!(),
+                    }
+                }
+                let before = serde_json::to_vec(&forged).unwrap();
+                assert!(engine::step(&mut forged, Action::Pass).is_err());
+                assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
+                assert!(matches!(
+                    engine::advance_until_decision(&mut forged),
+                    Decision::Halted { .. }
+                ));
+                assert_eq!(engine::effective_power(&forged, other), 1);
+                assert!(!engine::has_effective_keyword(
+                    &forged,
+                    source,
+                    Keywords::MENACE
+                ));
+            }
+        }
     }
 }

@@ -47,3 +47,8 @@ Review also found that mana tap admission and automatic payment ignored effectiv
 haste on sick creatures. Both paths now use the existing effective keyword check;
 a registered Llanowar Elves regression grants haste and tests explicit and
 automatic payment after restore, without clearing summoning sickness.
+
+An actual printed-trigger restore regression also forges the bound boost object,
+zone, generation and missing source contract for both cards and seats. It
+requires action refusal without mutation and halted continuation before damage
+or grants. This fifth group remains uncompiled and unexecuted.
