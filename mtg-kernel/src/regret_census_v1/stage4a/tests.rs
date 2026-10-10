@@ -588,6 +588,13 @@ fn resume_refuses_mixed_forward_activation_modes() {
     assert!(completed_roots(&(ordinary.clone() + &fast), false).is_err());
     assert!(completed_roots(&(ordinary + &fast), true).is_err());
     assert!(completed_roots(fast.trim_end(), false).unwrap().is_empty());
+    let mut interrupted = fast.as_bytes().to_vec();
+    interrupted.extend_from_slice(&[0xe2, 0x82]);
+    assert!(completed_roots_from_bytes(&interrupted, false).is_err());
+    assert!(completed_roots_from_bytes(&interrupted, true)
+        .unwrap()
+        .contains("fast"));
+    assert!(completed_roots_from_bytes(&[0xff, b'\n'], false).is_err());
 }
 
 #[test]

@@ -183,6 +183,17 @@ fn completed_roots(rows: &str, fast_forward: bool) -> Result<HashSet<String>, St
     Ok(done)
 }
 
+fn completed_roots_from_bytes(bytes: &[u8], fast_forward: bool) -> Result<HashSet<String>, String> {
+    // An interrupted UTF-8 character in the disposable last line must not
+    // hide completed rows from activation-mode validation.
+    let keep = bytes
+        .iter()
+        .rposition(|&byte| byte == b'\n')
+        .map_or(0, |index| index + 1);
+    let retained = std::str::from_utf8(&bytes[..keep]).map_err(|error| error.to_string())?;
+    completed_roots(retained, fast_forward)
+}
+
 fn set_replay_forward(roles: &mut Roles, fast_forward: bool) {
     roles.focal.set_fast_search_forward_v1(fast_forward);
     for opponent in &mut roles.opps {
@@ -546,10 +557,12 @@ fn plain_roles(policy: &FrozenPlayPolicyV1, shared: &Shared) -> Result<Roles, St
 pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(), String> {
     let shared = load_shared(cfg)?;
     let done: HashSet<String> = if cfg.mode == "s4a-run" {
-        completed_roots(
-            &std::fs::read_to_string(&cfg.out).unwrap_or_default(),
-            shared.fast_forward,
-        )?
+        let bytes = match std::fs::read(&cfg.out) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(error) => return Err(error.to_string()),
+        };
+        completed_roots_from_bytes(&bytes, shared.fast_forward)?
     } else {
         HashSet::new()
     };
