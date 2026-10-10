@@ -34,3 +34,10 @@ to Cleanup/Untap skipped their entry actions. Fixtures now explicitly finalize
 the targeted stack item before changing state or taking snapshots, and pass
 through EndStep priority into real Cleanup and the opponent's Untap. Original
 source c67ad5b6 is retained; these repairs remain pending native qualification.
+
+Repair receipt, October 10: separate read-only review of
+61c1c64a3018e004c6d04707314ca7b92537a918 confirmed all three findings closed
+with no remaining actionable defects. Formatting/diff checks pass. Before
+admission, the existing unstarted Haley queue was updated to this exact source,
+preserving its guard, cache and reservation. It includes compilation of these
+five card cases; unregistered card gameplay remains unexecuted.
