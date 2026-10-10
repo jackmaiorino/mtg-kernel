@@ -28,6 +28,9 @@ pub(crate) enum V4SearchStateErrorV1 {
     LibraryChoicePlanFailed,
     LibraryChoiceRebuildFailed,
     LibraryChoiceOriginFailed,
+    /// A caller's post-sample hook (e.g. a public deck prior) declared the
+    /// sample incompatible. Like every sampler error, never retry the seed.
+    SampleHookRejected,
     StepFailed,
     HaltedSimulation,
 }
@@ -185,7 +188,20 @@ impl FastActorSessionV1 {
         seed: u64,
         mode: V4SearchSampleMode,
     ) -> Result<Self, Error> {
-        self.search_clone_v4_mode_inner(seed, mode, |_, _| {})
+        self.search_clone_v4_mode_inner(seed, mode, |_, _| Ok(()))
+    }
+    /// `kernel_search_redeterminized_clone_mode_v4` with a fallible hook that
+    /// edits the sampled hidden state after the whole-object shuffle and the
+    /// fresh future chance, before the live candidates are rebuilt and the
+    /// actor's boundary is compared. A hook that changes anything the actor
+    /// observes therefore fails with `SampleBoundaryChanged`.
+    pub(crate) fn kernel_search_redeterminized_clone_hooked_v4(
+        &self,
+        seed: u64,
+        mode: V4SearchSampleMode,
+        hook: impl FnOnce(&mut GameState, PlayerId) -> Result<(), Error>,
+    ) -> Result<Self, Error> {
+        self.search_clone_v4_mode_inner(seed, mode, hook)
     }
     #[cfg(test)]
     pub(crate) fn kernel_search_redeterminized_clone_library_v2(
@@ -200,13 +216,16 @@ impl FastActorSessionV1 {
         seed: u64,
         after_sample: impl FnOnce(&mut GameState, PlayerId),
     ) -> Result<Self, Error> {
-        self.search_clone_v4_mode_inner(seed, V4SearchSampleMode::Legacy, after_sample)
+        self.search_clone_v4_mode_inner(seed, V4SearchSampleMode::Legacy, |state, actor| {
+            after_sample(state, actor);
+            Ok(())
+        })
     }
     fn search_clone_v4_mode_inner(
         &self,
         seed: u64,
         mode: V4SearchSampleMode,
-        after_sample: impl FnOnce(&mut GameState, PlayerId),
+        after_sample: impl FnOnce(&mut GameState, PlayerId) -> Result<(), Error>,
     ) -> Result<Self, Error> {
         if self.flat_action_contract_mode != FlatActionContractModeV1::V3 {
             return Err(Error::UnsupportedActionContract);
@@ -270,7 +289,7 @@ impl FastActorSessionV1 {
             let future = u64::from_le_bytes(bytes[..8].try_into().expect("eight digest bytes"));
             copy.state.resample_future_randomness_for_search_v3(future);
         }
-        after_sample(&mut copy.state, actor);
+        after_sample(&mut copy.state, actor)?;
         let mut current = copy.current.take().ok_or(Error::NoLiveDecision)?;
         if let Some(plan) = &plan {
             plan.rebuild(&mut copy.state)
