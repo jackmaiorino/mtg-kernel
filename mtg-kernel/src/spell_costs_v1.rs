@@ -26,6 +26,60 @@ pub(super) struct SelectedSpellManaCostsV1 {
 }
 
 impl SelectedSpellManaCostsV1 {
+    /// Validate one chosen-object slice per collected component group before
+    /// deriving the combined payment. The casting caller already validates
+    /// staged discard and chosen-creature bindings, and supplies any separately
+    /// selected graveyard costs so Delve cannot reuse their cards.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn payment_plan_with_component_choices_v1(
+        &self,
+        x: u8,
+        player: PlayerId,
+        source: ObjectId,
+        state: &GameState,
+        chosen_by_group: &[&[ObjectId]],
+        separately_reserved_graveyard: &[ObjectId],
+    ) -> Option<SpellManaPaymentV1> {
+        if chosen_by_group.len() != self.component_groups.len() {
+            return None;
+        }
+        let mut reserved = separately_reserved_graveyard.to_vec();
+        for (components, chosen) in self.component_groups.iter().zip(chosen_by_group) {
+            reserved.extend(super::validate_cost_component_choices_v1(
+                state, player, source, components, chosen,
+            )?);
+            // DiscardCards has already been staged/paid by FinishCast. Its
+            // original hand-count check must not be repeated after discard.
+            // Mana and life share the complete selected total below. The
+            // chosen-creature binding belongs to PendingCast validation.
+            let nonmana = components
+                .iter()
+                .copied()
+                .filter(|component| {
+                    !matches!(
+                        component,
+                        CostComponent::Mana(_)
+                            | CostComponent::ConvokeMana(_)
+                            | CostComponent::DiscardCards(_)
+                            | CostComponent::PayLife(_)
+                            | CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand
+                    )
+                })
+                .collect::<Vec<_>>();
+            if !super::can_pay_components(&nonmana, player, source, state) {
+                return None;
+            }
+            if components.iter().any(|component| {
+                matches!(component, CostComponent::ExileOtherCardsFromOwnGraveyard(_))
+            }) {
+                reserved.extend(chosen.iter().copied());
+            }
+        }
+        let (increase, reduction) =
+            super::spell_cost_generic_modifiers_v1(state, self.types, player);
+        self.payment_plan(x, player, state, increase, reduction, &reserved)
+    }
+
     /// Determine the payment without changing state. Freeze this result before
     /// any nonmana sacrifice can remove a cost reducer. Reserved objects are
     /// unavailable as mana sources or as Delve cards.
@@ -415,6 +469,73 @@ mod tests {
         )
         .is_none());
         assert!(!state.objects.get(source).tapped);
+    }
+
+    #[test]
+    fn component_preflight_does_not_recheck_a_completed_discard() {
+        let mut selected = selected("Fireblast", CastMethodV4::Alternative, false);
+        selected.component_groups =
+            vec![&[CostComponent::DiscardCards(1), CostComponent::PayLife(1)]];
+        let mut state = ready();
+        let source = state.draw_card(PlayerId::P0).unwrap();
+        // Only the casting source remains in hand after the validated discard.
+        assert_eq!(state.players[0].hand, vec![source]);
+        let before = serde_json::to_value(&state).unwrap();
+        assert!(selected
+            .payment_plan_with_component_choices_v1(
+                0, PlayerId::P0, source, &state, &[&[]], &[],
+            )
+            .is_some());
+        assert_eq!(serde_json::to_value(&state).unwrap(), before);
+        state.players[0].life = 0;
+        assert!(selected
+            .payment_plan_with_component_choices_v1(
+                0, PlayerId::P0, source, &state, &[&[]], &[],
+            )
+            .is_none());
+        assert!(selected
+            .payment_plan_with_component_choices_v1(
+                0, PlayerId::P0, source, &state, &[], &[],
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn component_preflight_reserves_graveyard_picks_from_delve_without_mutation() {
+        let mut selected = selected("Gurmag Angler", CastMethodV4::Normal, false);
+        selected.component_groups =
+            vec![&[CostComponent::ExileOtherCardsFromOwnGraveyard(1)]];
+        let forest = card_def::card_id_by_name("Forest").unwrap();
+        let mut state =
+            GameState::new_from_libraries(&[forest; 3], &[forest], |_| "Forest".into(), 950);
+        let source = state.draw_card(PlayerId::P0).unwrap();
+        let mut graveyard = Vec::new();
+        for _ in 0..2 {
+            let object = state.draw_card(PlayerId::P0).unwrap();
+            state.players[0].hand.retain(|id| *id != object);
+            state.objects.get_mut(object).zone = crate::state::Zone::Graveyard;
+            state.players[0].graveyard.push(object);
+            graveyard.push(object);
+        }
+        state.players[0].mana_pool = [0, 0, 1, 0, 0, 5];
+        let before = serde_json::to_value(&state).unwrap();
+        let payment = selected
+            .payment_plan_with_component_choices_v1(
+                0, PlayerId::P0, source, &state, &[&graveyard[..1]], &[],
+            )
+            .unwrap();
+        assert_eq!(payment.delve_exiled, graveyard[1..]);
+        assert!(selected
+            .payment_plan_with_component_choices_v1(
+                0, PlayerId::P0, source, &state, &[&graveyard[..1]], &graveyard[1..],
+            )
+            .is_none());
+        assert!(selected
+            .payment_plan_with_component_choices_v1(
+                0, PlayerId::P0, source, &state, &[&[source]], &[],
+            )
+            .is_none());
+        assert_eq!(serde_json::to_value(&state).unwrap(), before);
     }
 
     #[test]
