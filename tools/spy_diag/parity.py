@@ -82,7 +82,8 @@ def main():
             ok &= rec["hash_equal"] and rec["archived_equal"]
             print(json.dumps(rec))
     try:
-        require_coverage(observed, expected)
+        # A qualification subset repeats roots (trace on and off) by design.
+        require_coverage(sorted(set(observed)) if a.root_id else observed, expected)
     except ValueError as error:
         print(json.dumps({"coverage_error": str(error)}))
         ok = False

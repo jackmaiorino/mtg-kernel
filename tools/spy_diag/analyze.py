@@ -285,7 +285,7 @@ def main():
                        "selection": selection_summary(sims, nodes, cast),
                        "root_edges": root_edges(nodes, hist),
                        "worlds": [eval_world(w, nodes, hist, cast) for w in worlds]}
-    require_coverage(result, expected)
+    require_coverage(list(result), expected)
     Path(a.out).mkdir(parents=True, exist_ok=True)
     (Path(a.out) / "analysis.json").write_text(json.dumps(result, indent=1))
     print(json.dumps({rid: {"role": r["role"], "complete": r["selection"]["suffix_complete_natural"],
