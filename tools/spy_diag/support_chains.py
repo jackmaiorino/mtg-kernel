@@ -1,17 +1,27 @@
 """Saved-record repeat-support diagnosis (collab LANES/spy-history-support-plan-20261010, PLAN.md).
 
-Usage: python support_chains.py TRACE_DIR OUT.json
+Usage: python support_chains.py TRACE_DIR ROWS_DIR OUT.json
 Reads boundary-profile traces only (no engine run). For each preselected
 case it binds the node by key, reconstructs the node's arrival chronology
 from ordered selection records, walks its ancestor chain with per-edge
-traffic, picks up to two same-root successful comparison nodes (most
-winning Giant backups, then most visits, then lowest id), finds the
+traffic, picks up to two same-root successful comparison nodes (first most
+winning Giant backups, then most visits among remaining successful nodes), finds the
 deepest common ancestor and how the paths split there, and lists the
 evaluated prefix per world. Spy labels only pick diagnostic witnesses.
+
+The fixed bindings below were recovered from the already selected archived
+node IDs, not from a new case selection. They match the frozen boundary
+result rows in LANES/spy-resolution-boundary-20261010/evidence. ROWS_DIR
+must contain those retained s4a_diag_root rows (*.jsonl). Historical runtime,
+changed bytes/keys/parents, duplicate records and inconsistent chronology
+are refused before creating the output. Existing outputs are preserved.
+Evidence source: mtg-kernel-collab commit
+070f0f5ffac0d3e75b28e5cdfae7a9747840e285, evidence/rows/b-*.jsonl.
 """
+import hashlib
 import json
 import sys
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
 
 GIANT, SELF = 4, 2
@@ -24,25 +34,81 @@ CASES = [
     ("r2-cast-A48-g4837-s111", 308, "successful contrast"),
     ("r1-target-A48-g1480-s108", None, "history-miss contrast"),
 ]
+PINS = {
+    "r1-cast-A48-g1939-s174": ("7b7ef9ce509e0354900e1cdf484e17ffac29d3aef50a88d70c100307280bec6d", "6744432dffb49c0874365174edaa482a120162933ef42c4b51b2d33623c0d597", [5256, 1]),
+    "r1-cast-A48-g508-s169": ("b8f9376ffe10fb909ec48b91e3f35474a7d789069c39e021411ca8f93d09fc6d", "d83c1f22b09c395c244b5bb57d04c0f06f05c2a06eac5b0e450a88b455c0fbca", [75, 2]),
+    "r1-target-T1-g1777-s117": ("2dfd9678e910f8e9db3ec430d0f64ac349021ef9cd166edfff3651d9ac911b0f", "0f3cfae22bb15739378334cd391ceb4b4e2ec259dad3c1e43c771b7b38b91f0a", [902, 2]),
+    "r1-cast-T1-g4558-s69": ("9260415b9a3bdddf1c5a930c023eb7c5529cd9d70bc8a1fae8a5616a7353e3bb", "92e795524c0ade5410d5a14c0f6f8e9779f3c94cc94acfa0916716f992da32a9", [26, 1]),
+    "r2-cast-A48-g4837-s111": ("50b8aefaef03db38e22e66243d0954c3273eb18984dec1b38070383ad8c0b506", "0b207e30b00ff2d9d3dacbc06de1dc933a24f5fa449559c49680579f2ecee1b6", [116, 0]),
+    "r1-target-A48-g1480-s108": ("323b9cc935737e3e3de02f4e9f5a04a651a4b0626922249329aab39e2cf48fd8", None, None),
+}
 
 
-def load(path):
+def load_rows(folder):
+    rows = {}
+    for path in sorted(Path(folder).glob("*.jsonl")):
+        with path.open(encoding="utf-8") as stream:
+            for line in stream:
+                row = json.loads(line)
+                if row.get("kind") != "s4a_diag_root":
+                    continue
+                rid = row["root_id"]
+                if rid in rows:
+                    raise ValueError(f"duplicate diagnostic root {rid}")
+                rows[rid] = row
+    return rows
+
+
+def load(path, rid=None, pin=None, row=None, nid=None):
     nodes, sims, worlds = {}, [], []
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            r = json.loads(line)
-            if r["r"] == "node":
-                nodes[r["id"]] = r
-            elif r["r"] == "sel":
-                sims.append(r)
-            elif r["r"] == "eval":
-                worlds.append(r)
+    selection_ids, world_ids = set(), set()
+    data = Path(path).read_bytes()
+    if pin is not None:
+        digest = hashlib.sha256(data).hexdigest()
+        if digest != pin[0]:
+            raise ValueError(f"trace hash differs from fixed case binding for {rid}")
+        if (row is None or row.get("root_id") != rid
+                or row.get("runtime_rules") != "resolution-boundary-v1"
+                or row.get("diag", {}).get("trace", {}).get("sha256") != digest):
+            raise ValueError(f"missing or incompatible boundary result row for {rid}")
+    meta = None
+    for line in data.decode("utf-8").splitlines():
+        r = json.loads(line)
+        if r["r"] == "meta":
+            if meta is not None:
+                raise ValueError(f"duplicate trace metadata in {path}")
+            meta = r
+        elif r["r"] == "node":
+            if r["id"] in nodes:
+                raise ValueError(f"duplicate node {r['id']} in {path}")
+            nodes[r["id"]] = r
+        elif r["r"] == "sel":
+            if r["i"] in selection_ids or (sims and r["i"] <= sims[-1]["i"]):
+                raise ValueError(f"duplicate or unordered selection in {path}")
+            selection_ids.add(r["i"])
+            sims.append(r)
+        elif r["r"] == "eval":
+            if r["world"] in world_ids:
+                raise ValueError(f"duplicate evaluation world in {path}")
+            world_ids.add(r["world"])
+            worlds.append(r)
+    if pin is not None:
+        if meta is None or meta.get("schema") != "s4a-diag-trace/v1" or meta.get("root_id") != rid:
+            raise ValueError(f"trace metadata differs for {rid}")
+        if nid is not None:
+            node = nodes.get(nid)
+            if node is None or node.get("key") != pin[1] or node.get("parent") != pin[2]:
+                raise ValueError(f"selected node key or parent differs for {rid}")
     return nodes, sims, worlds
 
 
 def chain(nodes, nid):
     out = []
+    seen = set()
     while nid is not None:
+        if nid in seen:
+            raise ValueError("cyclic node ancestry")
+        seen.add(nid)
         n = nodes[nid]
         out.append(nid)
         nid = n["parent"][0] if n["parent"] else None
@@ -74,6 +140,7 @@ def ancestors(nodes, nid):
 def chronology(nodes, sims, nid):
     n = nodes[nid]
     counts = [0] * len(n["n"])
+    wins = [0] * len(n["n"])
     events = []
     first_giant_win = None
     for s in sims:
@@ -85,6 +152,7 @@ def chronology(nodes, sims, nid):
                 untried = counts[e] == 0
                 counts[e] += 1
                 win = s["end"] == "win"
+                wins[e] += int(win)
                 events.append({"sim": s["i"], "edge": e, "lab": n["lab"][e], "untried": untried,
                                "expanded_here": s.get("new") == nid, "win": win})
                 if first_giant_win is None and win and n["lab"][e] & GIANT:
@@ -96,7 +164,9 @@ def chronology(nodes, sims, nid):
         seen[x["edge"]] += 1
         if reach8 is None and n["lab"][x["edge"]] & GIANT and seen[x["edge"]] >= MIN:
             reach8 = x["sim"]
-    reconciled = counts == n["n"]
+    reconciled = counts == n["n"] and wins == n["w"] and sum(counts) == n["visits"]
+    if not reconciled:
+        raise ValueError(f"selection chronology disagrees with saved counts for node {nid}")
     return {"node": nid, "key": n["key"][:16], "visits": n["visits"], "width": len(n["n"]),
             "edges_tried": sum(c > 0 for c in counts), "reconciled_with_saved_counts": reconciled,
             "arrivals": len(events), "first_giant_win_sim": first_giant_win,
@@ -116,7 +186,12 @@ def success_nodes(nodes, exclude):
         g = [e for e, b in enumerate(n["lab"]) if b & GIANT and n["w"][e] > 0]
         if g:
             cands.append((-max(n["w"][e] for e in g), -n["visits"], n["id"]))
-    return [c[2] for c in sorted(cands)[:2]]
+    if not cands:
+        return []
+    first = min(cands, key=lambda c: (c[0], c[2]))
+    remaining = [c for c in cands if c[2] != first[2]]
+    second = min(remaining, key=lambda c: (c[1], c[2])) if remaining else None
+    return [first[2]] + ([second[2]] if second is not None else [])
 
 
 def divergence(nodes, a, b):
@@ -146,38 +221,21 @@ def eval_prefix(worlds, nid=None):
             if d["node"] is None and d["src"] != "first_miss_plain":
                 continue
             rows.append([d["dep"], d["node"], d["edge"], d["src"], d["off"], d["ch"]])
-            if d["node"] == nid or d["src"] == "first_miss_plain":
-                reached = d["node"] == nid
+            if (nid is not None and d["node"] == nid) or d["src"] == "first_miss_plain":
+                reached = nid is not None and d["node"] == nid
                 break
         out.append({"world": w["world"], "reached_target_node": reached, "prefix": rows})
     return out
 
 
-def reconcile_all(nodes, sims):
-    """Per-edge natural returns rebuilt from ordered simulation paths equal
-    the saved n and w at every node, and visits equal the sum of n."""
-    n = defaultdict(lambda: Counter())
-    w = defaultdict(lambda: Counter())
-    for s in sims:
-        if s.get("end") not in ("win", "loss"):
-            continue
-        for p in s.get("path", []):
-            n[p[0]][p[1]] += 1
-            w[p[0]][p[1]] += s["end"] == "win"
-    for nid, node in nodes.items():
-        if [n[nid][e] for e in range(len(node["n"]))] != node["n"]:
-            return False
-        if [w[nid][e] for e in range(len(node["w"]))] != node["w"] or sum(node["n"]) != node["visits"]:
-            return False
-    return True
-
-
-def main():
-    tdir, outp = Path(sys.argv[1]), sys.argv[2]
+def build_result(tdir, rows, cases=CASES, pins=PINS):
     result = {}
-    for rid, nid, role in CASES:
-        nodes, sims, worlds = load(tdir / f"{rid}.trace.jsonl")
-        r = {"role": role, "all_nodes_reconciled": reconcile_all(nodes, sims)}
+    for rid, nid, role in cases:
+        nodes, sims, worlds = load(Path(tdir) / f"{rid}.trace.jsonl", rid, pins[rid], rows.get(rid), nid)
+        if not reconcile_all(nodes, sims):
+            raise ValueError(f"saved all-node counts disagree for {rid}")
+        r = {"role": role, "trace_sha256": pins[rid][0], "runtime_rules": "resolution-boundary-v1",
+             "all_nodes_reconciled": True}
         if nid is None:
             r["eval_prefix"] = eval_prefix(worlds)
             miss = Counter()
@@ -197,7 +255,37 @@ def main():
                                          "divergence": divergence(nodes, nid, sid)})
             r["eval_prefix"] = eval_prefix(worlds, nid)
         result[rid] = r
-    json.dump(result, open(outp, "w"), indent=1)
+    return result
+
+
+def reconcile_all(nodes, sims):
+    """Rebuild natural n/w/visits at every node, including unselected nodes."""
+    counts = {nid: [0] * len(node["n"]) for nid, node in nodes.items()}
+    wins = {nid: [0] * len(node["w"]) for nid, node in nodes.items()}
+    for sim in sims:
+        if sim.get("end") not in ("win", "loss"):
+            continue
+        for nid, edge in sim.get("path", []):
+            if nid not in nodes or not 0 <= edge < len(counts[nid]) or edge >= len(wins[nid]):
+                return False
+            counts[nid][edge] += 1
+            wins[nid][edge] += int(sim["end"] == "win")
+    return all(counts[nid] == node["n"] and wins[nid] == node["w"]
+               and sum(counts[nid]) == node["visits"] for nid, node in nodes.items())
+
+
+def write_result(tdir, rows_dir, outp, cases=CASES, pins=PINS):
+    result = build_result(tdir, load_rows(rows_dir), cases, pins)
+    with open(outp, "x", encoding="utf-8") as stream:
+        json.dump(result, stream, indent=1)
+        stream.write("\n")
+    return result
+
+
+def main():
+    if len(sys.argv) != 4:
+        raise SystemExit("usage: support_chains.py TRACE_DIR ROWS_DIR OUT.json")
+    result = write_result(*sys.argv[1:])
     for rid, r in result.items():
         print("==", rid, r["role"])
         if "chronology" in r:

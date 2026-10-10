@@ -631,7 +631,8 @@ fn run_native_science_loop_with_opponents_v1(
         | NativeRunCatalogProfileV1::FdnLibrarySearch
         | NativeRunCatalogProfileV1::FdnSimpleTriggers
         | NativeRunCatalogProfileV1::FdnActivatedCombat
-        | NativeRunCatalogProfileV1::FdnSurveil => {}
+        | NativeRunCatalogProfileV1::FdnSurveil
+        | NativeRunCatalogProfileV1::FdnFirstLifeGain => {}
     }
 
     if ladder_opponent.is_some() && population_opponent.is_some() {

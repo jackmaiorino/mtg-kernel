@@ -120,3 +120,8 @@ Bite Down's planeswalker recipient. Ajani has entry loyalty and damage
 handling but no loyalty abilities or combat defender support. It is marked
 partial and refused by deck admission. It is excluded from original-deck
 coverage counts.
+
+`FDN_reference_first_lifegain.dck` is a synthetic 40-card fixture containing
+Vanguard Seraph, Cat Collector and 38 Plains. It resolves the candidate v63
+registry; gameplay and store-profile qualification remain required. See
+`docs/design/fdn_first_lifegain_v1.md`.
