@@ -235,6 +235,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::ReturnAbilitySourceFromGraveyard { .. }
         | EffectOp::LoseOpponentsLifeXThenGainLifeLost
         | EffectOp::ReturnAttackingCreaturesToOwnersHands
+        | EffectOp::CounterTargetSpellThenCreateTokens { .. }
         | EffectOp::ExileGraveyardTargetsDrainPerCreature { .. }
         | EffectOp::RemoveTimeCounterFromSource
         | EffectOp::ReturnSourceAsEnduringEnchantment => effect_h::effect_op(op, env, out),

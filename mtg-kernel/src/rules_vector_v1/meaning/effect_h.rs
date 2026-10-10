@@ -239,6 +239,21 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                     .duration(DurF::WhileOnBattlefield),
             );
         }
+        EffectOp::CounterTargetSpellThenCreateTokens {
+            target_index,
+            token_def,
+            count,
+        } => {
+            let _ = target_index; // the target filter owns slot legality
+            out.effect(EffectAtom::new(EvF::CounterSpell).obj(ObjF::Spell));
+            out.effect(
+                EffectAtom::new(EvF::CreateToken)
+                    .player(RelF::ObjectController)
+                    .obj(ObjF::Token)
+                    .amount(AmtF::fixed(i64::from(*count))),
+            );
+            out.created_tokens.push(*token_def);
+        }
         EffectOp::ReturnAttackingCreaturesToOwnersHands => {
             out.effect(
                 EffectAtom::moving(Some(ZoneF::Battlefield), ZoneF::Hand)

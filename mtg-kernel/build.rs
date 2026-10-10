@@ -3367,6 +3367,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         mode2: None,
     };
     Some(match name {
+        "An Offer You Can't Refuse" => program(
+            "NoncreatureSpellOnStack",
+            "CounterTargetSpellThenCreateTokens(Target0,Treasure Token,2,currentSpellController,independentOfCounterSuccess)",
+            "EffectOp::CounterTargetSpellThenCreateTokens { target_index: 0, token_def: crate::card_def::card_id_by_name(\"Treasure Token\").expect(\"Treasure Token in CARD_DEFS\"), count: 2 }",
+        ),
         "Aetherize" => program(
             "None",
             "ReturnAttackingCreaturesToOwnersHands(currentCombat,currentCreatureType,simultaneous)",

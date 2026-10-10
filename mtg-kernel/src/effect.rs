@@ -1342,6 +1342,13 @@ pub enum EffectOp {
     /// Sample current attacking creatures at resolution and move them
     /// simultaneously to their owners' hands, preserving their public identity.
     ReturnAttackingCreaturesToOwnersHands,
+    /// Counter this exact targeted spell if allowed, then let its controller
+    /// at resolution create tokens whether or not the counter succeeded.
+    CounterTargetSpellThenCreateTokens {
+        target_index: u8,
+        token_def: u16,
+        count: u8,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -13456,6 +13463,71 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 .collect();
             event::propose_and_commit_batch(state, events);
         }
+        EffectOp::CounterTargetSpellThenCreateTokens {
+            target_index,
+            token_def,
+            count,
+        } => {
+            let index = usize::from(*target_index);
+            let Some(Target::Object(target)) = ctx.targets.get(index).copied() else {
+                return;
+            };
+            if !ctx.target_incarnation_matches(index, state) {
+                return;
+            }
+            let live = state.objects.get(target);
+            if live.zone != Zone::Stack {
+                return;
+            }
+            let Some(controller) = state.stack.iter().find_map(|item| {
+                (item.kind == crate::state::StackItemKind::Spell
+                    && item.source == target
+                    && item.v4.source_contract.is_some_and(|contract| {
+                        contract.source == target
+                            && contract.zone == Zone::Stack
+                            && contract.zone_change_count == live.zone_change_count
+                    }))
+                .then_some(item.controller)
+            }) else {
+                return;
+            };
+            let token = crate::card_def::CARD_DEFS
+                .get(usize::from(*token_def))
+                .expect("counter reward references a token definition");
+            assert!(
+                token.is_token && token.is_executable() && token.has_full_support(),
+                "counter reward requires a fully supported executable token definition"
+            );
+            if eval_cond(
+                &EffectCond::TargetSpellCanBeCountered(*target_index),
+                ctx,
+                state,
+            ) {
+                execute(
+                    &EffectOp::MoveObject {
+                        object: ObjectRef::Target(*target_index),
+                        to_zone: Zone::Graveyard,
+                    },
+                    ctx,
+                    state,
+                );
+            }
+            if state.engine.halted.is_some() {
+                return;
+            }
+            let mut reward_ctx = ctx.clone();
+            reward_ctx.controller = controller;
+            for _ in 0..*count {
+                execute(
+                    &EffectOp::CreateToken {
+                        token_def: *token_def,
+                        controller: PlayerRef::Controller,
+                    },
+                    &reward_ctx,
+                    state,
+                );
+            }
+        }
         EffectOp::MoveAllTargets { to_zone } => {
             let events = ctx
                 .targets
@@ -15272,6 +15344,118 @@ mod tests {
                 assert!(!branch.engine.combat.attackers.contains(&attacker));
             }
             assert_eq!(state.state_hash(), restored.state_hash());
+        }
+    }
+
+    #[test]
+    fn counter_reward_uses_current_spell_controller_then_preserves_stale_noop() {
+        let card = crate::card_def::card_id_by_name("Faerie Miscreant").unwrap();
+        let token = crate::card_def::card_id_by_name("Treasure Token").unwrap();
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                &[card; 7],
+                &[card; 7],
+                |_| "Faerie Miscreant".into(),
+                740,
+                player,
+            );
+            state.step = crate::state::Step::Main1;
+            let target = state.players[player.index()].hand[0];
+            state.players[player.index()].mana_pool[crate::mana::ManaColor::U.pool_index()] = 1;
+            crate::engine::advance_until_decision(&mut state);
+            crate::engine::step(&mut state, crate::engine::Action::CastSpell(target)).unwrap();
+            assert!(matches!(
+                crate::engine::advance_until_decision(&mut state),
+                crate::engine::Decision::CastSpellOrPass { .. }
+            ));
+            let mut ctx = ExecCtx::no_targets(
+                state.players[player.opponent().index()].hand[0],
+                player.opponent(),
+            );
+            ctx.targets.push(Target::Object(target));
+            let mut historical = StackTargetContractV4::capture(&state, Target::Object(target));
+            if let StackTargetContractV4::Object { controller, .. } = &mut historical {
+                *controller = player.opponent();
+            }
+            ctx.target_contracts.push(historical);
+            let op = EffectOp::CounterTargetSpellThenCreateTokens {
+                target_index: 0,
+                token_def: token,
+                count: 2,
+            };
+            let mut replay: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut replay] {
+                execute(&op, &ctx, branch);
+                assert!(branch.engine.halted.is_none());
+                assert_eq!(branch.objects.get(target).zone, Zone::Graveyard);
+                assert!(branch.players[player.index()].graveyard.contains(&target));
+                assert_eq!(branch.players[player.index()].battlefield.len(), 2);
+                assert!(branch.players[player.opponent().index()]
+                    .battlefield
+                    .is_empty());
+                for &created in &branch.players[player.index()].battlefield {
+                    assert_eq!(branch.objects.get(created).card_def, token);
+                    assert_eq!(branch.objects.get(created).controller, player);
+                }
+                let before = branch.state_hash();
+                execute(&op, &ctx, branch);
+                assert_eq!(
+                    branch.state_hash(),
+                    before,
+                    "stale target cannot produce another reward"
+                );
+            }
+            assert_eq!(state.state_hash(), replay.state_hash());
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn counter_reward_creates_tokens_even_if_target_cannot_be_countered() {
+        let card = crate::card_def::card_id_by_name("Koma, World-Eater").unwrap();
+        let token = crate::card_def::card_id_by_name("Treasure Token").unwrap();
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                &[card; 7],
+                &[card; 7],
+                |_| "Koma, World-Eater".into(),
+                741,
+                player,
+            );
+            state.step = crate::state::Step::Main1;
+            let target = state.players[player.index()].hand[0];
+            state.players[player.index()].mana_pool[5] = 5;
+            state.players[player.index()].mana_pool[crate::mana::ManaColor::U.pool_index()] = 1;
+            state.players[player.index()].mana_pool[crate::mana::ManaColor::G.pool_index()] = 1;
+            crate::engine::advance_until_decision(&mut state);
+            crate::engine::step(&mut state, crate::engine::Action::CastSpell(target)).unwrap();
+            assert!(matches!(
+                crate::engine::advance_until_decision(&mut state),
+                crate::engine::Decision::CastSpellOrPass { .. }
+            ));
+            let mut ctx = ExecCtx::no_targets(target, player.opponent());
+            ctx.targets.push(Target::Object(target));
+            ctx.target_contracts.push(StackTargetContractV4::capture(
+                &state,
+                Target::Object(target),
+            ));
+            execute(
+                &EffectOp::CounterTargetSpellThenCreateTokens {
+                    target_index: 0,
+                    token_def: token,
+                    count: 2,
+                },
+                &ctx,
+                &mut state,
+            );
+            assert!(state.engine.halted.is_none());
+            assert_eq!(state.objects.get(target).zone, Zone::Stack);
+            assert_eq!(state.stack.len(), 1);
+            assert_eq!(state.players[player.index()].battlefield.len(), 2);
+            assert!(state.players[player.opponent().index()]
+                .battlefield
+                .is_empty());
         }
     }
 
