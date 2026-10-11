@@ -3175,10 +3175,8 @@ enum AbilityEffectRecipe {
     /// Foundry and the Restless lands).
     AnimateSource,
     CreatureUpgrade(&'static str),
-    DrawThenLoseLife {
-        draw: u8,
-        life: u8,
-    },
+    DrawThenLoseLife { draw: u8, life: u8 },
+    ImpulseDraw { count: u8, duration: &'static str },
     /// Target(0) gets a fixed +power/+toughness until end of turn.
     PumpTargetUntilEndOfTurn {
         power: i8,
@@ -4072,6 +4070,7 @@ fn keywords_for(card: &CardJson) -> String {
         "Preacher of the Schism" => keywords.push("Keywords::DEATHTOUCH"),
         "Vampire Token" => keywords.push("Keywords::LIFELINK"),
         "Knight Vigilance Token" => keywords.push("Keywords::VIGILANCE"),
+        "Mosswood Dreadknight" => keywords.push("Keywords::TRAMPLE"),
         "Gingerbrute" => keywords.push("Keywords::HASTE"),
         "Surge Engine" => keywords.push("Keywords::DEFENDER"),
         "Spyglass Siren" => keywords.push("Keywords::FLYING"),
@@ -5911,6 +5910,7 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
             format!("each_player_controlling_named_permanent_draws_card:{name}")
         }
         AbilityEffectRecipe::DrawThenLoseLife { draw, life } => format!("draw_then_lose_life:{draw}:{life}"),
+        AbilityEffectRecipe::ImpulseDraw { count, duration } => format!("impulse_draw:{count}:{duration}"),
         AbilityEffectRecipe::CreatureUpgrade(kind) => format!("creature_upgrade:{kind}"),
         AbilityEffectRecipe::AnimateSource => "animate_source".to_string(),
         AbilityEffectRecipe::PumpTargetUntilEndOfTurn { power, toughness } => {
@@ -6138,12 +6138,9 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
                     .collect::<String>()
             )
         }
-        AbilityEffectRecipe::DrawThenLoseLife { draw, life } => {
-            format!("ability_effect_draw_{draw}_lose_life_{life}")
-        }
-        AbilityEffectRecipe::CreatureUpgrade(kind) => {
-            format!("ability_effect_creature_upgrade_{kind}")
-        }
+        AbilityEffectRecipe::DrawThenLoseLife { draw, life } => format!("ability_effect_draw_{draw}_lose_life_{life}"),
+        AbilityEffectRecipe::ImpulseDraw { count, duration } => format!("ability_effect_impulse_{count}_{duration}"),
+        AbilityEffectRecipe::CreatureUpgrade(kind) => format!("ability_effect_creature_upgrade_{kind}"),
         AbilityEffectRecipe::AnimateSource => "ability_effect_animate_source".to_string(),
         AbilityEffectRecipe::PumpTargetUntilEndOfTurn { power, toughness } => format!(
             "ability_effect_pump_target_{}_{}",
@@ -6373,6 +6370,8 @@ fn omen_effect_recipe_for(name: &str) -> Option<AbilityEffectRecipe> {
 /// instead of its ordinary graveyard departure.
 fn adventure_for(name: &str) -> String {
     match name {
+        "Questing Druid" => "Some(AdventureDef { name: \"Seek the Beast\", cost: Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 1, x_count: 0 }, types: &[CardType::Instant], target_spec: TargetSpec::None, effect: ability_effect_impulse_2_UntilOwnersNextEndStep })".to_string(),
+        "Mosswood Dreadknight" => "Some(AdventureDef { name: \"Dread Whispers\", cost: Cost { pips: &[Pip::Colored(ManaColor::B)], generic: 1, x_count: 0 }, types: &[CardType::Sorcery], target_spec: TargetSpec::None, effect: ability_effect_draw_1_lose_life_1 })".to_string(),
         "Imodane's Recruiter" => "Some(AdventureDef { name: \"Train Troops\", cost: Cost { pips: &[Pip::Colored(ManaColor::W)], generic: 4, x_count: 0 }, types: &[CardType::Sorcery], target_spec: TargetSpec::None, effect: ability_effect_create_knight_vigilance_token_2 })".to_string(),
         "Virtue of Loyalty" => "Some(AdventureDef { name: \"Ardenvale Fealty\", cost: Cost { pips: &[Pip::Colored(ManaColor::W)], generic: 1, x_count: 0 }, types: &[CardType::Instant], target_spec: TargetSpec::None, effect: ability_effect_create_knight_vigilance_token_1 })".to_string(),
         "Fang Dragon" => {
@@ -6384,14 +6383,10 @@ fn adventure_for(name: &str) -> String {
 
 fn adventure_effect_recipe_for(name: &str) -> Option<AbilityEffectRecipe> {
     match name {
-        "Imodane's Recruiter" => Some(AbilityEffectRecipe::CreateTokens {
-            token: "Knight Vigilance Token",
-            count: 2,
-        }),
-        "Virtue of Loyalty" => Some(AbilityEffectRecipe::CreateTokens {
-            token: "Knight Vigilance Token",
-            count: 1,
-        }),
+        "Questing Druid" => Some(AbilityEffectRecipe::ImpulseDraw { count: 2, duration: "UntilOwnersNextEndStep" }),
+        "Mosswood Dreadknight" => Some(AbilityEffectRecipe::DrawThenLoseLife { draw: 1, life: 1 }),
+        "Imodane's Recruiter" => Some(AbilityEffectRecipe::CreateTokens { token: "Knight Vigilance Token", count: 2 }),
+        "Virtue of Loyalty" => Some(AbilityEffectRecipe::CreateTokens { token: "Knight Vigilance Token", count: 1 }),
         "Fang Dragon" => Some(AbilityEffectRecipe::DamageAllCreatures {
             amount: 1,
             filter: CreatureEffectFilterRecipe::OpponentControlled,
@@ -6405,6 +6400,8 @@ fn adventure_effect_recipe_for(name: &str) -> Option<AbilityEffectRecipe> {
 /// `card_id_by_visible_name`'s face-2 arm.
 fn adventure_face_name_for(name: &str) -> Option<&'static str> {
     match name {
+        "Questing Druid" => Some("Seek the Beast"),
+        "Mosswood Dreadknight" => Some("Dread Whispers"),
         "Imodane's Recruiter" => Some("Train Troops"),
         "Virtue of Loyalty" => Some("Ardenvale Fealty"),
         "Fang Dragon" => Some("Forktail Sweep"),
@@ -6619,6 +6616,8 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Bloodtithe Harvester" => "etb:create_blood_token:1",
         "Imodane's Recruiter" => "etb:boost_controlled_creatures:1:0:haste:end_of_turn",
         "Virtue of Loyalty" => "beginning_controller_end_step:counter_controlled_creatures_then_untap_them",
+        "Mosswood Dreadknight" => "dies:exact_graveyard_adventure_permission:until_end_controller_next_turn",
+        "Questing Druid" => "cast_spell_with_color:white_blue_black_or_red:counter_source:1",
         "Sandstorm Salvager" => "etb:create_golem_token:1",
         "Preacher of the Schism" => "attacks_player_with_most_life:create_white_vampire_token;attacks_while_controller_most_life:draw:1:lose_life:1",
         "Tough Cookie" => "etb:create_food_token:1",
@@ -7517,6 +7516,9 @@ fn codegen(cards: &[CardJson]) -> String {
                     "    EffectOp::EachPlayerControllingDefinitionDrawsCard {{ card_def: named }}"
                 )
                 .unwrap();
+            }
+            AbilityEffectRecipe::ImpulseDraw { count, duration } => {
+                writeln!(out, "    EffectOp::ImpulseDraw {{ count: {count}, duration: crate::effect::ImpulseDuration::{duration} }}").unwrap();
             }
             AbilityEffectRecipe::DrawThenLoseLife { draw, life } => {
                 writeln!(out, "    EffectOp::Sequence(vec![EffectOp::DrawCards {{ player: PlayerRef::Controller, count: {draw} }}, EffectOp::LoseLife {{ player: PlayerRef::Controller, amount: {life} }}])").unwrap();

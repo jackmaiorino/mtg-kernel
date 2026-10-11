@@ -31,6 +31,14 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
         EffectOp::CreatureUpgrade(effect) => {
             use crate::standard_creatures_v1::CreatureEffectV1;
+            if matches!(effect, CreatureEffectV1::MosswoodGraveyardAdventure) {
+                let mut permission = EffectAtom::new(EvF::PlayPermission)
+                    .player(RelF::You)
+                    .obj(ObjF::ThisObject)
+                    .duration(DurF::UntilYourNextTurn);
+                permission.from = Some(ZoneF::Graveyard);
+                out.effect(permission);
+            }
             if matches!(effect, CreatureEffectV1::VirtueCountersUntap) {
                 plain_counter(
                     RelF::You,

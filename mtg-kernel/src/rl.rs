@@ -490,6 +490,7 @@ pub enum PlayOrCastV2 {
 pub enum PlayPermissionExpiryV2 {
     EndOfTurn,
     UntilHoldersNextTurn { holder_turn_started: bool },
+    UntilHoldersNextEndStep,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -6456,6 +6457,7 @@ fn exile_play_permissions_public_v2(state: &GameState) -> Result<Vec<ExilePlayPe
             zone_change_generation: perm.zone_change_generation,
             expiry: match perm.expiry {
                 PlayPermissionExpiry::EndOfTurn => PlayPermissionExpiryV2::EndOfTurn,
+                PlayPermissionExpiry::UntilHoldersNextEndStep => PlayPermissionExpiryV2::UntilHoldersNextEndStep,
                 PlayPermissionExpiry::UntilHoldersNextTurn {
                     holder_turn_started,
                 } => PlayPermissionExpiryV2::UntilHoldersNextTurn {

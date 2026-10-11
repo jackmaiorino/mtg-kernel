@@ -2922,3 +2922,198 @@ fn virtue_adventure_and_end_step_counter_then_untap_current_creatures() {
     assert!(state.objects.get(theirs).tapped);
     assert_eq!(state.objects.get(virtue).counters.plus1_plus1, 0);
 }
+
+fn finish_current_turn(state: &mut GameState) {
+    let active = state.active_player;
+    state.step = Step::End;
+    for _ in 0..30 {
+        let decision = next(state);
+        if state.active_player != active {
+            return;
+        }
+        match decision {
+            Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
+            other => panic!("unexpected turn-end decision {other:?}"),
+        }
+    }
+    panic!("turn did not finish");
+}
+
+#[test]
+fn mosswood_dies_allows_only_adventure_then_ordinary_exile_creature_cast() {
+    let mut state = ready(Step::Main1);
+    let knight = put(
+        &mut state,
+        PlayerId::P0,
+        "Mosswood Dreadknight",
+        Zone::Battlefield,
+    );
+    move_to(&mut state, knight, Zone::Graveyard);
+    settled(&mut state);
+    state = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+    state.players[0].mana_pool = pool(&[(ManaColor::G, 1)], 1);
+    assert!(
+        matches!(next(&mut state), Decision::CastSpellOrPass { castable_spells, .. } if !castable_spells.contains(&knight))
+    );
+    let hand = state.players[0].hand.len();
+    let life = state.players[0].life;
+    state.players[0].mana_pool = pool(&[(ManaColor::B, 1)], 1);
+    cast_form(&mut state, knight, 1);
+    assert_eq!(state.objects.get(knight).zone, Zone::Exile);
+    assert_eq!(state.players[0].life, life - 1);
+    assert_eq!(state.players[0].hand.len(), hand + 1);
+    state.players[0].mana_pool = pool(&[(ManaColor::G, 1)], 1);
+    cast_form(&mut state, knight, 0);
+    assert_eq!(state.objects.get(knight).zone, Zone::Battlefield);
+    assert!(engine::has_effective_keyword(
+        &state,
+        knight,
+        Keywords::TRAMPLE
+    ));
+}
+
+#[test]
+fn mosswood_permission_expires_at_end_of_controllers_next_turn_and_never_survives_blink() {
+    let mut state = ready(Step::Main1);
+    let knight = put(
+        &mut state,
+        PlayerId::P0,
+        "Mosswood Dreadknight",
+        Zone::Battlefield,
+    );
+    move_to(&mut state, knight, Zone::Graveyard);
+    settled(&mut state);
+    finish_current_turn(&mut state);
+    assert!(state
+        .objects
+        .get(knight)
+        .v4
+        .creature_upgrade
+        .as_ref()
+        .unwrap()
+        .graveyard_adventure
+        .is_some());
+    finish_current_turn(&mut state);
+    assert_eq!(state.active_player, PlayerId::P0);
+    let permission = state
+        .objects
+        .get(knight)
+        .v4
+        .creature_upgrade
+        .as_ref()
+        .unwrap()
+        .graveyard_adventure
+        .unwrap();
+    assert!(permission.holder_turn_started);
+    finish_current_turn(&mut state);
+    assert!(state.objects.get(knight).v4.creature_upgrade.is_none());
+
+    let mut state = ready(Step::Main1);
+    let knight = put(
+        &mut state,
+        PlayerId::P0,
+        "Mosswood Dreadknight",
+        Zone::Battlefield,
+    );
+    move_to(&mut state, knight, Zone::Graveyard);
+    next(&mut state);
+    move_to(&mut state, knight, Zone::Exile);
+    move_to(&mut state, knight, Zone::Graveyard);
+    settled(&mut state);
+    assert!(state.objects.get(knight).v4.creature_upgrade.is_none());
+}
+
+#[test]
+fn stolen_mosswood_grants_its_controller_permission_from_owners_graveyard() {
+    let mut state = ready(Step::Main1);
+    let knight = put(
+        &mut state,
+        PlayerId::P0,
+        "Mosswood Dreadknight",
+        Zone::Battlefield,
+    );
+    state.players[0].battlefield.retain(|id| *id != knight);
+    state.players[1].battlefield.push(knight);
+    state.objects.get_mut(knight).controller = PlayerId::P1;
+    move_to(&mut state, knight, Zone::Graveyard);
+    settled(&mut state);
+    let permission = state
+        .objects
+        .get(knight)
+        .v4
+        .creature_upgrade
+        .as_ref()
+        .unwrap()
+        .graveyard_adventure
+        .unwrap();
+    assert_eq!(permission.holder, PlayerId::P1);
+    state.active_player = PlayerId::P1;
+    state.priority_player = PlayerId::P1;
+    state.players[1].mana_pool = pool(&[(ManaColor::B, 1)], 1);
+    let life = state.players[1].life;
+    cast_form(&mut state, knight, 1);
+    assert_eq!(state.players[1].life, life - 1);
+    assert_eq!(state.objects.get(knight).owner, PlayerId::P0);
+    assert!(state.objects.get(knight).v4.on_adventure);
+}
+
+#[test]
+fn questing_druid_counts_selected_adventure_colors_and_impulse_allows_both_forms() {
+    let mut state = ready(Step::Main1);
+    let druid = put(
+        &mut state,
+        PlayerId::P0,
+        "Questing Druid",
+        Zone::Battlefield,
+    );
+    let second = put(&mut state, PlayerId::P0, "Questing Druid", Zone::Hand);
+    let top = stack_library_top(&mut state, &["Imodane's Recruiter", "Forest"]);
+    state.players[0].mana_pool = pool(&[(ManaColor::R, 1)], 1);
+    cast_form(&mut state, second, 1);
+    assert_eq!(state.objects.get(druid).counters.plus1_plus1, 1);
+    assert_eq!(state.objects.get(top[0]).zone, Zone::Exile);
+    assert!(state.engine.exile_play_permissions.iter().all(
+        |permission| permission.expiry == engine::PlayPermissionExpiry::UntilHoldersNextEndStep
+    ));
+    // Ordinary impulse exile permits the Adventure too, at its own cost.
+    state.players[0].mana_pool = pool(&[(ManaColor::W, 1)], 4);
+    cast_form(&mut state, top[0], 1);
+    assert_eq!(
+        battlefield_tokens(&state, PlayerId::P0, "Knight Vigilance Token").len(),
+        2
+    );
+    assert_eq!(state.objects.get(druid).counters.plus1_plus1, 2);
+    state.players[0].mana_pool = pool(&[(ManaColor::G, 1)], 1);
+    cast_form(&mut state, second, 0);
+    assert_eq!(state.objects.get(druid).counters.plus1_plus1, 2);
+}
+
+#[test]
+fn seek_the_beast_expires_at_start_of_next_own_end_step_even_same_turn() {
+    let mut state = ready(Step::Main1);
+    let druid = put(&mut state, PlayerId::P0, "Questing Druid", Zone::Hand);
+    state.players[0].mana_pool = pool(&[(ManaColor::R, 1)], 1);
+    cast_form(&mut state, druid, 1);
+    assert_eq!(state.engine.exile_play_permissions.len(), 2);
+    state.step = Step::Main2;
+    engine::step(&mut state, Action::Pass).unwrap();
+    next(&mut state);
+    engine::step(&mut state, Action::Pass).unwrap();
+    next(&mut state);
+    assert_eq!(state.step, Step::End);
+    assert!(state.engine.exile_play_permissions.is_empty());
+    // A grant made during the end step itself lasts until the next end step.
+    let later = put(&mut state, PlayerId::P0, "Questing Druid", Zone::Hand);
+    state.players[0].mana_pool = pool(&[(ManaColor::R, 1)], 1);
+    cast_form(&mut state, later, 1);
+    finish_current_turn(&mut state);
+    assert_eq!(state.engine.exile_play_permissions.len(), 2);
+    finish_current_turn(&mut state);
+    assert_eq!(state.engine.exile_play_permissions.len(), 2);
+    state.step = Step::Main2;
+    engine::step(&mut state, Action::Pass).unwrap();
+    next(&mut state);
+    engine::step(&mut state, Action::Pass).unwrap();
+    next(&mut state);
+    assert!(state.engine.exile_play_permissions.is_empty());
+}

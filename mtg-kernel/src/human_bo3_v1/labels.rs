@@ -169,6 +169,7 @@ fn describe_effect(effect: &EffectOp) -> Result<String, Error> {
         }
         EffectOp::ImpulseDraw { count, duration } => format!("exile the top {count} cards of its controller's library; that player may play them {}", match duration {
             ImpulseDuration::EndOfTurn => "until end of turn",
+            ImpulseDuration::UntilOwnersNextEndStep => "until their next end step",
             ImpulseDuration::UntilOwnersNextTurn => "until the end of their next turn",
         }),
         EffectOp::PumpControlled { filter, power, toughness, grant_haste } => {

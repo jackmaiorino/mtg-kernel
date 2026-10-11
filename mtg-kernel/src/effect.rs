@@ -176,6 +176,7 @@ impl LibraryCardFilter {
 pub enum ImpulseDuration {
     EndOfTurn,
     UntilOwnersNextTurn,
+    UntilOwnersNextEndStep,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -17241,6 +17242,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 );
                 let expiry = match duration {
                     ImpulseDuration::EndOfTurn => crate::engine::PlayPermissionExpiry::EndOfTurn,
+                    ImpulseDuration::UntilOwnersNextEndStep => crate::engine::PlayPermissionExpiry::UntilHoldersNextEndStep,
                     ImpulseDuration::UntilOwnersNextTurn => {
                         crate::engine::PlayPermissionExpiry::UntilHoldersNextTurn {
                             holder_turn_started: false,

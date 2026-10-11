@@ -429,3 +429,18 @@ pub(super) const VIRTUE_LOYALTY_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredA
     condition: TriggerCondition::BeginningControllerEndStep,
     ..etb_trigger(virtue_counters_untap_effect)
 }];
+
+fn mosswood_graveyard_adventure_effect() -> EffectOp {
+    EffectOp::CreatureUpgrade(
+        crate::standard_creatures_v1::CreatureEffectV1::MosswoodGraveyardAdventure,
+    )
+}
+pub(super) const MOSSWOOD_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::LeftBattlefieldToGraveyard,
+    ..etb_trigger(mosswood_graveyard_adventure_effect)
+}];
+
+pub(super) const QUESTING_DRUID_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastSpellWithAnyColor(0b01111),
+    ..etb_trigger(counter_on_source_effect)
+}];

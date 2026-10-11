@@ -7002,6 +7002,69 @@
       ],
       "name": "Collector's Cage",
       "java_file": "Mage.Sets/src/mage/cards/c/CollectorsCage.java"
+    },
+    {
+      "name": "Mosswood Dreadknight",
+      "engine_capability": "full",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Knight"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "medium",
+      "mechanics": [
+        "trample",
+        "adventure",
+        "dies_adventure_permission"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MosswoodDreadknight.java"
+    },
+    {
+      "name": "Questing Druid",
+      "engine_capability": "full",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Druid"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "medium",
+      "mechanics": [
+        "adventure",
+        "cast_spell_color_counter"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/q/QuestingDruid.java"
     }
   ]
 }

@@ -2692,6 +2692,7 @@ impl FlatDecisionEncoderV2 {
     ) -> FlatPermissionRelationDataV2 {
         let (expiry, holder_turn_started) = match permission.expiry {
             PlayPermissionExpiryV2::EndOfTurn => (0, false),
+            PlayPermissionExpiryV2::UntilHoldersNextEndStep => (2, false),
             PlayPermissionExpiryV2::UntilHoldersNextTurn {
                 holder_turn_started,
             } => (1, holder_turn_started),

@@ -116,6 +116,9 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                 // The holder is the controller; expires at the cleanup of
                 // the controller's next turn.
                 ImpulseDuration::UntilOwnersNextTurn => DurF::UntilYourNextTurn,
+                // Exact end-step expiry is exposed in the public permission;
+                // the fixed rules-vector vocabulary has no end-step duration.
+                ImpulseDuration::UntilOwnersNextEndStep => DurF::UntilYourNextTurn,
             };
             let mut permission = EffectAtom::new(EvF::PlayPermission)
                 .player(RelF::You)

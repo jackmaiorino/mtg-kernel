@@ -11,6 +11,7 @@ use crate::state::{GameState, Zone};
 #[serde(default)]
 pub struct CreatureUpgradeV1 {
     pub temporary_creature: Option<(i16, i16, u64)>,
+    pub graveyard_adventure: Option<GraveyardAdventurePermissionV1>,
     pub haste_blockers_only: bool,
     pub creature_types: Option<(Vec<u16>, u64)>,
     pub base_stats: Option<(i16, i16, u64)>,
@@ -34,6 +35,52 @@ pub enum CreatureEffectV1 {
     HarvesterWeakening,
     SalvagerBoostTokens,
     VirtueCountersUntap,
+    MosswoodGraveyardAdventure,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct GraveyardAdventurePermissionV1 {
+    pub holder: crate::ids::PlayerId,
+    pub holder_turn_started: bool,
+}
+
+pub(crate) fn graveyard_permission(
+    state: &GameState,
+    id: ObjectId,
+) -> Option<GraveyardAdventurePermissionV1> {
+    state
+        .objects
+        .try_get(id)?
+        .v4
+        .creature_upgrade
+        .as_ref()?
+        .graveyard_adventure
+}
+
+pub(crate) fn graveyard_adventure_allowed(
+    state: &GameState,
+    id: ObjectId,
+    holder: crate::ids::PlayerId,
+) -> bool {
+    let object = state.objects.get(id);
+    object.zone == Zone::Graveyard
+        && crate::card_def::CARD_DEFS[object.card_def as usize].name == "Mosswood Dreadknight"
+        && graveyard_permission(state, id).is_some_and(|permission| permission.holder == holder)
+}
+
+pub(crate) fn begin_turn(state: &mut GameState) {
+    for (_, object) in state.objects.iter_mut() {
+        if let Some(permission) = object
+            .v4
+            .creature_upgrade
+            .as_mut()
+            .and_then(|value| value.graveyard_adventure.as_mut())
+        {
+            if permission.holder == state.active_player {
+                permission.holder_turn_started = true;
+            }
+        }
+    }
 }
 
 fn upgrade(state: &GameState, id: ObjectId) -> Option<&CreatureUpgradeV1> {
@@ -158,6 +205,11 @@ pub(crate) fn cleanup(state: &mut GameState) {
         if let Some(upgrade) = &mut object.v4.creature_upgrade {
             upgrade.temporary_creature = None;
             upgrade.haste_blockers_only = false;
+            if upgrade.graveyard_adventure.is_some_and(|permission| {
+                permission.holder == state.active_player && permission.holder_turn_started
+            }) {
+                upgrade.graveyard_adventure = None;
+            }
             if *upgrade == CreatureUpgradeV1::default() {
                 object.v4.creature_upgrade = None;
             }
@@ -184,6 +236,29 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
 }
 
 pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameState) {
+    if effect == CreatureEffectV1::MosswoodGraveyardAdventure {
+        let Some(contract) = ctx.ability_source_contract else {
+            return;
+        };
+        let Some(object) = state.objects.try_get(ctx.source) else {
+            return;
+        };
+        if object.zone == Zone::Graveyard
+            && contract.zone_change_count.checked_add(1) == Some(object.zone_change_count)
+        {
+            state
+                .objects
+                .get_mut(ctx.source)
+                .v4
+                .creature_upgrade
+                .get_or_insert_with(Default::default)
+                .graveyard_adventure = Some(GraveyardAdventurePermissionV1 {
+                holder: ctx.controller,
+                holder_turn_started: false,
+            });
+        }
+        return;
+    }
     if matches!(
         effect,
         CreatureEffectV1::SalvagerBoostTokens | CreatureEffectV1::VirtueCountersUntap
@@ -340,6 +415,9 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
         .creature_upgrade
         .get_or_insert_with(Default::default);
     match effect {
+        CreatureEffectV1::MosswoodGraveyardAdventure => {
+            unreachable!("graveyard permission handled above")
+        }
         CreatureEffectV1::WurmletCounterIfFirstResolution => {
             unreachable!("resolution marker handled above")
         }

@@ -231,6 +231,7 @@ pub enum TriggerCondition {
     AttacksPlayerWithMostLife,
     ControlledCreatureOrCreatureSpellBecomesTargetOfOpponent,
     TurnedFaceUp,
+    CastSpellWithAnyColor(u8),
 }
 
 pub struct TriggeredAbilityDef {
@@ -3271,6 +3272,10 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Monk Token" => &MONASTERY_SWIFTSPEAR_TRIGGERS,
         "Kellan, Planar Trailblazer" => &KELLAN_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
+        "Questing Druid" => &standard_family_g_v1::QUESTING_DRUID_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Mosswood Dreadknight" => &standard_family_g_v1::MOSSWOOD_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
         "Imodane's Recruiter" => &standard_family_g_v1::IMODANE_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Virtue of Loyalty" => &standard_family_g_v1::VIRTUE_LOYALTY_TRIGGERS,
@@ -4904,6 +4909,10 @@ fn trigger_matches(
                 controller: caster, ..
             },
         ) => *caster == controller,
+        (
+            TriggerCondition::CastSpellWithAnyColor(mask),
+            CommittedEvent::SpellCast { spell, controller: caster },
+        ) => *caster == controller && crate::engine::object_color_mask(state, *spell) & mask != 0,
         (
             TriggerCondition::CastSpellManaValueAtLeast(minimum),
             CommittedEvent::SpellCast {
