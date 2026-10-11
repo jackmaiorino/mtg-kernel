@@ -182,8 +182,12 @@ pub fn observe_v1(
             return Err(RlContractError("invalid captured recipient".into()));
         };
         let public_definition = if capture.recipient_face_down {
-            crate::card_def::card_id_by_name("Face-down creature")
-                .ok_or_else(|| RlContractError("public face-down sentinel missing".into()))?
+            crate::card_def::card_id_by_name(if capture.recipient_disguised {
+                "Face-down creature"
+            } else {
+                "Face-down card"
+            })
+            .ok_or_else(|| RlContractError("public face-down sentinel missing".into()))?
         } else {
             card_def
         };

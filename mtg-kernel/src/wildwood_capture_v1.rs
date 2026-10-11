@@ -17,6 +17,7 @@ pub struct CaptureV1 {
     pub(crate) event: Box<CommittedEvent>,
     pub(crate) recipient: StackTargetContractV4,
     pub(crate) recipient_face_down: bool,
+    pub(crate) recipient_disguised: bool,
     pub(crate) recipient_is_creature: bool,
     pub(crate) recipient_is_hydra: bool,
     pub(crate) observers: Vec<AbilitySourceContractV4>,
@@ -45,6 +46,12 @@ pub(crate) fn capture(
         event: Box::new(event.clone()),
         recipient: StackTargetContractV4::capture(state, Target::Object(*object)),
         recipient_face_down: state.objects.get(*object).v4.face_down_v1.is_some(),
+        recipient_disguised: state
+            .objects
+            .get(*object)
+            .v4
+            .face_down_v1
+            .is_some_and(|face| face.disguised),
         recipient_is_creature: crate::engine::object_has_type(state, *object, CardType::Creature),
         recipient_is_hydra: crate::engine::has_effective_subtype(state, *object, Subtype::Hydra),
         observers,
