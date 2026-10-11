@@ -1283,7 +1283,11 @@ const CECIL_TRIGGERS: [TriggeredAbilityDef; 2] = [
 
 /// Replaces a trigger-time template with the event's data, if `effect` is
 /// one of this module's templates.
-pub(crate) fn materialize_event(effect: &EffectOp, event: &CommittedEvent) -> Option<EffectOp> {
+pub(crate) fn materialize_event(
+    effect: &EffectOp,
+    event: &CommittedEvent,
+    state: &GameState,
+) -> Option<EffectOp> {
     match (effect, event) {
         (
             EffectOp::StandardV1(StandardOpV1::BindEtaliPoison),
@@ -1301,9 +1305,13 @@ pub(crate) fn materialize_event(effect: &EffectOp, event: &CommittedEvent) -> Op
         (
             EffectOp::StandardV1(StandardOpV1::BindCopyCastSpell),
             CommittedEvent::SpellCast { spell, .. },
-        ) => Some(EffectOp::StandardV1(
-            StandardOpV1::CopySpellMayChooseNewTargets { spell: *spell },
-        )),
+        ) => state
+            .stack
+            .iter()
+            .find(|item| item.source == *spell && item.kind == crate::state::StackItemKind::Spell)
+            .map(|item| EffectOp::CopySpellSnapshot {
+                spell: Box::new(item.clone()),
+            }),
         _ => None,
     }
 }
@@ -1320,7 +1328,7 @@ pub(crate) fn template_matches(template: &EffectOp, effect: &EffectOp) -> bool {
             EffectOp::StandardV1(StandardOpV1::CecilDarkness { .. }),
         ) | (
             EffectOp::StandardV1(StandardOpV1::BindCopyCastSpell),
-            EffectOp::StandardV1(StandardOpV1::CopySpellMayChooseNewTargets { .. }),
+            EffectOp::CopySpellSnapshot { .. },
         )
     )
 }
@@ -1531,23 +1539,31 @@ pub(crate) fn trigger_matches(
                 return false;
             };
             let live = state.objects.get(source);
-            let def = &CARD_DEFS[state.objects.get(spell).card_def as usize];
             controller == live.controller
                 && live.zone == Zone::Battlefield
                 && crate::continuous_characteristics_v1::printed_abilities_active(state, source)
-                && (def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery))
+                && state.stack.iter().any(|item| {
+                    item.source == spell
+                        && item.kind == crate::state::StackItemKind::Spell
+                        && (crate::engine::stack_spell_has_type(state, item, CardType::Instant)
+                            || crate::engine::stack_spell_has_type(state, item, CardType::Sorcery))
+                })
         }
         StandardTriggerV1::YouCastInstantOrSorceryAtClassLevel { level } => {
             let CommittedEvent::SpellCast { spell, controller } = events[index] else {
                 return false;
             };
             let live = state.objects.get(source);
-            let def = &CARD_DEFS[state.objects.get(spell).card_def as usize];
             controller == live.controller
                 && live.zone == Zone::Battlefield
                 && crate::continuous_characteristics_v1::printed_abilities_active(state, source)
                 && class_level(state, source) >= level
-                && (def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery))
+                && state.stack.iter().any(|item| {
+                    item.source == spell
+                        && item.kind == crate::state::StackItemKind::Spell
+                        && (crate::engine::stack_spell_has_type(state, item, CardType::Instant)
+                            || crate::engine::stack_spell_has_type(state, item, CardType::Sorcery))
+                })
         }
         StandardTriggerV1::ControllerEndStepIfLifeChanged { require_lost } => {
             let live = state.objects.get(source);

@@ -135,6 +135,7 @@ pub(super) fn finish_hideaway(
             disguised: false,
             lookers: 1u8 << pending.ctx.controller.index(),
             hidden_by: Some(source(pending)?),
+            hidden_by_source: pending.ctx.ability_source_contract,
         });
     }
     let rest = choice

@@ -396,7 +396,9 @@ fn materialize_trigger_event_effect(
             };
         }
     }
-    if let Some(effect) = crate::standard_cards_v1::materialize_event(&(trigger.effect)(), event) {
+    if let Some(effect) =
+        crate::standard_cards_v1::materialize_event(&(trigger.effect)(), event, state)
+    {
         return effect;
     }
     if matches!(

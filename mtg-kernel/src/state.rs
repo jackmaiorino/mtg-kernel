@@ -288,6 +288,9 @@ pub struct FaceDownV1 {
     /// Seats with continuing permission to look at this hidden identity.
     pub lookers: u8,
     pub hidden_by: Option<ObjectLinkV4>,
+    /// Public source identity at hideaway resolution, retained if the Cage leaves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden_by_source: Option<AbilitySourceContractV4>,
 }
 
 impl Hash for ObjectStateV4 {

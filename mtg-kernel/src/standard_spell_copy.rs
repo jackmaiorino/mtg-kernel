@@ -17,6 +17,10 @@ pub(crate) fn validate_copy_snapshot(state: &GameState, spell: &StackItem) -> Re
         || source.card_def != live.card_def
         || source.owner != live.owner
         || source.zone != Zone::Stack
+        || spell.v4.cast_method != Some(source.cast_method)
+        || source
+            .finalized_cast_binding
+            .is_some_and(|binding| binding.x_value != spell.v4.x_value)
         || live.zone_change_count < source.zone_change_count
         || spell.v4.stack_item_id == StackItemId::default()
         || spell.targets.len() != spell.v4.target_contracts.len()
@@ -38,30 +42,21 @@ pub(crate) fn validate_copy_snapshot(state: &GameState, spell: &StackItem) -> Re
         }
     }
     let def = &card_def::CARD_DEFS[source.card_def as usize];
-    let spec = match spell.mode_chosen {
-        0 => {
-            if spell.v4.cast_method == Some(CastMethodV4::Omen) {
-                supported_adventure(def)
-                    .map(|x| x.target_spec)
-                    .or_else(|| supported_omen(def).map(|x| x.target_spec))
-                    .ok_or("copy snapshot lost alternative spell")?
-            } else {
-                def.target_spec
-            }
+    let spec = if spell.v4.cast_method == Some(CastMethodV4::Omen) {
+        if spell.mode_chosen != 0 {
+            return Err("copy snapshot alternative form has a mode".into());
         }
-        1 => {
-            def.mode2
-                .as_ref()
-                .ok_or("copy snapshot mode missing")?
-                .target_spec
-        }
-        2 => {
-            def.mode3
-                .as_ref()
-                .ok_or("copy snapshot mode missing")?
-                .target_spec
-        }
-        _ => return Err("copy snapshot invalid mode".into()),
+        supported_adventure(def)
+            .map(|x| x.target_spec)
+            .or_else(|| supported_omen(def).map(|x| x.target_spec))
+            .ok_or("copy snapshot lost alternative spell")?
+    } else if spell.v4.cast_method == Some(CastMethodV4::Bestow) {
+        supported_bestow(def)
+            .ok_or("copy snapshot lost Bestow form")?
+            .target_spec
+    } else {
+        def.printed_mode_target(spell.mode_chosen, spell.kicked)
+            .ok_or("copy snapshot mode missing")?
     };
     if spell.v4.target_spec != Some(spec) || spell.targets.len() > usize::from(target_count(spec)) {
         return Err("copy snapshot changed its definition-owned targets".into());
@@ -149,12 +144,14 @@ pub(crate) fn materialize_copy_snapshot(
     copy.is_copy = true;
     copy.is_flashback = false;
     copy.v4.stack_item_id = next_stack_item_id(state);
-    copy.v4.cast_method = Some(CastMethodV4::Normal);
-    copy.v4.source_contract = Some(StackSourceContractV4::capture(
-        state,
-        source,
-        CastMethodV4::Normal,
-    ));
+    // Alternative characteristics are copied; the original payment route is not.
+    let method = match spell.v4.cast_method {
+        Some(CastMethodV4::Omen) => CastMethodV4::Omen,
+        Some(CastMethodV4::Bestow) => CastMethodV4::Bestow,
+        _ => CastMethodV4::Normal,
+    };
+    copy.v4.cast_method = Some(method);
+    copy.v4.source_contract = Some(StackSourceContractV4::capture(state, source, method));
     copy.v4.target_contracts = contracts;
     copy.v4.optional_additional_cost_paid = None;
     // Additional costs are not paid again; their choices and X are copied.

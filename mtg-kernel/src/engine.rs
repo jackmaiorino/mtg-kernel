@@ -2186,11 +2186,14 @@ fn validate_spell_source_contract_fields(
     }
     if is_virtual_copy {
         if item.is_flashback
-            || cast_method != CastMethodV4::Normal
+            || !matches!(
+                cast_method,
+                CastMethodV4::Normal | CastMethodV4::Omen | CastMethodV4::Bestow
+            )
             || source.v4.spell_cast_origin.is_some()
         {
             return Err(
-                "a supported virtual spell copy must carry normal, non-flashback provenance"
+                "a virtual spell copy must carry a supported spell form without cast provenance"
                     .to_string(),
             );
         }
@@ -2732,7 +2735,11 @@ fn permanent_targets_of_color(state: &GameState, color: mana::ManaColor) -> Vec<
 /// Bestow is an Aura enchantment spell rather than a creature spell, while
 /// Omen uses its definition-owned alternative type line. Other cast methods
 /// retain the printed card types.
-fn stack_spell_has_type(state: &GameState, item: &StackItem, card_type: CardType) -> bool {
+pub(crate) fn stack_spell_has_type(
+    state: &GameState,
+    item: &StackItem,
+    card_type: CardType,
+) -> bool {
     let def = &card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize];
     match item.v4.cast_method {
         Some(CastMethodV4::Bestow) => card_type == CardType::Enchantment,
@@ -12208,6 +12215,13 @@ fn triggered_stack_item_expected_target_spec(
             }) {
                 return Err("casualty trigger lost its paid source spell".into());
             }
+        } else if card_def::CARD_DEFS[source_card_def as usize].name != "Chandra, Hope's Beacon"
+            || item.controller != spell.controller
+            || ability_source_contract.is_none_or(|source| source.zone != Zone::Battlefield)
+            || !(stack_spell_has_type(state, spell, CardType::Instant)
+                || stack_spell_has_type(state, spell, CardType::Sorcery))
+        {
+            return Err("copy trigger lost its definition-owned instant or sorcery cast".into());
         }
     }
     if let EffectOp::ResolveInitiativeTrigger { binding } = inline_effect {
@@ -13108,6 +13122,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             disguised: true,
             lookers: 1 << item.controller.index(),
             hidden_by: None,
+            hidden_by_source: None,
         });
         state.objects.get_mut(item.source).v4.ward_generic = 2;
     }
@@ -17940,6 +17955,7 @@ fn begin_cast_ex(
             disguised: true,
             lookers: 1 << player.index(),
             hidden_by: None,
+            hidden_by_source: None,
         });
     }
     // A spell on the stack is controlled by the player who cast it, which
@@ -18192,6 +18208,7 @@ fn finalize_owned_cast(
                 disguised: true,
                 lookers: 1 << pending.controller.index(),
                 hidden_by: None,
+                hidden_by_source: None,
             });
     }
     item.v4.paid_cost_refs = paid_cost_refs;
@@ -18307,6 +18324,7 @@ fn finalize_owned_cast(
 /// madness_cast`'s decline branch already has, rather than leaving
 /// `priority_passes` untouched.
 fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMethodV4) {
+    let was_face_down = state.objects.get(pending.spell).v4.face_down_v1.is_some();
     let item = state.stack.pop();
     debug_assert!(
         item.is_some_and(|i| i.source == pending.spell),
@@ -18366,7 +18384,7 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
     if resolution_cast_v1::finish_child(state) {
         return;
     }
-    if to_zone == Zone::Hand {
+    if to_zone == Zone::Hand && !was_face_down {
         for observer in [PlayerId::P0, PlayerId::P1] {
             state
                 .reveal_hand_card(observer, owner, pending.spell)

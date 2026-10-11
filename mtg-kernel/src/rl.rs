@@ -969,7 +969,7 @@ pub struct ObservationV2 {
     pub visible_projection_hash: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct FaceDownCardKnowledgeV1 {
     pub object: CardStableRefV1,
     pub card_db_id: u16,
@@ -6053,6 +6053,50 @@ fn object_relations_public_v4(
         let Some(source) = visible_card_ref(state, id, acting_player)? else {
             continue;
         };
+        if let Some(face) = object
+            .v4
+            .face_down_v1
+            .filter(|face| face.hidden_by.is_some())
+        {
+            let contract = face.hidden_by_source.ok_or_else(|| {
+                RlContractError("hideaway relation lost its historical source".into())
+            })?;
+            let link = face.hidden_by.expect("filtered linked hideaway");
+            let cage = state.objects.try_get(link.object).ok_or_else(|| {
+                RlContractError("hideaway relation lost its source object".into())
+            })?;
+            if face.disguised
+                || object.zone != Zone::Exile
+                || contract.source != link.object
+                || contract.zone_change_count != link.zone_change_count
+                || contract.zone != Zone::Battlefield
+                || cage.owner != contract.owner
+                || cage.card_def != contract.card_def
+                || cage.zone_change_count < contract.zone_change_count
+                || crate::card_def::CARD_DEFS[contract.card_def as usize].name != "Collector's Cage"
+            {
+                return Err(RlContractError(
+                    "hideaway relation changed its source incarnation".into(),
+                ));
+            }
+            let exiled_by = if cage.zone_change_count == contract.zone_change_count {
+                visible_card_ref(state, link.object, acting_player)?
+                    .ok_or_else(|| RlContractError("live hideaway source is hidden".into()))?
+            } else {
+                CardStableRefV1 {
+                    arena_id: contract.source.0,
+                    card_db_id: contract.card_def,
+                    owner: contract.owner.into(),
+                    controller: contract.controller.into(),
+                    zone: contract.zone,
+                    zone_change_count: contract.zone_change_count,
+                }
+            };
+            out.push(ObjectRelationPublicV4::ExiledBy {
+                object: source.clone(),
+                exiled_by,
+            });
+        }
         if let Some(link) = object.v4.attached_to {
             let target = state.objects.try_get(link.object).ok_or_else(|| {
                 RlContractError("attached_to relation points at a missing object".to_string())
