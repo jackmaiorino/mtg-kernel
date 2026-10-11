@@ -411,12 +411,12 @@ fn malformed_restored_trigger_authority_refuses_before_counter() {
                         .controller = actor.opponent()
                 }
                 2 => {
-                    let Some(EffectOp::PutPlusOnePlusOneCounterOnBoundObject { object }) =
+                    let Some(EffectOp::WildwoodCounterFromReceiptV1 { observer_index, .. }) =
                         state.stack[0].inline_effect.as_mut()
                     else {
-                        panic!("real bound root")
+                        panic!("real receipt-bound root")
                     };
-                    object.expected_zone_change_count += 1;
+                    *observer_index += 1;
                 }
                 _ => unreachable!(),
             }
@@ -643,7 +643,7 @@ fn future_committed_counter_captures_keep_original_controller_and_apnap_after_re
         state.players[controller.index()].battlefield.push(object);
         state.objects.get_mut(object).controller = controller;
     }
-    use mtg_kernel::effect::{EffectObjectBinding, EffectOp};
+    use mtg_kernel::effect::EffectOp;
     use mtg_kernel::rules_meaning_wildwood_v1 as meaning;
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
@@ -684,15 +684,19 @@ fn future_committed_counter_captures_keep_original_controller_and_apnap_after_re
                 (contract.controller, contract.zone_change_count),
                 (controller, generation)
             );
+            let EffectOp::WildwoodCounterFromReceiptV1 {
+                capture_history_index,
+                observer_index,
+            } = &capture.effect
+            else {
+                panic!("actual receipt-bound capture");
+            };
+            let history = serde_json::to_value(&state.engine.event_history).unwrap();
             assert_eq!(
-                capture.effect,
-                EffectOp::PutPlusOnePlusOneCounterOnBoundObject {
-                    object: EffectObjectBinding {
-                        object: source,
-                        expected_zone: Zone::Battlefield,
-                        expected_zone_change_count: generation,
-                    },
-                }
+                history[usize::try_from(*capture_history_index).unwrap()]
+                    ["WildwoodCounterCaptureV1"]["capture"]["observers"]
+                    [usize::try_from(*observer_index).unwrap()],
+                serde_json::to_value(contract).unwrap()
             );
             let selected =
                 meaning::meaning_v1(&meaning::live_selector_v1().unwrap(), contract.card_def)
@@ -1012,5 +1016,58 @@ fn historical_counter_capture_survives_changes_and_rejects_erased_or_redirected_
         let before = serde_json::to_vec(&resurrected).unwrap();
         assert!(engine::step(&mut resurrected, Action::Pass).is_err());
         assert_eq!(serde_json::to_vec(&resurrected).unwrap(), before);
+    }
+}
+
+#[test]
+fn completed_noop_requires_actual_original_source_departure_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let source = scourge(&mut state, actor);
+        let elf = add(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        counters(&mut state, actor, elf, 1);
+        next(&mut state);
+        let item = state.stack.last().unwrap().clone();
+        let id = item.v4.stack_item_id;
+        let mut forged = restore(&state);
+        forged.stack.pop();
+        forged.engine.event_history.extend([
+            event::CommittedEvent::WildwoodTriggerResolvingV1 { stack_item_id: id },
+            event::CommittedEvent::WildwoodTriggerOperationV1 {
+                stack_item_id: id,
+                counter_event_index: None,
+            },
+            event::CommittedEvent::WildwoodTriggerClosedV1 {
+                stack_item_id: id,
+                countered: false,
+            },
+        ]);
+        let before = serde_json::to_vec(&forged).unwrap();
+        assert!(engine::step(&mut forged, Action::Pass).is_err());
+        assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
+        let mut replay = restore(&forged);
+        assert!(engine::step(&mut replay, Action::Pass).is_err());
+        assert_eq!(serde_json::to_vec(&replay).unwrap(), before);
+        assert_eq!(state.objects.get(source).counters.plus1_plus1, 2);
+
+        // A real departure is independent committed authority for the no-op.
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Exile));
+        let mut replay = restore(&state);
+        settle(&mut state);
+        settle(&mut replay);
+        assert_eq!(state.objects.get(source).zone, Zone::Exile);
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+        // Removing that authority from a completed no-op must refuse too.
+        let mut erased = restore(&state);
+        let departure = erased.engine.event_history.iter().position(|event| matches!(
+            event, event::CommittedEvent::ZoneChange { object, from: Zone::Battlefield, to: Zone::Exile, .. }
+                if *object == source)).unwrap();
+        erased.engine.event_history.remove(departure);
+        let before = serde_json::to_vec(&erased).unwrap();
+        assert!(engine::step(&mut erased, Action::Pass).is_err());
+        assert_eq!(serde_json::to_vec(&erased).unwrap(), before);
     }
 }

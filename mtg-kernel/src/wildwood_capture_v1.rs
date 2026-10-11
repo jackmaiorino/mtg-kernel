@@ -485,6 +485,20 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     {
                         return Err("Wildwood operation counter occurrence changed".into());
                     }
+                } else {
+                    let source = item
+                        .v4
+                        .ability_source_contract
+                        .ok_or("Wildwood absent operation lost source")?;
+                    // The capture proves this exact incarnation was on the
+                    // battlefield. Its first later committed departure makes
+                    // that incarnation permanently unavailable, even on return.
+                    if !state.engine.event_history[capture + 1..*start].iter().any(|event| {
+                        matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Battlefield, .. }
+                            if *object == source.source)
+                    }) {
+                        return Err("Wildwood no-op lacks a committed source departure".into());
+                    }
                 }
             }
             _ => return Err("Wildwood resolution owner erased or reintroduced".into()),
