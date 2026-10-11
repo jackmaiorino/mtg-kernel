@@ -159,14 +159,30 @@ fn diff_tags(a: &Value, b: &Value, actor: usize) -> (Vec<&'static str>, Vec<Stri
                 }
             }
             Some("projection") => {
-                match parts
-                    .iter()
-                    .position(|x| *x == "players")
-                    .and_then(|i| parts.get(i + 1))
-                {
-                    Some(i) if i.parse::<usize>().ok() == Some(actor) => "own_public",
-                    Some(_) => "opponent_public",
-                    None => "public_other",
+                const PER_SEAT: [&str; 10] = [
+                    "life_totals",
+                    "mana_pools",
+                    "hand_counts",
+                    "library_counts",
+                    "player_status",
+                    "battlefield",
+                    "graveyards",
+                    "poison_counters",
+                    "ninja_emblems",
+                    "restricted_mana",
+                ];
+                match (
+                    parts.get(2),
+                    parts.get(3).and_then(|x| x.parse::<usize>().ok()),
+                ) {
+                    (Some(f), Some(i)) if PER_SEAT.contains(f) => {
+                        if i == actor {
+                            "own_public"
+                        } else {
+                            "opponent_public"
+                        }
+                    }
+                    _ => "public_other",
                 }
             }
             _ => "residual",
@@ -210,8 +226,10 @@ fn collect_diff(a: &Value, b: &Value, path: &str, out: &mut Vec<String>, limit: 
 pub(super) fn tree_report(tree: &Tree, actor: usize) -> Value {
     let root_key = [0u8; 32];
     // Children by (parent, edge); topology depth by walking parents.
+    let mut sorted: Vec<(&Key, &super::tree::Node)> = tree.nodes.iter().collect();
+    sorted.sort_by_key(|(k, _)| **k);
     let mut children: HashMap<(Key, Vec<u8>), Vec<Key>> = HashMap::new();
-    for (k, n) in &tree.nodes {
+    for &(k, n) in &sorted {
         if n.parent != root_key {
             children
                 .entry((n.parent, n.edge.clone()))
@@ -241,7 +259,7 @@ pub(super) fn tree_report(tree: &Tree, actor: usize) -> Value {
     let mut by_depth: BTreeMap<u32, Vec<[f64; 7]>> = BTreeMap::new();
     let (mut unexpanded_backed, mut unexpanded_backups) = (0u64, 0u64);
     let mut parents_with_children = HashSet::new();
-    for (k, n) in &tree.nodes {
+    for &(k, n) in &sorted {
         let total: u64 = n.n.iter().sum();
         let legal = n.n.len();
         let tried = n.n.iter().filter(|&&x| x > 0).count();
@@ -314,7 +332,7 @@ pub(super) fn tree_report(tree: &Tree, actor: usize) -> Value {
             }
             // Tags from the two most visited children.
             let mut v: Vec<&Key> = kids.iter().collect();
-            v.sort_by_key(|k| std::cmp::Reverse(tree.nodes[*k].visits));
+            v.sort_by_key(|k| (std::cmp::Reverse(tree.nodes[*k].visits), **k));
             let (a, b) = (&tree.nodes[v[0]], &tree.nodes[v[1]]);
             let (tags, paths) = diff_tags(
                 &serde_json::from_slice(&a.canon.obs).unwrap_or(Value::Null),
@@ -336,8 +354,8 @@ pub(super) fn tree_report(tree: &Tree, actor: usize) -> Value {
     }
     let p_parents = parents_with_children.len();
     // Repeated current views across histories (diagnostic only).
-    let mut views: HashMap<String, Vec<u64>> = HashMap::new();
-    for n in tree.nodes.values() {
+    let mut views: BTreeMap<String, Vec<u64>> = BTreeMap::new();
+    for &(_, n) in &sorted {
         let mut bytes = n.canon.obs.clone();
         for e in &n.canon.edges {
             bytes.extend_from_slice(&(e.len() as u64).to_le_bytes());
