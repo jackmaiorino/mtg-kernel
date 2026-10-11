@@ -81,6 +81,8 @@ struct Shared {
     model: String,
     limits: Limits,
     prior: world::DeckPrior,
+    /// Explicit search-only activation, recorded in rows.
+    fast_forward: bool,
     runtime_rules: Option<crate::engine::RuntimeRulesV1>,
     /// E's selection rule (`S4A_SELECT`): None is the formal untried-first
     /// rule; `fpu-1.5` the finite-urgency candidate.
@@ -88,6 +90,12 @@ struct Shared {
 }
 
 fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
+    let fast_forward = match std::env::var("S4A_FAST_FORWARD").as_deref() {
+        Ok("1") => true,
+        Ok("0") | Err(_) => false,
+        Ok(v) => return Err(format!("S4A_FAST_FORWARD must be 0 or 1, not {v}")),
+    };
+    validate_fast_forward_mode(&cfg.mode, fast_forward)?;
     let runtime_setting = match std::env::var("S4A_RUNTIME") {
         Ok(value) => Some(value),
         Err(std::env::VarError::NotPresent) => None,
@@ -147,6 +155,7 @@ fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
         model,
         limits,
         prior: world::DeckPrior::new(&cfg.decks),
+        fast_forward,
         runtime_rules,
         select_urgency,
     })
@@ -244,6 +253,76 @@ fn completed_identity_roots(
         }
     }
     Ok(done)
+}
+
+fn validate_fast_forward_mode(mode: &str, fast_forward: bool) -> Result<(), String> {
+    if fast_forward && mode != "s4a-run" {
+        return Err(
+            "S4A_FAST_FORWARD=1 is supported only for s4a-run; corpus and replay remain ordinary"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// Only newline-terminated rows survive partial-tail recovery. Bind resumed
+/// results to the declared activation mode before truncating or opening output.
+fn completed_roots(
+    rows: &str,
+    fast_forward: bool,
+    row_kind: &str,
+) -> Result<HashSet<String>, String> {
+    let mut done = HashSet::new();
+    for line in rows
+        .split_inclusive('\n')
+        .filter(|line| line.ends_with('\n'))
+    {
+        let Ok(row) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if row["kind"] != row_kind {
+            continue;
+        }
+        let recorded = match row["config"].get("fast_search_forward") {
+            None => false, // Historical ordinary rows omit the field.
+            Some(value) => value
+                .as_bool()
+                .ok_or("invalid resumed forward activation mode")?,
+        };
+        if recorded != fast_forward {
+            return Err("resume refused: forward activation mode differs; preserve output and use a fresh path".into());
+        }
+        if let Some(id) = row["root_id"].as_str() {
+            done.insert(id.to_owned());
+        }
+    }
+    Ok(done)
+}
+
+fn completed_roots_from_bytes(
+    bytes: &[u8],
+    fast_forward: bool,
+    row_kind: &str,
+    runtime_rules: Option<crate::engine::RuntimeRulesV1>,
+    select_rule: Option<&str>,
+) -> Result<HashSet<String>, String> {
+    // An interrupted UTF-8 character in the disposable last line must not
+    // hide completed rows from activation-mode validation.
+    let keep = bytes
+        .iter()
+        .rposition(|&byte| byte == b'\n')
+        .map_or(0, |index| index + 1);
+    let retained = std::str::from_utf8(&bytes[..keep]).map_err(|error| error.to_string())?;
+    let done = completed_identity_roots(bytes, row_kind, runtime_rules, select_rule)?;
+    completed_roots(retained, fast_forward, row_kind)?;
+    Ok(done)
+}
+
+fn set_replay_forward(roles: &mut Roles, fast_forward: bool) {
+    roles.focal.set_fast_search_forward_v1(fast_forward);
+    for opponent in &mut roles.opps {
+        opponent.set_fast_search_forward_v1(fast_forward);
+    }
 }
 
 fn write_line(sink: &Mutex<std::fs::File>, row: &Value) -> Result<(), String> {
@@ -435,7 +514,12 @@ fn run_root(
         .as_str()
         .ok_or("root has no root_id")?
         .to_owned();
-    let (setup, session) = replay(cfg, shared, roles, root)?;
+    // Frozen roots were captured with ordinary play. Restore their trajectory
+    // with that mode on every root, then use the declared mode for search.
+    set_replay_forward(roles, false);
+    let replayed = replay(cfg, shared, roles, root);
+    set_replay_forward(roles, shared.fast_forward);
+    let (setup, session) = replayed?;
     let replay_secs = started.elapsed().as_secs_f64();
     let d = decision(&session).ok_or("root is terminal")?;
     let seeds = RootSeeds {
@@ -556,6 +640,9 @@ fn run_root(
             "selection_sampler_seconds":{"E":e_sel.sampler.seconds,"A":a_sel.sampler.seconds,"D":d_sel.sampler.seconds},
             "eval_wall":eval_wall,"eval_sampler_seconds":eval_sampler.seconds,
             "root_wall":started.elapsed().as_secs_f64()}});
+    if shared.fast_forward {
+        row["config"]["fast_search_forward"] = json!(true);
+    }
     row["primary_sha256"] = json!(primary_hash(&row));
     Ok(row)
 }
@@ -707,6 +794,20 @@ fn run_root_diag(
 }
 
 fn fork_roles(policy: &FrozenPlayPolicyV1, shared: &Shared) -> Result<Roles, String> {
+    let mut roles = plain_roles(policy, shared)?;
+    if shared.fast_forward {
+        for p in [&mut roles.focal, &mut roles.scorer, &mut roles.inner_focal]
+            .into_iter()
+            .chain(roles.opps.iter_mut())
+            .chain(roles.inner_opps.iter_mut())
+        {
+            p.enable_fast_search_forward_v1();
+        }
+    }
+    Ok(roles)
+}
+
+fn plain_roles(policy: &FrozenPlayPolicyV1, shared: &Shared) -> Result<Roles, String> {
     Ok(Roles {
         focal: policy.fork_for_collection_v3()?,
         opps: shared
@@ -737,8 +838,9 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(error) => return Err(error.to_string()),
         };
-        completed_identity_roots(
+        completed_roots_from_bytes(
             &bytes,
+            shared.fast_forward,
             row_kind,
             shared.runtime_rules,
             shared.select_urgency.map(|_| "fpu-1.5"),
@@ -772,11 +874,12 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
         (cfg.first_game, cfg.first_game + cfg.games)
     };
     eprintln!(
-        "stage4a {}: model {}, opponents {:?}, items {first}..{end}, limits {}, {} already done",
+        "stage4a {}: model {}, opponents {:?}, items {first}..{end}, limits {}, fast forward {}, {} already done",
         cfg.mode,
         shared.model,
         shared.labels,
         shared.limits.json(),
+        shared.fast_forward,
         done.len()
     );
     let next = AtomicU64::new(first);
