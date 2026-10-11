@@ -484,13 +484,12 @@ pub(super) fn selected_spell_mana_costs_v1(
 pub(super) fn selected_spell_mana_costs_for_source_v1(
     source: ObjectId,
     definition: &card_def::CardDef,
-    method: CastMethodV4,
-    kicked: bool,
-    mode: u8,
+    form: (CastMethodV4, bool, u8),
     targets: &[Target],
     player: PlayerId,
     state: &GameState,
 ) -> Option<SelectedSpellManaCostsV1> {
+    let (method, kicked, mode) = form;
     let mut selected =
         selected_spell_mana_costs_v1(definition, method, kicked, mode, targets, player, state)?;
     if super::resolution_cast_v1::free_cast_for(state, source, player) {
@@ -535,7 +534,12 @@ pub(super) fn selected_spell_quote_v1(
         return None;
     }
     let selected = selected_spell_mana_costs_for_source_v1(
-        source, definition, method, kicked, mode, targets, player, state,
+        source,
+        definition,
+        (method, kicked, mode),
+        targets,
+        player,
+        state,
     )?;
     let modifiers = super::spell_cost_generic_modifiers_v1(state, selected.types, player);
     let mut family = None;
@@ -750,9 +754,11 @@ pub(super) fn prepare_final_spell_payment_v1(
     let selected = selected_spell_mana_costs_for_source_v1(
         source,
         definition,
-        method,
-        pending.kicked == Some(true),
-        pending.mode_chosen.unwrap_or(0),
+        (
+            method,
+            pending.kicked == Some(true),
+            pending.mode_chosen.unwrap_or(0),
+        ),
         &pending.targets_chosen,
         player,
         state,

@@ -56,7 +56,7 @@ pub(crate) fn counter_count(
 ) -> i32 {
     let o = state.objects.get(id);
     match kind {
-        CounterKindV1::PlusOne => i32::from(o.counters.plus1_plus1),
+        CounterKindV1::PlusOne => o.counters.plus1_plus1,
         CounterKindV1::MinusOne => i32::from(o.counters.minus1_minus1),
         CounterKindV1::MinusToughness => i32::from(o.counters.minus0_minus1),
         CounterKindV1::Stun => i32::from(o.counters.stun),

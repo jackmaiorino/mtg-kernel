@@ -42,6 +42,7 @@ pub(crate) fn legendary_creature(state: &GameState, object: ObjectId) -> bool {
         && crate::engine::effective_supertypes(state, object).contains(&Supertype::Legendary)
 }
 
+#[cfg(feature = "standard-magezero-fixtures")]
 pub(crate) fn jodah_bonus(state: &GameState, recipient: ObjectId) -> i32 {
     let object = state.objects.get(recipient);
     if object.zone != Zone::Battlefield || !legendary_creature(state, recipient) {
@@ -171,7 +172,7 @@ pub(crate) fn execute(op: LegendEffectV1, ctx: &ExecCtx, state: &mut GameState) 
             if !ctx.target_incarnation_matches(0, state) {
                 return;
             }
-            if let Err(_) = crate::engine::counter_stack_item_by_id(state, stack_item_id) {
+            if crate::engine::counter_stack_item_by_id(state, stack_item_id).is_err() {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,

@@ -5070,7 +5070,7 @@ fn can_pay_components(
             }
             CostComponent::LoyaltyX => crate::planeswalker_v1::loyalty(state, source).is_some(),
             CostComponent::Loyalty(delta) => crate::planeswalker_v1::loyalty(state, source)
-                .is_some_and(|loyalty| *delta >= 0 || loyalty >= u32::from(delta.unsigned_abs())),
+                .is_some_and(|loyalty| *delta >= 0 || loyalty >= delta.unsigned_abs()),
             CostComponent::ExileCraftArtifactMaterial => {
                 !craft_material_candidates(player, source, state, &[]).is_empty()
             }
@@ -5160,7 +5160,7 @@ fn validate_cost_component_choices_v1(
         return None;
     }
     if components.iter().any(|component| {
-        matches!(component, CostComponent::Loyalty(delta) if !crate::planeswalker_v1::loyalty(state, source).is_some_and(|loyalty| *delta >= 0 || loyalty >= u32::from(delta.unsigned_abs())))
+        matches!(component, CostComponent::Loyalty(delta) if !crate::planeswalker_v1::loyalty(state, source).is_some_and(|loyalty| *delta >= 0 || loyalty >= delta.unsigned_abs()))
     }) {
         return None;
     }
@@ -7712,8 +7712,8 @@ pub(crate) fn available_mana_ability_choices_into(
     let Some(def) = card_def::CARD_DEFS.get(object.card_def as usize) else {
         return;
     };
-    if !object.tapped
-        && !(object_has_type(state, source, CardType::Creature) && object.summoning_sick)
+    if !(object.tapped
+        || object_has_type(state, source, CardType::Creature) && object.summoning_sick)
     {
         for color in crate::standard_legends_v1::katilda_mana_colors(state, source) {
             out.push(color);
@@ -8880,9 +8880,11 @@ fn remaining_cast_payment_is_payable(
     let Some(selected) = spell_costs_v1::selected_spell_mana_costs_for_source_v1(
         pending.spell,
         def,
-        method,
-        pending.kicked == Some(true),
-        pending.mode_chosen.unwrap_or(0),
+        (
+            method,
+            pending.kicked == Some(true),
+            pending.mode_chosen.unwrap_or(0),
+        ),
         &pending.targets_chosen,
         pending.controller,
         state,
@@ -14331,25 +14333,17 @@ pub fn effective_base_toughness(state: &GameState, id: ObjectId) -> Option<i32> 
         return None;
     }
     let obj = state.objects.get(id);
-    crate::continuous_characteristics_v1::base_power_toughness(state, id)
+    let base = crate::continuous_characteristics_v1::base_power_toughness(state, id)
         .map(|(_, toughness)| i32::from(toughness))
-        .or_else(|| crate::standard_cards_v1::gnome_base_stats(state, id).map(|stats| stats.1))
-        .or_else(|| {
-            #[cfg(feature = "standard-magezero-fixtures")]
-            {
-                crate::standard_statics_v1::characteristic_defining_toughness(state, id)
-            }
-            #[cfg(not(feature = "standard-magezero-fixtures"))]
-            {
-                None
-            }
-        })
-        .or_else(|| obj.v4.face_down_v1.map(|_| 2))
-        .or_else(|| {
-            card_def::CARD_DEFS[obj.card_def as usize]
-                .toughness_for_face(obj.v4.face_index)
-                .map(i32::from)
-        })
+        .or_else(|| crate::standard_cards_v1::gnome_base_stats(state, id).map(|stats| stats.1));
+    #[cfg(feature = "standard-magezero-fixtures")]
+    let base =
+        base.or_else(|| crate::standard_statics_v1::characteristic_defining_toughness(state, id));
+    base.or_else(|| obj.v4.face_down_v1.map(|_| 2)).or_else(|| {
+        card_def::CARD_DEFS[obj.card_def as usize]
+            .toughness_for_face(obj.v4.face_index)
+            .map(i32::from)
+    })
 }
 
 pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
@@ -15952,14 +15946,13 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
                 apply_choose_land_color(state, option_index)
             } else if state.engine.pending_cast.is_some() {
                 apply_pending_cast_effect_option(state, option_index)
-            } else if state.engine.pending_activation.is_some() {
-                let pending = state.engine.pending_activation.as_ref().unwrap();
+            } else if let Some(pending) = state.engine.pending_activation.as_ref() {
                 if pending_activation_action_stage(state,pending)? != PendingActivationActionStage::ChooseLoyaltyX {
                     return Err("activation is not choosing X".into());
                 }
                 let x = u8::try_from(option_index).map_err(|_|"loyalty X exceeds supported range")?;
                 if crate::planeswalker_v1::loyalty(state,pending.source).is_none_or(|n|n<u32::from(x)) { return Err("insufficient loyalty for X".into()); }
-                state.engine.pending_activation.as_mut().unwrap().loyalty_x = Some(x);
+                state.engine.pending_activation.as_mut().ok_or("activation disappeared before choosing X")?.loyalty_x = Some(x);
                 Ok(())
             } else {
                 effect::choose_resumable_option(state, option_index)
@@ -19109,6 +19102,144 @@ pub(crate) fn pay_plan(state: &mut GameState, player: PlayerId, plan: &mana::Pay
 #[cfg(test)]
 #[path = "engine_attachment_lki_tests.rs"]
 mod attachment_lki_tests;
+
+fn crew_requirement(components: &[CostComponent]) -> Option<u8> {
+    components.iter().find_map(|component| {
+        if let CostComponent::Crew(power) = component {
+            Some(*power)
+        } else {
+            None
+        }
+    })
+}
+fn crew_power(state: &GameState, object: ObjectId) -> i64 {
+    let bonus = if card_def::CARD_DEFS[state.objects.get(object).card_def as usize].name
+        == "Pilot Token"
+        && crate::continuous_characteristics_v1::printed_abilities_active(state, object)
+    {
+        2
+    } else {
+        0
+    };
+    i64::from(effective_power(state, object)) + bonus
+}
+fn crew_candidates(
+    state: &GameState,
+    player: PlayerId,
+    source: ObjectId,
+    selected: &[EffectObjectBinding],
+) -> Vec<EffectObjectBinding> {
+    let candidates: Vec<_> = state.players[player.index()]
+        .battlefield
+        .iter()
+        .filter_map(|&object| {
+            let live = state.objects.get(object);
+            let binding = EffectObjectBinding {
+                object,
+                expected_zone: Zone::Battlefield,
+                expected_zone_change_count: live.zone_change_count,
+            };
+            (object != source
+                && live.controller == player
+                && live.zone == Zone::Battlefield
+                && !live.tapped
+                && object_has_type(state, object, CardType::Creature)
+                && !selected.contains(&binding))
+            .then_some(binding)
+        })
+        .collect();
+    let requirement = state
+        .engine
+        .pending_activation
+        .as_ref()
+        .filter(|p| p.source == source)
+        .and_then(|p| {
+            resolved_activated_ability(
+                state.objects.get(source).card_def,
+                p.ability_index,
+                state,
+                source,
+            )
+        })
+        .and_then(|a| crew_requirement(a.cost));
+    let Some(required) = requirement else {
+        return candidates;
+    };
+    let selected_power = selected
+        .iter()
+        .map(|b| crew_power(state, b.object))
+        .sum::<i64>();
+    let positives = candidates
+        .iter()
+        .map(|b| crew_power(state, b.object).max(0))
+        .sum::<i64>();
+    candidates
+        .into_iter()
+        .filter(|b| {
+            selected_power + positives + crew_power(state, b.object).min(0) >= i64::from(required)
+        })
+        .collect()
+}
+fn choose_crew_member(state: &mut GameState, target: Target) -> Result<(), String> {
+    let pending = state
+        .engine
+        .pending_activation
+        .as_ref()
+        .ok_or("missing crew activation")?;
+    validate_pending_activation(state, pending)?;
+    let Target::Object(object) = target else {
+        return Err("crew requires a creature".into());
+    };
+    let binding = crew_candidates(
+        state,
+        pending.controller,
+        pending.source,
+        &pending.object_cost_chosen,
+    )
+    .into_iter()
+    .find(|b| b.object == object)
+    .ok_or("illegal crew member")?;
+    state
+        .engine
+        .pending_activation
+        .as_mut()
+        .unwrap()
+        .object_cost_chosen
+        .push(binding);
+    Ok(())
+}
+fn finish_crew(state: &mut GameState) -> Result<(), String> {
+    let pending = state
+        .engine
+        .pending_activation
+        .as_ref()
+        .ok_or("missing crew activation")?;
+    validate_pending_activation(state, pending)?;
+    let ability = resolved_activated_ability(
+        state.objects.get(pending.source).card_def,
+        pending.ability_index,
+        state,
+        pending.source,
+    )
+    .ok_or("missing crew ability")?;
+    let required = crew_requirement(ability.cost).ok_or("ability has no crew cost")?;
+    if pending
+        .object_cost_chosen
+        .iter()
+        .map(|b| crew_power(state, b.object))
+        .sum::<i64>()
+        < i64::from(required)
+    {
+        return Err("crew power is insufficient".into());
+    }
+    state
+        .engine
+        .pending_activation
+        .as_mut()
+        .unwrap()
+        .crew_finished = true;
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {
@@ -25534,142 +25665,4 @@ mod tests {
              being countered"
         );
     }
-}
-
-fn crew_requirement(components: &[CostComponent]) -> Option<u8> {
-    components.iter().find_map(|component| {
-        if let CostComponent::Crew(power) = component {
-            Some(*power)
-        } else {
-            None
-        }
-    })
-}
-fn crew_power(state: &GameState, object: ObjectId) -> i64 {
-    let bonus = if card_def::CARD_DEFS[state.objects.get(object).card_def as usize].name
-        == "Pilot Token"
-        && crate::continuous_characteristics_v1::printed_abilities_active(state, object)
-    {
-        2
-    } else {
-        0
-    };
-    i64::from(effective_power(state, object)) + bonus
-}
-fn crew_candidates(
-    state: &GameState,
-    player: PlayerId,
-    source: ObjectId,
-    selected: &[EffectObjectBinding],
-) -> Vec<EffectObjectBinding> {
-    let candidates: Vec<_> = state.players[player.index()]
-        .battlefield
-        .iter()
-        .filter_map(|&object| {
-            let live = state.objects.get(object);
-            let binding = EffectObjectBinding {
-                object,
-                expected_zone: Zone::Battlefield,
-                expected_zone_change_count: live.zone_change_count,
-            };
-            (object != source
-                && live.controller == player
-                && live.zone == Zone::Battlefield
-                && !live.tapped
-                && object_has_type(state, object, CardType::Creature)
-                && !selected.contains(&binding))
-            .then_some(binding)
-        })
-        .collect();
-    let requirement = state
-        .engine
-        .pending_activation
-        .as_ref()
-        .filter(|p| p.source == source)
-        .and_then(|p| {
-            resolved_activated_ability(
-                state.objects.get(source).card_def,
-                p.ability_index,
-                state,
-                source,
-            )
-        })
-        .and_then(|a| crew_requirement(a.cost));
-    let Some(required) = requirement else {
-        return candidates;
-    };
-    let selected_power = selected
-        .iter()
-        .map(|b| crew_power(state, b.object))
-        .sum::<i64>();
-    let positives = candidates
-        .iter()
-        .map(|b| crew_power(state, b.object).max(0))
-        .sum::<i64>();
-    candidates
-        .into_iter()
-        .filter(|b| {
-            selected_power + positives + crew_power(state, b.object).min(0) >= i64::from(required)
-        })
-        .collect()
-}
-fn choose_crew_member(state: &mut GameState, target: Target) -> Result<(), String> {
-    let pending = state
-        .engine
-        .pending_activation
-        .as_ref()
-        .ok_or("missing crew activation")?;
-    validate_pending_activation(state, pending)?;
-    let Target::Object(object) = target else {
-        return Err("crew requires a creature".into());
-    };
-    let binding = crew_candidates(
-        state,
-        pending.controller,
-        pending.source,
-        &pending.object_cost_chosen,
-    )
-    .into_iter()
-    .find(|b| b.object == object)
-    .ok_or("illegal crew member")?;
-    state
-        .engine
-        .pending_activation
-        .as_mut()
-        .unwrap()
-        .object_cost_chosen
-        .push(binding);
-    Ok(())
-}
-fn finish_crew(state: &mut GameState) -> Result<(), String> {
-    let pending = state
-        .engine
-        .pending_activation
-        .as_ref()
-        .ok_or("missing crew activation")?;
-    validate_pending_activation(state, pending)?;
-    let ability = resolved_activated_ability(
-        state.objects.get(pending.source).card_def,
-        pending.ability_index,
-        state,
-        pending.source,
-    )
-    .ok_or("missing crew ability")?;
-    let required = crew_requirement(ability.cost).ok_or("ability has no crew cost")?;
-    if pending
-        .object_cost_chosen
-        .iter()
-        .map(|b| crew_power(state, b.object))
-        .sum::<i64>()
-        < i64::from(required)
-    {
-        return Err("crew power is insufficient".into());
-    }
-    state
-        .engine
-        .pending_activation
-        .as_mut()
-        .unwrap()
-        .crew_finished = true;
-    Ok(())
 }

@@ -85,11 +85,11 @@ pub(super) fn payment(
         p: &PendingCast,
         chosen: &[EffectObjectBinding],
         i: usize,
-        pips: Vec<mana::Pip>,
-        generic: u32,
+        remaining_cost: (Vec<mana::Pip>, u32),
         creature_spell: bool,
         excluded: &[ObjectId],
     ) -> Option<mana::PaymentPlan> {
+        let (pips, generic) = remaining_cost;
         if i == chosen.len() {
             return mana::plan_spell_mana_total_v1(
                 &pips,
@@ -111,8 +111,7 @@ pub(super) fn payment(
                     p,
                     chosen,
                     i + 1,
-                    rest,
-                    generic,
+                    (rest, generic),
                     creature_spell,
                     excluded,
                 ) {
@@ -126,8 +125,7 @@ pub(super) fn payment(
                 p,
                 chosen,
                 i + 1,
-                pips,
-                generic - 1,
+                (pips, generic - 1),
                 creature_spell,
                 excluded,
             )
@@ -140,8 +138,7 @@ pub(super) fn payment(
         p,
         chosen,
         0,
-        pips,
-        generic,
+        (pips, generic),
         creature_spell,
         &excluded,
     )?;

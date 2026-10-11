@@ -1953,6 +1953,7 @@ pub(crate) fn room_cast_mana_value(
 /// names, costs and colors on the battlefield. Elsewhere both halves apply,
 /// except on the stack, where only the chosen half applies.
 /// https://magic.wizards.com/en/news/feature/duskmourn-house-of-horror-release-notes
+#[cfg(feature = "standard-magezero-fixtures")]
 pub(crate) fn room_characteristics(
     state: &GameState,
     object: ObjectId,
