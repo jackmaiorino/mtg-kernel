@@ -9695,7 +9695,7 @@ mod adventure_and_monarch_rl_tests {
         fn ready() -> GameState {
             let land = card_id_by_name("Island").unwrap();
             let mut state =
-                GameState::new_from_libraries(&[land; 12], &[land; 12], card_name, 0xface_002);
+                GameState::new_from_libraries(&[land; 12], &[land; 12], card_name, 0x0fac_e002);
             state.active_player = PlayerId::P0;
             state.priority_player = PlayerId::P0;
             state.step = Step::Main1;

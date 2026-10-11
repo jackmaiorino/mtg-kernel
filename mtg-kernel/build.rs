@@ -4143,7 +4143,6 @@ fn keywords_for(card: &CardJson) -> String {
             keywords.push("Keywords::VIGILANCE");
         }
         "Gingerbrute" => keywords.push("Keywords::HASTE"),
-        "Surge Engine" => keywords.push("Keywords::DEFENDER"),
         "Spyglass Siren" => keywords.push("Keywords::FLYING"),
         "Sheoldred, the Apocalypse" => keywords.push("Keywords::DEATHTOUCH"),
         "Masked Meower" | "Clockwork Percussionist" => keywords.push("Keywords::HASTE"),

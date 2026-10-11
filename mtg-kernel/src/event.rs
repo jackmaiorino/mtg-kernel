@@ -706,7 +706,7 @@ pub enum CommittedEvent {
     /// History-only exact finalized trigger publication.
     AuthorityEntryPublishedV1 {
         capture_history_index: u64,
-        item: crate::state::StackItem,
+        item: Box<crate::state::StackItem>,
     },
     WildwoodCounterCaptureV1 {
         capture: Box<crate::wildwood_capture_v1::CaptureV1>,
@@ -796,7 +796,7 @@ pub enum CommittedEvent {
     },
     CerberusPublishedV1 {
         capture_history_index: u64,
-        item: crate::state::StackItem,
+        item: Box<crate::state::StackItem>,
     },
     CerberusOperationV1 {
         capture_history_index: u64,

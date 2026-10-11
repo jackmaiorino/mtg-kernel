@@ -343,7 +343,7 @@ fn publication(
             CommittedEvent::CerberusPublishedV1 {
                 capture_history_index,
                 item,
-            } if *capture_history_index == capture_index => Some((index, item)),
+            } if *capture_history_index == capture_index => Some((index, item.as_ref())),
             _ => None,
         })
         .collect();
@@ -392,7 +392,7 @@ pub(crate) fn publish(state: &mut GameState, item: &crate::state::StackItem) -> 
         .event_history
         .push(CommittedEvent::CerberusPublishedV1 {
             capture_history_index: *capture_history_index,
-            item: item.clone(),
+            item: Box::new(item.clone()),
         });
     Ok(())
 }

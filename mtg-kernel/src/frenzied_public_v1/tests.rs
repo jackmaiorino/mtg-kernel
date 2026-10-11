@@ -168,7 +168,7 @@ fn printed_public_payment_closed_restriction_restore_and_receipt_forgeries() {
                             CommittedEvent::FrenziedGoblinPublishedV1 { publication } => {
                                 publication.item.targets =
                                     vec![crate::state::Target::Object(source)];
-                                publication.item.v4.target_contracts = vec![contract.clone()];
+                                publication.item.v4.target_contracts = vec![contract];
                                 publication.target_snapshot = snapshot.clone();
                                 publication.target_at_placement = public_ref.clone();
                             }
@@ -176,11 +176,10 @@ fn printed_public_payment_closed_restriction_restore_and_receipt_forgeries() {
                                 if let Some(pending) = receipt.pending.as_mut() {
                                     pending.resolving_item.targets =
                                         vec![crate::state::Target::Object(source)];
-                                    pending.resolving_item.v4.target_contracts =
-                                        vec![contract.clone()];
+                                    pending.resolving_item.v4.target_contracts = vec![contract];
                                     pending.ctx.targets =
                                         vec![crate::state::Target::Object(source)];
-                                    pending.ctx.target_contracts = vec![contract.clone()];
+                                    pending.ctx.target_contracts = vec![contract];
                                 }
                             }
                             _ => {}
@@ -188,11 +187,11 @@ fn printed_public_payment_closed_restriction_restore_and_receipt_forgeries() {
                     }
                     for item in &mut corrupt.stack {
                         item.targets = vec![crate::state::Target::Object(source)];
-                        item.v4.target_contracts = vec![contract.clone()];
+                        item.v4.target_contracts = vec![contract];
                     }
                     let pending = corrupt.engine.pending_effect.as_mut().unwrap();
                     pending.resolving_item.targets = vec![crate::state::Target::Object(source)];
-                    pending.resolving_item.v4.target_contracts = vec![contract.clone()];
+                    pending.resolving_item.v4.target_contracts = vec![contract];
                     pending.ctx.targets = vec![crate::state::Target::Object(source)];
                     pending.ctx.target_contracts = vec![contract];
                     // Genuine committed Targeted remains the independent original recipient.

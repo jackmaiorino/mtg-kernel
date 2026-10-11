@@ -14042,7 +14042,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         }
     };
     if !targets_legal
-        && effect::frenzied_goblin_resolution_v1::preflight_unstarted_removal(state, &item).is_err()
+        && effect::frenzied_goblin_resolution_v1::preflight_unstarted_removal(state, item).is_err()
     {
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
         return ResolutionProgress::Suspended;

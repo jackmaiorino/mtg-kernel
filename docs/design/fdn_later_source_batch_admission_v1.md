@@ -121,3 +121,31 @@ checks and69 affected default Python passes,193 Full/1 Partial/92 Missing.
 Future206 Full markers in this source remain unaccepted. Separate Authority
 V17, EmploymentV18 and CerberusV19 source lanes are outside Native64; all
 consumer/model/sampler and broader issue110 criteria remain open.
+
+Native64 finalized101/101 at exactac264: both all-test compiles passed;
+403 passed,9 failed,3 ignored runtime occurrences across62 groups.
+The Store filter discovered165 cases versus162 requested, so the actual
+total was415. Three strict lints failed. Both complete Default/Standard
+exports are byte-identical to accepted Native33. Final log, guard and
+manifest are verified cold under E:/storage-records/fdn110. Only the
+verified terminal owned VCTIP144108 helper was released, followed by guard101
+and absent supervisor162716 before target reuse.
+
+Reviewed fixture repairs retain genuine Authority entry/legend/token
+producers, real Employment Counterspell priority and authenticated Cleanup
+discard totals. Temporary-control overlap now asserts the actual next Untap
+and starting-player-dependent round increment. The unchanged Aegis copy
+fixture runs in its timestamp-enabled Limited and Standard catalogs;
+Default intentionally lacks that authority. Native lint repairs box full
+published stack rows without changing serialized payloads, preserve the
+counter predicate, remove redundant Copy clones/borrow, retain the same seed,
+and remove the redundant Surge Engine Defender entry already supplied by
+its printed keywords. Native64 failures remain preserved.
+
+The composed source now includes separately reviewed Authority Public/HumanV17,
+Employment Public/HumanV18 and Cerberus capture/Public/HumanV19, including
+original entry visibility and original source-departure repairs. Existing
+event/mode prefixes and each distinct observation admission are preserved.
+These new groups and repairs require exact composed-source native checks.
+Prepared Librarian source remains separate and unregistered. No consumer,
+model, sampler, strength or accepted206-card claim follows from source review.

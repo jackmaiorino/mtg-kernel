@@ -485,8 +485,9 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                         .v4
                         .ability_source_contract
                         .ok_or("Wildwood operation source missing")?;
-                    if !(*start < *added && *added < *operation)
-                        || !matches!(state.engine.event_history.get(*added), Some(CommittedEvent::PlusOneCountersAdded { object, zone_change_count, player, count }) if *object == source.source && *zone_change_count == source.zone_change_count && *player == source.controller && *count == 1)
+                    if !(*start < *added
+                        && *added < *operation
+                        && matches!(state.engine.event_history.get(*added), Some(CommittedEvent::PlusOneCountersAdded { object, zone_change_count, player, count }) if *object == source.source && *zone_change_count == source.zone_change_count && *player == source.controller && *count == 1))
                     {
                         return Err("Wildwood operation counter occurrence changed".into());
                     }
