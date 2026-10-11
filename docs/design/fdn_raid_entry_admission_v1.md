@@ -71,3 +71,10 @@ and earlier tuples remain readable; stale v70 publication/resume guards precede
 store access. Current-record profile checks move to v71. Full native record,
 publisher/resume/science, public consumer and lint qualification remains pending.
 Neither this tuple nor these fixture results admit a model or training launch.
+
+Native14 passes the six printed groups, suppression primitive and v71 record
+validation, with all three stale publisher/resume/science guards. It then stops
+at the definition suite: the current-build canary still expected v70. The
+canary now names v71 and uses the actual generated hash above. The historical
+v70 tuple is unchanged. This test failure and the unrun remaining consumer/lint
+checks are retained rather than counted as a full qualification pass.
