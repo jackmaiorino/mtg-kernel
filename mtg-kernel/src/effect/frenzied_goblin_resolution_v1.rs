@@ -591,7 +591,7 @@ fn published_at(
         || crate::sower_restriction_capture_v1::masked_ref(*target, &target_snapshot)
             .map_err(|error| error.to_string())?
             != publication.target_at_placement
-        || !matches!(item.v4.target_contracts.as_slice(), [StackTargetContractV4::Object { owner, .. }] if *owner == target_snapshot.owner)
+        || !matches!(item.v4.target_contracts.as_slice(), [StackTargetContractV4::Object { owner, card_def, spell_copy_origin, .. }] if *owner == target_snapshot.owner && *card_def == target_snapshot.card_def && *spell_copy_origin == target_snapshot.spell_copy_origin)
         || publication.declaration_history_index >= index
         || publication.targeting_history_index >= index
         || !matches!(state.engine.event_history.get(publication.declaration_history_index as usize),

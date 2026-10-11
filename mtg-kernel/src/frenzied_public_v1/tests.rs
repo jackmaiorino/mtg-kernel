@@ -137,7 +137,7 @@ fn printed_public_payment_closed_restriction_restore_and_receipt_forgeries() {
         assert_eq!(pending.resolutions[0].phase, "optional_red_payment");
         assert_eq!(pending.resolutions[0].captured_payer, actor.into());
         assert_eq!(serde_json::to_vec(&state).unwrap(), before);
-        for case in 0..5 {
+        for case in 0..6 {
             let mut corrupt: GameState = serde_json::from_slice(&before).unwrap();
             match case {
                 0 => corrupt.engine.pending_effect = None,
@@ -152,7 +152,7 @@ fn printed_public_payment_closed_restriction_restore_and_receipt_forgeries() {
                         }
                     }
                 }
-                _ => {
+                4 => {
                     let contract = crate::state::StackTargetContractV4::capture(
                         &corrupt,
                         crate::state::Target::Object(source),
@@ -197,9 +197,30 @@ fn printed_public_payment_closed_restriction_restore_and_receipt_forgeries() {
                     pending.ctx.target_contracts = vec![contract];
                     // Genuine committed Targeted remains the independent original recipient.
                 }
+                _ => {
+                    for event in &mut corrupt.engine.event_history {
+                        if let CommittedEvent::FrenziedGoblinPublishedV1 { publication } = event {
+                            let mut snapshot: crate::state::GameObject =
+                                serde_json::from_str(&publication.target_snapshot).unwrap();
+                            snapshot.card_def = crate::card_def::card_id_by_name("Forest").unwrap();
+                            snapshot.name = "Forest".into();
+                            snapshot.v4 =
+                                crate::state::ObjectStateV4::from_card_def(snapshot.card_def);
+                            publication.target_snapshot = serde_json::to_string(&snapshot).unwrap();
+                            publication.target_at_placement =
+                                crate::sower_restriction_capture_v1::masked_ref(
+                                    recipient, &snapshot,
+                                )
+                                .unwrap();
+                            // The actual placement contract still records Llanowar Elves.
+                        }
+                    }
+                }
             }
             let bytes = serde_json::to_vec(&corrupt).unwrap();
             assert!(observe_v1(&corrupt, &surface, actor, 0, 0, 0, 1).is_err());
+            assert_eq!(serde_json::to_vec(&corrupt).unwrap(), bytes);
+            assert!(engine::step(&mut corrupt, Action::Pass).is_err());
             assert_eq!(serde_json::to_vec(&corrupt).unwrap(), bytes);
         }
         engine::step(&mut state, Action::ChooseEffectBoolean(true)).unwrap();
