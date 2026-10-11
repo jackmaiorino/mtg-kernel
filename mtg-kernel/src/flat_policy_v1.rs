@@ -1688,10 +1688,11 @@ impl FlatDecisionEncoderV1 {
     }
 
     fn build_globals(&mut self, observation: &ObservationV5) -> Result<(), FlatDecisionErrorV1> {
-        if observation
-            .projection
-            .creatures_attacked_this_turn
-            .is_some()
+        if !observation.known_face_down_cards.is_empty()
+            || observation
+                .projection
+                .creatures_attacked_this_turn
+                .is_some()
             || observation.projection.poison_counters.is_some()
             || observation.projection.ninja_emblems.is_some()
             || observation.projection.poison_prevention.is_some()
@@ -3994,6 +3995,45 @@ mod tests {
         encoder.build_relations(observation)?;
         encoder.validate_cached_tables()?;
         Ok(encoder)
+    }
+
+    #[test]
+    #[cfg(feature = "standard-magezero-fixtures")]
+    fn frozen_encoder_rejects_known_face_down_identities_without_silently_aliasing_them() {
+        let session = FastActorSessionV1::reset_with_limits(90_121, 128, 128, 16_384);
+        let mut observation = session
+            .flat_policy_observation_v1(expected(&session))
+            .unwrap();
+        assert!(observation.known_face_down_cards.is_empty());
+        assert!(materialize_observation(&observation).is_ok());
+
+        let sentinel = crate::card_def::card_id_by_name("Face-down creature").unwrap();
+        let stable = synthetic_stable(
+            98_121,
+            sentinel,
+            observation.acting_player,
+            observation.acting_player,
+            Zone::Battlefield,
+        );
+        observation.projection.surface.battlefield[seat_index(observation.acting_player)]
+            .push(synthetic_public(stable.clone()));
+        assert!(materialize_observation(&observation).is_ok());
+
+        // The public object is identical in both cases. Encoding only that
+        // row would collapse two identities the acting player can distinguish.
+        for name in ["Llanowar Elves", "Mosswood Dreadknight"] {
+            observation.known_face_down_cards = vec![crate::rl::FaceDownCardKnowledgeV1 {
+                object: stable.clone(),
+                card_db_id: crate::card_def::card_id_by_name(name).unwrap(),
+                card_name: name.to_string(),
+            }];
+            assert!(matches!(
+                materialize_observation(&observation),
+                Err(FlatDecisionErrorV1::ObservationContract)
+            ));
+        }
+        observation.known_face_down_cards.clear();
+        assert!(materialize_observation(&observation).is_ok());
     }
 
     #[test]
