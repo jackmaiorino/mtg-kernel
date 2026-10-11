@@ -2739,6 +2739,8 @@ enum Special {
         effect: &'static str,
         mode2: Option<ProgramMode>,
     },
+    // Unregistered source preparation. Variable kicked targets are not supported yet.
+    DivineResiliencePrepared,
 }
 
 #[derive(Clone, Copy)]
@@ -2866,6 +2868,7 @@ impl Special {
     /// formatting-only codegen edits must not churn the card-database hash.
     fn canonical_token(self) -> String {
         match self {
+            Special::DivineResiliencePrepared => "divine_resilience:unexecutable_prepared_source:base_W:kicker_2W:unkicked_one_controlled_creature:kicked_any_number_distinct_controlled_creatures:grant_indestructible_to_each_legal_incarnation_until_cleanup".to_string(),
             Special::None => "none".to_string(),
             Special::StandardProgram {
                 target_spec,
@@ -3259,6 +3262,7 @@ fn standard_program_function(name: &str) -> String {
 
 fn special_for(name: &str) -> Special {
     match name {
+        "Divine Resilience" => Special::DivineResiliencePrepared,
         // Great Furnace is intentionally explicit: unlike a basic land, its
         // mana ability is rules text, not intrinsic to a basic land type.
         "Great Furnace" => Special::GreatFurnace,
@@ -3847,6 +3851,7 @@ fn program_function_suffix(name: &str) -> String {
 /// data hash.
 fn effect_recipe_for(card: &CardJson) -> String {
     match special_for(&card.name) {
+        Special::DivineResiliencePrepared => "target=None;spell=None;mana=None;unsupported=kicker_dependent_variable_target_cardinality;desired=GrantKeywordToEachLegalAnnouncedControlledCreatureUntilEndOfTurn(Indestructible)".to_string(),
         Special::None => {
             let executable = card.engine_capability != EngineCapabilityJson::NoEffect;
             let spell = if executable && is_ordinary_permanent(card) {
@@ -4519,6 +4524,7 @@ fn enters_battlefield_tapped_unless_for(name: &str) -> &'static str {
 /// ("Kicker {R}").
 fn kicker_cost_for(name: &str) -> String {
     match name {
+        "Divine Resilience" => cost_src("{2}{W}"),
         "Goblin Bushwhacker" => cost_src("{R}"),
         // Offspring {2} reuses kicker's optional additional cost.
         "Iridescent Vinelasher" => cost_src("{2}"),
@@ -9214,6 +9220,11 @@ fn codegen(cards: &[CardJson]) -> String {
         };
 
         let (target_spec_src, mut spell_effect_src, mut mana_ability_src) = match special {
+            Special::DivineResiliencePrepared => (
+                "TargetSpec::None",
+                "no_effect".to_string(),
+                "no_effect".to_string(),
+            ),
             Special::None => (
                 "TargetSpec::None",
                 "no_effect".to_string(),
