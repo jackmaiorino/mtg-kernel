@@ -43,6 +43,7 @@ pub(crate) mod employment_v18;
 pub(crate) mod frenzied_v15;
 pub(crate) mod human_opening_v1;
 pub(crate) mod human_v8;
+pub(crate) mod librarian_v20;
 pub(crate) mod sower_v14;
 pub(crate) mod wildwood_v16;
 
@@ -4433,6 +4434,7 @@ enum FlatActionContractModeV1 {
     AuthorityV17,
     EmploymentV18,
     CerberusV19,
+    LibrarianV20,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -7365,6 +7367,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:cerberus_v19:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::LibrarianV20 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = librarian_v20::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:librarian_v20:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));

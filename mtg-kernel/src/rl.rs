@@ -2442,6 +2442,33 @@ fn build_policy_observation_storage_v6(
     )
 }
 
+/// Distinct selected Librarian input using shared internal typed storage.
+/// This does not bypass any predecessor variable/cant-block/Wildwood refusal.
+pub(crate) fn librarian_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::librarian_activation_v1::validate_state(state).map_err(RlContractError)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_v6(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
+    )
+}
+
 pub(crate) fn sower_observation_storage_v1(
     state: &GameState,
     surface: &PolicySurfaceV5,
