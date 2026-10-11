@@ -52,3 +52,24 @@ lane. Native qualification belongs to the parent after Native55; no runtime
 pass is claimed. Serial composition with Vampire's engine call sites must keep
 both source-specific owners and route each actual definition to exactly its own
 loan, driver and marked publication. No generic absent-live bypass is permitted.
+
+## Native56 fixture correction
+
+The parent ran the six printed fixtures on composition `7bba`: three passed,
+including the owned begin/answer/repeated-restore path, and three failed.
+The retained full log is
+`C:/Users/Jack/AppData/Local/Temp/fdn110-pending-receipts/fdn110-native56-18c5-working.log`.
+This follow-up changes only fixture assumptions, leaving the owner and engine
+implementation unchanged. A nonempty prefix with no eligible card publishes
+the genuine optional zero-target prompt and requires FinishEffectSelection;
+an empty library completes without a prompt. The test now checks that exact
+menu and rejects selecting the battlefield source before finishing. Revealed
+hand knowledge is asserted for the opponent; the owner's actual hand already
+provides visibility and its duplicate hand-knowledge list remains empty.
+Parsing the failure's two full serialized byte arrays found only
+`engine.halted` changed. Advancing an invalid continuation deliberately records
+that terminal diagnostic, so the fixture now requires exactly the expected
+source-bound diagnostic and byte equality for everything else. Invalid actions
+remain read-only both before and after the terminal checkpoint, across all
+twelve forgery cases for both seats. Pinned formatting and diff checks are the
+only checks performed on this follow-up; the corrected fixtures remain unrun.

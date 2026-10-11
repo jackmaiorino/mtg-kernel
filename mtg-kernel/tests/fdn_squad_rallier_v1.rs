@@ -226,15 +226,16 @@ fn real_cast_optional_power_pick_reveal_random_bottom_and_restored_replay_both_s
                     take
                 );
                 assert_eq!(current.objects.get(original[0]).owner, actor);
-                for viewer in [actor, actor.opponent()] {
-                    assert_eq!(
-                        current
-                            .known_hand_cards(viewer, actor)
-                            .iter()
-                            .any(|entry| entry.object == original[0]),
-                        take
-                    );
-                }
+                // Own hand visibility is represented by the hand itself.
+                // Revealing a selected card adds knowledge for the opponent.
+                assert!(current.known_hand_cards(actor, actor).is_empty());
+                assert_eq!(
+                    current
+                        .known_hand_cards(actor.opponent(), actor)
+                        .iter()
+                        .any(|entry| entry.object == original[0]),
+                    take
+                );
                 assert!(current.engine.event_log.iter().all(|event| !matches!(
                     event,
                     CommittedEvent::SquadRallierResolutionBoundaryV1 { .. }
@@ -359,6 +360,16 @@ fn empty_or_no_eligible_prefix_finishes_real_paid_random_bottom_without_targets(
             activate(&mut state, actor, source);
             let mut restored = restore(&state);
             for current in [&mut state, &mut restored] {
+                if !names.is_empty() {
+                    assert!(
+                        matches!(until_pick(current), Decision::ChooseEffectTargets {
+                        player, source: current_source, selected_count: 0,
+                        min_targets: 0, max_targets: 0, ref legal_targets, can_finish: true,
+                    } if player == actor && current_source == source && legal_targets.is_empty())
+                    );
+                    readonly(current, Action::ChooseEffectTarget(Target::Object(source)));
+                    engine::step(current, Action::FinishEffectSelection).unwrap();
+                }
                 settle(current);
                 assert_eq!(
                     sort_ids(current.players[actor.index()].library.clone()),
@@ -490,12 +501,27 @@ fn restored_private_stage_erasure_restart_controller_filter_and_prefix_forgery_r
             assert!(mtg_kernel::effect::validate_pending_effect_choice(&forged).is_err());
             readonly(&mut forged, Action::FinishEffectSelection);
             readonly(&mut forged, Action::Pass);
-            let before = serde_json::to_vec(&forged).unwrap();
+            // Action rejection is read-only. Advancing records the terminal
+            // diagnostic; every other serialized field must remain identical.
+            let mut expected_halt = restore(&forged);
+            expected_halt.engine.halted = Some((
+                engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
             assert!(matches!(
                 engine::advance_until_decision(&mut forged),
-                Decision::Halted { .. }
+                Decision::Halted {
+                    mechanic: engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    source: halted_source,
+                } if halted_source == source
             ));
-            assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
+            assert_eq!(
+                serde_json::to_vec(&forged).unwrap(),
+                serde_json::to_vec(&expected_halt).unwrap(),
+                "forgery case {failure} changed more than the halt diagnostic"
+            );
+            readonly(&mut forged, Action::FinishEffectSelection);
+            readonly(&mut forged, Action::Pass);
         }
     }
 }
