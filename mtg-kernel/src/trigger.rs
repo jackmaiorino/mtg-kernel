@@ -5557,7 +5557,10 @@ mod tests {
     use crate::state::GameState;
 
     #[test]
-    #[cfg(feature = "limited-fdn-fixtures")]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn raid_entry_predicate_uses_actual_declarations_and_the_captured_controller() {
         use crate::engine::{self, Action};
         use crate::policy_observation_v6::tests::{put, ready_state};
