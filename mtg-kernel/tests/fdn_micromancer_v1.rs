@@ -1,4 +1,4 @@
-//! Source preparation. Registration and actual card qualification remain pending.
+//! Registered candidate; full gameplay/profile admission remains pending.
 #![cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
@@ -194,12 +194,12 @@ fn printed_metadata_and_actual_filtered_revealed_search_restore() {
             }
             assert!(matches!(settle(current), Decision::CastSpellOrPass { .. }));
             assert_eq!(current.objects.get(sorcery).zone, Zone::Hand);
-            for observer in [PlayerId::P0, PlayerId::P1] {
-                assert!(current
-                    .known_hand_cards(observer, player)
-                    .iter()
-                    .any(|entry| entry.object == sorcery));
-            }
+            assert!(current.players[player.index()].hand.contains(&sorcery));
+            assert!(current
+                .known_hand_cards(player.opponent(), player)
+                .iter()
+                .any(|entry| entry.object == sorcery
+                    && entry.zone_change_count == current.objects.get(sorcery).zone_change_count));
             assert!(!current.players[player.index()].library.contains(&sorcery));
         }
         same(&state, &replay);
