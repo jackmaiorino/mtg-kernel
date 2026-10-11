@@ -617,6 +617,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Ruby, Daring Tracker",
     "Courageous Goblin",
     "Brineborn Cutthroat",
+        "Nessian Hornbeetle",
     "Arbiter of Woe",
     "Armasaur Guide",
     "Mischievous Pup",
