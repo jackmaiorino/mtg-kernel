@@ -10,6 +10,8 @@ mod fdn_arbiter_of_woe_v1;
 mod fdn_armasaur_guide_v1;
 #[path = "fdn/fdn_attack_draw_triggers_v1.rs"]
 mod fdn_attack_draw_triggers_v1;
+#[path = "fdn/fdn_bloom_tender_v1.rs"]
+mod fdn_bloom_tender_v1;
 #[path = "fdn/fdn_bounty_v1.rs"]
 mod fdn_bounty_v1;
 #[path = "fdn/fdn_brineborn_cutthroat_v1.rs"]
