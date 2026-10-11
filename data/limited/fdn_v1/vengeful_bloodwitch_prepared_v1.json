@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "admission": "unregistered",
+  "source_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "java_file": "Mage.Sets/src/mage/cards/v/VengefulBloodwitch.java",
+  "name": "Vengeful Bloodwitch",
+  "mana_cost": "{1}{B}",
+  "mana_value": 2,
+  "colors": ["B"],
+  "types": ["Creature"],
+  "subtypes": ["Vampire", "Warlock"],
+  "supertypes": [],
+  "power": 1,
+  "toughness": 1,
+  "is_land": false,
+  "produces_mana": [],
+  "mechanics": [],
+  "rules": "Whenever this creature or another creature you control dies, target opponent loses 1 life and you gain 1 life.",
+  "qualification": "Prepared source and acceptance fixtures only. No catalog ID, capability admission or profile identity is assigned."
+}

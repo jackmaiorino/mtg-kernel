@@ -5,8 +5,9 @@ use crate::durable_publication_v1::{
     capture_existing_publication_parent_v1, publish_new_file_v1, DurableFileExpectationV1,
 };
 use crate::expanded_deck_training_v1::{
-    execute_v1, line_b_frozen_sha256_v1, load_expanded_inference_v1, CollectionSamplerV1,
-    ExpandedEpisodeV1, ExpandedInferenceIdentityV1, ExpandedLossSelectionV1, ExpandedModelSourceV1,
+    execute_v1, line_b_frozen_sha256_v1, load_expanded_inference_v1,
+    load_expanded_update_inference_v1, CollectionSamplerV1, ExpandedEpisodeV1,
+    ExpandedInferenceIdentityV1, ExpandedLossSelectionV1, ExpandedModelSourceV1,
     ExpandedTrainingCommandV1, ExpandedUpdateBackendV1, LineBUpdateOptionsV1, PinnedFileV1,
     UpdateBackwardExecutionV1, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
 };
@@ -670,7 +671,8 @@ fn validate_update(
         checkpoint: Some(checkpoint.clone()),
         ..source.clone()
     };
-    let (_, after) = load_expanded_inference_v1(&next)?;
+    let after =
+        load_expanded_update_inference_v1(&next, trajectories, learning_rate, value_coefficient)?;
     check(
         after.adam_step
             == before
@@ -680,13 +682,6 @@ fn validate_update(
             && document["adam_step"] == after.adam_step
             && document["after_state_sha256"] == after.state_sha256,
         "update does not advance exactly one optimizer step",
-    )?;
-    let saved = read_json(&checkpoint.path, ARTIFACT_CAP)?;
-    check(
-        saved["trajectories"] == value(&trajectories)?
-            && saved["learning_rate_bits"] == learning_rate.to_bits()
-            && saved["value_coefficient_bits"] == value_coefficient.to_bits(),
-        "checkpoint inputs or optimizer settings differ",
     )?;
     Ok((next, after))
 }

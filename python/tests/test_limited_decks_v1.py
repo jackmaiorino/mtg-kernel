@@ -191,6 +191,16 @@ class LimitedDeckTest(unittest.TestCase):
             self.assertEqual(self.registry[name].card_id, card_id)
             self.assertEqual(resolved.count(card_id), copies)
 
+    def test_raid_entry_reference_and_appended_ids(self) -> None:
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_raid_entries.dck").read_text(encoding="utf-8"))
+        resolved = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(resolved), 40)
+        for name, card_id in [("Skyship Buccaneer", 390), ("Goblin Boarders", 391)]:
+            self.assertEqual(self.registry[name].card_id, card_id)
+            self.assertEqual(resolved.count(card_id), 4)
+        self.assertNotIn("Gorehorn Raider", self.registry)
+        self.assertNotIn("Strongbox Raider", self.registry)
+
     def test_original_decks_are_40_cards_and_fully_resolve(self) -> None:
         for filename, supported_copies, source_sha256 in [
             ("FDN_top_04956_UG.dck", 40, "bb618d6eaddf04b0a9e51e9a88cd512a04635e99ebca91b11ace4c305d634c86"),
@@ -228,6 +238,23 @@ class LimitedDeckTest(unittest.TestCase):
         self.assertEqual(ids, [self.registry["Island"].card_id] * 20 + [self.registry["Forest"].card_id] * 21)
         with self.assertRaisesRegex(ValueError, "at least 40"):
             limited.resolve_mainboard(limited.parse_dck("39 Forest"), self.registry)
+
+    def test_condemn_return_reference_resolves_appended_spells(self) -> None:
+        path = FIXTURES / "FDN_reference_condemn_return.dck"
+        deck = limited.parse_dck(path.read_text(encoding="utf-8"))
+        ids = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(ids), 40)
+        self.assertEqual(ids.count(392), 4)
+        self.assertEqual(ids.count(393), 4)
+        self.assertEqual(self.registry["Condemn"].card_id, 392)
+        self.assertEqual(self.registry["Run Away Together"].card_id, 393)
+
+    def test_bloodwitch_reference_resolves_appended_creature(self) -> None:
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_bloodwitch.dck").read_text(encoding="utf-8"))
+        ids = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(ids), 40)
+        self.assertEqual(ids.count(394), 4)
+        self.assertEqual(self.registry["Vengeful Bloodwitch"].card_id, 394)
 
     def test_unknown_partial_no_effect_and_token_are_all_rejected(self) -> None:
         registry = limited.registry_from_json({"version": 2, "cards": [
@@ -281,7 +308,7 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("FDN_top_*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
-        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 188)
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 193)
         self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
                              for card in report["cards"]), 0)
 
