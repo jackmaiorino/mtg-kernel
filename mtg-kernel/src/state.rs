@@ -2838,6 +2838,38 @@ impl GameState {
     /// ordinal. Fallible: callers must propagate the error. Crate-private
     /// because no external caller requires it; effect frames are the only
     /// consumers.
+    /// Sample one public graveyard card without changing either zone order
+    /// or library knowledge. Reuses the checked environment randomness
+    /// transaction on a private projection and commits only its RNG state.
+    pub(crate) fn random_graveyard_card_v1(
+        &mut self,
+        owner: PlayerId,
+    ) -> Result<Option<ObjectId>, LibraryShuffleError> {
+        let owner = library_shuffle_owner(owner)?;
+        let cards = self.players[owner.index()]
+            .graveyard
+            .iter()
+            .copied()
+            .filter(|id| {
+                let card = self.objects.get(*id);
+                card.zone == Zone::Graveyard
+                    && card.owner == owner
+                    && !card.v4.is_token
+                    && !crate::card_def::CARD_DEFS[card.card_def as usize].is_token
+                    && card.spell_copy_origin.is_none()
+            })
+            .collect::<Vec<_>>();
+        if cards.len() < 2 {
+            return Ok(cards.first().copied());
+        }
+        let mut projected = self.clone();
+        projected.players[owner.index()].library = cards;
+        projected.shuffle_library(owner)?;
+        let chosen = projected.players[owner.index()].library.first().copied();
+        self.randomness = projected.randomness;
+        Ok(chosen)
+    }
+
     pub(crate) fn shuffle_library(&mut self, owner: PlayerId) -> Result<(), LibraryShuffleError> {
         let token = self.preflight_library_shuffle(owner)?;
         self.commit_library_shuffle(owner, token)

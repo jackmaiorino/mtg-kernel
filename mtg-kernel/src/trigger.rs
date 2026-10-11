@@ -3072,6 +3072,25 @@ const DELVER_OF_SECRETS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
 /// static `CARD_DEFS` entry, but its by-name `match` is a long chain of string
 /// compares, and trigger collection calls it for every object in every zone on
 /// every committed event batch.
+fn tersa_discard_draw() -> EffectOp {
+    EffectOp::DiscardUpToThenDraw {
+        player: PlayerRef::Controller,
+        maximum: 2,
+    }
+}
+fn tersa_random_exile() -> EffectOp {
+    EffectOp::ExileRandomGraveyardCardPlayableThisTurn {
+        player: PlayerRef::Controller,
+        minimum_cards: 7,
+    }
+}
+const TERSA_LIGHTSHATTER_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    etb_trigger(tersa_discard_draw),
+    TriggeredAbilityDef {
+        condition: TriggerCondition::AttacksWithControllerGraveyardCardCountAtLeast(7),
+        ..etb_trigger(tersa_random_exile)
+    },
+];
 fn zoetic_glyph_discover() -> EffectOp {
     EffectOp::Discover { limit: 3 }
 }
@@ -3122,6 +3141,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         return &JOB_SELECT_TRIGGERS;
     }
     match card.name {
+        "Tersa Lightshatter" => &TERSA_LIGHTSHATTER_TRIGGERS,
         "Zoetic Glyph" => &ZOETIC_GLYPH_TRIGGERS,
         "Collector's Cage" => &COLLECTORS_CAGE_TRIGGERS,
         "Celestial Armor" => &CELESTIAL_ARMOR_TRIGGERS,

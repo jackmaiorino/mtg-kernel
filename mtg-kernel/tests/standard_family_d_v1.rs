@@ -2947,3 +2947,105 @@ fn cage_hideaway_is_private_and_can_play_a_land_after_the_counter_creates_coven(
     assert_eq!(state.objects.get(target).counters.plus1_plus1, 1);
     assert!(state.objects.get(cage).tapped);
 }
+
+#[test]
+fn tersa_discard_choice_draws_exactly_zero_one_or_two_and_survives_restore() {
+    for count in 0..=2 {
+        let mut state = ready();
+        let first = put(&mut state, PlayerId::P0, "Mountain", Zone::Hand);
+        let second = put(&mut state, PlayerId::P0, "Forest", Zone::Hand);
+        let tersa = put(&mut state, PlayerId::P0, "Tersa Lightshatter", Zone::Hand);
+        add_mana(&mut state, PlayerId::P0, &[ManaColor::R], 2);
+        cast(&mut state, tersa, &[]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { .. })
+        ));
+        assert!(engine::has_effective_keyword(
+            &state,
+            tersa,
+            Keywords::HASTE
+        ));
+        let library_count = state.players[0].library.len();
+        state = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+        for card in [first, second].into_iter().take(count) {
+            engine::step(&mut state, Action::ChooseEffectTarget(Target::Object(card))).unwrap();
+            if count == 2 && card == first {
+                next(&mut state);
+            }
+        }
+        if count < 2 {
+            engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+        }
+        settled(&mut state);
+        assert_eq!(state.players[0].hand.len(), 2);
+        assert_eq!(state.players[0].library.len(), library_count - count);
+        assert_eq!(state.players[0].graveyard.len(), count);
+    }
+}
+#[test]
+fn tersa_threshold_random_exile_is_replayable_and_requires_normal_mana() {
+    let mut state = ready();
+    let tersa = put(
+        &mut state,
+        PlayerId::P0,
+        "Tersa Lightshatter",
+        Zone::Battlefield,
+    );
+    for _ in 0..7 {
+        put(&mut state, PlayerId::P0, "Burst Lightning", Zone::Graveyard);
+    }
+    attack_with(&mut state, vec![tersa]);
+    let library = state.players[0].library.clone();
+    let mut restored: GameState =
+        serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+    for state in [&mut state, &mut restored] {
+        settled(state);
+        assert_eq!(state.exile.len(), 1);
+        assert_eq!(state.players[0].graveyard.len(), 6);
+        assert_eq!(state.players[0].library, library);
+        let card = state.exile[0];
+        state.priority_player = PlayerId::P0;
+        assert!(!castable(state, card), "Tersa does not waive the mana cost");
+        add_mana(state, PlayerId::P0, &[ManaColor::R], 0);
+        cast(state, card, &[Target::Player(PlayerId::P1)]);
+        settled(state);
+        assert_eq!(state.objects.get(card).zone, Zone::Graveyard);
+    }
+    assert_eq!(state, restored);
+}
+#[test]
+fn tersa_threshold_rechecks_on_resolution_and_permission_expires_at_cleanup() {
+    for remove_card in [false, true] {
+        let mut state = ready();
+        let tersa = put(
+            &mut state,
+            PlayerId::P0,
+            "Tersa Lightshatter",
+            Zone::Battlefield,
+        );
+        for _ in 0..7 {
+            put(&mut state, PlayerId::P0, "Mountain", Zone::Graveyard);
+        }
+        attack_with(&mut state, vec![tersa]);
+        next(&mut state);
+        assert!(!state.stack.is_empty());
+        if remove_card {
+            let card = state.players[0].graveyard[0];
+            mtg_kernel::event::propose_and_commit(
+                &mut state,
+                mtg_kernel::event::ProposedEvent::zone_change(card, Zone::Hand),
+            );
+        }
+        settled(&mut state);
+        assert_eq!(state.exile.len(), usize::from(!remove_card));
+        if !remove_card {
+            assert_eq!(state.engine.exile_play_permissions.len(), 1);
+            pass_until(&mut state, |s| {
+                s.active_player == PlayerId::P1 && s.step == Step::Main1
+            });
+            assert!(state.engine.exile_play_permissions.is_empty());
+            assert_eq!(state.exile.len(), 1);
+        }
+    }
+}

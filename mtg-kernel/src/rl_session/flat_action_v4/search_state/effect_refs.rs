@@ -66,7 +66,9 @@ impl Scan<'_> {
             ResolveMonarchTrigger { binding } => self.a(&binding.source),
             StandardV1(op) => op.bound_objects().iter().any(|chosen| self.b(chosen)),
             // Other current leaf programs carry symbolic refs, not physical bindings.
-            ExileUntilThenCastV1 { .. }
+            DiscardUpToThenDraw { .. }
+            | ExileRandomGraveyardCardPlayableThisTurn { .. }
+            | ExileUntilThenCastV1 { .. }
             | Discover { .. }
             | Hideaway { .. }
             | PlayHideawayIfThreeDistinctPowers
@@ -235,6 +237,9 @@ impl Scan<'_> {
                         .as_ref()
                         .and_then(|candidate| candidate.expected_object)
                         .is_some_and(|b| self.b(&b))
+            }
+            DiscardDraw { choice, selected } => {
+                self.bs(&choice.hand) || self.bs(selected) || self.fs(&choice.remaining)
             }
             ExileBatchSelect { choice, .. } | ExileBatchResume { choice } => {
                 self.fs(&choice.remaining)
@@ -469,6 +474,7 @@ impl Scan<'_> {
         use EffectTargetSelectionPurpose::*;
         match p {
             CopyTarget { choice } => self.copy(&choice.spell) || self.fs(&choice.remaining),
+            DiscardDraw { choice } => self.bs(&choice.hand) || self.fs(&choice.remaining),
             ExileBatch { choice } => {
                 self.fs(&choice.remaining)
                     || self.bs(&choice.cast)

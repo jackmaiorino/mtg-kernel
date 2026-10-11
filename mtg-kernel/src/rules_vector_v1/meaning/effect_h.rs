@@ -33,6 +33,28 @@ fn exile_self(out: &mut Collector) {
 pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     let _ = env;
     match op {
+        EffectOp::DiscardUpToThenDraw { player, maximum } => {
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Hand), ZoneF::Graveyard)
+                    .player(player_ref(*player))
+                    .obj(ObjF::AnyCard)
+                    .amount(AmtF::fixed(i64::from(*maximum))),
+            );
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Library), ZoneF::Hand)
+                    .player(player_ref(*player))
+                    .obj(ObjF::AnyCard)
+                    .amount(AmtF::fixed(i64::from(*maximum))),
+            );
+        }
+        EffectOp::ExileRandomGraveyardCardPlayableThisTurn { player, .. } => {
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Graveyard), ZoneF::Exile)
+                    .player(player_ref(*player))
+                    .obj(ObjF::AnyCard)
+                    .amount(AmtF::fixed(1)),
+            );
+        }
         EffectOp::ExileUntilThenCastV1 {
             players,
             return_rest_to_bottom,

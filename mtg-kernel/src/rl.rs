@@ -6912,6 +6912,7 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryOne { .. }
                             | crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
                             | crate::effect::EffectTargetSelectionPurpose::Hideaway { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::DiscardDraw { .. }
                             | crate::effect::EffectTargetSelectionPurpose::WardCards { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand {
@@ -6949,6 +6950,7 @@ fn pending_effect_semantic_v4(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
                             | crate::effect::EffectTargetSelectionPurpose::Hideaway { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::DiscardDraw { .. }
                             | crate::effect::EffectTargetSelectionPurpose::WardCards { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
@@ -7068,6 +7070,7 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::CopyTarget { .. }
                             | crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
                             | crate::effect::EffectTargetSelectionPurpose::Hideaway { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::DiscardDraw { .. }
                             | crate::effect::EffectTargetSelectionPurpose::WardCards { .. }
                             | crate::effect::EffectTargetSelectionPurpose::ExileOneFromGraveyard {
                                 ..

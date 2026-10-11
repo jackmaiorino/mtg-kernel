@@ -4251,7 +4251,7 @@ fn standard_keywords_for(name: &str) -> &'static [&'static str] {
         "Shanna, Purifying Blade" => &["Keywords::LIFELINK"],
         "Ertai Resurrected" => &["Keywords::FLASH"],
         "Skrelv, Defector Mite" => &["Keywords::TOXIC_1"],
-        "Emberheart Challenger" => &["Keywords::HASTE"],
+        "Tersa Lightshatter" | "Emberheart Challenger" => &["Keywords::HASTE"],
         "Burnout Bashtronaut" => &["Keywords::MENACE"],
         "Nova Hellkite" => &["Keywords::FLYING", "Keywords::HASTE"],
         "Aloe Alchemist" => &["Keywords::TRAMPLE"],

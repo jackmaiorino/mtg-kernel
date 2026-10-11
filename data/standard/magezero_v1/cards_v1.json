@@ -7555,6 +7555,43 @@
         "poison"
       ],
       "java_file": "Mage.Sets/src/mage/cards/e/EtaliPrimalConqueror.java"
+    },
+    {
+      "engine_capability": "partial",
+      "mana_cost": "{2}{R}",
+      "mana_value": 3,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Orc",
+        "Wizard"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "haste",
+        "discard",
+        "draw",
+        "threshold",
+        "random_exile",
+        "impulse_draw"
+      ],
+      "name": "Tersa Lightshatter",
+      "java_file": "Mage.Sets/src/mage/cards/t/TersaLightshatter.java"
     }
   ]
 }

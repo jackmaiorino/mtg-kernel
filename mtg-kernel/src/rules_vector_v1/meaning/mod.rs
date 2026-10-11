@@ -225,7 +225,9 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. } => {
             effect_g::effect_op(op, env, out)
         }
-        EffectOp::ExileUntilThenCastV1 { .. }
+        EffectOp::DiscardUpToThenDraw { .. }
+        | EffectOp::ExileRandomGraveyardCardPlayableThisTurn { .. }
+        | EffectOp::ExileUntilThenCastV1 { .. }
         | EffectOp::Discover { .. }
         | EffectOp::Hideaway { .. }
         | EffectOp::PlayHideawayIfThreeDistinctPowers

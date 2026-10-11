@@ -21,6 +21,8 @@ mod standard_look;
 use standard_look::ConvokeLookChoice;
 mod standard_copy;
 use standard_copy::CopyTargetChoice;
+mod standard_discard;
+use standard_discard::DiscardDrawChoice;
 mod standard_exile;
 use standard_exile::{ExileBatchChoice, ExilePlayChoice, HideawayChoice};
 
@@ -1501,6 +1503,14 @@ pub enum EffectOp {
         predicate: ExileCastPredicateV1,
         return_rest_to_bottom: bool,
     },
+    DiscardUpToThenDraw {
+        player: PlayerRef,
+        maximum: u8,
+    },
+    ExileRandomGraveyardCardPlayableThisTurn {
+        player: PlayerRef,
+        minimum_cards: u8,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -1924,6 +1934,10 @@ pub enum EffectFrame {
     ExileBatchResume {
         choice: ExileBatchChoice,
     },
+    DiscardDraw {
+        choice: DiscardDrawChoice,
+        selected: Vec<EffectObjectBinding>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -2267,6 +2281,9 @@ pub enum EffectTargetSelectionPurpose {
     },
     ExileBatch {
         choice: ExileBatchChoice,
+    },
+    DiscardDraw {
+        choice: DiscardDrawChoice,
     },
 }
 
@@ -2797,6 +2814,8 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::Hideaway { .. }
         | EffectOp::PlayHideawayIfThreeDistinctPowers
         | EffectOp::ExileUntilThenCastV1 { .. }
+        | EffectOp::DiscardUpToThenDraw { .. }
+        | EffectOp::ExileRandomGraveyardCardPlayableThisTurn { .. }
         | EffectOp::CounterUnlessPaysLife { .. }
         | EffectOp::CounterUnlessDiscardsCard { .. }
         | EffectOp::CounterUnlessCollectsEvidence { .. }
@@ -3952,6 +3971,17 @@ fn complete_resumable_target_selection(
         }
         EffectTargetSelectionPurpose::CopyTarget { .. } => {
             unreachable!("handled target choices before object conversion")
+        }
+        EffectTargetSelectionPurpose::DiscardDraw { choice } => {
+            let frame = EffectFrame::DiscardDraw {
+                choice,
+                selected: objects,
+            };
+            continuation.answered_choice_guard =
+                Some(EffectAnsweredChoiceGuard::StandardSelection {
+                    frame: Box::new(frame.clone()),
+                });
+            continuation.frames.push(frame);
         }
         EffectTargetSelectionPurpose::ExileBatch { choice } => {
             let frame = EffectFrame::ExileBatchSelect {
@@ -6450,6 +6480,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::Hideaway { .. }
                         | EffectFrame::ExilePlay { .. }
                         | EffectFrame::ExileBatchSelect { .. }
+                        | EffectFrame::DiscardDraw { .. }
                         | EffectFrame::OwnerLibraryPlacement { .. }
                         | EffectFrame::ResolveCounterUnlessPaysGeneric { .. }
                         | EffectFrame::ResolveCounterTargetUnlessPaysGeneric { .. }
@@ -6477,6 +6508,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::Hideaway { .. }
                         | EffectFrame::ExilePlay { .. }
                         | EffectFrame::ExileBatchSelect { .. }
+                        | EffectFrame::DiscardDraw { .. }
                 )
             {
                 return Err("Standard selection lost its authenticated answer frame".into());
@@ -7394,6 +7426,27 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                                 .collect::<Vec<_>>()
                     {
                         return Err("chosen-permanent candidates changed".to_string());
+                    }
+                }
+                EffectTargetSelectionPurpose::DiscardDraw { choice } => {
+                    standard_discard::validate(state, pending, choice)?;
+                    let all = selected
+                        .iter()
+                        .chain(legal)
+                        .filter_map(|c| c.expected_object)
+                        .collect::<Vec<_>>();
+                    validate_exact_binding_permutation(
+                        &choice.hand,
+                        &all,
+                        "discard draw candidates",
+                    )?;
+                    if *chooser != choice.player
+                        || *path != choice.path
+                        || !*ordered
+                        || *min_targets != 0
+                        || *max_targets != u16::from(choice.maximum).min(choice.hand.len() as u16)
+                    {
+                        return Err("discard draw shape changed".into());
                     }
                 }
                 EffectTargetSelectionPurpose::ExileBatch { choice } => {
@@ -9044,6 +9097,7 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 | EffectFrame::Hideaway { .. }
                 | EffectFrame::ExilePlay { .. }
                 | EffectFrame::ExileBatchSelect { .. }
+                | EffectFrame::DiscardDraw { .. }
         ) {
             if continuation.answered_choice_guard.take()
                 != Some(EffectAnsweredChoiceGuard::StandardSelection {
@@ -9055,6 +9109,9 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
         }
         let EffectFrame::Program { op, path } = frame else {
             match frame {
+                EffectFrame::DiscardDraw { choice, selected } => {
+                    standard_discard::finish(state, &continuation, &choice, &selected)?
+                }
                 EffectFrame::ExileBatchSelect { choice, selected } => {
                     standard_exile::finish_batch_selection(
                         state,
@@ -11009,6 +11066,19 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
             EffectOp::PlayExiledLand { card } => {
                 crate::engine::resolution_cast_v1::stage(state, continuation, card, None, true)?;
                 return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::DiscardUpToThenDraw { player, maximum } => {
+                if standard_discard::stage(state, &mut continuation, player, maximum, path)? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
+            EffectOp::ExileRandomGraveyardCardPlayableThisTurn {
+                player,
+                minimum_cards,
+            } => {
+                let player = continuation.ctx.resolve_player(player, state);
+                standard_discard::random_exile(state, player, minimum_cards)?;
             }
             EffectOp::ExileUntilThenCastV1 {
                 players,
@@ -15537,7 +15607,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::Discover { .. }
         | EffectOp::Hideaway { .. }
         | EffectOp::PlayHideawayIfThreeDistinctPowers
-        | EffectOp::ExileUntilThenCastV1 { .. } => {
+        | EffectOp::ExileUntilThenCastV1 { .. }
+        | EffectOp::DiscardUpToThenDraw { .. }
+        | EffectOp::ExileRandomGraveyardCardPlayableThisTurn { .. } => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
