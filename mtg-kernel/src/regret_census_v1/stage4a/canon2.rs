@@ -523,17 +523,6 @@ pub(crate) struct KeyStats {
 }
 
 impl KeyStats {
-    pub(crate) fn merge(&mut self, o: &Self) {
-        self.frames += o.frames;
-        self.frames_with_mattering_ties += o.frames_with_mattering_ties;
-        self.exact_resolved += o.exact_resolved;
-        self.canonicalizations_for_ties += o.canonicalizations_for_ties;
-        for (k, v) in &o.fallbacks {
-            *self.fallbacks.entry(k).or_default() += v;
-        }
-        self.seconds += o.seconds;
-    }
-
     pub(crate) fn json(&self) -> Value {
         serde_json::json!({"frames":self.frames,"frames_with_mattering_ties":self.frames_with_mattering_ties,
             "exact_resolved":self.exact_resolved,"canonicalizations_for_ties":self.canonicalizations_for_ties,
