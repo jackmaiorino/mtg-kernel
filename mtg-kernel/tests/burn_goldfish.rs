@@ -63,6 +63,9 @@ fn kind_of(d: &Decision) -> Kind {
         Decision::OrderTriggers { player, .. } => Kind::OrderTriggers(*player),
         Decision::DeclareAttackers { player, .. } => Kind::DeclareAttackers(*player),
         Decision::GameOver { .. } => Kind::GameOver,
+        Decision::ChooseVariableCastTargets { .. } | Decision::ChooseVariableCastKicker { .. } => {
+            unreachable!("burn goldfish's fixed roster has no variable-target spell; its script cannot answer this successor")
+        }
         // Nothing in this goldfish's scripted library (Mountain + Lightning
         // Bolt only) can produce these -- no alt-cost/additional-cost card,
         // no discard obligation (hand never exceeds 7), no creature ever
@@ -147,6 +150,10 @@ fn run_goldfish(state: &mut GameState) -> (Vec<Kind>, Vec<i32>) {
         }
 
         match decision {
+            Decision::ChooseVariableCastTargets { .. }
+            | Decision::ChooseVariableCastKicker { .. } => {
+                unreachable!("burn goldfish's fixed roster has no variable-target spell; its script cannot answer this successor")
+            }
             Decision::GameOver { winner } => {
                 assert_eq!(winner, Some(PlayerId::P0), "P0 should win via burn only");
                 break;
