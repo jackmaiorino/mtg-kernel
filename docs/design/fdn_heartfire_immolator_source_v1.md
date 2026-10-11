@@ -46,7 +46,10 @@ The printed both-seat forgery fixture now restores each damaged snapshot,
 checks readonly refusal, and retries against the identical retained state.
 Added erasure/replacement of the inline root together with receipt removal,
 and erasure of both inline/source selectors while a receipt remains.
-A real registered Shivan Dragon activation verifies unrelated receipt-free
-validation, unchanged bytes/hash, and identical ordinary pass after restore.
+A real registered Shivan Dragon activation, restricted to the actual
+Limited without Standard catalog that owns that definition, verifies unrelated
+receipt-free validation, unchanged bytes/hash, and identical ordinary pass
+after restore. Default and Standard behavior remain qualification tasks; this
+FDN fixture does not claim operands from those catalogs.
 Pinned formatting and diff checks are run in the owned repair tree.
 Native rerun remains parent-owned; this repair does not claim a runtime pass.
