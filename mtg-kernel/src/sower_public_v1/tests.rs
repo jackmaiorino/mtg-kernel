@@ -251,7 +251,7 @@ fn missing_duplicate_coherent_capture_and_expired_reinsertion_refuse_readonly() 
                 CommittedEvent::SowerRestrictionInstalledV1 { capture } => {
                     capture.item.targets = vec![replacement];
                     capture.item.v4.target_contracts = vec![contract];
-                    capture.recipient = public_ref;
+                    capture.recipient = public_ref.clone();
                     capture.recipient_snapshot = snapshot.clone();
                 }
                 _ => {}
