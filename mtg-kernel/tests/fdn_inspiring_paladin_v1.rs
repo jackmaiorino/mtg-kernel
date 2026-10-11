@@ -396,7 +396,7 @@ fn ordinary_cleanup_and_complete_opponent_turn_switch_both_grants_after_restore(
         let source = put(&mut state, player, "Inspiring Paladin", Zone::Battlefield);
         let own = put(&mut state, player, "Llanowar Elves", Zone::Battlefield);
         state.objects.get_mut(own).counters.plus1_plus1 = 1;
-        state.step = Step::EndStep;
+        state.step = Step::End;
         assert!(first_strike(&state, source));
         assert!(first_strike(&state, own));
         let round = state.turn;
