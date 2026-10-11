@@ -80,10 +80,7 @@ impl FastActorSessionV1 {
                     let choices = legal_targets
                         .iter()
                         .map(|target| {
-                            Ok(selected_ref(&StackTargetContractV4::capture(
-                                &self.state,
-                                *target,
-                            ))?)
+                            selected_ref(&StackTargetContractV4::capture(&self.state, *target))
                         })
                         .collect::<Result<Vec<_>, RlContractError>>()?;
                     (choices, *can_finish)
