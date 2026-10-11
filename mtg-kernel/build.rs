@@ -4757,6 +4757,8 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_zone: "Battlefield",
             sorcery_speed_only: false,
             target_spec: "CardInGraveyards",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
         }],
         "Squad Rallier" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::ManaCost("{2}{W}")],
@@ -4767,6 +4769,8 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_zone: "Battlefield",
             sorcery_speed_only: false,
             target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
         }],
         "Sower of Chaos" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Mana {
