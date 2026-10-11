@@ -1666,6 +1666,10 @@ pub struct GameState {
     /// everywhere else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub counter_lki_v1: Option<Vec<CounterLkiV1>>,
+    /// Power and toughness of departed Standard creatures, keyed by exact
+    /// battlefield incarnation for intervening-if trigger comparisons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creature_stats_lki_v1: Option<Vec<CreatureStatsLkiV1>>,
     /// Players who lost life this turn. Only `standard-magezero-fixtures`
     /// builds record it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1718,6 +1722,13 @@ pub struct AttackBlockRestrictionV1 {
 pub struct CounterLkiV1 {
     pub source: ObjectLinkV4,
     pub counters: Counters,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CreatureStatsLkiV1 {
+    pub source: ObjectLinkV4,
+    pub power: i32,
+    pub toughness: i32,
 }
 
 impl GameState {
@@ -1783,6 +1794,10 @@ impl Hash for GameState {
         }
         if let Some(lki) = &self.counter_lki_v1 {
             "counter-lki-v1".hash(state);
+            lki.hash(state);
+        }
+        if let Some(lki) = &self.creature_stats_lki_v1 {
+            "creature-stats-lki-v1".hash(state);
             lki.hash(state);
         }
         if let Some(loss) = &self.life_loss_turn_v1 {
@@ -1984,6 +1999,7 @@ impl GameState {
             creature_death_turn_v1: None,
             london_mulligans_v1: None,
             counter_lki_v1: None,
+            creature_stats_lki_v1: None,
             life_loss_turn_v1: None,
             attack_block_restrictions_v1: None,
             speed_v1: None,
@@ -2646,6 +2662,34 @@ impl GameState {
     pub(crate) fn shuffle_library(&mut self, owner: PlayerId) -> Result<(), LibraryShuffleError> {
         let token = self.preflight_library_shuffle(owner)?;
         self.commit_library_shuffle(owner, token)
+    }
+
+    /// Randomizes only the bottom `count` cards. The same checked randomness
+    /// transaction supplies both legacy and environment-v2 permutations;
+    /// unrelated library positions and their known identities stay intact.
+    pub(crate) fn randomize_library_bottom_v1(
+        &mut self,
+        owner: PlayerId,
+        count: usize,
+    ) -> Result<(), LibraryShuffleError> {
+        let owner = library_shuffle_owner(owner)?;
+        let len = self.players[owner.index()].library.len();
+        let count = count.min(len);
+        if count < 2 {
+            return Ok(());
+        }
+        let start = len - count;
+        let mut staged = self.clone();
+        staged.players[owner.index()].library = self.players[owner.index()].library[start..].to_vec();
+        staged.shuffle_library(owner)?;
+        self.players[owner.index()].library[start..]
+            .copy_from_slice(&staged.players[owner.index()].library);
+        self.randomness = staged.randomness;
+        for observer in [PlayerId::P0, PlayerId::P1] {
+            self.library_knowledge[observer.index()][owner.index()]
+                .retain(|entry| (entry.position as usize) < start);
+        }
+        Ok(())
     }
 
     /// Read-only shared view of the legacy RNG; `None` on an environment-v2

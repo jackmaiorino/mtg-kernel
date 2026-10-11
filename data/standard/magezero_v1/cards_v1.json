@@ -316,7 +316,7 @@
     },
     {
       "name": "Memory Deluge",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{2}{U}{U}",
       "mana_value": 4,
       "colors": [
@@ -713,7 +713,7 @@
     },
     {
       "name": "Sharp-Eyed Rookie",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{1}{G}",
       "mana_value": 2,
       "colors": [
@@ -745,7 +745,7 @@
     },
     {
       "name": "Evolving Adaptive",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{G}",
       "mana_value": 1,
       "colors": [
@@ -970,7 +970,7 @@
     },
     {
       "name": "Thalia, Guardian of Thraben",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{1}{W}",
       "mana_value": 2,
       "colors": [
@@ -1004,7 +1004,7 @@
     },
     {
       "name": "Haughty Djinn",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{1}{U}{U}",
       "mana_value": 3,
       "colors": [
@@ -1102,7 +1102,7 @@
     },
     {
       "name": "Extraction Specialist",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{2}{W}",
       "mana_value": 3,
       "colors": [
@@ -1169,7 +1169,7 @@
     },
     {
       "name": "Recruitment Officer",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{W}",
       "mana_value": 1,
       "colors": [

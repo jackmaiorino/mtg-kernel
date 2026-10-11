@@ -1162,9 +1162,8 @@ pub enum EffectOp {
     /// Privately look at the top `count` cards, put exactly `pick` of them
     /// (or all, if fewer were seen) into hand without revealing them, and
     /// put the rest on the bottom. With `choose_rest_order` the player
-    /// orders the rest (Impulse); without it the rest keeps its looked-at
-    /// order, the kernel's deterministic stand-in for Memory Deluge's
-    /// "in a random order" since randomness only enters through shuffles.
+    /// orders the rest (Impulse); otherwise the rest is randomized
+    /// (Memory Deluge) without disturbing the unexamined library.
     LookTopPickToHandBottomRest {
         player: PlayerRef,
         count: LibraryLookCount,
@@ -1237,9 +1236,8 @@ pub enum EffectOp {
     /// Privately look at the top `count` cards of the player's library; they
     /// may reveal one creature card with mana value at most `max_mana_value`
     /// from among them and put it into their hand, and the rest go on the
-    /// bottom (Recruitment Officer). The printed random bottom order is kept
-    /// as the looked-at order: randomness only advances through library
-    /// shuffles. The bottom placement reuses the typed partition frame.
+    /// bottom in random order (Recruitment Officer). The bottom placement
+    /// reuses the typed partition frame and randomizes only its remainder.
     LookTopMayTakeCreatureManaValueAtMostToHandBottomRest {
         player: PlayerRef,
         count: u8,
@@ -12620,7 +12618,21 @@ fn resume_library_partition_frame(
                 .chain(&ordered_rest)
                 .map(|binding| binding.object)
                 .collect::<Vec<_>>();
-            state.apply_scry_result(player, &expected_prefix, &[], &bottom)?;
+            // Preflight and commit randomization on a local projection so
+            // exhausted randomness cannot partly resolve this instruction.
+            let random_bottom = matches!(filter, LibraryPartitionFilter::Pick(rule) if !rule.choose_rest_order)
+                || crate::card_def::CARD_DEFS
+                    .get(state.objects.get(continuation.ctx.source).card_def as usize)
+                    .is_some_and(|definition| definition.name == "Recruitment Officer");
+            if random_bottom && ordered_rest.len() > 1 {
+                let mut projected = state.clone();
+                projected.apply_scry_result(player, &expected_prefix, &[], &bottom)?;
+                projected.randomize_library_bottom_v1(player, ordered_rest.len())
+                    .map_err(|error| error.to_string())?;
+                *state = projected;
+            } else {
+                state.apply_scry_result(player, &expected_prefix, &[], &bottom)?;
+            }
             let events = selected
                 .iter()
                 .map(|binding| event::ProposedEvent::zone_change(binding.object, Zone::Hand))
@@ -15023,18 +15035,20 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             source,
             then,
         } => {
-            let live = |binding: &EffectObjectBinding| {
-                validate_effect_object_binding(state, *binding).is_ok()
-                    && binding.expected_zone == Zone::Battlefield
+            let stats = |binding: &EffectObjectBinding| {
+                #[cfg(feature = "standard-magezero-fixtures")]
+                { crate::standard_statics_v1::current_or_last_creature_stats(state, *binding) }
+                #[cfg(not(feature = "standard-magezero-fixtures"))]
+                { (validate_effect_object_binding(state, *binding).is_ok()
+                    && binding.expected_zone == Zone::Battlefield).then(|| (
+                        crate::engine::effective_power(state, binding.object),
+                        crate::engine::effective_toughness(state, binding.object))) }
             };
-            if live(entrant)
-                && live(source)
-                && (crate::engine::effective_power(state, entrant.object)
-                    > crate::engine::effective_power(state, source.object)
-                    || crate::engine::effective_toughness(state, entrant.object)
-                        > crate::engine::effective_toughness(state, source.object))
-            {
-                execute(then, ctx, state);
+            if let (Some((entrant_power, entrant_toughness)), Some((source_power, source_toughness)))
+                = (stats(entrant), stats(source)) {
+                if entrant_power > source_power || entrant_toughness > source_toughness {
+                    execute(then, ctx, state);
+                }
             }
         }
         EffectOp::CreateTokenTappedAndAttacking { token_def } => {

@@ -7719,6 +7719,8 @@ fn check_game_over(state: &GameState) -> Option<Decision> {
 /// comprehensive rules would actually grant.
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
     loop {
+        #[cfg(feature = "standard-magezero-fixtures")]
+        crate::standard_statics_v1::expire_attack_block_restrictions(state);
         if let Err(source) = state.validate_attachment_relations() {
             state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
         }

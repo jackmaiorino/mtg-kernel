@@ -308,17 +308,7 @@ fn appended_definitions_match_their_printed_characteristics() {
         let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} missing"));
         let def = &CARD_DEFS[id as usize];
         // Incomplete printed behavior stays available only for development.
-        let expected = if [
-            "Recruitment Officer",
-            "Evolving Adaptive",
-            "Extraction Specialist",
-            "Haughty Djinn",
-            "Quirion Beastcaller",
-            "Sharp-Eyed Rookie",
-            "Thalia, Guardian of Thraben",
-        ]
-        .contains(&name)
-        {
+        let expected = if name == "Quirion Beastcaller" {
             CardCapability::Partial
         } else {
             CardCapability::Full
@@ -1893,7 +1883,7 @@ fn recruitment_officer_takes_a_cheap_creature_and_bottoms_the_rest() {
     assert!(state.players[0].hand.contains(&scout));
     assert_eq!(state.players[0].library.len(), library_len - 1);
     assert_eq!(state.players[0].library[0], fifth);
-    assert_eq!(library_bottom(&state, 3), vec![troll, inspector, bolt]);
+    assert_same_members(library_bottom(&state, 3), vec![troll, inspector, bolt]);
     assert_eq!(state.players[0].mana_pool, [0; 6]);
 }
 
@@ -1915,7 +1905,7 @@ fn recruitment_officer_may_take_nothing() {
     engine::step(&mut state, Action::FinishEffectSelection).unwrap();
     settled(&mut state);
     assert_eq!(state.players[0].hand.len(), hand);
-    assert_eq!(library_bottom(&state, 4), top);
+    assert_same_members(library_bottom(&state, 4), top);
 }
 
 #[test]
@@ -1939,5 +1929,149 @@ fn recruitment_officer_with_no_cheap_creature_asks_nothing() {
     let hand = state.players[0].hand.len();
     assert_eq!(activate_officer(&mut state, officer), None);
     assert_eq!(state.players[0].hand.len(), hand);
-    assert_eq!(library_bottom(&state, 4), top);
+    assert_same_members(library_bottom(&state, 4), top);
+}
+
+fn assert_same_members(mut actual: Vec<ObjectId>, mut expected: Vec<ObjectId>) {
+    actual.sort_unstable();
+    expected.sort_unstable();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn outgrowing_entrant_uses_last_known_stats_after_leaving_and_returning() {
+    for name in ["Sharp-Eyed Rookie", "Evolving Adaptive"] {
+        let mut state = ready(Step::Main1);
+        let source = put(&mut state, PlayerId::P0, name, Zone::Hand);
+        move_to(&mut state, source, Zone::Battlefield);
+        settled(&mut state);
+        let entrant = put(&mut state, PlayerId::P0, "Novice Inspector", Zone::Hand);
+        state.objects.get_mut(entrant).counters.plus1_plus1 = 5;
+        move_to(&mut state, entrant, Zone::Battlefield);
+        // Entry resets counters; grow before trigger collection from the
+        // next entrant instead, and preserve that incarnation on departure.
+        settled(&mut state);
+        let entrant = put(&mut state, PlayerId::P0, "Troll of Khazad-dum", Zone::Hand);
+        move_to(&mut state, entrant, Zone::Battlefield);
+        move_to(&mut state, entrant, Zone::Hand);
+        move_to(&mut state, entrant, Zone::Graveyard);
+        settled(&mut state);
+        if name == "Sharp-Eyed Rookie" {
+            assert_eq!(state.objects.get(source).counters.plus1_plus1, 1);
+            assert_eq!(battlefield_tokens(&state, PlayerId::P0, "Clue Token").len(), 2);
+        } else {
+            // Inspector's 2 toughness exceeded the initial 1/1 Adaptive.
+            assert_eq!(state.objects.get(source).counters.oil, 3);
+        }
+    }
+}
+
+#[test]
+fn rookie_still_investigates_if_both_creatures_left_before_resolution() {
+    let mut state = ready(Step::Main1);
+    let rookie = put(&mut state, PlayerId::P0, "Sharp-Eyed Rookie", Zone::Battlefield);
+    let entrant = put(&mut state, PlayerId::P0, "Troll of Khazad-dum", Zone::Hand);
+    move_to(&mut state, entrant, Zone::Battlefield);
+    event::propose_and_commit_batch(&mut state, vec![
+        ProposedEvent::zone_change(rookie, Zone::Graveyard),
+        ProposedEvent::zone_change(entrant, Zone::Graveyard),
+    ]);
+    settled(&mut state);
+    assert_eq!(battlefield_tokens(&state, PlayerId::P0, "Clue Token").len(), 1);
+}
+
+#[test]
+fn specialist_restriction_does_not_restart_after_regaining_control() {
+    let mut state = ready(Step::Main1);
+    let inspector = put(&mut state, PlayerId::P0, "Novice Inspector", Zone::Graveyard);
+    let specialist = cast_specialist(&mut state, inspector);
+    assert!(state.attack_block_restrictions_v1.is_some());
+    state.objects.get_mut(specialist).controller = PlayerId::P1;
+    state.players[0].battlefield.retain(|&id| id != specialist);
+    state.players[1].battlefield.push(specialist);
+    next(&mut state);
+    assert!(state.attack_block_restrictions_v1.is_none());
+    state.objects.get_mut(specialist).controller = PlayerId::P0;
+    state.players[1].battlefield.retain(|&id| id != specialist);
+    state.players[0].battlefield.push(specialist);
+    state.objects.get_mut(inspector).summoning_sick = false;
+    state.step = Step::DeclareAttackers;
+    match next(&mut state) {
+        Decision::DeclareAttackers { eligible, .. } => assert!(eligible.contains(&inspector)),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn recruitment_randomizes_bottom_without_revealing_its_positions() {
+    let mut outcomes = std::collections::BTreeSet::new();
+    for seed in 0..16 {
+        let mut state = GameState::new_from_libraries(
+            &[card_id_by_name("Forest").unwrap(); 40],
+            &[card_id_by_name("Forest").unwrap(); 40],
+            |id| CARD_DEFS[id as usize].object_name.into(), seed);
+        state.step = Step::Main1;
+        let officer = put(&mut state, PlayerId::P0, "Recruitment Officer", Zone::Battlefield);
+        let top = stack_library_top(&mut state, &["Lightning Bolt", "Forest", "Hullbreaker Horror", "Troll of Khazad-dum"]);
+        let tail = state.players[0].library[4..].to_vec();
+        assert_eq!(activate_officer(&mut state, officer), None);
+        let bottom = library_bottom(&state, 4);
+        assert_same_members(bottom.clone(), top);
+        assert_eq!(&state.players[0].library[..tail.len()], &tail);
+        for observer in [PlayerId::P0, PlayerId::P1] {
+            assert!(state.known_library_cards(observer, PlayerId::P0).iter().all(|entry| (entry.position as usize) < tail.len()));
+        }
+        outcomes.insert(bottom);
+    }
+    assert!(outcomes.len() > 1);
+}
+
+#[test]
+fn djinn_reduces_flashback_and_thalia_increases_it() {
+    for (djinns, thalias, generic) in [(1, 0, 0), (0, 1, 2), (2, 1, 0)] {
+        let mut state = ready(Step::Main1);
+        for _ in 0..djinns { put(&mut state, PlayerId::P0, "Haughty Djinn", Zone::Battlefield); }
+        for _ in 0..thalias { put(&mut state, PlayerId::P1, "Thalia, Guardian of Thraben", Zone::Battlefield); }
+        let spell = put(&mut state, PlayerId::P0, "Lava Dart", Zone::Graveyard);
+        // Lava Dart's flashback has no mana base: sacrifice a Mountain.
+        let mountain = put(&mut state, PlayerId::P0, "Mountain", Zone::Battlefield);
+        state.objects.get_mut(mountain).tapped = true;
+        let expected = (thalias as u8).saturating_sub(djinns as u8);
+        state.players[0].mana_pool = pool(&[], expected);
+        assert!(castable(&mut state).contains(&spell), "{djinns}, {thalias}, {generic}");
+        engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+        loop {
+            match next(&mut state) {
+                Decision::ChooseTargets { .. } => engine::step(&mut state, Action::ChooseTarget(Target::Player(PlayerId::P1))).unwrap(),
+                Decision::ChooseCostTargets { .. } => engine::step(&mut state, Action::ChooseCostTarget(mountain)).unwrap(),
+                Decision::CastSpellOrPass { .. } => break,
+                other => panic!("{other:?}"),
+            }
+        }
+        assert_eq!(state.players[0].mana_pool, [0; 6]);
+        assert_eq!(state.objects.get(mountain).zone, Zone::Graveyard);
+        settled(&mut state);
+        assert_eq!(state.objects.get(spell).zone, Zone::Exile);
+        assert_eq!(state.players[1].life, 19);
+    }
+}
+
+#[test]
+fn djinn_reduction_includes_kicker_and_floors_after_thalia_tax() {
+    let mut state = ready(Step::Main1);
+    for _ in 0..2 { put(&mut state, PlayerId::P0, "Haughty Djinn", Zone::Battlefield); }
+    put(&mut state, PlayerId::P1, "Thalia, Guardian of Thraben", Zone::Battlefield);
+    let spell = put(&mut state, PlayerId::P0, "Burst Lightning", Zone::Hand);
+    // Printed {R} + kicker {4} + tax {1} - two Djinn = {3}{R}.
+    state.players[0].mana_pool = pool(&[(ManaColor::R, 1)], 3);
+    next(&mut state);
+    engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+    assert!(matches!(next(&mut state), Decision::ChooseKicker { .. }));
+    engine::step(&mut state, Action::ChooseKicker(true)).unwrap();
+    assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
+    engine::step(&mut state, Action::ChooseTarget(Target::Player(PlayerId::P1))).unwrap();
+    next(&mut state);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
+    settled(&mut state);
+    assert_eq!(state.players[1].life, 16);
 }

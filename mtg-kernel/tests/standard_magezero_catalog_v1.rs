@@ -723,8 +723,13 @@ fn memory_deluge_looks_at_the_mana_spent_and_flashes_back() {
     resolve_stack(&mut state, &mut first);
     assert_eq!(state.objects.get(library[0]).zone, Zone::Hand);
     assert_eq!(state.objects.get(library[3]).zone, Zone::Hand);
-    // The rest keeps its looked-at order on the bottom.
-    assert_eq!(&state.players[0].library[8..], &[library[1], library[2]]);
+    // Randomization changes only the unselected bottom subset.
+    let mut bottom = state.players[0].library[8..].to_vec();
+    bottom.sort_unstable();
+    let mut expected_bottom = vec![library[1], library[2]];
+    expected_bottom.sort_unstable();
+    assert_eq!(bottom, expected_bottom);
+    assert_eq!(&state.players[0].library[..8], &library[4..]);
 
     // Flashback for {5}{U}{U} spends seven mana, so it looks at seven.
     assert_eq!(state.objects.get(deluge).zone, Zone::Graveyard);

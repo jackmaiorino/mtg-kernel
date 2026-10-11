@@ -1041,6 +1041,7 @@ fn commit_with_ability_lki(
             #[cfg(feature = "standard-magezero-fixtures")]
             if from == Zone::Battlefield {
                 record_counter_lki(state, z.object);
+                crate::standard_statics_v1::record_creature_stats_lki(state, z.object);
             }
             #[cfg(feature = "standard-magezero-fixtures")]
             crate::standard_keywords_v1::before_zone_change(state, z.object, z.to_zone);
@@ -1319,6 +1320,14 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
         .into_iter()
         .filter_map(|e| apply_replacements(state, e))
         .collect();
+    #[cfg(feature = "standard-magezero-fixtures")]
+    for event in &survivors {
+        if let ProposedEvent::ZoneChange(change) = event {
+            if state.objects.get(change.object).zone == Zone::Battlefield {
+                crate::standard_statics_v1::record_creature_stats_lki(state, change.object);
+            }
+        }
+    }
     // Lifelink changes life at the same time as the damage. Capture every
     // source/controller before any member of the simultaneous batch can die.
     // CR 119.9: one source damaging several recipients simultaneously is
