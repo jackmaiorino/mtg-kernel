@@ -1,4 +1,4 @@
-//! Prepared fixtures. Sprite/Archmage admission and gameplay qualification remain pending.
+//! Controller instant/sorcery reductions across payment, casting and restore boundaries.
 #![cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
