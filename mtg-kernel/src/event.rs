@@ -918,6 +918,9 @@ pub enum CommittedEvent {
     CrystalShieldOperationV1 {
         operation: crate::effect::crystal_prevention_v1::ShieldOperationV1,
     },
+    CrystalExecutionV1 {
+        execution: Box<crate::effect::crystal_prevention_v1::ExecutionV1>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

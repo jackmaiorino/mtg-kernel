@@ -564,7 +564,7 @@ pub(super) fn drive(state: &mut GameState) -> Result<ResumableProgress, String> 
     if owned {
         validate(state)?;
     }
-    let result = super::drive_resumable_inner(state, None);
+    let result = super::drive_resumable_inner(state);
     if owned && result.is_ok() {
         record_boundary(state)?;
     }
@@ -576,7 +576,7 @@ fn drive_owned(
     owner: &SquadRallierResolutionOwnerV1,
 ) -> Result<ResumableProgress, String> {
     validate_with_owner(state, Some(owner))?;
-    let result = super::drive_resumable_inner(state, None);
+    let result = super::drive_resumable_inner(state);
     if result.is_ok() {
         record_boundary(state)?;
     }

@@ -55,6 +55,23 @@ pub struct ShieldOperationV1 {
     pub damage_amount: i32,
     pub after: Option<ActiveReplacement>,
 }
+/// Produced by the actual owning interpreter before its resulting boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ExecutionV1 {
+    pub history_index: u32,
+    pub previous: u32,
+    pub item: Box<StackItem>,
+    pub before: Box<EffectContinuation>,
+    pub after: Option<Box<EffectContinuation>>,
+    pub steps: Vec<ExecutionStepV1>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ExecutionStepV1 {
+    pub frame: EffectFrame,
+    pub conditional_result: Option<bool>,
+    pub offered_menu: Option<PendingEffectChoice>,
+    pub damage_history: Vec<u32>,
+}
 pub(crate) fn shield_operation(
     state: &mut GameState,
     replacement: &ActiveReplacement,
@@ -241,11 +258,13 @@ fn supported(op: &EffectOp) -> bool {
 pub(crate) fn requires_successor(state: &GameState) -> bool {
     crate::crystal_barricade_v1::active(state)
         || boundaries(state).next().is_some()
-        || state
-            .engine
-            .event_history
-            .iter()
-            .any(|event| matches!(event, CommittedEvent::CrystalShieldOperationV1 { .. }))
+        || state.engine.event_history.iter().any(|event| {
+            matches!(
+                event,
+                CommittedEvent::CrystalShieldOperationV1 { .. }
+                    | CommittedEvent::CrystalExecutionV1 { .. }
+            )
+        })
         || state
             .stack
             .iter()
@@ -351,6 +370,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
 }
 fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(), String> {
     validate_shields(state)?;
+    validate_executions(state)?;
     for (index, event) in state.engine.event_history.iter().enumerate() {
         let CommittedEvent::CrystalPreventionBoundaryV1 { boundary: b } = event else {
             continue;
@@ -377,6 +397,21 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
             return Err("Crystal resolution history chain changed or restarted".into());
         }
         if b.answer.is_none() {
+            if let Some(previous) = previous {
+                let execution = state.engine.event_history.get(
+                    index
+                        .checked_sub(1)
+                        .ok_or("Crystal execution boundary index")?,
+                );
+                if !matches!(execution, Some(CommittedEvent::CrystalExecutionV1 { execution })
+                    if execution.previous == previous.history_index
+                        && execution.item == b.item && execution.after == b.pending)
+                {
+                    return Err(
+                        "Crystal boundary lost its actual owned execution occurrence".into(),
+                    );
+                }
+            }
             if let Some(old) = previous.and_then(|p| p.pending.as_deref()) {
                 if old.choice.is_some() && b.pending.as_deref() != Some(old) {
                     return Err(
@@ -580,14 +615,265 @@ pub(crate) fn resume_owned(
 }
 fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgress, String> {
     validate_with_owner(state, Some(owner))?;
-    let result = drive_resumable_inner(state, Some(owner))?;
-    if let ResumableProgress::Complete(item) = &result {
-        if !owner.completion_matches(item) {
-            return Err("Crystal completion changed owner".into());
+    let previous = last(state, &owner.expected)
+        .ok_or("Crystal execution lost publication")?
+        .history_index;
+    let before = state
+        .engine
+        .pending_effect
+        .take()
+        .ok_or("Crystal execution lost pending owner")?;
+    if before.choice.is_some() {
+        state.engine.pending_effect = Some(before);
+        return Err("Crystal waiting choice cannot execute before its actual answer".into());
+    }
+    let mut pending = before.clone();
+    let mut steps = Vec::new();
+    while let Some(frame) = pending.frames.pop() {
+        let EffectFrame::Program { op, path } = &frame else {
+            return Err("Crystal fixed interpreter received a foreign frame".into());
+        };
+        let mut step = ExecutionStepV1 {
+            frame: frame.clone(),
+            conditional_result: None,
+            offered_menu: None,
+            damage_history: Vec::new(),
+        };
+        match op {
+            EffectOp::Sequence(ops) => {
+                for (index, inner) in ops.iter().enumerate().rev() {
+                    let mut child = path.clone();
+                    child.push(u16::try_from(index).map_err(|_| "Crystal sequence exceeds u16")?);
+                    pending.frames.push(EffectFrame::Program {
+                        op: inner.clone(),
+                        path: child,
+                    });
+                }
+            }
+            EffectOp::Conditional { cond, then, else_ } => {
+                let met = eval_cond(cond, &pending.ctx, state);
+                step.conditional_result = Some(met);
+                let mut child = path.clone();
+                child.push(if met { 0 } else { 1 });
+                pending.frames.push(EffectFrame::Program {
+                    op: if met {
+                        (**then).clone()
+                    } else {
+                        (**else_).clone()
+                    },
+                    path: child,
+                });
+            }
+            EffectOp::DealDamage { target, amount } => {
+                if offer(state, &mut pending, op, path)? {
+                    step.offered_menu = pending.choice.clone();
+                    steps.push(step);
+                    break;
+                }
+                let start = state.engine.event_history.len();
+                crate::event::propose_and_commit_crystal_owned(
+                    state,
+                    crate::event::ProposedEvent::damage(
+                        pending.ctx.source,
+                        pending.ctx.resolve_target(*target),
+                        *amount,
+                    ),
+                    owner,
+                );
+                if state.engine.halted.is_some() {
+                    state.engine.pending_effect = Some(pending);
+                    return Err("Crystal owned damage execution halted".into());
+                }
+                for (offset, event) in state.engine.event_history[start..].iter().enumerate() {
+                    if matches!(event, CommittedEvent::Damage { .. }) {
+                        step.damage_history.push(
+                            u32::try_from(start + offset)
+                                .map_err(|_| "Crystal damage occurrence exceeds u32")?,
+                        );
+                    }
+                }
+            }
+            _ => return Err("Crystal fixed interpreter received an unsupported producer".into()),
+        }
+        steps.push(step);
+    }
+    let suspended = pending.choice.is_some();
+    let after = suspended.then_some(Box::new(pending));
+    state.engine.pending_effect = after.as_deref().cloned();
+    let execution = ExecutionV1 {
+        history_index: u32::try_from(state.engine.event_history.len())
+            .map_err(|_| "Crystal history exceeds u32")?,
+        previous,
+        item: Box::new(owner.expected.clone()),
+        before: Box::new(before),
+        after,
+        steps,
+    };
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::CrystalExecutionV1 {
+            execution: Box::new(execution),
+        });
+    record(state, owner, None)?;
+    Ok(if suspended {
+        ResumableProgress::Suspended
+    } else {
+        ResumableProgress::Complete(Box::new(owner.expected.clone()))
+    })
+}
+fn validate_executions(state: &GameState) -> Result<(), String> {
+    for (index, event) in state.engine.event_history.iter().enumerate() {
+        let CommittedEvent::CrystalExecutionV1 { execution } = event else {
+            continue;
+        };
+        let previous_index =
+            usize::try_from(execution.previous).map_err(|_| "Crystal previous index")?;
+        let Some(CommittedEvent::CrystalPreventionBoundaryV1 { boundary: previous }) =
+            state.engine.event_history.get(previous_index)
+        else {
+            return Err("Crystal execution lost original boundary".into());
+        };
+        let Some(CommittedEvent::CrystalPreventionBoundaryV1 { boundary: next }) =
+            state.engine.event_history.get(index + 1)
+        else {
+            return Err("Crystal execution lost its immediate resulting boundary".into());
+        };
+        if usize::try_from(execution.history_index).ok() != Some(index)
+            || previous_index >= index
+            || previous.item != execution.item
+            || previous.pending.as_deref() != Some(execution.before.as_ref())
+            || execution.before.choice.is_some()
+            || next.previous != Some(execution.previous)
+            || next.item != execution.item
+            || next.root != previous.root
+            || next.answer.is_some()
+            || next.pending != execution.after
+        {
+            return Err("Crystal execution changed its actual owner or remainder".into());
+        }
+        let mut pending = (*execution.before).clone();
+        let mut last_damage = previous_index;
+        for (step_index, step) in execution.steps.iter().enumerate() {
+            if pending.choice.is_some() || pending.frames.pop().as_ref() != Some(&step.frame) {
+                return Err(
+                    "Crystal execution skipped or reordered its exact remaining frames".into(),
+                );
+            }
+            let EffectFrame::Program { op, path } = &step.frame else {
+                return Err("Crystal execution committed a foreign frame".into());
+            };
+            match op {
+                EffectOp::Sequence(ops) => {
+                    if step.conditional_result.is_some()
+                        || step.offered_menu.is_some()
+                        || !step.damage_history.is_empty()
+                    {
+                        return Err("Crystal sequence carries foreign execution facts".into());
+                    }
+                    for (offset, inner) in ops.iter().enumerate().rev() {
+                        let mut child = path.clone();
+                        child.push(
+                            u16::try_from(offset).map_err(|_| "Crystal sequence exceeds u16")?,
+                        );
+                        pending.frames.push(EffectFrame::Program {
+                            op: inner.clone(),
+                            path: child,
+                        });
+                    }
+                }
+                EffectOp::Conditional { then, else_, .. } => {
+                    let met = step
+                        .conditional_result
+                        .ok_or("Crystal conditional lost actual branch")?;
+                    if step.offered_menu.is_some() || !step.damage_history.is_empty() {
+                        return Err("Crystal conditional carries foreign execution facts".into());
+                    }
+                    let mut child = path.clone();
+                    child.push(if met { 0 } else { 1 });
+                    pending.frames.push(EffectFrame::Program {
+                        op: if met {
+                            (**then).clone()
+                        } else {
+                            (**else_).clone()
+                        },
+                        path: child,
+                    });
+                }
+                EffectOp::DealDamage { target, amount } => {
+                    if step.conditional_result.is_some() {
+                        return Err("Crystal damage carries a foreign branch".into());
+                    }
+                    if let Some(menu) = step.offered_menu.as_ref() {
+                        if step_index + 1 != execution.steps.len()
+                            || !step.damage_history.is_empty()
+                        {
+                            return Err(
+                                "Crystal offered choice executed another instruction".into()
+                            );
+                        }
+                        let PendingEffectChoice::ChooseOption {
+                            purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                            ..
+                        } = menu
+                        else {
+                            return Err("Crystal execution offered a foreign menu".into());
+                        };
+                        if choice.path != *path
+                            || choice.source != pending.ctx.source
+                            || choice.target != pending.ctx.resolve_target(*target)
+                            || choice.original_amount != *amount
+                            || choice.remaining_amount != *amount
+                            || !choice.touched.is_empty()
+                            || choice.remaining_frames != pending.frames
+                        {
+                            return Err(
+                                "Crystal execution changed offered damage or exact remainder"
+                                    .into(),
+                            );
+                        }
+                        pending.choice = Some(menu.clone());
+                    } else {
+                        if step.damage_history.len() > 1 {
+                            return Err(
+                                "Crystal fixed damage committed more than one damage event".into(),
+                            );
+                        }
+                        for saved in &step.damage_history {
+                            let at = usize::try_from(*saved).map_err(|_| "Crystal damage index")?;
+                            if at <= last_damage || at >= index {
+                                return Err("Crystal damage occurrence moved or replayed".into());
+                            }
+                            if !matches!(state.engine.event_history.get(at),
+                                Some(CommittedEvent::Damage { source, target: recipient, amount: dealt, .. })
+                                if *source == pending.ctx.source
+                                    && *recipient == pending.ctx.resolve_target(*target)
+                                    && *dealt > 0 && *dealt <= *amount)
+                            {
+                                return Err(
+                                    "Crystal execution lost genuine committed damage".into()
+                                );
+                            }
+                            last_damage = at;
+                        }
+                    }
+                }
+                _ => return Err("Crystal execution contains an unsupported producer".into()),
+            }
+        }
+        let after = if pending.choice.is_some() {
+            Some(Box::new(pending))
+        } else {
+            if !pending.frames.is_empty() {
+                return Err("Crystal completion skipped remaining printed instructions".into());
+            }
+            None
+        };
+        if after != execution.after {
+            return Err("Crystal execution changed completion or suspended remainder".into());
         }
     }
-    record(state, owner, None)?;
-    Ok(result)
+    Ok(())
 }
 fn cannot_prevent(state: &GameState) -> bool {
     state.engine.until_end_of_turn.iter().any(|e| {

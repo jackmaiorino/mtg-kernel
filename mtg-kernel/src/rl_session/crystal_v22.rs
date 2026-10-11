@@ -100,6 +100,11 @@ impl FastActorSessionV1 {
     }
 
     #[cfg(test)]
+    pub(crate) fn crystal_fixture_state(&self) -> &GameState {
+        &self.state
+    }
+
+    #[cfg(test)]
     pub(crate) fn crystal_fixture_state_mut(&mut self) -> &mut GameState {
         &mut self.state
     }

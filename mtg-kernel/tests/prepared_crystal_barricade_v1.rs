@@ -706,3 +706,78 @@ fn unsupported_real_draw_root_refuses_before_pop_or_card_mutation_in_mixed_envir
         )));
     }
 }
+
+#[test]
+fn answered_real_bolt_cannot_forge_closed_boundary_without_owned_execution() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let wall = source(&mut state, actor);
+        let target = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        shield(&mut state, wall, target, 1);
+        let bolt = announce_bolt(&mut state, actor.opponent(), Target::Object(target));
+        mixed_menu(&mut state);
+        let selected = option(&state, false);
+        engine::step(&mut state, Action::ChooseEffectOption(selected)).unwrap();
+        assert!(state
+            .engine
+            .pending_effect
+            .as_ref()
+            .unwrap()
+            .choice
+            .is_none());
+        assert_eq!(state.objects.get(bolt).zone, Zone::Stack);
+        let original = state
+            .engine
+            .event_history
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                mtg_kernel::event::CommittedEvent::CrystalPreventionBoundaryV1 { boundary } => {
+                    Some((**boundary).clone())
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert!(original.answer.is_some());
+        assert!(original.pending.as_ref().unwrap().choice.is_none());
+        let mut bad = restore(&state);
+        bad.engine.pending_effect = None;
+        bad.stack
+            .retain(|item| item.v4.stack_item_id != original.item.v4.stack_item_id);
+        let mut closed = original.clone();
+        closed.previous = Some(original.history_index);
+        closed.history_index = u32::try_from(bad.engine.event_history.len()).unwrap();
+        closed.answer = None;
+        closed.pending = None;
+        bad.engine.event_history.push(
+            mtg_kernel::event::CommittedEvent::CrystalPreventionBoundaryV1 {
+                boundary: Box::new(closed),
+            },
+        );
+        let before = serde_json::to_vec(&bad).unwrap();
+        assert!(engine::step(&mut bad, Action::Pass).is_err());
+        assert_eq!(serde_json::to_vec(&bad).unwrap(), before);
+        assert!(matches!(
+            engine::advance_until_decision(&mut bad),
+            Decision::Halted { .. }
+        ));
+        bad.engine.halted = None;
+        assert_eq!(serde_json::to_vec(&bad).unwrap(), before);
+        assert_eq!(bad.objects.get(bolt).zone, Zone::Stack);
+        let mut replay = restore(&state);
+        finish(&mut state);
+        finish(&mut replay);
+        assert_eq!(state.objects.get(bolt).zone, Zone::Graveyard);
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+        assert!(state
+            .engine
+            .event_history
+            .iter()
+            .any(|event| matches!(event,
+            mtg_kernel::event::CommittedEvent::CrystalExecutionV1 { execution }
+                if execution.item.source == bolt && execution.after.is_none())));
+    }
+}

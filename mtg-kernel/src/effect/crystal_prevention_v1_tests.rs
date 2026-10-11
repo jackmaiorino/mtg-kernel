@@ -56,7 +56,7 @@ fn absent_stack_wrapper_writes_no_hash_input_or_serialized_field() {
     let mut hash = Writes::default();
     std::hash::Hash::hash(&CrystalPreventionStartedV1::default(), &mut hash);
     assert_eq!(hash.0, 0);
-    let value = serde_json::to_value(crate::state::StackItemV4::default()).unwrap();
+    let value = serde_json::to_value(crate::state::StackStateV4::default()).unwrap();
     assert!(value.get("crystal_prevention_started_v1").is_none());
     std::hash::Hash::hash(&CrystalPreventionStartedV1(Some(0)), &mut hash);
     assert!(hash.0 > 0);

@@ -295,9 +295,22 @@ fn future_printed_bolt_mixed_menu_public_human_submit_and_owning_restore_both_se
         let snapshot = session.snapshot_v22();
         let receipt = projector.submit(&mut session, request.clone()).unwrap();
         let after = session.inner.privileged_core_environment_hash();
-        assert_eq!(session.inner.state.objects.get(target).damage, 0);
+        assert_eq!(
+            session
+                .inner
+                .crystal_fixture_state()
+                .objects
+                .get(target)
+                .damage,
+            0
+        );
         assert!(matches!(
-            session.inner.state.engine.active_replacements[0].kind,
+            session
+                .inner
+                .crystal_fixture_state()
+                .engine
+                .active_replacements[0]
+                .kind,
             ReplacementEffectKind::PreventNextDamage { remaining: 5, .. }
         ));
         assert_eq!(
