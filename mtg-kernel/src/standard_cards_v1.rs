@@ -1510,9 +1510,13 @@ pub(crate) fn trigger_matches(
                 zone_change_count: state.objects.get(spell).zone_change_count,
             };
             controller == live.controller
-                && [CardType::Artifact, CardType::Creature]
-                    .into_iter()
-                    .any(|kind| crate::engine::object_has_type(state, spell, kind))
+                && state.stack.iter().any(|item| {
+                    item.source == spell
+                        && item.kind == crate::state::StackItemKind::Spell
+                        && [CardType::Artifact, CardType::Creature]
+                            .into_iter()
+                            .any(|kind| crate::engine::stack_spell_has_type(state, item, kind))
+                })
                 && state.standard_v1.as_ref().is_some_and(|value| {
                     value
                         .paid_spells
@@ -4313,12 +4317,15 @@ pub fn kaito_stun() -> EffectOp {
     ])
 }
 pub(crate) fn kaito_is_creature(state: &GameState, id: ObjectId) -> bool {
+    // This effect starts in layer 4. Removing its ability in layer 6
+    // cannot stop the type or base P/T changes (613.6); the hexproof
+    // grant is separately ordered against ability removal in layer 6.
     state.objects.try_get(id).is_some_and(|o| {
         o.zone == Zone::Battlefield
             && CARD_DEFS[o.card_def as usize].name == "Kaito, Bane of Nightmares"
+            && o.v4.face_down_v1.is_none()
             && state.active_player == o.controller
             && crate::planeswalker_v1::loyalty(state, id).is_some_and(|n| n > 0)
-            && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     })
 }
 pub(crate) fn ninja_emblems(state: &GameState) -> Option<[u16; 2]> {

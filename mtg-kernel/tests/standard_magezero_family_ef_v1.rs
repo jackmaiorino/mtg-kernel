@@ -97,6 +97,111 @@ fn kaito_minus_two_taps_and_places_two_stun_counters() {
     assert_eq!(state.objects.get(target).counters.stun, 2);
 }
 
+#[test]
+fn tidebinder_removes_kaitos_abilities_but_preserves_his_creature_layers() {
+    let mut state = game();
+    let kaito = put(
+        &mut state,
+        P0,
+        "Kaito, Bane of Nightmares",
+        Zone::Battlefield,
+    );
+    next(&mut state);
+    act(&mut state, Action::ActivateAbility(kaito, 0));
+    next(&mut state);
+    let ability = state.stack.last().unwrap().v4.stack_item_id;
+    let tidebinder = put(&mut state, P0, "Tishana's Tidebinder", Zone::Hand);
+    state.players[0].mana_pool[ManaColor::U.pool_index()] = 3;
+    act(&mut state, Action::CastSpell(tidebinder));
+    drive(&mut state, &[Target::StackItem(ability)]);
+    assert!(!state
+        .stack
+        .iter()
+        .any(|item| item.v4.stack_item_id == ability));
+    assert_eq!(loyalty(&state, kaito), Some(5));
+    assert_eq!(
+        engine::effective_power(&state, kaito),
+        3,
+        "the emblem ability was countered"
+    );
+    assert_eq!(engine::effective_toughness(&state, kaito), 4);
+    assert!(engine::object_has_type(&state, kaito, CardType::Creature));
+    assert!(!engine::object_has_type(
+        &state,
+        kaito,
+        CardType::Planeswalker
+    ));
+    assert_eq!(
+        engine::effective_subtype_ids(&state, kaito),
+        vec![mtg_kernel::card_def::Subtype::Ninja.stable_id()]
+    );
+    assert!(!engine::has_effective_keyword(
+        &state,
+        kaito,
+        Keywords::HEXPROOF
+    ));
+    state = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+    state.active_player = P1;
+    assert!(engine::object_has_type(
+        &state,
+        kaito,
+        CardType::Planeswalker
+    ));
+    assert!(!engine::object_has_type(&state, kaito, CardType::Creature));
+    state.active_player = P0;
+    assert!(engine::object_has_type(&state, kaito, CardType::Creature));
+    assert_eq!(engine::effective_power(&state, kaito), 3);
+    assert!(!engine::has_effective_keyword(
+        &state,
+        kaito,
+        Keywords::HEXPROOF
+    ));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(tidebinder, Zone::Graveyard),
+    );
+    assert!(engine::has_effective_keyword(
+        &state,
+        kaito,
+        Keywords::HEXPROOF
+    ));
+}
+
+#[test]
+fn kaitos_earlier_creature_layers_do_not_overwrite_witness_protection() {
+    let mut state = game();
+    let kaito = put(
+        &mut state,
+        P0,
+        "Kaito, Bane of Nightmares",
+        Zone::Battlefield,
+    );
+    let aura = put(&mut state, P0, "Witness Protection", Zone::Hand);
+    state.players[0].mana_pool[ManaColor::U.pool_index()] = 1;
+    next(&mut state);
+    act(&mut state, Action::CastSpell(aura));
+    drive(&mut state, &[Target::Object(kaito)]);
+    assert_eq!(engine::effective_power(&state, kaito), 1);
+    assert_eq!(engine::effective_toughness(&state, kaito), 1);
+    assert_eq!(
+        engine::effective_subtype_ids(&state, kaito),
+        vec![mtg_kernel::card_def::Subtype::Citizen.stable_id()]
+    );
+    assert!(!engine::has_effective_keyword(
+        &state,
+        kaito,
+        Keywords::HEXPROOF
+    ));
+    assert!(engine::object_has_type(&state, kaito, CardType::Creature));
+    state.active_player = P1;
+    assert!(engine::object_has_type(&state, kaito, CardType::Creature));
+    assert!(!engine::object_has_type(
+        &state,
+        kaito,
+        CardType::Planeswalker
+    ));
+}
+
 fn game() -> GameState {
     let island = card_id_by_name("Island").unwrap();
     let mut state = GameState::new_from_libraries(
@@ -2901,6 +3006,40 @@ fn bankbuster_last_charge_creates_tokens_even_if_source_leaves_in_response() {
 }
 
 #[test]
+fn a_pilot_without_abilities_cannot_supply_the_extra_crew_power() {
+    let mut state = game();
+    let vehicle = put(&mut state, P0, "Reckoner Bankbuster", Zone::Battlefield);
+    let pilot = put(&mut state, P0, "Pilot Token", Zone::Battlefield);
+    let cauldron = put(&mut state, P0, "Agatha's Soul Cauldron", Zone::Battlefield);
+    let donor = to_graveyard(&mut state, P0, "Gingerbrute");
+    act(&mut state, Action::ActivateAbility(cauldron, 0));
+    drive(&mut state, &[Target::Object(donor), Target::Object(pilot)]);
+    assert_eq!(engine::effective_power(&state, pilot), 2);
+    assert!(activatable(&mut state).contains(&(vehicle, 1)));
+    state.players[0].mana_pool[ManaColor::C.pool_index()] = 1;
+    let granted = activatable(&mut state)
+        .into_iter()
+        .find(|(source, _)| *source == pilot)
+        .expect("Pilot has Gingerbrute's nonmana activated ability");
+    act(&mut state, Action::ActivateAbility(granted.0, granted.1));
+    next(&mut state);
+    let ability = state.stack.last().unwrap().v4.stack_item_id;
+    let tidebinder = put(&mut state, P0, "Tishana's Tidebinder", Zone::Hand);
+    state.players[0].mana_pool[ManaColor::U.pool_index()] = 3;
+    act(&mut state, Action::CastSpell(tidebinder));
+    drive(&mut state, &[Target::StackItem(ability)]);
+    event::propose_and_commit(&mut state, ProposedEvent::tap(tidebinder));
+    assert_eq!(engine::effective_power(&state, pilot), 2);
+    assert!(!state.objects.get(pilot).tapped);
+    assert!(!activatable(&mut state).contains(&(vehicle, 1)));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(tidebinder, Zone::Graveyard),
+    );
+    assert!(activatable(&mut state).contains(&(vehicle, 1)));
+}
+
+#[test]
 fn etali_free_casts_opponents_spell_then_transforms_and_poison_uses_damage_lki() {
     let mut state = game();
     let foreign = put(&mut state, P1, "Llanowar Elves", Zone::Hand);
@@ -3016,6 +3155,58 @@ fn smithy_taps_exactly_five_and_barracks_tracks_floating_mana_after_untap() {
     assert_eq!(battlefield_named(&state, P0, "Gnome Soldier").len(), 2);
     assert!(state.players[0].restricted_mana_pool.0.is_empty());
 }
+
+#[test]
+fn barracks_checks_the_cast_adventure_form_for_direct_and_floating_mana() {
+    for floating in [false, true] {
+        for adventure in [false, true] {
+            let mut state = game();
+            let smithy = put(&mut state, P0, "Thousand Moons Smithy", Zone::Battlefield);
+            resolve_stack(&mut state);
+            let mut ctx = mtg_kernel::effect::ExecCtx::no_targets(smithy, P0);
+            ctx.ability_source_contract = Some(
+                mtg_kernel::state::AbilitySourceContractV4::capture(&state, smithy),
+            );
+            mtg_kernel::effect::execute(
+                &mtg_kernel::effect::EffectOp::TransformSourceInPlace,
+                &ctx,
+                &mut state,
+            );
+            assert_eq!(state.objects.get(smithy).v4.face_index, 1);
+            let recruiter = put(&mut state, P0, "Imodane's Recruiter", Zone::Hand);
+            state.players[0].mana_pool[ManaColor::C.pool_index()] = if adventure { 4 } else { 1 };
+            state.players[0].mana_pool[ManaColor::R.pool_index()] = u8::from(!adventure);
+            next(&mut state);
+            if floating {
+                act(&mut state, Action::ActivateManaAbility(smithy));
+                assert_eq!(state.players[0].restricted_mana_pool.0.len(), 1);
+            }
+            act(&mut state, Action::CastSpell(recruiter));
+            if let Decision::ChooseSpellMode { legal_modes, .. } = next(&mut state) {
+                let form = u8::from(adventure);
+                assert!(legal_modes.contains(&form));
+                act(&mut state, Action::ChooseSpellMode(form));
+            }
+            resolve_stack(&mut state);
+            assert!(state.objects.get(smithy).tapped, "Barracks mana was spent");
+            assert!(state.players[0].restricted_mana_pool.0.is_empty());
+            assert_eq!(
+                battlefield_named(&state, P0, "Gnome Soldier").len(),
+                if adventure { 1 } else { 2 },
+                "floating={floating}, adventure={adventure}"
+            );
+            assert_eq!(
+                state.objects.get(recruiter).zone,
+                if adventure {
+                    Zone::Exile
+                } else {
+                    Zone::Battlefield
+                }
+            );
+        }
+    }
+}
+
 #[test]
 fn twilight_target_admission_uses_cost_reduction_and_taxes() {
     let mut reduced = game();

@@ -14446,7 +14446,14 @@ pub(crate) fn static_graveyard_threshold_keyword_for(name: &str) -> Option<(u16,
 /// review: not a parallel mechanism) -- there is no combat- or SBA-specific
 /// shortcut anywhere else that reads power/toughness/keywords directly.
 pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> bool {
-    if kw == Keywords::HEXPROOF && crate::standard_cards_v1::kaito_is_creature(state, id) {
+    if kw == Keywords::HEXPROOF
+        && crate::standard_cards_v1::kaito_is_creature(state, id)
+        && crate::continuous_characteristics_v1::grant_survives(
+            state,
+            id,
+            state.objects.get(id).v4.layer_timestamp.unwrap_or(0),
+        )
+    {
         return true;
     }
     let obj = state.objects.get(id);
@@ -14917,7 +14924,10 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
         .map(|(_, timestamp)| *timestamp)
         .or_else(|| override_effect.map(|(_, timestamp)| timestamp));
     let mut subtype_ids = upgrade.map(|(types, _)| types).unwrap_or_else(|| {
-        if crate::standard_cards_v1::kaito_is_creature(state, id) {
+        if crate::standard_cards_v1::kaito_is_creature(state, id)
+            && override_effect
+                .is_none_or(|(_, timestamp)| object.v4.layer_timestamp.unwrap_or(0) > timestamp)
+        {
             return vec![card_def::Subtype::Ninja.stable_id()];
         }
         override_effect.map_or_else(
@@ -25468,12 +25478,14 @@ fn crew_requirement(components: &[CostComponent]) -> Option<u8> {
     })
 }
 fn crew_power(state: &GameState, object: ObjectId) -> i64 {
-    let bonus =
-        if card_def::CARD_DEFS[state.objects.get(object).card_def as usize].name == "Pilot Token" {
-            2
-        } else {
-            0
-        };
+    let bonus = if card_def::CARD_DEFS[state.objects.get(object).card_def as usize].name
+        == "Pilot Token"
+        && crate::continuous_characteristics_v1::printed_abilities_active(state, object)
+    {
+        2
+    } else {
+        0
+    };
     i64::from(effective_power(state, object)) + bonus
 }
 fn crew_candidates(
