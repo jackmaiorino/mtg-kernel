@@ -834,6 +834,7 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
     }
     if let Some(animation) = animation {
         let crate::card_def::AnimationDef {
+            until_end_of_turn,
             power,
             toughness,
             artifact,
@@ -847,6 +848,7 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 "power": power,
                 "toughness": toughness,
                 "artifact": artifact,
+                "until_end_of_turn": until_end_of_turn,
                 "colors": colors.iter().map(|c| format!("{c:?}")).collect::<Vec<_>>(),
                 "subtypes": subtypes.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>(),
                 "keywords": keywords.0,

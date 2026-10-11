@@ -180,9 +180,33 @@ pub fn fields(name: &str, executable: bool) -> StandardLandFields {
             fields.restricted_mana_abilities = "&[RestrictedManaAbilityDef { colors: &[ManaColor::R], restriction: ManaSpendRestrictionDef::CreatureSpell }]".to_string();
         }
         "Mishra's Foundry" => {
-            fields.animation = "Some(AnimationDef { power: 2, toughness: 2, artifact: true, colors: &[], subtypes: &[Subtype::AssemblyWorker], keywords: Keywords::NONE })".to_string();
+            fields.animation = "Some(AnimationDef { until_end_of_turn: true, power: 2, toughness: 2, artifact: true, colors: &[], subtypes: &[Subtype::AssemblyWorker], keywords: Keywords::NONE })".to_string();
         }
-        "Eiganjo, Seat of the Empire" => {
+        "Restless Bivouac" => {
+            fields.animation = "Some(AnimationDef { until_end_of_turn: true, power: 2, toughness: 2, artifact: false, colors: &[ManaColor::R, ManaColor::W], subtypes: &[Subtype::Ox], keywords: Keywords::NONE })".to_string();
+        }
+        "Restless Cottage" => {
+            fields.animation = "Some(AnimationDef { until_end_of_turn: true, power: 4, toughness: 4, artifact: false, colors: &[ManaColor::B, ManaColor::G], subtypes: &[Subtype::Horror], keywords: Keywords::NONE })".to_string();
+        }
+        "Restless Fortress" => {
+            fields.animation = "Some(AnimationDef { until_end_of_turn: true, power: 1, toughness: 4, artifact: false, colors: &[ManaColor::W, ManaColor::B], subtypes: &[Subtype::Nightmare], keywords: Keywords::NONE })".to_string();
+        }
+        "Restless Reef" => {
+            fields.animation = "Some(AnimationDef { until_end_of_turn: true, power: 4, toughness: 4, artifact: false, colors: &[ManaColor::U, ManaColor::B], subtypes: &[Subtype::Shark], keywords: Keywords::DEATHTOUCH })".to_string();
+        }
+        "Restless Ridgeline" => {
+            fields.animation = "Some(AnimationDef { until_end_of_turn: true, power: 3, toughness: 4, artifact: false, colors: &[ManaColor::R, ManaColor::G], subtypes: &[Subtype::Dinosaur], keywords: Keywords::NONE })".to_string();
+        }
+        "Restless Prairie" => {
+            fields.animation = "Some(AnimationDef { until_end_of_turn: true, power: 3, toughness: 3, artifact: false, colors: &[ManaColor::G, ManaColor::W], subtypes: &[Subtype::Llama], keywords: Keywords::NONE })".to_string();
+        }
+        "Restless Vinestalk" => {
+            fields.animation = "Some(AnimationDef { until_end_of_turn: true, power: 5, toughness: 5, artifact: false, colors: &[ManaColor::G, ManaColor::U], subtypes: &[Subtype::Plant], keywords: Keywords::TRAMPLE })".to_string();
+        }
+        "Soulstone Sanctuary" => {
+            fields.animation = "Some(AnimationDef { until_end_of_turn: false, power: 3, toughness: 3, artifact: false, colors: &[], subtypes: Subtype::CREATURE_TYPES, keywords: Keywords::VIGILANCE })".to_string();
+        }
+        "Eiganjo, Seat of the Empire" | "Otawara, Soaring City" => {
             fields.activated_ability_generic_reductions = "&[ActivatedAbilityGenericReductionDef { ability_index: 0, per: ActivatedAbilityReductionCountDef::ControlledLegendaryCreatures }]".to_string();
         }
         _ => {}
@@ -206,6 +230,87 @@ pub fn activated_ability_recipes(name: &str) -> Option<&'static [ActivatedAbilit
         }]);
     }
     match name {
+        "Restless Bivouac" => Some(&[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ManaCost("{1}{R}{W}")],
+            effect: AbilityEffectRecipe::AnimateSource,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }]),
+        "Restless Cottage" => Some(&[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ManaCost("{2}{B}{G}")],
+            effect: AbilityEffectRecipe::AnimateSource,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }]),
+        "Restless Fortress" => Some(&[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ManaCost("{2}{W}{B}")],
+            effect: AbilityEffectRecipe::AnimateSource,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }]),
+        "Restless Reef" => Some(&[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ManaCost("{2}{U}{B}")],
+            effect: AbilityEffectRecipe::AnimateSource,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }]),
+        "Restless Ridgeline" => Some(&[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ManaCost("{2}{R}{G}")],
+            effect: AbilityEffectRecipe::AnimateSource,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }]),
+        "Restless Prairie" => Some(&[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ManaCost("{2}{G}{W}")],
+            effect: AbilityEffectRecipe::AnimateSource,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }]),
+        "Restless Vinestalk" => Some(&[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ManaCost("{3}{G}{U}")],
+            effect: AbilityEffectRecipe::AnimateSource,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }]),
+        "Soulstone Sanctuary" => Some(&[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ManaCost("{4}")],
+            effect: AbilityEffectRecipe::AnimateSource,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }]),
+        "Otawara, Soaring City" => Some(&[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ManaCost("{3}{U}"), AbilityCostRecipe::DiscardSelf],
+            effect: AbilityEffectRecipe::MoveAllTargetsToHand,
+            activation_zone: "Hand",
+            sorcery_speed_only: false,
+            target_spec: "ArtifactCreatureEnchantmentOrPlaneswalker",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }]),
         "Mishra's Foundry" => Some(&[
             ActivatedAbilityRecipe {
                 cost: &[AbilityCostRecipe::Mana {

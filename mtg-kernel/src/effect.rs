@@ -78,6 +78,9 @@ pub enum CreatureFilter {
 pub enum CreatureSacrificeFilter {
     Any,
     GreatestPower,
+    Token,
+    Nontoken,
+    PermanentType(CardType),
 }
 
 /// Typed predicate for a private library search. The first consumer is
@@ -328,6 +331,13 @@ pub enum EffectCond {
     TargetIsLegalForAbility {
         index: u8,
         spec: crate::card_def::TargetSpec,
+    },
+    /// Current controller of a live permanent target, sampled before it moves.
+    TargetControlledByController(u8),
+    TargetControllerPoisonAtLeast(u8, u16),
+    PlayerControlsPermanentType {
+        player: PlayerRef,
+        card_type: CardType,
     },
 }
 
@@ -1401,6 +1411,15 @@ pub enum EffectOp {
         total: u32,
         allocations: Vec<u32>,
         finalized: bool,
+    },
+    SetTargetBasePowerToughnessUntilEndOfTurn {
+        index: u8,
+        power: i16,
+        toughness: i16,
+    },
+    BoostOtherControlledCreaturesUntilEndOfTurn {
+        power: i32,
+        toughness: i32,
     },
 }
 
@@ -13147,13 +13166,23 @@ fn creature_sacrifice_bindings(
     let mut bindings = Vec::new();
     for &object_id in &state.players[player.index()].battlefield {
         let object = state.objects.get(object_id);
-        if object.controller != player || object.v4.face_index != 0 {
+        if object.controller != player {
             continue;
         }
         crate::card_def::CARD_DEFS
             .get(object.card_def as usize)
             .ok_or_else(|| "creature-sacrifice card definition is missing".to_string())?;
-        if crate::engine::object_has_type(state, object_id, CardType::Creature) {
+        let matches = match filter {
+            CreatureSacrificeFilter::PermanentType(card_type) => {
+                crate::engine::object_has_type(state, object_id, card_type)
+            }
+            _ => {
+                crate::engine::object_has_type(state, object_id, CardType::Creature)
+                    && (filter != CreatureSacrificeFilter::Token || object.v4.is_token)
+                    && (filter != CreatureSacrificeFilter::Nontoken || !object.v4.is_token)
+            }
+        };
+        if matches {
             bindings.push(EffectObjectBinding {
                 object: object_id,
                 expected_zone: Zone::Battlefield,
@@ -16105,6 +16134,43 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 install_temporary_boost(state, object, *power, *toughness, *keywords);
             }
         }
+        EffectOp::SetTargetBasePowerToughnessUntilEndOfTurn {
+            index,
+            power,
+            toughness,
+        } => {
+            if let Some(Target::Object(object)) = ctx.targets.get(usize::from(*index)) {
+                if ctx.target_incarnation_matches(usize::from(*index), state)
+                    && state.objects.get(*object).zone == Zone::Battlefield
+                {
+                    let timestamp = crate::engine::next_timestamp(state);
+                    state.objects.get_mut(*object).v4.temporary_base_pt_v1 =
+                        Some((*power, *toughness, timestamp));
+                }
+            }
+        }
+        EffectOp::BoostOtherControlledCreaturesUntilEndOfTurn { power, toughness } => {
+            let objects: Vec<_> = state.players[ctx.controller.index()]
+                .battlefield
+                .iter()
+                .copied()
+                .filter(|&id| crate::engine::object_has_type(state, id, CardType::Creature))
+                .filter(|&id| {
+                    !ctx.ability_source_contract.is_some_and(|source| {
+                        source.source == id
+                            && source.zone_change_count == state.objects.get(id).zone_change_count
+                    })
+                })
+                .map(|object| EffectObjectBinding {
+                    object,
+                    expected_zone: Zone::Battlefield,
+                    expected_zone_change_count: state.objects.get(object).zone_change_count,
+                })
+                .collect();
+            for object in objects {
+                install_temporary_boost(state, object, *power, *toughness, Keywords::NONE);
+            }
+        }
         EffectOp::BoostControlledCreaturesUntilEndOfTurn {
             power,
             toughness,
@@ -17176,6 +17242,21 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
                     }
                     _ => false,
                 }
+        }
+        EffectCond::PlayerControlsPermanentType { player, card_type } => state.players
+            [ctx.resolve_player(*player, state).index()]
+        .battlefield
+        .iter()
+        .any(|&id| crate::engine::object_has_type(state, id, *card_type)),
+        EffectCond::TargetControlledByController(index) => {
+            ctx.target_incarnation_matches(usize::from(*index), state)
+                && matches!(ctx.targets.get(usize::from(*index)), Some(Target::Object(object))
+                    if state.objects.get(*object).controller == ctx.controller)
+        }
+        EffectCond::TargetControllerPoisonAtLeast(index, minimum) => {
+            ctx.target_incarnation_matches(usize::from(*index), state)
+                && matches!(ctx.targets.get(usize::from(*index)), Some(Target::Object(object))
+                    if state.players[state.objects.get(*object).controller.index()].poison_counters.0 >= *minimum)
         }
     }
 }

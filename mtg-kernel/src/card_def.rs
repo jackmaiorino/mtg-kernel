@@ -323,6 +323,8 @@ pub enum Subtype {
     /// MageZero Standard creature completion; prior identities are unchanged.
     Siren,
     Praetor,
+    Ox,
+    Llama,
 }
 
 impl Subtype {
@@ -389,64 +391,155 @@ impl Subtype {
         Subtype::Squirrel,
         Subtype::Insect,
         Subtype::Fish,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Angel,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Noble,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Unicorn,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Beast,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Cleric,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Homunculus,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Merfolk,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Octopus,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Hyena,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Raccoon,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Citizen,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Turtle,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Gremlin,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Dinosaur,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Warlock,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Archer,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Lizard,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Golem,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Boar,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Cyclops,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Shark,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Elk,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Demon,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Dwarf,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Berserker,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Otter,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Elephant,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Construct,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Dog,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Ox,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Llama,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Scout,
         #[cfg(feature = "standard-magezero-fixtures")]
@@ -626,6 +719,8 @@ impl Subtype {
                 | Subtype::Elephant
                 | Subtype::Construct
                 | Subtype::Dog
+                | Subtype::Ox
+                | Subtype::Llama
                 | Subtype::Hyena
                 | Subtype::Raccoon
                 | Subtype::Citizen
@@ -866,6 +961,11 @@ pub enum TargetSpec {
     StandardV1(crate::standard_cards_v1::StandardTargetV1),
     /// Any number of controlled creatures, with placement-time allocations.
     CounterDistribution,
+    CreaturePowerPlusToughnessAtMostFive,
+    NonartifactCreature,
+    ArtifactCreatureEnchantmentOrPlaneswalker,
+    AnotherAttackingCreature,
+    UpToOneOtherCreature,
 }
 
 impl TargetSpec {
@@ -936,6 +1036,11 @@ impl TargetSpec {
             TargetSpec::UpToTwoOtherControlledCreatures => 59,
             TargetSpec::StandardV1(_) => 60,
             TargetSpec::CounterDistribution => 70,
+            TargetSpec::CreaturePowerPlusToughnessAtMostFive => 90,
+            TargetSpec::NonartifactCreature => 91,
+            TargetSpec::ArtifactCreatureEnchantmentOrPlaneswalker => 92,
+            TargetSpec::AnotherAttackingCreature => 93,
+            TargetSpec::UpToOneOtherCreature => 94,
         }
     }
 }
@@ -1501,7 +1606,7 @@ pub enum ManaAbilityConditionDef {
 }
 
 /// What a restricted mana ability's mana may pay for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ManaSpendRestrictionDef {
     /// "Spend this mana only to cast a creature spell."
     CreatureSpell,
@@ -1525,6 +1630,8 @@ pub struct RestrictedManaAbilityDef {
 /// subtypes become the listed ones; the keywords are added.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AnimationDef {
+    /// False for animations with no stated duration, such as Soulstone Sanctuary.
+    pub until_end_of_turn: bool,
     pub power: i16,
     pub toughness: i16,
     pub artifact: bool,

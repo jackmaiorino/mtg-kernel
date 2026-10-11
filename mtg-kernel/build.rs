@@ -3608,6 +3608,49 @@ fn standard_program_for(name: &str) -> Option<Special> {
         "Lightning Strike" => Special::BurnAnyTarget(3),
         "Negate" => Special::CounterTarget(StackSpellFilter::Noncreature),
         "Opt" => Special::ScryThenDraw { scry: 1, draw: 1 },
+        "Sheoldred's Edict" => Special::Program {
+            target: "None",
+            recipe: "SacrificeOpponent(NontokenCreature);mode3=SacrificeOpponent(Planeswalker)",
+            effect: "EffectOp::SacrificeCreature { player: PlayerRef::Opponent, filter: crate::effect::CreatureSacrificeFilter::Nontoken }",
+            mode2: Some(ProgramMode {
+                target: "None",
+                recipe: "SacrificeOpponent(TokenCreature)",
+                effect: "EffectOp::SacrificeCreature { player: PlayerRef::Opponent, filter: crate::effect::CreatureSacrificeFilter::Token }",
+            }),
+        },
+        "Invoke Despair" => program("TargetOpponent", "Sequence(SacrificeCreatureElseLoseTwoDrawOne,SacrificeEnchantmentElseLoseTwoDrawOne,SacrificePlaneswalkerElseLoseTwoDrawOne)", "EffectOp::Sequence(vec![EffectOp::Conditional { cond: EffectCond::PlayerControlsPermanentType { player: PlayerRef::Target(0), card_type: CardType::Creature }, then: Box::new(EffectOp::SacrificeCreature { player: PlayerRef::Target(0), filter: crate::effect::CreatureSacrificeFilter::PermanentType(CardType::Creature) }), else_: Box::new(EffectOp::Sequence(vec![EffectOp::LoseLife { player: PlayerRef::Target(0), amount: 2 }, EffectOp::DrawCards { player: PlayerRef::Controller, count: 1 }])) }, EffectOp::Conditional { cond: EffectCond::PlayerControlsPermanentType { player: PlayerRef::Target(0), card_type: CardType::Enchantment }, then: Box::new(EffectOp::SacrificeCreature { player: PlayerRef::Target(0), filter: crate::effect::CreatureSacrificeFilter::PermanentType(CardType::Enchantment) }), else_: Box::new(EffectOp::Sequence(vec![EffectOp::LoseLife { player: PlayerRef::Target(0), amount: 2 }, EffectOp::DrawCards { player: PlayerRef::Controller, count: 1 }])) }, EffectOp::Conditional { cond: EffectCond::PlayerControlsPermanentType { player: PlayerRef::Target(0), card_type: CardType::Planeswalker }, then: Box::new(EffectOp::SacrificeCreature { player: PlayerRef::Target(0), filter: crate::effect::CreatureSacrificeFilter::PermanentType(CardType::Planeswalker) }), else_: Box::new(EffectOp::Sequence(vec![EffectOp::LoseLife { player: PlayerRef::Target(0), amount: 2 }, EffectOp::DrawCards { player: PlayerRef::Controller, count: 1 }])) }])"),
+        "Cut Down" => program("CreaturePowerPlusToughnessAtMostFive", "DestroyTargetCreaturePowerPlusToughnessAtMostFive", DESTROY_TARGET0_ON_BATTLEFIELD),
+        "Go for the Throat" => program("NonartifactCreature", "DestroyTargetNonartifactCreature", DESTROY_TARGET0_ON_BATTLEFIELD),
+        "Anoint with Affliction" => program(
+            "Creature",
+            "Conditional(TargetManaValueAtMost(0,3),ExileTarget,Conditional(TargetControllerPoisonAtLeast(0,3),ExileTarget,NoOp))",
+            "EffectOp::Conditional { cond: EffectCond::TargetManaValueAtMost(0, 3), then: Box::new(EffectOp::MoveObject { object: ObjectRef::Target(0), to_zone: Zone::Exile }), else_: Box::new(EffectOp::Conditional { cond: EffectCond::TargetControllerPoisonAtLeast(0, 3), then: Box::new(EffectOp::MoveObject { object: ObjectRef::Target(0), to_zone: Zone::Exile }), else_: Box::new(EffectOp::Sequence(vec![])) }) }",
+        ),
+        "Gleeful Demolition" => program(
+            "ArtifactPermanent",
+            "Conditional(TargetControlledByController(0),Sequence(DestroyTarget,CreateThreePhyrexianGoblins),DestroyTarget)",
+            "EffectOp::Conditional { cond: EffectCond::TargetControlledByController(0), then: Box::new(EffectOp::Sequence(vec![EffectOp::DestroyObject { object: ObjectRef::Target(0) }, EffectOp::CreateTokensDynamic { token_def: crate::card_def::card_id_by_name(\"Phyrexian Goblin Token\").expect(\"Phyrexian Goblin Token in CARD_DEFS\"), controller: PlayerRef::Controller, count: DynamicValueDef::Fixed(3), tapped: false }])), else_: Box::new(EffectOp::DestroyObject { object: ObjectRef::Target(0) }) }",
+        ),
+        "Sleight of Hand" => program(
+            "None",
+            "LookTopPickToHandBottomRest(Controller,Fixed(2),pick=1,rest=Chosen)",
+            "EffectOp::LookTopPickToHandBottomRest { player: PlayerRef::Controller, count: crate::effect::LibraryLookCount::Fixed(2), pick: 1, choose_rest_order: true }",
+        ),
+        "Stock Up" => program(
+            "None",
+            "LookTopPickToHandBottomRest(Controller,Fixed(5),pick=2,rest=Chosen)",
+            "EffectOp::LookTopPickToHandBottomRest { player: PlayerRef::Controller, count: crate::effect::LibraryLookCount::Fixed(5), pick: 2, choose_rest_order: true }",
+        ),
+        "Shore Up" => program(
+            "ControlledCreature",
+            "Sequence(PumpTarget(1,1),GrantHexproofTarget,UntapTarget)",
+            "EffectOp::Sequence(vec![EffectOp::PumpTargetUntilEndOfTurnDynamic { target: TargetRef::Target(0), power: DynamicValueDef::Fixed(1), toughness: DynamicValueDef::Fixed(1) }, EffectOp::GrantKeywordTargetUntilEndOfTurn { object: ObjectRef::Target(0), keyword: Keywords::HEXPROOF }, EffectOp::UntapObject { object: ObjectRef::Target(0) }])",
+        ),
+        "Big Score" => program(
+            "None",
+            "Sequence(DrawCards(Controller,2),CreateTokens(Treasure,2))",
+            "EffectOp::Sequence(vec![EffectOp::DrawCards { player: PlayerRef::Controller, count: 2 }, EffectOp::CreateTokensDynamic { token_def: crate::card_def::card_id_by_name(\"Treasure Token\").expect(\"Treasure Token in CARD_DEFS\"), controller: PlayerRef::Controller, count: DynamicValueDef::Fixed(2), tapped: false }])",
+        ),
         // Counter target spell. If that spell is countered this way, exile it
         // instead of putting it into its owner's graveyard.
         "Dissipate" => program(
@@ -3717,6 +3760,10 @@ fn program_target_spec_src(target: &str) -> &'static str {
             "TargetSpec::ControlledCreatureThenOpponentCreature"
         }
         "NonOutlawCreature" => "TargetSpec::NonOutlawCreature",
+        "CreaturePowerPlusToughnessAtMostFive" => {
+            "TargetSpec::CreaturePowerPlusToughnessAtMostFive"
+        }
+        "NonartifactCreature" => "TargetSpec::NonartifactCreature",
         "CreatureToughnessAtLeastFour" => "TargetSpec::CreatureToughnessAtLeastFour",
         "CreatureEnchantmentOrPlaneswalker" => "TargetSpec::CreatureEnchantmentOrPlaneswalker",
         other => panic!("unsupported program target spec {other}"),
@@ -4405,7 +4452,7 @@ fn alt_cost_for(name: &str) -> &'static str {
 /// cast this spell, discard a card.").
 fn additional_cost_for(name: &str) -> &'static str {
     match name {
-        "Grab the Prize" | "Thrill of Possibility" => "Some(&[CostComponent::DiscardCards(1)])",
+        "Grab the Prize" | "Thrill of Possibility" | "Big Score" => "Some(&[CostComponent::DiscardCards(1)])",
         "Arbiter of Woe" => "Some(&[CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::Creature }])",
         "Fanatical Offering" | "Reckoner's Bargain" | "Eviscerator's Insight" => {
             "Some(&[CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::ArtifactOrCreature }])"
@@ -6064,6 +6111,9 @@ fn mode2_for(name: &str) -> String {
 /// half runs first from `standard_keywords_v1::spree_mode_prelude`, since a
 /// counter-unless-pays program must stay rooted.
 fn mode3_for(name: &str) -> String {
+    if name == "Sheoldred's Edict" {
+        return "Some(ModeDef { target_spec: TargetSpec::None, effect: mode3_effect_sheoldreds_edict })".to_string();
+    }
     match special_for(name) {
         Special::PiracyCharm => "Some(ModeDef { target_spec: TargetSpec::AnyPlayer, effect: mode3_effect_piracy_charm_discard })".to_string(),
         Special::ThrabenCharm => "Some(ModeDef { target_spec: TargetSpec::UpToTwoPlayers, effect: mode3_effect_thraben_charm_exile_graveyards })".to_string(),
@@ -6276,6 +6326,13 @@ fn delve_for(name: &str) -> bool {
 /// event, target, and effect part of the generated card database identity.
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Restless Prairie" => "attacks:other_controlled_creatures_plus_one_one_eot",
+        "Restless Vinestalk" => "attacks:up_to_one_other_creature_base_three_three_eot",
+        "Restless Bivouac" => "attacks:controlled_creature_plus_one_counter:1",
+        "Restless Cottage" => "attacks:create_food:exile_up_to_one_target_graveyard_card",
+        "Restless Fortress" => "attacks:defending_player_loses_two:gain_two",
+        "Restless Reef" => "attacks:target_player_mills_four",
+        "Restless Ridgeline" => "attacks:another_attacker_plus_two_zero:untap",
         "Wardens of the Cycle" => "controller_end_step:intervening_if_creature_died_this_turn:mode_at_placement:gain_controller_life:2|draw_controller:1_then_lose_controller_life:1:recheck_morbid_in_each_branch:untargeted",
         "Archmage of Runes" => "cast_instant_or_sorcery:draw_controller:1",
         "Billowing Shriekmass" => "etb:mill_controller_library:3:private_ordering_exact_incarnations",
@@ -8678,6 +8735,9 @@ fn codegen(cards: &[CardJson]) -> String {
             .unwrap();
             writeln!(out, "    Some({effect})").unwrap();
             writeln!(out, "}}").unwrap();
+            if card.name == "Sheoldred's Edict" {
+                writeln!(out, "fn mode3_effect_sheoldreds_edict() -> EffectOp {{ EffectOp::SacrificeCreature {{ player: PlayerRef::Opponent, filter: crate::effect::CreatureSacrificeFilter::PermanentType(CardType::Planeswalker) }} }}").unwrap();
+            }
             if let Some(mode) = mode2 {
                 writeln!(out, "fn mode2_effect_program_{suffix}() -> EffectOp {{").unwrap();
                 writeln!(out, "    {}", mode.effect).unwrap();
@@ -9975,6 +10035,8 @@ fn subtype_variant(t: &str) -> &'static str {
         "Phyrexian" => "Subtype::Phyrexian",
         "Construct" => "Subtype::Construct",
         "Dog" => "Subtype::Dog",
+        "Ox" => "Subtype::Ox",
+        "Llama" => "Subtype::Llama",
         "Horror" => "Subtype::Horror",
         "Nightmare" => "Subtype::Nightmare",
         "Clue" => "Subtype::Clue",

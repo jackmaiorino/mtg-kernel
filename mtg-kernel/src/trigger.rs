@@ -24,6 +24,8 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "standard-magezero-fixtures")]
 mod standard_family_g_v1;
+#[cfg(feature = "standard-magezero-fixtures")]
+mod standard_lands_v2;
 
 /// Trigger conditions this increment's kernel can match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3244,6 +3246,20 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         #[cfg(feature = "standard-magezero-fixtures")]
         "Sheoldred, the Apocalypse" => &standard_family_g_v1::SHEOLDRED_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
+        "Restless Bivouac" => &standard_lands_v2::BIVOUAC,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Restless Cottage" => &standard_lands_v2::COTTAGE,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Restless Fortress" => &standard_lands_v2::FORTRESS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Restless Prairie" => &standard_lands_v2::PRAIRIE,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Restless Vinestalk" => &standard_lands_v2::VINESTALK,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Restless Reef" => &standard_lands_v2::REEF,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Restless Ridgeline" => &standard_lands_v2::RIDGELINE,
+        #[cfg(feature = "standard-magezero-fixtures")]
         "Novice Inspector" => &standard_family_g_v1::NOVICE_INSPECTOR_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Sentinel of the Nameless City" => {
@@ -3285,6 +3301,11 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         return TargetSpec::None;
     };
     match card.name {
+        "Restless Bivouac" => TargetSpec::ControlledCreature,
+        "Restless Cottage" => TargetSpec::UpToOneCardInGraveyards,
+        "Restless Reef" => TargetSpec::AnyPlayer,
+        "Restless Vinestalk" => TargetSpec::UpToOneOtherCreature,
+        "Restless Ridgeline" => TargetSpec::AnotherAttackingCreature,
         "Celestial Armor" => TargetSpec::ControlledCreature,
         "Sun-Blessed Healer" => TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(2),
         "Elvish Regrower" => TargetSpec::PermanentCardInOwnGraveyard,

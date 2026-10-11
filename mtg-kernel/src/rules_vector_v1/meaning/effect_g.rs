@@ -30,7 +30,12 @@ fn plain_counter(player: RelF, obj: ObjF, amount: AmtF, out: &mut Collector) {
 pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
         EffectOp::DistributePlusOneCounters { .. } => {
-            plain_counter(RelF::You, ObjF::Typed(CardTypeF::Creature), AmtF::Dynamic, out);
+            plain_counter(
+                RelF::You,
+                ObjF::Typed(CardTypeF::Creature),
+                AmtF::Dynamic,
+                out,
+            );
             out.control(ControlF::ChooseBranch);
         }
         EffectOp::BindEntrantOutgrowsSourceThen { then } => {

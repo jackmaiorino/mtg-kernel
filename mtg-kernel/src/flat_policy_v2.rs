@@ -1863,6 +1863,18 @@ impl FlatDecisionEncoderV2 {
         observation: &impl FlatCommonObservation,
     ) -> Result<(), FlatDecisionErrorV2> {
         let observation = observation.flat_common();
+        if observation.projection.poison_counters.is_some()
+            || observation.projection.restricted_mana.is_some()
+            || observation
+                .projection
+                .surface
+                .battlefield
+                .iter()
+                .flatten()
+                .any(|card| card.characteristics.base_pt_until_end_of_turn.is_some())
+        {
+            return Err(FlatDecisionErrorV2::ObservationContract);
+        }
         let actor = observation.acting_player;
         let p = &observation.projection.surface;
         let seats = [actor, opponent(actor)];
@@ -5976,6 +5988,7 @@ mod tests {
             skip_next_untap: false,
             goaded_by: Vec::new(),
             characteristics: CardCharacteristicsV2 {
+                base_pt_until_end_of_turn: None,
                 type_flags: CardTypeFlagsV2 {
                     land: false,
                     creature: true,

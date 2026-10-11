@@ -272,6 +272,20 @@ pub(crate) fn effect_cond(cond: &EffectCond, env: &Env, out: &mut Collector) {
             // Full legality also includes captured incarnation and protection.
             out.atoms.push(Atom::Opaque);
         }
+        EffectCond::PlayerControlsPermanentType { player, card_type } => {
+            let _ = (player, card_type);
+            out.atoms.push(Atom::Opaque);
+        }
+        EffectCond::TargetControlledByController(slot)
+        | EffectCond::TargetControllerPoisonAtLeast(slot, _) => {
+            out.read(
+                RelF::ObjectController,
+                None,
+                Some(env.target_obj(*slot)),
+                AggF::Characteristic,
+            );
+            out.atoms.push(Atom::Opaque);
+        }
     }
 }
 

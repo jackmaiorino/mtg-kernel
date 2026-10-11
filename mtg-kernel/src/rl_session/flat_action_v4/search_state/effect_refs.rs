@@ -131,6 +131,8 @@ impl Scan<'_> {
             | BindOilCounterToTriggerSource
             | BindTemporaryBoostToTriggerSource { .. }
             | BoostControlledCreaturesUntilEndOfTurn { .. }
+            | SetTargetBasePowerToughnessUntilEndOfTurn { .. }
+            | BoostOtherControlledCreaturesUntilEndOfTurn { .. }
             | GainLifeByAttackingSubtypeCount { .. }
             | CreatureTargetPowerDamage { .. }
             | PreventCombatDamageToTargetThisTurn { .. }

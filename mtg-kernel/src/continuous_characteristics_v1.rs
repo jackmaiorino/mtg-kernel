@@ -89,3 +89,23 @@ pub(crate) fn animation(
     }
     definition.animation.map(|animation| (animation, timestamp))
 }
+
+/// Layer 7b settings use timestamps. Characteristic-defining abilities (7a)
+/// are consulted only when no setting applies.
+pub(crate) fn base_power_toughness(state: &GameState, id: ObjectId) -> Option<(i16, i16)> {
+    let object = state.objects.try_get(id)?;
+    let mut settings = Vec::new();
+    if let Some((override_, timestamp)) = creature_override(state, id) {
+        settings.push((override_.power, override_.toughness, timestamp));
+    }
+    if let Some((animation, timestamp)) = animation(state, id) {
+        settings.push((animation.power, animation.toughness, timestamp));
+    }
+    if object.zone == Zone::Battlefield {
+        settings.extend(object.v4.temporary_base_pt_v1);
+    }
+    settings
+        .into_iter()
+        .max_by_key(|setting| setting.2)
+        .map(|(power, toughness, _)| (power, toughness))
+}

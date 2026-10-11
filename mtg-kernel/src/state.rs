@@ -263,6 +263,9 @@ pub struct ObjectStateV4 {
     /// (every animation lasts until end of turn) and by every zone change.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub animation_timestamp: Option<u64>,
+    /// Latest layer-7b base setting until cleanup, kept on this incarnation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temporary_base_pt_v1: Option<(i16, i16, u64)>,
     /// True from this incarnation's battlefield entry until the next untap
     /// step. `entered_battlefield_turn` is a round number shared by both
     /// players' turns, so it cannot answer "entered this turn" (Mirrex).
@@ -316,6 +319,10 @@ impl Hash for ObjectStateV4 {
         }
         if self.enduring_enchantment_v1 {
             "enduring-enchantment/v1".hash(state);
+        }
+        if let Some(setting) = self.temporary_base_pt_v1 {
+            "temporary-base-pt/v1".hash(state);
+            setting.hash(state);
         }
         if let Some(timestamp) = self.animation_timestamp {
             "animation_timestamp/v1".hash(state);
@@ -381,6 +388,7 @@ impl ObjectStateV4 {
             time_counters_v1: 0,
             enduring_enchantment_v1: false,
             animation_timestamp: None,
+            temporary_base_pt_v1: None,
             entered_battlefield_this_turn: false,
         }
     }
@@ -618,6 +626,11 @@ pub struct PlayerState {
     pub graveyard: Vec<ObjectId>,
     /// [W, U, B, R, G, C].
     pub mana_pool: [u8; 6],
+    #[serde(
+        default,
+        skip_serializing_if = "crate::mana::RestrictedManaPoolV1::is_empty"
+    )]
+    pub restricted_mana_pool: crate::mana::RestrictedManaPoolV1,
     pub has_lost: bool,
     pub lands_played_this_turn: u8,
     /// Set by `event::commit` when a `Draw` was attempted against an empty
@@ -669,6 +682,7 @@ impl PlayerState {
             battlefield: Vec::new(),
             graveyard: Vec::new(),
             mana_pool: [0; 6],
+            restricted_mana_pool: Default::default(),
             has_lost: false,
             lands_played_this_turn: 0,
             drew_from_empty: false,
@@ -1094,6 +1108,11 @@ pub fn stack_target_contract_is_structurally_valid(
                     | TargetSpec::ArtifactEnchantmentOrFlyingCreature
                     | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour
                     | TargetSpec::OpponentNonlandPermanent
+                    | TargetSpec::CreaturePowerPlusToughnessAtMostFive
+                    | TargetSpec::NonartifactCreature
+                    | TargetSpec::UpToOneOtherCreature
+                    | TargetSpec::AnotherAttackingCreature
+                    | TargetSpec::ArtifactCreatureEnchantmentOrPlaneswalker
                     | TargetSpec::NonOutlawCreature
                     | TargetSpec::CreatureToughnessAtLeastFour
                     | TargetSpec::CreatureEnchantmentOrPlaneswalker

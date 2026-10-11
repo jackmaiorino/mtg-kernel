@@ -2471,7 +2471,7 @@
     },
     {
       "name": "Mirrex",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -2510,7 +2510,7 @@
     },
     {
       "name": "Rockface Village",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -5240,6 +5240,703 @@
         "characteristic_defining_power_toughness"
       ],
       "java_file": "Mage.Sets/src/mage/cards/r/RegalBunnicorn.java"
+    },
+    {
+      "name": "Abrade",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "modal",
+        "damage_target_creature",
+        "artifact_destruction"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/Abrade.java"
+    },
+    {
+      "name": "Boltwave",
+      "engine_capability": "full",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "damage_each_opponent"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/Boltwave.java"
+    },
+    {
+      "name": "Essence Scatter",
+      "engine_capability": "full",
+      "mana_cost": "{1}{U}",
+      "mana_value": 2,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoU.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "counterspell"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/EssenceScatter.java"
+    },
+    {
+      "name": "Snakeskin Veil",
+      "engine_capability": "full",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "plus_one_counter",
+        "grant_hexproof"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SnakeskinVeil.java"
+    },
+    {
+      "name": "Sleight of Hand",
+      "engine_capability": "full",
+      "mana_cost": "{U}",
+      "mana_value": 1,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "spell_effect"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SleightOfHand.java"
+    },
+    {
+      "name": "Stock Up",
+      "engine_capability": "full",
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "spell_effect"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/StockUp.java"
+    },
+    {
+      "name": "Shore Up",
+      "engine_capability": "full",
+      "mana_cost": "{U}",
+      "mana_value": 1,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "spell_effect"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/ShoreUp.java"
+    },
+    {
+      "name": "Big Score",
+      "engine_capability": "full",
+      "mana_cost": "{3}{R}",
+      "mana_value": 4,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "spell_effect"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BigScore.java"
+    },
+    {
+      "name": "Cut Down",
+      "engine_capability": "full",
+      "mana_cost": "{B}",
+      "mana_value": 1,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-BW.dck",
+        "Standard16-GB.dck",
+        "Standard16-RB.dck",
+        "Standard16-UB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "destroy"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CutDown.java"
+    },
+    {
+      "name": "Go for the Throat",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-BW.dck",
+        "Standard16-GB.dck",
+        "Standard16-RB.dck",
+        "Standard16-UB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "destroy"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GoForTheThroat.java"
+    },
+    {
+      "name": "Anoint with Affliction",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-BW.dck",
+        "Standard16-GB.dck",
+        "Standard16-UB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "spell_effect"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AnointWithAffliction.java"
+    },
+    {
+      "name": "Gleeful Demolition",
+      "engine_capability": "full",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "spell_effect"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GleefulDemolition.java"
+    },
+    {
+      "name": "Phyrexian Goblin Token",
+      "object_name": "Phyrexian Goblin",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Phyrexian",
+        "Goblin"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "token"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/PhyrexianGoblinToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Soulstone Sanctuary",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C"
+      ],
+      "decks": [
+        "Standard-MonoB.dck",
+        "Standard16-GB.dck",
+        "Standard16-RG.dck",
+        "Standard16-UB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "animation"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SoulstoneSanctuary.java"
+    },
+    {
+      "name": "Otawara, Soaring City",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "U"
+      ],
+      "decks": [
+        "Standard16-UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "channel"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/o/OtawaraSoaringCity.java"
+    },
+    {
+      "name": "Restless Bivouac",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "R",
+        "W"
+      ],
+      "decks": [
+        "Standard16-RW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "enters_tapped",
+        "animation",
+        "attack_trigger"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RestlessBivouac.java"
+    },
+    {
+      "name": "Restless Cottage",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "B",
+        "G"
+      ],
+      "decks": [
+        "Standard16-GB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "enters_tapped",
+        "animation",
+        "attack_trigger"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RestlessCottage.java"
+    },
+    {
+      "name": "Restless Fortress",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "W",
+        "B"
+      ],
+      "decks": [
+        "Standard16-BW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "enters_tapped",
+        "animation",
+        "attack_trigger"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RestlessFortress.java"
+    },
+    {
+      "name": "Restless Reef",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "U",
+        "B"
+      ],
+      "decks": [
+        "Standard16-UB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "enters_tapped",
+        "animation",
+        "attack_trigger"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RestlessReef.java"
+    },
+    {
+      "name": "Restless Ridgeline",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "R",
+        "G"
+      ],
+      "decks": [
+        "Standard16-RG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "enters_tapped",
+        "animation",
+        "attack_trigger"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RestlessRidgeline.java"
+    },
+    {
+      "name": "Restless Prairie",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "G",
+        "W"
+      ],
+      "decks": [
+        "Standard16-GW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "enters_tapped",
+        "animation",
+        "attack_trigger"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RestlessPrairie.java"
+    },
+    {
+      "name": "Restless Vinestalk",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "G",
+        "U"
+      ],
+      "decks": [
+        "Standard16-UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "enters_tapped",
+        "animation",
+        "attack_trigger"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RestlessVinestalk.java"
+    },
+    {
+      "name": "Sheoldred's Edict",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "sacrifice"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SheoldredsEdict.java"
+    },
+    {
+      "name": "Invoke Despair",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}{B}{B}{B}",
+      "mana_value": 5,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "sacrifice"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/i/InvokeDespair.java"
     }
   ]
 }

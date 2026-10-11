@@ -21,6 +21,22 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                     .duration(DurF::EndOfTurn),
             );
         }
+        EffectOp::SetTargetBasePowerToughnessUntilEndOfTurn { index, .. } => {
+            out.effect(
+                EffectAtom::new(EvF::SetCharacteristic)
+                    .obj(env.target_obj(*index))
+                    .duration(DurF::EndOfTurn),
+            );
+        }
+        EffectOp::BoostOtherControlledCreaturesUntilEndOfTurn { power, .. } => {
+            out.effect(
+                EffectAtom::new(EvF::SetCharacteristic)
+                    .player(RelF::You)
+                    .obj(ObjF::Typed(CardTypeF::Creature))
+                    .amount(AmtF::fixed(*power))
+                    .duration(DurF::EndOfTurn),
+            );
+        }
         _ => unreachable!("dispatched to the wrong slice"),
     }
 }

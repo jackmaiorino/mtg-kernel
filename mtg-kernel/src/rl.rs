@@ -285,6 +285,8 @@ pub struct KeywordFlagsV2 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CardCharacteristicsV2 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_pt_until_end_of_turn: Option<[i16; 2]>,
     pub type_flags: CardTypeFlagsV2,
     pub base_power: Option<i32>,
     pub base_toughness: Option<i32>,
@@ -960,6 +962,11 @@ pub struct PublicFoundationsCombatV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublicObservationProjectionV5 {
+    /// Public counters, omitted in games with no poison to preserve frozen observations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poison_counters: Option<[u16; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restricted_mana: Option<[Vec<PublicRestrictedManaV1>; 2]>,
     #[serde(flatten)]
     pub surface: PublicObservationProjectionV2,
     pub policy_surface_context: PolicySurfaceContextV5,
@@ -967,6 +974,15 @@ pub struct PublicObservationProjectionV5 {
     pub foundations_combat: Option<PublicFoundationsCombatV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub london_mulligans: Option<PublicLondonMulligansV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicRestrictedManaV1 {
+    pub color: ManaColor,
+    pub restriction: crate::card_def::ManaSpendRestrictionDef,
+    pub source_card_def: u16,
+    /// A current public permanent reference, or None after the producer left.
+    pub source: Option<CardStableRefV1>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1935,6 +1951,8 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
         substep_index,
         substep_count,
         projection: PublicObservationProjectionV5 {
+            poison_counters: public_poison_counters_v1(state),
+            restricted_mana: public_restricted_mana_v1(state)?,
             surface: base.projection,
             policy_surface_context,
             london_mulligans: public_london_mulligans_v1(state),
@@ -1969,6 +1987,40 @@ fn public_foundations_combat_v1(state: &GameState) -> Result<Option<PublicFounda
             })
         })
         .transpose()
+}
+
+fn public_restricted_mana_v1(
+    state: &GameState,
+) -> Result<Option<[Vec<PublicRestrictedManaV1>; 2]>> {
+    let mut pools = [Vec::new(), Vec::new()];
+    for (index, pool) in pools.iter_mut().enumerate() {
+        for unit in &state.players[index].restricted_mana_pool.0 {
+            let source = state
+                .objects
+                .try_get(unit.source.object)
+                .filter(|object| {
+                    object.zone == Zone::Battlefield
+                        && object.zone_change_count == unit.source.zone_change_count
+                })
+                .map(|_| card_ref(state, unit.source.object))
+                .transpose()?;
+            pool.push(PublicRestrictedManaV1 {
+                color: unit.color,
+                restriction: unit.restriction,
+                source_card_def: unit.source_card_def,
+                source,
+            });
+        }
+    }
+    Ok(pools.iter().any(|pool| !pool.is_empty()).then_some(pools))
+}
+
+fn public_poison_counters_v1(state: &GameState) -> Option<[u16; 2]> {
+    let counts = [
+        state.players[0].poison_counters.0,
+        state.players[1].poison_counters.0,
+    ];
+    (counts != [0, 0]).then_some(counts)
 }
 
 fn public_london_mulligans_v1(state: &GameState) -> Option<PublicLondonMulligansV1> {
@@ -2113,6 +2165,8 @@ fn build_policy_observation_v6(request: PolicyObservationBuildV5<'_>) -> Result<
         substep_index,
         substep_count,
         projection: PublicObservationProjectionV5 {
+            poison_counters: public_poison_counters_v1(state),
+            restricted_mana: public_restricted_mana_v1(state)?,
             surface: base.projection,
             policy_surface_context,
             foundations_combat: public_foundations_combat_v1(state)?,
@@ -5653,6 +5707,12 @@ fn card_characteristics_v2(state: &GameState, id: ObjectId) -> CardCharacteristi
     let base_toughness = engine::effective_base_toughness(state, id);
     let has_pt = base_power.is_some() || base_toughness.is_some();
     CardCharacteristicsV2 {
+        base_pt_until_end_of_turn: state
+            .objects
+            .get(id)
+            .v4
+            .temporary_base_pt_v1
+            .map(|(power, toughness, _)| [power, toughness]),
         type_flags: CardTypeFlagsV2 {
             land: engine::object_has_type(state, id, CardType::Land),
             creature: engine::object_has_type(state, id, CardType::Creature),

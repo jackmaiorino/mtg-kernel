@@ -285,11 +285,21 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
         ),
         // A creature without an outlaw type. No creature-type facet exists;
         // the nearest class is "a creature".
-        TargetSpec::NonOutlawCreature => object(out, creature(), None, ZoneF::Battlefield),
+        TargetSpec::CreaturePowerPlusToughnessAtMostFive
+        | TargetSpec::NonartifactCreature
+        | TargetSpec::UpToOneOtherCreature
+        | TargetSpec::AnotherAttackingCreature
+        | TargetSpec::NonOutlawCreature => object(out, creature(), None, ZoneF::Battlefield),
         // A creature with effective toughness >= 4. The toughness
         // requirement has no facet; the nearest class is "a creature".
         TargetSpec::CreatureToughnessAtLeastFour => {
             object(out, creature(), None, ZoneF::Battlefield)
+        }
+        TargetSpec::ArtifactCreatureEnchantmentOrPlaneswalker => {
+            object(out, creature(), None, ZoneF::Battlefield);
+            object(out, typed(CardType::Artifact), None, ZoneF::Battlefield);
+            object(out, typed(CardType::Enchantment), None, ZoneF::Battlefield);
+            object(out, typed(CardType::Planeswalker), None, ZoneF::Battlefield);
         }
         TargetSpec::CreatureEnchantmentOrPlaneswalker => {
             object(out, creature(), None, ZoneF::Battlefield);
@@ -421,6 +431,7 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
         | TargetSpec::CreatureOrPlaneswalker
         | TargetSpec::ArtifactEnchantmentOrFlyingCreature
         | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour
+        | TargetSpec::ArtifactCreatureEnchantmentOrPlaneswalker
         | TargetSpec::CreatureEnchantmentOrPlaneswalker => {
             let _ = slot; // One target slot.
             ObjF::Permanent
@@ -452,6 +463,10 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
         | TargetSpec::NonblackCreature
         | TargetSpec::ControlledCreatureThenOpponentCreature
         | TargetSpec::AttackingOrBlockingCreature
+        | TargetSpec::CreaturePowerPlusToughnessAtMostFive
+        | TargetSpec::NonartifactCreature
+        | TargetSpec::UpToOneOtherCreature
+        | TargetSpec::AnotherAttackingCreature
         | TargetSpec::NonOutlawCreature
         | TargetSpec::CreatureToughnessAtLeastFour => {
             let _ = slot; // Every slot is a creature.

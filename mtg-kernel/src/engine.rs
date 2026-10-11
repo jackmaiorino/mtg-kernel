@@ -1606,8 +1606,13 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::ArtifactEnchantmentOrFlyingCreature
         | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour
         | TargetSpec::OpponentNonlandPermanent
+        | TargetSpec::CreaturePowerPlusToughnessAtMostFive
+        | TargetSpec::NonartifactCreature
+        | TargetSpec::UpToOneOtherCreature
+        | TargetSpec::AnotherAttackingCreature
         | TargetSpec::NonOutlawCreature
         | TargetSpec::CreatureToughnessAtLeastFour
+        | TargetSpec::ArtifactCreatureEnchantmentOrPlaneswalker
         | TargetSpec::CreatureEnchantmentOrPlaneswalker
         | TargetSpec::AnotherControlledCreature
         | TargetSpec::ControlledCreatureWithSubtype(_)
@@ -1630,7 +1635,8 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
 
 fn target_min_count(spec: TargetSpec) -> u8 {
     match spec {
-        TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
+        TargetSpec::UpToOneOtherCreature
+        | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
         | TargetSpec::UpToTwoPlayers
         | TargetSpec::UpToTwoCardsInGraveyards
@@ -2924,6 +2930,35 @@ fn legal_targets_for_controller_from_source(
             })
             .map(Target::Object)
             .collect(),
+        TargetSpec::CreaturePowerPlusToughnessAtMostFive => battlefield_objects(state)
+            .filter(|&id| {
+                object_has_type(state, id, CardType::Creature)
+                    && effective_power(state, id) + effective_toughness(state, id) <= 5
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::NonartifactCreature => battlefield_objects(state)
+            .filter(|&id| {
+                object_has_type(state, id, CardType::Creature)
+                    && !object_has_type(state, id, CardType::Artifact)
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::UpToOneOtherCreature => battlefield_objects(state)
+            .filter(|&id| {
+                object_has_type(state, id, CardType::Creature)
+                    && source.is_none_or(|source| id != source.object)
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::AnotherAttackingCreature => battlefield_objects(state)
+            .filter(|&id| {
+                object_has_type(state, id, CardType::Creature)
+                    && state.engine.combat.attackers.contains(&id)
+                    && source.is_none_or(|source| id != source.object)
+            })
+            .map(Target::Object)
+            .collect(),
         TargetSpec::NonOutlawCreature => battlefield_objects(state)
             .filter(|&id| {
                 object_has_type(state, id, CardType::Creature)
@@ -2937,6 +2972,19 @@ fn legal_targets_for_controller_from_source(
             .filter(|&id| {
                 object_has_type(state, id, CardType::Creature)
                     && effective_toughness(state, id) >= 4
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::ArtifactCreatureEnchantmentOrPlaneswalker => battlefield_objects(state)
+            .filter(|&id| {
+                [
+                    CardType::Artifact,
+                    CardType::Creature,
+                    CardType::Enchantment,
+                    CardType::Planeswalker,
+                ]
+                .into_iter()
+                .any(|kind| object_has_type(state, id, kind))
             })
             .map(Target::Object)
             .collect(),
@@ -7155,6 +7203,15 @@ pub(crate) fn available_mana_ability_choices_into(
             }
         }
     }
+    if primary_payable {
+        for restricted in def.restricted_mana_abilities {
+            for &color in restricted.colors {
+                if !out.contains(color) {
+                    out.push(color);
+                }
+            }
+        }
+    }
 }
 
 /// Exact currently-payable color choices across every printed mana ability
@@ -7273,6 +7330,44 @@ fn activate_mana_ability_for(
     let card_def = state.objects.get(source).card_def;
     let chosen_color = state.objects.get(source).v4.chosen_color;
     let definition = &card_def::CARD_DEFS[card_def as usize];
+    let primary_choices = definition.primary_mana_ability_choices(chosen_color);
+    if !primary_choices.contains(&choice)
+        && !definition
+            .additional_mana_abilities
+            .iter()
+            .any(|ability| ability.colors.contains(&choice))
+    {
+        if let Some(restricted) = definition
+            .restricted_mana_abilities
+            .iter()
+            .find(|ability| ability.colors.contains(&choice))
+        {
+            if cost_target.is_some() {
+                return Err("restricted tap mana has no additional object cost".into());
+            }
+            let unit = mana::RestrictedManaUnitV1 {
+                color: choice,
+                restriction: restricted.restriction,
+                source: ObjectLinkV4 {
+                    object: source,
+                    zone_change_count: state.objects.get(source).zone_change_count,
+                },
+                source_card_def: card_def,
+            };
+            event::propose_and_commit(state, ProposedEvent::tap(source));
+            event::propose_and_commit(state, ProposedEvent::mana_add(player, vec![choice]));
+            state.players[player.index()].mana_pool[choice.pool_index()] -= 1;
+            state.players[player.index()]
+                .restricted_mana_pool
+                .0
+                .push(unit);
+            state.engine.priority_passes = [false, false];
+            state.engine.mana_ability_activations += 1;
+            state.engine.last_mana_ability_activator = Some(player);
+            collect_and_queue_triggers(state);
+            return Ok(());
+        }
+    }
     let ability_index = definition
         .mana_ability_index(choice, chosen_color)
         .ok_or_else(|| format!("{source} cannot produce {choice:?}"))?;
@@ -10984,7 +11079,9 @@ fn validate_pending_trigger(state: &GameState, pending: &PendingTrigger) -> Resu
     for &target in &pending.targets {
         let legal = if matches!(
             expected,
-            TargetSpec::UpToOneOtherControlledPermanent
+            TargetSpec::UpToOneOtherCreature
+                | TargetSpec::AnotherAttackingCreature
+                | TargetSpec::UpToOneOtherControlledPermanent
                 | TargetSpec::UpToTwoOtherControlledCreatures
         ) {
             completable_next_targets_for_controller_and_source(
@@ -12491,7 +12588,9 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
 fn advance_step(state: &mut GameState) {
     if state.step == Step::CombatDamage && crate::combat_damage_v1::needs_normal_wave(state) {
         state.players[0].mana_pool = [0; 6];
+        state.players[0].restricted_mana_pool.0.clear();
         state.players[1].mana_pool = [0; 6];
+        state.players[1].restricted_mana_pool.0.clear();
         crate::combat_damage_v1::start_normal_wave(state);
         reset_priority(state);
         return;
@@ -12557,7 +12656,9 @@ fn advance_step(state: &mut GameState) {
 
     state.step = next;
     state.players[0].mana_pool = [0; 6];
+    state.players[0].restricted_mana_pool.0.clear();
     state.players[1].mana_pool = [0; 6];
+    state.players[1].restricted_mana_pool.0.clear();
     run_step_entry_action(state, next);
     reset_priority(state);
 }
@@ -12799,8 +12900,14 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             for (_, obj) in state.objects.iter_mut() {
                 obj.damage = 0;
                 obj.v4.deathtouch_damage = false;
-                // 514.2: every land animation lasts until end of turn.
-                obj.v4.animation_timestamp = None;
+                obj.v4.temporary_base_pt_v1 = None;
+                // Only effects with an explicit duration expire at cleanup.
+                if card_def::CARD_DEFS[obj.card_def as usize]
+                    .animation
+                    .is_some_and(|animation| animation.until_end_of_turn)
+                {
+                    obj.v4.animation_timestamp = None;
+                }
             }
             state.engine.until_end_of_turn.clear();
             state.engine.active_replacements.retain(|replacement| {
@@ -13172,13 +13279,9 @@ pub fn effective_base_power(state: &GameState, id: ObjectId) -> Option<i32> {
             None
         }
     };
-    crate::continuous_characteristics_v1::creature_override(state, id)
-        .map(|(characteristics, _)| i32::from(characteristics.power))
+    crate::continuous_characteristics_v1::base_power_toughness(state, id)
+        .map(|(power, _)| i32::from(power))
         .or_else(characteristic_power)
-        .or_else(|| {
-            crate::continuous_characteristics_v1::animation(state, id)
-                .map(|(animation, _)| i32::from(animation.power))
-        })
         .or_else(|| {
             card_def::CARD_DEFS[obj.card_def as usize]
                 .power_for_face(obj.v4.face_index)
@@ -13188,8 +13291,8 @@ pub fn effective_base_power(state: &GameState, id: ObjectId) -> Option<i32> {
 
 pub fn effective_base_toughness(state: &GameState, id: ObjectId) -> Option<i32> {
     let obj = state.objects.get(id);
-    crate::continuous_characteristics_v1::creature_override(state, id)
-        .map(|(characteristics, _)| i32::from(characteristics.toughness))
+    crate::continuous_characteristics_v1::base_power_toughness(state, id)
+        .map(|(_, toughness)| i32::from(toughness))
         .or_else(|| {
             #[cfg(feature = "standard-magezero-fixtures")]
             {
@@ -13199,10 +13302,6 @@ pub fn effective_base_toughness(state: &GameState, id: ObjectId) -> Option<i32> 
             {
                 None
             }
-        })
-        .or_else(|| {
-            crate::continuous_characteristics_v1::animation(state, id)
-                .map(|(animation, _)| i32::from(animation.toughness))
         })
         .or_else(|| {
             card_def::CARD_DEFS[obj.card_def as usize]
@@ -17779,6 +17878,12 @@ pub(crate) fn pay_plan(state: &mut GameState, player: PlayerId, plan: &mana::Pay
     for (i, &amt) in plan.pool_used.iter().enumerate() {
         state.players[player.index()].mana_pool[i] -= amt;
     }
+    for &index in plan.restricted_pool_used.iter().rev() {
+        state.players[player.index()]
+            .restricted_mana_pool
+            .0
+            .remove(index);
+    }
     #[cfg(feature = "standard-magezero-fixtures")]
     if plan.life_paid > 0 {
         event::propose_and_commit(state, ProposedEvent::life_payment(player, plan.life_paid));
@@ -17789,7 +17894,7 @@ pub(crate) fn pay_plan(state: &mut GameState, player: PlayerId, plan: &mana::Pay
         state.players[player.index()].life -= plan.life_paid;
     }
     let pool_spent: u16 = plan.pool_used.iter().map(|&amount| u16::from(amount)).sum();
-    u16::try_from(plan.taps.len())
+    u16::try_from(plan.taps.len() + plan.restricted_pool_used.len())
         .unwrap_or(u16::MAX)
         .saturating_add(pool_spent)
 }

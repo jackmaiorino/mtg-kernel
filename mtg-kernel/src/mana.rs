@@ -178,6 +178,7 @@ pub struct ManaSource {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PaymentPlan {
+    pub restricted_pool_used: Vec<usize>,
     /// Newly tapped sources and the color each was tapped for, in the order
     /// they were committed (provenance).
     pub taps: Vec<(ObjectId, ManaColor)>,
@@ -211,6 +212,66 @@ pub struct PaymentPlan {
     /// records no surplus: the mana was added and spent atomically and
     /// never reaches the pool.
     pub surplus: [u8; 6],
+}
+
+/// One floating restricted unit, retaining its producing incarnation after
+/// that permanent leaves. Keeping it separate prevents an ordinary ability
+/// payment from treating restricted colored mana as generic unrestricted mana.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RestrictedManaUnitV1 {
+    pub color: ManaColor,
+    pub restriction: crate::card_def::ManaSpendRestrictionDef,
+    pub source: crate::state::ObjectLinkV4,
+    pub source_card_def: u16,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct RestrictedManaPoolV1(pub Vec<RestrictedManaUnitV1>);
+impl RestrictedManaPoolV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+impl std::hash::Hash for RestrictedManaPoolV1 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        if !self.0.is_empty() {
+            std::hash::Hash::hash(&"restricted-mana-pool/v1", state);
+            std::hash::Hash::hash(&self.0, state);
+        }
+    }
+}
+
+fn spell_floating_pool(state: &GameState, player: PlayerId, creature_spell: bool) -> [u8; 6] {
+    let mut pool = state.players[player.index()].mana_pool;
+    if creature_spell {
+        for unit in &state.players[player.index()].restricted_mana_pool.0 {
+            pool[unit.color.pool_index()] = pool[unit.color.pool_index()].saturating_add(1);
+        }
+    }
+    pool
+}
+
+fn separate_restricted_spending(
+    plan: &mut PaymentPlan,
+    state: &GameState,
+    player: PlayerId,
+    creature_spell: bool,
+) {
+    if creature_spell {
+        for (index, unit) in state.players[player.index()]
+            .restricted_mana_pool
+            .0
+            .iter()
+            .enumerate()
+        {
+            let used = &mut plan.pool_used[unit.color.pool_index()];
+            if *used > 0 {
+                *used -= 1;
+                plan.restricted_pool_used.push(index);
+            }
+        }
+    }
 }
 
 /// Parallel source alternatives may refer to the same physical permanent:
@@ -272,9 +333,12 @@ pub fn can_pay_spell(
     creature_spell: bool,
 ) -> Option<PaymentPlan> {
     let sources = gather_sources_for_spell(player, state, creature_spell);
-    let pool = state.players[player.index()].mana_pool;
-    solve(cost, x_value, pool, &sources)
-        .filter(|plan| life_payment_affordable(plan.life_paid, state.players[player.index()].life))
+    let pool = spell_floating_pool(state, player, creature_spell);
+    let mut plan = solve(cost, x_value, pool, &sources).filter(|plan| {
+        life_payment_affordable(plan.life_paid, state.players[player.index()].life)
+    })?;
+    separate_restricted_spending(&mut plan, state, player, creature_spell);
+    Some(plan)
 }
 
 /// Owned-pip counterpart to `can_pay` for serialized resolution-time costs.
@@ -391,7 +455,7 @@ pub(crate) fn plan_spell_mana_total_v1(
         .into_iter()
         .filter(|source| !excluded.contains(&source.id))
         .collect::<Vec<_>>();
-    let pool = state.players[player.index()].mana_pool;
+    let pool = spell_floating_pool(state, player, creature_spell);
 
     let mut plan = PaymentPlan::default();
     let mut pool_remaining = pool;
@@ -409,6 +473,7 @@ pub(crate) fn plan_spell_mana_total_v1(
     ) {
         return None;
     }
+    separate_restricted_spending(&mut plan, state, player, creature_spell);
     let total_life = i64::from(plan.life_paid) + i64::from(additional_life);
     (total_life == 0 || total_life <= i64::from(state.players[player.index()].life)).then_some(plan)
 }
@@ -485,7 +550,7 @@ pub(crate) fn plan_spell_mana_total_with_convoke_v1(
         sources.push(source);
     }
     let mut plan = PaymentPlan::default();
-    let mut pool = state.players[player.index()].mana_pool;
+    let mut pool = spell_floating_pool(state, player, creature_spell);
     let mut used = vec![false; sources.len()];
     if !solve_pips_with_life_budget_v1(
         pips,
@@ -511,6 +576,7 @@ pub(crate) fn plan_spell_mana_total_with_convoke_v1(
             true
         }
     });
+    separate_restricted_spending(&mut plan, state, player, creature_spell);
     Some((plan, convoked))
 }
 
