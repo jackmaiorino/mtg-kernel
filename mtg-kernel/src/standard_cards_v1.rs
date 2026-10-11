@@ -1882,14 +1882,21 @@ pub(crate) fn filters_cast_targets(def: &CardDef) -> bool {
 /// mana value, and X is then at least that mana value (`minimum_x`).
 pub(crate) fn cast_target_allowed(
     def: &CardDef,
+    source: ObjectId,
     controller: PlayerId,
     target: Target,
     state: &GameState,
 ) -> bool {
     match target {
         Target::Object(object) if def.name == BLUE_SUNS_TWILIGHT => {
-            crate::engine::maximum_payable_unadjusted_x(&def.cost, controller, state)
-                .is_some_and(|maximum| mana_value(state, object) <= u16::from(maximum))
+            crate::engine::x_target_is_payable(
+                def,
+                source,
+                controller,
+                target,
+                mana_value(state, object),
+                state,
+            )
         }
         _ => true,
     }

@@ -4496,14 +4496,53 @@ fn activation_mana_payment(
     })
 }
 
-pub(crate) fn maximum_payable_unadjusted_x(
-    cost: &Cost,
+pub(crate) fn x_target_is_payable(
+    def: &card_def::CardDef,
+    source: ObjectId,
     player: PlayerId,
+    target: Target,
+    minimum: u16,
     state: &GameState,
-) -> Option<u8> {
-    (0..=u8::MAX)
-        .rev()
-        .find(|&x| mana::can_pay(cost, x, player, state).is_some())
+) -> bool {
+    let Ok(x) = u8::try_from(minimum) else {
+        return false;
+    };
+    if resolution_cast_v1::free_cast(state, source) && x != 0 {
+        return false;
+    }
+    if let Some(pending) = state
+        .engine
+        .pending_cast
+        .as_ref()
+        .filter(|p| p.spell == source)
+    {
+        let mut projected = pending.clone();
+        projected.targets_chosen = vec![target];
+        return pending_cast_quote_v1(
+            def,
+            &projected,
+            finalized_cast_method(pending, pending.source_contract.cast_method, def),
+            pending.kicked == Some(true),
+            x,
+            state,
+        )
+        .is_some();
+    }
+    spell_costs_v1::selected_spell_quote_v1(
+        def,
+        source,
+        state.objects.get(source).zone,
+        CastMethodV4::Normal,
+        false,
+        0,
+        x,
+        &[target],
+        &[],
+        player,
+        state,
+        &[],
+    )
+    .is_some()
 }
 
 fn payable_activation_cost_object_candidates(
@@ -6606,6 +6645,7 @@ fn completable_next_cast_targets(
             .filter(|&target| {
                 crate::standard_cards_v1::cast_target_allowed(
                     def,
+                    pending.spell,
                     pending.controller,
                     target,
                     state,
@@ -7119,7 +7159,7 @@ fn is_castable_now(
             state,
         )
         .into_iter()
-        .any(|target| crate::standard_cards_v1::cast_target_allowed(def, player, target, state))
+        .any(|target| crate::standard_cards_v1::cast_target_allowed(def, id, player, target, state))
     {
         return false;
     }
