@@ -800,8 +800,9 @@ fn saved_damage(
             .v4
             .activated_ability_index
             .ok_or_else(|| RlContractError("Heartfire missing printed selector".into()))?;
-        let root = rules_meaning_heartfire_v1::root_meaning(source.card_def, u32::from(local))
-            .map_err(|_| RlContractError("Heartfire unsupported selected root".into()))?;
+        let root =
+            crate::rules_meaning_heartfire_v1::root_meaning(source.card_def, u32::from(local))
+                .map_err(|_| RlContractError("Heartfire unsupported selected root".into()))?;
         let facts = crate::source_power_activation_v1::damage_source(
             state,
             item.source,
