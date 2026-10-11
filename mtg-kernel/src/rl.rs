@@ -7018,7 +7018,8 @@ fn pending_effect_semantic_v4(
                                     TargetSelectionPurposeV4::LibraryOrder
                                 }
                             },
-                            crate::effect::EffectTargetSelectionPurpose::CopyTarget { .. }
+                            crate::effect::EffectTargetSelectionPurpose::ExileBatch { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::CopyTarget { .. }
                             | crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
                             | crate::effect::EffectTargetSelectionPurpose::Hideaway { .. }
                             | crate::effect::EffectTargetSelectionPurpose::WardCards { .. }

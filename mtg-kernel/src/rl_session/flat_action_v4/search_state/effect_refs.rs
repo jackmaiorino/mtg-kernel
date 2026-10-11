@@ -66,7 +66,8 @@ impl Scan<'_> {
             ResolveMonarchTrigger { binding } => self.a(&binding.source),
             StandardV1(op) => op.bound_objects().iter().any(|chosen| self.b(chosen)),
             // Other current leaf programs carry symbolic refs, not physical bindings.
-            Discover { .. }
+            ExileUntilThenCastV1 { .. }
+            | Discover { .. }
             | Hideaway { .. }
             | PlayHideawayIfThreeDistinctPowers
             | IncreaseSpeed { .. }
@@ -234,6 +235,14 @@ impl Scan<'_> {
                         .as_ref()
                         .and_then(|candidate| candidate.expected_object)
                         .is_some_and(|b| self.b(&b))
+            }
+            ExileBatchSelect { choice, .. } | ExileBatchResume { choice } => {
+                self.fs(&choice.remaining)
+                    || self.bs(&choice.cast)
+                    || choice
+                        .scans
+                        .iter()
+                        .any(|scan| self.bs(&scan.original_library) || self.bs(&scan.exiled))
             }
             Hideaway { choice, selected } => {
                 self.bs(&choice.prefix) || self.bs(selected) || self.fs(&choice.remaining)
@@ -460,6 +469,14 @@ impl Scan<'_> {
         use EffectTargetSelectionPurpose::*;
         match p {
             CopyTarget { choice } => self.copy(&choice.spell) || self.fs(&choice.remaining),
+            ExileBatch { choice } => {
+                self.fs(&choice.remaining)
+                    || self.bs(&choice.cast)
+                    || choice
+                        .scans
+                        .iter()
+                        .any(|scan| self.bs(&scan.original_library) || self.bs(&scan.exiled))
+            }
             Hideaway { choice } => self.bs(&choice.prefix) || self.fs(&choice.remaining),
             ConvokeLook { choice } => self.bs(&choice.prefix) || self.fs(&choice.remaining),
             WardCards { choice } => self.bs(&choice.candidates) || self.fs(&choice.remaining),

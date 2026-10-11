@@ -429,3 +429,294 @@ fn bottom(
         .randomize_library_bottom_v1(player, cards.len())
         .map_err(|e| e.to_string())
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ExileScanV1 {
+    pub player: PlayerId,
+    pub original_library: Vec<EffectObjectBinding>,
+    pub exiled: Vec<EffectObjectBinding>,
+    pub hit: Option<EffectObjectBinding>,
+    pub history_start: usize,
+    pub history_end: usize,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ExileBatchChoice {
+    pub players: Vec<PlayerRef>,
+    pub predicate: ExileCastPredicateV1,
+    pub return_rest_to_bottom: bool,
+    pub scans: Vec<ExileScanV1>,
+    pub cast: Vec<EffectObjectBinding>,
+    pub path: Vec<u16>,
+    pub remaining: Vec<EffectFrame>,
+}
+fn batch_qualifies(state: &GameState, id: ObjectId, predicate: ExileCastPredicateV1) -> bool {
+    let definition = &crate::card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
+    !definition.types.contains(&CardType::Land)
+        && match predicate {
+            ExileCastPredicateV1::Nonland => true,
+            ExileCastPredicateV1::LegendaryNonlandManaValueLessThan(limit) => {
+                definition
+                    .supertypes
+                    .contains(&crate::card_def::Supertype::Legendary)
+                    && definition.mana_value < limit
+            }
+        }
+}
+pub(super) fn start_batch(
+    state: &mut GameState,
+    pending: &mut EffectContinuation,
+    players: Vec<PlayerRef>,
+    predicate: ExileCastPredicateV1,
+    return_rest_to_bottom: bool,
+    path: Vec<u16>,
+) -> Result<bool, String> {
+    check_root(
+        state,
+        pending,
+        &path,
+        EffectOp::ExileUntilThenCastV1 {
+            players: players.clone(),
+            predicate,
+            return_rest_to_bottom,
+        },
+    )?;
+    let mut staged = state.clone();
+    let mut scans = Vec::new();
+    for player in &players {
+        let player = pending.ctx.resolve_player(*player, &staged);
+        if scans.iter().any(|scan: &ExileScanV1| scan.player == player) {
+            return Err("exile scan repeats a player".into());
+        }
+        let original_library = staged.players[player.index()]
+            .library
+            .iter()
+            .map(|id| bind(&staged, *id))
+            .collect::<Vec<_>>();
+        let mut scan = ExileScanV1 {
+            player,
+            original_library,
+            exiled: vec![],
+            hit: None,
+            history_start: staged.engine.event_history.len(),
+            history_end: 0,
+        };
+        for original in &scan.original_library {
+            event::propose_and_commit(
+                &mut staged,
+                event::ProposedEvent::zone_change(original.object, Zone::Exile),
+            );
+            let card = bind(&staged, original.object);
+            if card.expected_zone != Zone::Exile {
+                return Err("exile-until encountered unsupported replacement".into());
+            }
+            scan.exiled.push(card);
+            if batch_qualifies(&staged, card.object, predicate) {
+                scan.hit = Some(card);
+                break;
+            }
+        }
+        scan.history_end = staged.engine.event_history.len();
+        scans.push(scan);
+    }
+    let choice = ExileBatchChoice {
+        players,
+        predicate,
+        return_rest_to_bottom,
+        scans,
+        cast: vec![],
+        path,
+        remaining: pending.frames.clone(),
+    };
+    let suspended = offer_batch(&mut staged, pending, choice)?;
+    *state = staged;
+    Ok(suspended)
+}
+pub(super) fn validate_batch(
+    state: &GameState,
+    pending: &EffectContinuation,
+    choice: &ExileBatchChoice,
+) -> Result<(), String> {
+    check_root(
+        state,
+        pending,
+        &choice.path,
+        EffectOp::ExileUntilThenCastV1 {
+            players: choice.players.clone(),
+            predicate: choice.predicate,
+            return_rest_to_bottom: choice.return_rest_to_bottom,
+        },
+    )?;
+    if pending.frames != choice.remaining || choice.players.len() != choice.scans.len() {
+        return Err("exile batch continuation changed".into());
+    }
+    let hits = choice
+        .scans
+        .iter()
+        .filter_map(|scan| scan.hit)
+        .collect::<Vec<_>>();
+    for (index, card) in choice.cast.iter().enumerate() {
+        if !hits.contains(card) || choice.cast[..index].contains(card) {
+            return Err("exile batch cast provenance changed".into());
+        }
+        let live = state.objects.get(card.object);
+        if live.zone_change_count<=card.expected_zone_change_count || !state.engine.event_history.iter().skip(choice.scans.last().map_or(0,|scan|scan.history_end)).any(|event|matches!(event,event::CommittedEvent::SpellCast{spell,..} if *spell==card.object)){return Err("exile batch recorded an uncast card".into());}
+    }
+    for (index, scan) in choice.scans.iter().enumerate() {
+        if scan.player != pending.ctx.resolve_player(choice.players[index], state)
+            || choice.scans[..index]
+                .iter()
+                .any(|prior| prior.player == scan.player)
+            || scan.exiled.len() > scan.original_library.len()
+        {
+            return Err("exile batch player or extent changed".into());
+        }
+        if scan.hit.is_some() && scan.hit != scan.exiled.last().copied() {
+            return Err("exile batch hit was not final".into());
+        }
+        if scan.hit.is_none() && scan.exiled.len() != scan.original_library.len() {
+            return Err("exile batch stopped before a hit".into());
+        }
+        let history = state
+            .engine
+            .event_history
+            .get(scan.history_start..scan.history_end)
+            .ok_or("exile batch lost event history")?;
+        let moves = history
+            .iter()
+            .filter_map(|event| match event {
+                event::CommittedEvent::ZoneChange {
+                    object,
+                    from: Zone::Library,
+                    to: Zone::Exile,
+                    ..
+                } => Some(*object),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if moves
+            != scan
+                .exiled
+                .iter()
+                .map(|card| card.object)
+                .collect::<Vec<_>>()
+        {
+            return Err("exile batch transition history changed".into());
+        }
+        for (index, card) in scan.exiled.iter().enumerate() {
+            let original = scan.original_library[index];
+            if original.object != card.object
+                || original.expected_zone != Zone::Library
+                || card.expected_zone != Zone::Exile
+                || original.expected_zone_change_count.checked_add(1)
+                    != Some(card.expected_zone_change_count)
+                || state.objects.get(card.object).owner != scan.player
+                || batch_qualifies(state, card.object, choice.predicate)
+                    != (scan.hit == Some(*card))
+            {
+                return Err("exile batch stop predicate or incarnation changed".into());
+            }
+            if !choice.cast.contains(card) {
+                validate_effect_object_binding(state, *card)?;
+            }
+        }
+    }
+    Ok(())
+}
+pub(super) fn batch_candidates(
+    state: &GameState,
+    pending: &EffectContinuation,
+    choice: &ExileBatchChoice,
+) -> Vec<EffectObjectBinding> {
+    choice
+        .scans
+        .iter()
+        .filter_map(|scan| scan.hit)
+        .filter(|card| {
+            !choice.cast.contains(card)
+                && crate::engine::can_cast_exiled_without_mana(
+                    state,
+                    pending.ctx.controller,
+                    *card,
+                    None,
+                )
+        })
+        .collect()
+}
+pub(super) fn offer_batch(
+    state: &mut GameState,
+    pending: &mut EffectContinuation,
+    choice: ExileBatchChoice,
+) -> Result<bool, String> {
+    validate_batch(state, pending, &choice)?;
+    let candidates = batch_candidates(state, pending, &choice);
+    if candidates.is_empty() {
+        finish_batch(state, &choice)?;
+        return Ok(false);
+    }
+    pending.choice = Some(PendingEffectChoice::SelectTargets {
+        player: pending.ctx.controller,
+        path: choice.path.clone(),
+        selected: vec![],
+        legal: candidates
+            .into_iter()
+            .map(|card| EffectTargetCandidate {
+                target: Target::Object(card.object),
+                expected_object: Some(card),
+            })
+            .collect(),
+        min_targets: 0,
+        max_targets: 1,
+        ordered: false,
+        purpose: EffectTargetSelectionPurpose::ExileBatch { choice },
+    });
+    Ok(true)
+}
+pub(super) fn finish_batch_selection(
+    state: &mut GameState,
+    pending: &mut EffectContinuation,
+    mut choice: ExileBatchChoice,
+    selected: &[EffectObjectBinding],
+) -> Result<(), String> {
+    validate_batch(state, pending, &choice)?;
+    if selected.len() > 1
+        || selected
+            .first()
+            .is_some_and(|card| !batch_candidates(state, pending, &choice).contains(card))
+    {
+        return Err("invalid next free spell choice".into());
+    }
+    if let Some(card) = selected.first().copied() {
+        choice.cast.push(card);
+        let path = choice.path.clone();
+        pending
+            .frames
+            .push(EffectFrame::ExileBatchResume { choice });
+        pending.frames.push(EffectFrame::Program {
+            op: EffectOp::CastExiledWithoutMana {
+                card,
+                maximum_mana_value: None,
+            },
+            path,
+        });
+    } else {
+        finish_batch(state, &choice)?;
+    }
+    Ok(())
+}
+fn finish_batch(state: &mut GameState, choice: &ExileBatchChoice) -> Result<(), String> {
+    if !choice.return_rest_to_bottom {
+        return Ok(());
+    }
+    let mut staged = state.clone();
+    for scan in &choice.scans {
+        let remaining = scan
+            .exiled
+            .iter()
+            .filter(|card| !choice.cast.contains(card))
+            .copied()
+            .collect::<Vec<_>>();
+        bottom(&mut staged, scan.player, &remaining)?;
+    }
+    *state = staged;
+    Ok(())
+}

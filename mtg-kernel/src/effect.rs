@@ -22,7 +22,7 @@ use standard_look::ConvokeLookChoice;
 mod standard_copy;
 use standard_copy::CopyTargetChoice;
 mod standard_exile;
-use standard_exile::{ExilePlayChoice, HideawayChoice};
+use standard_exile::{ExileBatchChoice, ExilePlayChoice, HideawayChoice};
 
 use crate::card_def::{
     CardType, DynamicValueDef, Keywords, OptionalAdditionalCostDef, PermanentFilter,
@@ -61,6 +61,14 @@ pub struct StormCopyBindingV1 {
     pub active_player: PlayerId,
     pub spell_cast_event_index: u32,
     pub casts_after_source: [u16; 2],
+}
+
+/// The printed stop condition for exile-until effects. The selected spell
+/// form remains unrestricted unless the originating effect says otherwise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ExileCastPredicateV1 {
+    Nonland,
+    LegendaryNonlandManaValueLessThan(u16),
 }
 
 /// Which of a controller's creatures a team-wide pump/keyword effect
@@ -1488,6 +1496,11 @@ pub enum EffectOp {
         count: u8,
     },
     PlayHideawayIfThreeDistinctPowers,
+    ExileUntilThenCastV1 {
+        players: Vec<PlayerRef>,
+        predicate: ExileCastPredicateV1,
+        return_rest_to_bottom: bool,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -1904,6 +1917,13 @@ pub enum EffectFrame {
     DiscoverRemainder {
         choice: ExilePlayChoice,
     },
+    ExileBatchSelect {
+        choice: ExileBatchChoice,
+        selected: Vec<EffectObjectBinding>,
+    },
+    ExileBatchResume {
+        choice: ExileBatchChoice,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -2244,6 +2264,9 @@ pub enum EffectTargetSelectionPurpose {
     },
     Hideaway {
         choice: HideawayChoice,
+    },
+    ExileBatch {
+        choice: ExileBatchChoice,
     },
 }
 
@@ -2773,6 +2796,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::Discover { .. }
         | EffectOp::Hideaway { .. }
         | EffectOp::PlayHideawayIfThreeDistinctPowers
+        | EffectOp::ExileUntilThenCastV1 { .. }
         | EffectOp::CounterUnlessPaysLife { .. }
         | EffectOp::CounterUnlessDiscardsCard { .. }
         | EffectOp::CounterUnlessCollectsEvidence { .. }
@@ -3928,6 +3952,17 @@ fn complete_resumable_target_selection(
         }
         EffectTargetSelectionPurpose::CopyTarget { .. } => {
             unreachable!("handled target choices before object conversion")
+        }
+        EffectTargetSelectionPurpose::ExileBatch { choice } => {
+            let frame = EffectFrame::ExileBatchSelect {
+                choice,
+                selected: objects,
+            };
+            continuation.answered_choice_guard =
+                Some(EffectAnsweredChoiceGuard::StandardSelection {
+                    frame: Box::new(frame.clone()),
+                });
+            continuation.frames.push(frame);
         }
         EffectTargetSelectionPurpose::Hideaway { choice } => {
             let frame = EffectFrame::Hideaway {
@@ -6414,6 +6449,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::CopyTarget { .. }
                         | EffectFrame::Hideaway { .. }
                         | EffectFrame::ExilePlay { .. }
+                        | EffectFrame::ExileBatchSelect { .. }
                         | EffectFrame::OwnerLibraryPlacement { .. }
                         | EffectFrame::ResolveCounterUnlessPaysGeneric { .. }
                         | EffectFrame::ResolveCounterTargetUnlessPaysGeneric { .. }
@@ -6440,6 +6476,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::CopyTarget { .. }
                         | EffectFrame::Hideaway { .. }
                         | EffectFrame::ExilePlay { .. }
+                        | EffectFrame::ExileBatchSelect { .. }
                 )
             {
                 return Err("Standard selection lost its authenticated answer frame".into());
@@ -7357,6 +7394,27 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                                 .collect::<Vec<_>>()
                     {
                         return Err("chosen-permanent candidates changed".to_string());
+                    }
+                }
+                EffectTargetSelectionPurpose::ExileBatch { choice } => {
+                    standard_exile::validate_batch(state, pending, choice)?;
+                    let all = selected
+                        .iter()
+                        .chain(legal)
+                        .filter_map(|c| c.expected_object)
+                        .collect::<Vec<_>>();
+                    validate_exact_binding_permutation(
+                        &standard_exile::batch_candidates(state, pending, choice),
+                        &all,
+                        "exile batch cast choices",
+                    )?;
+                    if *chooser != pending.ctx.controller
+                        || *path != choice.path
+                        || *ordered
+                        || *min_targets != 0
+                        || *max_targets != 1
+                    {
+                        return Err("exile batch choice shape changed".into());
                     }
                 }
                 EffectTargetSelectionPurpose::Hideaway { choice } => {
@@ -8985,6 +9043,7 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 | EffectFrame::CopyTarget { .. }
                 | EffectFrame::Hideaway { .. }
                 | EffectFrame::ExilePlay { .. }
+                | EffectFrame::ExileBatchSelect { .. }
         ) {
             if continuation.answered_choice_guard.take()
                 != Some(EffectAnsweredChoiceGuard::StandardSelection {
@@ -8996,6 +9055,20 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
         }
         let EffectFrame::Program { op, path } = frame else {
             match frame {
+                EffectFrame::ExileBatchSelect { choice, selected } => {
+                    standard_exile::finish_batch_selection(
+                        state,
+                        &mut continuation,
+                        choice,
+                        &selected,
+                    )?;
+                }
+                EffectFrame::ExileBatchResume { choice } => {
+                    if standard_exile::offer_batch(state, &mut continuation, choice)? {
+                        state.engine.pending_effect = Some(continuation);
+                        return Ok(ResumableProgress::Suspended);
+                    }
+                }
                 EffectFrame::Hideaway { choice, selected } => {
                     standard_exile::finish_hideaway(state, &continuation, &choice, &selected)?;
                 }
@@ -10936,6 +11009,23 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
             EffectOp::PlayExiledLand { card } => {
                 crate::engine::resolution_cast_v1::stage(state, continuation, card, None, true)?;
                 return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::ExileUntilThenCastV1 {
+                players,
+                predicate,
+                return_rest_to_bottom,
+            } => {
+                if standard_exile::start_batch(
+                    state,
+                    &mut continuation,
+                    players,
+                    predicate,
+                    return_rest_to_bottom,
+                    path,
+                )? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
             }
             EffectOp::Discover { limit } => {
                 if standard_exile::discover(state, &mut continuation, limit, path)? {
@@ -15435,7 +15525,8 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::CopySpellSnapshot { .. }
         | EffectOp::Discover { .. }
         | EffectOp::Hideaway { .. }
-        | EffectOp::PlayHideawayIfThreeDistinctPowers => {
+        | EffectOp::PlayHideawayIfThreeDistinctPowers
+        | EffectOp::ExileUntilThenCastV1 { .. } => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,

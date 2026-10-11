@@ -33,6 +33,26 @@ fn exile_self(out: &mut Collector) {
 pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     let _ = env;
     match op {
+        EffectOp::ExileUntilThenCastV1 {
+            players,
+            return_rest_to_bottom,
+            ..
+        } => {
+            for player in players {
+                out.effect(
+                    EffectAtom::moving(Some(ZoneF::Library), ZoneF::Exile)
+                        .player(player_ref(*player))
+                        .obj(ObjF::AnyCard),
+                );
+                if *return_rest_to_bottom {
+                    out.effect(
+                        EffectAtom::moving(Some(ZoneF::Exile), ZoneF::Library)
+                            .player(player_ref(*player))
+                            .obj(ObjF::AnyCard),
+                    );
+                }
+            }
+        }
         EffectOp::Discover { limit: _ } => {
             out.effect(
                 EffectAtom::moving(Some(ZoneF::Library), ZoneF::Exile)
