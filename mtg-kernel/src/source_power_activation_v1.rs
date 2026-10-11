@@ -451,7 +451,11 @@ pub(crate) fn execute(ctx: &ExecCtx, state: &mut GameState) {
     }
 }
 
-#[cfg(all(test, feature = "Limited", not(feature = "Standard")))]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 #[path = "source_power_activation_v1_legacy_tests.rs"]
 mod legacy_tests;
 
