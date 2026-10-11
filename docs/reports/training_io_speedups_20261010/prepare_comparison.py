@@ -123,7 +123,11 @@ def bindings(root, python):
     helpers = {name: pin(root / name) for name in (
         "formal_case_driver.py", "formal_launcher_adapter.py", "observe_native_affinity.py",
         "wait_canonical_free.py", "run_comparison.py", "run_qualifications.py")}
+    supporting = [pin(root.parent / name) for name in (
+        "helpers/postprocess_case.py", "helpers/copy_recovery.py", "helpers/desktop_devices.py",
+        "measure_allocations.py", "resume_qualifications.py")]
     return {"tools": tools, "runtimes": runtimes, "helpers": helpers,
+            "supporting_helpers": supporting,
             "controller": helpers["formal_case_driver.py"],
             "adapter": helpers["formal_launcher_adapter.py"],
             "runtime_decks": pin(root / "runtime_decks_v1.json"),
