@@ -62,7 +62,7 @@ def retry_sources(plan):
             and [item['label'] for item in state['completed']] == labels,
             'complete qualification provenance differs from sealed plan')
     runner = verify(state['runner_source'])
-    require(Path(runner['path']) == BASE / 'resume_qualifications_retry.py', 'exact admission runner required')
+    require(Path(runner['path']) == ROOT / 'resume_qualifications_retry.py', 'exact admission runner required')
     sources += [pin(Path(__file__).resolve()), runner]
     if 'launch_overlay' in state:
         sources.append(verify(state['launch_overlay']))

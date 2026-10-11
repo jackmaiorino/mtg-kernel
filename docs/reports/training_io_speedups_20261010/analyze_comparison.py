@@ -555,7 +555,7 @@ def retry_provenance(reader, plan, state):
             and index["complete"] is True and not index.get("error") and index["plan"] == refs["qualification_plan"]
             and [item["label"] for item in index["completed"]] == labels, "sealed qualification index binding differs")
     runner = index["runner_source"]
-    require(runner in state["sources"] and same_path(runner["path"], BASE / "resume_qualifications_retry.py"),
+    require(runner in state["sources"] and same_path(runner["path"], ROOT / "resume_qualifications_retry.py"),
             "qualification admission runner absent from execution source graph")
     reader.verify(runner)
     implementation = next((ref for ref in state["sources"] if same_path(ref["path"], ROOT / "run_comparison_retry.py")), None)
