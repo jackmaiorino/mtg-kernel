@@ -310,6 +310,97 @@ fn restored_captured_beneficiary_source_and_collection_forgery_refuse_readonly()
 }
 
 #[test]
+fn independent_entry_observers_reject_coherent_beneficiary_and_source_rewrites_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let authority = cast(&mut state, actor, "Authority of the Consuls", ManaColor::W);
+        settle(&mut state);
+        let entrant = put(&mut state, actor, "Llanowar Elves", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change_to_battlefield_under_controller(entrant, actor.opponent()),
+        );
+        until_gain(&mut state);
+        transfer(&mut state, authority, actor.opponent());
+        transfer(&mut state, entrant, actor);
+        // Current control no longer reveals either original entry controller.
+        // The authentic continuation still gains life for the original observer.
+        let mut valid = restored(&state);
+        settle(&mut valid);
+        assert_eq!(valid.players[actor.index()].life, 21);
+        assert_eq!(valid.players[actor.opponent().index()].life, 20);
+        let observers: Vec<_> = state
+            .engine
+            .event_history
+            .iter()
+            .filter(|event| matches!(event, CommittedEvent::AuthorityEntryObserversV1 { .. }))
+            .cloned()
+            .collect();
+        assert_eq!(observers.len(), 1);
+        for corruption in 0..6 {
+            let mut forged = restored(&state);
+            if corruption < 4 {
+                let capture = forged
+                    .engine
+                    .event_history
+                    .iter_mut()
+                    .find_map(|event| match event {
+                        CommittedEvent::AuthorityEntryCaptureV1 { capture } => Some(capture),
+                        _ => None,
+                    })
+                    .unwrap();
+                match corruption {
+                    0 => {
+                        capture.source.controller = actor.opponent();
+                        capture.entrant_controller = actor;
+                    }
+                    1 => capture.source.owner = actor.opponent(),
+                    2 => capture.source.card_def = card_id_by_name("Llanowar Elves").unwrap(),
+                    _ => capture.source.zone_change_count += 1,
+                }
+                let source = capture.source;
+                let item = forged.stack.last_mut().unwrap();
+                item.controller = source.controller;
+                item.v4.ability_source_contract = Some(source);
+            } else if corruption == 4 {
+                // The independent observer row also requires its individual
+                // capture, even after the mutable dispatch rows disappear.
+                forged.engine.event_history.retain(|event| {
+                    !matches!(
+                        event,
+                        CommittedEvent::AuthorityEntryCaptureV1 { .. }
+                            | CommittedEvent::AuthorityEntryCollectedV1 { .. }
+                    )
+                });
+            } else {
+                forged.engine.event_history.retain(|event| {
+                    !matches!(event, CommittedEvent::AuthorityEntryObserversV1 { .. })
+                });
+            }
+            if corruption != 5 {
+                assert_eq!(
+                    forged
+                        .engine
+                        .event_history
+                        .iter()
+                        .filter(|event| {
+                            matches!(event, CommittedEvent::AuthorityEntryObserversV1 { .. })
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>(),
+                    observers
+                );
+            }
+            readonly_pass(&mut forged);
+            for _ in 0..2 {
+                forged = restored(&forged);
+                readonly_pass(&mut forged);
+            }
+        }
+    }
+}
+
+#[test]
 fn actual_two_entry_batch_retains_distinct_occurrences_and_restored_trigger_order() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
@@ -345,6 +436,29 @@ fn actual_two_entry_batch_retains_distinct_occurrences_and_restored_trigger_orde
             matches!(decision, Decision::OrderTriggers { player, ref pending } if player == actor && pending.len() == 2)
         );
         transfer(&mut state, authority, actor.opponent());
+        transfer(&mut state, first, actor);
+        let mut forged = restored(&state);
+        let pending = forged.engine.pending_triggers.first_mut().unwrap();
+        let EffectOp::AuthorityEntryGainLifeV1 {
+            capture_history_index,
+        } = pending.effect
+        else {
+            panic!("actual captured pending trigger required");
+        };
+        pending.controller = actor.opponent();
+        pending.source_contract.as_mut().unwrap().controller = actor.opponent();
+        let CommittedEvent::AuthorityEntryCaptureV1 { capture } =
+            &mut forged.engine.event_history[usize::try_from(capture_history_index).unwrap()]
+        else {
+            panic!("actual committed capture required");
+        };
+        // Coherently rewrite the pending payer/source and its dispatch capture.
+        // Leave the independent entry-observer record unchanged.
+        capture.source.controller = actor.opponent();
+        capture.entrant_controller = actor;
+        readonly_pass(&mut forged);
+        let mut repeated = restored(&forged);
+        readonly_pass(&mut repeated);
         let mut replay = restored(&state);
         for current in [&mut state, &mut replay] {
             engine::step(current, Action::OrderTriggers(vec![1, 0])).unwrap();

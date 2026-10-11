@@ -5,13 +5,15 @@
   "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
   "mage_source": "Mage.Sets/src/mage/cards/a/AuthorityOfTheConsuls.java",
   "cost": "{W}",
-  "types": ["Enchantment"],
+  "types": [
+    "Enchantment"
+  ],
   "subtypes": [],
   "text": "Creatures your opponents control enter the battlefield tapped. Whenever a creature enters the battlefield under an opponent's control, you gain 1 life.",
   "target": "None",
   "spell_effect": "None; enchantment enters through the ordinary permanent spell path",
   "static": "active printed ability; actual opponent-controlled creature entry is tapped; ZoneChange and CreateToken",
-  "trigger": "OpponentCreatureEntersV1; independent committed entry observer capture; bound untargeted gain1 to the original captured controller",
+  "trigger": "OpponentCreatureEntersV1; independent history-only entry observer contracts bind complete once-only dispatch captures; bound untargeted gain1 to the original captured controller",
   "registration": "absent; documentation only, not generator input",
   "qualification": "native, actual future registration, printed gameplay and successor consumer/model qualification unrun",
   "remaining": "exact static and captured-entry RulesMeaning/public/Human successors; old full policy projection deliberately refuses; no card/profile ID or hash assigned"

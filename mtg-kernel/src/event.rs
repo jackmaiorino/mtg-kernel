@@ -680,6 +680,13 @@ pub enum CommittedEvent {
     AuthorityEntryCollectedV1 {
         capture_history_index: u64,
     },
+    /// History-only original observer facts, independent of trigger captures.
+    AuthorityEntryObserversV1 {
+        entry_history_index: u64,
+        entrant: crate::state::ObjectLinkV4,
+        entrant_controller: PlayerId,
+        sources: Vec<crate::state::AbilitySourceContractV4>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

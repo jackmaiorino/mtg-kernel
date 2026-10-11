@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 pub struct AuthorityEntryCaptureV1 {
     pub history_index: u64,
     pub entry_history_index: u64,
+    pub observer_authority_index: u64,
     pub source: AbilitySourceContractV4,
     pub entrant: ObjectLinkV4,
     pub entrant_controller: PlayerId,
@@ -85,11 +86,26 @@ pub(crate) fn record_entry(state: &mut GameState, entry_history_index: usize) {
                 .then(|| AbilitySourceContractV4::capture(state, source))
         })
         .collect();
+    if sources.is_empty() {
+        return;
+    }
+    let observer_authority_index =
+        u64::try_from(state.engine.event_history.len()).expect("bounded history");
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::AuthorityEntryObserversV1 {
+            entry_history_index: u64::try_from(entry_history_index).expect("bounded history"),
+            entrant,
+            entrant_controller,
+            sources: sources.clone(),
+        });
     for source in sources {
         let capture = AuthorityEntryCaptureV1 {
             history_index: u64::try_from(state.engine.event_history.len())
                 .expect("bounded history"),
             entry_history_index: u64::try_from(entry_history_index).expect("bounded history"),
+            observer_authority_index,
             source,
             entrant,
             entrant_controller,
@@ -109,6 +125,30 @@ fn capture_at(state: &GameState, index: u64) -> Result<&AuthorityEntryCaptureV1,
     };
     let entry_index =
         usize::try_from(capture.entry_history_index).map_err(|_| "entry index exceeds usize")?;
+    let observer_index = usize::try_from(capture.observer_authority_index)
+        .map_err(|_| "observer index exceeds usize")?;
+    let Some(CommittedEvent::AuthorityEntryObserversV1 {
+        entry_history_index,
+        entrant,
+        entrant_controller,
+        sources,
+    }) = state.engine.event_history.get(observer_index)
+    else {
+        return Err("opponent entry capture lost its independent observer authority".into());
+    };
+    if entry_index >= observer_index
+        || observer_index >= index
+        || *entry_history_index != capture.entry_history_index
+        || *entrant != capture.entrant
+        || *entrant_controller != capture.entrant_controller
+        || sources
+            .iter()
+            .filter(|source| **source == capture.source)
+            .count()
+            != 1
+    {
+        return Err("opponent entry capture changed its original observer or beneficiary".into());
+    }
     if usize::try_from(capture.history_index).ok() != Some(index)
         || entry_index >= index || !owns_definition(capture.source.card_def)
         || capture.source.zone != Zone::Battlefield
@@ -141,6 +181,7 @@ pub(crate) fn collect(
     if !enabled() {
         return Ok(Vec::new());
     }
+    validate_observed_entries(state)?;
     let mut pending = Vec::new();
     let mut used = std::collections::BTreeSet::new();
     // A mutable collection log cannot silently omit an outstanding committed
@@ -288,6 +329,8 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     if !enabled() {
         return Ok(());
     }
+    validate_observed_entries(state)
+        .map_err(|_| "opponent entry observer authority is incomplete")?;
     for event in &state.engine.event_history {
         let CommittedEvent::AuthorityEntryCaptureV1 { capture } = event else {
             continue;
@@ -354,3 +397,69 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests;
+
+fn validate_observed_entries(state: &GameState) -> Result<(), ObjectId> {
+    if state
+        .engine
+        .event_log
+        .iter()
+        .any(|event| matches!(event, CommittedEvent::AuthorityEntryObserversV1 { .. }))
+    {
+        return Err(ObjectId(0));
+    }
+    for (index, event) in state.engine.event_history.iter().enumerate() {
+        let CommittedEvent::AuthorityEntryObserversV1 {
+            entry_history_index,
+            entrant,
+            entrant_controller,
+            sources,
+        } = event
+        else {
+            continue;
+        };
+        if sources.is_empty()
+            || usize::try_from(*entry_history_index)
+                .ok()
+                .is_none_or(|entry| {
+                    entry >= index
+                        || state.engine.event_history.get(entry).is_none_or(|event| {
+                            crate::trigger::battlefield_entry_object(event) != Some(entrant.object)
+                        })
+                })
+        {
+            return Err(sources.first().map_or(ObjectId(0), |source| source.source));
+        }
+        for (source_index, source) in sources.iter().enumerate() {
+            if !owns_definition(source.card_def)
+                || source.zone != Zone::Battlefield
+                || source.controller == *entrant_controller
+                || sources[..source_index]
+                    .iter()
+                    .any(|prior| prior.source == source.source)
+            {
+                return Err(source.source);
+            }
+            let captures: Vec<_> = state
+                .engine
+                .event_history
+                .iter()
+                .filter_map(|event| match event {
+                    CommittedEvent::AuthorityEntryCaptureV1 { capture }
+                        if usize::try_from(capture.observer_authority_index).ok()
+                            == Some(index)
+                            && capture.source.source == source.source =>
+                    {
+                        Some(capture)
+                    }
+                    _ => None,
+                })
+                .collect();
+            if captures.len() != 1
+                || capture_at(state, captures[0].history_index).ok() != Some(captures[0])
+            {
+                return Err(source.source);
+            }
+        }
+    }
+    Ok(())
+}

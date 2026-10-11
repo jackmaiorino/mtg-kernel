@@ -1037,6 +1037,15 @@ pub(super) fn conflicts(
                         .attached_to
                         .is_some_and(|link| s.raw(link.object))
             }
+            AuthorityEntryObserversV1 {
+                entrant, sources, ..
+            } => {
+                s.raw(entrant.object)
+                    || sources.iter().any(|source| {
+                        s.raw(source.source)
+                            || source.attached_to.is_some_and(|link| s.raw(link.object))
+                    })
+            }
             InitiativeTrigger { binding } => s.raw(binding.source.source),
             MonarchTrigger { binding } => s.raw(binding.source.source),
             ControlledCreatureDeathCaptureCollectedV1 { .. }
