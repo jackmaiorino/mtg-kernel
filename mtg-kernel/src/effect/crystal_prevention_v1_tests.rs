@@ -42,6 +42,29 @@ fn absent_crystal_keeps_registered_shield_damage_and_restore_unchanged() {
     }
 }
 #[test]
+fn nondamage_classifier_requires_every_branch_and_never_guesses_unknown_leaves() {
+    let draw = EffectOp::DrawCards {
+        player: PlayerRef::Controller,
+        count: 1,
+    };
+    assert!(ordinary_nondamage(&draw));
+    assert!(ordinary_nondamage(&EffectOp::Sequence(vec![draw.clone()])));
+    assert!(ordinary_nondamage(&EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: vec![draw.clone()]
+    }));
+    assert!(!ordinary_nondamage(&EffectOp::Sequence(vec![
+        draw,
+        EffectOp::DealDamage {
+            target: TargetRef::Opponent,
+            amount: 3
+        }
+    ])));
+    assert!(!ordinary_nondamage(&EffectOp::StandardV1(
+        crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1
+    )));
+}
+#[test]
 fn absent_stack_wrapper_writes_no_hash_input_or_serialized_field() {
     #[derive(Default)]
     struct Writes(usize);

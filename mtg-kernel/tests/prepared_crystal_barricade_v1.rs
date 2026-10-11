@@ -677,7 +677,7 @@ fn future_selected_ordering_meaning_reconstructs_all_admission_and_coverage_flag
 }
 
 #[test]
-fn unsupported_real_draw_root_refuses_before_pop_or_card_mutation_in_mixed_environment() {
+fn real_draw_root_completes_and_replays_without_borrowing_crystal_owner() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
         let wall = source(&mut state, actor);
@@ -690,34 +690,99 @@ fn unsupported_real_draw_root_refuses_before_pop_or_card_mutation_in_mixed_envir
         engine::step(&mut state, Action::CastSpell(draw)).unwrap();
         let _ = next(&mut state); // Genuine announcement and payment complete.
         assert!(state.stack.iter().any(|item| item.source == draw));
-        let stack = serde_json::to_vec(&state.stack).unwrap();
         let hand = state.players[actor.index()].hand.clone();
         let library = state.players[actor.index()].library.clone();
         let shield = state.engine.active_replacements.clone();
-        let mut halted = false;
-        for _ in 0..8 {
-            let decision = engine::advance_until_decision(&mut state);
-            if matches!(decision, Decision::Halted { .. }) {
-                halted = true;
-                break;
-            }
-            assert!(
-                matches!(decision, Decision::CastSpellOrPass { .. }),
-                "{decision:?}"
+        let mut replay = restore(&state);
+        for current in [&mut state, &mut replay] {
+            finish(current);
+            assert_eq!(current.objects.get(draw).zone, Zone::Graveyard);
+            assert_eq!(current.players[actor.index()].hand.len(), hand.len() + 1);
+            assert_eq!(
+                current.players[actor.index()].library.len(),
+                library.len() - 1
             );
-            engine::step(&mut state, Action::Pass).unwrap();
+            assert_eq!(current.engine.active_replacements, shield);
         }
-        assert!(halted);
-        assert_eq!(serde_json::to_vec(&state.stack).unwrap(), stack);
-        assert_eq!(state.objects.get(draw).zone, Zone::Stack);
-        assert_eq!(state.players[actor.index()].hand, hand);
-        assert_eq!(state.players[actor.index()].library, library);
-        assert_eq!(state.engine.active_replacements, shield);
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
         assert!(state.engine.pending_effect.is_none());
         assert!(!state.engine.event_history.iter().any(|event| matches!(
             event,
             mtg_kernel::event::CommittedEvent::CrystalPreventionBoundaryV1 { .. }
         )));
+    }
+}
+
+#[test]
+fn mixed_environment_keeps_real_generic_and_life_ward_payment_continuations() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for (name, life_cost) in [("Tolarian Terror", 0), ("Sire of Seven Deaths", 7)] {
+            for pay in [false, true] {
+                let caster = actor.opponent();
+                let mut state = ready(actor);
+                let wall = source(&mut state, actor);
+                let target = put(&mut state, actor, name, Zone::Battlefield);
+                shield(&mut state, wall, target, 5);
+                let bolt = announce_bolt(&mut state, caster, Target::Object(target));
+                let life = state.players[caster.index()].life;
+                state.players[caster.index()].mana_pool[ManaColor::C.pool_index()] = 2;
+                for _ in 0..12 {
+                    let d = next(&mut state);
+                    if matches!(d, Decision::ChooseEffectBoolean { player, .. } if player == caster)
+                    {
+                        break;
+                    }
+                    assert!(matches!(d, Decision::CastSpellOrPass { .. }), "{d:?}");
+                    engine::step(&mut state, Action::Pass).unwrap();
+                }
+                assert!(matches!(next(&mut state),
+                    Decision::ChooseEffectBoolean { player, .. } if player == caster));
+                let saved = serde_json::to_vec(&state).unwrap();
+                assert!(engine::step(&mut state, Action::ChooseEffectOption(0)).is_err());
+                assert_eq!(serde_json::to_vec(&state).unwrap(), saved);
+                let mut replay = restore(&state);
+                for current in [&mut state, &mut replay] {
+                    engine::step(current, Action::ChooseEffectBoolean(pay)).unwrap();
+                    if pay {
+                        mixed_menu(current);
+                        let selected = option(current, false);
+                        engine::step(current, Action::ChooseEffectOption(selected)).unwrap();
+                    }
+                    finish(current);
+                    assert_eq!(current.objects.get(bolt).zone, Zone::Graveyard);
+                    assert_eq!(current.objects.get(target).damage, 0);
+                    assert_eq!(
+                        current.players[caster.index()].life,
+                        life - if pay { life_cost } else { 0 }
+                    );
+                    assert!(matches!(
+                        current.engine.active_replacements[0].kind,
+                        mtg_kernel::event::ReplacementEffectKind::PreventNextDamage {
+                            remaining: 5,
+                            ..
+                        }
+                    ));
+                    let crystal_rows =
+                        current
+                            .engine
+                            .event_history
+                            .iter()
+                            .filter(|e| {
+                                matches!(e,
+                        mtg_kernel::event::CommittedEvent::CrystalPreventionBoundaryV1 { .. })
+                            })
+                            .count();
+                    assert_eq!(crystal_rows > 0, pay);
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&replay).unwrap()
+                );
+            }
+        }
     }
 }
 

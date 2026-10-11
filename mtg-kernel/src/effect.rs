@@ -3030,7 +3030,8 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
-    if crystal_prevention_v1::mixed_environment(state)
+    if (crystal_prevention_v1::mixed_environment(state)
+        && !crystal_prevention_v1::ordinary_nondamage(op))
         || resolving_item.v4.crystal_prevention_started_v1.0.is_some()
     {
         return Err("Crystal damage requires its genuine pre-pop loan".into());
@@ -16061,7 +16062,9 @@ fn creature_matches_filter(
 }
 
 pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
-    if crystal_prevention_v1::mixed_environment(state) {
+    if crystal_prevention_v1::mixed_environment(state)
+        && !crystal_prevention_v1::ordinary_nondamage(op)
+    {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ctx.source,

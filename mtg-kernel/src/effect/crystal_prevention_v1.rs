@@ -239,6 +239,25 @@ fn probe(item: &StackItem) -> EffectContinuation {
         answered_choice_guard: None,
     }
 }
+/// A positive classification, never an absence-of-known-damage guess. These
+/// leaves cannot emit damage, and every nested branch must also be classified.
+/// Generated Ward roots retain the ordinary stack and payment validators.
+pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
+    match op {
+        EffectOp::Sequence(ops) => ops.iter().all(ordinary_nondamage),
+        EffectOp::Conditional { then, else_, .. } => {
+            ordinary_nondamage(then) && ordinary_nondamage(else_)
+        }
+        EffectOp::Choice { options, .. } => options.iter().all(ordinary_nondamage),
+        EffectOp::DrawCards { .. }
+        | EffectOp::GainLife { .. }
+        | EffectOp::LoseLife { .. }
+        | EffectOp::CounterUnlessPaysGeneric { .. }
+        | EffectOp::CounterUnlessPaysLifeWithChoice { .. }
+        | EffectOp::CounterTargetUnlessPaysGeneric { .. } => true,
+        _ => false,
+    }
+}
 fn has_damage(op: &EffectOp) -> bool {
     match op {
         EffectOp::DealDamage { .. } => true,
@@ -276,9 +295,9 @@ pub(crate) fn mixed_environment(state: &GameState) -> bool {
         && state.engine.active_replacements.iter().any(|r|
             matches!(r.kind, ReplacementEffectKind::PreventNextDamage { remaining, .. } if remaining > 0))
 }
-/// Deliberately conservative coverage boundary. No unsupported synchronous
-/// program may begin in this opt-in mixed environment. Ward/payment and other
-/// producers need a separate composable owned interpreter before admission.
+/// Unsupported damage programs refuse before pop. Positively classified
+/// nondamage programs keep their genuine predecessor resolution authority,
+/// including generated Generic/Life Ward payment continuations.
 pub(crate) fn acquire_owner(
     state: &GameState,
     item: &StackItem,
@@ -300,7 +319,15 @@ pub(crate) fn acquire_owner(
         return Err("Crystal owner did not acquire the genuine complete live item".into());
     }
     crate::engine::validated_stack_item_target_spec(item, state)?;
+    // Generated Ward programs have their own definition/source/targeter
+    // authentication. They are not printed trigger-list entries.
+    if !started && item.inline_effect.as_ref().is_some_and(ordinary_nondamage) {
+        return Ok(None);
+    }
     let root = *validated_definition_owned_root_effect(state, &probe(item))?;
+    if !started && ordinary_nondamage(&root) {
+        return Ok(None);
+    }
     if !supported(&root) {
         return Err("mixed Crystal prevention needs a supported fixed-damage producer".into());
     }
