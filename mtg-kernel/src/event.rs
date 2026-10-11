@@ -649,6 +649,11 @@ pub enum CommittedEvent {
     SourcePowerActivationFinishedV1 {
         stack_item_id: StackItemId,
     },
+    /// Private committed lifecycle ownership for the new paid look-four root.
+    /// Never placed in the public trigger event log.
+    SquadRallierResolutionBoundaryV1 {
+        receipt: crate::effect::SquadRallierResolutionReceiptV1,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
