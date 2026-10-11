@@ -150,7 +150,13 @@ fn actual_white_enchantment_own_entry_negative_and_opposing_real_cast_tapped_gai
     assert_eq!(def.cost.pips, [Pip::Colored(ManaColor::W)]);
     assert_eq!(def.types, [CardType::Enchantment]);
     assert_eq!(def.target_spec, TargetSpec::None);
-    assert!((def.spell_effect)().is_none());
+    assert_eq!(
+        (def.spell_effect)(),
+        Some(EffectOp::MoveObject {
+            object: mtg_kernel::effect::ObjectRef::ThisSource,
+            to_zone: Zone::Battlefield,
+        })
+    );
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
         let authority = cast(&mut state, actor, "Authority of the Consuls", ManaColor::W);
@@ -718,6 +724,10 @@ fn genuine_legend_suspension_retains_both_entry_gain_owners_and_original_benefic
                 ProposedEvent::zone_change(second, Zone::Battlefield),
             ],
         );
+        // Direct entry primitives need the ordinary post-operation SBA and
+        // trigger checkpoint before advance can expose the legend decision.
+        let pending = mtg_kernel::trigger::collect_and_process(&mut state);
+        state.engine.pending_triggers.extend(pending);
         let Decision::ChooseLegendPermanent { player, candidates } = next(&mut state) else {
             panic!("actual duplicate legends must suspend the checkpoint");
         };

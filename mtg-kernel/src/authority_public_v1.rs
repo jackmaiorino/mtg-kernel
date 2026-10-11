@@ -89,7 +89,7 @@ pub fn producer_sha256_v1() -> String {
         SCHEMA,
         include_str!("authority_public_v1.rs"),
         include_str!("authority_public_capture_v1.rs"),
-        include_str!("authority_of_the_authority_v1.rs"),
+        include_str!("authority_of_the_consuls_v1.rs"),
         include_str!("rules_meaning_authority_v1.rs"),
         include_str!("sower_restriction_capture_v1.rs"),
         include_str!("rl.rs"),
@@ -236,8 +236,8 @@ pub fn observe_v1(
                     } if *capture_history_index == index => Some(kind),
                     _ => None,
                 }) {
-            match kind { crate::authority_of_the_authority_v1::AuthorityEntryOperationKindV1::GainCommitted { .. } => EntryLifecycleV1::Gained,
-                crate::authority_of_the_authority_v1::AuthorityEntryOperationKindV1::CounterCommitted => EntryLifecycleV1::Countered }
+            match kind { crate::authority_of_the_consuls_v1::AuthorityEntryOperationKindV1::GainCommitted { .. } => EntryLifecycleV1::Gained,
+                crate::authority_of_the_consuls_v1::AuthorityEntryOperationKindV1::CounterCommitted => EntryLifecycleV1::Countered }
         } else if stack_index.is_some() {
             EntryLifecycleV1::Published
         } else if state.engine.pending_triggers.iter().any(owns) {
@@ -288,7 +288,7 @@ pub fn observe_v1(
     let active_sources = state
         .objects
         .iter()
-        .filter(|(source, _)| crate::authority_of_the_authority_v1::active(state, *source))
+        .filter(|(source, _)| crate::authority_of_the_consuls_v1::active(state, *source))
         .map(|(source, live)| {
             Ok(ActiveSourceV1 {
                 source: crate::sower_restriction_capture_v1::masked_ref(source, live)?,

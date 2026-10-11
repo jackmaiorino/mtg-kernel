@@ -146,11 +146,11 @@ mod printed {
                 let mut state = ready_state();
                 state.active_player = actor;
                 state.priority_player = actor;
-                let observer = crate::card_def::card_id_by_name("Authority of the Consuls")
-                    .expect("future actual registration");
-                let elf = crate::card_def::card_id_by_name("Llanowar Elves").unwrap();
-                let observer_entry = ProposedEvent::create_token(observer, actor);
-                let creature_entry = ProposedEvent::create_token(elf, actor.opponent());
+                let observer = put(&mut state, actor, "Authority of the Consuls", Zone::Hand);
+                let token_def = crate::card_def::card_id_by_name("Human Soldier Token").unwrap();
+                assert!(crate::card_def::CARD_DEFS[token_def as usize].is_token);
+                let observer_entry = ProposedEvent::zone_change(observer, Zone::Battlefield);
+                let creature_entry = ProposedEvent::create_token(token_def, actor.opponent());
                 event::propose_and_commit_batch(
                     &mut state,
                     if observer_first {
@@ -165,13 +165,31 @@ mod printed {
                     .iter()
                     .find_map(|event| match event {
                         CommittedEvent::CreateToken {
-                            object, token_def, ..
-                        } if *token_def == elf => Some(*object),
+                            object,
+                            token_def: created,
+                            controller,
+                        } if *created == token_def && *controller == actor.opponent() => {
+                            Some(*object)
+                        }
                         _ => None,
                     })
                     .unwrap();
                 assert!(!state.objects.get(entrant).tapped);
                 assert!(state.objects.get(entrant).v4.is_token);
+                assert_eq!(state.objects.get(entrant).owner, actor.opponent());
+                let captures = state
+                    .engine
+                    .event_log
+                    .iter()
+                    .filter_map(|event| match event {
+                        CommittedEvent::AuthorityEntryCaptureV1 { capture } => Some(capture),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(captures.len(), 1);
+                assert_eq!(captures[0].entrant.object, entrant);
+                assert_eq!(captures[0].source.source, observer);
+                assert_eq!(captures[0].source.controller, actor);
                 assert!(matches!(
                     engine::advance_until_decision(&mut state),
                     Decision::CastSpellOrPass { .. }
