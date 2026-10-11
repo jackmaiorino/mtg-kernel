@@ -978,6 +978,7 @@ pub(super) fn conflicts(
             crate::event::CommittedEvent::CrystalPreventionBoundaryV1 { .. }
                 | crate::event::CommittedEvent::CrystalShieldOperationV1 { .. }
                 | crate::event::CommittedEvent::CrystalExecutionV1 { .. }
+                | crate::event::CommittedEvent::CrystalDamageOperationV3 { .. }
         )
     }) || state
         .stack
@@ -1043,7 +1044,8 @@ pub(super) fn conflicts(
             // transport too, rather than implying sampler admission.
             CrystalPreventionBoundaryV1 { .. }
             | CrystalShieldOperationV1 { .. }
-            | CrystalExecutionV1 { .. } => true,
+            | CrystalExecutionV1 { .. }
+            | CrystalDamageOperationV3 { .. } => true,
             Damage { source, target, .. } => {
                 s.raw(*source) || matches!(target,crate::state::Target::Object(id) if s.raw(*id))
             }

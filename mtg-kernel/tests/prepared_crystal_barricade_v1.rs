@@ -1966,3 +1966,200 @@ fn real_incinerating_private_capture_and_independent_discard_operation_forgeries
         }
     }
 }
+
+#[test]
+fn real_fixed_and_chosen_power_damage_require_independent_positive_or_prevented_outcome() {
+    use mtg_kernel::event::CommittedEvent;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for power_root in [false, true] {
+            for entirely_prevented in [false, true] {
+                let mut state = ready(actor);
+                let wall = source(
+                    &mut state,
+                    if entirely_prevented {
+                        actor.opponent()
+                    } else {
+                        actor
+                    },
+                );
+                let dealer = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+                let recipient = put(
+                    &mut state,
+                    actor.opponent(),
+                    "Llanowar Elves",
+                    Zone::Battlefield,
+                );
+                // A distinct numeric shield makes this a real mixed environment
+                // without adding a prevention choice for this recipient.
+                shield(&mut state, wall, wall, 1);
+                let spell = if power_root {
+                    announce_power_spell(&mut state, actor, "Bite Down", dealer, recipient)
+                } else {
+                    announce_bolt(&mut state, actor, Target::Object(recipient))
+                };
+                let before_resolution = restore(&state);
+                let mut replay = restore(&state);
+                for current in [&mut state, &mut replay] {
+                    finish(current);
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&replay).unwrap()
+                );
+                let operation = state
+                    .engine
+                    .event_history
+                    .iter()
+                    .find_map(|e| match e {
+                        CommittedEvent::CrystalDamageOperationV3 { operation }
+                            if operation.ctx.source == spell =>
+                        {
+                            Some(operation.as_ref())
+                        }
+                        _ => None,
+                    })
+                    .unwrap();
+                assert_eq!(operation.output.is_none(), entirely_prevented);
+                assert_eq!(operation.damage_history.is_none(), entirely_prevented);
+                assert_eq!(
+                    operation.input.source,
+                    if power_root { dealer } else { spell }
+                );
+                assert_eq!(state.objects.get(spell).zone, Zone::Graveyard);
+                assert_eq!(
+                    state.objects.get(recipient).zone,
+                    if entirely_prevented {
+                        Zone::Battlefield
+                    } else {
+                        Zone::Graveyard
+                    }
+                );
+                mtg_kernel::effect::validate_pending_effect_choice(&state).unwrap();
+
+                // Preserve genuine publication and all preceding cast/target journals.
+                // A forged completion cannot create an actual damage/no-effect operation.
+                let initial = state
+                    .engine
+                    .event_history
+                    .iter()
+                    .find_map(|e| match e {
+                        CommittedEvent::CrystalPreventionBoundaryV1 { boundary }
+                            if boundary.item.source == spell && boundary.previous.is_none() =>
+                        {
+                            Some(boundary.clone())
+                        }
+                        _ => None,
+                    })
+                    .unwrap();
+                let actual_step = state
+                    .engine
+                    .event_history
+                    .iter()
+                    .find_map(|e| match e {
+                        CommittedEvent::CrystalExecutionV1 { execution }
+                            if execution.item.source == spell =>
+                        {
+                            execution
+                                .steps
+                                .iter()
+                                .find(|s| {
+                                    matches!(&s.frame,
+                            mtg_kernel::effect::EffectFrame::Program {op,..}
+                                if matches!(op,mtg_kernel::effect::EffectOp::DealDamage {..}
+                                    |mtg_kernel::effect::EffectOp::CreatureTargetPowerDamage {..}))
+                                })
+                                .cloned()
+                        }
+                        _ => None,
+                    })
+                    .unwrap();
+                let mut bad = before_resolution;
+                bad.engine.event_history =
+                    state.engine.event_history[..=initial.history_index as usize].to_vec();
+                let mut step = actual_step;
+                step.damage_history.clear();
+                step.damage_operation = None;
+                let execution = mtg_kernel::effect::crystal_prevention_v1::ExecutionV1 {
+                    history_index: u32::try_from(bad.engine.event_history.len()).unwrap(),
+                    previous: initial.history_index,
+                    item: initial.item.clone(),
+                    before: initial.pending.clone().unwrap(),
+                    after: None,
+                    steps: vec![step],
+                    batch_commit: None,
+                    discard_commit: None,
+                };
+                let mut closed = initial.clone();
+                closed.previous = Some(initial.history_index);
+                closed.pending = None;
+                closed.answer = None;
+                closed.history_index = execution.history_index + 1;
+                bad.stack.retain(|item| item.source != spell);
+                bad.engine.pending_effect = None;
+                bad.engine
+                    .event_history
+                    .push(CommittedEvent::CrystalExecutionV1 {
+                        execution: Box::new(execution),
+                    });
+                bad.engine
+                    .event_history
+                    .push(CommittedEvent::CrystalPreventionBoundaryV1 { boundary: closed });
+                let bytes = serde_json::to_vec(&bad).unwrap();
+                assert!(engine::step(&mut bad, Action::Pass).is_err());
+                assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+                assert!(matches!(
+                    engine::advance_until_decision(&mut bad),
+                    Decision::Halted { .. }
+                ));
+                bad.engine.halted = None;
+                assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+                for case in 0..3 {
+                    let mut bad = restore(&state);
+                    match case {
+                        0 => {
+                            bad.engine.event_history.retain(|e| {
+                                !matches!(e, CommittedEvent::CrystalDamageOperationV3 { .. })
+                            });
+                        }
+                        1 => {
+                            for event in &mut bad.engine.event_history {
+                                if let CommittedEvent::CrystalExecutionV1 { execution } = event {
+                                    for step in &mut execution.steps {
+                                        step.damage_operation = None;
+                                    }
+                                }
+                            }
+                        }
+                        _ => {
+                            let op = bad
+                                .engine
+                                .event_history
+                                .iter_mut()
+                                .find_map(|e| match e {
+                                    CommittedEvent::CrystalDamageOperationV3 { operation }
+                                        if operation.ctx.source == spell =>
+                                    {
+                                        Some(operation)
+                                    }
+                                    _ => None,
+                                })
+                                .unwrap();
+                            op.output = None;
+                            op.damage_history = None;
+                            op.preventers.clear();
+                        }
+                    }
+                    let bytes = serde_json::to_vec(&bad).unwrap();
+                    assert!(engine::step(&mut bad, Action::Pass).is_err(), "case {case}");
+                    assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+                    assert!(matches!(
+                        engine::advance_until_decision(&mut bad),
+                        Decision::Halted { .. }
+                    ));
+                    bad.engine.halted = None;
+                    assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+                }
+            }
+        }
+    }
+}
