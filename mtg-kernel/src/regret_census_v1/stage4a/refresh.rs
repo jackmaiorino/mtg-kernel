@@ -613,8 +613,7 @@ mod tests {
         for seed in 1..40u64 {
             let mut s = game(seed);
             let mut steps = 0;
-            loop {
-                let Some(d) = decision(&s) else { break };
+            while let Some(d) = decision(&s) {
                 if d.substep_index > 0 && d.legal_action_count >= 2 {
                     found = Some((s.clone(), d));
                     break;
