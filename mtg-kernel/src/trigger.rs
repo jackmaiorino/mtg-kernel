@@ -3590,7 +3590,7 @@ pub(crate) fn required_optional_additional_cost_for_trigger(
 
 /// Authenticates the finite set of effects a definition-owned trigger can
 /// place on the stack, including Moon-Circuit Hacker's event-frozen branch.
-fn source_bound_trigger_program_matches(template: &EffectOp, effect: &EffectOp) -> bool {
+pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: &EffectOp) -> bool {
     if template == effect {
         return true;
     }

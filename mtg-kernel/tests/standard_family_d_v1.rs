@@ -1140,17 +1140,14 @@ fn knight_errant_of_eos_convokes_and_takes_creatures_up_to_the_count() {
             ..
         })
     ));
-    engine::step(
-        &mut state,
-        Action::ChooseEffectTarget(Target::Object(top[2])),
-    )
-    .unwrap();
-    engine::step(
-        &mut state,
-        Action::ChooseEffectTarget(Target::Object(top[4])),
-    )
-    .unwrap();
-    settled(&mut state);
+    let mut restored: GameState =
+        serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+    for state in [&mut state, &mut restored] {
+        engine::step(state, Action::ChooseEffectTarget(Target::Object(top[2]))).unwrap();
+        engine::step(state, Action::ChooseEffectTarget(Target::Object(top[4]))).unwrap();
+        settled(state);
+    }
+    assert_eq!(state, restored);
     assert_eq!(state.objects.get(knight).zone, Zone::Battlefield);
     assert!(state.objects.get(initiate).tapped);
     assert!(state.objects.get(challenger).tapped);

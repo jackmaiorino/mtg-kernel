@@ -5463,9 +5463,13 @@ fn validated_definition_owned_root_effect(
                         pending.resolving_item.source,
                         state,
                     ) == *root
-                        // Event-bound Standard programs (Chandra's copy) are
-                        // filled in from the triggering event.
-                        || crate::standard_cards_v1::template_matches(&(trigger.effect)(), &root)
+                        // Event-bound programs such as Knight-Errant's
+                        // convoke count retain their trigger-time values.
+                        // Use the same template matcher as stack placement.
+                        || crate::trigger::source_bound_trigger_program_matches(
+                            &(trigger.effect)(),
+                            &root,
+                        )
                 })
         {
             return Err(

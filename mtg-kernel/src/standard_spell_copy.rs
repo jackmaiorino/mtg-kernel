@@ -156,7 +156,10 @@ pub(crate) fn materialize_copy_snapshot(
     copy.v4.optional_additional_cost_paid = None;
     // Additional costs are not paid again; their choices and X are copied.
     let id = copy.v4.stack_item_id;
-    validate_spell_stack_source(state, &copy)?;
+    // The object and source contract exist now; stack membership does not
+    // exist until the insertion below. The targeting logger then checks the
+    // complete stack contract, including that unique membership.
+    validate_spell_source_contract_fields(state, &copy)?;
     state.stack.push(copy);
     log_final_targeting_events(state, id)?;
     Ok(())

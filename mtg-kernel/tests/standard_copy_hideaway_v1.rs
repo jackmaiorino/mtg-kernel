@@ -246,15 +246,16 @@ fn chandra_allows_retargeting_each_target_of_a_two_target_spell() {
         next(&mut state),
         Decision::ChooseEffectTargets { .. }
     ));
-    engine::step(
-        &mut state,
-        Action::ChooseEffectTarget(Target::Object(fourth)),
-    )
-    .unwrap();
-    settled(&mut state);
-    for target in [first, second, third, fourth] {
-        assert_eq!(state.objects.get(target).zone, Zone::Graveyard);
+    let mut restored: GameState =
+        serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+    for state in [&mut state, &mut restored] {
+        engine::step(state, Action::ChooseEffectTarget(Target::Object(fourth))).unwrap();
+        settled(state);
+        for target in [first, second, third, fourth] {
+            assert_eq!(state.objects.get(target).zone, Zone::Graveyard);
+        }
     }
+    assert_eq!(state, restored);
 }
 
 #[test]
