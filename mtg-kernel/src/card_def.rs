@@ -308,6 +308,8 @@ pub enum Subtype {
     Construct,
     /// Appended for unregistered Mischievous Pup, preserving existing ids.
     Dog,
+    /// Appended for Ghalta; existing observation subtype ids remain fixed.
+    Elder,
 }
 
 impl Subtype {
@@ -431,6 +433,8 @@ impl Subtype {
         Subtype::Construct,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Dog,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Elder,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Scout,
         #[cfg(feature = "standard-magezero-fixtures")]
@@ -632,6 +636,7 @@ impl Subtype {
                 | Subtype::Sheep
                 | Subtype::AssemblyWorker
                 | Subtype::Mite
+                | Subtype::Elder
         )
     }
 }
@@ -1524,6 +1529,9 @@ pub enum DynamicCountDef {
     ControllerBattlefieldSubtype(Subtype),
     /// One iff a currently controlled permanent has the effective named subtype.
     ControllerHasPermanentSubtype(Subtype),
+    /// Nonnegative total effective power of the caster's live creatures.
+    /// Negative powers contribute before the aggregate is floored at zero.
+    ControllerCreatureTotalPower,
 }
 
 /// Reduces only the generic portion of a spell's mana cost, flooring at
@@ -1540,12 +1548,12 @@ pub struct GenericCostReductionDef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WardCostDef {
     Generic(u8),
-    /// Ward—Collect evidence N (MageZero Standard, Axebane Ferox).
+    /// Wardâ€”Collect evidence N (MageZero Standard, Axebane Ferox).
     CollectEvidence(u16),
-    /// Ward—Pay N life, printed on the transform back face only
+    /// Wardâ€”Pay N life, printed on the transform back face only
     /// (MageZero Standard, Moonrage Brute).
     BackFacePayLife(u8),
-    /// Ward—Discard a card, printed on both faces (MageZero Standard,
+    /// Wardâ€”Discard a card, printed on both faces (MageZero Standard,
     /// Graveyard Trespasser).
     DiscardCard,
 }
@@ -2202,11 +2210,11 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 370 (instant/sorcery cost reducers).
+        // batches append through id 376 (conditional, flash and power creatures).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                371
+                377
             } else {
                 192
             }
@@ -2328,8 +2336,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v67_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x1b1e_46eb_fc30_edb7;
+    fn card_db_hash_v68_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x645f_2da1_b223_a18f;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

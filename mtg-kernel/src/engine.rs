@@ -5746,6 +5746,19 @@ fn normal_cast_reduction_count(
         card_def::DynamicCountDef::ControllerDrawsThisTurn => {
             state.players[player.index()].draws_this_turn
         }
+        card_def::DynamicCountDef::ControllerCreatureTotalPower => {
+            let total: i64 = state
+                .objects
+                .iter()
+                .filter(|(id, object)| {
+                    object.zone == Zone::Battlefield
+                        && object.controller == player
+                        && object_has_type(state, *id, CardType::Creature)
+                })
+                .map(|(id, _)| i64::from(effective_power(state, id)))
+                .sum();
+            total.clamp(0, i64::from(u32::MAX)) as u32
+        }
         card_def::DynamicCountDef::ControllerHasCreatureWithAndWithoutSubtype(subtype) => {
             let mut has_subtype = false;
             let mut lacks_subtype = false;
@@ -6018,6 +6031,25 @@ fn spell_types_have_instant(types: &[CardType]) -> bool {
     types.contains(&CardType::Instant)
 }
 
+pub(crate) fn static_controller_casts_with_flash_for_v1(name: &str) -> bool {
+    cfg!(feature = "limited-fdn-fixtures") && name == "High Fae Trickster"
+}
+
+fn controller_can_cast_with_flash_v1(player: PlayerId, state: &GameState) -> bool {
+    state.objects.iter().any(|(source, object)| {
+        object.zone == Zone::Battlefield
+            && object.controller == player
+            && object.v4.face_index == 0
+            && card_def::CARD_DEFS
+                .get(object.card_def as usize)
+                .is_some_and(|definition| {
+                    definition.is_executable()
+                        && static_controller_casts_with_flash_for_v1(definition.name)
+                })
+            && crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+    })
+}
+
 fn cast_form_timing_ok(
     types: &[CardType],
     keywords: Keywords,
@@ -6026,6 +6058,7 @@ fn cast_form_timing_ok(
 ) -> bool {
     spell_types_have_instant(types)
         || keywords.has(Keywords::FLASH)
+        || (!types.contains(&CardType::Land) && controller_can_cast_with_flash_v1(player, state))
         || sorcery_speed_timing_ok(player, state)
 }
 
@@ -6037,6 +6070,8 @@ fn pending_cast_form_timing_ok(
 ) -> bool {
     spell_types_have_instant(types)
         || keywords.has(Keywords::FLASH)
+        || (!types.contains(&CardType::Land)
+            && controller_can_cast_with_flash_v1(pending.controller, state))
         || (pending.controller == state.active_player
             && pending.controller == state.priority_player
             && matches!(state.step, Step::Main1 | Step::Main2)
@@ -6637,6 +6672,30 @@ fn available_mana_abilities(player: PlayerId, state: &GameState) -> Vec<ObjectId
         .collect()
 }
 
+fn rich_mana_ability_amount(
+    amount: ManaAbilityAmountDef,
+    player: PlayerId,
+    state: &GameState,
+) -> Result<u8, String> {
+    match amount {
+        ManaAbilityAmountDef::Fixed(amount) => Ok(amount),
+        ManaAbilityAmountDef::ControlledCreaturesWithKeyword(keyword) => state.players
+            [player.index()]
+        .battlefield
+        .iter()
+        .filter(|&&candidate| {
+            object_has_type(state, candidate, CardType::Creature)
+                && has_effective_keyword(state, candidate, keyword)
+        })
+        .count()
+        .try_into()
+        .map_err(|_| "mana ability amount exceeds u8".to_string()),
+        ManaAbilityAmountDef::Dynamic(value) => evaluate_dynamic_value(state, value, player)
+            .try_into()
+            .map_err(|_| "mana ability amount exceeds u8".to_string()),
+    }
+}
+
 fn rich_mana_ability_is_payable(
     player: PlayerId,
     source: ObjectId,
@@ -6659,11 +6718,15 @@ fn rich_mana_ability_is_payable(
     match rich.cost {
         ManaAbilityCostDef::TapSelf | ManaAbilityCostDef::TapAndSacrificeSelf => {
             !(object.tapped
-                || object_has_type(state, source, CardType::Creature) && object.summoning_sick)
+                || (object_has_type(state, source, CardType::Creature)
+                    && object.summoning_sick
+                    && !has_effective_keyword(state, source, Keywords::HASTE)))
         }
         ManaAbilityCostDef::TapSelfPayLife(life) => {
             !(object.tapped
-                || object_has_type(state, source, CardType::Creature) && object.summoning_sick)
+                || (object_has_type(state, source, CardType::Creature)
+                    && object.summoning_sick
+                    && !has_effective_keyword(state, source, Keywords::HASTE)))
                 && mana::life_payment_affordable(
                     i32::from(life),
                     state.players[player.index()].life,
@@ -6677,7 +6740,9 @@ fn rich_mana_ability_is_payable(
             // cheap checks: the flat-encode zero-allocation contract counts
             // on the short-circuit (tests/flat_action_allocation.rs).
             !(object.tapped
-                || object_has_type(state, source, CardType::Creature) && object.summoning_sick
+                || (object_has_type(state, source, CardType::Creature)
+                    && object.summoning_sick
+                    && !has_effective_keyword(state, source, Keywords::HASTE))
                 || mana_ability_cost_targets(player, source, state).is_empty())
         }
     }
@@ -6741,10 +6806,23 @@ pub(crate) fn available_mana_ability_choices_into(
         rich_mana_ability_is_payable(player, source, 0, rich, None, state)
     } else {
         !(object.tapped
-            || object_has_type(state, source, CardType::Creature) && object.summoning_sick)
+            || (object_has_type(state, source, CardType::Creature)
+                && object.summoning_sick
+                && !has_effective_keyword(state, source, Keywords::HASTE)))
     };
     if primary_payable {
         for &color in primary.as_slice() {
+            if let Some(rich) = def.mana_ability_def {
+                let Ok(amount) = rich_mana_ability_amount(rich.amount, player, state) else {
+                    continue;
+                };
+                if state.players[player.index()].mana_pool[color.pool_index()]
+                    .checked_add(amount)
+                    .is_none()
+                {
+                    continue;
+                }
+            }
             out.push(color);
         }
     }
@@ -6935,23 +7013,20 @@ fn activate_mana_ability_for(
             })
             .transpose()?;
 
-        let amount = match rich.amount {
-            ManaAbilityAmountDef::Fixed(amount) => amount,
-            ManaAbilityAmountDef::ControlledCreaturesWithKeyword(keyword) => state.players
-                [player.index()]
-            .battlefield
-            .iter()
-            .filter(|&&candidate| {
-                object_has_type(state, candidate, CardType::Creature)
-                    && has_effective_keyword(state, candidate, keyword)
+        let amount = rich_mana_ability_amount(rich.amount, player, state)?;
+
+        // Refuse an unrepresentable result before tapping, sacrificing, paying
+        // or recording an activation. Rich dynamic sources can produce more
+        // than the legacy conditional-yield ceiling of eight.
+        let color_index = choice.pool_index();
+        let final_pool = i32::from(state.players[player.index()].mana_pool[color_index])
+            + mana_plan.as_ref().map_or(0, |plan| {
+                i32::from(plan.surplus[color_index]) - i32::from(plan.pool_used[color_index])
             })
-            .count()
-            .try_into()
-            .map_err(|_| "mana ability amount exceeds u8".to_string())?,
-            ManaAbilityAmountDef::Dynamic(value) => evaluate_dynamic_value(state, value, player)
-                .try_into()
-                .map_err(|_| "mana ability amount exceeds u8".to_string())?,
-        };
+            + i32::from(amount);
+        if !(0..=i32::from(u8::MAX)).contains(&final_pool) {
+            return Err("mana ability result exceeds the pool capacity".to_string());
+        }
 
         if let Some(plan) = &mana_plan {
             pay_plan(state, player, plan);
@@ -10811,6 +10886,41 @@ fn validate_madness_offer_stack_item(state: &GameState, item: &StackItem) -> Res
     Ok(())
 }
 
+fn validate_bound_trigger_source_objects(
+    effect: &EffectOp,
+    source: ObjectId,
+    source_contract: Option<AbilitySourceContractV4>,
+) -> Result<(), String> {
+    match effect {
+        EffectOp::Sequence(steps) => {
+            for step in steps {
+                validate_bound_trigger_source_objects(step, source, source_contract)?;
+            }
+        }
+        EffectOp::Conditional { then, else_, .. } => {
+            validate_bound_trigger_source_objects(then, source, source_contract)?;
+            validate_bound_trigger_source_objects(else_, source, source_contract)?;
+        }
+        EffectOp::PutPlusOnePlusOneCounterOnBoundObject { object }
+        | EffectOp::BoostBoundObjectUntilEndOfTurn { object, .. }
+        | EffectOp::WarpExileBoundObject { object }
+        | EffectOp::DoublePlusOneCountersOnBoundObject { object }
+        | EffectOp::PutOilCounterOnBoundObject { object } => {
+            let Some(contract) = source_contract else {
+                return Err("bound-source trigger lost its historical source contract".to_string());
+            };
+            if object.object != source
+                || object.expected_zone != contract.zone
+                || object.expected_zone_change_count != contract.zone_change_count
+            {
+                return Err("bound-source trigger changed its exact source binding".to_string());
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn triggered_stack_item_expected_target_spec(
     item: &StackItem,
     state: &GameState,
@@ -10855,20 +10965,7 @@ fn triggered_stack_item_expected_target_spec(
     {
         return Err("attached-source trigger lost its host LKI".to_string());
     }
-    if let EffectOp::PutPlusOnePlusOneCounterOnBoundObject { object }
-    | EffectOp::BoostBoundObjectUntilEndOfTurn { object, .. }
-    | EffectOp::WarpExileBoundObject { object } = inline_effect
-    {
-        let Some(source_contract) = ability_source_contract else {
-            return Err("bound-source trigger lost its historical source contract".to_string());
-        };
-        if object.object != item.source
-            || object.expected_zone != source_contract.zone
-            || object.expected_zone_change_count != source_contract.zone_change_count
-        {
-            return Err("bound-source trigger changed its exact source binding".to_string());
-        }
-    }
+    validate_bound_trigger_source_objects(inline_effect, item.source, ability_source_contract)?;
     if let EffectOp::ResolveInitiativeTrigger { binding } = inline_effect {
         let Some(source_contract) = ability_source_contract else {
             return Err("Initiative trigger lost its historical designation source".to_string());
@@ -12257,7 +12354,7 @@ pub(crate) fn static_controlled_subtype_boost_for(
     name: &str,
 ) -> Option<StaticControlledSubtypeBoostDef> {
     match name {
-        "Dwynen, Gilt-Leaf Daen" => Some(StaticControlledSubtypeBoostDef {
+        "Dwynen, Gilt-Leaf Daen" | "Elvish Archdruid" => Some(StaticControlledSubtypeBoostDef {
             subtype: card_def::Subtype::Elf,
             exclude_source: true,
             power: 1,
@@ -15704,6 +15801,7 @@ fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> R
                 trigger::TriggerCondition::Attacks
                     | trigger::TriggerCondition::AttacksWithControllerGraveyardCardCountAtLeast(_)
                     | trigger::TriggerCondition::AttacksWithGreaterPowerAttacker
+                    | trigger::TriggerCondition::AttacksWhileControllerHasPowerFourCreature
             )
         }) {
             let event = CommittedEvent::DeclaredAttacker {
@@ -16853,6 +16951,77 @@ mod attachment_lki_tests;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn nested_source_bound_trigger_objects_reject_redirected_zone_and_generation_bindings() {
+        let elf = crate::card_def::card_id_by_name("Llanowar Elves").unwrap();
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state =
+                GameState::new_from_libraries(&[elf; 4], &[elf; 4], |_| "elf".into(), 1112);
+            let source = state.players[player.index()].library[0];
+            let other = state.players[player.opponent().index()].library[0];
+            for object in [source, other] {
+                crate::event::propose_and_commit(
+                    &mut state,
+                    crate::event::ProposedEvent::zone_change(object, Zone::Battlefield),
+                );
+            }
+            let contract = AbilitySourceContractV4::capture(&state, source);
+            let binding = crate::effect::EffectObjectBinding {
+                object: source,
+                expected_zone: contract.zone,
+                expected_zone_change_count: contract.zone_change_count,
+            };
+            for conditional in [false, true] {
+                let wrap = |object| {
+                    let leaf = EffectOp::BoostBoundObjectUntilEndOfTurn {
+                        object,
+                        power: 1,
+                        toughness: 0,
+                    };
+                    let nested = if conditional {
+                        EffectOp::Conditional {
+                            cond: crate::effect::EffectCond::SourceStillInTriggerZone,
+                            then: Box::new(leaf),
+                            else_: Box::new(EffectOp::Sequence(vec![])),
+                        }
+                    } else {
+                        leaf
+                    };
+                    EffectOp::Sequence(vec![nested])
+                };
+                assert!(validate_bound_trigger_source_objects(
+                    &wrap(binding),
+                    source,
+                    Some(contract)
+                )
+                .is_ok());
+                for forged in [
+                    crate::effect::EffectObjectBinding {
+                        object: other,
+                        ..binding
+                    },
+                    crate::effect::EffectObjectBinding {
+                        expected_zone: Zone::Graveyard,
+                        ..binding
+                    },
+                    crate::effect::EffectObjectBinding {
+                        expected_zone_change_count: binding.expected_zone_change_count + 1,
+                        ..binding
+                    },
+                ] {
+                    assert!(validate_bound_trigger_source_objects(
+                        &wrap(forged),
+                        source,
+                        Some(contract)
+                    )
+                    .is_err());
+                }
+                assert!(
+                    validate_bound_trigger_source_objects(&wrap(binding), source, None).is_err()
+                );
+            }
+        }
+    }
     use super::*;
     use crate::card_def::card_id_by_name;
     use crate::effect::PlayerRef;
@@ -16980,6 +17149,36 @@ mod tests {
             assert_eq!(
                 normal_cast_reduction_count(present, player, &[], &restored),
                 1
+            );
+        }
+    }
+
+    #[test]
+    fn creature_power_cost_count_sums_signed_live_effective_power() {
+        use card_def::DynamicCountDef;
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = empty_game();
+            let first = put_on_battlefield(&mut state, player, "Llanowar Elves");
+            let second = put_on_battlefield(&mut state, player, "Llanowar Elves");
+            let foreign = put_on_battlefield(&mut state, player.opponent(), "Llanowar Elves");
+            put_in_hand(&mut state, player, "Llanowar Elves");
+            let land = put_on_battlefield(&mut state, player, "Forest");
+            state.objects.get_mut(land).counters.plus1_plus1 = 100;
+            let count = DynamicCountDef::ControllerCreatureTotalPower;
+            assert_eq!(normal_cast_reduction_count(count, player, &[], &state), 2);
+            state.objects.get_mut(first).counters.plus1_plus1 = 4;
+            state.objects.get_mut(second).counters.minus1_minus1 = 3;
+            assert_eq!(normal_cast_reduction_count(count, player, &[], &state), 3);
+            state.objects.get_mut(foreign).controller = player;
+            assert_eq!(normal_cast_reduction_count(count, player, &[], &state), 4);
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(first, Zone::Exile));
+            assert_eq!(normal_cast_reduction_count(count, player, &[], &state), 0);
+            state.objects.get_mut(second).counters.minus1_minus1 = 0;
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(
+                normal_cast_reduction_count(count, player, &[], &restored),
+                2
             );
         }
     }

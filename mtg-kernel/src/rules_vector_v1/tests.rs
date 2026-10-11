@@ -614,6 +614,9 @@ fn power_toughness_changes_keep_their_sign() {
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Archmage of Runes",
+    "Ruby, Daring Tracker",
+    "Courageous Goblin",
+    "Brineborn Cutthroat",
     "Arbiter of Woe",
     "Armasaur Guide",
     "Mischievous Pup",
@@ -821,6 +824,11 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
     (
         "engine.rs",
+        "High Fae Trickster",
+        "read via engine::static_controller_casts_with_flash_for_v1 (timing opaque)",
+    ),
+    (
+        "engine.rs",
         "Mocking Sprite",
         "read via engine::static_instant_sorcery_reduction_for_v1",
     ),
@@ -857,6 +865,11 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
     (
         "engine.rs",
         "Dwynen, Gilt-Leaf Daen",
+        "read via engine::static_controlled_subtype_boost_for",
+    ),
+    (
+        "engine.rs",
+        "Elvish Archdruid",
         "read via engine::static_controlled_subtype_boost_for",
     ),
     (

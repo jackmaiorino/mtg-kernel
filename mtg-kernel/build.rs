@@ -3703,10 +3703,11 @@ fn effect_recipe_for(card: &CardJson) -> String {
                 "None".to_string()
             };
             let static_bonus = match card.name.as_str() {
-                "Dwynen, Gilt-Leaf Daen" => ";static=boost_other_controlled_elf_creatures:1:1",
+                "Dwynen, Gilt-Leaf Daen" | "Elvish Archdruid" => ";static=boost_other_controlled_elf_creatures:1:1",
                 "Anthem of Champions" => ";static=boost_live_controlled_creatures:1:1:layer7c:printed_source_abilities",
                 "Mocking Sprite" | "Archmage of Runes" => ";static=controller_instant_or_sorcery_spells_cost_generic_less:1:total_cost_after_additional_and_x_before_one_floor:printed_source_abilities",
                 "Empyrean Eagle" => ";static=boost_other_live_controlled_creatures_with_effective_flying:1:1:layer7c:printed_source_abilities",
+                "High Fae Trickster" => ";static=controller_casts_nonland_spells_as_though_flash:while_live_battlefield_printed_abilities:does_not_grant_keyword_or_activate_or_play_lands",
                 "Billowing Shriekmass" => ";static=controller_graveyard_cards_at_least:7:boost_source:2:1:layer7c:printed_source_abilities",
                 "Dreadwing Scavenger" => ";static=controller_graveyard_cards_at_least:7:boost_source:1:1:layer7c:deathtouch:printed_source_abilities",
                 _ => "",
@@ -3970,8 +3971,12 @@ fn keywords_for(card: &CardJson) -> String {
         | "Vitu-Ghazi Inspector"
         | "Webweaver Changeling"
         | "Dwynen, Gilt-Leaf Daen" => keywords.push("Keywords::REACH"),
-        "Spinewoods Paladin" | "Avenging Hunter" | "Beast-Kin Ranger" | "Mossborn Hydra"
-        | "Koma, World-Eater" => keywords.push("Keywords::TRAMPLE"),
+        "Spinewoods Paladin"
+        | "Avenging Hunter"
+        | "Beast-Kin Ranger"
+        | "Mossborn Hydra"
+        | "Koma, World-Eater"
+        | "Ghalta, Primal Hunger" => keywords.push("Keywords::TRAMPLE"),
         "Outlaw Medic"
         | "Sacred Cat"
         | "Sacred Cat Embalmed Token"
@@ -3979,7 +3984,9 @@ fn keywords_for(card: &CardJson) -> String {
         | "Felidar Savior"
         | "Sun-Blessed Healer" => keywords.push("Keywords::LIFELINK"),
         "Guardian of the Guildpact" => keywords.push("Keywords::PROTECTION_FROM_MONOCOLORED"),
-        "Brazen Scourge" | "Fanatical Firebrand" => keywords.push("Keywords::HASTE"),
+        "Brazen Scourge" | "Fanatical Firebrand" | "Ruby, Daring Tracker" => {
+            keywords.push("Keywords::HASTE")
+        }
         "Samurai Token" | "Apothecary Stomper" | "Armasaur Guide" => {
             keywords.push("Keywords::VIGILANCE")
         }
@@ -3987,7 +3994,11 @@ fn keywords_for(card: &CardJson) -> String {
         "Resolute Reinforcements" | "Twinblade Blessing" | "Ambush Wolf" => {
             keywords.push("Keywords::FLASH")
         }
-        "Mischievous Pup" => keywords.push("Keywords::FLASH"),
+        "Mischievous Pup" | "Brineborn Cutthroat" => keywords.push("Keywords::FLASH"),
+        "High Fae Trickster" => {
+            keywords.push("Keywords::FLYING");
+            keywords.push("Keywords::FLASH");
+        }
         "Elfsworn Giant" => keywords.push("Keywords::REACH"),
         "Eager Trufflesnout" => keywords.push("Keywords::TRAMPLE"),
         _ => {}
@@ -4268,6 +4279,7 @@ fn mana_ability_def_for(name: &str) -> &'static str {
         "Lotus Petal" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::SacrificeSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
         "Overgrown Battlement" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::ControlledCreaturesWithKeyword(Keywords::DEFENDER), controller_damage: 0, max_activations_per_turn: None })",
         "Priest of Titania" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Dynamic(DynamicValueDef::BattlefieldPermanentsWithSubtype(Subtype::Elf)), controller_damage: 0, max_activations_per_turn: None })",
+        "Elvish Archdruid" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Dynamic(DynamicValueDef::ControlledPermanentsWithSubtype(Subtype::Elf)), controller_damage: 0, max_activations_per_turn: None })",
         "Saruli Caretaker" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
         "Tinder Wall" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::SacrificeSelf, amount: ManaAbilityAmountDef::Fixed(2), controller_damage: 0, max_activations_per_turn: None })",
         "Wall of Roots" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: Some(1) })",
@@ -6055,6 +6067,9 @@ fn cost_src(mana_cost: &str) -> String {
 
 fn generic_cost_reduction_for(name: &str) -> &'static str {
     match name {
+        "Ghalta, Primal Hunger" => {
+            "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerCreatureTotalPower })"
+        }
         "Arcane Epiphany" => {
             "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerHasPermanentSubtype(Subtype::Wizard) })"
         }
@@ -6170,6 +6185,9 @@ fn delve_for(name: &str) -> bool {
 /// event, target, and effect part of the generated card database identity.
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Brineborn Cutthroat" => "controller_cast_spell_during_opponent_turn:plus_one_counter_on_bound_source:1",
+        "Ruby, Daring Tracker" => "source_attacks_while_controller_has_effective_power_at_least:4:bound_source_pump_until_end_of_turn:2:2",
+        "Courageous Goblin" => "source_attacks_while_controller_has_effective_power_at_least:4:bound_source_pump_until_end_of_turn:1:0:menace_on_exact_trigger_source",
         "Wardens of the Cycle" => "controller_end_step:intervening_if_creature_died_this_turn:mode_at_placement:gain_controller_life:2|draw_controller:1_then_lose_controller_life:1:recheck_morbid_in_each_branch:untargeted",
         "Archmage of Runes" => "cast_instant_or_sorcery:draw_controller:1",
         "Billowing Shriekmass" => "etb:mill_controller_library:3:private_ordering_exact_incarnations",
@@ -9403,7 +9421,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v67\n"
+            "kernel_carddb/v68\n"
         } else {
             "kernel_carddb/v34\n"
         },
@@ -9784,6 +9802,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Turtle" => "Subtype::Turtle",
         "Gremlin" => "Subtype::Gremlin",
         "Dinosaur" => "Subtype::Dinosaur",
+        "Elder" => "Subtype::Elder",
         "Warlock" => "Subtype::Warlock",
         "Insect" => "Subtype::Insect",
         "Archer" => "Subtype::Archer",
