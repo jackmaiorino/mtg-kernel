@@ -39,9 +39,7 @@ pub(crate) fn has_printed_ability(state: &GameState, object: ObjectId, name: &st
 
 pub(crate) fn legendary_creature(state: &GameState, object: ObjectId) -> bool {
     crate::engine::object_has_type(state, object, CardType::Creature)
-        && CARD_DEFS[state.objects.get(object).card_def as usize]
-            .supertypes
-            .contains(&Supertype::Legendary)
+        && crate::engine::effective_supertypes(state, object).contains(&Supertype::Legendary)
 }
 
 pub(crate) fn jodah_bonus(state: &GameState, recipient: ObjectId) -> i32 {

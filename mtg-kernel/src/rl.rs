@@ -40,6 +40,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeSet, HashSet};
 use std::fmt;
 use std::fs::{self, File};
+use std::hash::Hash;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
@@ -283,8 +284,19 @@ pub struct KeywordFlagsV2 {
     pub landwalk_mask: u8,
 }
 
+/// Effective identity when printed catalog identity is insufficient, such as
+/// an unlocked Room door or a transforming face with different supertypes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct EffectiveIdentityV1 {
+    pub names: Vec<String>,
+    pub mana_value: u16,
+    pub supertypes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CardCharacteristicsV2 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_identity: Option<EffectiveIdentityV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub legend_return_sources: Option<Vec<CardStableRefV1>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -299,6 +311,27 @@ pub struct CardCharacteristicsV2 {
     pub effective_color_mask: u8,
     pub effective_subtype_ids: Vec<u16>,
     pub effective_keywords: KeywordFlagsV2,
+}
+
+// Preserve the historical byte stream when effective identity is absent.
+impl std::hash::Hash for CardCharacteristicsV2 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.legend_return_sources.hash(state);
+        self.legend_rules.hash(state);
+        self.base_pt_until_end_of_turn.hash(state);
+        self.type_flags.hash(state);
+        self.base_power.hash(state);
+        self.base_toughness.hash(state);
+        self.effective_power.hash(state);
+        self.effective_toughness.hash(state);
+        self.effective_color_mask.hash(state);
+        self.effective_subtype_ids.hash(state);
+        self.effective_keywords.hash(state);
+        if let Some(identity) = &self.effective_identity {
+            "effective_identity_v1".hash(state);
+            identity.hash(state);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -5743,7 +5776,10 @@ fn public_card(state: &GameState, id: ObjectId) -> Result<CardPublicV1> {
         stable: card_ref(state, id)?,
         card_name: if object.v4.face_down_v1.is_some() {
             card_name(projected_card_def(state, id, object.zone_change_count))
-        } else if crate::continuous_characteristics_v1::creature_override(state, id).is_some() {
+        } else if object.v4.face_index == 1
+            || card_effective_identity_v1(state, id).is_some()
+            || crate::continuous_characteristics_v1::creature_override(state, id).is_some()
+        {
             engine::effective_name(state, id).to_string()
         } else {
             card_name(object.card_def)
@@ -5783,6 +5819,7 @@ fn public_card_v2(
             text_mode.card_name(projected_card_def(state, id, object.zone_change_count))
         } else if matches!(text_mode, ObservationTextModeV2::FullArtifact)
             && (object.v4.face_index == 1
+                || card_effective_identity_v1(state, id).is_some()
                 || crate::continuous_characteristics_v1::creature_override(state, id).is_some())
         {
             engine::effective_name(state, id).to_string()
@@ -5925,12 +5962,34 @@ fn known_hand_cards_v4(
     Ok(result)
 }
 
+fn card_effective_identity_v1(state: &GameState, id: ObjectId) -> Option<EffectiveIdentityV1> {
+    let object = state.objects.get(id);
+    if object.v4.face_down_v1.is_some() {
+        return None;
+    }
+    let definition = &CARD_DEFS[object.card_def as usize];
+    let needs_identity = definition.name == "Unholy Annex // Ritual Chamber"
+        || engine::effective_supertypes(state, id) != definition.supertypes;
+    needs_identity.then(|| EffectiveIdentityV1 {
+        names: engine::effective_names(state, id)
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        mana_value: engine::object_mana_value(state, id),
+        supertypes: engine::effective_supertypes(state, id)
+            .iter()
+            .map(|value| format!("{value:?}"))
+            .collect(),
+    })
+}
+
 fn card_characteristics_v2(state: &GameState, id: ObjectId) -> CardCharacteristicsV2 {
     let object = state.objects.get(id);
     let base_power = engine::effective_base_power(state, id);
     let base_toughness = engine::effective_base_toughness(state, id);
     let has_pt = base_power.is_some() || base_toughness.is_some();
     CardCharacteristicsV2 {
+        effective_identity: card_effective_identity_v1(state, id),
         legend_rules: crate::standard_legends_v1::characteristics(state, id),
         legend_return_sources: object.v4.melira_protection_v1.as_ref().map(|sources| {
             sources

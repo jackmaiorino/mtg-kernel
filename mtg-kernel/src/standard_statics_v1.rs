@@ -80,14 +80,10 @@ pub(crate) fn apply_conditional_entry_counters(state: &mut GameState, id: Object
         // "This creature enters with a +1/+1 counter on it if you control a
         // permanent with mana value 4 or greater."
         "Ascendant Packleader" => {
-            let controls_big_permanent =
-                state.players[controller.index()]
-                    .battlefield
-                    .iter()
-                    .any(|&other| {
-                        other != id
-                            && CARD_DEFS[state.objects.get(other).card_def as usize].mana_value >= 4
-                    });
+            let controls_big_permanent = state.players[controller.index()]
+                .battlefield
+                .iter()
+                .any(|&other| other != id && crate::engine::object_mana_value(state, other) >= 4);
             if controls_big_permanent {
                 state.objects.get_mut(id).counters.plus1_plus1 += 1;
             }

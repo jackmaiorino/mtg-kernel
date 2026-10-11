@@ -17199,11 +17199,12 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             let Some(Target::Object(target)) = ctx.targets.get(usize::from(*index)) else {
                 return;
             };
-            let name = crate::engine::effective_name(state, *target);
             let objects = [PlayerId::P0, PlayerId::P1]
                 .into_iter()
                 .flat_map(|p| state.players[p.index()].battlefield.iter().copied())
-                .filter(|&id| crate::engine::effective_name(state, id) == name)
+                .filter(|&id| {
+                    id == *target || crate::engine::objects_share_name(state, id, *target)
+                })
                 .collect::<Vec<_>>();
             let events = objects
                 .into_iter()
@@ -18497,9 +18498,7 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
             ctx.target_incarnation_matches(usize::from(*index), state)
                 && match ctx.targets.get(usize::from(*index)) {
                     Some(Target::Object(object)) => {
-                        crate::card_def::CARD_DEFS[state.objects.get(*object).card_def as usize]
-                            .mana_value
-                            <= *maximum
+                        crate::engine::object_mana_value(state, *object) <= *maximum
                     }
                     _ => false,
                 }

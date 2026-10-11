@@ -84,10 +84,9 @@ fn groups(state: &GameState) -> Vec<LegendGroupV1> {
     for controller in [state.active_player, state.active_player.opponent()] {
         let mut names: BTreeMap<&str, Vec<ObjectLinkV4>> = BTreeMap::new();
         for (id, object) in state.objects.iter() {
-            let definition = &card_def::CARD_DEFS[object.card_def as usize];
             if object.zone == Zone::Battlefield
                 && object.controller == controller
-                && definition.supertypes.contains(&Supertype::Legendary)
+                && engine::effective_supertypes(state, id).contains(&Supertype::Legendary)
             {
                 names
                     .entry(engine::effective_name(state, id))

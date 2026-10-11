@@ -2821,6 +2821,11 @@ pub(crate) fn stack_spell_mana_value(state: &GameState, item: &StackItem) -> u16
     if state.objects.get(item.source).v4.face_down_v1.is_some() {
         return 0;
     }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if let Some((_, value, _)) = crate::standard_cards_v1::room_characteristics(state, item.source)
+    {
+        return value;
+    }
     let def = &card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize];
     if item.v4.cast_method == Some(CastMethodV4::Omen) {
         if let Some((cost, _)) = def.omen_spell_form() {
@@ -3141,10 +3146,8 @@ fn legal_targets_for_controller_from_source(
             .collect(),
         TargetSpec::NonlegendaryCreature => battlefield_objects(state)
             .filter(|&id| {
-                let def_idx = state.objects.get(id).card_def;
-                let def = &card_def::CARD_DEFS[def_idx as usize];
                 object_has_type(state, id, CardType::Creature)
-                    && !def.supertypes.contains(&card_def::Supertype::Legendary)
+                    && !effective_supertypes(state, id).contains(&card_def::Supertype::Legendary)
             })
             .map(Target::Object)
             .collect(),
@@ -3390,9 +3393,7 @@ fn legal_targets_for_controller_from_source(
         TargetSpec::LegendaryCreature => battlefield_objects(state)
             .filter(|&id| {
                 object_has_type(state, id, CardType::Creature)
-                    && card_def::CARD_DEFS[state.objects.get(id).card_def as usize]
-                        .supertypes
-                        .contains(&card_def::Supertype::Legendary)
+                    && effective_supertypes(state, id).contains(&card_def::Supertype::Legendary)
             })
             .map(Target::Object)
             .collect(),
@@ -3909,9 +3910,7 @@ fn payable_activation_legal_targets_for(
             let Target::Object(object) = target else {
                 return false;
             };
-            let Ok(x_value) = u8::try_from(
-                card_def::CARD_DEFS[state.objects.get(*object).card_def as usize].mana_value,
-            ) else {
+            let Ok(x_value) = u8::try_from(object_mana_value(state, *object)) else {
                 return false;
             };
             can_pay_activation_components_with_x(ability.cost, controller, source, state, x_value)
@@ -3936,11 +3935,11 @@ fn activation_x_value(
     let Some(Target::Object(target)) = targets.first().copied() else {
         return Err("variable activation cost lost its target".to_string());
     };
-    let live = state
+    state
         .objects
         .try_get(target)
         .ok_or("variable activation target is missing")?;
-    u8::try_from(card_def::CARD_DEFS[live.card_def as usize].mana_value)
+    u8::try_from(object_mana_value(state, target))
         .map_err(|_| "variable activation target mana value exceeds the payment range".to_string())
 }
 
@@ -4167,13 +4166,7 @@ pub(crate) fn evaluate_dynamic_value(
                     && object.controller == controller
                     && !object_has_type(state, *id, CardType::Land)
             })
-            .map(|(_, object)| {
-                if object.v4.face_down_v1.is_some() {
-                    0
-                } else {
-                    card_def::CARD_DEFS[object.card_def as usize].mana_value
-                }
-            })
+            .map(|(id, _)| object_mana_value(state, id))
             .collect::<std::collections::BTreeSet<_>>()
             .len(),
         // UrzaTerrainValue's shape: every required conjunction must be
@@ -4474,9 +4467,7 @@ fn reduced_activation_mana_cost(
             .iter()
             .filter(|&&id| {
                 object_has_type(state, id, CardType::Creature)
-                    && card_def::CARD_DEFS[state.objects.get(id).card_def as usize]
-                        .supertypes
-                        .contains(&card_def::Supertype::Legendary)
+                    && effective_supertypes(state, id).contains(&card_def::Supertype::Legendary)
             })
             .count(),
         };
@@ -7656,9 +7647,7 @@ fn mana_ability_condition_holds(
         }),
         card_def::ManaAbilityConditionDef::ControlledLegendaryPermanentHasColor(color) => {
             state.players[player.index()].battlefield.iter().any(|&id| {
-                card_def::CARD_DEFS[state.objects.get(id).card_def as usize]
-                    .supertypes
-                    .contains(&card_def::Supertype::Legendary)
+                effective_supertypes(state, id).contains(&card_def::Supertype::Legendary)
                     && object_color_mask(state, id) & card_def::mana_color_mask(color) != 0
             })
         }
@@ -14097,6 +14086,10 @@ pub fn object_color_mask(state: &GameState, id: ObjectId) -> u8 {
         if object.v4.face_down_v1.is_some() {
             0
         } else {
+            #[cfg(feature = "standard-magezero-fixtures")]
+            if let Some((_, _, color)) = crate::standard_cards_v1::room_characteristics(state, id) {
+                return color;
+            }
             object.v4.effective_color_mask
         }
     })
@@ -14123,15 +14116,73 @@ pub fn damage_is_prevented_by_protection(
     })
 }
 
+/// Current mana value, including selected Room doors and stack spell forms.
+pub fn object_mana_value(state: &GameState, id: ObjectId) -> u16 {
+    let object = state.objects.get(id);
+    if object.v4.face_down_v1.is_some() {
+        return 0;
+    }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if let Some((_, value, _)) = crate::standard_cards_v1::room_characteristics(state, id) {
+        return value;
+    }
+    if object.zone == Zone::Stack {
+        if let Some(item) = state
+            .stack
+            .iter()
+            .find(|item| item.source == id && item.kind == StackItemKind::Spell)
+        {
+            return stack_spell_mana_value(state, item);
+        }
+    }
+    card_def::CARD_DEFS[object.card_def as usize].mana_value
+}
+/// Supertypes belong to the face currently showing. Temple of Power has no
+/// supertypes; the front face Ojer Axonil is legendary. Ability removal does
+/// not remove a supertype, and face-down objects have no supertypes.
+pub fn effective_supertypes(state: &GameState, id: ObjectId) -> &'static [card_def::Supertype] {
+    let object = state.objects.get(id);
+    let def = &card_def::CARD_DEFS[object.card_def as usize];
+    if object.v4.face_down_v1.is_some()
+        || (object.zone == Zone::Battlefield
+            && object.v4.face_index == 1
+            && def.name == "Ojer Axonil, Deepest Might")
+    {
+        &[]
+    } else {
+        def.supertypes
+    }
+}
+/// A split permanent can have zero, one or two names. Empty names never match.
+pub fn effective_names(state: &GameState, id: ObjectId) -> Vec<&str> {
+    let name = effective_name(state, id);
+    if name.is_empty() {
+        Vec::new()
+    } else {
+        name.split(" // ").collect()
+    }
+}
+pub fn objects_share_name(state: &GameState, left: ObjectId, right: ObjectId) -> bool {
+    let left = effective_names(state, left);
+    effective_names(state, right)
+        .into_iter()
+        .any(|name| left.contains(&name))
+}
+
 pub fn effective_name(state: &GameState, id: ObjectId) -> &str {
-    crate::continuous_characteristics_v1::creature_override(state, id).map_or(
-        if state.objects.get(id).v4.face_down_v1.is_some() {
-            ""
-        } else {
-            state.objects.get(id).name.as_str()
-        },
-        |(characteristics, _)| characteristics.name,
-    )
+    if let Some((characteristics, _)) =
+        crate::continuous_characteristics_v1::creature_override(state, id)
+    {
+        return characteristics.name;
+    }
+    if state.objects.get(id).v4.face_down_v1.is_some() {
+        return "";
+    }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if let Some((name, _, _)) = crate::standard_cards_v1::room_characteristics(state, id) {
+        return name;
+    }
+    state.objects.get(id).name.as_str()
 }
 
 pub fn effective_base_power(state: &GameState, id: ObjectId) -> Option<i32> {

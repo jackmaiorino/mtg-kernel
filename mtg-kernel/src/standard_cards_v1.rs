@@ -311,8 +311,7 @@ pub(crate) fn target_matches(
         StandardTargetV1::AnotherNonlegendaryControlledCreature => {
             live.controller == controller
                 && has(CardType::Creature)
-                && !CARD_DEFS[live.card_def as usize]
-                    .supertypes
+                && !crate::engine::effective_supertypes(state, object)
                     .contains(&crate::card_def::Supertype::Legendary)
         }
         StandardTargetV1::InstantOrSorceryCardInOwnGraveyard => false,
@@ -1156,7 +1155,7 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
 
 /// A permanent's mana value (202.3), from its card's mana cost.
 fn mana_value(state: &GameState, object: ObjectId) -> u16 {
-    CARD_DEFS[state.objects.get(object).card_def as usize].mana_value
+    crate::engine::object_mana_value(state, object)
 }
 
 /// `player` gains control of `object` indefinitely (until it leaves the
@@ -1595,8 +1594,7 @@ pub(crate) fn trigger_matches(
                 && !is_everflame(state, source)
                 && state.objects.get(object).controller == live.controller
                 && crate::engine::object_has_type(state, object, CardType::Creature)
-                && CARD_DEFS[state.objects.get(object).card_def as usize]
-                    .supertypes
+                && crate::engine::effective_supertypes(state, object)
                     .contains(&crate::card_def::Supertype::Legendary)
         }
         StandardTriggerV1::AnotherControlledArtifactEntersManaValueAtLeast(minimum) => {
@@ -1915,6 +1913,49 @@ pub(crate) fn minimum_x(def: &CardDef, targets: &[Target], state: &GameState) ->
 // ---- Rooms: Unholy Annex // Ritual Chamber ---------------------------------
 
 const ROOM: &str = "Unholy Annex // Ritual Chamber";
+
+/// CR709.5 and the DSK release notes: only unlocked doors contribute their
+/// names, costs and colors on the battlefield. Elsewhere both halves apply,
+/// except on the stack, where only the chosen half applies.
+/// https://magic.wizards.com/en/news/feature/duskmourn-house-of-horror-release-notes
+pub(crate) fn room_characteristics(
+    state: &GameState,
+    object: ObjectId,
+) -> Option<(&'static str, u16, u8)> {
+    let live = state.objects.get(object);
+    let def = &CARD_DEFS[live.card_def as usize];
+    if def.name != ROOM {
+        return None;
+    }
+    let (left, right) = def.name.split_once(" // ")?;
+    let doors = if live.zone == Zone::Battlefield {
+        u8::from(door_unlocked(state, object, 0)) | (u8::from(door_unlocked(state, object, 1)) << 1)
+    } else if live.zone == Zone::Stack {
+        let method = state
+            .stack
+            .iter()
+            .find(|item| item.source == object && item.kind == crate::state::StackItemKind::Spell)
+            .and_then(|item| item.v4.cast_method)
+            .or_else(|| {
+                live.v4
+                    .spell_cast_origin
+                    .and_then(|origin| origin.finalized_method)
+            });
+        if method == Some(crate::state::CastMethodV4::Alternative) {
+            2
+        } else {
+            1
+        }
+    } else {
+        3
+    };
+    Some(match doors {
+        0 => ("", 0, 0),
+        1 => (left, 3, crate::card_def::mana_color_mask(ManaColor::B)),
+        2 => (right, 5, crate::card_def::mana_color_mask(ManaColor::B)),
+        _ => (ROOM, 8, crate::card_def::mana_color_mask(ManaColor::B)),
+    })
+}
 
 /// Whether `door` (0 left, 1 right) of this exact Room incarnation is
 /// unlocked.

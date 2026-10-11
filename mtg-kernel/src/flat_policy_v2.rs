@@ -1897,7 +1897,8 @@ impl FlatDecisionEncoderV2 {
                 .iter()
                 .flatten()
                 .any(|card| {
-                    card.characteristics.base_pt_until_end_of_turn.is_some()
+                    card.characteristics.effective_identity.is_some()
+                        || card.characteristics.base_pt_until_end_of_turn.is_some()
                         || card.characteristics.legend_rules.is_some()
                         || card.characteristics.legend_return_sources.is_some()
                 })
@@ -6038,6 +6039,7 @@ mod tests {
             goaded_by: Vec::new(),
             creature_upgrade: None,
             characteristics: CardCharacteristicsV2 {
+                effective_identity: None,
                 base_pt_until_end_of_turn: None,
                 legend_rules: None,
                 legend_return_sources: None,
