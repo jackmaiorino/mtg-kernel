@@ -137,4 +137,26 @@ expectation. Review found that V12 still shares that frozen input refusal, so
 an explicit authenticated V12 input successor is required before qualification.
 Sowerf9a is composed at53984: validate captures before conversion/advancement,
 retain exact malformed state bytes, alias the tuple and move the actual tests.
-Scoped source review is CLEAR. Repaired native gameplay/lint is still pending.
+Scoped source review is CLEAR. The result below records the subsequent repaired
+consumer checks; the complete native batch and lint results remain pending.
+
+Current delivery composition73c9d57347550b6a3d6ee59beed0266e438d0d46 contains
+reviewed PR226 head ee5f2ce9 and accepted main6db8129. Its eight new fixture files
+move byte-for-byte into fdn_integration, with84 FDN/11 Standard modules. New
+Limited/Standard library selectors cover the source/meaning/public/session
+successors. Named read-only review found the actual ancestors, existing module
+sequence, all moved bytes, selector paths and old job/guard behavior preserved.
+Pinned formatting/diff and49 deck/frozen-pool plus7 Limited-session Python cases
+pass. Compiled grouped execution and current-head CI are still required.
+
+Heartfire8fb's separate owning V12 recipient input is composed atd2a2db5f. It
+retains the frozen input refusal and validates the actual partial-walker ledger
+without granting the printed planeswalker abilities or model admission. In the
+ongoing Native60 check of later source359a6e76, both all-test typechecks pass;
+Limited Heartfire input3/Human6 and Sower public4/Human5/session1 cases pass.
+Actual printed Self5 cases also pass with the separately appended observer
+sentinels in that later catalog. These scoped results are not an overall batch
+or grouped-execution pass. Native60's three new-card failures, later catalog
+registration and remaining consumers/model gaps remain separate from this
+404-definition candidate. Final native receipts and prerequisite PR226/default
+delivery remain pending before acceptance.
