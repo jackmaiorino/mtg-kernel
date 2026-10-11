@@ -1,4 +1,4 @@
-//! Unregistered Raid source fixtures; actual card gameplay remains unqualified.
+//! Registered Raid entry fixtures; actual gameplay qualification remains pending.
 #![cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
@@ -8,7 +8,7 @@ use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
-use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Zone};
+use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 
 fn ready(actor: PlayerId) -> GameState {
     let forest = card_id_by_name("Forest").unwrap();
@@ -20,6 +20,11 @@ fn ready(actor: PlayerId) -> GameState {
         actor,
     );
     state.step = Step::Main1;
+    put(&mut state, actor, "Mountain", Zone::Hand);
+    for player in [PlayerId::P0, PlayerId::P1] {
+        put(&mut state, player, "Mountain", Zone::Battlefield);
+        put(&mut state, player, "Lightning Bolt", Zone::Hand);
+    }
     state
 }
 fn put(state: &mut GameState, actor: PlayerId, name: &str, zone: Zone) -> ObjectId {
@@ -66,13 +71,37 @@ fn priority(state: &mut GameState, actor: PlayerId) {
     panic!("priority was not available to {actor:?}");
 }
 fn cast(state: &mut GameState, actor: PlayerId, card: ObjectId) {
-    priority(state, actor);
     state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 20;
     state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 20;
+    priority(state, actor);
     engine::step(state, Action::CastSpell(card)).unwrap();
     pass(state);
     pass(state);
+    assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
     assert_eq!(state.objects.get(card).zone, Zone::Battlefield);
+}
+fn cast_witness(state: &mut GameState, actor: PlayerId, host: ObjectId) -> ObjectId {
+    let aura = put(state, actor, "Witness Protection", Zone::Hand);
+    state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 20;
+    priority(state, actor);
+    engine::step(state, Action::CastSpell(aura)).unwrap();
+    assert!(
+        matches!(next(state), Decision::ChooseTargets { legal_targets, .. } if legal_targets.contains(&Target::Object(host)))
+    );
+    engine::step(state, Action::ChooseTarget(Target::Object(host))).unwrap();
+    for _ in 0..16 {
+        let boundary = next(state);
+        if state.objects.get(aura).zone == Zone::Battlefield {
+            return aura;
+        }
+        // Guttersnipe's real cast trigger resolves before this Aura.
+        assert!(matches!(boundary, Decision::CastSpellOrPass { .. }));
+        engine::step(state, Action::Pass).unwrap();
+    }
+    panic!("Witness did not resolve before the queued Raid ability");
+}
+fn restored(state: &GameState) -> GameState {
+    serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap()
 }
 fn main2_after_declaration(state: &mut GameState, actor: PlayerId, nonempty: bool) {
     let attacker = put(state, actor, "Guttersnipe", Zone::Battlefield);
@@ -102,6 +131,8 @@ fn main2_after_declaration(state: &mut GameState, actor: PlayerId, nonempty: boo
 fn metadata_and_printed_source_rules_match_the_pinned_reference() {
     let sky = &CARD_DEFS[card_id_by_name("Skyship Buccaneer").unwrap() as usize];
     let board = &CARD_DEFS[card_id_by_name("Goblin Boarders").unwrap() as usize];
+    assert_eq!(card_id_by_name("Skyship Buccaneer"), Some(390));
+    assert_eq!(card_id_by_name("Goblin Boarders"), Some(391));
     assert_eq!(sky.capability, CardCapability::Full);
     assert_eq!(board.capability, CardCapability::Full);
     assert_eq!(
@@ -119,16 +150,21 @@ fn metadata_and_printed_source_rules_match_the_pinned_reference() {
 #[test]
 fn boarders_counter_is_an_entry_replacement_for_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
-        for history in [None, Some(false), Some(true)] {
+        for mode in 0..4 {
+            let history = [None, Some(false), Some(true), Some(true)][mode];
             let mut state = ready(actor);
             if let Some(nonempty) = history {
                 main2_after_declaration(&mut state, actor, nonempty);
             }
+            if mode == 3 {
+                state.turn += 1;
+            }
+            let enabled = mode == 2;
             let board = put(&mut state, actor, "Goblin Boarders", Zone::Hand);
             cast(&mut state, actor, board);
             assert_eq!(
                 state.objects.get(board).counters.plus1_plus1,
-                i32::from(history == Some(true))
+                i32::from(enabled)
             );
             assert!(
                 state.stack.is_empty(),
@@ -136,7 +172,7 @@ fn boarders_counter_is_an_entry_replacement_for_both_seats() {
             );
             assert_eq!(
                 engine::effective_power(&state, board),
-                if history == Some(true) { 4 } else { 3 }
+                if enabled { 4 } else { 3 }
             );
         }
     }
@@ -144,21 +180,28 @@ fn boarders_counter_is_an_entry_replacement_for_both_seats() {
 #[test]
 fn skyship_captures_only_after_a_nonempty_declaration_and_draws_on_resolution() {
     for actor in [PlayerId::P0, PlayerId::P1] {
-        for history in [None, Some(false), Some(true)] {
+        for mode in 0..4 {
+            let history = [None, Some(false), Some(true), Some(true)][mode];
             let mut state = ready(actor);
             if let Some(nonempty) = history {
                 main2_after_declaration(&mut state, actor, nonempty);
             }
+            if mode == 3 {
+                state.turn += 1;
+            }
+            let enabled = mode == 2;
             let sky = put(&mut state, actor, "Skyship Buccaneer", Zone::Hand);
             let library = state.players[actor.index()].library.len();
             cast(&mut state, actor, sky);
             assert_eq!(state.players[actor.index()].library.len(), library);
-            if history == Some(true) {
+            let hand = state.players[actor.index()].hand.len();
+            if enabled {
                 assert_eq!(state.stack.len(), 1);
                 pass(&mut state);
                 pass(&mut state);
+                assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
                 assert_eq!(state.players[actor.index()].library.len(), library - 1);
-                assert_eq!(state.players[actor.index()].hand.len(), 1);
+                assert_eq!(state.players[actor.index()].hand.len(), hand + 1);
             } else {
                 assert!(state.stack.is_empty());
             }
@@ -183,25 +226,64 @@ fn another_players_declaration_does_not_enable_flash_raid_entries() {
     }
 }
 #[test]
-fn pending_skyship_draw_restores_and_survives_source_departure() {
+fn pending_skyship_draw_restores_captured_controller_and_intervening_condition() {
     for actor in [PlayerId::P0, PlayerId::P1] {
-        let mut state = ready(actor);
-        main2_after_declaration(&mut state, actor, true);
-        let sky = put(&mut state, actor, "Skyship Buccaneer", Zone::Hand);
-        cast(&mut state, actor, sky);
-        assert_eq!(state.stack.len(), 1);
-        event::propose_and_commit(&mut state, ProposedEvent::zone_change(sky, Zone::Graveyard));
-        let mut replay: GameState =
-            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
-        for current in [&mut state, &mut replay] {
-            pass(current);
-            pass(current);
-            assert_eq!(current.players[actor.index()].hand.len(), 1);
+        for mode in 0..5 {
+            let mut state = ready(actor);
+            if mode == 2 {
+                put(&mut state, actor, "High Fae Trickster", Zone::Battlefield);
+            }
+            main2_after_declaration(&mut state, actor, true);
+            let sky = put(&mut state, actor, "Skyship Buccaneer", Zone::Hand);
+            cast(&mut state, actor, sky);
+            assert_eq!(state.stack.len(), 1);
+            let library = state.players[actor.index()].library.len();
+            let other_library = state.players[actor.opponent().index()].library.len();
+            match mode {
+                0 => event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(sky, Zone::Graveyard),
+                ),
+                1 => {
+                    state.players[actor.index()]
+                        .battlefield
+                        .retain(|&id| id != sky);
+                    state.players[actor.opponent().index()]
+                        .battlefield
+                        .push(sky);
+                    state.objects.get_mut(sky).controller = actor.opponent();
+                }
+                2 => {
+                    cast_witness(&mut state, actor, sky);
+                    assert!(!engine::has_effective_keyword(
+                        &state,
+                        sky,
+                        Keywords::FLYING
+                    ));
+                    assert_eq!(state.stack.len(), 1);
+                }
+                3 => state.attack_declaration_turn_v1 = None,
+                _ => state.turn += 1,
+            }
+            let hand = state.players[actor.index()].hand.len();
+            let mut replay = restored(&state);
+            for current in [&mut state, &mut replay] {
+                pass(current);
+                pass(current);
+                assert!(matches!(next(current), Decision::CastSpellOrPass { .. }));
+                let draw = usize::from(mode < 3);
+                assert_eq!(current.players[actor.index()].hand.len(), hand + draw);
+                assert_eq!(current.players[actor.index()].library.len(), library - draw);
+                assert_eq!(
+                    current.players[actor.opponent().index()].library.len(),
+                    other_library
+                );
+            }
+            assert_eq!(
+                state.diagnostic_state_hash(),
+                replay.diagnostic_state_hash()
+            );
         }
-        assert_eq!(
-            state.diagnostic_state_hash(),
-            replay.diagnostic_state_hash()
-        );
     }
 }
 #[test]
@@ -217,5 +299,18 @@ fn boarders_new_incarnation_gets_one_fresh_entry_counter() {
         cast(&mut state, actor, board);
         assert!(state.objects.get(board).zone_change_count > generation);
         assert_eq!(state.objects.get(board).counters.plus1_plus1, 1);
+        let aura = cast_witness(&mut state, actor, board);
+        assert_eq!(engine::effective_power(&state, board), 2);
+        assert_eq!(state.objects.get(board).counters.plus1_plus1, 1);
+        let mut replay = restored(&state);
+        for current in [&mut state, &mut replay] {
+            event::propose_and_commit(current, ProposedEvent::zone_change(aura, Zone::Graveyard));
+            assert_eq!(engine::effective_power(current, board), 4);
+            assert_eq!(current.objects.get(board).counters.plus1_plus1, 1);
+        }
+        assert_eq!(
+            state.diagnostic_state_hash(),
+            replay.diagnostic_state_hash()
+        );
     }
 }

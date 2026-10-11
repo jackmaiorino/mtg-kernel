@@ -907,6 +907,7 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         // Roots: BRANCH_ROOTS (JSONL of branch::RootSpec); this process plays
         // roots [first_game, first_game + games) for arm BRANCH_ARM (B1 or D8).
         sh.spec.validate()?;
+        let binding = bank::bank_binding(policy, &sh)?;
         let path = std::env::var("BRANCH_ROOTS").map_err(|_| "BRANCH_ROOTS is required")?;
         let specs: Vec<branch::RootSpec> = std::fs::read_to_string(&path)
             .map_err(|e| format!("{path}: {e}"))?
@@ -1001,7 +1002,9 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
             let r = std::thread::scope(|scope| {
                 std::thread::Builder::new()
                     .stack_size(256 << 20)
-                    .spawn_scoped(scope, || branch::root_arm(&sh, policy, spec, retain, &opts))
+                    .spawn_scoped(scope, || {
+                        branch::root_arm(&sh, policy, spec, retain, &binding, &opts)
+                    })
                     .map_err(|e| e.to_string())?
                     .join()
                     .map_err(|_| "branch worker panicked".to_owned())?

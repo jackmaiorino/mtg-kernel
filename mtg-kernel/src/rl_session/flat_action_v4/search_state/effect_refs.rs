@@ -156,6 +156,8 @@ impl Scan<'_> {
             | DestroyPermanentsSharingTargetNameV1 { .. }
             | CreateTokensWithHasteUntilEndOfTurnV1 { .. }
             | PumpTargetUntilEndOfTurnDynamic { .. }
+            | PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness { .. }
+            | ReturnTwoDifferentControllerCreaturesToOwnersHands
             | DoubleTargetPowerUntilEndOfTurn { .. }
             | DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
             | CreateTokensForOtherControlledCreaturesNamed { .. }
@@ -1007,9 +1009,18 @@ pub(super) fn conflicts(
                 paid_cost_refs,
                 ..
             } => s.raw(*source) || paid_cost_refs.iter().any(|r| s.raw(r.object)),
+            ControlledCreatureDeathCaptureV1 { source, died, .. } => {
+                // Historical source definitions and the deceased identity are
+                // still authoritative while this event waits for collection.
+                s.raw(source.source)
+                    || s.raw(died.object)
+                    || source.attached_to.is_some_and(|link| s.raw(link.object))
+            }
             InitiativeTrigger { binding } => s.raw(binding.source.source),
             MonarchTrigger { binding } => s.raw(binding.source.source),
-            LifeLoss { .. }
+            ControlledCreatureDeathCaptureCollectedV1 { .. }
+            | DifferentControllerTargetDepartureV1 { .. }
+            | LifeLoss { .. }
             | LifeGain { .. }
             | LifeGainTurnBeganV1 { .. }
             | ManaAdded { .. }
@@ -1167,5 +1178,37 @@ mod tests {
         );
         assert!(conflicts(&state, &[object], None));
         assert!(!conflicts(&state, &[other], None));
+    }
+
+    #[test]
+    fn captured_death_source_and_deceased_ids_cannot_be_resampled_while_event_waits() {
+        // This tests the reference scanner, not card admission or trigger capture.
+        let mut state = ready_state();
+        let source = put(&mut state, PlayerId::P1, "Forest", Zone::Library);
+        let deceased = put(&mut state, PlayerId::P1, "Island", Zone::Library);
+        let host = put(&mut state, PlayerId::P1, "Mountain", Zone::Library);
+        let unrelated = put(&mut state, PlayerId::P1, "Swamp", Zone::Library);
+        let mut contract = AbilitySourceContractV4::capture(&state, source);
+        contract.attached_to = Some(crate::state::ObjectLinkV4 {
+            object: host,
+            zone_change_count: state.objects.get(host).zone_change_count,
+        });
+        state.engine.event_log.push(
+            crate::event::CommittedEvent::ControlledCreatureDeathCaptureV1 {
+                source: contract,
+                ability_index: 0,
+                died: crate::state::ObjectLinkV4 {
+                    object: deceased,
+                    zone_change_count: state.objects.get(deceased).zone_change_count,
+                },
+                controller_before: PlayerId::P1,
+            },
+        );
+        for id in [source, deceased, host] {
+            assert!(conflicts(&state, &[id], None));
+            state.objects.get_mut(id).zone_change_count += 1;
+            assert!(conflicts(&state, &[id], None));
+        }
+        assert!(!conflicts(&state, &[unrelated], None));
     }
 }

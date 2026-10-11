@@ -1021,6 +1021,10 @@ pub enum TargetSpec {
     AnotherArtifactOrCreature,
     UpToTwoOtherCreaturesDifferentControllers,
     ArtifactOrEnchantmentThenPlayer,
+    /// One currently attacking effective creature. Condemn is the first consumer.
+    AttackingCreature,
+    /// Exactly two distinct effective creatures with different current controllers.
+    TwoCreaturesWithDifferentControllers,
 }
 
 impl TargetSpec {
@@ -1108,6 +1112,8 @@ impl TargetSpec {
             TargetSpec::AnotherArtifactOrCreature => 101,
             TargetSpec::UpToTwoOtherCreaturesDifferentControllers => 102,
             TargetSpec::ArtifactOrEnchantmentThenPlayer => 74,
+            TargetSpec::AttackingCreature => 61,
+            TargetSpec::TwoCreaturesWithDifferentControllers => 62,
         }
     }
 }
@@ -2547,15 +2553,49 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 389 (Paladin, Skyknight and Sire).
+        // batches append through id 394 (Vengeful Bloodwitch after Condemn,
+        // Run Away Together, Raid, Skyknight and Sire).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                390
+                395
             } else {
                 192
             }
         );
+    }
+
+    #[test]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    fn raid_entry_definitions_append_after_paladin_skyknight_and_sire() {
+        for (name, id, mana_value, power, toughness) in [
+            ("Inspiring Paladin", 387, 3, 3, 3),
+            ("Skyknight Squire", 388, 2, 1, 1),
+            ("Sire of Seven Deaths", 389, 7, 7, 7),
+            ("Skyship Buccaneer", 390, 5, 4, 3),
+            ("Goblin Boarders", 391, 3, 3, 2),
+        ] {
+            assert_eq!(card_id_by_name(name), Some(id));
+            let definition = &CARD_DEFS[id as usize];
+            assert_eq!(definition.capability, CardCapability::Full);
+            assert_eq!(
+                (
+                    definition.mana_value,
+                    definition.power,
+                    definition.toughness
+                ),
+                (mana_value, Some(power), Some(toughness))
+            );
+            assert!(definition.is_executable());
+        }
+        assert!(CARD_DEFS[390].keywords.has(Keywords::FLYING));
+        assert_eq!(crate::trigger::triggers_for(390).len(), 1);
+        assert!(crate::trigger::triggers_for(391).is_empty());
+        assert!(card_id_by_name("Gorehorn Raider").is_none());
+        assert!(card_id_by_name("Strongbox Raider").is_none());
     }
 
     #[test]
@@ -2649,6 +2689,8 @@ mod tests {
             (TargetSpec::CreatureWithStunCounter, 72),
             (TargetSpec::UpToOneStackAbility, 73),
             (TargetSpec::ArtifactOrEnchantmentThenPlayer, 74),
+            (TargetSpec::AttackingCreature, 61),
+            (TargetSpec::TwoCreaturesWithDifferentControllers, 62),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);
@@ -2678,8 +2720,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v70_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x2a7f_ae6a_5d9c_c7a5;
+    fn card_db_hash_v73_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x7c8c_36e6_236b_5681;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

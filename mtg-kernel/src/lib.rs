@@ -47,6 +47,7 @@ pub mod bounded_staleness_async_v1;
 pub mod card_def;
 pub mod combat_damage_v1;
 pub(crate) mod continuous_characteristics_v1;
+mod creature_death_capture_v1;
 pub mod legend_rule_v1;
 pub mod native_search_collection_v3;
 pub mod native_search_trajectory_v3;
@@ -483,6 +484,7 @@ pub const KERNEL_VERSION: &str = "0.0.4-spike";
 
 pub mod public_cost_features_v1;
 pub(crate) mod public_stack_features_v1;
+pub mod rules_meaning_v2;
 /// Engine-derived per-card rules features (no names or registry labels).
 pub mod rules_vector_v1;
 

@@ -318,7 +318,7 @@ jobs:
       - name: Validate MageZero Standard catalog
         if: matrix.group == 'standard'
         run: |
-          python python/tools/run_rust_lib_filters.py --features standard-magezero-fixtures card_def:: cauldron_grants_v1:: rl::legacy_hash_v1:: human_bo3_v1::visible::standard:: resolution_cast_v1:: finalized_case_cast_rejects_a_restored_prior_incarnation_grant engine::standard_spell_copy::tests:: frozen_encoder_rejects_creature_upgrades_in_every_public_zone frozen_encoder_rejects_known_face_down_identities frozen_encoder_rejects_private_face_down_knowledge face_down_crew_payment_reference captured_disguise_stack_target standard_face_down_public_refs channel_payment_preserves_printed_ability_discount counter_removal_payment_accepts_repeated_creature crew_payment_reserves_its_contributors event::tests::heartfire_death_respects_the_pre_zone_change_ability_snapshot engine::legacy_attack_hash_baseline_tests:: native_flat_tensorizer_v5::tests::known_face_down_knowledge_refuses_frozen_successor_encoders
+          python python/tools/run_rust_lib_filters.py --features standard-magezero-fixtures card_def:: cauldron_grants_v1:: rl::legacy_hash_v1:: human_bo3_v1::visible::standard:: resolution_cast_v1:: finalized_case_cast_rejects_a_restored_prior_incarnation_grant engine::standard_spell_copy::tests:: frozen_encoder_rejects_creature_upgrades_in_every_public_zone frozen_encoder_rejects_known_face_down_identities frozen_encoder_rejects_private_face_down_knowledge face_down_crew_payment_reference captured_disguise_stack_target standard_face_down_public_refs channel_payment_preserves_printed_ability_discount counter_removal_payment_accepts_repeated_creature crew_payment_reserves_its_contributors event::tests::heartfire_death_respects_the_pre_zone_change_ability_snapshot engine::legacy_attack_hash_baseline_tests:: engine::anytarget_planeswalker_tests:: native_flat_tensorizer_v5::tests::known_face_down_knowledge_refuses_frozen_successor_encoders
           python python/tools/run_rust_integration_tests.py standard_integration --features standard-magezero-fixtures
 
       - name: Run Rust release tests
@@ -347,7 +347,7 @@ jobs:
         if: matrix.group == 'limited'
         run: |
           python python/tools/run_rust_integration_tests.py fdn_integration --features limited-fdn-fixtures
-          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures limited_session_v1::tests rl_session::tests card_def:: koma_spell_protection threshold_counts_graveyard native_training_store_run_v2:: policy_observation_v8:: policy_observation_v9:: engine::raid_history_tests:: trigger::tests::raid_ flat_policy_v4:: native_flat_tensorizer_v4:: native_flat_tensorizer_v5:: native_flat_tensorizer_v6:: rl_session::human_v8:: human_bo3_v1::
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures limited_session_v1::tests rl_session::tests card_def:: koma_spell_protection threshold_counts_graveyard native_training_store_run_v2:: policy_observation_v8:: policy_observation_v9:: engine::raid_history_tests:: trigger::tests::raid_ effect::condemn_tests:: effect::run_away_together_tests:: bloodwitch_ engine::anytarget_planeswalker_tests:: rules_meaning_v2:: flat_policy_v4:: native_flat_tensorizer_v4:: native_flat_tensorizer_v5:: native_flat_tensorizer_v6:: rl_session::human_v8:: human_bo3_v1::
 
       - name: Validate FDN profiles under the native Store feature
         if: matrix.group == 'limited-store'

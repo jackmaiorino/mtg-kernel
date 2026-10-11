@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "admission": "unregistered",
+  "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "java_file": "Mage.Sets/src/mage/cards/c/Condemn.java",
+  "name": "Condemn",
+  "mana_cost": "{W}",
+  "mana_value": 1,
+  "colors": [
+    "W"
+  ],
+  "types": [
+    "Instant"
+  ],
+  "subtypes": [],
+  "supertypes": [],
+  "power": null,
+  "toughness": null,
+  "rules": [
+    "Put target attacking creature on the bottom of its owner's library.",
+    "Its controller gains life equal to its toughness."
+  ]
+}

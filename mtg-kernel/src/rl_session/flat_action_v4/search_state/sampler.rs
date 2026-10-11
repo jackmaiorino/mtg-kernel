@@ -18,11 +18,21 @@ fn conflicts(
             || c.attached_to
                 .is_some_and(|x| same(x.object, x.zone_change_count))
     };
+    let historical_death_source =
+        |source: &AbilitySourceContractV4, effect: &crate::effect::EffectOp| {
+            pool.contains(&source.source)
+                && crate::creature_death_capture_v1::owns_program(source, effect)
+        };
     let stack = |s: &StackItem| {
         s.inline_effect
             .as_ref()
             .is_some_and(|op| super::effect_refs::op_conflicts(state, pool, op))
             || s.v4.ability_source_contract.as_ref().is_some_and(&ability)
+            || s.v4
+                .ability_source_contract
+                .as_ref()
+                .zip(s.inline_effect.as_ref())
+                .is_some_and(|(source, effect)| historical_death_source(source, effect))
             || s.v4.granted_by.as_ref().is_some_and(&ability)
             || s.v4
                 .cauldron_grant
@@ -49,6 +59,9 @@ fn conflicts(
     }) || e.pending_triggers.iter().any(|t| {
         super::effect_refs::op_conflicts(state, pool, &t.effect)
             || t.source_contract.as_ref().is_some_and(&ability)
+            || t.source_contract
+                .as_ref()
+                .is_some_and(|source| historical_death_source(source, &t.effect))
             || t.granted_by.as_ref().is_some_and(&ability)
     }) || state.stack.iter().any(&stack)
         || e.pending_effect
@@ -345,5 +358,88 @@ mod tests {
         obj.v4
             .reset_for_zone_change(obj.card_def, Zone::Library, state.turn);
         assert!(redeterminize(&mut state, PlayerId::P0, 1).is_ok());
+    }
+
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    fn bloodwitch_hidden_return_refuses_resampling_of_historical_pending_and_stack_source() {
+        use crate::engine::{self, Action, Decision};
+        use crate::event::{self, ProposedEvent};
+        use crate::policy_observation_v6::tests::put;
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let controller = actor.opponent();
+            let mut state = super::super::tests::state(actor);
+            let source = put(
+                &mut state,
+                controller,
+                "Vengeful Bloodwitch",
+                Zone::Battlefield,
+            );
+            let victim = put(&mut state, controller, "Llanowar Elves", Zone::Battlefield);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(victim, Zone::Graveyard),
+            );
+            let pending = crate::trigger::collect_and_process(&mut state);
+            assert_eq!(pending.len(), 1);
+            state.engine.pending_triggers.extend(pending);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Library),
+            );
+            assert!(crate::trigger::collect_and_process(&mut state).is_empty());
+            assert!(state.engine.event_log.is_empty());
+            assert_eq!(state.objects.get(source).zone_change_count, 1);
+            assert_eq!(
+                state.engine.pending_triggers[0]
+                    .source_contract
+                    .unwrap()
+                    .zone_change_count,
+                0
+            );
+            assert!(conflicts(&state, &[source], None));
+            for _ in 0..2 {
+                let original = serde_json::to_vec(&state).unwrap();
+                let restored: GameState = serde_json::from_slice(&original).unwrap();
+                assert!(conflicts(&restored, &[source], None));
+                let mut disposable = restored;
+                assert_eq!(
+                    redeterminize_with_library_plan_classified(&mut disposable, actor, 991, None),
+                    Err(Error::HiddenReferenceConflict)
+                );
+                assert_eq!(original, serde_json::to_vec(&state).unwrap());
+                if state.stack.is_empty() {
+                    let decision = engine::advance_until_decision(&mut state);
+                    assert!(
+                        matches!(decision, Decision::ChooseTargets { player, .. } if player == controller)
+                    );
+                    engine::step(
+                        &mut state,
+                        Action::ChooseTarget(crate::state::Target::Player(actor)),
+                    )
+                    .unwrap();
+                    engine::advance_until_decision(&mut state);
+                    assert_eq!(state.stack.len(), 1);
+                    assert_eq!(
+                        state.stack[0]
+                            .v4
+                            .ability_source_contract
+                            .unwrap()
+                            .zone_change_count,
+                        0
+                    );
+                    assert!(crate::trigger::collect_and_process(&mut state).is_empty());
+                    assert!(state.engine.event_log.is_empty());
+                    assert!(conflicts(&state, &[source], None));
+                }
+            }
+            // Removing new typed ownership removes this new restriction.
+            state.stack.clear();
+            state.engine.pending_triggers.clear();
+            assert!(!conflicts(&state, &[source], None));
+        }
     }
 }

@@ -22,6 +22,8 @@ mod fdn_casting_triggers_v1;
 mod fdn_celestial_armor_v1;
 #[path = "fdn/fdn_combat_cards_v1.rs"]
 mod fdn_combat_cards_v1;
+#[path = "fdn/fdn_condemn_v1.rs"]
+mod fdn_condemn_v1;
 #[path = "fdn/fdn_controller_flash_v1.rs"]
 mod fdn_controller_flash_v1;
 #[path = "fdn/fdn_counter_creatures_v1.rs"]
@@ -104,12 +106,16 @@ mod fdn_paradise_druid_v1;
 mod fdn_pilfer_v1;
 #[path = "fdn/fdn_prowler_creature_v1.rs"]
 mod fdn_prowler_creature_v1;
+#[path = "fdn/fdn_raid_entries_v1.rs"]
+mod fdn_raid_entries_v1;
 #[path = "fdn/fdn_raise_past_v1.rs"]
 mod fdn_raise_past_v1;
 #[path = "fdn/fdn_removal_tricks_v1.rs"]
 mod fdn_removal_tricks_v1;
 #[path = "fdn/fdn_rise_dark_realms_v1.rs"]
 mod fdn_rise_dark_realms_v1;
+#[path = "fdn/fdn_run_away_together_v1.rs"]
+mod fdn_run_away_together_v1;
 #[path = "fdn/fdn_second_rite_v1.rs"]
 mod fdn_second_rite_v1;
 #[path = "fdn/fdn_simple_triggers_v1.rs"]
@@ -140,6 +146,8 @@ mod fdn_tokens_auras_v1;
 mod fdn_triggers_tricks_v1;
 #[path = "fdn/fdn_uncharted_voyage_v1.rs"]
 mod fdn_uncharted_voyage_v1;
+#[path = "fdn/fdn_vengeful_bloodwitch_v1.rs"]
+mod fdn_vengeful_bloodwitch_v1;
 #[path = "fdn/fdn_wardens_cycle_v1.rs"]
 mod fdn_wardens_cycle_v1;
 #[path = "fdn/fdn_witness_protection_v1.rs"]

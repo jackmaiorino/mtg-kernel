@@ -41,6 +41,20 @@ fn threshold(out: &mut Collector, player: RelF, zone: ZoneF, obj: ObjF, minimum:
 /// The event a triggered ability waits for, plus any intervening reads.
 pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector) {
     match condition {
+        TriggerCondition::ThisOrControlledCreatureDies => {
+            // The frozen vocabulary lacks self-or-controlled-other death.
+            // Mark the gap instead of inventing an exact predecessor facet.
+            out.trigger(TrigF::SelfLeaves {
+                to: Some(ZoneF::Graveyard),
+            });
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Typed(CardTypeF::Creature)),
+                AggF::EventThisTurn,
+            );
+            out.atoms.push(Atom::Opaque);
+        }
         TriggerCondition::EtbAfterControllerAttackedThisTurn => {
             out.trigger(TrigF::SelfEnters);
             out.control(ControlF::Conditional);

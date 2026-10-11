@@ -12,7 +12,7 @@ import argparse
 import copy
 from datetime import datetime, timezone
 import hashlib
-from functools import lru_cache
+from collections import OrderedDict
 import json
 import math
 import os
@@ -43,9 +43,10 @@ LEASE_GUARD_ENV = "MTG_LEASE_GUARD_DIR"
 PROC = Path("/proc")
 
 
-@lru_cache(maxsize=16)
-def _inference_shape(path, sha256, size, modified_ns):
-    checkpoint = read(checked({"path": path, "sha256": sha256}))
+_INFERENCE_SHAPES = OrderedDict()
+
+
+def _inference_shape(checkpoint):
     return {key: checkpoint[key] for key in
             ("schema", "source_import", "feature_contract_digest", "feature_encoding_digest", "card_db_hash")} | {
                 "parameters": [(row["name"], row["shape"], len(row["values"])) for row in checkpoint["parameters"]]}
@@ -53,8 +54,17 @@ def _inference_shape(path, sha256, size, modified_ns):
 
 def inference_shape(source):
     item = source["checkpoint"]
-    stat = Path(item["path"]).stat()
-    return _inference_shape(item["path"], item["sha256"], stat.st_size, stat.st_mtime_ns)
+    payload = Path(item["path"]).read_bytes()
+    require(hashlib.sha256(payload).hexdigest() == item["sha256"],
+            "changed pinned input: " + item["path"])
+    # Cache only a small derived shape, after checking the current exact bytes.
+    # A matching path/size/mtime does not establish immutable contents.
+    if item["sha256"] not in _INFERENCE_SHAPES:
+        _INFERENCE_SHAPES[item["sha256"]] = _inference_shape(json.loads(payload))
+        if len(_INFERENCE_SHAPES) > 16:
+            _INFERENCE_SHAPES.popitem(last=False)
+    _INFERENCE_SHAPES.move_to_end(item["sha256"])
+    return copy.deepcopy(_INFERENCE_SHAPES[item["sha256"]])
 
 
 def runtime_identity(runtime):
@@ -379,7 +389,8 @@ def placed_config(request, config, qualification):
     return result
 
 
-def collection_fingerprint(path, expected, resolve=checked, ledgers=None, validated_files=None):
+def collection_fingerprint(path, expected, resolve=checked, ledgers=None, validated_files=None,
+                           exposure_inputs=None):
     """Ordered trajectory hashes of a complete, all-natural collection.
 
     A tolerant training collection may also pin a non-natural ledger of
@@ -405,10 +416,13 @@ def collection_fingerprint(path, expected, resolve=checked, ledgers=None, valida
         require(trajectory["terminal"]["terminal_classification"] == "natural",
                 "non-natural terminal")
         hashes.append(item["sha256"])
+        if exposure_inputs is not None:
+            from nine_deck_exposure_collector_v1 import exposure_projection
+            exposure_inputs.append({"source": dict(item), "trajectory": exposure_projection(trajectory)})
     return hashes
 
 
-def output_fingerprint(config, kind, result, runtime, qualification, resolve=checked, collection_ref=None, run_ref=None, validated_files=None, timing=None):
+def output_fingerprint(config, kind, result, runtime, qualification, resolve=checked, collection_ref=None, run_ref=None, validated_files=None, timing=None, exposure_inputs=None):
     if kind == "evaluation":
         return {"trajectories": collection_fingerprint(
             collection_ref or pin(Path(config["output_directory"])/"collection.json"), len(config["episodes"]), resolve,
@@ -436,9 +450,13 @@ def output_fingerprint(config, kind, result, runtime, qualification, resolve=che
             timing["receipt_read_hash_parse_seconds"] += time.monotonic() - phase_started
         require(receipt["iteration"] == index, "unordered update receipts")
         ledgers = [] if tolerant else None
+        projected = [] if exposure_inputs is not None else None
         phase_started = time.monotonic()
         trajectories = collection_fingerprint(receipt["collection"],
-                                              len(config["iterations"][index]["episodes"]), resolve, ledgers, validated_files)
+                                              len(config["iterations"][index]["episodes"]), resolve, ledgers, validated_files,
+                                              projected)
+        if exposure_inputs is not None:
+            exposure_inputs.append(projected)
         if timing is not None:
             timing["collection_seconds"] += time.monotonic() - phase_started
         phase_started = time.monotonic()
@@ -711,8 +729,17 @@ def execute(request_path, qualification):
     fingerprint_started = time.monotonic()
     validated_files = {}
     fingerprint_timing = {}
+    exposure_iterations = [] if request["kind"] == "training" else None
     fingerprint = output_fingerprint(placed, request["kind"], last, runtime, qualification,
-                                     validated_files=validated_files, timing=fingerprint_timing)
+                                     validated_files=validated_files, timing=fingerprint_timing,
+                                     exposure_inputs=exposure_iterations)
+    exposure_pin = None
+    if exposure_iterations is not None:
+        from nine_deck_exposure_collector_v1 import INPUT_SCHEMA
+        exposure_path = Path(placed["output_directory"])/"exposure-inputs.json"
+        write(exposure_path, {"schema": INPUT_SCHEMA, "iterations": exposure_iterations})
+        exposure_pin = pin(exposure_path)
+        validated_files[str(exposure_path.resolve())] = exposure_pin["sha256"]
     fingerprint_seconds = time.monotonic() - fingerprint_started
     storage_started = time.monotonic()
     validate_storage(request["storage"], 0)
@@ -744,6 +771,7 @@ def execute(request_path, qualification):
         report["collection"] = pin(Path(placed["output_directory"])/"collection.json")
     else:
         report["run"] = pin(Path(placed["output_directory"])/"run.json")
+        report["exposure_inputs"] = exposure_pin
     write(root/"report.json", report)
     print(json.dumps({"complete": True, "report": pin(root/"report.json")}))
 

@@ -1,0 +1,548 @@
+{
+  "schema": "training-io-speedups-analysis/v1",
+  "complete": true,
+  "state": {
+    "path": "D:\\training-io-speedups-20261010\\desktop\\formal\\continuation-coordinator-v2\\state.json",
+    "sha256": "42a0180281217a56376c295fd66f3c0ab79cb31283494dfeb8456292d742f548"
+  },
+  "completed_updates": 648,
+  "completed_games": 6480,
+  "fingerprint_sha256": "f6c07924418e8dc850a5a83ad5ec0d987eeebdadca0ce672bd41a9084483ca07",
+  "full_fingerprint_parity": true,
+  "exposure_and_embedding_gate_parity": true,
+  "recovered_output_parity": {
+    "scientific_update_parity": true,
+    "deterministic_preparation_parity_when_present": true,
+    "update_count_per_case": 162,
+    "native_member_coverage_parity": true,
+    "native_member_inventory_sha256": "8ea6e50ea5237ca8226275db4e9bac39c3321e457a984b7c0a2ad0617915b4f8",
+    "comparison_member_count": 2919,
+    "coverage_exception": "Only candidate exposure-inputs.json is excluded from cross-case member-name coverage; its exact SHA is bound to report.exposure_inputs and independently recovered.",
+    "definition": "All update.json fields, recursively and with original paths/pins/numbers, except the enumerated timers and preparation placement fields reported per update. Unknown scientific fields remain compared. GAE profile phase labels remain compared. Deterministic preparation fields are compared among all prepared cases; serial placement has no preparation receipt. No path, float tolerance, loss or gauge normalization."
+  },
+  "comparisons": {
+    "matched_case_wall_seconds": {
+      "baseline_mean_seconds": 873.2328475999966,
+      "candidate_mean_seconds": 789.1542044000234,
+      "speedup_ratio_of_means": 1.1065427298380757,
+      "percent_time_reduction": 9.628433404796432,
+      "adjacent_paired_speedups": [
+        1.0065516675813355,
+        1.237732490779384
+      ]
+    },
+    "raw_case_wall_seconds": {
+      "baseline_mean_seconds": 873.8201060999854,
+      "candidate_mean_seconds": 789.1542044000234,
+      "speedup_ratio_of_means": 1.1072868917480223,
+      "percent_time_reduction": 9.689168412230863,
+      "adjacent_paired_speedups": [
+        1.0078630196388416,
+        1.237732490779384
+      ]
+    },
+    "dispatch_seconds": {
+      "baseline_mean_seconds": 606.3953039000044,
+      "candidate_mean_seconds": 561.9909253999795,
+      "speedup_ratio_of_means": 1.0790126254590704,
+      "percent_time_reduction": 7.322678492798362,
+      "adjacent_paired_speedups": [
+        1.0804263279237538,
+        1.077674695296862
+      ]
+    },
+    "child_seconds": {
+      "baseline_mean_seconds": 385.3193884000211,
+      "candidate_mean_seconds": 343.1283284499805,
+      "speedup_ratio_of_means": 1.122960001992931,
+      "percent_time_reduction": 10.949633270527205,
+      "adjacent_paired_speedups": [
+        1.1394001155003783,
+        1.1076066509601907
+      ]
+    },
+    "inspect_seconds": {
+      "baseline_mean_seconds": 127.85927160001302,
+      "candidate_mean_seconds": 26.226413500015042,
+      "speedup_ratio_of_means": 4.875209932915139,
+      "percent_time_reduction": 79.48806279605587,
+      "adjacent_paired_speedups": [
+        5.298738328755235,
+        4.309932516829621
+      ]
+    },
+    "exposure_seconds": {
+      "baseline_mean_seconds": 108.16853455000091,
+      "candidate_mean_seconds": 5.018251300003612,
+      "speedup_ratio_of_means": 21.555025462738993,
+      "percent_time_reduction": 95.36071065316696,
+      "adjacent_paired_speedups": [
+        24.928376309448883,
+        17.530987120469415
+      ]
+    },
+    "archive_seconds": {
+      "baseline_mean_seconds": 82.88928025000496,
+      "candidate_mean_seconds": 82.48703319999913,
+      "speedup_ratio_of_means": 1.0048764882721692,
+      "percent_time_reduction": 0.4852823535113293,
+      "adjacent_paired_speedups": [
+        0.9972730769506325,
+        1.0122337108158945
+      ]
+    },
+    "copy_seconds": {
+      "baseline_mean_seconds": 35.12848164998286,
+      "candidate_mean_seconds": 118.18377334999968,
+      "speedup_ratio_of_means": 0.2972360811830768,
+      "percent_time_reduction": -236.4329108430377,
+      "adjacent_paired_speedups": [
+        0.1748871608908298,
+        0.9612324923032131
+      ]
+    },
+    "retain_seconds": {
+      "baseline_mean_seconds": 32.29414974999963,
+      "candidate_mean_seconds": 48.18981549999444,
+      "speedup_ratio_of_means": 0.6701447061984157,
+      "percent_time_reduction": -49.221502572598254,
+      "adjacent_paired_speedups": [
+        0.5753687475005551,
+        0.8939424799885571
+      ]
+    },
+    "late_copy_seconds": {
+      "baseline_mean_seconds": 65.2132903499878,
+      "candidate_mean_seconds": 28.001276750015677,
+      "speedup_ratio_of_means": 2.3289398884267407,
+      "percent_time_reduction": 57.06200898660696,
+      "adjacent_paired_speedups": [
+        1.5860849193801947,
+        5.327607429281308
+      ]
+    },
+    "late_receipt_seconds": {
+      "baseline_mean_seconds": 1.1963409000163665,
+      "candidate_mean_seconds": 1.4318035500036785,
+      "speedup_ratio_of_means": 0.8355482147067542,
+      "percent_time_reduction": -19.68190253999431,
+      "adjacent_paired_speedups": [
+        1.2285108195564334,
+        0.06402452057638669
+      ]
+    }
+  },
+  "coordinator": {
+    "started_utc": "2026-10-11T05:47:03.374343+00:00",
+    "finished_utc": "2026-10-11T13:50:58.012406+00:00",
+    "elapsed_seconds": 29034.638063,
+    "raw_case_wall_sum_seconds": 3325.9486210000177,
+    "matched_case_wall_sum_seconds": 3324.77410400004,
+    "canonical_queue_wait_seconds": 3421.1805396000564,
+    "one_time_allocation_audit_seconds": 1.1745169999776408,
+    "outside_case_and_queue_seconds": 22287.508902399924,
+    "recorded_subprocess_phase_seconds": 3128.618306199991,
+    "stopped_coordinator_gap_seconds": 1229.420778,
+    "interrupted_between_case_utc_interval_proxy_seconds": 7200.302812,
+    "interrupted_continuation_utc_interval_proxy_seconds": 13856.676248,
+    "remaining_coordinator_overhead_seconds": 1.109064399925046,
+    "active_coordinator_segment_seconds": 27805.217285,
+    "accounting": "Full UTC span includes every interrupted interval and stopped gap once. canonical_queue_wait_seconds covers only four successful measured admissions. Failed intervals are UTC proxies, not exact measured queues. Remaining overhead subtracts those separately disclosed intervals; primary matched case totals are unchanged."
+  },
+  "maintenance_reservations": {
+    "cases": [
+      {
+        "label": "io-01-baseline",
+        "started_utc": "2026-10-11T05:47:09.817611+00:00",
+        "maintenance_started_utc": "2026-10-11T05:57:04.879997+00:00",
+        "finished_utc": "2026-10-11T06:02:12.520013+00:00",
+        "timing_boundary": "Through final recovery receipt SHA reads and canonical generation observation; subsequent durable coordinator-state write is outside case wall and included in coordinator elapsed.",
+        "before": {
+          "observed_utc": "2026-10-11T05:57:04.884308+00:00",
+          "current": null,
+          "highest_generation": 466
+        },
+        "after": {
+          "observed_utc": "2026-10-11T06:02:12.518510+00:00",
+          "current": null,
+          "highest_generation": 466
+        },
+        "dispatch_generation": 466,
+        "additional_generations_observed": false,
+        "scope": "Canonical reservation generations only. Includes short completed reservations through archived filenames. Does not rule out shared-slot or unreserved background work; does not reject or exclude a case."
+      },
+      {
+        "label": "io-02-candidate",
+        "started_utc": "2026-10-11T06:11:03.071707+00:00",
+        "maintenance_started_utc": "2026-10-11T06:20:13.343263+00:00",
+        "finished_utc": "2026-10-11T06:25:58.731470+00:00",
+        "timing_boundary": "Through final recovery receipt SHA reads and canonical generation observation; subsequent durable coordinator-state write is outside case wall and included in coordinator elapsed.",
+        "before": {
+          "observed_utc": "2026-10-11T06:20:13.347472+00:00",
+          "current": null,
+          "highest_generation": 467
+        },
+        "after": {
+          "observed_utc": "2026-10-11T06:25:58.730081+00:00",
+          "current": {
+            "generation": 468,
+            "lane": "spellbench-luna-bounded-qualification-20261009",
+            "work_id": "luna-lean-h8-qualification-001",
+            "acquired_at": "2026-10-11T06:22:11.673+00:00"
+          },
+          "highest_generation": 468
+        },
+        "dispatch_generation": 467,
+        "additional_generations_observed": true,
+        "scope": "Canonical reservation generations only. Includes short completed reservations through archived filenames. Does not rule out shared-slot or unreserved background work; does not reject or exclude a case."
+      },
+      {
+        "label": "io-03-candidate",
+        "started_utc": "2026-10-11T13:25:29.636020+00:00",
+        "maintenance_started_utc": "2026-10-11T13:35:11.325373+00:00",
+        "finished_utc": "2026-10-11T13:36:52.295955+00:00",
+        "timing_boundary": "Through final recovery receipt SHA reads and canonical generation observation; subsequent durable coordinator-state write is outside case wall and included in coordinator elapsed.",
+        "before": {
+          "observed_utc": "2026-10-11T13:35:11.328155+00:00",
+          "current": null,
+          "highest_generation": 472
+        },
+        "after": {
+          "observed_utc": "2026-10-11T13:36:52.294816+00:00",
+          "current": null,
+          "highest_generation": 472
+        },
+        "dispatch_generation": 472,
+        "additional_generations_observed": false,
+        "scope": "Canonical reservation generations only. Includes short completed reservations through archived filenames. Does not rule out shared-slot or unreserved background work; does not reject or exclude a case."
+      },
+      {
+        "label": "io-04-baseline",
+        "started_utc": "2026-10-11T13:36:53.048382+00:00",
+        "maintenance_started_utc": "2026-10-11T13:47:19.937947+00:00",
+        "finished_utc": "2026-10-11T13:50:57.998766+00:00",
+        "timing_boundary": "Through final recovery receipt SHA reads and canonical generation observation; subsequent durable coordinator-state write is outside case wall and included in coordinator elapsed.",
+        "before": {
+          "observed_utc": "2026-10-11T13:47:19.940802+00:00",
+          "current": null,
+          "highest_generation": 473
+        },
+        "after": {
+          "observed_utc": "2026-10-11T13:50:57.997559+00:00",
+          "current": null,
+          "highest_generation": 473
+        },
+        "dispatch_generation": 473,
+        "additional_generations_observed": false,
+        "scope": "Canonical reservation generations only. Includes short completed reservations through archived filenames. Does not rule out shared-slot or unreserved background work; does not reject or exclude a case."
+      }
+    ],
+    "scope": "Before/after canonical-generation observations are diagnostics only. Report every higher generation without rejecting or excluding cases; they do not establish full maintenance isolation."
+  },
+  "accounting": "Primary matched case wall equals raw case wall minus only the first-case one-time allocation audit. It includes controller envelopes, late payload recovery, late receipt self-copy, final receipt SHA reads and canonical generation observation. Subsequent durable completed-state writes are outside case wall and included in coordinator elapsed. Archive/child/exposure timers are nested diagnostics and must not be added to totals. Coordinator queues and outside-case overhead are separate. Final coordinator-state cold copy and analysis are outside the completed coordinator clock.",
+  "scope": "Combined package and qualified per-variant allocation comparison; two observed matched ABBA pairs. Every case retained. No outlier exclusion, individual-patch causality, confidence interval, playing-strength or holdout claim. Interrupted ABBA spanning two admission failures and a long between-pair gap. Cache, storage and background conditions may differ across sessions. Only the observed combined-package matched ratio is supported; no uninterrupted-isolation or individual-patch causal claim.",
+  "evidence": {
+    "analysis.json": {
+      "path": "D:\\training-io-speedups-20261010\\desktop\\formal\\analysis-20261011T1400\\analysis.json",
+      "sha256": "53a1fea0481f47f63965eb15233c3323952a147bfc194795e643e8b84cf95fce"
+    },
+    "recovery.json": {
+      "path": "D:\\training-io-speedups-20261010\\desktop\\formal\\analysis-20261011T1400\\recovery.json",
+      "sha256": "2d5c7112654b2c8ec0ae169acaa88122a4e50f02ad7fa87220307396354e541c"
+    },
+    "cases.csv": {
+      "path": "D:\\training-io-speedups-20261010\\desktop\\formal\\analysis-20261011T1400\\cases.csv",
+      "sha256": "9db90ae186396fac2301776991fe4c716e9e6778a3a6c3bf1c3d875aa089b246"
+    }
+  },
+  "independent_recovery_root": "E:/training-io-speedups-20261010/analysis/formal-20261011T1400",
+  "frozen_baseline_commit": "b3bd1c1c0d7b5b6766359a3901549de768bcc175",
+  "frozen_candidate_commit": "172ccb3c818a96f082f2cab44c570134a0b21ee3",
+  "cases": [
+    {
+      "label": "io-01-baseline",
+      "variant": "baseline",
+      "workers": 8,
+      "preparation_workers": 8,
+      "completed_updates": 162,
+      "completed_games": 1620,
+      "matched_case_wall_seconds": 901.5214779000089,
+      "raw_case_wall_seconds": 902.6959948999865,
+      "excluded_allocation_audit_seconds": 1.1745169999776408,
+      "dispatch_seconds": 590.4694752999931,
+      "child_seconds": 377.59666800001287,
+      "inspect_seconds": 158.88832890000776,
+      "exposure_seconds": 136.10059859999456,
+      "archive_seconds": 80.90841109998291,
+      "copy_seconds": 34.90584809999564,
+      "retain_seconds": 38.95626629999606,
+      "late_copy_seconds": 71.18921789998421,
+      "late_receipt_seconds": 2.3308123000024352,
+      "completed_phase_seconds": 894.4091364999767,
+      "case_envelope_seconds": 7.1123414000321645,
+      "scientific_config_sha256": "6cc61760f6e6629d74cf83681a8cae954a7d80b20ec769863b970fd2bdb6f58d",
+      "report": {
+        "path": "D:\\training-io-speedups-20261010\\desktop\\measure\\hot\\io-01-baseline\\report.json",
+        "sha256": "0c709016b385bce962e6844ddf78ab68ae0a3e372aad922ee8863429a604da31"
+      },
+      "native_member_count": 2919,
+      "late_recovery": {
+        "mode": "individual-files",
+        "files": 1188,
+        "payload_bytes": 146337567,
+        "full_source_and_independent_destination_readback": true
+      },
+      "physical": {
+        "native": {
+          "files": 2919,
+          "logical_bytes": 10704959155,
+          "allocated_file_bytes": 4915260170,
+          "method": "GetCompressedFileSizeW",
+          "excludes_directory_and_volume_metadata": true
+        },
+        "cold": {
+          "files": 3,
+          "logical_bytes": 2630137179,
+          "allocated_file_bytes": 2627186688,
+          "method": "GetCompressedFileSizeW",
+          "excludes_directory_and_volume_metadata": true
+        },
+        "dispatch": {
+          "files": 9,
+          "logical_bytes": 13801206,
+          "allocated_file_bytes": 3066661,
+          "method": "GetCompressedFileSizeW",
+          "excludes_directory_and_volume_metadata": true
+        },
+        "maintenance": {
+          "files": 4,
+          "logical_bytes": 22034823,
+          "allocated_file_bytes": 22034823,
+          "method": "GetCompressedFileSizeW",
+          "excludes_directory_and_volume_metadata": true
+        }
+      },
+      "retained_physical": {
+        "files": 1178,
+        "logical_bytes": 124278089,
+        "allocated_file_bytes": 124278089,
+        "method": "GetCompressedFileSizeW",
+        "excludes_directory_and_volume_metadata": true
+      }
+    },
+    {
+      "label": "io-02-candidate",
+      "variant": "candidate",
+      "workers": 8,
+      "preparation_workers": 8,
+      "completed_updates": 162,
+      "completed_games": 1620,
+      "matched_case_wall_seconds": 895.6534542000154,
+      "raw_case_wall_seconds": 895.6534542000154,
+      "excluded_allocation_audit_seconds": 0.0,
+      "dispatch_seconds": 546.515259799984,
+      "child_seconds": 331.39953460000106,
+      "inspect_seconds": 29.986068199999863,
+      "exposure_seconds": 5.459665599977598,
+      "archive_seconds": 81.12964540001121,
+      "copy_seconds": 199.59068419999676,
+      "retain_seconds": 67.70660809997935,
+      "late_copy_seconds": 44.88361059999443,
+      "late_receipt_seconds": 1.8972664000175428,
+      "completed_phase_seconds": 888.6822308999544,
+      "case_envelope_seconds": 6.971223300060956,
+      "scientific_config_sha256": "6cc61760f6e6629d74cf83681a8cae954a7d80b20ec769863b970fd2bdb6f58d",
+      "report": {
+        "path": "D:\\training-io-speedups-20261010\\desktop\\measure\\hot\\io-02-candidate\\report.json",
+        "sha256": "0a1b346751bee32cd79692977532113adee214ebdf304649d8d933cee5f873e0"
+      },
+      "native_member_count": 2920,
+      "late_recovery": {
+        "mode": "store-bundle",
+        "files": 1189,
+        "payload_bytes": 207674336,
+        "full_source_and_independent_destination_readback": true
+      },
+      "physical": {
+        "native": {
+          "files": 2920,
+          "logical_bytes": 10766294331,
+          "allocated_file_bytes": 4932860682,
+          "method": "GetCompressedFileSizeW",
+          "excludes_directory_and_volume_metadata": true
+        },
+        "cold": {
+          "files": 3,
+          "logical_bytes": 2634751871,
+          "allocated_file_bytes": 2631827456,
+          "method": "GetCompressedFileSizeW",
+          "excludes_directory_and_volume_metadata": true
+        },
+        "dispatch": {
+          "files": 9,
+          "logical_bytes": 13801166,
+          "allocated_file_bytes": 3066369,
+          "method": "GetCompressedFileSizeW",
+          "excludes_directory_and_volume_metadata": true
+        },
+        "maintenance": {
+          "files": 4,
+          "logical_bytes": 22034824,
+          "allocated_file_bytes": 22034824,
+          "method": "GetCompressedFileSizeW",
+          "excludes_directory_and_volume_metadata": true
+        }
+      },
+      "retained_physical": {
+        "files": 1179,
+        "logical_bytes": 185614780,
+        "allocated_file_bytes": 185614780,
+        "method": "GetCompressedFileSizeW",
+        "excludes_directory_and_volume_metadata": true
+      }
+    },
+    {
+      "label": "io-03-candidate",
+      "variant": "candidate",
+      "workers": 8,
+      "preparation_workers": 8,
+      "completed_updates": 162,
+      "completed_games": 1620,
+      "matched_case_wall_seconds": 682.6549546000315,
+      "raw_case_wall_seconds": 682.6549546000315,
+      "excluded_allocation_audit_seconds": 0.0,
+      "dispatch_seconds": 577.4665909999749,
+      "child_seconds": 354.8571222999599,
+      "inspect_seconds": 22.46675880003022,
+      "exposure_seconds": 4.576837000029627,
+      "archive_seconds": 83.84442099998705,
+      "copy_seconds": 36.77686250000261,
+      "retain_seconds": 28.673022900009528,
+      "late_copy_seconds": 11.118942900036927,
+      "late_receipt_seconds": 0.9663406999898143,
+      "completed_phase_seconds": 676.5021781000542,
+      "case_envelope_seconds": 6.152776499977335,
+      "scientific_config_sha256": "6cc61760f6e6629d74cf83681a8cae954a7d80b20ec769863b970fd2bdb6f58d",
+      "report": {
+        "path": "D:\\training-io-speedups-20261010\\desktop\\measure\\hot\\io-03-candidate\\report.json",
+        "sha256": "21a168aaaf764392c3f8453443e4d04a684f148e815f97f6226803a83a413cae"
+      },
+      "native_member_count": 2920,
+      "late_recovery": {
+        "mode": "store-bundle",
+        "files": 1189,
+        "payload_bytes": 207673683,
+        "full_source_and_independent_destination_readback": true
+      },
+      "physical": {
+        "native": {
+          "files": 2920,
+          "logical_bytes": 10766293677,
+          "allocated_file_bytes": 4932860682,
+          "method": "GetCompressedFileSizeW",
+          "excludes_directory_and_volume_metadata": true
+        },
+        "cold": {
+          "files": 3,
+          "logical_bytes": 2634751803,
+          "allocated_file_bytes": 2631835648,
+          "method": "GetCompressedFileSizeW",
+          "excludes_directory_and_volume_metadata": true
+        },
+        "dispatch": {
+          "files": 9,
+          "logical_bytes": 13801155,
+          "allocated_file_bytes": 3066518,
+          "method": "GetCompressedFileSizeW",
+          "excludes_directory_and_volume_metadata": true
+        },
+        "maintenance": {
+          "files": 4,
+          "logical_bytes": 22034824,
+          "allocated_file_bytes": 22034824,
+          "method": "GetCompressedFileSizeW",
+          "excludes_directory_and_volume_metadata": true
+        }
+      },
+      "retained_physical": {
+        "files": 1179,
+        "logical_bytes": 185614126,
+        "allocated_file_bytes": 185614126,
+        "method": "GetCompressedFileSizeW",
+        "excludes_directory_and_volume_metadata": true
+      }
+    },
+    {
+      "label": "io-04-baseline",
+      "variant": "baseline",
+      "workers": 8,
+      "preparation_workers": 8,
+      "completed_updates": 162,
+      "completed_games": 1620,
+      "matched_case_wall_seconds": 844.9442172999843,
+      "raw_case_wall_seconds": 844.9442172999843,
+      "excluded_allocation_audit_seconds": 0.0,
+      "dispatch_seconds": 622.3211325000157,
+      "child_seconds": 393.0421088000294,
+      "inspect_seconds": 96.83021430001827,
+      "exposure_seconds": 80.23647050000727,
+      "archive_seconds": 84.870149400027,
+      "copy_seconds": 35.35111519997008,
+      "retain_seconds": 25.632033200003207,
+      "late_copy_seconds": 59.23736279999139,
+      "late_receipt_seconds": 0.061869500030297786,
+      "completed_phase_seconds": 839.3718579999986,
+      "case_envelope_seconds": 5.572359299985692,
+      "scientific_config_sha256": "6cc61760f6e6629d74cf83681a8cae954a7d80b20ec769863b970fd2bdb6f58d",
+      "report": {
+        "path": "D:\\training-io-speedups-20261010\\desktop\\measure\\hot\\io-04-baseline\\report.json",
+        "sha256": "0ef82aed6a6e85dbd7c8eb72a1d7ffb55f04219c0cceaee3378fc3f3ebb054cd"
+      },
+      "native_member_count": 2919,
+      "late_recovery": {
+        "mode": "individual-files",
+        "files": 1188,
+        "payload_bytes": 146337212,
+        "full_source_and_independent_destination_readback": true
+      },
+      "physical": {
+        "native": {
+          "files": 2919,
+          "logical_bytes": 10704958795,
+          "allocated_file_bytes": 4915260170,
+          "method": "GetCompressedFileSizeW",
+          "excludes_directory_and_volume_metadata": true
+        },
+        "cold": {
+          "files": 3,
+          "logical_bytes": 2630137170,
+          "allocated_file_bytes": 2627186688,
+          "method": "GetCompressedFileSizeW",
+          "excludes_directory_and_volume_metadata": true
+        },
+        "dispatch": {
+          "files": 9,
+          "logical_bytes": 13801068,
+          "allocated_file_bytes": 3066671,
+          "method": "GetCompressedFileSizeW",
+          "excludes_directory_and_volume_metadata": true
+        },
+        "maintenance": {
+          "files": 4,
+          "logical_bytes": 22034823,
+          "allocated_file_bytes": 22034823,
+          "method": "GetCompressedFileSizeW",
+          "excludes_directory_and_volume_metadata": true
+        }
+      },
+      "retained_physical": {
+        "files": 1178,
+        "logical_bytes": 124277729,
+        "allocated_file_bytes": 124277729,
+        "method": "GetCompressedFileSizeW",
+        "excludes_directory_and_volume_metadata": true
+      }
+    }
+  ],
+  "continuation_scope": "Interrupted ABBA spanning two admission failures and a long between-pair gap. Cache, storage and background conditions may differ across sessions. Only the observed combined-package matched ratio is supported; no uninterrupted-isolation or individual-patch causal claim."
+}
