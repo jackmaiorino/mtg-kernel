@@ -2,6 +2,37 @@ use super::*;
 use crate::policy_observation_v6::tests::{put, ready_state};
 
 #[test]
+#[cfg(not(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+)))]
+fn foreign_restored_capture_refuses_readonly_before_begin_index_both_seats() {
+    use crate::event::CommittedEvent;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for begin in [0, u64::MAX] {
+            let mut state = ready_state();
+            let source = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let capture = crate::cerberus_capture_v1::CerberusCaptureV1 {
+                history_index: 0,
+                begin_history_index: begin,
+                observer_authority_index: 0,
+                source: crate::state::AbilitySourceContractV4::capture(&state, source),
+            };
+            state
+                .engine
+                .event_history
+                .push(CommittedEvent::CerberusCaptureV1 { capture });
+            let replay: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            let before = serde_json::to_vec(&replay).unwrap();
+            assert!(crate::cerberus_capture_v1::validate_state(&replay).is_err());
+            assert!(observe_v1(&replay, &PolicySurfaceV5::new(), actor, 0, 0, 0, 1).is_err());
+            assert_eq!(serde_json::to_vec(&replay).unwrap(), before);
+        }
+    }
+}
+
+#[test]
 fn ordinary_predecessor_parts_hidden_identity_and_artifact_identity_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready_state();

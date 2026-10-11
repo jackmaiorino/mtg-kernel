@@ -499,6 +499,19 @@ mod tests {
     }
 
     #[test]
+    fn same_seat_same_episode_foreign_snapshot_refuses_without_prompt_mutation() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let first = ordinary(actor, false, "Snap");
+            let mut second = ordinary(actor, false, "Snap");
+            let before = second.current().unwrap();
+            assert!(second.restore(first.save().unwrap()).is_err());
+            assert_eq!(second.current().unwrap(), before);
+            let owned = second.save().unwrap();
+            second.restore(owned).unwrap();
+        }
+    }
+
+    #[test]
     fn registered_hidden_substitution_and_arena_renumbering_keep_human_dto_equal() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut first = ordinary(actor, false, "Snap");

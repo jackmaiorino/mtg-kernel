@@ -10221,7 +10221,14 @@ fn codegen(cards: &[CardJson]) -> String {
         // recipe token. This covers every field selected by the generator for
         // `CardDef`; runtime primitive implementation changes remain pinned
         // separately by the source revision.
-        canon.push_str(&keywords_for(c));
+        // Surge Engine historically contributed Defender twice to this exact
+        // catalog token. Its deduplicated generated expression has the same bits,
+        // while the frozen Standard identity must retain the original token.
+        if c.name == "Surge Engine" && c.mechanics.iter().any(|m| m == "defender") {
+            canon.push_str("Keywords(Keywords::DEFENDER.0 | Keywords::DEFENDER.0)");
+        } else {
+            canon.push_str(&keywords_for(c));
+        }
         canon.push('|');
         canon.push_str("mana_ability_choices=");
         if c.engine_capability != EngineCapabilityJson::NoEffect && has_activated_mana_ability(c) {
