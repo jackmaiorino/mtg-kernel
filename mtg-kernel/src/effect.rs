@@ -43,6 +43,11 @@ use serde::{Deserialize, Serialize};
 mod squad_rallier_resolution_v1;
 pub(crate) use squad_rallier_resolution_v1::owned_root as squad_rallier_root_is_exact;
 pub use squad_rallier_resolution_v1::SquadRallierResolutionReceiptV1;
+pub(crate) use squad_rallier_resolution_v1::{
+    acquire_owner as acquire_squad_rallier_resolution_owner,
+    begin_owned as begin_owned_squad_rallier_resolution,
+    resume_owned as resume_owned_squad_rallier_resolution, SquadRallierResolutionOwnerV1,
+};
 pub(crate) mod library_choice_search_v2;
 mod standard_payment_v1;
 pub mod standard_selection_v1;
