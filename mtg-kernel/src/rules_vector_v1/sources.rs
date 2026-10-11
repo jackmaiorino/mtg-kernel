@@ -349,8 +349,15 @@ fn activated(walk: &mut Walk, ctx: CtxF, key: &str, ability: &ActivatedAbilityDe
         sorcery_speed_only,
         activation_target_filter,
         max_activations_per_turn,
+        face,
     } = *ability;
     let program = effect();
+    if let Some(face) = face {
+        // Keep every historical single-faced record byte-identical.
+        walk.rec(&format!("{key}/face"), json!(face));
+        walk.opaque
+            .push("activated ability is restricted to a printed face");
+    }
     walk.rec(
         key,
         json!({

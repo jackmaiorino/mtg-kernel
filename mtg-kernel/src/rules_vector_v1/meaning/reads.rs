@@ -505,6 +505,11 @@ pub(crate) fn library_card_filter(filter: LibraryCardFilter, out: &mut Collector
         }
         LibraryCardFilter::AnyLand => ObjF::Typed(CardTypeF::Land),
         LibraryCardFilter::AnyCard => ObjF::AnyCard,
+        LibraryCardFilter::ArtifactWithManaValue(_) => {
+            // The frozen vocabulary lacks an exact mana-value read predicate.
+            out.atoms.push(Atom::Opaque);
+            ObjF::Typed(CardTypeF::Artifact)
+        }
     }
 }
 
@@ -518,7 +523,10 @@ pub(crate) fn permanent_filter(filter: PermanentFilter) -> (ObjF, Option<RelF>) 
             // permanent.
             (ObjF::Permanent, None)
         }
-        PermanentFilter::Artifact => (ObjF::Typed(CardTypeF::Artifact), None),
+        PermanentFilter::Artifact | PermanentFilter::AnotherArtifact => {
+            // Source exclusion is marked opaque by the consuming cost.
+            (ObjF::Typed(CardTypeF::Artifact), None)
+        }
         PermanentFilter::Creature => (ObjF::Typed(CardTypeF::Creature), None),
         PermanentFilter::Land => (ObjF::Typed(CardTypeF::Land), None),
     }
