@@ -23,9 +23,12 @@ back face for BackFacePayLife. Historical incarnations cannot read a returned
 object. Ability suppression retains the printed fee with effective=false.
 The existing automatic back-face payment behavior is unchanged.
 
-Two registered Standard/combined V8 fixture groups cover actor visibility,
+Three registered V8 fixture groups cover actor visibility,
 revealed hand/library knowledge, hidden identity invariance, front/back face,
-suppression, exact incarnation, deduplication and saved-state restoration.
+exact incarnation, deduplication and saved-state restoration. Standard tests
+use registered Brutal Cathar; the Limited suppression test uses registered
+Tolarian Terror and Witness Protection. The combined registry excludes the
+FDN-only Aura, so it is not used to construct a combined-feature state.
 The sixth actual Sire group additionally covers front-face fee visibility,
 an actual Witness Protection cast, its life Ward payment and Aura removal.
 These new groups are unrun. The earlier native receipt binds its earlier

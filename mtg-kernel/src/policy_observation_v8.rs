@@ -376,15 +376,12 @@ mod tests {
         }
     }
 
-    #[cfg(all(
-        feature = "standard-magezero-fixtures",
-        feature = "limited-fdn-fixtures"
-    ))]
+    #[cfg(feature = "standard-magezero-fixtures")]
     #[test]
-    fn effective_life_ward_uses_exact_live_incarnation_and_ability_status() {
+    fn effective_life_ward_uses_exact_live_incarnation() {
         use crate::event::{propose_and_commit, ProposedEvent};
         use crate::policy_observation_v6::tests::{put, ready_state};
-        use crate::state::{ObjectLinkV4, Zone};
+        use crate::state::Zone;
         let mut state = ready_state();
         let source = put(&mut state, PlayerId::P1, "Brutal Cathar", Zone::Battlefield);
         propose_and_commit(&mut state, ProposedEvent::transform_in_place(source, 1));
@@ -398,36 +395,6 @@ mod tests {
                 .unwrap()
                 .len(),
             1
-        );
-
-        // A valid starting-board Aura removes the ability, not its printed fee.
-        let aura = put(
-            &mut state,
-            PlayerId::P0,
-            "Witness Protection",
-            Zone::Battlefield,
-        );
-        let source_generation = state.objects.get(source).zone_change_count;
-        state.objects.get_mut(aura).v4.attached_to = Some(ObjectLinkV4 {
-            object: source,
-            zone_change_count: source_generation,
-        });
-        state.objects.get_mut(aura).v4.layer_timestamp = Some(100);
-        state.objects.get_mut(source).attachments.push(aura);
-        let suppressed = observe(&state, PlayerId::P0);
-        let row = &suppressed.extensions.ward_life_card_traits[0];
-        assert_eq!(row.life, 3);
-        assert!(!row.effective);
-        assert!(crate::trigger::active_printed_ward_cost(&state, source).is_none());
-        propose_and_commit(
-            &mut state,
-            ProposedEvent::zone_change(aura, Zone::Graveyard),
-        );
-        assert!(
-            observe(&state, PlayerId::P0)
-                .extensions
-                .ward_life_card_traits[0]
-                .effective
         );
 
         propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
@@ -449,6 +416,67 @@ mod tests {
         let rows = life_ward_card_traits(&state, [original.source, current.source]).unwrap();
         assert_eq!(rows.len(), 2);
         assert!(!rows[0].effective && rows[1].effective);
+    }
+
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    fn shared_printed_ward_predicate_tracks_registered_aura_suppression() {
+        use crate::card_def::WardCostDef;
+        use crate::event::{propose_and_commit, ProposedEvent};
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::state::{ObjectLinkV4, Zone};
+        let mut state = ready_state();
+        let source = put(
+            &mut state,
+            PlayerId::P1,
+            "Tolarian Terror",
+            Zone::Battlefield,
+        );
+        assert_eq!(
+            crate::trigger::active_printed_ward_cost(&state, source),
+            Some(WardCostDef::Generic(2))
+        );
+        let aura = put(
+            &mut state,
+            PlayerId::P0,
+            "Witness Protection",
+            Zone::Battlefield,
+        );
+        let source_generation = state.objects.get(source).zone_change_count;
+        state.objects.get_mut(aura).v4.attached_to = Some(ObjectLinkV4 {
+            object: source,
+            zone_change_count: source_generation,
+        });
+        state.objects.get_mut(aura).v4.layer_timestamp = Some(100);
+        state.objects.get_mut(source).attachments.push(aura);
+        assert!(crate::trigger::active_printed_ward_cost(&state, source).is_none());
+        let surface = PolicySurfaceV5::new();
+        let observation = observe_policy_v8(&state, &surface, PlayerId::P0, 0, 0, 0, 1).unwrap();
+        assert!(observation.extensions.ward_life_card_traits.is_empty());
+        assert_eq!(
+            observation.projection.surface.battlefield[1][0]
+                .characteristics
+                .effective_keywords
+                .ward_generic,
+            0
+        );
+        let restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(
+            observe_policy_v8(&restored, &surface, PlayerId::P0, 0, 0, 0, 1).unwrap(),
+            observation
+        );
+        propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(aura, Zone::Graveyard),
+        );
+        assert_eq!(
+            crate::trigger::active_printed_ward_cost(&state, source),
+            Some(WardCostDef::Generic(2))
+        );
     }
 
     #[test]
