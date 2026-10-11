@@ -66,6 +66,13 @@ impl Scan<'_> {
             ResolveMonarchTrigger { binding } => self.a(&binding.source),
             StandardV1(op) => op.bound_objects().iter().any(|chosen| self.b(chosen)),
             // Other current leaf programs carry symbolic refs, not physical bindings.
+            StandardLegendV1(op) => match op {
+                crate::standard_legends_v1::LegendEffectV1::ReturnBoundPermanent(object)
+                | crate::standard_legends_v1::LegendEffectV1::CountersOnReturnedPermanent(object) => {
+                    self.b(object)
+                }
+                _ => false,
+            },
             DiscardUpToThenDraw { .. }
             | ExileRandomGraveyardCardPlayableThisTurn { .. }
             | ExileUntilThenCastV1 { .. }
@@ -76,7 +83,6 @@ impl Scan<'_> {
             | DealDamage { .. }
             | DistributePlusOneCounters { .. }
             | CreatureUpgrade(_)
-            | StandardLegendV1(_)
             | ReturnTargetPermanentToBattlefield { .. }
             | GainLife { .. }
             | LoseLife { .. }

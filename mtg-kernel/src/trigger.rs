@@ -3330,6 +3330,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         #[cfg(feature = "standard-magezero-fixtures")]
         "Sheoldred, the Apocalypse" => &standard_family_g_v1::SHEOLDRED_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
+        "Lagrella, the Magpie" => &standard_legends_v1::LAGRELLA,
+        #[cfg(feature = "standard-magezero-fixtures")]
         "Ertai Resurrected" => &standard_legends_v1::ERTAI,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Halana and Alena, Partners" => &standard_legends_v1::HALANA,
@@ -3389,6 +3391,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         return TargetSpec::None;
     };
     match card.name {
+        "Lagrella, the Magpie" => TargetSpec::UpToTwoOtherCreaturesDifferentControllers,
         "Halana and Alena, Partners" => TargetSpec::AnotherControlledCreature,
         "Restless Bivouac" => TargetSpec::ControlledCreature,
         "Restless Cottage" => TargetSpec::UpToOneCardInGraveyards,
@@ -3653,6 +3656,22 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
     {
         return true;
     }
+    if matches!(
+        (card.name, effect),
+        (
+            "Melira, the Living Cure",
+            EffectOp::StandardLegendV1(
+                crate::standard_legends_v1::LegendEffectV1::ReturnBoundPermanent(_)
+            )
+        ) | (
+            "Lagrella, the Magpie",
+            EffectOp::StandardLegendV1(
+                crate::standard_legends_v1::LegendEffectV1::CountersOnReturnedPermanent(_)
+            )
+        )
+    ) {
+        return true;
+    }
     if triggers_for(card_def)
         .iter()
         .any(|trigger| source_bound_trigger_program_matches(&(trigger.effect)(), effect))
@@ -3732,6 +3751,15 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
                 TargetSpec::None
             },
         );
+    }
+    if matches!(
+        effect,
+        EffectOp::StandardLegendV1(
+            crate::standard_legends_v1::LegendEffectV1::ReturnBoundPermanent(_)
+                | crate::standard_legends_v1::LegendEffectV1::CountersOnReturnedPermanent(_)
+        )
+    ) {
+        return Some(TargetSpec::None);
     }
     #[cfg(feature = "standard-magezero-fixtures")]
     if card.name == "Ertai Resurrected" {
@@ -4271,7 +4299,7 @@ fn triggers_from_events(
         return Vec::new();
     }
     let draws_this_turn_at = draws_this_turn_snapshot(events, state);
-    let mut new_triggers = Vec::new();
+    let mut new_triggers = state.legend_pending_v1.take().unwrap_or_default();
     let may_trigger = card_defs_with_event_triggers();
     for (id, obj) in state.objects.iter() {
         // Most objects (lands, vanilla creatures, every library card of a

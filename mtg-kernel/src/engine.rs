@@ -1616,6 +1616,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::StackObject
         | TargetSpec::StackAbility
         | TargetSpec::AnotherCreatureOrPlaneswalker
+        | TargetSpec::AnotherArtifactOrCreature
         | TargetSpec::InstantSpellOnStack
         | TargetSpec::BlueSpellOnStack
         | TargetSpec::RedSpellOnStack
@@ -1676,6 +1677,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::LegendaryCreature => 1,
         TargetSpec::StandardV1(filter) => filter.counts().0,
         TargetSpec::PlayerThenTheirCreature
+        | TargetSpec::UpToTwoOtherCreaturesDifferentControllers
         | TargetSpec::UpToTwoOtherControlledCreatures
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
@@ -1690,6 +1692,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
 fn target_min_count(spec: TargetSpec) -> u8 {
     match spec {
         TargetSpec::UpToOneOtherCreature
+        | TargetSpec::UpToTwoOtherCreaturesDifferentControllers
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
         | TargetSpec::UpToTwoPlayers
@@ -2965,6 +2968,13 @@ fn legal_targets_for_controller_from_source(
                 Vec::new()
             }
         }
+        TargetSpec::AnotherArtifactOrCreature | TargetSpec::UpToTwoOtherCreaturesDifferentControllers => {
+            state.objects.iter().filter(|(id,live)| live.zone==Zone::Battlefield
+                && !source.is_some_and(|source| source.object==*id && source.zone_change_count==live.zone_change_count)
+                && (object_has_type(state,*id,CardType::Creature) || (spec==TargetSpec::AnotherArtifactOrCreature && object_has_type(state,*id,CardType::Artifact)))
+                && (spec!=TargetSpec::UpToTwoOtherCreaturesDifferentControllers || !targets_chosen.iter().any(|target| matches!(target,Target::Object(other) if state.objects.get(*other).controller==live.controller))))
+                .map(|(id,_)|Target::Object(id)).collect()
+        }
         TargetSpec::StackObject
         | TargetSpec::StackAbility
         | TargetSpec::AnotherCreatureOrPlaneswalker => {
@@ -3556,7 +3566,8 @@ fn legal_targets_for_controller_from_source(
         });
     }
     if let Some(source) = source {
-        targets.retain(|target| !matches!(target,Target::Object(object) if crate::standard_legends_v1::katilda_protected_from(state,*object,source.object)));
+        targets.retain(|target| !matches!(target,Target::Object(object) if crate::standard_legends_v1::katilda_protected_from(state,*object,source.object)
+            || crate::standard_legends_v1::hexproof_from_color(state,*object,source.object,source.card_def,source.zone_change_count,controller)));
     }
     targets
 }
@@ -5889,9 +5900,7 @@ pub(crate) fn permanent_matches_filter(
             object_has_type(state, id, CardType::Artifact)
                 || object_has_type(state, id, CardType::Creature)
         }
-        PermanentFilter::Token => {
-            card_def::CARD_DEFS[state.objects.get(id).card_def as usize].is_token
-        }
+        PermanentFilter::Token => state.objects.get(id).v4.is_token,
         PermanentFilter::Artifact => object_has_type(state, id, CardType::Artifact),
         PermanentFilter::Creature => object_has_type(state, id, CardType::Creature),
         PermanentFilter::Land => {
@@ -8269,6 +8278,9 @@ fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
             if crate::standard_keywords_v1::cant_block(state, id)
                 || crate::standard_statics_v1::cant_attack_or_block(state, id)
             {
+                return false;
+            }
+            if crate::standard_legends_v1::skrelv_blocks(state, attacker, id) {
                 return false;
             }
             if crate::standard_legends_v1::katilda_protected_from(state, attacker, id) {
@@ -13545,6 +13557,9 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
         }
         Step::Cleanup => {
             crate::standard_cards_v1::cleanup(state);
+            for player in &mut state.players {
+                player.poison_prevention_v1.0 = false;
+            }
             // 514.1/514.2: reset damage, "until end of turn" effects end,
             // then discard down to the maximum hand size, then reset the
             // land-drop counter for the player whose turn just ended.
@@ -13552,6 +13567,8 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 obj.damage = 0;
                 obj.v4.deathtouch_damage = false;
                 obj.v4.temporary_base_pt_v1 = None;
+                obj.v4.skrelv_grants_v1 = None;
+                obj.v4.melira_protection_v1 = None;
                 // Only effects with an explicit duration expire at cleanup.
                 if card_def::CARD_DEFS[obj.card_def as usize]
                     .animation
@@ -14834,9 +14851,8 @@ pub(crate) fn commit_combat_damage_events(state: &mut GameState, events: Vec<Pro
         // 702.164c: combat damage a creature with toxic N deals to a player
         // also gives that player N poison counters.
         #[cfg(feature = "standard-magezero-fixtures")]
-        if has_effective_keyword(state, source, Keywords::TOXIC_1) {
-            let poison = &mut state.players[player.index()].poison_counters;
-            poison.0 = poison.0.saturating_add(1);
+        if let Some(characteristics) = crate::standard_legends_v1::characteristics(state, source) {
+            crate::standard_legends_v1::give_poison(state, player, characteristics.toxic);
         }
     }
     if let Some(holder) = state.initiative {

@@ -29,7 +29,9 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
         TargetSpec::OpponentArtifactEnchantmentOrNonbasicLand => {
             (BATTLEFIELD, Some(RelF::Opponent))
         }
-        TargetSpec::LegendaryCreature => (BATTLEFIELD, None),
+        TargetSpec::LegendaryCreature
+        | TargetSpec::AnotherArtifactOrCreature
+        | TargetSpec::UpToTwoOtherCreaturesDifferentControllers => (BATTLEFIELD, None),
         // Slot 0 is a creature or a player; only the creature has a zone.
         TargetSpec::AnyTarget => (BATTLEFIELD, None),
         // Slot 0 is the player, slot 1 a creature that player controls.

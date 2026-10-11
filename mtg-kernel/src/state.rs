@@ -268,6 +268,10 @@ pub struct ObjectStateV4 {
     pub temporary_base_pt_v1: Option<(i16, i16, u64)>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creature_upgrade: Option<crate::standard_creatures_v1::CreatureUpgradeV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skrelv_grants_v1: Option<Vec<crate::standard_legends_v1::SkrelvGrantV1>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub melira_protection_v1: Option<Vec<AbilitySourceContractV4>>,
     /// True from this incarnation's battlefield entry until the next untap
     /// step. `entered_battlefield_turn` is a round number shared by both
     /// players' turns, so it cannot answer "entered this turn" (Mirrex).
@@ -331,6 +335,14 @@ impl Hash for ObjectStateV4 {
         }
         if self.enduring_enchantment_v1 {
             "enduring-enchantment/v1".hash(state);
+        }
+        if let Some(grants) = &self.melira_protection_v1 {
+            "melira_protection/v1".hash(state);
+            grants.hash(state);
+        }
+        if let Some(grants) = &self.skrelv_grants_v1 {
+            "skrelv_grants/v1".hash(state);
+            grants.hash(state);
         }
         if let Some(setting) = self.temporary_base_pt_v1 {
             "temporary-base-pt/v1".hash(state);
@@ -410,6 +422,8 @@ impl ObjectStateV4 {
             animation_timestamp: None,
             temporary_base_pt_v1: None,
             creature_upgrade: None,
+            skrelv_grants_v1: None,
+            melira_protection_v1: None,
             entered_battlefield_this_turn: false,
             face_down_v1: None,
         }
@@ -673,6 +687,11 @@ pub struct PlayerState {
     /// bytes.
     #[serde(default, skip_serializing_if = "PoisonCountersV1::is_zero")]
     pub poison_counters: PoisonCountersV1,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::standard_legends_v1::PoisonPreventionV1::is_false"
+    )]
+    pub poison_prevention_v1: crate::standard_legends_v1::PoisonPreventionV1,
 }
 
 /// A player's poison counter count. Hashes nothing while zero.
@@ -712,6 +731,7 @@ impl PlayerState {
             spells_cast_this_turn: 0,
             dungeon: DungeonStateV4::default(),
             poison_counters: PoisonCountersV1::default(),
+            poison_prevention_v1: Default::default(),
         }
     }
 }
@@ -1225,6 +1245,7 @@ pub fn stack_target_contract_is_structurally_valid(
                     | TargetSpec::OpponentArtifactOrEnchantmentPermanent
                     | TargetSpec::ArtifactOrEnchantmentPermanent
                     | TargetSpec::AttackingOrBlockingCreature
+                    | TargetSpec::AnotherArtifactOrCreature
                     | TargetSpec::AnotherCreatureOrPlaneswalker
                     | TargetSpec::CreatureOrPlaneswalker
                     | TargetSpec::ArtifactEnchantmentOrFlyingCreature
@@ -1249,6 +1270,7 @@ pub fn stack_target_contract_is_structurally_valid(
                 },
             ) | (
                 TargetSpec::UpToTwoCreatures
+                    | TargetSpec::UpToTwoOtherCreaturesDifferentControllers
                     | TargetSpec::UpToTwoOtherControlledCreatures
                     | TargetSpec::ExactlyTwoArtifactPermanents
                     | TargetSpec::ControlledCreatureThenOpponentCreature
@@ -1848,6 +1870,8 @@ pub struct GameState {
     /// Card state for the MageZero Standard catalog's own cards.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub standard_v1: Option<crate::standard_cards_v1::StandardStateV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legend_pending_v1: Option<Vec<crate::trigger::PendingTrigger>>,
 }
 
 /// Which players lost life during one turn (Hired Claw: "only if an
@@ -1990,6 +2014,10 @@ impl Hash for GameState {
         if let Some(descended) = &self.descended_v1 {
             "descended-v1".hash(state);
             descended.hash(state);
+        }
+        if let Some(pending) = &self.legend_pending_v1 {
+            "legend_pending/v1".hash(state);
+            pending.hash(state);
         }
         if let Some(history) = &self.life_gain_turn_v1 {
             "life-gain-turn-v1".hash(state);
@@ -2188,6 +2216,7 @@ impl GameState {
             descended_v1: None,
             life_gain_turn_v1: None,
             standard_v1: None,
+            legend_pending_v1: None,
         };
         crate::life_gain_turn_v1::initialize_for_pool(&mut state);
         state

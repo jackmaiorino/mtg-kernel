@@ -4803,6 +4803,16 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
+        "Melira, the Living Cure" => &[ActivatedAbilityRecipe {
+            cost:&[AbilityCostRecipe::ExileSelf],
+            effect: AbilityEffectRecipe::Program{name:"melira_protection",effect:"EffectOp::StandardLegendV1(crate::standard_legends_v1::LegendEffectV1::ProtectTargetFromDeath)"},
+            activation_zone:"Battlefield",sorcery_speed_only:false,target_spec:"AnotherArtifactOrCreature",activation_target_filter:"TargetSpecOnly",max_activations_per_turn:None,
+        }],
+        "Skrelv, Defector Mite" => &[ActivatedAbilityRecipe {
+            cost:&[AbilityCostRecipe::ManaCost("{W/P}"),AbilityCostRecipe::Tap],
+            effect: AbilityEffectRecipe::Program{name:"skrelv_choice",effect:"crate::standard_legends_v1::skrelv_choice()"},
+            activation_zone:"Battlefield",sorcery_speed_only:false,target_spec:"AnotherControlledCreature",activation_target_filter:"TargetSpecOnly",max_activations_per_turn:None,
+        }],
         "Hajar, Loyal Bodyguard" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::SacrificeSelf],
             effect: AbilityEffectRecipe::Program { name: "hajar_protection", effect: "EffectOp::StandardLegendV1(crate::standard_legends_v1::LegendEffectV1::ProtectControlledLegendaryCreatures)" },

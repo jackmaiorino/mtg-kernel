@@ -376,6 +376,12 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
             Some(RelF::Opponent),
             ZoneF::Battlefield,
         ),
+        TargetSpec::AnotherArtifactOrCreature => {
+            object(out, ObjF::Permanent, None, ZoneF::Battlefield)
+        }
+        TargetSpec::UpToTwoOtherCreaturesDifferentControllers => {
+            object(out, creature(), None, ZoneF::Battlefield)
+        }
         TargetSpec::LegendaryCreature => object(out, creature(), None, ZoneF::Battlefield),
         TargetSpec::ControlledPermanentWithAnySubtype(subtypes) => {
             let _ = subtypes;
@@ -396,6 +402,8 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
         TargetSpec::StackObject
         | TargetSpec::StackAbility
         | TargetSpec::AnotherCreatureOrPlaneswalker => ObjF::AnyCard,
+        TargetSpec::AnotherArtifactOrCreature => ObjF::Permanent,
+        TargetSpec::UpToTwoOtherCreaturesDifferentControllers => creature(),
         TargetSpec::LegendaryCreature => creature(),
         TargetSpec::StandardV1(filter) => standard_target_obj(filter),
         // No targets are chosen, so the engine's `resolve_object` would

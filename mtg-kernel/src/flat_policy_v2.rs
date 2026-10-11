@@ -1882,6 +1882,7 @@ impl FlatDecisionEncoderV2 {
             .is_some()
             || observation.projection.poison_counters.is_some()
             || observation.projection.ninja_emblems.is_some()
+            || observation.projection.poison_prevention.is_some()
             || observation.projection.restricted_mana.is_some()
             || observation
                 .projection
@@ -1889,7 +1890,11 @@ impl FlatDecisionEncoderV2 {
                 .battlefield
                 .iter()
                 .flatten()
-                .any(|card| card.characteristics.base_pt_until_end_of_turn.is_some())
+                .any(|card| {
+                    card.characteristics.base_pt_until_end_of_turn.is_some()
+                        || card.characteristics.legend_rules.is_some()
+                        || card.characteristics.legend_return_sources.is_some()
+                })
         {
             return Err(FlatDecisionErrorV2::ObservationContract);
         }
@@ -6027,6 +6032,8 @@ mod tests {
             creature_upgrade: None,
             characteristics: CardCharacteristicsV2 {
                 base_pt_until_end_of_turn: None,
+                legend_rules: None,
+                legend_return_sources: None,
                 type_flags: CardTypeFlagsV2 {
                     land: false,
                     creature: true,

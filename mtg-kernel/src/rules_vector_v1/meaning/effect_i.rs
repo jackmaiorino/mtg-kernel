@@ -11,6 +11,29 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         EffectOp::StandardLegendV1(op) => {
             use crate::standard_legends_v1::LegendEffectV1;
             match op {
+                LegendEffectV1::ProtectTargetFromDeath => out.effect(
+                    EffectAtom::moving(Some(ZoneF::Graveyard), ZoneF::Battlefield)
+                        .obj(ObjF::Permanent)
+                        .duration(DurF::EndOfTurn),
+                ),
+                LegendEffectV1::ReturnBoundPermanent(_) => out.effect(
+                    EffectAtom::moving(Some(ZoneF::Graveyard), ZoneF::Battlefield)
+                        .obj(ObjF::Permanent),
+                ),
+                LegendEffectV1::LagrellaExileTargets => out.effect(
+                    EffectAtom::moving(Some(ZoneF::Battlefield), ZoneF::Exile)
+                        .obj(ObjF::Typed(CardTypeF::Creature)),
+                ),
+                LegendEffectV1::CountersOnReturnedPermanent(_) => out.effect(
+                    EffectAtom::new(EvF::PlaceCounter)
+                        .obj(ObjF::Permanent)
+                        .amount(AmtF::fixed(2)),
+                ),
+                LegendEffectV1::SkrelvGrant(_) => out.effect(
+                    EffectAtom::new(EvF::GrantKeyword)
+                        .obj(ObjF::Typed(CardTypeF::Creature))
+                        .duration(DurF::EndOfTurn),
+                ),
                 LegendEffectV1::CounterStackTargetAndDraw => {
                     out.effect(
                         EffectAtom::moving(Some(ZoneF::Stack), ZoneF::Graveyard).obj(ObjF::AnyCard),

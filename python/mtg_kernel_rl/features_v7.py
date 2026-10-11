@@ -3528,7 +3528,7 @@ def validate_decision_contract(
 
 
 def encode_decision(observation: dict[str, Any], legal_actions: list[dict[str, Any]]) -> EncodedDecision:
-    if any(observation.get("projection", {}).get(field) is not None for field in ("poison_counters", "restricted_mana", "creatures_attacked_this_turn")):
+    if any(observation.get("projection", {}).get(field) is not None for field in ("poison_counters", "poison_prevention", "restricted_mana", "creatures_attacked_this_turn")):
         raise FeatureSchemaError("poison counters and restricted mana require a Standard feature schema; frozen Pauper features cannot discard them")
     assert_observation_classified(observation)
     if observation["schema_version"] != 6:

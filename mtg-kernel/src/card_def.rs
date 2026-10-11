@@ -981,6 +981,8 @@ pub enum TargetSpec {
     StackAbility,
     AnotherCreatureOrPlaneswalker,
     UpToOneStackAbility,
+    AnotherArtifactOrCreature,
+    UpToTwoOtherCreaturesDifferentControllers,
 }
 
 impl TargetSpec {
@@ -1065,6 +1067,8 @@ impl TargetSpec {
             TargetSpec::StackAbility => 99,
             TargetSpec::AnotherCreatureOrPlaneswalker => 100,
             TargetSpec::UpToOneStackAbility => 73,
+            TargetSpec::AnotherArtifactOrCreature => 101,
+            TargetSpec::UpToTwoOtherCreaturesDifferentControllers => 102,
         }
     }
 }

@@ -286,6 +286,10 @@ pub struct KeywordFlagsV2 {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CardCharacteristicsV2 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legend_return_sources: Option<Vec<CardStableRefV1>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legend_rules: Option<crate::standard_legends_v1::LegendCharacteristicsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_pt_until_end_of_turn: Option<[i16; 2]>,
     pub type_flags: CardTypeFlagsV2,
     pub base_power: Option<i32>,
@@ -1006,6 +1010,8 @@ pub struct PublicObservationProjectionV5 {
     /// Public counters, omitted in games with no poison to preserve frozen observations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub poison_counters: Option<[u16; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poison_prevention: Option<[bool; 2]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creatures_attacked_this_turn: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2007,6 +2013,13 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
         projection: PublicObservationProjectionV5 {
             poison_counters: public_poison_counters_v1(state),
             ninja_emblems: crate::standard_cards_v1::ninja_emblems(state),
+            poison_prevention: {
+                let flags = [
+                    state.players[0].poison_prevention_v1.0,
+                    state.players[1].poison_prevention_v1.0,
+                ];
+                flags.iter().any(|x| *x).then_some(flags)
+            },
             creatures_attacked_this_turn: (state.creatures_attacked_this_turn_v1() != 0)
                 .then(|| state.creatures_attacked_this_turn_v1()),
             restricted_mana: public_restricted_mana_v1(state)?,
@@ -2225,6 +2238,13 @@ fn build_policy_observation_v6(request: PolicyObservationBuildV5<'_>) -> Result<
         projection: PublicObservationProjectionV5 {
             poison_counters: public_poison_counters_v1(state),
             ninja_emblems: crate::standard_cards_v1::ninja_emblems(state),
+            poison_prevention: {
+                let flags = [
+                    state.players[0].poison_prevention_v1.0,
+                    state.players[1].poison_prevention_v1.0,
+                ];
+                flags.iter().any(|x| *x).then_some(flags)
+            },
             creatures_attacked_this_turn: (state.creatures_attacked_this_turn_v1() != 0)
                 .then(|| state.creatures_attacked_this_turn_v1()),
             restricted_mana: public_restricted_mana_v1(state)?,
@@ -5884,6 +5904,20 @@ fn card_characteristics_v2(state: &GameState, id: ObjectId) -> CardCharacteristi
     let base_toughness = engine::effective_base_toughness(state, id);
     let has_pt = base_power.is_some() || base_toughness.is_some();
     CardCharacteristicsV2 {
+        legend_rules: crate::standard_legends_v1::characteristics(state, id),
+        legend_return_sources: object.v4.melira_protection_v1.as_ref().map(|sources| {
+            sources
+                .iter()
+                .map(|source| CardStableRefV1 {
+                    arena_id: source.source.0,
+                    card_db_id: source.card_def,
+                    owner: source.owner.into(),
+                    controller: source.controller.into(),
+                    zone: source.zone,
+                    zone_change_count: source.zone_change_count,
+                })
+                .collect()
+        }),
         base_pt_until_end_of_turn: state
             .objects
             .get(id)
@@ -6117,11 +6151,18 @@ fn validate_linked_exile_records_public_v4(state: &GameState) -> Result<()> {
             || crate::card_def::CARD_DEFS
                 .get(record.source.card_def as usize)
                 .is_none_or(|definition| {
-                    !matches!(definition.name, "Mesmeric Fiend" | "Journey to Nowhere")
+                    !matches!(
+                        definition.name,
+                        "Mesmeric Fiend" | "Journey to Nowhere" | "Lagrella, the Magpie"
+                    )
                 })
             || state.engine.linked_exile_records[..index]
                 .iter()
-                .any(|other| other.source == record.source)
+                .any(|other| {
+                    other.source == record.source
+                        && crate::card_def::CARD_DEFS[record.source.card_def as usize].name
+                            != "Lagrella, the Magpie"
+                })
         {
             return Err(RlContractError(
                 "linked-exile record has an invalid or duplicate source contract".to_string(),

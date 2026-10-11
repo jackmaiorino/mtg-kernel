@@ -462,7 +462,11 @@ fn hajar_locks_in_legendary_creatures_and_katilda_grants_colored_mana() {
         Zone::Battlefield,
     );
     next(&mut state);
-    engine::step(&mut state, Action::ActivateManaAbility(hajar, ManaColor::R)).unwrap();
+    engine::step(
+        &mut state,
+        Action::ActivateManaAbilityChoice(hajar, ManaColor::R),
+    )
+    .unwrap();
     assert!(state.objects.get(hajar).tapped);
     assert_eq!(state.players[0].mana_pool[ManaColor::R.pool_index()], 1);
     engine::step(&mut state, Action::ActivateAbility(hajar, 0)).unwrap();
@@ -607,4 +611,146 @@ fn ertai_can_choose_one_of_two_abilities_from_the_same_departed_source() {
         .any(|item| item.v4.stack_item_id == other));
     assert_eq!(state.players[0].hand.len(), before + 1);
     assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
+}
+
+#[test]
+fn skrelv_color_choice_is_public_and_grants_expire() {
+    let mut state = ready(Step::Main1);
+    let source = put(
+        &mut state,
+        PlayerId::P0,
+        "Skrelv, Defector Mite",
+        Zone::Battlefield,
+    );
+    let target = put(
+        &mut state,
+        PlayerId::P0,
+        "Hajar, Loyal Bodyguard",
+        Zone::Battlefield,
+    );
+    state.players[0].mana_pool = pool(&[(ManaColor::W, 1)], 0);
+    next(&mut state);
+    engine::step(&mut state, Action::ActivateAbility(source, 0)).unwrap();
+    assert!(
+        matches!(next(&mut state),Decision::ChooseTargets { legal_targets, .. } if legal_targets.contains(&Target::Object(target)) && !legal_targets.contains(&Target::Object(source)))
+    );
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectOption {
+            option_count: 5,
+            ..
+        })
+    ));
+    engine::step(&mut state, Action::ChooseEffectOption(3)).unwrap();
+    settled(&mut state);
+    let rules = mtg_kernel::standard_legends_v1::characteristics(&state, target).unwrap();
+    assert_eq!(rules.toxic, 1);
+    assert_eq!(
+        rules.hexproof_color_mask,
+        mtg_kernel::card_def::mana_color_mask(ManaColor::R)
+    );
+    assert_eq!(
+        rules.cant_be_blocked_by_color_mask,
+        rules.hexproof_color_mask
+    );
+    let observation = mtg_kernel::rl::observe_policy_v6(
+        &state,
+        &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+        PlayerId::P0,
+        0,
+        0,
+        0,
+        1,
+    )
+    .unwrap();
+    assert!(serde_json::to_string(&observation)
+        .unwrap()
+        .contains("hexproof_color_mask"));
+    move_to(&mut state, target, Zone::Exile);
+    move_to(&mut state, target, Zone::Battlefield);
+    assert!(mtg_kernel::standard_legends_v1::characteristics(&state, target).is_none());
+}
+
+#[test]
+fn melira_delayed_return_tracks_the_protected_incarnation() {
+    let mut state = ready(Step::Main1);
+    let melira = put(
+        &mut state,
+        PlayerId::P0,
+        "Melira, the Living Cure",
+        Zone::Battlefield,
+    );
+    let target = put(
+        &mut state,
+        PlayerId::P0,
+        "Hajar, Loyal Bodyguard",
+        Zone::Battlefield,
+    );
+    next(&mut state);
+    engine::step(&mut state, Action::ActivateAbility(melira, 0)).unwrap();
+    assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(melira).zone, Zone::Exile);
+    assert!(state.objects.get(target).v4.melira_protection_v1.is_some());
+    move_to(&mut state, target, Zone::Graveyard);
+    assert_eq!(state.objects.get(target).zone, Zone::Graveyard);
+    settled(&mut state);
+    assert_eq!(state.objects.get(target).zone, Zone::Battlefield);
+    assert!(state.objects.get(target).v4.melira_protection_v1.is_none());
+    move_to(&mut state, target, Zone::Graveyard);
+    settled(&mut state);
+    assert_eq!(state.objects.get(target).zone, Zone::Graveyard);
+}
+
+#[test]
+fn lagrella_returns_both_players_creatures_and_counters_only_its_controllers() {
+    let mut state = ready(Step::Main1);
+    let ours = put(
+        &mut state,
+        PlayerId::P0,
+        "Hajar, Loyal Bodyguard",
+        Zone::Battlefield,
+    );
+    let theirs = put(
+        &mut state,
+        PlayerId::P1,
+        "Quirion Beastcaller",
+        Zone::Battlefield,
+    );
+    let other_ours = put(
+        &mut state,
+        PlayerId::P0,
+        "Katilda, Dawnhart Prime",
+        Zone::Battlefield,
+    );
+    let source = put(&mut state, PlayerId::P0, "Lagrella, the Magpie", Zone::Hand);
+    state.players[0].mana_pool = pool(
+        &[(ManaColor::W, 1), (ManaColor::U, 1), (ManaColor::G, 1)],
+        0,
+    );
+    cast(&mut state, source, &[]);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseTargets {
+            can_finish: true,
+            ..
+        })
+    ));
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(ours))).unwrap();
+    assert!(
+        matches!(next(&mut state),Decision::ChooseTargets { legal_targets, .. } if legal_targets.contains(&Target::Object(theirs)) && !legal_targets.contains(&Target::Object(other_ours)))
+    );
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(theirs))).unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(ours).zone, Zone::Exile);
+    assert_eq!(state.objects.get(theirs).zone, Zone::Exile);
+    move_to(&mut state, source, Zone::Graveyard);
+    assert_eq!(state.objects.get(ours).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(theirs).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(ours).counters.plus1_plus1, 0);
+    settled(&mut state);
+    assert_eq!(state.objects.get(ours).counters.plus1_plus1, 2);
+    assert_eq!(state.objects.get(theirs).counters.plus1_plus1, 0);
 }

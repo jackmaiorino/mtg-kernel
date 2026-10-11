@@ -31,3 +31,8 @@ pub(super) fn ertai_effect() -> EffectOp {
     }
 }
 pub(super) const ERTAI: [TriggeredAbilityDef; 1] = [etb_trigger(ertai_effect)];
+
+fn lagrella() -> EffectOp {
+    EffectOp::StandardLegendV1(LegendEffectV1::LagrellaExileTargets)
+}
+pub(super) const LAGRELLA: [TriggeredAbilityDef; 1] = [etb_trigger(lagrella)];

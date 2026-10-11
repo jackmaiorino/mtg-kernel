@@ -1022,6 +1022,7 @@ fn commit_with_ability_lki(
             crate::standard_keywords_v1::unearth_exile_instead(state, &mut z);
             #[cfg(not(feature = "standard-magezero-fixtures"))]
             let _ = &mut z;
+            crate::standard_legends_v1::before_zone_change(state, z.object, z.to_zone);
             let from = state.objects.get(z.object).zone;
             crate::standard_cards_v1::before_departure(state, z.object);
             #[cfg(feature = "standard-magezero-fixtures")]
@@ -1285,6 +1286,11 @@ fn commit_with_ability_lki(
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
     if let Some(object) = left_battlefield {
+        crate::standard_legends_v1::return_lagrella_exiles(
+            state,
+            object,
+            state.objects.get(object).zone_change_count - 1,
+        );
         if !state.engine.linked_exile_records.is_empty() {
             let left_zone_change_count = state.objects.get(object).zone_change_count - 1;
             crate::effect::return_cards_exiled_until_source_leaves(
