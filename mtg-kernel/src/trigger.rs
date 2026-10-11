@@ -3272,6 +3272,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Monk Token" => &MONASTERY_SWIFTSPEAR_TRIGGERS,
         "Kellan, Planar Trailblazer" => &KELLAN_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
+        "Brightglass Gearhulk" => &standard_family_g_v1::BRIGHTGLASS_GEARHULK_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
         "Essence Channeler" => &standard_family_g_v1::ESSENCE_CHANNELER_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Floodpits Drowner" => &standard_family_g_v1::FLOODPITS_DROWNER_TRIGGERS,

@@ -7129,6 +7129,39 @@
         "dies_transfer_counters"
       ],
       "java_file": "Mage.Sets/src/mage/cards/e/EssenceChanneler.java"
+    },
+    {
+      "name": "Brightglass Gearhulk",
+      "engine_capability": "full",
+      "mana_cost": "{G}{G}{W}{W}",
+      "mana_value": 4,
+      "colors": [
+        "G",
+        "W"
+      ],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Construct"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "medium",
+      "mechanics": [
+        "first_strike",
+        "trample",
+        "etb_search_library"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BrightglassGearhulk.java"
     }
   ]
 }

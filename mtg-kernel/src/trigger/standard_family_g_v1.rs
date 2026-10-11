@@ -466,3 +466,22 @@ pub(super) const ESSENCE_CHANNELER_TRIGGERS: [TriggeredAbilityDef; 2] = [
         ..etb_trigger(essence_transfer_counters_effect)
     },
 ];
+
+fn brightglass_search_effect() -> EffectOp {
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: vec![
+            EffectOp::Sequence(vec![]),
+            EffectOp::SearchLibraryToHandUpTo {
+                player: PlayerRef::Controller,
+                filter:
+                    crate::effect::LibraryCardFilter::ArtifactCreatureOrEnchantmentManaValueAtMost(
+                        1,
+                    ),
+                max_targets: 2,
+            },
+        ],
+    }
+}
+pub(super) const BRIGHTGLASS_GEARHULK_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(brightglass_search_effect)];

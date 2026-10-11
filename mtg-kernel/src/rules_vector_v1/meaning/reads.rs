@@ -530,6 +530,7 @@ pub(crate) fn library_card_filter(filter: LibraryCardFilter, out: &mut Collector
             ObjF::Typed(CardTypeF::Land)
         }
         LibraryCardFilter::AnyCard => ObjF::AnyCard,
+        LibraryCardFilter::ArtifactCreatureOrEnchantmentManaValueAtMost(_) => ObjF::Permanent,
     }
 }
 

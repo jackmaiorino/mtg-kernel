@@ -3266,3 +3266,54 @@ fn essence_transfers_all_counter_families_from_departed_incarnation() {
     assert_eq!(recipient.v4.lifelink_keyword_counters, 1);
     assert_eq!(recipient.v4.time_counters_v1, 2);
 }
+
+#[test]
+fn brightglass_search_is_optional_and_filters_two_revealed_cheap_permanents() {
+    let mut state = ready(Step::Main1);
+    let top = stack_library_top(
+        &mut state,
+        &[
+            "Novice Inspector",
+            "Gingerbrute",
+            "Lightning Bolt",
+            "Forest",
+            "Mosswood Dreadknight",
+        ],
+    );
+    cast_creature(&mut state, "Brightglass Gearhulk");
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectOption { .. })
+    ));
+    engine::step(&mut state, Action::ChooseEffectOption(1)).unwrap();
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { legal_targets, .. }) if legal_targets == vec![Target::Object(top[0]), Target::Object(top[1])])
+    );
+    engine::step(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(top[0])),
+    )
+    .unwrap();
+    next(&mut state);
+    engine::step(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(top[1])),
+    )
+    .unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(top[0]).zone, Zone::Hand);
+    assert_eq!(state.objects.get(top[1]).zone, Zone::Hand);
+    assert_eq!(state.objects.get(top[2]).zone, Zone::Library);
+    assert_eq!(state.objects.get(top[3]).zone, Zone::Library);
+    assert_eq!(state.objects.get(top[4]).zone, Zone::Library);
+
+    let library = state.players[0].library.clone();
+    cast_creature(&mut state, "Brightglass Gearhulk");
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectOption { .. })
+    ));
+    engine::step(&mut state, Action::ChooseEffectOption(0)).unwrap();
+    settled(&mut state);
+    assert_eq!(state.players[0].library, library);
+}
