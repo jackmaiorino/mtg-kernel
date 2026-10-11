@@ -942,6 +942,17 @@ pub(super) fn conflicts(
         }
         if let Some(resolution) = &standard.resolution_play {
             if resolution.permission.as_ref().is_some_and(|p| s.b(&p.card))
+                || resolution.authorization.as_ref().is_some_and(|proof| {
+                    s.f(&proof.answer)
+                        || proof.exiled_card.v4.face_down_v1.is_some_and(|face| {
+                            face.hidden_by
+                                .is_some_and(|link| s.same(link.object, link.zone_change_count))
+                                || face
+                                    .hidden_by_source
+                                    .as_ref()
+                                    .is_some_and(|source| s.a(source))
+                        })
+                })
                 || resolution.kicked_source.is_some_and(|id| s.raw(id))
                 || resolution
                     .suspended

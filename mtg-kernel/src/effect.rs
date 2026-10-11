@@ -9253,6 +9253,44 @@ fn validate_resumable_program(op: &EffectOp) -> Result<(), String> {
     Ok(())
 }
 
+/// Rebuild the exact generated child instruction from its definition-owned
+/// typed answer, using the caller's pre-announcement projection.
+pub(crate) fn validate_resolution_play_authorization(
+    state: &mut GameState,
+    suspended: &EffectContinuation,
+    answer: &EffectFrame,
+    permission: crate::engine::resolution_cast_v1::ResolutionPermissionV1,
+) -> Result<(), String> {
+    let mut expected = suspended.clone();
+    match answer {
+        EffectFrame::ExilePlay { choice, play: true } => {
+            expected.frames = choice.remaining.clone();
+            standard_exile::finish_play(state, &mut expected, choice, true)?;
+        }
+        EffectFrame::ExileBatchSelect { choice, selected } if selected.len() == 1 => {
+            expected.frames = choice.remaining.clone();
+            standard_exile::finish_batch_selection(state, &mut expected, choice.clone(), selected)?;
+        }
+        _ => return Err("resolution child has no affirmative typed play answer".into()),
+    }
+    let op = if permission.land {
+        EffectOp::PlayExiledLand {
+            card: permission.card,
+        }
+    } else {
+        EffectOp::CastExiledWithoutMana {
+            card: permission.card,
+            maximum_mana_value: permission.maximum_mana_value,
+        }
+    };
+    if !matches!(expected.frames.pop(), Some(EffectFrame::Program { op: generated, .. }) if generated == op)
+        || expected != *suspended
+    {
+        return Err("resolution child permission or suspended remainder changed".into());
+    }
+    Ok(())
+}
+
 fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
     let mut continuation = state
         .engine
@@ -9264,7 +9302,14 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
         return Ok(ResumableProgress::Suspended);
     }
 
+    let mut resolution_answer = None;
     while let Some(frame) = continuation.frames.pop() {
+        if matches!(
+            frame,
+            EffectFrame::ExilePlay { .. } | EffectFrame::ExileBatchSelect { .. }
+        ) {
+            resolution_answer = Some(frame.clone());
+        }
         if matches!(
             frame,
             EffectFrame::WardPayment { .. }
@@ -11266,11 +11311,13 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 }
             }
             EffectOp::CastExiledWithoutMana { card, maximum_mana_value } => {
-                crate::engine::resolution_cast_v1::stage(state, continuation, card, maximum_mana_value, false)?;
+                let answer = resolution_answer.take().ok_or("free cast has no typed answer")?;
+                crate::engine::resolution_cast_v1::stage(state, continuation, card, maximum_mana_value, false, answer)?;
                 return Ok(ResumableProgress::Suspended);
             }
             EffectOp::PlayExiledLand { card } => {
-                crate::engine::resolution_cast_v1::stage(state, continuation, card, None, true)?;
+                let answer = resolution_answer.take().ok_or("free land play has no typed answer")?;
+                crate::engine::resolution_cast_v1::stage(state, continuation, card, None, true, answer)?;
                 return Ok(ResumableProgress::Suspended);
             }
             EffectOp::DiscardUpToThenDraw { player, maximum } => {

@@ -15993,7 +15993,7 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
                     excluded_color,
                 });
             } else {
-                play_land(state, p, id, None);
+                play_land(state, p, id, None, false)?;
             }
             Ok(())
         }
@@ -18074,6 +18074,7 @@ pub(crate) fn validate_pending_land_play(
     state: &GameState,
     pending: &PendingLandPlay,
 ) -> Result<(), String> {
+    resolution_cast_v1::validate_child(state, pending.source, pending.controller, true, false)?;
     let object = state
         .objects
         .try_get(pending.source)
@@ -18137,7 +18138,13 @@ fn apply_choose_land_color(state: &mut GameState, option_index: u16) -> Result<(
         .get(usize::from(option_index))
         .ok_or("land color-choice option index is outside the printed color set")?;
     state.engine.pending_land_play = None;
-    play_land(state, pending.controller, pending.source, Some(color));
+    play_land(
+        state,
+        pending.controller,
+        pending.source,
+        Some(color),
+        false,
+    )?;
     Ok(())
 }
 
@@ -18215,7 +18222,9 @@ fn play_land(
     player: PlayerId,
     id: ObjectId,
     chosen_color: Option<ManaColor>,
-) {
+    owned_resolution_parent: bool,
+) -> Result<(), String> {
+    resolution_cast_v1::validate_child(state, id, player, true, owned_resolution_parent)?;
     let ctx = ExecCtx::no_targets(id, player);
     if resolution_cast_v1::permit(state, id).is_some_and(|p| p.land) {
         event::propose_and_commit(
@@ -18234,17 +18243,13 @@ fn play_land(
     }
     state.objects.get_mut(id).v4.chosen_color = chosen_color;
     state.players[player.index()].lands_played_this_turn += 1;
-    match resolution_cast_v1::finish_child(state) {
-        Ok(true) => return,
-        Ok(false) => {}
-        Err(_) => {
-            state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, id));
-            return;
-        }
+    if resolution_cast_v1::finish_child(state)? {
+        return Ok(());
     }
     collect_and_queue_triggers(state);
     state.engine.priority_passes = [false, false];
     state.priority_player = player;
+    Ok(())
 }
 
 /// Plots a hand card (`PlotAbility`): pays `CardDef::plot_cost`, exiles it,

@@ -10,6 +10,14 @@ pub struct ResolutionPlayV1 {
     pub permission: Option<ResolutionPermissionV1>,
     pub deferred_triggers: Vec<PendingTrigger>,
     pub kicked_source: Option<ObjectId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorization: Option<Box<ResolutionAuthorizationV1>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ResolutionAuthorizationV1 {
+    pub answer: effect::EffectFrame,
+    pub exiled_card: crate::state::GameObject,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -258,6 +266,7 @@ pub(crate) fn can_cast_exiled_without_mana(
         }),
         deferred_triggers: Vec::new(),
         kicked_source: None,
+        authorization: None,
     });
     begin_cast_ex(
         &mut projected,
@@ -287,11 +296,13 @@ pub(crate) fn stage(
     card: EffectObjectBinding,
     maximum_mana_value: Option<u16>,
     land: bool,
+    answer: effect::EffectFrame,
 ) -> Result<(), String> {
     let controller = continuation.ctx.controller;
     if !live(state, card) {
         return Err("resolution play lost its exact exile card".into());
     }
+    let exiled_card = state.objects.get(card.object).clone();
     if land {
         if !can_play_exiled_land(state, controller, card) {
             return Err("resolution land play has no remaining legal land drop".into());
@@ -319,6 +330,7 @@ pub(crate) fn stage(
             permission: None,
             deferred_triggers: Vec::new(),
             kicked_source,
+            authorization: None,
         });
     if context.parent != parent || context.suspended.is_some() || context.permission.is_some() {
         return Err("resolution play overlaps another casting instruction".into());
@@ -330,6 +342,10 @@ pub(crate) fn stage(
         maximum_mana_value,
         land,
     });
+    context.authorization = Some(Box::new(ResolutionAuthorizationV1 {
+        answer,
+        exiled_card,
+    }));
     context
         .deferred_triggers
         .append(&mut state.engine.pending_triggers);
@@ -346,7 +362,7 @@ pub(crate) fn stage(
                 excluded_color,
             });
         } else {
-            play_land(state, controller, card.object, None);
+            play_land(state, controller, card.object, None, true)?;
         }
     } else {
         begin_cast_ex(state, controller, card.object, Some(CastMethodV4::Normal));
@@ -365,51 +381,147 @@ pub(crate) fn can_play_exiled_land(
         && card_def::CARD_DEFS[state.objects.get(card.object).card_def as usize].is_playable_land()
 }
 
-/// Called at the public pending-cast boundary, after the resolving parent
-/// has been reinserted below its child. Quote-only preflight has no parent.
 pub(super) fn validate_pending_child(
     state: &GameState,
     pending: &PendingCast,
 ) -> Result<(), String> {
-    if !timing_override(state, pending.spell) {
-        return Ok(());
-    }
-    let context = context(state).ok_or("resolution cast lost its parent context")?;
+    validate_child(state, pending.spell, pending.controller, false, false)
+}
+
+/// Authenticate a serialized child before choosing or paying any of its costs.
+/// `owned_parent` is only used synchronously by a land instruction, while the
+/// interpreter owns the parent outside the public stack.
+pub(super) fn validate_child(
+    state: &GameState,
+    source: ObjectId,
+    controller: PlayerId,
+    land: bool,
+    owned_parent: bool,
+) -> Result<(), String> {
+    let object = state
+        .objects
+        .try_get(source)
+        .ok_or("resolution child source is missing")?;
+    let resolving_origin = object
+        .v4
+        .spell_cast_origin
+        .filter(|origin| matches!(origin.route, SpellCastRouteV4::ResolvingEffectV1 { .. }));
+    let Some(context) = context(state) else {
+        return if resolving_origin.is_some() {
+            Err("resolution child lost its parent context".into())
+        } else {
+            Ok(())
+        };
+    };
     let parent = context
         .suspended
         .as_ref()
-        .ok_or("resolution cast lost its suspended parent")?;
-    if parent.resolving_item.v4.stack_item_id != context.parent
-        || parent.ctx.stack_item_id != Some(context.parent)
-        || parent.ctx.source != parent.resolving_item.source
-        || parent.ctx.controller != parent.resolving_item.controller
-        || context
-            .parent_index
-            .checked_add(1)
-            .is_none_or(|index| index >= state.stack.len())
-        || state.stack.get(context.parent_index) != Some(&parent.resolving_item)
-        || state
+        .ok_or("resolution child lost its suspended parent")?;
+    let permission = context
+        .permission
+        .ok_or("resolution child lost its permission")?;
+    let authorization = context
+        .authorization
+        .as_ref()
+        .ok_or("resolution child lost its typed authorization")?;
+    if context.parent == StackItemId::default()
+        || parent.resolving_item.v4.stack_item_id != context.parent
+        || parent.ctx.controller != controller
+        || parent.choice.is_some()
+        || parent.answered_choice_guard.is_some()
+        || permission.controller != controller
+        || permission.land != land
+        || permission.card.object != source
+        || permission.card.expected_zone != Zone::Exile
+        || state.engine.pending_effect.is_some()
+    {
+        return Err("resolution child parent or permission changed".into());
+    }
+    if land {
+        if !live(state, permission.card) || permission.maximum_mana_value.is_some() {
+            return Err("resolution land permission changed".into());
+        }
+    } else if object.zone != Zone::Stack
+        || resolving_origin.is_none_or(|origin| {
+            origin.origin_zone != Zone::Exile
+                || origin.origin_zone_change_count != permission.card.expected_zone_change_count
+                || origin.route
+                    != (SpellCastRouteV4::ResolvingEffectV1 {
+                        holder: controller,
+                        maximum_mana_value: permission.maximum_mana_value,
+                    })
+        })
+    {
+        return Err("resolution spell permission changed".into());
+    }
+    let original = &authorization.exiled_card;
+    if original.zone != Zone::Exile
+        || original.zone_change_count != permission.card.expected_zone_change_count
+        || original.card_def != object.card_def
+        || original.owner != object.owner
+    {
+        return Err("resolution child exile snapshot changed".into());
+    }
+    let mut projected = state.clone();
+    if owned_parent {
+        if projected
+            .stack
+            .iter()
+            .any(|item| item.v4.stack_item_id == context.parent)
+            || context.parent_index > projected.stack.len()
+        {
+            return Err("owned resolution parent has an invalid stack position".into());
+        }
+        projected
+            .stack
+            .insert(context.parent_index, parent.resolving_item.clone());
+    }
+    if projected.stack.get(context.parent_index) != Some(&parent.resolving_item)
+        || projected
             .stack
             .iter()
             .filter(|item| item.v4.stack_item_id == context.parent)
             .count()
             != 1
     {
-        return Err(
-            "resolution cast suspended parent no longer matches its stack incarnation".into(),
-        );
+        return Err("resolution child lost its exact public parent".into());
     }
-    Ok(())
+    projected.engine.pending_effect = Some((**parent).clone());
+    // The parent is suspended before a child can discard. Its own validation
+    // must not mistake a child's additional cost for a parent effect answer.
+    projected.engine.pending_discard = None;
+    effect::validate_pending_effect_choice(&projected)?;
+    projected.engine.pending_effect = None;
+    projected.engine.pending_cast = None;
+    projected.engine.pending_land_play = None;
+    if !land {
+        projected
+            .stack
+            .retain(|item| !(item.kind == StackItemKind::Spell && item.source == source));
+        projected.exile.push(source);
+    }
+    *projected.objects.get_mut(source) = original.clone();
+    effect::validate_resolution_play_authorization(
+        &mut projected,
+        parent,
+        &authorization.answer,
+        permission,
+    )
 }
 
 pub(super) fn finish_child(state: &mut GameState) -> Result<bool, String> {
     let Some(context) = context_mut(state) else {
         return Ok(false);
     };
-    let parent = context
-        .suspended
-        .as_ref()
-        .ok_or("resolution play lost its suspended parent")?;
+    if context.suspended.is_none()
+        || context.permission.is_none()
+        || context.authorization.is_none()
+    {
+        return Err(
+            "active resolution child cannot finish without its authenticated parent".into(),
+        );
+    }
+    let parent = context.suspended.as_ref().unwrap();
     if parent.resolving_item.v4.stack_item_id != context.parent
         || parent.ctx.stack_item_id != Some(context.parent)
     {
@@ -417,6 +529,7 @@ pub(super) fn finish_child(state: &mut GameState) -> Result<bool, String> {
     }
     let parent = context.suspended.take().unwrap();
     context.permission = None;
+    context.authorization = None;
     let captures = trigger::capture_triggers_without_sba(state);
     let triggers = std::mem::take(&mut state.engine.pending_triggers);
     let context = context_mut(state).unwrap();
@@ -523,6 +636,242 @@ mod tests {
             expected_zone: Zone::Exile,
             expected_zone_change_count: state.objects.get(source).zone_change_count,
         }
+    }
+
+    fn settle(state: &mut GameState) -> Option<Decision> {
+        for _ in 0..100 {
+            match advance_until_decision(state) {
+                Decision::OrderTriggers { pending, .. } => {
+                    step(state, Action::OrderTriggers((0..pending.len()).collect())).unwrap()
+                }
+                Decision::CastSpellOrPass { .. }
+                    if state.stack.is_empty() && state.engine.pending_triggers.is_empty() =>
+                {
+                    return None
+                }
+                Decision::CastSpellOrPass { .. } => step(state, Action::Pass).unwrap(),
+                decision => return Some(decision),
+            }
+        }
+        panic!("resolution fixture did not settle");
+    }
+
+    fn library_card(state: &mut GameState, index: usize, name: &str) -> ObjectId {
+        let id = state.players[0].library[index];
+        let def = card_def::card_id_by_name(name).unwrap();
+        let object = state.objects.get_mut(id);
+        object.card_def = def;
+        object.name = name.into();
+        object.v4 = ObjectStateV4::from_card_def(def);
+        id
+    }
+
+    fn discover_child() -> (GameState, ObjectId) {
+        let mut state = ready();
+        let child = library_card(&mut state, 1, "Burst Lightning");
+        let glyph = put(&mut state, "Zoetic Glyph", Zone::Battlefield);
+        state.players[0].mana_pool[5] = 4;
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(glyph, Zone::Graveyard),
+        );
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectBoolean { .. })
+        ));
+        step(&mut state, Action::ChooseEffectBoolean(true)).unwrap();
+        assert!(
+            matches!(advance_until_decision(&mut state), Decision::ChooseKicker { spell, .. } if spell == child)
+        );
+        (state, child)
+    }
+
+    #[test]
+    fn restored_discover_authenticates_full_parent_and_typed_permission_before_payment() {
+        let (state, child) = discover_child();
+        for corruption in 0..10 {
+            let mut restored: GameState =
+                serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+            let context = context_mut(&mut restored).unwrap();
+            match corruption {
+                0 => context
+                    .suspended
+                    .as_mut()
+                    .unwrap()
+                    .ctx
+                    .targets
+                    .push(Target::Player(PlayerId::P1)),
+                1 => {
+                    context
+                        .suspended
+                        .as_mut()
+                        .unwrap()
+                        .ctx
+                        .ability_source_contract = None
+                }
+                2 => context.suspended.as_mut().unwrap().frames.clear(),
+                3 => context.permission.as_mut().unwrap().controller = PlayerId::P1,
+                4 => {
+                    context
+                        .permission
+                        .as_mut()
+                        .unwrap()
+                        .card
+                        .expected_zone_change_count += 1
+                }
+                5 => context.permission.as_mut().unwrap().maximum_mana_value = None,
+                6 => context.authorization = None,
+                7 => {
+                    let effect::EffectFrame::ExilePlay { play, .. } =
+                        &mut context.authorization.as_mut().unwrap().answer
+                    else {
+                        panic!("discover answer")
+                    };
+                    *play = false;
+                }
+                8 => context.suspended = None,
+                9 => context.suspended.as_mut().unwrap().ctx.kicked = true,
+                _ => unreachable!(),
+            }
+            let before = restored.clone();
+            assert!(
+                step(&mut restored, Action::ChooseKicker(true)).is_err(),
+                "corruption {corruption}"
+            );
+            assert_eq!(
+                restored, before,
+                "rejected action mutated corruption {corruption}"
+            );
+            assert!(
+                matches!(
+                    advance_until_decision(&mut restored),
+                    Decision::Halted { .. }
+                ),
+                "corruption {corruption}"
+            );
+            assert_eq!(restored.objects, before.objects);
+            assert_eq!(restored.players, before.players);
+            assert_eq!(restored.stack, before.stack);
+            assert_eq!(restored.exile, before.exile);
+            assert!(restored.engine.pending_cast.is_some());
+        }
+        let mut restored: GameState =
+            serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+        step(&mut restored, Action::ChooseKicker(true)).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut restored),
+            Decision::ChooseTargets { .. }
+        ));
+        step(
+            &mut restored,
+            Action::ChooseTarget(Target::Player(PlayerId::P1)),
+        )
+        .unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut restored),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(restored.players[0].mana_pool[5], 0);
+        assert_eq!(restored.objects.get(child).zone, Zone::Stack);
+        assert!(context(&restored).is_none());
+        assert!(settle(&mut restored).is_none());
+        assert_eq!(restored.players[1].life, 16);
+    }
+
+    fn cage_land_child() -> (GameState, ObjectId) {
+        let mut state = ready();
+        let land = library_card(&mut state, 1, "Citadel Gate");
+        let cage = put(&mut state, "Collector's Cage", Zone::Hand);
+        state.players[0].mana_pool = [1, 0, 0, 0, 0, 1];
+        step(&mut state, Action::CastSpell(cage)).unwrap();
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { .. })
+        ));
+        step(&mut state, Action::ChooseEffectTarget(Target::Object(land))).unwrap();
+        assert!(settle(&mut state).is_none());
+        let target = put(&mut state, "Novice Inspector", Zone::Battlefield);
+        put(&mut state, "Monastery Swiftspear", Zone::Battlefield);
+        put(&mut state, "Nova Hellkite", Zone::Battlefield);
+        state.players[0].mana_pool[5] = 1;
+        step(&mut state, Action::ActivateAbility(cage, 0)).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::ChooseTargets { .. }
+        ));
+        step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectBoolean { .. })
+        ));
+        step(&mut state, Action::ChooseEffectBoolean(true)).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::ChooseEffectOption { .. }
+        ));
+        (state, land)
+    }
+
+    #[test]
+    fn restored_cage_land_authenticates_parent_before_placement_and_preserves_valid_choice() {
+        let (state, land) = cage_land_child();
+        for corruption in 0..4 {
+            let mut restored: GameState =
+                serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+            match corruption {
+                0 => context_mut(&mut restored).unwrap().suspended = None,
+                1 => context_mut(&mut restored)
+                    .unwrap()
+                    .suspended
+                    .as_mut()
+                    .unwrap()
+                    .ctx
+                    .targets
+                    .clear(),
+                2 => {
+                    context_mut(&mut restored)
+                        .unwrap()
+                        .permission
+                        .as_mut()
+                        .unwrap()
+                        .controller = PlayerId::P1
+                }
+                3 => {
+                    restored
+                        .engine
+                        .pending_land_play
+                        .as_mut()
+                        .unwrap()
+                        .controller = PlayerId::P1
+                }
+                _ => unreachable!(),
+            }
+            let before = restored.clone();
+            assert!(
+                step(&mut restored, Action::ChooseEffectOption(0)).is_err(),
+                "corruption {corruption}"
+            );
+            assert_eq!(restored, before);
+            assert!(matches!(
+                advance_until_decision(&mut restored),
+                Decision::Halted { .. }
+            ));
+            assert_eq!(restored.objects, before.objects);
+            assert_eq!(restored.players, before.players);
+            assert_eq!(restored.exile, before.exile);
+            assert_eq!(restored.objects.get(land).zone, Zone::Exile);
+        }
+        let mut restored: GameState =
+            serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+        step(&mut restored, Action::ChooseEffectOption(0)).unwrap();
+        assert!(settle(&mut restored).is_none());
+        assert_eq!(restored.objects.get(land).zone, Zone::Battlefield);
+        assert_eq!(
+            restored.objects.get(land).v4.chosen_color,
+            Some(ManaColor::U)
+        );
+        assert_eq!(restored.players[0].lands_played_this_turn, 1);
+        assert!(context(&restored).is_none());
     }
 
     #[test]
@@ -725,6 +1074,7 @@ mod tests {
                 }),
                 deferred_triggers: Vec::new(),
                 kicked_source: None,
+                authorization: None,
             });
             begin_cast_ex(&mut state, PlayerId::P0, room, Some(CastMethodV4::Normal));
             let pending = state.engine.pending_cast.as_ref().unwrap();
