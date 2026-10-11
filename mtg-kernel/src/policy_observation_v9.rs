@@ -185,10 +185,30 @@ mod tests {
             let mut first = base.clone();
             let mut second = base;
             // Both spells are registered in the Limited and Standard catalogs.
-            put(&mut first, actor.opponent(), "Fleeting Distraction", Zone::Hand);
-            put(&mut second, actor.opponent(), "Stroke of Midnight", Zone::Hand);
-            put(&mut first, actor.opponent(), "Stroke of Midnight", Zone::Library);
-            put(&mut second, actor.opponent(), "Fleeting Distraction", Zone::Library);
+            put(
+                &mut first,
+                actor.opponent(),
+                "Fleeting Distraction",
+                Zone::Hand,
+            );
+            put(
+                &mut second,
+                actor.opponent(),
+                "Stroke of Midnight",
+                Zone::Hand,
+            );
+            put(
+                &mut first,
+                actor.opponent(),
+                "Stroke of Midnight",
+                Zone::Library,
+            );
+            put(
+                &mut second,
+                actor.opponent(),
+                "Fleeting Distraction",
+                Zone::Library,
+            );
             assert_eq!(observe(&first, actor), observe(&second, actor));
         }
     }
