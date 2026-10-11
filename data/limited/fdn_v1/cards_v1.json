@@ -6065,6 +6065,38 @@
         "variable_controlled_creature_targets",
         "indestructible_until_cleanup"
       ]
+    },
+    {
+      "name": "Scavenging Ooze",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Ooze"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/s/ScavengingOoze.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_scavenging_ooze.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "graveyard_exile_activation",
+        "captured_creature_type",
+        "exact_source_counter",
+        "captured_controller_gain"
+      ]
     }
   ]
 }

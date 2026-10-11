@@ -609,6 +609,11 @@ impl Subtype {
         Subtype::Artificer,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Orc,
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        Subtype::Ooze,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -2520,7 +2525,7 @@ mod tests {
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     fn creature_type_choice_ids_preserve_pauper_and_foundations_profiles() {
         // Preserve the ordered lists from ddff546a, with Elder appended to
-        // Foundations by v68. These also define the changeling subtype
+        // Foundations by v68 and Ooze149 by this candidate. These also define the changeling subtype
         // projection and creature-type choice surface in these profiles.
         let expected: &[u16] = &[
             0, 2, 3, 5, 6, 7, 8, 9, 10, 11, 13, 14, 18, 19, 20, 21, 22, 24, 25, 26, 27, 29, 30, 31,
@@ -2531,7 +2536,7 @@ mod tests {
         if cfg!(feature = "limited-fdn-fixtures") {
             expected.extend_from_slice(&[
                 79, 80, 81, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99,
-                100, 101, 102, 103, 104, 119, 124, 125, 126, 127, 109,
+                100, 101, 102, 103, 104, 119, 124, 125, 126, 127, 109, 149,
             ]);
         }
         assert_eq!(
@@ -2568,12 +2573,12 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 395 (Divine Resilience after Bloodwitch,
+        // batches append through id 396 (Scavenging Ooze after Divine Resilience,
         // Run Away Together, Raid, Skyknight and Sire).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                396
+                397
             } else {
                 192
             }
