@@ -522,4 +522,74 @@ mod printed {
             );
         }
     }
+
+    #[test]
+    fn real_noncreature_only_selection_exiles_without_drain_and_changed_prefix_refuses() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, _, cards) = to_etb(actor, "Fireblast");
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(cards[1]))).unwrap();
+            engine::advance_until_decision(&mut state);
+            let mut session = owned(state);
+            let mut projector = HumanZombieProjectorV13::new(actor.into());
+            let prompt = projector
+                .project_current(&session, expected(&session))
+                .unwrap();
+            let public = session.public_observation(expected(&session)).unwrap();
+            assert_eq!(public.contexts[0].selected[0].arena_id, cards[1].0);
+            assert_eq!(public.contexts[0].selected_live_legal, vec![true]);
+            let snapshot = session.snapshot_v13();
+            // Both target and contract are coherently changed to another legal
+            // card in the same physical graveyard. It still changes the binding.
+            let replacement = crate::state::StackTargetContractV4::capture(
+                session.inner.zombie_fixture_state(),
+                Target::Object(cards[0]),
+            );
+            let pending = session
+                .inner
+                .zombie_fixture_state_mut()
+                .engine
+                .pending_triggers
+                .first_mut()
+                .unwrap();
+            pending.targets[0] = Target::Object(cards[0]);
+            pending.target_contracts[0] = replacement;
+            let forged = session.inner.privileged_core_environment_hash();
+            assert_eq!(
+                projector.submit(
+                    &mut session,
+                    request(&prompt, "Finish Soul-Shackled Zombie")
+                ),
+                Err(Error::StaleDecision)
+            );
+            assert_eq!(session.inner.privileged_core_environment_hash(), forged);
+            session.restore_v13(&snapshot).unwrap();
+            let prompt = projector
+                .project_current(&session, expected(&session))
+                .unwrap();
+            projector
+                .submit(
+                    &mut session,
+                    request(&prompt, "Finish Soul-Shackled Zombie"),
+                )
+                .unwrap();
+            settle(&mut session);
+            assert_eq!(
+                session
+                    .inner
+                    .zombie_fixture_state()
+                    .objects
+                    .get(cards[1])
+                    .zone,
+                Zone::Exile
+            );
+            assert_eq!(
+                session.inner.zombie_fixture_state().players[actor.index()].life,
+                20
+            );
+            assert_eq!(
+                session.inner.zombie_fixture_state().players[actor.opponent().index()].life,
+                20
+            );
+        }
+    }
 }
