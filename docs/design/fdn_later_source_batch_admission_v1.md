@@ -13,8 +13,9 @@ Authority and Employment remain separate preparation. Public, Human, sampler
 and model successors listed in the source docs remain required. Sentinels are
 observer labels without underlying hidden physical identity and cannot enter
 booster pools or decks. Native generator output and gameplay qualification
-must precede a catalog/profile successor. Historical profiles stay immutable.
-Current v77 live assertions deliberately await the actual generated identity.
+must precede runtime admission of a catalog/profile successor. Historical
+profiles stay immutable. The v78 candidate below derives from the actual
+generator artifact; gameplay qualification is still pending.
 No experiment, spending, measurement, model admission or strength claim occurs.
 
 Python deck/registry checks44 passed with the old prefix and frozen inputs
@@ -33,3 +34,13 @@ v78 profile preserves every older literal and reader, adds a historical v77
 fixture and stale publish/resume refusals before store access. Only current
 live canaries change. Runtime deck SHA stays68e7602, with no model, weight or
 measurement identity change and no execution admission or result claim.
+
+Native60 exact359a6e76984215913c769818f678f0f15a9dfb7d is submitted under
+supportedhandle9914bdf3fcd348a2b2bd15720cc021aa/supervisor143300, actual cores12-15
+BelowNormal. Its43 selected groups request336 runtime cases plus both all-test
+typechecks, Limited/Default strict lints and complete Default/Standard replay
+exports. This also covers the reviewed Sower pre-advancement capture validation
+and separate HeartfireV12 recipient input. Native59 actual101/101, absent
+supervisor155588 and exact terminal helper release were observed before reuse.
+The submitted manifest is durably mirrored under E:/storage-records/fdn110.
+No native result or additional accepted coverage is claimed yet.
