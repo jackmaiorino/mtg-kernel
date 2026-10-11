@@ -112,6 +112,7 @@ pub mod policy_observation_v8;
 pub mod policy_observation_v9;
 pub mod policy_observation_variable_cast_v1;
 pub mod rl_variable_cast_v1;
+pub mod rules_meaning_authority_v1;
 pub mod rules_meaning_heartfire_v1;
 pub mod rules_meaning_ooze_v1;
 pub mod unclamped_softmax_sampler_v1;

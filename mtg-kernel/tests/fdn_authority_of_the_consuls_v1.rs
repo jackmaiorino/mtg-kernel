@@ -179,6 +179,114 @@ fn actual_white_enchantment_own_entry_negative_and_opposing_real_cast_tapped_gai
 }
 
 #[test]
+fn future_actual_static_and_trigger_meanings_bind_distinct_complete_roots_and_refuse_forgery() {
+    use mtg_kernel::rules_meaning_authority_v1 as meaning;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let source = cast(&mut state, actor, "Authority of the Consuls", ManaColor::W);
+        settle(&mut state);
+        let id = state.objects.get(source).card_def;
+        let selector = meaning::live_selector_v1().unwrap();
+        let static_meaning = meaning::meaning_v1(
+            &selector,
+            id,
+            meaning::RootV1::OpponentCreatureEntryTappedReplacement,
+        )
+        .unwrap();
+        let trigger_meaning = meaning::meaning_v1(
+            &selector,
+            id,
+            meaning::RootV1::OpponentCreatureEntryGainLifeTrigger,
+        )
+        .unwrap();
+        assert_ne!(static_meaning.root_sha256, trigger_meaning.root_sha256);
+        assert_eq!(static_meaning.trigger_index, None);
+        assert_eq!(trigger_meaning.trigger_index, Some(0));
+        let entrant = put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        assert!(state.objects.get(entrant).tapped);
+        until_gain(&mut state);
+        assert!(matches!(
+            state.stack.last().unwrap().inline_effect,
+            Some(EffectOp::AuthorityEntryGainLifeV1 { .. })
+        ));
+        let before = serde_json::to_vec(&state).unwrap();
+        for record in [&static_meaning, &trigger_meaning] {
+            let roundtrip = serde_json::from_slice(&serde_json::to_vec(record).unwrap()).unwrap();
+            meaning::validate_meaning_v1(&roundtrip).unwrap();
+            let mut extra = serde_json::to_value(record).unwrap();
+            extra["unknown_authority"] = true.into();
+            assert!(serde_json::from_value::<meaning::CardMeaningV1>(extra).is_err());
+            let mut extra_fact = serde_json::to_value(record).unwrap();
+            extra_fact["facts"][0]["ActivePrintedBattlefieldFace"]["unknown_authority"] =
+                true.into();
+            assert!(serde_json::from_value::<meaning::CardMeaningV1>(extra_fact).is_err());
+            assert!(!record.public_human_sampler_and_model_admitted);
+            for field in 0..13 {
+                let mut forged = record.clone();
+                match field {
+                    0 => forged.selector.schema.push('x'),
+                    1 => forged.selector.scope.push('x'),
+                    2 => forged.selector.card_db_hash ^= 1,
+                    3 => forged.selector.producer_sha256.push('x'),
+                    4 => forged.card_id = card_id_by_name("Lightning Bolt").unwrap(),
+                    5 => forged.printed_name.push('x'),
+                    6 => forged.printed_cost = "{0}".into(),
+                    7 => forged.printed_mana_value = 2,
+                    8 => forged.ordinary_untargeted_enchantment_spell = false,
+                    9 => {
+                        forged.root = if record.root
+                            == meaning::RootV1::OpponentCreatureEntryTappedReplacement
+                        {
+                            meaning::RootV1::OpponentCreatureEntryGainLifeTrigger
+                        } else {
+                            meaning::RootV1::OpponentCreatureEntryTappedReplacement
+                        }
+                    }
+                    10 => forged.trigger_index = Some(1),
+                    11 => forged.root_sha256.push('x'),
+                    _ => forged.public_human_sampler_and_model_admitted = true,
+                }
+                assert!(
+                    meaning::validate_meaning_v1(&forged).is_err(),
+                    "field={field}"
+                );
+            }
+            for index in 0..record.facts.len() {
+                let mut omitted = record.clone();
+                omitted.facts.remove(index);
+                assert!(meaning::validate_meaning_v1(&omitted).is_err());
+                let mut repeated = record.clone();
+                repeated.facts.push(record.facts[index].clone());
+                assert!(meaning::validate_meaning_v1(&repeated).is_err());
+                let mut reordered = record.clone();
+                reordered
+                    .facts
+                    .swap(index, (index + 1) % record.facts.len());
+                assert!(meaning::validate_meaning_v1(&reordered).is_err());
+                let mut rewritten = record.clone();
+                rewritten.facts[index] =
+                    meaning::FactV1::ActivePrintedBattlefieldFace { face_index: 1 };
+                assert!(meaning::validate_meaning_v1(&rewritten).is_err());
+            }
+        }
+        assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+        let mut replay = restored(&state);
+        settle(&mut state);
+        settle(&mut replay);
+        assert_eq!(state.players[actor.index()].life, 21);
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+    }
+}
+
+#[test]
 fn original_observer_controller_and_physical_entrant_owner_survive_response_and_reentry() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for response in 0..4 {
