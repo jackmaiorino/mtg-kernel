@@ -2414,6 +2414,9 @@ pub enum EffectTargetSelectionPurpose {
     DiscardDraw {
         choice: DiscardDrawChoice,
     },
+    CrystalDiscardAfterDamageV2 {
+        capture: u32,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -3322,6 +3325,9 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
 /// wrong-shape actions byte-for-byte nonmutating.
 pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<(), String> {
     validate_pending_effect_choice(state)?;
+    if crystal_prevention_v1::is_discard_choice(state) {
+        return crystal_prevention_v1::answer_discard(state, Some(target));
+    }
     let choice = state
         .engine
         .pending_effect
@@ -3432,6 +3438,9 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
 /// final card auto-completes and this action is never legal there.
 pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), String> {
     validate_pending_effect_choice(state)?;
+    if crystal_prevention_v1::is_discard_choice(state) {
+        return crystal_prevention_v1::answer_discard(state, None);
+    }
     let choice = state
         .engine
         .pending_effect
@@ -4088,6 +4097,9 @@ fn complete_resumable_target_selection(
         })
         .collect::<Result<Vec<_>, String>>()?;
     match purpose {
+        EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { .. } => {
+            return Err("Crystal discard requires its authenticated owning answer".into())
+        }
         EffectTargetSelectionPurpose::StandardCopyTargetV1 { .. } => {
             unreachable!("answered above without object bindings")
         }
@@ -8104,6 +8116,9 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     {
                         return Err("chosen-permanent candidates changed".to_string());
                     }
+                }
+                EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { .. } => {
+                    crystal_prevention_v1::validate_discard_choice(state, pending)?
                 }
                 EffectTargetSelectionPurpose::DiscardDraw { choice } => {
                     standard_discard::validate(state, pending, choice)?;

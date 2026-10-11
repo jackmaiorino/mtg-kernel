@@ -37,9 +37,18 @@ pub struct MenuV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creature_power_at_resolution: Option<i32>,
     pub source: CardStableRefV1,
+    pub resolving_source: CardStableRefV1,
     pub recipient: CardStableRefV1,
     pub remaining_damage: i32,
     pub options: Vec<OptionV1>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiscardMenuV2 {
+    pub chooser: PlayerSeatV1,
+    pub source: CardStableRefV1,
+    pub maximum_cards: u16,
+    pub draws_if_discarded: u16,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -75,6 +84,8 @@ pub struct CrystalObservationV1 {
     pub attacked_this_turn: [bool; 2],
     pub static_sources: Vec<StaticSourceV1>,
     pub prevention_menu: Option<MenuV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub optional_discard_menu: Option<DiscardMenuV2>,
     pub projection_sha256: String,
 }
 fn digest(bytes: &[u8]) -> String {
@@ -224,6 +235,26 @@ fn damage_origin(
         }),
     ))
 }
+fn discard_menu(
+    state: &GameState,
+    actor: PlayerId,
+) -> Result<Option<DiscardMenuV2>, RlContractError> {
+    if !crate::effect::crystal_prevention_v1::is_discard_choice(state) {
+        return Ok(None);
+    }
+    let pending = state.engine.pending_effect.as_ref().unwrap();
+    if actor != pending.ctx.controller {
+        return Err(RlContractError(
+            "Crystal discard input is private to its captured controller".into(),
+        ));
+    }
+    Ok(Some(DiscardMenuV2 {
+        chooser: actor.into(),
+        source: crate::rl::crystal_resolving_source_ref(state, &pending.resolving_item)?,
+        maximum_cards: 1,
+        draws_if_discarded: 1,
+    }))
+}
 fn menu(state: &GameState) -> Result<Option<MenuV1>, RlContractError> {
     use crate::effect::crystal_prevention_v1::PreventionV1;
     use crate::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
@@ -260,6 +291,10 @@ fn menu(state: &GameState) -> Result<Option<MenuV1>, RlContractError> {
     Ok(Some(MenuV1 {
         chooser: choice.chooser.into(),
         source,
+        resolving_source: crate::rl::crystal_resolving_source_ref(
+            state,
+            &state.engine.pending_effect.as_ref().unwrap().resolving_item,
+        )?,
         source_history,
         simultaneous_choices_remaining: choice.batch.as_ref().map(|progress| {
             progress
@@ -293,6 +328,7 @@ pub fn observe_v1(
     substep_count: u32,
 ) -> Result<CrystalObservationV1, RlContractError> {
     validate_state(state).map_err(RlContractError)?;
+    let optional_discard_menu = discard_menu(state, actor)?;
     let mut static_sources = Vec::new();
     for (id, o) in state.objects.iter() {
         if crate::crystal_barricade_v1::is_active_source(state, id) {
@@ -336,6 +372,7 @@ pub fn observe_v1(
         ],
         static_sources,
         prevention_menu: menu(state)?,
+        optional_discard_menu,
         projection_sha256: String::new(),
     };
     o.projection_sha256 = commitment(&o)?;

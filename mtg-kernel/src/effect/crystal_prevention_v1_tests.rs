@@ -119,3 +119,93 @@ fn absent_stack_wrapper_writes_no_hash_input_or_serialized_field() {
     std::hash::Hash::hash(&CrystalPreventionStartedV1(Some(0)), &mut hash);
     assert!(hash.0 > 0);
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn absent_crystal_real_incinerating_keeps_legacy_optional_cost_and_replay() {
+    use crate::engine::{self, Action, Decision, OptionalCostChoice};
+    use crate::mana::ManaColor;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for pay in [false, true] {
+            let mut state = ready_state();
+            state.active_player = actor;
+            state.priority_player = actor;
+            let target = put(
+                &mut state,
+                actor.opponent(),
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            let card = put(&mut state, actor, "Forest", Zone::Hand);
+            let spell = put(&mut state, actor, "Incinerating Blast", Zone::Hand);
+            state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 4;
+            assert!(
+                matches!(engine::advance_until_decision(&mut state),Decision::CastSpellOrPass {player,..} if player==actor)
+            );
+            engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::ChooseTargets { .. }
+            ));
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+            engine::advance_until_decision(&mut state);
+            for _ in 0..10 {
+                let d = engine::advance_until_decision(&mut state);
+                if matches!(d,Decision::ChooseOptionalCost {player,..} if player==actor) {
+                    break;
+                }
+                assert!(matches!(d, Decision::CastSpellOrPass { .. }), "{d:?}");
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            assert!(
+                matches!(engine::advance_until_decision(&mut state),Decision::ChooseOptionalCost {player,discard_payable:true,..}
+                if player==actor)
+            );
+            assert!(state.engine.pending_effect.is_none());
+            assert!(!requires_successor(&state));
+            let bytes = serde_json::to_vec(&state).unwrap();
+            let mut replay: GameState = serde_json::from_slice(&bytes).unwrap();
+            for current in [&mut state, &mut replay] {
+                engine::step(
+                    current,
+                    Action::ChooseOptionalCost(if pay {
+                        OptionalCostChoice::Discard
+                    } else {
+                        OptionalCostChoice::Decline
+                    }),
+                )
+                .unwrap();
+                if pay {
+                    assert!(matches!(
+                        engine::advance_until_decision(current),
+                        Decision::Discard { .. }
+                    ));
+                    engine::step(current, Action::Discard(vec![card])).unwrap();
+                }
+                for _ in 0..15 {
+                    let d = engine::advance_until_decision(current);
+                    if current.stack.is_empty() && current.engine.pending_triggers.is_empty() {
+                        break;
+                    }
+                    assert!(matches!(d, Decision::CastSpellOrPass { .. }), "{d:?}");
+                    engine::step(current, Action::Pass).unwrap();
+                }
+                assert_eq!(current.objects.get(spell).zone, Zone::Graveyard);
+                assert_eq!(
+                    current.objects.get(card).zone,
+                    if pay { Zone::Graveyard } else { Zone::Hand }
+                );
+                assert!(!requires_successor(current));
+                validate(current).unwrap();
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&replay).unwrap()
+            );
+        }
+    }
+}

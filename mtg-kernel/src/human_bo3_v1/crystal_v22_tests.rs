@@ -334,3 +334,248 @@ fn future_printed_bolt_mixed_menu_public_human_submit_and_owning_restore_both_se
         assert_eq!(session.inner.privileged_core_environment_hash(), after);
     }
 }
+
+#[test]
+#[ignore = "Crystal Barricade is unregistered; explicit future printed qualification"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn future_incinerating_private_human_discard_decline_and_owning_restore_both_seats() {
+    use crate::engine::{self, Action, Decision};
+    use crate::event::{ActiveReplacement, ReplacementEffectKind};
+    use crate::mana::ManaColor;
+    use crate::state::Target;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for pay in [false, true] {
+            let mut state = ready_state();
+            state.active_player = actor;
+            state.priority_player = actor;
+            let wall = put(
+                &mut state,
+                actor.opponent(),
+                "Crystal Barricade",
+                Zone::Battlefield,
+            );
+            let target = put(
+                &mut state,
+                actor.opponent(),
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            let card = put(&mut state, actor, "Forest", Zone::Hand);
+            put(&mut state, actor.opponent(), "Lightning Bolt", Zone::Hand);
+            let spell = put(&mut state, actor, "Incinerating Blast", Zone::Hand);
+            state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 4;
+            state.engine.next_replacement_id = 1;
+            state.engine.active_replacements.push(ActiveReplacement {
+                id: 1,
+                source: wall,
+                kind: ReplacementEffectKind::PreventNextDamage {
+                    target: Target::Object(target),
+                    remaining: 1,
+                },
+            });
+            assert!(
+                matches!(engine::advance_until_decision(&mut state),Decision::CastSpellOrPass {player,..} if player==actor)
+            );
+            engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::ChooseTargets { .. }
+            ));
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+            let _ = engine::advance_until_decision(&mut state);
+            for _ in 0..10 {
+                let d = engine::advance_until_decision(&mut state);
+                if matches!(d, Decision::ChooseEffectOption { .. }) {
+                    break;
+                }
+                assert!(matches!(d, Decision::CastSpellOrPass { .. }), "{d:?}");
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            let Some(crate::effect::PendingEffectChoice::ChooseOption {
+                purpose: crate::effect::EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                ..
+            }) = state
+                .engine
+                .pending_effect
+                .as_ref()
+                .and_then(|p| p.choice.as_ref())
+            else {
+                panic!("real prevention");
+            };
+            let selected = choice
+                .options
+                .iter()
+                .position(|o| {
+                    matches!(
+                        o,
+                        crate::effect::crystal_prevention_v1::PreventionV1::Barricade(_)
+                    )
+                })
+                .unwrap();
+            engine::step(
+                &mut state,
+                Action::ChooseEffectOption(u16::try_from(selected).unwrap()),
+            )
+            .unwrap();
+            assert!(
+                matches!(engine::advance_until_decision(&mut state),Decision::ChooseEffectTargets {player,source,..}
+                if player==actor && source==spell)
+            );
+            let before_hand = state.players[actor.index()].hand.len();
+            let before_library = state.players[actor.index()].library.len();
+            let base = FastActorSessionV1::from_crystal_v22_fixture_state(state);
+            let mut session = HumanCrystalSessionV22::from_session(base).unwrap();
+            let current = expected(&session);
+            let public = session.public_observation(current).unwrap();
+            assert_eq!(
+                public.optional_discard_menu.as_ref().unwrap().chooser,
+                actor.into()
+            );
+            assert_eq!(
+                public
+                    .optional_discard_menu
+                    .as_ref()
+                    .unwrap()
+                    .source
+                    .arena_id,
+                spell.0
+            );
+            let mut projector = HumanCrystalProjectorV22::new(actor.into());
+            let prompt = projector.project_current(&session, current).unwrap();
+            safe(&serde_json::to_value(&prompt).unwrap());
+            let private_before = session.inner.privileged_core_environment_hash();
+            assert!(HumanCrystalProjectorV22::new(actor.opponent().into())
+                .project_current(&session, current)
+                .is_err());
+            assert_eq!(
+                session.inner.privileged_core_environment_hash(),
+                private_before
+            );
+            let request = action(
+                &prompt,
+                if pay {
+                    "Discard Forest"
+                } else {
+                    "Decline the optional discard"
+                },
+            );
+            let snapshot = session.snapshot_v22();
+            let receipt = projector.submit(&mut session, request.clone()).unwrap();
+            let after = session.inner.privileged_core_environment_hash();
+            let actual = session.inner.crystal_fixture_state();
+            assert_eq!(
+                actual.players[actor.index()].library.len(),
+                before_library - usize::from(pay)
+            );
+            assert_eq!(actual.players[actor.index()].hand.len(), before_hand);
+            assert_eq!(
+                actual.objects.get(card).zone,
+                if pay { Zone::Graveyard } else { Zone::Hand }
+            );
+            assert_eq!(actual.objects.get(target).damage, 0);
+            assert_eq!(
+                projector.submit(&mut session, request.clone()).unwrap(),
+                receipt
+            );
+            assert_eq!(session.inner.privileged_core_environment_hash(), after);
+            session.restore_v22(&snapshot).unwrap();
+            let before = session.inner.privileged_core_environment_hash();
+            assert_eq!(
+                projector.submit(&mut session, request.clone()),
+                Err(Error::StaleDecision)
+            );
+            assert_eq!(session.inner.privileged_core_environment_hash(), before);
+            let mut replay = HumanCrystalProjectorV22::new(actor.into());
+            let prompt_again = replay
+                .project_current(&session, expected(&session))
+                .unwrap();
+            assert_eq!(prompt_again, prompt);
+            replay.submit(&mut session, request).unwrap();
+            assert_eq!(session.inner.privileged_core_environment_hash(), after);
+        }
+    }
+}
+
+#[test]
+#[ignore = "Crystal Barricade is unregistered; explicit future printed qualification"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn future_bite_human_binds_resolving_spell_separately_from_actual_damage_source() {
+    use crate::engine::{self, Action, Decision};
+    use crate::event::{ActiveReplacement, ReplacementEffectKind};
+    use crate::mana::ManaColor;
+    use crate::state::Target;
+    for caster in [PlayerId::P0, PlayerId::P1] {
+        let actor = caster.opponent();
+        let mut state = ready_state();
+        state.active_player = caster;
+        state.priority_player = caster;
+        let wall = put(&mut state, actor, "Crystal Barricade", Zone::Battlefield);
+        let dealer = put(&mut state, caster, "Llanowar Elves", Zone::Battlefield);
+        let recipient = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        let spell = put(&mut state, caster, "Bite Down", Zone::Hand);
+        state.players[caster.index()].mana_pool[ManaColor::G.pool_index()] = 1;
+        state.players[caster.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+        state.engine.next_replacement_id = 1;
+        state.engine.active_replacements.push(ActiveReplacement {
+            id: 1,
+            source: wall,
+            kind: ReplacementEffectKind::PreventNextDamage {
+                target: Target::Object(recipient),
+                remaining: 1,
+            },
+        });
+        engine::advance_until_decision(&mut state);
+        engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+        for target in [dealer, recipient] {
+            assert!(
+                matches!(engine::advance_until_decision(&mut state),Decision::ChooseTargets {legal_targets,..}
+                if legal_targets.contains(&Target::Object(target)))
+            );
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+        }
+        engine::advance_until_decision(&mut state);
+        for _ in 0..10 {
+            let d = engine::advance_until_decision(&mut state);
+            if matches!(d, Decision::ChooseEffectOption { .. }) {
+                break;
+            }
+            assert!(matches!(d, Decision::CastSpellOrPass { .. }), "{d:?}");
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        assert!(
+            matches!(engine::advance_until_decision(&mut state),Decision::ChooseEffectOption {player,source,..}
+            if player==actor && source==spell)
+        );
+        let base = FastActorSessionV1::from_crystal_v22_fixture_state(state);
+        let mut session = HumanCrystalSessionV22::from_session(base).unwrap();
+        let current = expected(&session);
+        let public = session.public_observation(current).unwrap();
+        let menu = public.prevention_menu.as_ref().unwrap();
+        assert_eq!(menu.source.arena_id, dealer.0);
+        assert_eq!(menu.resolving_source.arena_id, spell.0);
+        let mut projector = HumanCrystalProjectorV22::new(actor.into());
+        let prompt = projector.project_current(&session, current).unwrap();
+        safe(&serde_json::to_value(&prompt).unwrap());
+        let request = action(&prompt, "Apply Crystal Barricade");
+        projector.submit(&mut session, request.clone()).unwrap();
+        assert_eq!(
+            session
+                .inner
+                .crystal_fixture_state()
+                .objects
+                .get(recipient)
+                .damage,
+            0
+        );
+        let after = session.inner.privileged_core_environment_hash();
+        projector.submit(&mut session, request).unwrap();
+        assert_eq!(session.inner.privileged_core_environment_hash(), after);
+    }
+}

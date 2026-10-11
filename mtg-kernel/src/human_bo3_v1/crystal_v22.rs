@@ -102,15 +102,25 @@ pub struct HumanCrystalMenuV22 {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub creature_power_at_resolution: Option<i32>,
     pub source: HumanCardRefV1,
+    pub resolving_source: HumanCardRefV1,
     pub recipient: HumanCardRefV1,
     pub remaining_damage: i32,
     pub options: Vec<HumanCrystalOptionV22>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HumanCrystalDiscardMenuV22 {
+    pub chooser: PlayerSeatV1,
+    pub source: HumanCardRefV1,
+    pub maximum_cards: u16,
+    pub draws_if_discarded: u16,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HumanCrystalExtensionsV22 {
     pub predecessor: HumanExtensionsV9,
     pub static_sources: Vec<HumanCrystalSourceV22>,
     pub prevention_menu: Option<HumanCrystalMenuV22>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub optional_discard_menu: Option<HumanCrystalDiscardMenuV22>,
 }
 fn parts(observation: &CrystalObservationV1) -> super::life_ward_v8::ProjectionPartsV8<'_> {
     super::life_ward_v8::ProjectionPartsV8 {
@@ -139,6 +149,18 @@ fn state(
             })
         })
         .collect::<Result<Vec<_>, Error>>()?;
+    let optional_discard_menu = observation
+        .optional_discard_menu
+        .as_ref()
+        .map(|row| {
+            Ok::<_, Error>(HumanCrystalDiscardMenuV22 {
+                chooser: row.chooser,
+                source: handles.get(&row.source)?.clone(),
+                maximum_cards: row.maximum_cards,
+                draws_if_discarded: row.draws_if_discarded,
+            })
+        })
+        .transpose()?;
     let prevention_menu = observation
         .prevention_menu
         .as_ref()
@@ -160,6 +182,7 @@ fn state(
                 simultaneous_choices_remaining: row.simultaneous_choices_remaining,
                 creature_power_at_resolution: row.creature_power_at_resolution,
                 source: handles.get(&row.source)?.clone(),
+                resolving_source: handles.get(&row.resolving_source)?.clone(),
                 recipient: handles.get(&row.recipient)?.clone(),
                 remaining_damage: row.remaining_damage,
                 options,
@@ -179,6 +202,7 @@ fn state(
             },
             static_sources,
             prevention_menu,
+            optional_discard_menu,
         },
         policy_context: old.policy_context,
         known_face_down_cards: old.known_face_down_cards,
@@ -195,6 +219,45 @@ fn label(
     handles: &Handles,
     human: PlayerSeatV1,
 ) -> Result<String, Error> {
+    if let Some(menu) = observation.optional_discard_menu.as_ref() {
+        if menu.chooser != human || menu.maximum_cards != 1 || menu.draws_if_discarded != 1 {
+            return Err(Error::InvalidVisibleReference);
+        }
+        return match action {
+            ActionSemanticV1::ChooseEffectTarget {
+                actor,
+                source,
+                target,
+                selected_count,
+                min_targets,
+                max_targets,
+            } if *actor == human
+                && *source == menu.source
+                && *selected_count == 0
+                && *min_targets == 0
+                && *max_targets == 1 =>
+            {
+                let crate::rl::TargetRefV1::Object { object } = target else {
+                    return Err(Error::InvalidVisibleReference);
+                };
+                if !observation.own_hand.iter().any(|row| row.stable == *object) {
+                    return Err(Error::InvalidVisibleReference);
+                }
+                Ok(format!(
+                    "Discard {}, then draw a card",
+                    handles.name(object)?
+                ))
+            }
+            ActionSemanticV1::FinishEffectSelection {
+                actor,
+                source,
+                selected_count,
+            } if *actor == human && *source == menu.source && *selected_count == 0 => {
+                Ok("Decline the optional discard".into())
+            }
+            _ => Err(Error::UnsupportedPrompt),
+        };
+    }
     if let Some(menu) = observation.prevention_menu.as_ref() {
         let ActionSemanticV1::ChooseEffectOption {
             actor,
@@ -207,7 +270,7 @@ fn label(
         };
         if *actor != human
             || menu.chooser != human
-            || *source != menu.source
+            || *source != menu.resolving_source
             || usize::from(*option_count) != menu.options.len()
         {
             return Err(Error::InvalidVisibleReference);
@@ -273,10 +336,14 @@ fn project_base(
     }
     if let Some(row) = observation.prevention_menu.as_ref() {
         handles.insert(&row.source)?;
+        handles.insert(&row.resolving_source)?;
         handles.insert(&row.recipient)?;
         for option in &row.options {
             handles.insert(&option.source)?;
         }
+    }
+    if let Some(row) = observation.optional_discard_menu.as_ref() {
+        handles.insert(&row.source)?;
     }
     let initial = state(observation, &mut handles, human)?;
     let mut unary = BTreeMap::<String, Vec<String>>::new();
@@ -312,6 +379,12 @@ fn project_base(
                 .or_default()
                 .push(visible::without_handles(option)?);
         }
+    }
+    if let Some(row) = initial.extensions.optional_discard_menu.as_ref() {
+        unary
+            .entry(row.source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
     }
     for rows in unary.values_mut() {
         rows.sort();

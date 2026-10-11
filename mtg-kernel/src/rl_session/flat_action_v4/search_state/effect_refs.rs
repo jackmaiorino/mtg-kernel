@@ -638,6 +638,7 @@ impl Scan<'_> {
                 then,
                 ..
             } => self.bs(original_graveyard) || self.bs(candidates) || self.op(then),
+            CrystalDiscardAfterDamageV2 { .. } => true,
             SelectObjectsV1 {
                 original_candidates,
                 ..

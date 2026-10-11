@@ -1405,6 +1405,7 @@ fn real_bite_and_felling_use_selected_creature_power_after_counters_and_keep_res
                 .unwrap();
                 let menu = public.prevention_menu.unwrap();
                 assert_eq!(menu.source.arena_id, dealer.0);
+                assert_eq!(menu.resolving_source.arena_id, spell.0);
                 assert_eq!(menu.creature_power_at_resolution, Some(expected_power));
                 assert_eq!(menu.remaining_damage, expected_power);
                 assert!(menu.source_history.is_none());
@@ -1615,6 +1616,353 @@ fn chosen_power_capture_and_coherent_menu_amount_forgeries_refuse_readonly() {
             assert!(engine::step(&mut state, Action::ChooseEffectOption(0)).is_err());
             assert!(engine::step(&mut state, Action::Pass).is_err());
             assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+        }
+    }
+}
+
+fn announce_incinerating(state: &mut GameState, actor: PlayerId, target: ObjectId) -> ObjectId {
+    let spell = put(state, actor, "Incinerating Blast", Zone::Hand);
+    state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+    state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 4;
+    priority(state, actor);
+    engine::step(state, Action::CastSpell(spell)).unwrap();
+    assert!(
+        matches!(next(state), Decision::ChooseTargets { legal_targets, .. }
+        if legal_targets.contains(&Target::Object(target)))
+    );
+    engine::step(state, Action::ChooseTarget(Target::Object(target))).unwrap();
+    let _ = next(state);
+    assert!(state.stack.iter().any(|i| i.source == spell));
+    spell
+}
+fn discard_after_prevention(state: &mut GameState, actor: PlayerId, spell: ObjectId) {
+    mixed_menu(state);
+    let chosen = option(state, false);
+    engine::step(state, Action::ChooseEffectOption(chosen)).unwrap();
+    assert!(matches!(next(state), Decision::ChooseEffectTargets {
+        player, source, min_targets: 0, max_targets: 1, selected_count: 0, can_finish: true, ..
+    } if player == actor && source == spell));
+}
+#[test]
+fn real_incinerating_optional_discard_and_decline_preserve_controller_privacy_and_restore() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for pay in [false, true] {
+            let mut state = ready(actor);
+            let wall = source(&mut state, actor.opponent());
+            let recipient = put(
+                &mut state,
+                actor.opponent(),
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            let card = put(&mut state, actor, "Forest", Zone::Hand);
+            shield(&mut state, wall, recipient, 2);
+            let spell = announce_incinerating(&mut state, actor, recipient);
+            discard_after_prevention(&mut state, actor, spell);
+            assert_eq!(state.objects.get(recipient).damage, 0);
+            let surface = mtg_kernel::policy_surface_v5::PolicySurfaceV5::new();
+            let public =
+                mtg_kernel::crystal_public_v1::observe_v1(&state, &surface, actor, 0, 0, 0, 1)
+                    .unwrap();
+            let menu = public.optional_discard_menu.unwrap();
+            assert_eq!(menu.chooser, actor.into());
+            assert_eq!(menu.source.arena_id, spell.0);
+            assert_eq!(menu.maximum_cards, 1);
+            assert_eq!(menu.draws_if_discarded, 1);
+            assert!(public.prevention_menu.is_none());
+            let bytes = serde_json::to_vec(&state).unwrap();
+            assert!(mtg_kernel::crystal_public_v1::observe_v1(
+                &state,
+                &surface,
+                actor.opponent(),
+                0,
+                0,
+                0,
+                1
+            )
+            .is_err());
+            assert_eq!(serde_json::to_vec(&state).unwrap(), bytes);
+            let old_hand = state.players[actor.index()].hand.clone();
+            let drawn = state.players[actor.index()].library[0];
+            let library_len = state.players[actor.index()].library.len();
+            let mut replay = restore(&state);
+            for current in [&mut state, &mut replay] {
+                engine::step(
+                    current,
+                    if pay {
+                        Action::ChooseEffectTarget(Target::Object(card))
+                    } else {
+                        Action::FinishEffectSelection
+                    },
+                )
+                .unwrap();
+                finish(current);
+                assert_eq!(current.objects.get(spell).zone, Zone::Graveyard);
+                assert_eq!(
+                    current.players[actor.index()].library.len(),
+                    library_len - usize::from(pay)
+                );
+                if pay {
+                    assert_eq!(current.objects.get(card).zone, Zone::Graveyard);
+                    assert!(current.players[actor.index()].hand.contains(&drawn));
+                } else {
+                    assert_eq!(current.players[actor.index()].hand, old_hand);
+                }
+                assert_eq!(current.objects.get(recipient).damage, 0);
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&replay).unwrap()
+            );
+        }
+    }
+}
+#[test]
+fn real_incinerating_empty_hand_skips_optional_cost_and_empty_library_records_actual_draw() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for empty_library in [false, true] {
+            let mut state = ready(actor);
+            let wall = source(&mut state, actor.opponent());
+            let recipient = put(
+                &mut state,
+                actor.opponent(),
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            // Physical departure uses the actual event rather than deleting a hand vector.
+            let old = state.players[actor.index()].hand.clone();
+            for id in old {
+                event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(id, Zone::Graveyard),
+                );
+            }
+            let card = empty_library.then(|| put(&mut state, actor, "Forest", Zone::Hand));
+            if empty_library {
+                let cards = state.players[actor.index()].library.clone();
+                for id in cards {
+                    event::propose_and_commit(
+                        &mut state,
+                        ProposedEvent::zone_change(id, Zone::Graveyard),
+                    );
+                }
+                assert!(state.players[actor.index()].library.is_empty());
+            }
+            shield(&mut state, wall, recipient, 1);
+            let spell = announce_incinerating(&mut state, actor, recipient);
+            mixed_menu(&mut state);
+            let chosen = option(&state, false);
+            engine::step(&mut state, Action::ChooseEffectOption(chosen)).unwrap();
+            if let Some(card) = card {
+                assert!(matches!(
+                    next(&mut state),
+                    Decision::ChooseEffectTargets { max_targets: 1, .. }
+                ));
+                let mut replay = restore(&state);
+                for current in [&mut state, &mut replay] {
+                    engine::step(current, Action::ChooseEffectTarget(Target::Object(card)))
+                        .unwrap();
+                    assert!(current.engine.event_history.iter().any(|e|
+                        matches!(e,mtg_kernel::event::CommittedEvent::Draw {player,object:None} if *player==actor)));
+                    assert!(matches!(
+                        engine::advance_until_decision(current),
+                        Decision::GameOver { .. }
+                    ));
+                    // Preserve the existing engine terminal convention: loss is reported
+                    // before the pending resolved spell's final departure is drained.
+                    assert_eq!(current.objects.get(spell).zone, Zone::Stack);
+                    assert!(current.engine.pending_effect.as_ref().is_some_and(|p| p
+                        .resolving_item
+                        .source
+                        == spell
+                        && p.choice.is_none()));
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&replay).unwrap()
+                );
+            } else {
+                finish(&mut state);
+                assert_eq!(state.objects.get(spell).zone, Zone::Graveyard);
+                assert!(!state.engine.event_history.iter().any(|e|
+                    matches!(e,mtg_kernel::event::CommittedEvent::Draw {player,..} if *player==actor)));
+            }
+        }
+    }
+}
+#[test]
+fn real_incinerating_madness_discard_uses_actual_exile_draw_and_later_trigger() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let wall = source(&mut state, actor.opponent());
+        let recipient = put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let temper = put(&mut state, actor, "Fiery Temper", Zone::Hand);
+        let drawn = state.players[actor.index()].library[0];
+        shield(&mut state, wall, recipient, 1);
+        let spell = announce_incinerating(&mut state, actor, recipient);
+        discard_after_prevention(&mut state, actor, spell);
+        let mut replay = restore(&state);
+        for current in [&mut state, &mut replay] {
+            engine::step(current, Action::ChooseEffectTarget(Target::Object(temper))).unwrap();
+            assert_eq!(current.objects.get(temper).zone, Zone::Exile);
+            assert!(current.players[actor.index()].hand.contains(&drawn));
+            for _ in 0..30 {
+                let d = next(current);
+                if matches!(d,Decision::ChooseMadnessCast {player,card} if player==actor && card==temper)
+                {
+                    engine::step(current, Action::ChooseMadnessCast(false)).unwrap();
+                    break;
+                }
+                assert!(matches!(d, Decision::CastSpellOrPass { .. }), "{d:?}");
+                engine::step(current, Action::Pass).unwrap();
+            }
+            assert_eq!(current.objects.get(temper).zone, Zone::Graveyard);
+            finish(current);
+            assert_eq!(current.objects.get(spell).zone, Zone::Graveyard);
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+    }
+}
+#[test]
+fn real_incinerating_private_capture_and_independent_discard_operation_forgeries_refuse_readonly() {
+    use mtg_kernel::effect::{EffectTargetSelectionPurpose, PendingEffectChoice};
+    use mtg_kernel::event::CommittedEvent;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let wall = source(&mut state, actor.opponent());
+        let recipient = put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let card = put(&mut state, actor, "Forest", Zone::Hand);
+        let foreign = put(&mut state, actor.opponent(), "Forest", Zone::Hand);
+        shield(&mut state, wall, recipient, 1);
+        let spell = announce_incinerating(&mut state, actor, recipient);
+        discard_after_prevention(&mut state, actor, spell);
+        let bytes = serde_json::to_vec(&state).unwrap();
+        assert!(engine::step(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(foreign))
+        )
+        .is_err());
+        assert_eq!(serde_json::to_vec(&state).unwrap(), bytes);
+        for case in 0..4 {
+            let mut bad = restore(&state);
+            match case {
+                0 => {
+                    bad.players[actor.index()].hand.swap(0, 1);
+                }
+                1 => {
+                    bad.objects.get_mut(card).zone_change_count += 1;
+                }
+                2 => {
+                    let PendingEffectChoice::SelectTargets { purpose, .. } = bad
+                        .engine
+                        .pending_effect
+                        .as_mut()
+                        .unwrap()
+                        .choice
+                        .as_mut()
+                        .unwrap()
+                    else {
+                        unreachable!()
+                    };
+                    let EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { capture } =
+                        purpose
+                    else {
+                        unreachable!()
+                    };
+                    *capture += 1;
+                }
+                _ => {
+                    bad.engine.pending_effect.as_mut().unwrap().frames.clear();
+                    bad.engine.pending_effect.as_mut().unwrap().choice = None;
+                }
+            }
+            let bytes = serde_json::to_vec(&bad).unwrap();
+            assert!(
+                engine::step(&mut bad, Action::FinishEffectSelection).is_err(),
+                "case {case}"
+            );
+            assert!(engine::step(&mut bad, Action::Pass).is_err(), "case {case}");
+            assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes, "case {case}");
+        }
+        engine::step(&mut state, Action::ChooseEffectTarget(Target::Object(card))).unwrap();
+        let mut fake_closed = restore(&state);
+        let mut boundary = fake_closed
+            .engine
+            .event_history
+            .iter()
+            .rev()
+            .find_map(|e| match e {
+                CommittedEvent::CrystalPreventionBoundaryV1 { boundary } => Some(boundary.clone()),
+                _ => None,
+            })
+            .unwrap();
+        let id = boundary.item.v4.stack_item_id;
+        boundary.previous = Some(boundary.history_index);
+        boundary.history_index = u32::try_from(fake_closed.engine.event_history.len()).unwrap();
+        boundary.pending = None;
+        boundary.answer = None;
+        fake_closed.stack.retain(|item| item.v4.stack_item_id != id);
+        fake_closed.engine.pending_effect = None;
+        fake_closed
+            .engine
+            .event_history
+            .push(CommittedEvent::CrystalPreventionBoundaryV1 { boundary });
+        let bytes = serde_json::to_vec(&fake_closed).unwrap();
+        assert!(engine::step(&mut fake_closed, Action::Pass).is_err());
+        assert_eq!(serde_json::to_vec(&fake_closed).unwrap(), bytes);
+        assert!(matches!(
+            engine::advance_until_decision(&mut fake_closed),
+            Decision::Halted { .. }
+        ));
+        fake_closed.engine.halted = None;
+        assert_eq!(serde_json::to_vec(&fake_closed).unwrap(), bytes);
+        for case in 0..3 {
+            let mut bad = restore(&state);
+            let operation = bad
+                .engine
+                .event_history
+                .iter_mut()
+                .rev()
+                .find_map(|e| match e {
+                    CommittedEvent::CrystalExecutionV1 { execution }
+                        if execution.discard_commit.is_some() =>
+                    {
+                        execution.discard_commit.as_mut()
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            match case {
+                0 => operation.discard_history = None,
+                1 => operation.draw_history = None,
+                _ => {
+                    operation.selected = None;
+                    operation.discard_history = None;
+                    operation.draw_history = None;
+                }
+            }
+            let bytes = serde_json::to_vec(&bad).unwrap();
+            assert!(engine::step(&mut bad, Action::Pass).is_err());
+            assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+            assert!(matches!(
+                engine::advance_until_decision(&mut bad),
+                Decision::Halted { .. }
+            ));
+            bad.engine.halted = None;
+            assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
         }
     }
 }

@@ -8050,6 +8050,9 @@ fn pending_effect_semantic_v4(
                             }
                             | crate::effect::EffectTargetSelectionPurpose::StandardDiscardToDrawV1 {
                                 ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 {
+                                ..
                             } => TargetSelectionPurposeV4::CardSelection,
                             crate::effect::EffectTargetSelectionPurpose::StandardCopyTargetV1 {
                                 ..
@@ -8551,6 +8554,14 @@ fn stack_item_public_v2(
     })
 }
 
+/// Reuses the genuine frozen source projection for a new scoped companion.
+/// This does not change its existing copied/hidden-source refusals.
+pub(crate) fn crystal_resolving_source_ref(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<CardStableRefV1> {
+    stack_source_ref(state, item)
+}
 fn stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRefV1> {
     crate::engine::validated_stack_item_target_spec(item, state)
         .map_err(|error| RlContractError(format!("invalid stack source metadata: {error}")))?;

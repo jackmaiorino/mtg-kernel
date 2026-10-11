@@ -1382,6 +1382,21 @@ pub(crate) fn propose_and_commit_crystal_power_owned(
     }
     propose_and_commit_inner(state, event);
 }
+pub(crate) fn propose_and_commit_crystal_discard_draw_owned(
+    state: &mut GameState,
+    capture: &crate::effect::crystal_prevention_v1::DiscardCaptureV2,
+    selected: crate::effect::EffectObjectBinding,
+    owner: &crate::effect::crystal_prevention_v1::OwnerV1,
+) {
+    if !owner.permits_discard_draw(state, capture, selected) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            capture.ctx.source,
+        ));
+        return;
+    }
+    propose_and_commit_inner(state, ProposedEvent::draw(capture.ctx.controller));
+}
 pub(crate) fn propose_and_commit_crystal_life_gain_owned(
     state: &mut GameState,
     player: crate::effect::PlayerRef,

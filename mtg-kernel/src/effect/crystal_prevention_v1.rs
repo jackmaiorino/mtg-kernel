@@ -73,6 +73,8 @@ pub struct ExecutionV1 {
     pub steps: Vec<ExecutionStepV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch_commit: Option<BatchCommitV2>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discard_commit: Option<DiscardCommitV2>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ExecutionStepV1 {
@@ -86,6 +88,8 @@ pub struct ExecutionStepV1 {
     pub batch_capture: Option<BatchCaptureV2>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creature_power_capture: Option<CreaturePowerCaptureV2>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discard_capture: Option<DiscardCaptureV2>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct BatchDamageV2 {
@@ -157,6 +161,21 @@ pub struct CreaturePowerCaptureV2 {
     pub signed_power: i32,
     pub counter_history: Vec<u32>,
     pub damage: Option<BatchDamageV2>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct DiscardCaptureV2 {
+    pub ctx: ExecCtx,
+    pub op: EffectOp,
+    pub path: Vec<u16>,
+    pub hand: Vec<EffectObjectBinding>,
+    pub library: Vec<EffectObjectBinding>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct DiscardCommitV2 {
+    pub capture: u32,
+    pub selected: Option<EffectObjectBinding>,
+    pub discard_history: Option<u32>,
+    pub draw_history: Option<u32>,
 }
 pub(crate) fn shield_operation(
     state: &mut GameState,
@@ -348,6 +367,37 @@ impl OwnerV1 {
             && state.engine.pending_effect.is_none()
             && validate_live_creature_power(state, capture).is_ok()
     }
+    pub(crate) fn permits_discard_draw(
+        &self,
+        state: &GameState,
+        capture: &DiscardCaptureV2,
+        selected: EffectObjectBinding,
+    ) -> bool {
+        let live = state
+            .stack
+            .iter()
+            .filter(|i| i.v4.stack_item_id == self.expected.v4.stack_item_id)
+            .collect::<Vec<_>>();
+        live.as_slice() == [&self.expected]
+            && state.engine.pending_effect.as_ref().is_some_and(|p| {
+                p.resolving_item == self.expected
+                    && last(state, &self.expected).and_then(|b| b.pending.as_deref()) == Some(p)
+            })
+            && capture.ctx == context(&self.expected)
+            && effect_op_at_structural_path(&self.root, &capture.path) == Some(&capture.op)
+            && optional_discard_draw(&capture.op)
+            && capture.hand.contains(&selected)
+            && state
+                .engine
+                .event_history
+                .iter()
+                .rev()
+                .take_while(|e| !matches!(e, CommittedEvent::CrystalPreventionBoundaryV1 { .. }))
+                .any(|e| {
+                    matches!(e, CommittedEvent::ZoneChange { object, from: Zone::Hand,
+                    to: Zone::Graveyard | Zone::Exile, .. } if *object == selected.object)
+                })
+    }
     pub(crate) fn controller(&self) -> PlayerId {
         self.expected.controller
     }
@@ -408,6 +458,9 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
             ordinary_nondamage(then) && ordinary_nondamage(else_)
         }
         EffectOp::Choice { options, .. } => options.iter().all(ordinary_nondamage),
+        EffectOp::MayPayCostThen {
+            then, otherwise, ..
+        } => ordinary_nondamage(then) && otherwise.as_deref().is_none_or(ordinary_nondamage),
         EffectOp::DrawCards { .. }
         | EffectOp::GainLife { .. }
         | EffectOp::LoseLife { .. }
@@ -516,7 +569,15 @@ fn has_damage(op: &EffectOp) -> bool {
         _ => false,
     }
 }
+fn optional_discard_draw(op: &EffectOp) -> bool {
+    matches!(op, EffectOp::MayPayCostThen {
+        discard: 1, sacrifice_lands: 0, return_permanent: None, then, otherwise: None
+    } if **then == (EffectOp::DrawCards { player: PlayerRef::Controller, count: 1 }))
+}
 fn supported(op: &EffectOp) -> bool {
+    if optional_discard_draw(op) {
+        return true;
+    }
     match op {
         EffectOp::GainLife {
             player: PlayerRef::Controller | PlayerRef::Opponent,
@@ -711,7 +772,10 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
                 }
             }
             if let Some(old) = previous.and_then(|p| p.pending.as_deref()) {
-                if old.choice.is_some() && b.pending.as_deref() != Some(old) {
+                let actual_discard = matches!(state.engine.event_history.get(index - 1),
+                    Some(CommittedEvent::CrystalExecutionV1 { execution }) if execution.discard_commit.is_some()
+                        && execution.previous == previous.unwrap().history_index && execution.after == b.pending);
+                if old.choice.is_some() && b.pending.as_deref() != Some(old) && !actual_discard {
                     return Err(
                         "Crystal published choice advanced without an authenticated answer".into(),
                     );
@@ -841,6 +905,13 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
                     }
                 }
             }
+            if let Some(PendingEffectChoice::SelectTargets {
+                purpose: EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { capture },
+                ..
+            }) = p.choice.as_ref()
+            {
+                validate_discard_record(state, p, &b.root, *capture)?;
+            }
             if p.resolving_item != *b.item || p.ctx != context(&b.item) {
                 return Err("Crystal boundary lost the complete captured context".into());
             }
@@ -960,6 +1031,7 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
             nondamage_history: Vec::new(),
             batch_capture: None,
             creature_power_capture: None,
+            discard_capture: None,
         };
         match op {
             EffectOp::Sequence(ops) => {
@@ -1018,6 +1090,33 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                         );
                     }
                 }
+            }
+            EffectOp::MayPayCostThen { .. } if optional_discard_draw(op) => {
+                let capture = DiscardCaptureV2 {
+                    ctx: pending.ctx.clone(),
+                    op: op.clone(),
+                    path: path.clone(),
+                    hand: bindings_for(
+                        state,
+                        &state.players[pending.ctx.controller.index()].hand,
+                        Zone::Hand,
+                    )?,
+                    library: bindings_for(
+                        state,
+                        &state.players[pending.ctx.controller.index()].library,
+                        Zone::Library,
+                    )?,
+                };
+                if !capture.hand.is_empty() {
+                    let at = u32::try_from(state.engine.event_history.len())
+                        .map_err(|_| "Crystal discard capture exceeds u32")?;
+                    pending.choice = Some(discard_menu(&capture, at));
+                    step.offered_menu = pending.choice.clone();
+                    step.discard_capture = Some(capture);
+                    steps.push(step);
+                    break;
+                }
+                step.discard_capture = Some(capture);
             }
             EffectOp::CreatureTargetPowerDamage { .. } => {
                 let capture = capture_creature_power(state, &pending.ctx, op, path)?;
@@ -1131,6 +1230,7 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
         after,
         steps,
         batch_commit: None,
+        discard_commit: None,
     };
     state
         .engine
@@ -1150,6 +1250,10 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
         let CommittedEvent::CrystalExecutionV1 { execution } = event else {
             continue;
         };
+        if execution.discard_commit.is_some() {
+            validate_discard_commit(state, index, execution)?;
+            continue;
+        }
         if execution.batch_commit.is_some() {
             validate_batch_commit_execution(state, index, execution)?;
             continue;
@@ -1190,6 +1294,9 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
             let EffectFrame::Program { op, path } = &step.frame else {
                 return Err("Crystal execution committed a foreign frame".into());
             };
+            if !optional_discard_draw(op) && step.discard_capture.is_some() {
+                return Err("Crystal unrelated instruction carries discard capture".into());
+            }
             if !matches!(op, EffectOp::CreatureTargetPowerDamage { .. })
                 && step.creature_power_capture.is_some()
             {
@@ -1303,6 +1410,32 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                             }
                             last_damage = at;
                         }
+                    }
+                }
+                EffectOp::MayPayCostThen { .. } if optional_discard_draw(op) => {
+                    let capture = step
+                        .discard_capture
+                        .as_ref()
+                        .ok_or("Crystal optional discard lost actual capture")?;
+                    validate_discard_capture(capture, &pending.ctx, op, path)?;
+                    if step.conditional_result.is_some()
+                        || !step.damage_history.is_empty()
+                        || !step.nondamage_history.is_empty()
+                    {
+                        return Err(
+                            "Crystal discard offer carries foreign committed effects".into()
+                        );
+                    }
+                    if let Some(offered) = step.offered_menu.as_ref() {
+                        if capture.hand.is_empty()
+                            || step_index + 1 != execution.steps.len()
+                            || *offered != discard_menu(capture, execution.history_index)
+                        {
+                            return Err("Crystal discard offer changed exact private menu".into());
+                        }
+                        pending.choice = Some(offered.clone());
+                    } else if !capture.hand.is_empty() {
+                        return Err("Crystal optional discard erased a payable prompt".into());
                     }
                 }
                 EffectOp::CreatureTargetPowerDamage { .. } => {
@@ -1476,6 +1609,362 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
             return Err("Crystal execution changed completion or suspended remainder".into());
         }
     }
+    Ok(())
+}
+
+fn discard_capture_at(state: &GameState, at: u32) -> Result<&DiscardCaptureV2, String> {
+    let Some(CommittedEvent::CrystalExecutionV1 { execution }) =
+        state.engine.event_history.get(at as usize)
+    else {
+        return Err("Crystal discard lost independent execution capture".into());
+    };
+    let step = execution
+        .steps
+        .last()
+        .ok_or("Crystal discard lost offered printed cost leaf")?;
+    let capture = step
+        .discard_capture
+        .as_ref()
+        .ok_or("Crystal discard lost printed cost leaf")?;
+    if step.offered_menu.as_ref() != Some(&discard_menu(capture, at)) {
+        return Err("Crystal discard capture is not the offered final operation".into());
+    }
+    Ok(capture)
+}
+fn bindings_for(
+    state: &GameState,
+    objects: &[ObjectId],
+    zone: Zone,
+) -> Result<Vec<EffectObjectBinding>, String> {
+    objects
+        .iter()
+        .map(|id| {
+            let live = state
+                .objects
+                .try_get(*id)
+                .ok_or("Crystal private card absent")?;
+            if live.zone != zone {
+                return Err("Crystal private roster has wrong zone".into());
+            }
+            Ok(EffectObjectBinding {
+                object: *id,
+                expected_zone: zone,
+                expected_zone_change_count: live.zone_change_count,
+            })
+        })
+        .collect()
+}
+fn discard_menu(capture: &DiscardCaptureV2, at: u32) -> PendingEffectChoice {
+    PendingEffectChoice::SelectTargets {
+        player: capture.ctx.controller,
+        path: capture.path.clone(),
+        selected: Vec::new(),
+        legal: capture
+            .hand
+            .iter()
+            .map(|b| EffectTargetCandidate {
+                target: Target::Object(b.object),
+                expected_object: Some(*b),
+            })
+            .collect(),
+        min_targets: 0,
+        max_targets: 1,
+        ordered: false,
+        purpose: EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { capture: at },
+    }
+}
+pub(crate) fn is_discard_choice(state: &GameState) -> bool {
+    matches!(
+        state
+            .engine
+            .pending_effect
+            .as_ref()
+            .and_then(|p| p.choice.as_ref()),
+        Some(PendingEffectChoice::SelectTargets {
+            purpose: EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { .. },
+            ..
+        })
+    )
+}
+fn validate_discard_capture(
+    capture: &DiscardCaptureV2,
+    ctx: &ExecCtx,
+    op: &EffectOp,
+    path: &[u16],
+) -> Result<(), String> {
+    if capture.ctx != *ctx
+        || capture.op != *op
+        || capture.path != path
+        || !optional_discard_draw(op)
+    {
+        return Err("Crystal discard changed definition-owned cost/draw root".into());
+    }
+    let mut all = std::collections::BTreeSet::new();
+    for (cards, zone) in [
+        (&capture.hand, Zone::Hand),
+        (&capture.library, Zone::Library),
+    ] {
+        for card in cards {
+            if card.expected_zone != zone || !all.insert(card.object) {
+                return Err("Crystal discard repeated private incarnation or changed zone".into());
+            }
+        }
+    }
+    Ok(())
+}
+fn validate_discard_record(
+    state: &GameState,
+    pending: &EffectContinuation,
+    root: &EffectOp,
+    at: u32,
+) -> Result<(), String> {
+    let capture = discard_capture_at(state, at)?;
+    let op = effect_op_at_structural_path(root, &capture.path)
+        .ok_or("Crystal discard lost structural path")?;
+    validate_discard_capture(capture, &pending.ctx, op, &capture.path)?;
+    let Some(CommittedEvent::CrystalExecutionV1 { execution }) =
+        state.engine.event_history.get(at as usize)
+    else {
+        unreachable!()
+    };
+    let mut frames = Vec::new();
+    remaining(root, &capture.path, &[], &mut frames)?;
+    if execution.item.as_ref() != &pending.resolving_item
+        || capture.hand.is_empty()
+        || pending.choice.as_ref() != Some(&discard_menu(capture, at))
+        || pending.frames != frames
+        || pending.answered_choice_guard.is_some()
+    {
+        return Err("Crystal discard changed captured hand/menu/remainder".into());
+    }
+    Ok(())
+}
+pub(crate) fn validate_discard_choice(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<(), String> {
+    let Some(PendingEffectChoice::SelectTargets {
+        purpose: EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { capture: at },
+        ..
+    }) = pending.choice.as_ref()
+    else {
+        return Err("not a Crystal discard menu".into());
+    };
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    validate_discard_record(state, pending, &root, *at)?;
+    let capture = discard_capture_at(state, *at)?;
+    let player = capture.ctx.controller;
+    if bindings_for(state, &state.players[player.index()].hand, Zone::Hand)? != capture.hand
+        || bindings_for(state, &state.players[player.index()].library, Zone::Library)?
+            != capture.library
+        || capture
+            .hand
+            .iter()
+            .any(|b| state.objects.get(b.object).owner != player)
+        || capture
+            .library
+            .iter()
+            .any(|b| state.objects.get(b.object).owner != player)
+    {
+        return Err("Crystal waiting private hand or library changed".into());
+    }
+    Ok(())
+}
+fn validate_discard_commit(
+    state: &GameState,
+    index: usize,
+    execution: &ExecutionV1,
+) -> Result<(), String> {
+    let commit = execution
+        .discard_commit
+        .as_ref()
+        .ok_or("Crystal discard operation absent")?;
+    let previous_index = execution.previous as usize;
+    let Some(CommittedEvent::CrystalPreventionBoundaryV1 { boundary: previous }) =
+        state.engine.event_history.get(previous_index)
+    else {
+        return Err("Crystal discard answer lost prior owner".into());
+    };
+    let Some(CommittedEvent::CrystalPreventionBoundaryV1 { boundary: next }) =
+        state.engine.event_history.get(index + 1)
+    else {
+        return Err("Crystal discard operation lost immediate boundary".into());
+    };
+    let old = previous
+        .pending
+        .as_deref()
+        .ok_or("Crystal discard followed closure")?;
+    validate_discard_record(state, old, &previous.root, commit.capture)?;
+    let capture = discard_capture_at(state, commit.capture)?;
+    let mut after = old.clone();
+    after.choice = None;
+    if execution.history_index as usize != index
+        || previous_index >= index
+        || previous.item != execution.item
+        || next.item != execution.item
+        || next.previous != Some(execution.previous)
+        || next.root != previous.root
+        || next.answer.is_some()
+        || execution.before.as_ref() != old
+        || execution.after.as_deref() != Some(&after)
+        || next.pending != execution.after
+        || !execution.steps.is_empty()
+        || execution.batch_commit.is_some()
+    {
+        return Err("Crystal discard operation skipped owning remainder".into());
+    }
+    let interval = &state.engine.event_history[previous_index + 1..index];
+    let cost_occurrences = interval
+        .iter()
+        .enumerate()
+        .filter_map(|(offset, event)| {
+            matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Hand,
+            to: Zone::Graveyard | Zone::Exile, .. }
+            if capture.hand.iter().any(|b| b.object == *object))
+            .then_some(previous_index + 1 + offset)
+        })
+        .collect::<Vec<_>>();
+    let draw_occurrences = interval.iter().enumerate().filter_map(|(offset, event)| {
+        matches!(event, CommittedEvent::Draw { player, .. } if *player == capture.ctx.controller)
+            .then_some(previous_index + 1 + offset)
+    }).collect::<Vec<_>>();
+    if let Some(selected) = commit.selected {
+        if !capture.hand.contains(&selected) {
+            return Err("Crystal discard selected foreign incarnation".into());
+        }
+        let discard = commit
+            .discard_history
+            .ok_or("Crystal discard lost actual cost occurrence")? as usize;
+        let draw = commit
+            .draw_history
+            .ok_or("Crystal discard lost actual draw occurrence")? as usize;
+        if cost_occurrences != vec![discard]
+            || draw_occurrences != vec![draw]
+            || discard <= previous_index
+            || draw <= discard
+            || draw >= index
+            || !matches!(state.engine.event_history.get(discard),
+                Some(CommittedEvent::ZoneChange { object, from: Zone::Hand,
+                    to: Zone::Graveyard | Zone::Exile, .. }) if *object == selected.object)
+            || !matches!(state.engine.event_history.get(draw),
+                Some(CommittedEvent::Draw { player, object }) if *player == capture.ctx.controller
+                    && *object == capture.library.first().map(|b| b.object))
+        {
+            return Err("Crystal discard/draw lost genuine ordered cost and beneficiary".into());
+        }
+    } else if commit.discard_history.is_some()
+        || commit.draw_history.is_some()
+        || !cost_occurrences.is_empty()
+        || !draw_occurrences.is_empty()
+    {
+        return Err("Crystal declined discard nevertheless paid or drew".into());
+    }
+    Ok(())
+}
+pub(crate) fn answer_discard(state: &mut GameState, target: Option<Target>) -> Result<(), String> {
+    validate(state)?;
+    let pending = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .ok_or("Crystal discard absent")?;
+    validate_discard_choice(state, pending)?;
+    let Some(PendingEffectChoice::SelectTargets {
+        purpose: EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { capture: at },
+        ..
+    }) = pending.choice.as_ref()
+    else {
+        unreachable!()
+    };
+    let at = *at;
+    let capture = discard_capture_at(state, at)?.clone();
+    let selected = if let Some(target) = target {
+        Some(
+            *capture
+                .hand
+                .iter()
+                .find(|b| target == Target::Object(b.object))
+                .ok_or("Crystal discard card is not own current hand")?,
+        )
+    } else {
+        None
+    };
+    let before = pending.clone();
+    let boundary = last(state, &before.resolving_item).ok_or("Crystal discard lost publication")?;
+    let previous = boundary.history_index;
+    let owner = OwnerV1 {
+        original: before.resolving_item.clone(),
+        expected: before.resolving_item.clone(),
+        root: boundary.root.clone(),
+        initial: false,
+    };
+    let mut commit = DiscardCommitV2 {
+        capture: at,
+        selected,
+        discard_history: None,
+        draw_history: None,
+    };
+    if let Some(selected) = selected {
+        let start = state.engine.event_history.len();
+        crate::engine::commit_discarded_card(state, selected.object);
+        if state.engine.halted.is_some() {
+            return Err("Crystal accepted discard halted".into());
+        }
+        let mut occurrences = state.engine.event_history[start..].iter().enumerate().filter_map(|(offset,e)|
+            matches!(e,CommittedEvent::ZoneChange { object,from: Zone::Hand,to: Zone::Graveyard | Zone::Exile,.. }
+                if *object == selected.object).then_some(start+offset));
+        let discarded = occurrences
+            .next()
+            .ok_or("Crystal accepted discard lost actual departure")?;
+        if occurrences.next().is_some() {
+            return Err("Crystal discard repeated departure".into());
+        }
+        commit.discard_history =
+            Some(u32::try_from(discarded).map_err(|_| "Crystal discard history exceeds u32")?);
+        let draw_start = state.engine.event_history.len();
+        crate::event::propose_and_commit_crystal_discard_draw_owned(
+            state, &capture, selected, &owner,
+        );
+        if state.engine.halted.is_some() {
+            return Err("Crystal following draw halted".into());
+        }
+        let mut draws = state.engine.event_history[draw_start..]
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, e)| {
+                matches!(e,CommittedEvent::Draw { player,.. } if *player == capture.ctx.controller)
+                    .then_some(draw_start + offset)
+            });
+        let drawn = draws
+            .next()
+            .ok_or("Crystal accepted discard did not attempt draw")?;
+        if draws.next().is_some() {
+            return Err("Crystal accepted discard repeated draw".into());
+        }
+        commit.draw_history =
+            Some(u32::try_from(drawn).map_err(|_| "Crystal draw history exceeds u32")?);
+    }
+    let mut after = before.clone();
+    after.choice = None;
+    state.engine.pending_effect = Some(after.clone());
+    let execution = ExecutionV1 {
+        history_index: u32::try_from(state.engine.event_history.len())
+            .map_err(|_| "Crystal history exceeds u32")?,
+        previous,
+        item: Box::new(owner.expected.clone()),
+        before: Box::new(before),
+        after: Some(Box::new(after)),
+        steps: Vec::new(),
+        batch_commit: None,
+        discard_commit: Some(commit),
+    };
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::CrystalExecutionV1 {
+            execution: Box::new(execution),
+        });
+    record(state, &owner, None)?;
     Ok(())
 }
 
@@ -2194,6 +2683,9 @@ fn validate_batch_commit_execution(
     index: usize,
     execution: &ExecutionV1,
 ) -> Result<(), String> {
+    if execution.discard_commit.is_some() {
+        return Err("Crystal simultaneous commit carries foreign discard operation".into());
+    }
     let commit = execution
         .batch_commit
         .as_ref()
@@ -2411,6 +2903,15 @@ fn remaining(
     remaining(child, tail, &next, frames)
 }
 fn validate_choice(state: &GameState, pending: &EffectContinuation) -> Result<(), String> {
+    if matches!(
+        pending.choice.as_ref(),
+        Some(PendingEffectChoice::SelectTargets {
+            purpose: EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { .. },
+            ..
+        })
+    ) {
+        return validate_discard_choice(state, pending);
+    }
     let Some(PendingEffectChoice::ChooseOption {
         purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
         ..
@@ -2569,6 +3070,7 @@ pub(crate) fn answer(state: &mut GameState, index: u16) -> Result<(), String> {
                 before: Box::new(before),
                 after: Some(Box::new(after)),
                 steps: Vec::new(),
+                discard_commit: None,
                 batch_commit: Some(BatchCommitV2 {
                     capture: progress.capture,
                     outcomes: progress.outcomes,
