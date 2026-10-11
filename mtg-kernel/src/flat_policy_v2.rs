@@ -1907,6 +1907,8 @@ impl FlatDecisionEncoderV2 {
                 .battlefield
                 .iter()
                 .flatten()
+                .chain(observation.projection.surface.graveyards.iter().flatten())
+                .chain(observation.projection.surface.exile.iter())
                 .any(|card| {
                     card.creature_upgrade.is_some()
                         || card.characteristics.effective_identity.is_some()
@@ -6017,6 +6019,64 @@ mod tests {
                 "ExiledBy must resolve through the historical stack registration, got: {error:?}"
             )
         });
+    }
+
+    #[test]
+    fn frozen_encoder_rejects_creature_upgrades_in_every_public_zone() {
+        let session = v2_session(90_120, 127);
+        let base = session
+            .flat_policy_observation_v2(expected(&session))
+            .unwrap();
+        for owner in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+            for zone in [Zone::Battlefield, Zone::Graveyard, Zone::Exile] {
+                let mut observation = base.clone();
+                let card = synthetic_public(synthetic_stable(98_120, 1, owner, owner, zone));
+                let cards = match zone {
+                    Zone::Battlefield => {
+                        &mut observation.projection.surface.battlefield[seat_index(owner)]
+                    }
+                    Zone::Graveyard => {
+                        &mut observation.projection.surface.graveyards[seat_index(owner)]
+                    }
+                    Zone::Exile => &mut observation.projection.surface.exile,
+                    _ => unreachable!(),
+                };
+                cards.push(card);
+                assert_eq!(
+                    FlatDecisionEncoderV2::default().build_globals(&observation),
+                    Ok(())
+                );
+                let cards = match zone {
+                    Zone::Battlefield => {
+                        &mut observation.projection.surface.battlefield[seat_index(owner)]
+                    }
+                    Zone::Graveyard => {
+                        &mut observation.projection.surface.graveyards[seat_index(owner)]
+                    }
+                    Zone::Exile => &mut observation.projection.surface.exile,
+                    _ => unreachable!(),
+                };
+                cards.last_mut().unwrap().creature_upgrade =
+                    Some(crate::standard_creatures_v1::CreatureUpgradeV1 {
+                        // Mosswood's permission persists on its graveyard row.
+                        graveyard_adventure: Some(
+                            crate::standard_creatures_v1::GraveyardAdventurePermissionV1 {
+                                holder: match owner {
+                                    PlayerSeatV1::P0 => crate::ids::PlayerId::P0,
+                                    PlayerSeatV1::P1 => crate::ids::PlayerId::P1,
+                                },
+                                holder_turn_started: false,
+                            },
+                        ),
+                        ..Default::default()
+                    });
+                assert_eq!(
+                    FlatDecisionEncoderV2::default().build_globals(&observation),
+                    Err(FlatDecisionErrorV2::ObservationContract),
+                    "{zone:?} {owner:?}"
+                );
+            }
+        }
     }
 
     fn synthetic_stable(

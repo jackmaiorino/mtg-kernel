@@ -139,6 +139,8 @@ pub struct HumanCreatureUpgradeV1 {
     pub wurmlet_resolved_turn: Option<(u32, PlayerSeatV1)>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub combat_impulse_source: Option<HumanAbilitySourceV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub combat_impulse_donor: Option<HumanAbilitySourceV1>,
 }
 impl Project for creatures::CreatureUpgradeV1 {
     type Output = HumanCreatureUpgradeV1;
@@ -198,6 +200,7 @@ impl Project for creatures::CreatureUpgradeV1 {
                 .wurmlet_resolved_turn
                 .map(|(turn, player)| (turn, player.into())),
             combat_impulse_source: self.combat_impulse_source.project(handles)?,
+            combat_impulse_donor: self.combat_impulse_donor.project(handles)?,
         })
     }
 }
@@ -608,5 +611,50 @@ mod tests {
             projected["creature_options"],
             serde_json::json!(["decline or stop", "pay {G}{G}{G}"])
         );
+    }
+
+    #[test]
+    fn combat_impulse_donor_uses_a_historical_human_handle_and_is_absent_by_default() {
+        let mut observation = observation();
+        observation.projection.surface.battlefield[0][0].creature_upgrade =
+            Some(Default::default());
+        let before = serde_json::to_value(projected(&observation)).unwrap();
+        assert!(!before.to_string().contains("combat_impulse_donor"));
+        let mut results = Vec::new();
+        for offset in [0, 80000] {
+            observation.projection.surface.battlefield[0][0]
+                .creature_upgrade
+                .as_mut()
+                .unwrap()
+                .combat_impulse_donor = Some(crate::state::AbilitySourceContractV4 {
+                source: ObjectId(9123 + offset),
+                card_def: crate::card_def::card_id_by_name("Mountain").unwrap(),
+                owner: PlayerId::P1,
+                controller: PlayerId::P1,
+                zone: Zone::Exile,
+                zone_change_count: 3 + offset,
+                attached_to: None,
+            });
+            let visible = projected(&observation);
+            let card = visible.state.public.battlefield[0]
+                .iter()
+                .find(|card| card.stable.name == "Island")
+                .unwrap();
+            let donor = card
+                .creature_upgrade
+                .as_ref()
+                .unwrap()
+                .combat_impulse_donor
+                .as_ref()
+                .unwrap();
+            assert_eq!(donor.source.name, "Mountain");
+            assert_eq!(donor.source.zone, Zone::Exile);
+            assert_eq!(donor.source.owner, PlayerSeatV1::P1);
+            assert!(donor.source.handle.starts_with('c'));
+            let value = serde_json::to_value(visible).unwrap();
+            assert_safe(&value);
+            results.push(value);
+        }
+        assert_eq!(results[0], results[1]);
     }
 }

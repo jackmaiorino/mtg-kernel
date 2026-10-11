@@ -364,6 +364,9 @@ fn interchangeable_effect_targets(state: &HumanVisibleStateV1, left: &str, right
                             is_pair(&source.source)
                                 || source.attached_to.as_ref().is_some_and(&is_pair)
                         })
+                    || upgrade.combat_impulse_donor.as_ref().is_some_and(|source| {
+                        is_pair(&source.source) || source.attached_to.as_ref().is_some_and(&is_pair)
+                    })
             })
         {
             return false;
@@ -448,7 +451,8 @@ fn collect_roles(
                     || location.contains(".attachments.")
                     || location.contains(".legend_return_sources.")
                     || location.contains(".creature_upgrade.suppressed_by.")
-                    || location.contains(".combat_impulse_source.");
+                    || location.contains(".combat_impulse_source.")
+                    || location.contains(".combat_impulse_donor.");
                 let unary_permission = location.starts_with("public.exile_play_permissions.");
                 if unordered_graph {
                     graph.insert(handle.to_owned());
