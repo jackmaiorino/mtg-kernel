@@ -10325,8 +10325,8 @@ pub(crate) fn validate_pending_cast(
             }
         }
     }
-    if def.target_spec == TargetSpec::KickerControlledCreatures {
-        if def.kicker_cost.is_none()
+    if def.target_spec == TargetSpec::KickerControlledCreatures
+        && (def.kicker_cost.is_none()
             || def.mode2.is_some()
             || def.mode3.is_some()
             || state
@@ -10336,10 +10336,9 @@ pub(crate) fn validate_pending_cast(
                 .variable_targeting_kicked
                 != pending.kicked
             || (pending.kicked.is_none()
-                && (!pending.targets_chosen.is_empty() || pending.target_selection_finished))
-        {
-            return Err("variable cast targeting lost its definition-owned kicker binding".into());
-        }
+                && (!pending.targets_chosen.is_empty() || pending.target_selection_finished)))
+    {
+        return Err("variable cast targeting lost its definition-owned kicker binding".into());
     }
     if def.kicker_cost.is_none() {
         if pending.kicked != Some(false) {
@@ -16077,17 +16076,13 @@ fn pending_cast_action_stage(
     )
     .ok_or("pending cast selected a nonexistent spell form")?;
     if !pending_cast_targeting_is_complete(pending, active_target_spec) {
-        return Ok(
-            if {
-                let (min, max) =
-                    cast_target_bounds(active_target_spec, pending.kicked == Some(true));
-                max.is_none_or(|max| min < max)
-            } {
-                PendingCastActionStage::ChooseOptionalTarget
-            } else {
-                PendingCastActionStage::ChooseTarget
-            },
-        );
+        let (min, max) = cast_target_bounds(active_target_spec, pending.kicked == Some(true));
+        let optional_target = max.is_none_or(|max| min < max);
+        return Ok(if optional_target {
+            PendingCastActionStage::ChooseOptionalTarget
+        } else {
+            PendingCastActionStage::ChooseTarget
+        });
     }
     if pending.cast_mode.is_none() {
         return Ok(PendingCastActionStage::ChooseCastMode);

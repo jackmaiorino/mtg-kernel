@@ -152,11 +152,11 @@ pub(super) fn project_state_parts(
     // Select unchanged common facts into their safe DTO directly. This never
     // constructs, hashes or labels a purported predecessor observation.
     let common = visible::project_state_parts(
-        &observation.projection,
-        &observation.own_hand,
-        &observation.known_library_cards,
-        &observation.known_hand_cards,
-        &observation.known_face_down_cards,
+        observation.projection,
+        observation.own_hand,
+        observation.known_library_cards,
+        observation.known_hand_cards,
+        observation.known_face_down_cards,
         |handles| {
             Ok(HumanExtensionsV1 {
                 pending_cast_object_cost: observation
