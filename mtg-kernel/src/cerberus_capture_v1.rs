@@ -84,10 +84,8 @@ fn active(state: &GameState, source: ObjectId) -> bool {
 /// Called immediately after the genuine BeginningEndStep commitment.
 #[cfg(any(
     test,
-    all(
-        feature = "limited-fdn-fixtures",
-        not(feature = "standard-magezero-fixtures")
-    )
+    feature = "limited-fdn-fixtures",
+    feature = "standard-magezero-fixtures"
 ))]
 pub(crate) fn record_begin(state: &mut GameState, begin_history_index: usize) {
     if !enabled()

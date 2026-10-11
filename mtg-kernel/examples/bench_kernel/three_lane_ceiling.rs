@@ -440,6 +440,9 @@ fn sample_blocker_choice(rng: &mut SplitMix64, count: usize) -> Option<usize> {
 
 fn noncombat_action_count(decision: &Decision) -> Result<usize, String> {
     match decision {
+        Decision::ChooseVariableCastTargets { .. } | Decision::ChooseVariableCastKicker { .. } => {
+            Err("variable cast selection is outside the frozen H2 benchmark surface".into())
+        }
         Decision::CastSpellOrPass {
             castable_spells,
             mana_abilities,
@@ -527,6 +530,11 @@ fn factorial(n: usize) -> Result<usize, String> {
 
 fn noncombat_action_by_index(decision: &Decision, index: usize) -> Result<Action, String> {
     let action = match decision {
+        Decision::ChooseVariableCastTargets { .. } | Decision::ChooseVariableCastKicker { .. } => {
+            return Err(
+                "variable cast selection is outside the frozen H2 benchmark surface".into(),
+            );
+        }
         Decision::CastSpellOrPass {
             castable_spells,
             mana_abilities,

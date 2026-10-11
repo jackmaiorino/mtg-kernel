@@ -2985,6 +2985,22 @@ mod authority_visibility_tests {
                 });
                 batch.finish(&mut state);
                 crate::authority_public_capture_v1::validate_state(&state).unwrap();
+                if !disguised {
+                    assert!(!crate::engine::object_has_type(
+                        &state,
+                        entrant,
+                        crate::card_def::CardType::Creature,
+                    ));
+                    assert!(!state.engine.event_history.iter().any(|event| matches!(
+                        event,
+                        CommittedEvent::AuthorityEntryObserversV1 { .. }
+                            | CommittedEvent::AuthorityEntryPublicFactsV1 { .. }
+                    )));
+                    let restored: GameState =
+                        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                    crate::authority_public_capture_v1::validate_state(&restored).unwrap();
+                    continue;
+                }
                 let index = state
                     .engine
                     .event_history

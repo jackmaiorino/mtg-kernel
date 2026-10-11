@@ -263,6 +263,11 @@ fn random_action_for_decision(
             legal_targets,
             can_finish,
             ..
+        }
+        | Decision::ChooseVariableCastTargets {
+            legal_targets,
+            can_finish,
+            ..
         } => {
             let choice_count = legal_targets.len() + usize::from(*can_finish);
             let choice = rng_below(rng, choice_count);
@@ -279,6 +284,9 @@ fn random_action_for_decision(
             Action::ChooseCastMode(options[rng_below(rng, options.len())])
         }
         Decision::ChooseKicker { .. } => Action::ChooseKicker(rng_chance(rng, 1, 2)),
+        Decision::ChooseVariableCastKicker { can_decline, .. } => {
+            Action::ChooseKicker(!can_decline || rng_chance(rng, 1, 2))
+        }
         Decision::ChooseSpellMode { legal_modes, .. } => {
             Action::ChooseSpellMode(legal_modes[rng_below(rng, legal_modes.len())])
         }

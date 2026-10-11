@@ -414,10 +414,10 @@ fn historical_registered_face_down_mask_uses_installation_snapshot_after_departu
     for actor in [PlayerId::P0, PlayerId::P1] {
         for disguised in [false, true] {
             let (mut state, _, recipient) = primitive_with_face(actor, Some(disguised));
-            // Standard's generic face-down card has no creature type. The
+            // The generic face-down card has no creature type. The
             // typed control primitive correctly has no installation for that
             // illegal target; the disguised 2/2 remains a legal creature.
-            if cfg!(feature = "standard-magezero-fixtures") && !disguised {
+            if !disguised {
                 assert!(!crate::engine::effect_target_is_legal(
                     &state,
                     recipient,
