@@ -1,0 +1,71 @@
+//! Exact selected Crystal rules and the separately scoped ordering interpreter.
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+pub const SCHEMA: &str = "mtg-kernel/rules-meaning/crystal-ordering/v1";
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MeaningV1 {
+    pub schema: String,
+    pub card_db_hash: u64,
+    pub producer_sha256: String,
+    pub printed_static_roots: Vec<crate::rules_meaning_crystal_barricade_v1::MeaningV1>,
+    pub fixed_damage_sequence_and_conditional_supported: bool,
+    pub affected_current_recipient_controller_chooses: bool,
+    pub each_choice_rechecks_applicability_without_priority: bool,
+    pub shield_consumed_only_when_selected: bool,
+    pub other_synchronous_producers_refused_before_mutation: bool,
+    pub full_mixed_producer_coverage: bool,
+    pub model_and_sampler_admitted: bool,
+}
+pub fn producer_sha256_v1() -> String {
+    let mut h = Sha256::new();
+    for s in [
+        SCHEMA,
+        include_str!("rules_meaning_crystal_ordering_v1.rs"),
+        include_str!("rules_meaning_crystal_barricade_v1.rs"),
+        include_str!("crystal_barricade_v1.rs"),
+        include_str!("effect/crystal_prevention_v1.rs"),
+        include_str!("effect.rs"),
+        include_str!("event.rs"),
+        include_str!("engine.rs"),
+        include_str!("state.rs"),
+        include_str!("card_def.rs"),
+        include_str!("../build.rs"),
+    ] {
+        h.update([0]);
+        h.update(s.as_bytes());
+    }
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+pub fn selected() -> Result<MeaningV1, String> {
+    use crate::rules_meaning_crystal_barricade_v1::{live_selector, meaning, StaticRootV1};
+    let selector = live_selector().map_err(|e| format!("{e:?}"))?;
+    let id = crate::card_def::card_id_by_name("Crystal Barricade")
+        .ok_or("Crystal remains unregistered")?;
+    let roots = [
+        StaticRootV1::ControllerHexproof,
+        StaticRootV1::OtherControlledCreatureNoncombatPrevention,
+    ]
+    .into_iter()
+    .map(|r| meaning(&selector, id, r).map_err(|e| format!("{e:?}")))
+    .collect::<Result<Vec<_>, String>>()?;
+    Ok(MeaningV1 {
+        schema: SCHEMA.into(),
+        card_db_hash: crate::card_def::KERNEL_CARDDB_HASH,
+        producer_sha256: producer_sha256_v1(),
+        printed_static_roots: roots,
+        fixed_damage_sequence_and_conditional_supported: true,
+        affected_current_recipient_controller_chooses: true,
+        each_choice_rechecks_applicability_without_priority: true,
+        shield_consumed_only_when_selected: true,
+        other_synchronous_producers_refused_before_mutation: true,
+        full_mixed_producer_coverage: false,
+        model_and_sampler_admitted: false,
+    })
+}
+pub fn validate(record: &MeaningV1) -> Result<(), String> {
+    if *record != selected()? {
+        return Err("Crystal ordering meaning changed".into());
+    }
+    Ok(())
+}

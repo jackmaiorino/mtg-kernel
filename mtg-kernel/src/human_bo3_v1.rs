@@ -31,6 +31,8 @@ mod juggernaut_v25;
 pub use juggernaut_v25::*;
 mod ashroot_v27;
 pub use ashroot_v27::*;
+mod crystal_v22;
+pub use crystal_v22::*;
 mod authority_v17;
 pub use authority_v17::*;
 mod frenzied_v15;

@@ -912,6 +912,12 @@ pub enum CommittedEvent {
     RaidEntryStartedV1 {
         started: Box<crate::raid_entry_custody_v1::StartedV1>,
     },
+    CrystalPreventionBoundaryV1 {
+        boundary: Box<crate::effect::crystal_prevention_v1::BoundaryV1>,
+    },
+    CrystalShieldOperationV1 {
+        operation: crate::effect::crystal_prevention_v1::ShieldOperationV1,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1060,6 +1066,13 @@ pub fn apply_replacements(
         crate::standard_cards_v1::replace_damage(state, damage);
     }
     if let ProposedEvent::Damage(damage) = &proposed {
+        if crate::effect::crystal_prevention_v1::needs_choice(state, damage) {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                damage.source,
+            ));
+            return None;
+        }
         if !damage_cannot_be_prevented && crate::crystal_barricade_v1::prevents(state, damage) {
             return None;
         }
@@ -1123,7 +1136,7 @@ pub fn apply_replacements(
     }
 }
 
-fn replacement_applies(
+pub(crate) fn replacement_applies(
     repl: &ActiveReplacement,
     proposed: &ProposedEvent,
     state: &GameState,
@@ -1169,7 +1182,7 @@ fn replacement_applies(
 /// Applies `repl` to `proposed`, mutating the replacement's own bookkeeping
 /// in `state.engine.active_replacements` (e.g. decrementing/expiring a
 /// prevention shield's remaining count) as a side effect.
-fn replacement_apply(
+pub(crate) fn replacement_apply(
     repl: &ActiveReplacement,
     proposed: ProposedEvent,
     state: &mut GameState,
@@ -1179,6 +1192,15 @@ fn replacement_apply(
             ReplacementEffectKind::PreventNextDamage { remaining, .. },
             ProposedEvent::Damage(mut d),
         ) => {
+            if crate::effect::crystal_prevention_v1::shield_operation(state, repl, d.amount)
+                .is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    d.source,
+                ));
+                return None;
+            }
             let prevented = (*remaining).min(d.amount);
             d.amount -= prevented;
 
@@ -1316,6 +1338,32 @@ pub(crate) fn damage_color_mask(state: &GameState, damage: &DamageProposed) -> u
 /// is evaluated from the final damage amount and source immediately before
 /// that damage is committed.
 pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
+    if crate::effect::crystal_prevention_v1::validate(state).is_err() {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            crate::ids::ObjectId(0),
+        ));
+        return;
+    }
+    propose_and_commit_inner(state, event);
+}
+/// Only the scoped pre-pop Crystal interpreter calls this while holding the
+/// privately constructed removed-item loan. Generic public begin/resume refuse it.
+pub(crate) fn propose_and_commit_crystal_owned(
+    state: &mut GameState,
+    event: ProposedEvent,
+    owner: &crate::effect::crystal_prevention_v1::OwnerV1,
+) {
+    if !owner.permits_damage(state, &event) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            crate::ids::ObjectId(0),
+        ));
+        return;
+    }
+    propose_and_commit_inner(state, event);
+}
+fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
     if crate::effect::temporary_control_v1::authority::validate(state).is_err() {
         return;
     }
@@ -1929,6 +1977,27 @@ fn commit_with_ability_lki_and_entry_batch(
 /// `engine::deal_combat_damage`), not per event.
 pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent>) {
     let raid_history_start = state.engine.event_history.len();
+    if crate::effect::crystal_prevention_v1::validate(state).is_err() {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            crate::ids::ObjectId(0),
+        ));
+        return;
+    }
+    if let Some(source) = events.iter().find_map(|e| match e {
+        ProposedEvent::Damage(d)
+            if crate::effect::crystal_prevention_v1::needs_choice(state, d) =>
+        {
+            Some(d.source)
+        }
+        _ => None,
+    }) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        ));
+        return;
+    }
     let mut authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
     let survivors: Vec<ProposedEvent> = events
         .into_iter()

@@ -502,7 +502,7 @@ fn drive_owned(
     owner: &FrenziedGoblinResolutionOwnerV1,
 ) -> Result<ResumableProgress, String> {
     validate_with_owner(state, Some(owner))?;
-    let result = super::drive_resumable_inner(state);
+    let result = super::drive_resumable_inner(state, None);
     if result.is_ok() {
         record_boundary(state)?;
     }

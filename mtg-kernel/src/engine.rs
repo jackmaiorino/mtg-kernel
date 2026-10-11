@@ -9062,6 +9062,26 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
             source: ObjectId(0),
         };
     }
+    if effect::crystal_prevention_v1::validate(state).is_err() {
+        let source = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .map(|p| p.ctx.source)
+            .or_else(|| {
+                state
+                    .stack
+                    .iter()
+                    .find(|i| i.v4.crystal_prevention_started_v1.0.is_some())
+                    .map(|i| i.source)
+            })
+            .unwrap_or(ObjectId(0));
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
+        return Decision::Halted {
+            mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        };
+    }
     // A closed Cerberus operation still owns historical authority. Validate it
     // before automatic step/cleanup work can mutate a restored malformed state.
     if crate::cerberus_capture_v1::validate_state(state).is_err() {
@@ -10132,6 +10152,14 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
             return None;
         }
     };
+    let crystal_owner = match effect::crystal_prevention_v1::acquire_owner(state, &item, false) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return None;
+        }
+    };
     let index = resolution_cast_v1::resolving_index(state, item.v4.stack_item_id);
     match index
         .filter(|&i| i < state.stack.len())
@@ -10151,7 +10179,9 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
         }
     }
 
-    let progress = if let Some(owner) = squad_owner.as_ref() {
+    let progress = if let Some(owner) = crystal_owner.as_ref() {
+        effect::crystal_prevention_v1::resume_owned(state, owner)
+    } else if let Some(owner) = squad_owner.as_ref() {
         effect::resume_owned_squad_rallier_resolution(state, owner)
     } else if let Some(owner) = frenzied_owner.as_ref() {
         effect::resume_owned_frenzied_goblin_resolution(state, owner)
@@ -14107,13 +14137,16 @@ fn execute_resolving_program(
     program: &EffectOp,
     squad_owner: Option<&effect::SquadRallierResolutionOwnerV1>,
     frenzied_owner: Option<&effect::FrenziedGoblinResolutionOwnerV1>,
+    crystal_owner: Option<&effect::crystal_prevention_v1::OwnerV1>,
 ) -> ResolutionProgress {
-    if !effect::contains_player_choice(program) {
+    if crystal_owner.is_none() && !effect::contains_player_choice(program) {
         effect::execute(program, ctx, state);
         return ResolutionProgress::Complete;
     }
 
-    let progress = if let Some(owner) = squad_owner {
+    let progress = if let Some(owner) = crystal_owner {
+        effect::crystal_prevention_v1::begin_owned(state, program, ctx, owner)
+    } else if let Some(owner) = squad_owner {
         effect::begin_owned_squad_rallier_resolution(state, program, ctx, owner)
     } else if let Some(owner) = frenzied_owner {
         effect::begin_owned_frenzied_goblin_resolution(state, program, ctx, owner)
@@ -14122,11 +14155,16 @@ fn execute_resolving_program(
     };
     match progress {
         Ok(effect::ResumableProgress::Complete(completed))
-            if squad_owner.map_or_else(
+            if crystal_owner.map_or_else(
                 || {
-                    frenzied_owner.map_or(*completed == *item, |owner| {
-                        owner.completion_matches(&completed)
-                    })
+                    squad_owner.map_or_else(
+                        || {
+                            frenzied_owner.map_or(*completed == *item, |owner| {
+                                owner.completion_matches(&completed)
+                            })
+                        },
+                        |owner| owner.completion_matches(&completed),
+                    )
                 },
                 |owner| owner.completion_matches(&completed),
             ) =>
@@ -14137,17 +14175,18 @@ fn execute_resolving_program(
             // Keep the resolving item visible throughout the decision, but
             // grant no priority/SBA/trigger window until the continuation
             // completes.
-            let published = if squad_owner.is_some() || frenzied_owner.is_some() {
-                state
-                    .engine
-                    .pending_effect
-                    .as_ref()
-                    .expect("owned suspension publishes pending")
-                    .resolving_item
-                    .clone()
-            } else {
-                item.clone()
-            };
+            let published =
+                if squad_owner.is_some() || frenzied_owner.is_some() || crystal_owner.is_some() {
+                    state
+                        .engine
+                        .pending_effect
+                        .as_ref()
+                        .expect("owned suspension publishes pending")
+                        .resolving_item
+                        .clone()
+                } else {
+                    item.clone()
+                };
             resolution_cast_v1::restore_parent(state, published);
             ResolutionProgress::Suspended
         }
@@ -14238,6 +14277,20 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             state.stack.last().expect("resolving genuine item"),
             true,
         ) {
+            Ok(owner) => owner,
+            Err(_) => {
+                state.engine.halted = Some((
+                    UnsupportedMechanic::InvalidEffectContinuation,
+                    resolving_source,
+                ));
+                return ResolutionProgress::Suspended;
+            }
+        }
+    } else {
+        None
+    };
+    let crystal_owner = if targets_legal {
+        match effect::crystal_prevention_v1::acquire_owner(state, item, true) {
             Ok(owner) => owner,
             Err(_) => {
                 state.engine.halted = Some((
@@ -14406,6 +14459,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 &effect,
                 squad_owner.as_ref(),
                 frenzied_owner.as_ref(),
+                crystal_owner.as_ref(),
             )
         };
         if progress == ResolutionProgress::Complete {
@@ -14478,6 +14532,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             &program,
             squad_owner.as_ref(),
             frenzied_owner.as_ref(),
+            crystal_owner.as_ref(),
         ) == ResolutionProgress::Suspended
         {
             return ResolutionProgress::Suspended;

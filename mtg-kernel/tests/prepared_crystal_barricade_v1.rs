@@ -388,3 +388,321 @@ fn hidden_opposing_hand_does_not_change_public_static_target_eligibility() {
         .is_err());
     }
 }
+
+fn shield(state: &mut GameState, source: ObjectId, target: ObjectId, remaining: i32) {
+    state.engine.next_replacement_id += 1;
+    state
+        .engine
+        .active_replacements
+        .push(mtg_kernel::event::ActiveReplacement {
+            id: state.engine.next_replacement_id,
+            source,
+            kind: mtg_kernel::event::ReplacementEffectKind::PreventNextDamage {
+                target: Target::Object(target),
+                remaining,
+            },
+        });
+}
+fn mixed_menu(state: &mut GameState) -> Decision {
+    for _ in 0..10 {
+        let d = next(state);
+        if matches!(d, Decision::ChooseEffectOption { .. }) {
+            return d;
+        }
+        assert!(matches!(d, Decision::CastSpellOrPass { .. }), "{d:?}");
+        engine::step(state, Action::Pass).unwrap();
+    }
+    panic!("no affected-controller prevention menu");
+}
+fn option(state: &GameState, shield: bool) -> u16 {
+    use mtg_kernel::effect::crystal_prevention_v1::PreventionV1;
+    use mtg_kernel::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
+    let Some(PendingEffectChoice::ChooseOption {
+        purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+        ..
+    }) = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .and_then(|p| p.choice.as_ref())
+    else {
+        panic!("real Crystal prevention stage");
+    };
+    choice
+        .options
+        .iter()
+        .position(|o| {
+            if shield {
+                matches!(o, PreventionV1::Replacement(_))
+            } else {
+                matches!(o, PreventionV1::Barricade(_))
+            }
+        })
+        .unwrap() as u16
+}
+#[test]
+fn mixed_consumable_prevention_affected_controller_order_and_restore() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for amount in [1, 5] {
+            for first_shield in [false, true] {
+                let mut state = ready(actor);
+                let wall = source(&mut state, actor);
+                let target = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+                // A real typed synthetic shield, no printed shield producer is claimed.
+                shield(&mut state, wall, target, amount);
+                announce_bolt(&mut state, actor.opponent(), Target::Object(target));
+                assert!(matches!(mixed_menu(&mut state),
+                    Decision::ChooseEffectOption { player, .. } if player == actor));
+                let bytes = serde_json::to_vec(&state).unwrap();
+                let mut replay = restore(&state);
+                for current in [&mut state, &mut replay] {
+                    let chosen = option(current, first_shield);
+                    engine::step(current, Action::ChooseEffectOption(chosen)).unwrap();
+                    if first_shield && amount == 1 {
+                        assert!(
+                            matches!(next(current), Decision::ChooseEffectOption { player, .. } if player == actor)
+                        );
+                        let next_option = option(current, false);
+                        engine::step(current, Action::ChooseEffectOption(next_option)).unwrap();
+                    }
+                    finish(current);
+                    assert_eq!(current.objects.get(target).damage, 0);
+                    assert_eq!(current.objects.get(target).zone, Zone::Battlefield);
+                    let remaining = current
+                        .engine
+                        .active_replacements
+                        .iter()
+                        .find_map(|r| match r.kind {
+                            mtg_kernel::event::ReplacementEffectKind::PreventNextDamage {
+                                remaining,
+                                ..
+                            } => Some(remaining),
+                            _ => None,
+                        });
+                    assert_eq!(
+                        remaining,
+                        if first_shield {
+                            (amount > 3).then_some(amount - 3)
+                        } else {
+                            Some(amount)
+                        }
+                    );
+                }
+                assert_ne!(serde_json::to_vec(&state).unwrap(), bytes);
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&replay).unwrap()
+                );
+            }
+        }
+    }
+}
+#[test]
+fn mixed_prevention_erased_owner_receipt_and_menu_forgeries_refuse_readonly() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let wall = source(&mut state, actor);
+        let target = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        shield(&mut state, wall, target, 1);
+        announce_bolt(&mut state, actor.opponent(), Target::Object(target));
+        mixed_menu(&mut state);
+        for case in 0..5 {
+            let mut bad = restore(&state);
+            match case {
+                0 => bad.engine.pending_effect = None,
+                1 => bad.engine.event_history.retain(|e| {
+                    !matches!(
+                        e,
+                        mtg_kernel::event::CommittedEvent::CrystalPreventionBoundaryV1 { .. }
+                    )
+                }),
+                2 => {
+                    bad.engine.pending_effect = None;
+                    bad.engine.event_history.retain(|e| {
+                        !matches!(
+                            e,
+                            mtg_kernel::event::CommittedEvent::CrystalPreventionBoundaryV1 { .. }
+                        )
+                    });
+                }
+                3 => bad.stack.clear(),
+                _ => {
+                    if let Some(mtg_kernel::effect::PendingEffectChoice::ChooseOption {
+                        purpose:
+                            mtg_kernel::effect::EffectOptionChoicePurpose::CrystalPreventionV1 {
+                                choice,
+                            },
+                        ..
+                    }) = bad
+                        .engine
+                        .pending_effect
+                        .as_mut()
+                        .and_then(|p| p.choice.as_mut())
+                    {
+                        choice.remaining_amount = 2;
+                    }
+                }
+            }
+            let before = serde_json::to_vec(&bad).unwrap();
+            assert!(engine::step(&mut bad, Action::ChooseEffectOption(0)).is_err());
+            assert!(engine::step(&mut bad, Action::Pass).is_err());
+            assert_eq!(serde_json::to_vec(&bad).unwrap(), before, "case {case}");
+            assert!(matches!(
+                engine::advance_until_decision(&mut bad),
+                Decision::Halted { .. }
+            ));
+            bad.engine.halted = None;
+            assert_eq!(
+                serde_json::to_vec(&bad).unwrap(),
+                before,
+                "case {case} advance"
+            );
+        }
+        let mut bad = restore(&state);
+        let before = serde_json::to_vec(&bad).unwrap();
+        assert!(engine::step(&mut bad, Action::ChooseEffectOption(u16::MAX)).is_err());
+        assert_eq!(serde_json::to_vec(&bad).unwrap(), before);
+    }
+}
+#[test]
+fn mixed_unstaged_direct_and_batch_damage_refuse_before_shield_or_damage_mutation() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let wall = source(&mut state, actor);
+        let target = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        shield(&mut state, wall, target, 1);
+        for batch in [false, true] {
+            let mut bad = restore(&state);
+            let before = serde_json::to_vec(&bad).unwrap();
+            let damage = ProposedEvent::damage(wall, Target::Object(target), 3);
+            if batch {
+                event::propose_and_commit_batch(&mut bad, vec![damage]);
+            } else {
+                event::propose_and_commit(&mut bad, damage);
+            }
+            assert!(bad.engine.halted.is_some());
+            bad.engine.halted = None;
+            assert_eq!(serde_json::to_vec(&bad).unwrap(), before);
+        }
+    }
+}
+
+#[test]
+fn selected_shield_operation_and_unconsumed_installation_remain_mandatory_after_restore() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let wall = source(&mut state, actor);
+        let target = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        shield(&mut state, wall, target, 1);
+        announce_bolt(&mut state, actor.opponent(), Target::Object(target));
+        mixed_menu(&mut state);
+        let mut missing_installation = restore(&state);
+        missing_installation.engine.active_replacements.clear();
+        let before = serde_json::to_vec(&missing_installation).unwrap();
+        assert!(engine::step(&mut missing_installation, Action::Pass).is_err());
+        assert_eq!(serde_json::to_vec(&missing_installation).unwrap(), before);
+        let selected = option(&state, true);
+        engine::step(&mut state, Action::ChooseEffectOption(selected)).unwrap();
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseEffectOption { .. }
+        ));
+        for erase in [true, false] {
+            let mut bad = restore(&state);
+            if erase {
+                bad.engine.event_history.retain(|event| {
+                    !matches!(
+                        event,
+                        mtg_kernel::event::CommittedEvent::CrystalShieldOperationV1 { .. }
+                    )
+                });
+            } else {
+                let operation = bad
+                    .engine
+                    .event_history
+                    .iter_mut()
+                    .find_map(|event| match event {
+                        mtg_kernel::event::CommittedEvent::CrystalShieldOperationV1 {
+                            operation,
+                        } => Some(operation),
+                        _ => None,
+                    })
+                    .expect("actual selected shield operation");
+                operation.damage_amount = 2;
+            }
+            let before = serde_json::to_vec(&bad).unwrap();
+            assert!(engine::step(&mut bad, Action::Pass).is_err());
+            assert!(engine::step(&mut bad, Action::ChooseEffectOption(0)).is_err());
+            assert_eq!(serde_json::to_vec(&bad).unwrap(), before);
+            assert!(matches!(
+                engine::advance_until_decision(&mut bad),
+                Decision::Halted { .. }
+            ));
+            bad.engine.halted = None;
+            assert_eq!(serde_json::to_vec(&bad).unwrap(), before);
+        }
+    }
+}
+
+#[test]
+fn future_selected_ordering_meaning_reconstructs_all_admission_and_coverage_flags() {
+    let exact = mtg_kernel::rules_meaning_crystal_ordering_v1::selected().unwrap();
+    mtg_kernel::rules_meaning_crystal_ordering_v1::validate(&exact).unwrap();
+    let mut json = serde_json::to_value(&exact).unwrap();
+    json["full_mixed_producer_coverage"] = serde_json::json!(true);
+    let forged = serde_json::from_value(json).unwrap();
+    assert!(mtg_kernel::rules_meaning_crystal_ordering_v1::validate(&forged).is_err());
+    for field in ["producer_sha256", "schema"] {
+        let mut json = serde_json::to_value(&exact).unwrap();
+        json[field] = serde_json::json!("foreign");
+        let forged = serde_json::from_value(json).unwrap();
+        assert!(mtg_kernel::rules_meaning_crystal_ordering_v1::validate(&forged).is_err());
+    }
+    assert!(!exact.full_mixed_producer_coverage);
+    assert!(!exact.model_and_sampler_admitted);
+}
+
+#[test]
+fn unsupported_real_draw_root_refuses_before_pop_or_card_mutation_in_mixed_environment() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let wall = source(&mut state, actor);
+        let recipient = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        shield(&mut state, wall, recipient, 1);
+        let draw = put(&mut state, actor, "Think Twice", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 1;
+        state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+        priority(&mut state, actor);
+        engine::step(&mut state, Action::CastSpell(draw)).unwrap();
+        let _ = next(&mut state); // Genuine announcement and payment complete.
+        assert!(state.stack.iter().any(|item| item.source == draw));
+        let stack = serde_json::to_vec(&state.stack).unwrap();
+        let hand = state.players[actor.index()].hand.clone();
+        let library = state.players[actor.index()].library.clone();
+        let shield = state.engine.active_replacements.clone();
+        let mut halted = false;
+        for _ in 0..8 {
+            let decision = engine::advance_until_decision(&mut state);
+            if matches!(decision, Decision::Halted { .. }) {
+                halted = true;
+                break;
+            }
+            assert!(
+                matches!(decision, Decision::CastSpellOrPass { .. }),
+                "{decision:?}"
+            );
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        assert!(halted);
+        assert_eq!(serde_json::to_vec(&state.stack).unwrap(), stack);
+        assert_eq!(state.objects.get(draw).zone, Zone::Stack);
+        assert_eq!(state.players[actor.index()].hand, hand);
+        assert_eq!(state.players[actor.index()].library, library);
+        assert_eq!(state.engine.active_replacements, shield);
+        assert!(state.engine.pending_effect.is_none());
+        assert!(!state.engine.event_history.iter().any(|event| matches!(
+            event,
+            mtg_kernel::event::CommittedEvent::CrystalPreventionBoundaryV1 { .. }
+        )));
+    }
+}

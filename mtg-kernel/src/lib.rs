@@ -81,6 +81,7 @@ mod authority_public_capture_v1;
 pub mod authority_public_v1;
 #[allow(dead_code)]
 pub(crate) mod common_model_snapshot_v1;
+pub mod crystal_public_v1;
 pub mod effect;
 pub mod employment_public_v1;
 pub mod engine;
@@ -96,6 +97,7 @@ pub mod human_opening_v1;
 pub mod native_expanded_training_run_v1;
 mod raid_entry_custody_v1;
 mod raid_entry_v1;
+pub mod rules_meaning_crystal_ordering_v1;
 mod source_power_activation_v1;
 pub mod sower_of_chaos_v1;
 pub mod sower_public_v1;

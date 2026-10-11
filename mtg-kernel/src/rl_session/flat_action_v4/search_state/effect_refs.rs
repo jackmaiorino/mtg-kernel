@@ -726,6 +726,7 @@ impl Scan<'_> {
                             ..
                         } => self.fs(expected_remaining_frames),
                         Generic => false,
+                        CrystalPreventionV1 { .. } => true,
                         CreatureChoiceV1 {
                             kind,
                             expected_remaining_frames,

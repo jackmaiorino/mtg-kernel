@@ -41,6 +41,7 @@ use crate::state::{
     StackSourceContractV4, StackTargetContractV4, Target, UndercityRoomV1, Zone,
 };
 use serde::{Deserialize, Serialize};
+pub mod crystal_prevention_v1;
 pub(crate) mod frenzied_goblin_resolution_v1;
 pub(crate) use frenzied_goblin_resolution_v1::{
     acquire_owner as acquire_frenzied_goblin_resolution_owner,
@@ -2603,6 +2604,9 @@ pub enum EffectOptionChoicePurpose {
         kind: crate::standard_creature_choices_v1::CreatureChoiceV1,
         expected_remaining_frames: Vec<EffectFrame>,
     },
+    CrystalPreventionV1 {
+        choice: Box<crystal_prevention_v1::ChoiceV1>,
+    },
 }
 
 /// A policy-visible choice yielded by the generic effect interpreter. This is
@@ -3026,6 +3030,11 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
+    if crystal_prevention_v1::mixed_environment(state)
+        || resolving_item.v4.crystal_prevention_started_v1.0.is_some()
+    {
+        return Err("Crystal damage requires its genuine pre-pop loan".into());
+    }
     if state.engine.pending_effect.is_some() {
         return Err("cannot begin an effect while another continuation is pending".to_string());
     }
@@ -3055,6 +3064,15 @@ pub fn begin_resumable_resolution(
 
 /// Resumes after `choose_resumable_option` installed the selected branch.
 pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumableProgress, String> {
+    if state.engine.pending_effect.as_ref().is_some_and(|p| {
+        p.resolving_item
+            .v4
+            .crystal_prevention_started_v1
+            .0
+            .is_some()
+    }) {
+        return Err("Crystal continuation requires its genuine pre-removal loan".into());
+    }
     if state.engine.pending_effect.is_none() {
         return Err("no effect continuation is pending".to_string());
     }
@@ -3066,6 +3084,9 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
 /// snapshot taken immediately after the action deterministic too.
 pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Result<(), String> {
     validate_pending_effect_choice(state)?;
+    if crystal_prevention_v1::is_choice(state) {
+        return crystal_prevention_v1::answer(state, option_index);
+    }
     let continuation = state
         .engine
         .pending_effect
@@ -3095,6 +3116,9 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
                 ));
             };
             match purpose {
+                EffectOptionChoicePurpose::CrystalPreventionV1 { .. } => {
+                    return Err("Crystal choice requires its authenticated answer reducer".into())
+                }
                 EffectOptionChoicePurpose::PayGenericDrawV1 {
                     expected_remaining_frames,
                     ..
@@ -7798,6 +7822,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::wildwood_capture_v1::validate_state(state)?;
     squad_rallier_resolution_v1::validate(state)?;
     frenzied_goblin_resolution_v1::validate(state)?;
+    crystal_prevention_v1::validate(state)?;
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(());
     };
@@ -9459,6 +9484,9 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
             purpose,
             path,
         } => match purpose {
+            EffectOptionChoicePurpose::CrystalPreventionV1 { .. } => {
+                crystal_prevention_v1::validate(state)?
+            }
             EffectOptionChoicePurpose::PayGenericDrawV1 {
                 maximum,
                 canonical_path,
@@ -9836,12 +9864,26 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
     frenzied_goblin_resolution_v1::drive(state)
 }
 
-fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, String> {
+fn drive_resumable_inner(
+    state: &mut GameState,
+    crystal_owner: Option<&crystal_prevention_v1::OwnerV1>,
+) -> Result<ResumableProgress, String> {
     let mut continuation = state
         .engine
         .pending_effect
         .take()
         .ok_or("no effect continuation is pending")?;
+    if continuation
+        .resolving_item
+        .v4
+        .crystal_prevention_started_v1
+        .0
+        .is_some()
+        && crystal_owner.is_none_or(|owner| !owner.completion_matches(&continuation.resolving_item))
+    {
+        state.engine.pending_effect = Some(continuation);
+        return Err("Crystal interpreter lost its private removed-item loan".into());
+    }
     if continuation.choice.is_some() {
         state.engine.pending_effect = Some(continuation);
         return Ok(ResumableProgress::Suspended);
@@ -13378,6 +13420,17 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                 return Ok(ResumableProgress::Suspended);
             }
             leaf => {
+                if crystal_prevention_v1::offer(state, &mut continuation, &leaf, &path)? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+                if continuation.resolving_item.v4.crystal_prevention_started_v1.0.is_some() {
+                    if let EffectOp::DealDamage { target, amount } = &leaf {
+                        event::propose_and_commit_crystal_owned(state, event::ProposedEvent::damage(
+                            continuation.ctx.source, continuation.ctx.resolve_target(*target), *amount), crystal_owner.ok_or("Crystal damage lost its loan")?);
+                        continue;
+                    }
+                }
                 if let EffectOp::DiscardCards { player, count } = &leaf {
                     if !continuation.frames.is_empty() {
                         let player = continuation.ctx.resolve_player(*player, state);
@@ -16033,6 +16086,13 @@ fn creature_matches_filter(
 }
 
 pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
+    if crystal_prevention_v1::mixed_environment(state) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
     match op {
         EffectOp::Sequence(ops) => {
             for inner in ops {
