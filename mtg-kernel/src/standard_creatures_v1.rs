@@ -36,6 +36,8 @@ pub enum CreatureEffectV1 {
     SalvagerBoostTokens,
     VirtueCountersUntap,
     MosswoodGraveyardAdventure,
+    FloodpitsTapStun,
+    FloodpitsShuffle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -236,6 +238,79 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
 }
 
 pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameState) {
+    if matches!(
+        effect,
+        CreatureEffectV1::FloodpitsTapStun | CreatureEffectV1::FloodpitsShuffle
+    ) {
+        let Some(crate::state::Target::Object(target)) = ctx.targets.first().copied() else {
+            return;
+        };
+        let Some(source) = ctx.ability_source_contract else {
+            return;
+        };
+        let spec = if effect == CreatureEffectV1::FloodpitsTapStun {
+            crate::card_def::TargetSpec::OpponentControlledCreature
+        } else {
+            crate::card_def::TargetSpec::CreatureWithStunCounter
+        };
+        if !ctx.target_contracts.first().is_some_and(|&contract| {
+            crate::engine::target_contract_matches_live(state, ctx.targets[0], contract)
+        }) || !crate::engine::effect_target_is_legal_from_ability_source(
+            state,
+            source,
+            ctx.controller,
+            spec,
+            &ctx.targets,
+            0,
+        ) {
+            return;
+        }
+        if effect == CreatureEffectV1::FloodpitsTapStun {
+            crate::event::propose_and_commit(state, crate::event::ProposedEvent::tap(target));
+            state.objects.get_mut(target).counters.stun =
+                state.objects.get(target).counters.stun.saturating_add(1);
+            return;
+        }
+        let mut objects = vec![target];
+        if target != ctx.source
+            && state.objects.try_get(ctx.source).is_some_and(|object| {
+                object.zone == Zone::Battlefield
+                    && object.zone_change_count == source.zone_change_count
+            })
+        {
+            objects.push(ctx.source);
+        }
+        let mut staged = state.clone();
+        let mut owners: Vec<_> = objects
+            .iter()
+            .map(|id| staged.objects.get(*id).owner)
+            .collect();
+        owners.sort_by_key(|owner| owner.index());
+        owners.dedup();
+        crate::event::propose_and_commit_batch(
+            &mut staged,
+            objects
+                .iter()
+                .map(|&id| {
+                    crate::event::ProposedEvent::public_library_insert(
+                        id,
+                        crate::event::LibraryPlacement::Top,
+                    )
+                })
+                .collect(),
+        );
+        for owner in owners {
+            if staged.shuffle_library(owner).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
+        }
+        *state = staged;
+        return;
+    }
     if effect == CreatureEffectV1::MosswoodGraveyardAdventure {
         let Some(contract) = ctx.ability_source_contract else {
             return;
@@ -415,6 +490,9 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
         .creature_upgrade
         .get_or_insert_with(Default::default);
     match effect {
+        CreatureEffectV1::FloodpitsTapStun | CreatureEffectV1::FloodpitsShuffle => {
+            unreachable!("targeted effect handled above")
+        }
         CreatureEffectV1::MosswoodGraveyardAdventure => {
             unreachable!("graveyard permission handled above")
         }

@@ -4071,6 +4071,7 @@ fn keywords_for(card: &CardJson) -> String {
         "Vampire Token" => keywords.push("Keywords::LIFELINK"),
         "Knight Vigilance Token" => keywords.push("Keywords::VIGILANCE"),
         "Mosswood Dreadknight" => keywords.push("Keywords::TRAMPLE"),
+        "Floodpits Drowner" => { keywords.push("Keywords::FLASH"); keywords.push("Keywords::VIGILANCE"); }
         "Gingerbrute" => keywords.push("Keywords::HASTE"),
         "Surge Engine" => keywords.push("Keywords::DEFENDER"),
         "Spyglass Siren" => keywords.push("Keywords::FLYING"),
@@ -5512,6 +5513,13 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             },
         ],
         // MageZero Standard family G.
+        "Floodpits Drowner" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ManaCost("{1}{U}"), AbilityCostRecipe::Tap],
+            effect: AbilityEffectRecipe::CreatureUpgrade("FloodpitsShuffle"),
+            activation_zone: "Battlefield", sorcery_speed_only: false,
+            target_spec: "CreatureWithStunCounter", activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Bloodtithe Harvester" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Tap, AbilityCostRecipe::SacrificeSelf],
             effect: AbilityEffectRecipe::CreatureUpgrade("HarvesterWeakening"),
@@ -6618,6 +6626,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Virtue of Loyalty" => "beginning_controller_end_step:counter_controlled_creatures_then_untap_them",
         "Mosswood Dreadknight" => "dies:exact_graveyard_adventure_permission:until_end_controller_next_turn",
         "Questing Druid" => "cast_spell_with_color:white_blue_black_or_red:counter_source:1",
+        "Floodpits Drowner" => "etb:target_opponent_creature:tap:stun_counter:1",
         "Sandstorm Salvager" => "etb:create_golem_token:1",
         "Preacher of the Schism" => "attacks_player_with_most_life:create_white_vampire_token;attacks_while_controller_most_life:draw:1:lose_life:1",
         "Tough Cookie" => "etb:create_food_token:1",

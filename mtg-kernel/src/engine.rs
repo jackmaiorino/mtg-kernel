@@ -1641,6 +1641,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. }
         | TargetSpec::UpToOneTappedCreature
         | TargetSpec::ControlledNoncreatureArtifactPermanent
+        | TargetSpec::CreatureWithStunCounter
         | TargetSpec::NoncreatureArtifactPermanent
         | TargetSpec::Land
         | TargetSpec::OpponentArtifactOrEnchantmentPermanent
@@ -3323,6 +3324,9 @@ fn legal_targets_for_controller_from_source(
             .filter(|&id| object_has_type(state, id, CardType::Land))
             .map(Target::Object)
             .collect(),
+        TargetSpec::CreatureWithStunCounter => battlefield_objects(state)
+            .filter(|&id| object_has_type(state, id, CardType::Creature) && state.objects.get(id).counters.stun > 0)
+            .map(Target::Object).collect(),
         TargetSpec::ControlledNoncreatureArtifactPermanent => battlefield_objects(state)
             .filter(|&id| {
                 state.objects.get(id).controller == controller

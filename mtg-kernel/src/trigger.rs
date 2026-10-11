@@ -3272,6 +3272,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Monk Token" => &MONASTERY_SWIFTSPEAR_TRIGGERS,
         "Kellan, Planar Trailblazer" => &KELLAN_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
+        "Floodpits Drowner" => &standard_family_g_v1::FLOODPITS_DROWNER_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
         "Questing Druid" => &standard_family_g_v1::QUESTING_DRUID_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Mosswood Dreadknight" => &standard_family_g_v1::MOSSWOOD_TRIGGERS,
@@ -3391,6 +3393,8 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         "Deep-Cavern Bat" | "Hired Claw" => TargetSpec::TargetOpponent,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Extraction Specialist" => TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(2),
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Floodpits Drowner" => TargetSpec::OpponentControlledCreature,
         _ => TargetSpec::None,
     }
 }

@@ -444,3 +444,9 @@ pub(super) const QUESTING_DRUID_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredA
     condition: TriggerCondition::CastSpellWithAnyColor(0b01111),
     ..etb_trigger(counter_on_source_effect)
 }];
+
+fn floodpits_tap_stun_effect() -> EffectOp {
+    EffectOp::CreatureUpgrade(crate::standard_creatures_v1::CreatureEffectV1::FloodpitsTapStun)
+}
+pub(super) const FLOODPITS_DROWNER_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(floodpits_tap_stun_effect)];

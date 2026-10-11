@@ -31,6 +31,26 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
         EffectOp::CreatureUpgrade(effect) => {
             use crate::standard_creatures_v1::CreatureEffectV1;
+            if matches!(effect, CreatureEffectV1::FloodpitsTapStun) {
+                out.effect(
+                    EffectAtom::new(EvF::Tap)
+                        .player(RelF::Opponent)
+                        .obj(ObjF::Typed(CardTypeF::Creature)),
+                );
+                plain_counter(
+                    RelF::Opponent,
+                    ObjF::Typed(CardTypeF::Creature),
+                    AmtF::fixed(1),
+                    out,
+                );
+            }
+            if matches!(effect, CreatureEffectV1::FloodpitsShuffle) {
+                out.effect(
+                    EffectAtom::moving(Some(ZoneF::Battlefield), ZoneF::Library)
+                        .obj(ObjF::Typed(CardTypeF::Creature)),
+                );
+                out.effect(EffectAtom::new(EvF::Shuffle));
+            }
             if matches!(effect, CreatureEffectV1::MosswoodGraveyardAdventure) {
                 let mut permission = EffectAtom::new(EvF::PlayPermission)
                     .player(RelF::You)

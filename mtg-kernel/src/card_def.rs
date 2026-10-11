@@ -974,6 +974,7 @@ pub enum TargetSpec {
     CardInOwnGraveyardWithAnySubtype([Subtype; 4]),
     OpponentArtifactEnchantmentOrNonbasicLand,
     LegendaryCreature,
+    CreatureWithStunCounter,
 }
 
 impl TargetSpec {
@@ -1053,6 +1054,7 @@ impl TargetSpec {
             TargetSpec::CardInOwnGraveyardWithAnySubtype(_) => 95,
             TargetSpec::OpponentArtifactEnchantmentOrNonbasicLand => 96,
             TargetSpec::LegendaryCreature => 97,
+            TargetSpec::CreatureWithStunCounter => 72,
         }
     }
 }
@@ -2557,6 +2559,7 @@ mod tests {
             (TargetSpec::UpToTwoOtherControlledCreatures, 59),
             (TargetSpec::CounterDistribution, 70),
             (TargetSpec::ControlledNoncreatureArtifactPermanent, 71),
+            (TargetSpec::CreatureWithStunCounter, 72),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);

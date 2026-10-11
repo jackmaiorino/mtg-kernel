@@ -3117,3 +3117,74 @@ fn seek_the_beast_expires_at_start_of_next_own_end_step_even_same_turn() {
     next(&mut state);
     assert!(state.engine.exile_play_permissions.is_empty());
 }
+
+#[test]
+fn floodpits_drowner_taps_stuns_then_shuffles_both_owners() {
+    let mut state = ready(Step::Main1);
+    let target = put(&mut state, PlayerId::P1, "Cenote Scout", Zone::Battlefield);
+    let drowner = cast_creature(&mut state, "Floodpits Drowner");
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseTargets { .. })
+    ));
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+    settled(&mut state);
+    assert!(state.objects.get(target).tapped);
+    assert_eq!(state.objects.get(target).counters.stun, 1);
+    state.objects.get_mut(drowner).summoned_sick = false;
+    state.players[0].mana_pool = pool(&[(ManaColor::U, 1)], 1);
+    assert!(activatable(&mut state).contains(&(drowner, 0)));
+    engine::step(&mut state, Action::ActivateAbility(drowner, 0)).unwrap();
+    assert!(
+        matches!(next(&mut state), Decision::ChooseTargets { legal_targets, .. } if legal_targets == vec![Target::Object(target)])
+    );
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(target).zone, Zone::Library);
+    assert_eq!(state.objects.get(drowner).zone, Zone::Library);
+    assert!(state.players[0].library.contains(&drowner));
+    assert!(state.players[1].library.contains(&target));
+}
+
+#[test]
+fn floodpits_illegal_target_counters_whole_ability_but_missing_source_does_not() {
+    for remove_counter in [false, true] {
+        let mut state = ready(Step::Main1);
+        let drowner = put(
+            &mut state,
+            PlayerId::P0,
+            "Floodpits Drowner",
+            Zone::Battlefield,
+        );
+        let target = put(&mut state, PlayerId::P1, "Cenote Scout", Zone::Battlefield);
+        state.objects.get_mut(target).counters.stun = 1;
+        state.players[0].mana_pool = pool(&[(ManaColor::U, 1)], 1);
+        activatable(&mut state);
+        engine::step(&mut state, Action::ActivateAbility(drowner, 0)).unwrap();
+        next(&mut state);
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+        next(&mut state);
+        if remove_counter {
+            state.objects.get_mut(target).counters.stun = 0;
+        } else {
+            move_to(&mut state, drowner, Zone::Graveyard);
+        }
+        settled(&mut state);
+        assert_eq!(
+            state.objects.get(target).zone,
+            if remove_counter {
+                Zone::Battlefield
+            } else {
+                Zone::Library
+            }
+        );
+        assert_eq!(
+            state.objects.get(drowner).zone,
+            if remove_counter {
+                Zone::Battlefield
+            } else {
+                Zone::Graveyard
+            }
+        );
+    }
+}
