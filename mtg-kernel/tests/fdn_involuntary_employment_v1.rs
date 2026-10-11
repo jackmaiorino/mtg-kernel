@@ -213,6 +213,143 @@ fn employment_definition_matches_exact_pinned_printed_recipe() {
     );
 }
 #[test]
+fn actual_printed_meaning_reconstructs_all_facts_and_rejects_forged_admission() {
+    use mtg_kernel::rules_meaning_employment_v1 as selected;
+    let id = card_id_by_name("Involuntary Employment").expect("requires actual admission");
+    let selector = selected::live_selector().unwrap();
+    let record = selected::meaning(&selector, id, selected::RootV1::PrintedSpell).unwrap();
+    selected::validate(&record).unwrap();
+    let value = serde_json::to_value(&record).unwrap();
+    let roundtrip: selected::MeaningV1 = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(record, roundtrip);
+    assert_eq!(value["rule"].as_object().unwrap().len(), 18);
+    for field in value["rule"].as_object().unwrap().keys() {
+        let mut forged = value.clone();
+        forged["rule"][field] = serde_json::Value::Bool(false);
+        let forged: selected::MeaningV1 = serde_json::from_value(forged).unwrap();
+        assert!(selected::validate(&forged).is_err(), "accepted {field}");
+    }
+    let mut forged = record.clone();
+    forged.root_sha256.push('x');
+    assert!(selected::validate(&forged).is_err());
+    forged = record;
+    forged.public_human_sampler_and_model_admitted = true;
+    assert!(selected::validate(&forged).is_err());
+    for nested in [true, false] {
+        let mut forged = value.clone();
+        if nested {
+            forged["rule"]["unknown"] = true.into();
+        } else {
+            forged["unknown"] = true.into();
+        }
+        assert!(serde_json::from_value::<selected::MeaningV1>(forged).is_err());
+    }
+}
+#[test]
+fn actual_stun_replaces_untap_but_preserves_control_haste_and_treasure() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let target = put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        state.objects.get_mut(target).tapped = true;
+        state.objects.get_mut(target).counters.stun = 2;
+        let mut surface = surface();
+        announce(&mut surface, &mut state, actor, target);
+        let mut restored = replay(&state);
+        resolve(&mut surface, &mut state);
+        resolve(&mut self::surface(), &mut restored);
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+        assert_eq!(state.objects.get(target).controller, actor);
+        assert!(state.objects.get(target).tapped);
+        assert_eq!(state.objects.get(target).counters.stun, 1);
+        assert!(engine::has_effective_keyword(
+            &state,
+            target,
+            Keywords::HASTE
+        ));
+        assert_eq!(treasures(&state, actor), 1);
+        cleanup(&mut surface, &mut state);
+        assert_eq!(state.objects.get(target).controller, actor.opponent());
+        assert_eq!(treasures(&state, actor), 1);
+    }
+}
+#[test]
+fn actual_short_payment_refuses_without_mutation_and_counterspell_prevents_every_effect() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let target = put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        state.objects.get_mut(target).tapped = true;
+        let spell = put(&mut state, actor, "Involuntary Employment", Zone::Hand);
+        state.players[actor.index()].mana_pool = [0; 6];
+        let mut surface = surface();
+        assert!(
+            matches!(next(&mut surface, &mut state), Decision::CastSpellOrPass { player, castable_spells, .. }
+            if player == actor && !castable_spells.contains(&spell))
+        );
+        let before = serde_json::to_vec(&state).unwrap();
+        assert!(engine::step(&mut state, Action::CastSpell(spell)).is_err());
+        assert_eq!(before, serde_json::to_vec(&state).unwrap());
+        let counter = put(&mut state, actor.opponent(), "Counterspell", Zone::Hand);
+        state.players[actor.opponent().index()].mana_pool[ManaColor::U.pool_index()] = 2;
+        announce_existing(&mut surface, &mut state, actor, target, spell);
+        let item_id = state
+            .stack
+            .iter()
+            .find(|item| item.source == spell)
+            .unwrap()
+            .v4
+            .stack_item_id;
+        let d = next(&mut surface, &mut state);
+        assert!(
+            matches!(d, Decision::CastSpellOrPass { player, castable_spells, .. }
+            if player == actor.opponent() && castable_spells.contains(&counter))
+        );
+        apply(&mut surface, &mut state, Action::CastSpell(counter));
+        assert!(
+            matches!(next(&mut surface, &mut state), Decision::ChooseTargets { legal_targets, .. }
+            if legal_targets.contains(&Target::StackItem(item_id)))
+        );
+        apply(
+            &mut surface,
+            &mut state,
+            Action::ChooseTarget(Target::StackItem(item_id)),
+        );
+        assert!(matches!(
+            next(&mut surface, &mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(state.stack.len(), 2);
+        let mut restored = replay(&state);
+        resolve(&mut surface, &mut state);
+        resolve(&mut self::surface(), &mut restored);
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+        assert_eq!(state.objects.get(spell).zone, Zone::Graveyard);
+        assert_eq!(state.objects.get(target).controller, actor.opponent());
+        assert!(state.objects.get(target).tapped);
+        assert!(!engine::has_effective_keyword(
+            &state,
+            target,
+            Keywords::HASTE
+        ));
+        assert_eq!(treasures(&state, actor), 0);
+    }
+}
+#[test]
 fn actual_employment_casts_both_seats_own_or_opposing_creature_restore_and_cleanup() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for owner in [actor, actor.opponent()] {
@@ -479,8 +616,14 @@ fn employment_cast_during_real_madness_cleanup_priority_expires_before_turn_chan
         }
         assert!(discarded);
         assert_eq!(state.objects.get(temper).zone, Zone::Exile);
-        assert!(state.stack.iter().any(|item| item.madness_offer));
+        assert!(state.engine.pending_triggers.iter().any(|trigger| {
+            trigger.is_madness_offer && trigger.source == temper && trigger.controller == actor
+        }));
         assert_eq!(state.players[actor.index()].hand.len(), 7);
+        assert!(
+            matches!(next(&mut surface, &mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+        );
+        assert!(state.stack.iter().any(|item| item.madness_offer));
         announce_existing(&mut surface, &mut state, actor, target, spell);
         let mut restored = replay(&state);
         for branch in [&mut state, &mut restored] {

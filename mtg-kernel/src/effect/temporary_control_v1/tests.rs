@@ -161,8 +161,17 @@ fn stale_departed_reentered_and_protected_target_primitives_cannot_gain_control(
         let target = put(
             &mut state,
             controller.opponent(),
-            "Guardian of the Guildpact",
+            "Llanowar Elves",
             Zone::Battlefield,
+        );
+        let grant = ctx(&state, source, controller.opponent(), target);
+        execute(
+            &EffectOp::GrantKeywordTargetUntilEndOfTurn {
+                object: ObjectRef::Target(0),
+                keyword: Keywords::PROTECTION_FROM_MONOCOLORED,
+            },
+            &grant,
+            &mut state,
         );
         let context = ctx(&state, source, controller, target);
         let before = serde_json::to_vec(&state).unwrap();
@@ -266,5 +275,50 @@ fn frozen_observations_refuse_expiring_control_for_both_viewers_without_hidden_d
         assert!(crate::rl::observe_policy_v5(&state, &policy, viewer, 0, 0, 0, 1).is_err());
         assert!(crate::rl::observe_policy_v6(&state, &policy, viewer, 0, 0, 0, 1).is_err());
         assert!(crate::rl::observe_policy_v8(&state, &policy, viewer, 0, 0, 0, 1).is_err());
+    }
+}
+#[test]
+fn repeated_cleanup_clears_ordinary_and_restricted_mana_for_both_players() {
+    for controller in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state();
+        state.active_player = controller;
+        state.priority_player = controller;
+        let source = put(&mut state, controller, "Lightning Bolt", Zone::Hand);
+        let target = put(
+            &mut state,
+            controller.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        gain_control(&ctx(&state, source, controller, target), 0, &mut state);
+        state.step = crate::state::Step::Cleanup;
+        state.engine.priority_passes = [true; 2];
+        for player in &mut state.players {
+            player.mana_pool = [9; 6];
+            player
+                .restricted_mana_pool
+                .0
+                .push(crate::mana::RestrictedManaUnitV1 {
+                    color: crate::mana::ManaColor::G,
+                    restriction: crate::card_def::ManaSpendRestrictionDef::CreatureSpell,
+                    source: crate::state::ObjectLinkV4 {
+                        object: target,
+                        zone_change_count: state.objects.get(target).zone_change_count,
+                    },
+                    source_card_def: state.objects.get(target).card_def,
+                });
+        }
+        let mut restored = replay(&state);
+        let _ = crate::engine::advance_until_decision(&mut state);
+        let _ = crate::engine::advance_until_decision(&mut restored);
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+        for player in &state.players {
+            assert_eq!(player.mana_pool, [0; 6]);
+            assert!(player.restricted_mana_pool.is_empty());
+        }
+        assert_eq!(state.objects.get(target).controller, controller.opponent());
     }
 }

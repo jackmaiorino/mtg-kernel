@@ -6747,6 +6747,8 @@ fn continuous_effects_common_v2(
             "player hexproof and controlled-creature noncombat prevention require a public successor".into(),
         ));
     }
+    crate::effect::temporary_control_v1::refuse_legacy_observation(state)
+        .map_err(RlContractError)?;
     state.validate_attachment_relations().map_err(|object| {
         RlContractError(format!(
             "invalid attachment relation at object {}",

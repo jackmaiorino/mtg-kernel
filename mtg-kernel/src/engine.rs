@@ -14261,8 +14261,10 @@ fn advance_step(state: &mut GameState) {
             )
         })
     {
-        state.players[0].mana_pool = [0; 6];
-        state.players[1].mana_pool = [0; 6];
+        for player in &mut state.players {
+            player.mana_pool = [0; 6];
+            player.restricted_mana_pool.0.clear();
+        }
         run_step_entry_action(state, Step::Cleanup);
         reset_priority(state);
         return;
@@ -15587,7 +15589,6 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
                 UntilEndOfTurnEffect::SyntheticMarker(_) => false,
                 UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
                 | UntilEndOfTurnEffect::ResolvedObjectCantBlock { .. }
-
                 | UntilEndOfTurnEffect::ResolvedObjectControlEffect { .. } => false,
             };
             if grants {
