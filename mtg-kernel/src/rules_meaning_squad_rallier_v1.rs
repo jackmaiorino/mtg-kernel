@@ -64,6 +64,10 @@ pub fn producer_sha256() -> String {
         ("effect.rs", include_str!("effect.rs")),
         ("engine.rs", include_str!("engine.rs")),
         (
+            "standard_statics_v1.rs",
+            include_str!("standard_statics_v1.rs"),
+        ),
+        (
             "creature_stats_lki_v1.rs",
             include_str!("creature_stats_lki_v1.rs"),
         ),

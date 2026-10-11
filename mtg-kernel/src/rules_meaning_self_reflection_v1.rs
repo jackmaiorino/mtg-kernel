@@ -70,6 +70,10 @@ pub fn producer_sha256() -> String {
         ),
         ("standard_cards_v1.rs", include_str!("standard_cards_v1.rs")),
         (
+            "standard_statics_v1.rs",
+            include_str!("standard_statics_v1.rs"),
+        ),
+        (
             "standard_legends_v1.rs",
             include_str!("standard_legends_v1.rs"),
         ),
