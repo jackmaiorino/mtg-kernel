@@ -268,6 +268,23 @@ fn ordered_jobs_v1<T: Send, F: Fn(usize) -> Result<T, String> + Sync>(
     })
 }
 
+/// The same bounded, ordered worker executor for independent pinned input reads.
+/// Numeric replay and optimizer work still begin only after all inputs validate.
+pub(super) fn read_trajectories_v1(
+    pins: &[PinnedFileV1],
+    workers: usize,
+) -> Result<Vec<(u64, ExpandedTrajectoryV1)>, String> {
+    let read = |ordinal: usize| {
+        let bytes = read_pinned_bytes(&pins[ordinal])?;
+        let episode = serde_json::from_slice(&bytes).map_err(err)?;
+        Ok((bytes.len() as u64, episode))
+    };
+    if workers == 1 {
+        return (0..pins.len()).map(read).collect();
+    }
+    ordered_jobs_v1(workers, pins.len(), read).map(|(episodes, _)| episodes)
+}
+
 /// Process-wide cache of loaded opponent models keyed by their pinned source.
 /// A run's fixed opponents (the block's initial policy and the frozen partner)
 /// were parsed from their 20 MB checkpoints twice per update; now each source
