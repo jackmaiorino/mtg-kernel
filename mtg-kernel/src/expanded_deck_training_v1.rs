@@ -480,7 +480,14 @@ impl CheckpointInputExpectationV1<'_> {
         value_coefficient_bits: u32,
     ) -> Result<(), String> {
         ensure(
-            trajectories == self.trajectories
+            trajectories.len() == self.trajectories.len()
+                && trajectories
+                    .iter()
+                    .zip(self.trajectories)
+                    .all(|(actual, expected)| {
+                        actual.path.as_os_str() == expected.path.as_os_str()
+                            && actual.sha256 == expected.sha256
+                    })
                 && learning_rate_bits == self.learning_rate_bits
                 && value_coefficient_bits == self.value_coefficient_bits,
             "checkpoint inputs or optimizer settings differ",
@@ -3789,6 +3796,15 @@ pub(crate) mod tests {
             )
             .is_ok());
         let mut reordered = saved.trajectories.clone();
+        let mut differently_spelled = saved.trajectories.clone();
+        differently_spelled[0].path = "./trajectory-0.json".into();
+        assert!(inputs
+            .validate_v1(
+                &differently_spelled,
+                saved.learning_rate_bits,
+                saved.value_coefficient_bits
+            )
+            .is_err());
         reordered.reverse();
         assert!(inputs
             .validate_v1(
