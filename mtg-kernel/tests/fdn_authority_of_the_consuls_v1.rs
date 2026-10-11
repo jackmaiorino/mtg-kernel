@@ -466,6 +466,62 @@ fn collected_dispatch_deletion_and_resolved_item_replay_refuse_readonly_after_re
         );
         until_gain(&mut state);
         let saved_item = state.stack.last().unwrap().clone();
+        let capture_index = match saved_item.inline_effect {
+            Some(EffectOp::AuthorityEntryGainLifeV1 {
+                capture_history_index,
+            }) => capture_history_index,
+            _ => panic!("actual bound gain required"),
+        };
+        let capture_event =
+            state.engine.event_history[usize::try_from(capture_index).unwrap()].clone();
+        for corruption in 0..6 {
+            let mut forged = restored(&state);
+            match corruption {
+                0 => {
+                    forged.stack.pop();
+                    // A matching old stack ID does not prove this operation
+                    // resolved or was countered. No operation was committed.
+                    forged
+                        .engine
+                        .event_history
+                        .push(CommittedEvent::AuthorityEntryCompletedV1 {
+                            capture_history_index: capture_index,
+                            stack_item_id: saved_item.v4.stack_item_id,
+                            operation_history_index: 0,
+                        });
+                }
+                1 => forged.engine.event_log.push(capture_event.clone()),
+                2 => {
+                    let mut extra = capture_event.clone();
+                    let CommittedEvent::AuthorityEntryCaptureV1 { capture } = &mut extra else {
+                        unreachable!()
+                    };
+                    capture.source.owner = actor.opponent();
+                    forged.engine.event_log.push(extra);
+                }
+                3 => forged.stack.last_mut().unwrap().v4.stack_item_id = Default::default(),
+                4 => forged.engine.event_history.retain(|event| {
+                    !matches!(event, CommittedEvent::AuthorityEntryPublishedV1 { .. })
+                }),
+                _ => {
+                    let publication = forged
+                        .engine
+                        .event_history
+                        .iter_mut()
+                        .find(|event| {
+                            matches!(event, CommittedEvent::AuthorityEntryPublishedV1 { .. })
+                        })
+                        .unwrap();
+                    let CommittedEvent::AuthorityEntryPublishedV1 { item, .. } = publication else {
+                        unreachable!()
+                    };
+                    item.controller = actor.opponent();
+                }
+            }
+            readonly_pass(&mut forged);
+            let mut repeated = restored(&forged);
+            readonly_pass(&mut repeated);
+        }
         let mut omitted = restored(&state);
         omitted.stack.pop();
         readonly_pass(&mut omitted);
@@ -482,14 +538,14 @@ fn collected_dispatch_deletion_and_resolved_item_replay_refuse_readonly_after_re
                 .count(),
             1
         );
-        for corruption in 0..3 {
+        for corruption in 0..5 {
             let mut forged = restored(&state);
             match corruption {
                 0 => forged.stack.push(saved_item.clone()),
                 1 => forged.engine.event_history.retain(|event| {
                     !matches!(event, CommittedEvent::AuthorityEntryCompletedV1 { .. })
                 }),
-                _ => {
+                2 => {
                     let closed = forged
                         .engine
                         .event_history
@@ -501,6 +557,24 @@ fn collected_dispatch_deletion_and_resolved_item_replay_refuse_readonly_after_re
                         .clone();
                     forged.engine.event_history.push(closed);
                 }
+                3 => forged.engine.event_history.retain(|event| {
+                    !matches!(event, CommittedEvent::AuthorityEntryOperationV1 { .. })
+                }),
+                _ => {
+                    let operation = forged
+                        .engine
+                        .event_history
+                        .iter_mut()
+                        .find(|event| {
+                            matches!(event, CommittedEvent::AuthorityEntryOperationV1 { .. })
+                        })
+                        .unwrap();
+                    let CommittedEvent::AuthorityEntryOperationV1 { stack_item_id, .. } = operation
+                    else {
+                        unreachable!()
+                    };
+                    *stack_item_id = Default::default();
+                }
             }
             readonly_pass(&mut forged);
             for _ in 0..2 {
@@ -508,6 +582,71 @@ fn collected_dispatch_deletion_and_resolved_item_replay_refuse_readonly_after_re
                 readonly_pass(&mut forged);
             }
         }
+    }
+}
+
+#[test]
+fn genuine_legend_suspension_retains_both_entry_gain_owners_and_original_beneficiary() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let authority = cast(&mut state, actor, "Authority of the Consuls", ManaColor::W);
+        settle(&mut state);
+        let first = put(
+            &mut state,
+            actor.opponent(),
+            "Dwynen, Gilt-Leaf Daen",
+            Zone::Hand,
+        );
+        let second = put(
+            &mut state,
+            actor.opponent(),
+            "Dwynen, Gilt-Leaf Daen",
+            Zone::Hand,
+        );
+        event::propose_and_commit_batch(
+            &mut state,
+            vec![
+                ProposedEvent::zone_change(first, Zone::Battlefield),
+                ProposedEvent::zone_change(second, Zone::Battlefield),
+            ],
+        );
+        let Decision::ChooseLegendPermanent { player, candidates } = next(&mut state) else {
+            panic!("actual duplicate legends must suspend the checkpoint");
+        };
+        assert_eq!(player, actor.opponent());
+        assert_eq!(candidates.len(), 2);
+        assert!(state.engine.pending_triggers.is_empty());
+        let serialized = serde_json::to_value(&state).unwrap();
+        assert_eq!(
+            serialized["pending_legend_rule_v1"]["waiting_triggers"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        transfer(&mut state, authority, actor.opponent());
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(authority, Zone::Hand),
+        );
+        let mut erased_value = serde_json::to_value(&state).unwrap();
+        erased_value["pending_legend_rule_v1"]["waiting_triggers"] = serde_json::json!([]);
+        let mut erased: GameState = serde_json::from_value(erased_value).unwrap();
+        let before = serde_json::to_vec(&erased).unwrap();
+        assert!(engine::step(&mut erased, Action::ChooseLegendPermanent(first)).is_err());
+        assert_eq!(serde_json::to_vec(&erased).unwrap(), before);
+        let mut replay = restored(&state);
+        for current in [&mut state, &mut replay] {
+            engine::step(current, Action::ChooseLegendPermanent(first)).unwrap();
+            settle(current);
+            assert_eq!(current.players[actor.index()].life, 22);
+            assert_eq!(current.players[actor.opponent().index()].life, 20);
+            assert_eq!(current.objects.get(second).zone, Zone::Graveyard);
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
     }
 }
 

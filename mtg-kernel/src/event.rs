@@ -8,7 +8,9 @@
 //! resulting `CommittedEvent` to `state.engine.event_log` for
 //! `trigger::collect_and_process` to drain after the resolution finishes.
 
-pub use crate::authority_of_the_consuls_v1::AuthorityEntryCaptureV1;
+pub use crate::authority_of_the_consuls_v1::{
+    AuthorityEntryCaptureV1, AuthorityEntryOperationKindV1,
+};
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::ManaColor;
 use crate::state::{GameState, PaidCostRefV4, StackItemKind, Target, Zone};
@@ -690,6 +692,20 @@ pub enum CommittedEvent {
     AuthorityEntryCompletedV1 {
         capture_history_index: u64,
         stack_item_id: crate::ids::StackItemId,
+        operation_history_index: u64,
+    },
+    /// Independently committed actual gain/counter operation, not a dispatch
+    /// completion marker. Gain also binds the real ordinary LifeGain event.
+    AuthorityEntryOperationV1 {
+        capture_history_index: u64,
+        stack_item_id: StackItemId,
+        source: crate::state::AbilitySourceContractV4,
+        kind: crate::authority_of_the_consuls_v1::AuthorityEntryOperationKindV1,
+    },
+    /// History-only exact finalized trigger publication.
+    AuthorityEntryPublishedV1 {
+        capture_history_index: u64,
+        item: crate::state::StackItem,
     },
 }
 

@@ -21,6 +21,8 @@ fn unrelated_registered_entries_and_real_token_copy_preserve_absent_authority_st
                 | CommittedEvent::AuthorityEntryCollectedV1 { .. }
                 | CommittedEvent::AuthorityEntryObserversV1 { .. }
                 | CommittedEvent::AuthorityEntryCompletedV1 { .. }
+                | CommittedEvent::AuthorityEntryOperationV1 { .. }
+                | CommittedEvent::AuthorityEntryPublishedV1 { .. }
         )));
         assert!(!requires_successor(&state));
         let before = serde_json::to_vec(&state).unwrap();
@@ -65,6 +67,77 @@ mod printed {
             }
         }
         panic!("entry did not settle");
+    }
+    #[test]
+    fn actual_captures_authenticate_typed_deferred_and_legend_return_owners() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for transport in 0..2 {
+                let mut state = ready_state();
+                state.active_player = actor;
+                state.priority_player = actor;
+                let observer = put(
+                    &mut state,
+                    actor,
+                    "Authority of the Consuls",
+                    Zone::Battlefield,
+                );
+                let elf = put(&mut state, actor.opponent(), "Llanowar Elves", Zone::Hand);
+                event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(elf, Zone::Battlefield),
+                );
+                let events = state.engine.event_log.clone();
+                let pending = collect(&mut state, &events).unwrap();
+                assert_eq!(pending.len(), 1);
+                state.engine.event_log.clear();
+                if transport == 0 {
+                    state.legend_pending_v1 = Some(pending);
+                } else {
+                    // A typed owner-storage probe, not a fabricated printed
+                    // resolution-play producer. Actual capture/source authority
+                    // and the consumer's real deferred field are used.
+                    state
+                        .standard_v1
+                        .get_or_insert_with(Default::default)
+                        .resolution_play =
+                        Some(crate::engine::resolution_cast_v1::ResolutionPlayV1 {
+                            parent: crate::ids::StackItemId::default(),
+                            parent_index: 0,
+                            suspended: None,
+                            permission: None,
+                            deferred_triggers: pending,
+                            kicked_source: None,
+                            authorization: None,
+                        });
+                }
+                event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(observer, Zone::Hand),
+                );
+                validate_state(&state).unwrap();
+                assert!(requires_successor(&state));
+                let bytes = serde_json::to_vec(&state).unwrap();
+                let mut replay: GameState = serde_json::from_slice(&bytes).unwrap();
+                validate_state(&replay).unwrap();
+                assert_eq!(serde_json::to_vec(&replay).unwrap(), bytes);
+                if transport == 0 {
+                    replay.legend_pending_v1 = None;
+                } else {
+                    replay
+                        .standard_v1
+                        .as_mut()
+                        .unwrap()
+                        .resolution_play
+                        .as_mut()
+                        .unwrap()
+                        .deferred_triggers
+                        .clear();
+                }
+                let before = serde_json::to_vec(&replay).unwrap();
+                assert!(validate_state(&replay).is_err());
+                assert_eq!(serde_json::to_vec(&replay).unwrap(), before);
+            }
+        }
     }
     #[test]
     fn actual_simultaneous_token_entry_and_accepted_ability_counter_close_exact_dispatch() {

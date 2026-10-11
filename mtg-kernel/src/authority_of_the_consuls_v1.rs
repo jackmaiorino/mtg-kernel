@@ -17,6 +17,33 @@ pub struct AuthorityEntryCaptureV1 {
     pub entrant_controller: PlayerId,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum AuthorityEntryOperationKindV1 {
+    GainCommitted { life_gain_history_index: u64 },
+    CounterCommitted,
+}
+
+fn pending_owners(state: &GameState) -> impl Iterator<Item = &PendingTrigger> {
+    state
+        .engine
+        .pending_triggers
+        .iter()
+        .chain(state.legend_pending_v1.iter().flatten())
+        .chain(
+            state
+                .pending_legend_rule_v1
+                .iter()
+                .flat_map(|pending| pending.waiting_triggers()),
+        )
+        .chain(
+            state
+                .standard_v1
+                .iter()
+                .filter_map(|standard| standard.resolution_play.as_ref())
+                .flat_map(|resolution| resolution.deferred_triggers.iter()),
+        )
+}
+
 fn owns_definition(card_def: u16) -> bool {
     CARD_DEFS.get(usize::from(card_def)).is_some_and(|def| {
         def.name == "Authority of the Consuls"
@@ -309,6 +336,73 @@ pub(crate) fn validate_source(
     Ok(())
 }
 
+fn publication(
+    state: &GameState,
+    capture_index: u64,
+) -> Result<(usize, &crate::state::StackItem), String> {
+    let publications: Vec<_> = state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| match event {
+            CommittedEvent::AuthorityEntryPublishedV1 {
+                capture_history_index,
+                item,
+            } if *capture_history_index == capture_index => Some((index, item)),
+            _ => None,
+        })
+        .collect();
+    let [published] = publications.as_slice() else {
+        return Err("opponent entry trigger lost its exact publication".into());
+    };
+    let capture = capture_at(state, capture_index)?;
+    let item = published.1;
+    if item.source != capture.source.source
+        || item.controller != capture.source.controller
+        || item.v4.ability_source_contract != Some(capture.source)
+        || item.v4.stack_item_id == crate::ids::StackItemId::default()
+        || item.inline_effect
+            != Some(EffectOp::AuthorityEntryGainLifeV1 {
+                capture_history_index: capture_index,
+            })
+        || item.kind != crate::state::StackItemKind::TriggeredAbility
+        || !item.targets.is_empty()
+        || !item.v4.target_contracts.is_empty()
+        || item.is_copy
+        || item.is_flashback
+        || item.madness_offer
+    {
+        return Err("opponent entry publication changed its original finalized trigger".into());
+    }
+    Ok(*published)
+}
+
+/// Called only after the genuine engine trigger publisher finalized the row.
+pub(crate) fn publish(state: &mut GameState, item: &crate::state::StackItem) -> Result<(), String> {
+    let Some(
+        effect @ EffectOp::AuthorityEntryGainLifeV1 {
+            capture_history_index,
+        },
+    ) = item.inline_effect.as_ref()
+    else {
+        return Ok(());
+    };
+    validate_source(state, effect, item.v4.ability_source_contract)?;
+    if state.engine.event_history.iter().any(|event| matches!(event,
+        CommittedEvent::AuthorityEntryPublishedV1 { capture_history_index: index, .. } if index == capture_history_index)) {
+        return Err("opponent entry trigger was published twice".into());
+    }
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::AuthorityEntryPublishedV1 {
+            capture_history_index: *capture_history_index,
+            item: item.clone(),
+        });
+    Ok(())
+}
+
 /// Called only at actual engine resolution/counter completion after removal.
 pub(crate) fn finish(state: &mut GameState, item: &crate::state::StackItem) {
     let Some(
@@ -324,7 +418,35 @@ pub(crate) fn finish(state: &mut GameState, item: &crate::state::StackItem) {
     }
     if validate_source(state, effect, item.v4.ability_source_contract).is_err()
         || item.v4.stack_item_id == crate::ids::StackItemId::default()
+        || publication(state, *capture_history_index).map_or(true, |(_, original)| original != item)
     {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            item.source,
+        ));
+        return;
+    }
+    let operations: Vec<_> = state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| {
+            matches!(event, CommittedEvent::AuthorityEntryOperationV1 {
+            capture_history_index: capture, stack_item_id, source, ..
+        } if capture == capture_history_index && *stack_item_id == item.v4.stack_item_id
+            && Some(*source) == item.v4.ability_source_contract)
+            .then_some(index)
+        })
+        .collect();
+    let [operation_index] = operations.as_slice() else {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            item.source,
+        ));
+        return;
+    };
+    if validate_operation(state, *operation_index).is_err() {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             item.source,
@@ -337,6 +459,37 @@ pub(crate) fn finish(state: &mut GameState, item: &crate::state::StackItem) {
         .push(CommittedEvent::AuthorityEntryCompletedV1 {
             capture_history_index: *capture_history_index,
             stack_item_id: item.v4.stack_item_id,
+            operation_history_index: u64::try_from(*operation_index).expect("bounded history"),
+        });
+}
+
+/// The accepted counter primitive calls this with its validated removed item.
+/// A completion marker alone cannot impersonate this committed operation.
+pub(crate) fn record_countered(state: &mut GameState, item: &crate::state::StackItem) {
+    let Some(EffectOp::AuthorityEntryGainLifeV1 {
+        capture_history_index,
+    }) = item.inline_effect.as_ref()
+    else {
+        return;
+    };
+    let Some(source) = item.v4.ability_source_contract else {
+        return;
+    };
+    if publication(state, *capture_history_index).map_or(true, |(_, original)| original != item) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            item.source,
+        ));
+        return;
+    }
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::AuthorityEntryOperationV1 {
+            capture_history_index: *capture_history_index,
+            stack_item_id: item.v4.stack_item_id,
+            source,
+            kind: AuthorityEntryOperationKindV1::CounterCommitted,
         });
 }
 
@@ -355,6 +508,14 @@ pub(crate) fn resolve(state: &mut GameState, ctx: &ExecCtx, capture_history_inde
     if ctx.source != capture.source.source
         || ctx.controller != capture.source.controller
         || !ctx.targets.is_empty()
+        || publication(state, capture_history_index).map_or(true, |(_, item)| {
+            Some(item.v4.stack_item_id) != ctx.stack_item_id
+                || item.v4.ability_source_contract != ctx.ability_source_contract
+                || item.v4.target_contracts != ctx.target_contracts
+        })
+        || ctx
+            .stack_item_id
+            .is_none_or(|id| id == crate::ids::StackItemId::default())
     {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -362,7 +523,79 @@ pub(crate) fn resolve(state: &mut GameState, ctx: &ExecCtx, capture_history_inde
         ));
         return;
     }
+    let source = capture.source;
+    let start = state.engine.event_history.len();
     event::propose_and_commit(state, ProposedEvent::life_gain(ctx.controller, 1));
+    let gain_index = state.engine.event_history[start..]
+        .iter()
+        .position(|event| {
+            matches!(event,
+        CommittedEvent::LifeGain { player, amount } if *player == ctx.controller && *amount == 1)
+        });
+    let Some(gain_index) = gain_index else {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    };
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::AuthorityEntryOperationV1 {
+            capture_history_index,
+            stack_item_id: ctx.stack_item_id.unwrap(),
+            source,
+            kind: AuthorityEntryOperationKindV1::GainCommitted {
+                life_gain_history_index: u64::try_from(start + gain_index)
+                    .expect("bounded history"),
+            },
+        });
+}
+
+fn validate_operation(state: &GameState, index: usize) -> Result<(), String> {
+    let Some(CommittedEvent::AuthorityEntryOperationV1 {
+        capture_history_index,
+        stack_item_id,
+        source,
+        kind,
+    }) = state.engine.event_history.get(index)
+    else {
+        return Err("completion lost its committed gain/counter operation".into());
+    };
+    let capture = capture_at(state, *capture_history_index)?;
+    let (published_index, published) = publication(state, *capture_history_index)?;
+    let collections: Vec<_> = state.engine.event_history.iter().enumerate().filter_map(|(index, event)| {
+        matches!(event, CommittedEvent::AuthorityEntryCollectedV1 { capture_history_index: capture }
+            if capture == capture_history_index).then_some(index)
+    }).collect();
+    let [collection] = collections.as_slice() else {
+        return Err("operation lost its exact collection".into());
+    };
+    if *collection >= index
+        || published_index <= *collection
+        || published_index >= index
+        || published.v4.stack_item_id != *stack_item_id
+        || *source != capture.source
+        || *stack_item_id == crate::ids::StackItemId::default()
+    {
+        return Err("operation changed its original source/stack/collection occurrence".into());
+    }
+    if let AuthorityEntryOperationKindV1::GainCommitted {
+        life_gain_history_index,
+    } = kind
+    {
+        let gain =
+            usize::try_from(*life_gain_history_index).map_err(|_| "gain index exceeds usize")?;
+        if gain <= published_index
+            || gain >= index
+            || !matches!(state.engine.event_history.get(gain),
+            Some(CommittedEvent::LifeGain { player, amount }) if *player == source.controller && *amount == 1)
+        {
+            return Err("resolution operation lost its actual committed one-life gain".into());
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn requires_successor(state: &GameState) -> bool {
@@ -382,7 +615,7 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
                 )
             })
         })
-        || state.engine.pending_triggers.iter().any(|pending| {
+        || pending_owners(state).any(|pending| {
             matches!(
                 pending.effect,
                 EffectOp::BindAuthorityEntryGainLifeV1 | EffectOp::AuthorityEntryGainLifeV1 { .. }
@@ -421,6 +654,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             })
             .count();
         if collected > 1
+            || (collected == 1 && state.engine.event_log.iter().any(|logged| logged == event))
             || (collected == 0
                 && state
                     .engine
@@ -442,10 +676,17 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             if *capture_history_index == capture.history_index)
             })
             .count();
-        let pending = state
+        let operations = state
             .engine
-            .pending_triggers
+            .event_history
             .iter()
+            .filter(|event| {
+                matches!(event,
+            CommittedEvent::AuthorityEntryOperationV1 { capture_history_index, .. }
+            if *capture_history_index == capture.history_index)
+            })
+            .count();
+        let pending = pending_owners(state)
             .filter(|pending| {
                 matches!(pending.effect,
             EffectOp::AuthorityEntryGainLifeV1 { capture_history_index }
@@ -461,34 +702,79 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             if capture_history_index == capture.history_index)
             })
             .count();
+        let publications = state
+            .engine
+            .event_history
+            .iter()
+            .filter(|event| {
+                matches!(event,
+            CommittedEvent::AuthorityEntryPublishedV1 { capture_history_index, .. }
+            if *capture_history_index == capture.history_index)
+            })
+            .count();
         if completed > 1
+            || operations != completed
+            || publications != usize::from(live + completed > 0)
             || (collected == 0 && (completed != 0 || pending + live != 0))
             || (collected == 1 && pending + live != usize::from(completed == 0))
         {
             return Err("opponent entry trigger lost or replayed its dispatch ownership".into());
         }
     }
-    for event in &state.engine.event_history {
+    for (completion_index, event) in state.engine.event_history.iter().enumerate() {
         if let CommittedEvent::AuthorityEntryCompletedV1 {
             capture_history_index,
             stack_item_id,
+            operation_history_index,
         } = event
         {
             capture_at(state, *capture_history_index)?;
-            if *stack_item_id == crate::ids::StackItemId::default() {
-                return Err("opponent entry completion lost its stack incarnation".into());
+            let operation_index = usize::try_from(*operation_history_index)
+                .map_err(|_| "operation index exceeds usize")?;
+            validate_operation(state, operation_index)?;
+            if operation_index >= completion_index
+                || !matches!(state.engine.event_history.get(operation_index),
+                Some(CommittedEvent::AuthorityEntryOperationV1 { capture_history_index: capture, stack_item_id: id, .. })
+                if capture == capture_history_index && id == stack_item_id)
+            {
+                return Err("completion changed its exact committed operation".into());
+            }
+        }
+        if matches!(event, CommittedEvent::AuthorityEntryOperationV1 { .. }) {
+            validate_operation(state, completion_index)?;
+        }
+        if let CommittedEvent::AuthorityEntryPublishedV1 {
+            capture_history_index,
+            ..
+        } = event
+        {
+            let (index, _) = publication(state, *capture_history_index)?;
+            if index != completion_index || state.engine.event_history[..index].iter().filter(|event|
+                matches!(event, CommittedEvent::AuthorityEntryCollectedV1 { capture_history_index: capture }
+                    if capture == capture_history_index)).count() != 1 {
+                return Err("opponent entry publication lost its prior collection".into());
             }
         }
     }
-    if state
-        .engine
-        .event_log
-        .iter()
-        .any(|event| matches!(event, CommittedEvent::AuthorityEntryCompletedV1 { .. }))
-    {
+    if state.engine.event_log.iter().any(|event| {
+        matches!(
+            event,
+            CommittedEvent::AuthorityEntryCompletedV1 { .. }
+                | CommittedEvent::AuthorityEntryOperationV1 { .. }
+                | CommittedEvent::AuthorityEntryCollectedV1 { .. }
+                | CommittedEvent::AuthorityEntryPublishedV1 { .. }
+        )
+    }) {
         return Err("opponent entry completion was inserted into dispatch log".into());
     }
-    for pending in &state.engine.pending_triggers {
+    for event in &state.engine.event_log {
+        if let CommittedEvent::AuthorityEntryCaptureV1 { capture } = event {
+            if capture_at(state, capture.history_index)? != capture {
+                return Err("dispatch log contains a forged opponent entry capture".into());
+            }
+        }
+    }
+    for pending in pending_owners(state) {
         if let EffectOp::AuthorityEntryGainLifeV1 {
             capture_history_index,
         } = &pending.effect
@@ -512,6 +798,9 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         }) = &item.inline_effect
         {
             let capture = capture_at(state, *capture_history_index)?;
+            if publication(state, *capture_history_index)?.1 != item {
+                return Err("live opponent entry trigger changed its committed publication".into());
+            }
             if item.source != capture.source.source || item.controller != capture.source.controller
             {
                 return Err("opponent entry stack trigger changed its beneficiary".into());

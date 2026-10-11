@@ -12793,6 +12793,16 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
             return Err(error);
         }
     }
+    if matches!(
+        state
+            .stack
+            .last()
+            .and_then(|item| item.inline_effect.as_ref()),
+        Some(EffectOp::AuthorityEntryGainLifeV1 { .. })
+    ) {
+        let published = state.stack.last().expect("just published trigger").clone();
+        crate::authority_of_the_consuls_v1::publish(state, &published)?;
+    }
     // Same `priority_passes`/`priority_player` reset as `reset_priority`
     // (117.5: priority passes to the active player once a triggered
     // ability is put on the stack), but deliberately inlined instead of
@@ -13726,6 +13736,7 @@ pub(crate) fn counter_stack_item_by_id(
     };
     state.stack.remove(position);
     crate::source_power_activation_v1::finish(state, &item);
+    crate::authority_of_the_consuls_v1::record_countered(state, &item);
     crate::authority_of_the_consuls_v1::finish(state, &item);
     if let Some(departure) = departure {
         apply_spell_departure(state, departure)?;
@@ -14006,7 +14017,6 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
         crate::source_power_activation_v1::finish(state, &item);
-        crate::authority_of_the_consuls_v1::finish(state, &item);
         return ResolutionProgress::Complete;
     }
 

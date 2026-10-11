@@ -1046,6 +1046,15 @@ pub(super) fn conflicts(
                             || source.attached_to.is_some_and(|link| s.raw(link.object))
                     })
             }
+            AuthorityEntryPublishedV1 { item, .. } => {
+                s.raw(item.source)
+                    || item.v4.ability_source_contract.is_some_and(|source| {
+                        source.attached_to.is_some_and(|link| s.raw(link.object))
+                    })
+            }
+            AuthorityEntryOperationV1 { source, .. } => {
+                s.raw(source.source) || source.attached_to.is_some_and(|link| s.raw(link.object))
+            }
             InitiativeTrigger { binding } => s.raw(binding.source.source),
             MonarchTrigger { binding } => s.raw(binding.source.source),
             ControlledCreatureDeathCaptureCollectedV1 { .. }
