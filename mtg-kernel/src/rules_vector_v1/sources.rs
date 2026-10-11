@@ -990,6 +990,47 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
     }
 
     // Static abilities the engine keys by name outside `CardDef`.
+    if let Some(keywords) = crate::engine::static_controller_turn_self_keyword_for(name) {
+        walk.rec("static_controller_turn_self_keyword", json!(keywords.0));
+        walk.opaque
+            .push("static self keyword during current controller turn");
+        walk.ability(CtxF::Static, |out| {
+            out.control(ControlF::Conditional);
+            out.atoms.push(Atom::Opaque);
+            for keyword in keyword_bits(keywords) {
+                out.effect(
+                    EffectAtom::new(EvF::GrantKeyword)
+                        .obj(ObjF::ThisObject)
+                        .duration(DurF::WhileOnBattlefield)
+                        .keyword(keyword),
+                );
+            }
+        });
+    }
+    if crate::engine::static_counter_keyword_controller_turn_only_for(name) {
+        walk.rec("static_counter_keyword_controller_turn_only", json!(true));
+        walk.opaque
+            .push("current controller turn and live positive plus-one counter predicate");
+        walk.ability(CtxF::Static, |out| {
+            out.control(ControlF::Conditional);
+            out.atoms.push(Atom::Opaque);
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Typed(CardTypeF::Creature)),
+                AggF::Any,
+            );
+            for keyword in keyword_bits(controlled_counter_keyword.expect("counter keyword")) {
+                out.effect(
+                    EffectAtom::new(EvF::GrantKeyword)
+                        .player(RelF::You)
+                        .obj(ObjF::Typed(CardTypeF::Creature))
+                        .duration(DurF::WhileOnBattlefield)
+                        .keyword(keyword),
+                );
+            }
+        });
+    }
     if let Some(keywords) = crate::engine::static_untapped_self_keyword_for(name) {
         walk.rec("static_untapped_self_keyword", json!(keywords.0));
         walk.opaque

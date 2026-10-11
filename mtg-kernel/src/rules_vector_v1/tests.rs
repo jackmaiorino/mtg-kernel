@@ -834,6 +834,11 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
     ),
     (
         "engine.rs",
+        "Inspiring Paladin",
+        "read via engine controller-turn self and controlled-counter keyword descriptors (live turn and counter predicates opaque)",
+    ),
+    (
+        "engine.rs",
         "Paradise Druid",
         "read via engine::static_untapped_self_keyword_for (untapped predicate opaque)",
     ),

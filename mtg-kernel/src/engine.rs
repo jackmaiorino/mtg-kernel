@@ -12824,6 +12824,17 @@ pub(crate) fn static_untapped_self_keyword_for(name: &str) -> Option<Keywords> {
     }
 }
 
+pub(crate) fn static_controller_turn_self_keyword_for(name: &str) -> Option<Keywords> {
+    match name {
+        "Inspiring Paladin" => Some(Keywords::FIRST_STRIKE),
+        _ => None,
+    }
+}
+
+pub(crate) fn static_counter_keyword_controller_turn_only_for(name: &str) -> bool {
+    name == "Inspiring Paladin"
+}
+
 /// Whether `id` currently has `kw`, folding in every source this kernel
 /// models: the card's own static `Keywords`, `static_self_boost_for`'s
 /// conditional self-grant (Goblin Tomb Raider's haste), and any active
@@ -12867,6 +12878,14 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     {
         return true;
     }
+    if printed_active
+        && obj.zone == Zone::Battlefield
+        && obj.v4.face_index == 0
+        && state.active_player == obj.controller
+        && static_controller_turn_self_keyword_for(def.name).is_some_and(|keyword| keyword.has(kw))
+    {
+        return true;
+    }
     if crate::continuous_characteristics_v1::animation(state, id)
         .is_some_and(|(animation, _)| animation.keywords.has(kw))
     {
@@ -12897,6 +12916,8 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
                 && source.controller == obj.controller
                 && source_def.is_executable()
                 && crate::continuous_characteristics_v1::printed_abilities_active(state, source_id)
+                && (!static_counter_keyword_controller_turn_only_for(source_def.name)
+                    || (source.v4.face_index == 0 && state.active_player == source.controller))
                 && crate::continuous_characteristics_v1::grant_survives(
                     state,
                     id,
