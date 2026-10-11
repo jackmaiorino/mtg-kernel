@@ -366,9 +366,21 @@ fn effective_name_and_already_queued_ability_survive_witness_and_forged_roots_re
                 token_def: card_id_by_name("Rabbit Token").unwrap(),
             });
         let mut replay = restored(&forged);
-        assert!(matches!(
-            engine::advance_until_decision(&mut replay),
-            Decision::Halted { .. }
-        ));
+        let mut halted = false;
+        for _ in 0..8 {
+            match engine::advance_until_decision(&mut replay) {
+                Decision::Halted { .. } => {
+                    halted = true;
+                    break;
+                }
+                Decision::CastSpellOrPass { .. } => {
+                    engine::step(&mut replay, Action::Pass).unwrap();
+                }
+                other => panic!("unexpected forged-root decision {other:?}"),
+            }
+        }
+        assert!(halted, "forged root reached resolution without refusal");
+        assert!(rabbits(&replay, player).is_empty());
+        assert!(rabbits(&replay, player.opponent()).is_empty());
     }
 }
