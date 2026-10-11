@@ -40,11 +40,12 @@ def read(path):
 
 
 def pin(path):
+    spelling = str(path)
     path = Path(path)
     require(path.is_absolute() and path.is_file(), "absolute existing file required: " + str(path))
     with path.open("rb") as stream:
         digest = hashlib.file_digest(stream, "sha256").hexdigest()
-    return {"path": str(path), "sha256": digest}
+    return {"path": spelling, "sha256": digest}
 
 
 def checked(ref):
