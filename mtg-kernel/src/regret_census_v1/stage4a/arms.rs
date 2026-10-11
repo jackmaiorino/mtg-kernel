@@ -1,6 +1,7 @@
 //! Candidate E and controls A and D: selection under the transition ceiling,
 //! then independent evaluation on paired worlds (RUNNER.md sections 2-3).
 
+use super::canon2::{KeyMode, KeyStats, Keyer};
 use super::diag::{EvalSrc, SelSrc, Trace};
 use super::labels::{SpyDefs, Suffix};
 use super::play::{
@@ -78,6 +79,9 @@ pub(crate) struct RootCtx<'a> {
     pub(crate) limits: Limits,
     /// E's untried-action urgency (None: the formal untried-first rule).
     pub(crate) urgency: Option<f64>,
+    /// E's node key version (`canon2.rs`); selection and frozen execution
+    /// always use the same one.
+    pub(crate) key_mode: KeyMode,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -681,7 +685,19 @@ impl Roles {
         staged: &std::collections::HashSet<Key>,
         rec: &mut SimRecord,
         mut capture: Option<&mut Capture>,
+        diag: &mut SearchDiag,
     ) -> Result<(Vec<(Key, usize)>, Vec<(Key, Node)>, End), PlayErr> {
+        if ctx.key_mode != KeyMode::Legacy && (retain > 1 || capture.is_some()) {
+            return Err(PlayErr::Fault(
+                "depth retention and capture use legacy keys only".into(),
+            ));
+        }
+        let SearchDiag {
+            keys, legacy_path, ..
+        } = diag;
+        legacy_path.clear();
+        let mut keyer = Keyer::new(ctx.key_mode, keys);
+        let mut sup = Sup::new();
         let mut path: Vec<(Key, usize)> = Vec::new();
         let mut new: Vec<(Key, Node)> = Vec::new();
         let mut parent: (Key, Vec<u8>) = ([0u8; 32], b"root".to_vec());
@@ -696,6 +712,7 @@ impl Roles {
         let mut last_phys: Option<u64> = None;
         loop {
             if let Some(end) = terminal(&s, ctx.focal) {
+                sup.finish(rec);
                 return Ok((path, new, end));
             }
             let d = decision(&s).expect("decision");
@@ -705,6 +722,9 @@ impl Roles {
                         depth += 1;
                         last_phys = Some(d.physical_decision_id);
                     }
+                    // Diagnostic: whether this choice executes a tree edge
+                    // with eight prior natural terminal backups.
+                    let mut supported = false;
                     // Accounting only: the tree prefix ends at the first
                     // choice past the depth limit when nothing expanded.
                     if in_tree && depth > MAX_DEPTH && rec.depth_limit.is_none() {
@@ -717,9 +737,9 @@ impl Roles {
                         SelSrc::TailAfterExpand
                     };
                     let a = if in_tree && depth <= MAX_DEPTH {
-                        let cn = canon(&s, d)?;
-                        let key = child_key(&parent.0, &parent.1, &cn);
-                        let (edge_index, edge) = match tree.find(&key, &parent.0, &parent.1, &cn)? {
+                        let st = keyer.step(&s, d)?;
+                        let (key, pk, pe, cn) = keyer.storage(&st);
+                        let (edge_index, edge) = match tree.find(&key, &pk, &pe, cn)? {
                             Found::Hit(node) => {
                                 src = SelSrc::Tree;
                                 rec.existing += 1;
@@ -727,31 +747,19 @@ impl Roles {
                                     rec.staged_hits += 1;
                                 }
                                 let e = node.select_with(ctx.urgency);
+                                supported = node.n[e] >= super::tree::MIN_EXEC_BACKUPS;
                                 (e, cn.edges[e].clone())
                             }
                             Found::Miss => {
                                 src = SelSrc::Expand;
                                 if let Some(cap) = capture.as_deref_mut() {
-                                    cap.see(key, &s, d, depth, &cn, &path)?;
+                                    cap.see(key, &s, d, depth, cn, &path)?;
                                 }
                                 if let Some(t) = trace.as_deref_mut() {
-                                    t.node_created(
-                                        &key,
-                                        path.last(),
-                                        &cn,
-                                        &s,
-                                        ctx.focal,
-                                        &ctx.defs,
-                                    );
+                                    t.node_created(&key, path.last(), cn, &s, ctx.focal, &ctx.defs);
                                 }
-                                let node = Node::new(
-                                    &key,
-                                    parent.0,
-                                    parent.1.clone(),
-                                    cn.clone(),
-                                    depth,
-                                    ctx.seeds,
-                                );
+                                let perm = keyer.perm(&st, ctx.seeds)?;
+                                let node = Node::with_perm(pk, pe, cn.clone(), depth, perm);
                                 let e = node.select_with(ctx.urgency);
                                 new.push((key, node));
                                 in_tree = false;
@@ -762,8 +770,10 @@ impl Roles {
                             }
                         };
                         path.push((key, edge_index));
-                        let live = live_index(&cn, &edge)?;
+                        legacy_path.push(st.legacy_key);
+                        let live = live_index(cn, &edge)?;
                         parent = (key, edge);
+                        keyer.advance(st, live);
                         live
                     } else if !in_tree && new.len() < retain && depth <= MAX_DEPTH {
                         // Depth retention (D8): stage this choice node and
@@ -792,6 +802,7 @@ impl Roles {
                     if let Some(cap) = capture.as_deref_mut() {
                         cap.opp_since.clear();
                     }
+                    sup.see(d.physical_decision_id, depth, supported);
                     if let Some(t) = trace.as_deref_mut() {
                         let at = matches!(src, SelSrc::Tree | SelSrc::Expand)
                             .then(|| path.last())
@@ -866,6 +877,29 @@ impl Roles {
         mut records: Option<&mut Vec<SimRecord>>,
         mut capture: Option<&mut Capture>,
     ) -> (Selection, Tree) {
+        self.select_e_diagnosed(
+            ctx,
+            trace.take(),
+            retain,
+            records.take(),
+            capture.take(),
+            None,
+        )
+    }
+
+    /// `select_e_capturing` with optional search diagnostics (keying cost,
+    /// per-edge first wins, legacy identities per stored node).
+    pub(crate) fn select_e_diagnosed(
+        &mut self,
+        ctx: &RootCtx,
+        mut trace: Option<&mut Trace>,
+        retain: usize,
+        mut records: Option<&mut Vec<SimRecord>>,
+        mut capture: Option<&mut Capture>,
+        diag: Option<&mut SearchDiag>,
+    ) -> (Selection, Tree) {
+        let mut own = SearchDiag::default();
+        let diag = diag.unwrap_or(&mut own);
         let retain = retain.max(1);
         let mut staged: std::collections::HashSet<Key> = std::collections::HashSet::new();
         let started = Instant::now();
@@ -923,6 +957,7 @@ impl Roles {
                 &staged,
                 &mut rec,
                 capture.as_deref_mut(),
+                diag,
             );
             if let Some(cap) = capture.as_deref_mut() {
                 cap.end(matches!(&r, Ok((_, _, End::Natural { .. }))));
@@ -962,6 +997,7 @@ impl Roles {
                 Ok((path, new, End::Natural { win })) => {
                     sel.discovery
                         .add(&suffix, Some(End::Natural { win }), index);
+                    diag.before_backup(&tree, &path, &new, win, sel.completed);
                     tree.backup(&path, new, win);
                     sel.completed += 1;
                 }
@@ -1091,7 +1127,8 @@ impl Roles {
         mut trace: Option<&mut Trace>,
         mut log: Option<&mut Vec<u32>>,
     ) -> Result<End, PlayErr> {
-        let mut parent: (Key, Vec<u8>) = ([0u8; 32], b"root".to_vec());
+        let mut kstats = KeyStats::default();
+        let mut keyer = Keyer::new(ctx.key_mode, &mut kstats);
         let mut matching = true;
         let mut depth = 0u32;
         let mut last_phys: Option<u64> = None;
@@ -1117,13 +1154,13 @@ impl Roles {
                     };
                     let mut seen: Option<Seen> = None;
                     let a = if matching && depth <= MAX_DEPTH {
-                        let cn = canon(s, d)?;
-                        let key = child_key(&parent.0, &parent.1, &cn);
+                        let st = keyer.step(s, d)?;
+                        let (key, pk, pe, cn) = keyer.storage(&st);
                         if !root {
                             stats.nonroot_lookups += 1;
                         }
                         let mut hit = None;
-                        let live = match tree.find(&key, &parent.0, &parent.1, &cn)? {
+                        let live = match tree.find(&key, &pk, &pe, cn)? {
                             Found::Hit(node) => {
                                 if !root {
                                     stats.nonroot_hits += 1;
@@ -1138,7 +1175,7 @@ impl Roles {
                                             stats.root_qualified = true;
                                         }
                                         stats.executed.push((depth, node.n[e]));
-                                        live_index(&cn, &cn.edges[e])?
+                                        live_index(cn, &cn.edges[e])?
                                     }
                                     None => {
                                         src = EvalSrc::MatchedNoQualified;
@@ -1158,7 +1195,7 @@ impl Roles {
                             let edge = cn.edges.iter().position(|x| x == m).unwrap_or(usize::MAX);
                             seen = Some((key, hit, edge));
                         }
-                        parent = (key, cn.menu[live as usize].clone());
+                        keyer.advance(st, live);
                         live
                     } else {
                         act(&mut self.focal, s, &d, c)?
@@ -1328,6 +1365,130 @@ impl Capture {
     }
 }
 
+/// First natural winning backup of one stored edge, and what followed.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct EdgeWin {
+    /// (natural-simulation ordinal, prior backups of the edge, prior visits
+    /// of its node) at the first winning backup.
+    pub(crate) first_win: Option<(u64, u64, u64)>,
+    pub(crate) backups_after: u64,
+    pub(crate) wins_after: u64,
+}
+
+/// Search diagnostics (never read by selection, backup or execution).
+#[derive(Debug, Default)]
+pub(crate) struct SearchDiag {
+    pub(crate) keys: KeyStats,
+    pub(crate) edges: HashMap<(Key, usize), EdgeWin>,
+    /// Stored node -> legacy history identity -> natural backups per edge.
+    pub(crate) legacy: HashMap<Key, BTreeMap<Key, Vec<u64>>>,
+    legacy_path: Vec<Key>,
+}
+
+impl SearchDiag {
+    fn before_backup(
+        &mut self,
+        tree: &Tree,
+        path: &[(Key, usize)],
+        new: &[(Key, Node)],
+        win: bool,
+        ordinal: u64,
+    ) {
+        for (i, (k, a)) in path.iter().enumerate() {
+            let (prior, visits, edges) = match tree.nodes.get(k) {
+                Some(n) => (n.n[*a], n.visits, n.n.len()),
+                None => {
+                    let len = new
+                        .iter()
+                        .find(|(nk, _)| nk == k)
+                        .map_or(0, |(_, n)| n.n.len());
+                    (0, 0, len)
+                }
+            };
+            let e = self.edges.entry((*k, *a)).or_default();
+            if e.first_win.is_some() {
+                e.backups_after += 1;
+                e.wins_after += u64::from(win);
+            } else if win {
+                e.first_win = Some((ordinal, prior, visits));
+            }
+            if let Some(l) = self.legacy_path.get(i) {
+                let v = self
+                    .legacy
+                    .entry(*k)
+                    .or_default()
+                    .entry(*l)
+                    .or_insert_with(|| vec![0; edges]);
+                if let Some(x) = v.get_mut(*a) {
+                    *x += 1;
+                }
+            }
+        }
+    }
+}
+
+/// Contiguous supported prefix of one selection trajectory (diagnostic): a
+/// choice is supported when it executes a tree edge with at least eight prior
+/// natural terminal backups; a physical group when all its visited nonforced
+/// focal substeps are.
+struct Sup {
+    open_sub: bool,
+    open_group: bool,
+    cur: Option<u64>,
+    cur_ok: bool,
+    groups: u32,
+    subs: u32,
+    first_unsupported_depth: u32,
+}
+
+impl Sup {
+    fn new() -> Self {
+        Self {
+            open_sub: true,
+            open_group: true,
+            cur: None,
+            cur_ok: true,
+            groups: 0,
+            subs: 0,
+            first_unsupported_depth: 0,
+        }
+    }
+
+    fn close(&mut self) {
+        if self.cur.is_some() && self.open_group {
+            if self.cur_ok {
+                self.groups += 1;
+            } else {
+                self.open_group = false;
+            }
+        }
+    }
+
+    fn see(&mut self, phys: u64, depth: u32, ok: bool) {
+        if self.cur != Some(phys) {
+            self.close();
+            self.cur = Some(phys);
+            self.cur_ok = true;
+        }
+        self.cur_ok &= ok;
+        if self.open_sub {
+            if ok {
+                self.subs += 1;
+            } else {
+                self.open_sub = false;
+                self.first_unsupported_depth = depth;
+            }
+        }
+    }
+
+    fn finish(mut self, rec: &mut SimRecord) {
+        self.close();
+        rec.supported_groups = self.groups;
+        rec.supported_substeps = self.subs;
+        rec.first_unsupported_depth = self.first_unsupported_depth;
+    }
+}
+
 /// Selection work at one point of a simulation, relative to its start:
 /// physical focal depth, transitions and inference calls.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1360,6 +1521,12 @@ pub(crate) struct SimRecord {
     pub(crate) staged_hits: u32,
     /// Nodes committed by this simulation (natural endings only).
     pub(crate) new_nodes: usize,
+    /// Contiguous supported prefix (natural and nonnatural endings): leading
+    /// physical groups and leading nonforced substeps, and the physical depth
+    /// of the first unsupported choice (0: none).
+    pub(crate) supported_groups: u32,
+    pub(crate) supported_substeps: u32,
+    pub(crate) first_unsupported_depth: u32,
 }
 
 impl SimRecord {

@@ -25,6 +25,7 @@ mod arms;
 mod bank;
 mod bank_trace;
 mod branch;
+mod canon2;
 mod diag;
 mod identity;
 mod labels;
@@ -571,6 +572,7 @@ fn run_root(
         probs: probs.clone(),
         limits: shared.limits,
         urgency: None,
+        key_mode: canon2::KeyMode::Legacy,
     };
     let (e_sel, e_tree) = roles.select_e(&ctx);
     let a_cands = arms::a_candidates(&probs);
@@ -721,6 +723,7 @@ fn run_root_diag(
         probs: probs.clone(),
         limits: shared.limits,
         urgency: shared.select_urgency,
+        key_mode: canon2::KeyMode::Legacy,
     };
     let trace_dir = std::env::var("S4A_TRACE").ok();
     let mut trace = trace_dir.as_ref().map(|_| diag::Trace::default());
@@ -957,6 +960,12 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         // creating simulation, whose opponent decisions keep private
         // snapshots for the paired engine probe).
         let mut opts = opts;
+        opts.key_mode = match std::env::var("BRANCH_KEY_MODE").as_deref() {
+            Err(_) | Ok("legacy") => None,
+            Ok("shadow") => Some(canon2::KeyMode::Shadow),
+            Ok("repaired") => Some(canon2::KeyMode::Repaired),
+            Ok(other) => return Err(format!("BRANCH_KEY_MODE {other}")),
+        };
         opts.capture_up_to = match std::env::var("BRANCH_CAPTURE_UP_TO") {
             Ok(v) => v
                 .parse()
