@@ -2212,11 +2212,11 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 386 (following creatures, spells and tokens).
+        // batches append through id 389 (Paladin, Skyknight and Sire).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                387
+                390
             } else {
                 192
             }
