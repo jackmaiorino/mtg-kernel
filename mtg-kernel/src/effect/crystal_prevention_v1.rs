@@ -74,6 +74,8 @@ pub struct ExecutionStepV1 {
     pub conditional_result: Option<bool>,
     pub offered_menu: Option<PendingEffectChoice>,
     pub damage_history: Vec<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub nondamage_history: Vec<u32>,
 }
 pub(crate) fn shield_operation(
     state: &mut GameState,
@@ -210,6 +212,26 @@ impl OwnerV1 {
                     || d.historical_source == Some(self.expected.v4.stack_item_id)
                         && crate::source_power_activation_v1::damage_source(
                             state, d.source, self.expected.v4.stack_item_id).is_ok()))
+            && !state
+                .stack
+                .iter()
+                .any(|i| i.v4.stack_item_id == self.expected.v4.stack_item_id)
+            && state.engine.pending_effect.is_none()
+    }
+    pub(crate) fn controller(&self) -> PlayerId {
+        self.expected.controller
+    }
+    pub(crate) fn permits_life_gain(
+        &self,
+        state: &GameState,
+        event: &crate::event::ProposedEvent,
+        player: PlayerRef,
+        amount: i32,
+    ) -> bool {
+        matches!(player, PlayerRef::Controller | PlayerRef::Opponent)
+            && matches!(event, crate::event::ProposedEvent::LifeGain(gain)
+                if gain.player == context(&self.expected).resolve_player(player, state)
+                    && gain.amount == amount && gain.touched_by.is_empty())
             && !state
                 .stack
                 .iter()
@@ -362,6 +384,10 @@ fn has_damage(op: &EffectOp) -> bool {
 }
 fn supported(op: &EffectOp) -> bool {
     match op {
+        EffectOp::GainLife {
+            player: PlayerRef::Controller | PlayerRef::Opponent,
+            ..
+        } => true,
         EffectOp::DealDamage { .. }
         | EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1) => {
             true
@@ -771,6 +797,7 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
             conditional_result: None,
             offered_menu: None,
             damage_history: Vec::new(),
+            nondamage_history: Vec::new(),
         };
         match op {
             EffectOp::Sequence(ops) => {
@@ -826,6 +853,27 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                         step.damage_history.push(
                             u32::try_from(start + offset)
                                 .map_err(|_| "Crystal damage occurrence exceeds u32")?,
+                        );
+                    }
+                }
+            }
+            EffectOp::GainLife {
+                player: player @ (PlayerRef::Controller | PlayerRef::Opponent),
+                amount,
+            } => {
+                let start = state.engine.event_history.len();
+                crate::event::propose_and_commit_crystal_life_gain_owned(
+                    state, *player, *amount, owner,
+                );
+                if state.engine.halted.is_some() {
+                    state.engine.pending_effect = Some(pending);
+                    return Err("Crystal owned following life gain halted".into());
+                }
+                for (offset, event) in state.engine.event_history[start..].iter().enumerate() {
+                    if matches!(event, CommittedEvent::LifeGain { .. }) {
+                        step.nondamage_history.push(
+                            u32::try_from(start + offset)
+                                .map_err(|_| "Crystal life gain occurrence exceeds u32")?,
                         );
                     }
                 }
@@ -900,6 +948,11 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
             let EffectFrame::Program { op, path } = &step.frame else {
                 return Err("Crystal execution committed a foreign frame".into());
             };
+            if !matches!(op, EffectOp::GainLife { .. }) && !step.nondamage_history.is_empty() {
+                return Err(
+                    "Crystal damage/structural instruction carries foreign life gain".into(),
+                );
+            }
             match op {
                 EffectOp::Sequence(ops) => {
                     if step.conditional_result.is_some()
@@ -998,6 +1051,38 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                             }
                             last_damage = at;
                         }
+                    }
+                }
+                EffectOp::GainLife {
+                    player: player @ (PlayerRef::Controller | PlayerRef::Opponent),
+                    amount,
+                } => {
+                    if step.conditional_result.is_some()
+                        || step.offered_menu.is_some()
+                        || !step.damage_history.is_empty()
+                        || step.nondamage_history.len() != usize::from(*amount > 0)
+                    {
+                        return Err("Crystal life gain changed its actual operation count".into());
+                    }
+                    let beneficiary = match player {
+                        PlayerRef::Controller => pending.ctx.controller,
+                        PlayerRef::Opponent => pending.ctx.controller.opponent(),
+                        _ => unreachable!("matched direct player reference"),
+                    };
+                    for saved in &step.nondamage_history {
+                        let at = usize::try_from(*saved).map_err(|_| "Crystal life gain index")?;
+                        if at <= last_damage
+                            || at >= index
+                            || !matches!(state.engine.event_history.get(at),
+                                Some(CommittedEvent::LifeGain { player, amount: gained })
+                                    if *player == beneficiary && gained == amount)
+                        {
+                            return Err(
+                                "Crystal following life gain lost genuine committed occurrence"
+                                    .into(),
+                            );
+                        }
+                        last_damage = at;
                     }
                 }
                 _ => return Err("Crystal execution contains an unsupported producer".into()),

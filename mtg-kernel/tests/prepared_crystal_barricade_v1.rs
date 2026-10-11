@@ -899,6 +899,89 @@ fn real_heartfire_sacrifice_uses_captured_power_with_mixed_prevention_and_restor
 }
 
 #[test]
+fn real_joust_prevention_preserves_following_captured_controller_life_gain() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let wall = source(&mut state, actor);
+        let target = put(&mut state, actor, "Shivan Dragon", Zone::Battlefield);
+        let spell = put(&mut state, actor, "Joust Through", Zone::Hand);
+        shield(&mut state, wall, target, 5);
+        state.players[actor.index()].mana_pool[ManaColor::W.pool_index()] = 1;
+        state.step = Step::DeclareAttackers;
+        assert!(matches!(
+            next(&mut state),
+            Decision::DeclareAttackers { .. }
+        ));
+        engine::step(&mut state, Action::DeclareAttackers(vec![target])).unwrap();
+        assert!(state.engine.combat.attackers.contains(&target));
+        priority(&mut state, actor);
+        engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+        assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+        let _ = next(&mut state);
+        mixed_menu(&mut state);
+        let life = state.players[actor.index()].life;
+        let selected = option(&state, false);
+        engine::step(&mut state, Action::ChooseEffectOption(selected)).unwrap();
+        assert!(state
+            .engine
+            .pending_effect
+            .as_ref()
+            .unwrap()
+            .choice
+            .is_none());
+        assert!(!state
+            .engine
+            .pending_effect
+            .as_ref()
+            .unwrap()
+            .frames
+            .is_empty());
+        let mut replay = restore(&state);
+        for current in [&mut state, &mut replay] {
+            finish(current);
+            assert_eq!(current.objects.get(spell).zone, Zone::Graveyard);
+            assert_eq!(current.objects.get(target).damage, 0);
+            assert_eq!(current.players[actor.index()].life, life + 1);
+            assert_eq!(
+                current
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter(|e| matches!(e,
+                mtg_kernel::event::CommittedEvent::LifeGain { player, amount: 1 }
+                    if *player == actor))
+                    .count(),
+                1
+            );
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+        let mut forged = restore(&state);
+        for event in &mut forged.engine.event_history {
+            if let mtg_kernel::event::CommittedEvent::CrystalExecutionV1 { execution } = event {
+                for step in &mut execution.steps {
+                    if matches!(
+                        step.frame,
+                        mtg_kernel::effect::EffectFrame::Program {
+                            op: mtg_kernel::effect::EffectOp::GainLife { .. },
+                            ..
+                        }
+                    ) {
+                        step.nondamage_history.clear();
+                    }
+                }
+            }
+        }
+        let before = serde_json::to_vec(&forged).unwrap();
+        assert!(engine::step(&mut forged, Action::Pass).is_err());
+        assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
+    }
+}
+
+#[test]
 fn answered_real_bolt_cannot_forge_closed_boundary_without_owned_execution() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);

@@ -1366,6 +1366,33 @@ pub(crate) fn propose_and_commit_crystal_owned(
     }
     propose_and_commit_inner(state, event);
 }
+pub(crate) fn propose_and_commit_crystal_life_gain_owned(
+    state: &mut GameState,
+    player: crate::effect::PlayerRef,
+    amount: i32,
+    owner: &crate::effect::crystal_prevention_v1::OwnerV1,
+) {
+    let beneficiary = match player {
+        crate::effect::PlayerRef::Controller => owner.controller(),
+        crate::effect::PlayerRef::Opponent => owner.controller().opponent(),
+        _ => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                crate::ids::ObjectId(0),
+            ));
+            return;
+        }
+    };
+    let proposed = ProposedEvent::life_gain(beneficiary, amount);
+    if !owner.permits_life_gain(state, &proposed, player, amount) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            crate::ids::ObjectId(0),
+        ));
+        return;
+    }
+    propose_and_commit_inner(state, proposed);
+}
 fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
     if crate::effect::temporary_control_v1::authority::validate(state).is_err() {
         return;
