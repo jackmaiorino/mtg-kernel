@@ -2218,12 +2218,12 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 391 (Raid entry creatures after Paladin,
+        // batches append through id 393 (Condemn and Run Away Together after Raid,
         // Skyknight and Sire).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                392
+                394
             } else {
                 192
             }

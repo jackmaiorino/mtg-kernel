@@ -5948,6 +5948,63 @@
       "java_file": "Mage.Sets/src/mage/cards/g/GoblinBoarders.java",
       "scryfall_id": "4409a063-bf2a-4a49-803e-3ce6bd474353",
       "oracle_id": "4c64feae-95d7-426d-9e42-d3b0841d2054"
+    },
+    {
+      "name": "Condemn",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "java_file": "Mage.Sets/src/mage/cards/c/Condemn.java",
+      "is_land": false,
+      "produces_mana": [],
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_condemn_return.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "attacking_creature_target",
+        "bottom_library",
+        "captured_controller_lifegain"
+      ]
+    },
+    {
+      "name": "Run Away Together",
+      "mana_cost": "{1}{U}",
+      "mana_value": 2,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "java_file": "Mage.Sets/src/mage/cards/r/RunAwayTogether.java",
+      "is_land": false,
+      "produces_mana": [],
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_condemn_return.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "different_controller_targets",
+        "batched_return_to_owner_hand"
+      ]
     }
   ]
 }
