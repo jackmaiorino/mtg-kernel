@@ -5469,22 +5469,6 @@ pub(crate) fn projected_card_def(state: &GameState, id: ObjectId, generation: u3
     }
     object.card_def
 }
-pub(crate) fn actor_card_def(
-    state: &GameState,
-    object: crate::ids::ObjectId,
-    observer: PlayerId,
-) -> u16 {
-    let live = state.objects.get(object);
-    if live
-        .v4
-        .face_down_v1
-        .is_some_and(|face| face.lookers & (1u8 << observer.index()) != 0)
-    {
-        live.card_def
-    } else {
-        projected_card_def(state, object, live.zone_change_count)
-    }
-}
 fn known_face_down_cards_v1(
     state: &GameState,
     observer: PlayerId,
