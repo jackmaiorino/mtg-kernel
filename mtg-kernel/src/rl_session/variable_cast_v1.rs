@@ -460,6 +460,31 @@ mod tests {
     }
 
     #[test]
+    fn same_owner_public_binding_does_not_hash_opponent_hidden_identity() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state();
+            state.active_player = actor;
+            state.priority_player = actor;
+            put(&mut state, actor, "Forest", Zone::Hand);
+            let hidden = put(&mut state, actor.opponent(), "Snap", Zone::Hand);
+            let first = VariableCastSessionV1::from_state(11062, state).unwrap();
+            let mut second = first.clone();
+            let definition = crate::card_def::card_id_by_name("Lightning Bolt").unwrap();
+            let live = second.state.objects.get_mut(hidden);
+            live.card_def = definition;
+            live.name = crate::card_def::CARD_DEFS[definition as usize]
+                .object_name
+                .into();
+            live.v4 = crate::state::ObjectStateV4::from_card_def(definition);
+            // Reauthenticate a trusted backend substitution, retaining the same
+            // construction owner. Private authority differs; public bytes must not.
+            second.authority = second.authority_digest().unwrap();
+            assert_ne!(first.authority, second.authority);
+            assert_eq!(first.current().unwrap(), second.current().unwrap());
+        }
+    }
+
+    #[test]
     fn mutable_owned_state_and_coherent_snapshot_forgery_refuse_before_submission() {
         let mut session = ordinary(PlayerId::P0);
         let offered = request(&session, |_| true);
