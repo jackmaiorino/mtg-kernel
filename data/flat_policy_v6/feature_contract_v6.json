@@ -1,0 +1,31 @@
+{
+  "admission": "Prepared pins. Typed native binding, Human consumer and actual cross-consumer parity remain required. No model or training runtime admission.",
+  "dimensions": {
+    "action": 195,
+    "action_ref": 25,
+    "edge": 41,
+    "object": 98,
+    "object_groups": 20,
+    "state": 221
+  },
+  "feature_contract_digest": "04a15280634e31194625fde97ed4ea62aeee9e716fe7d1b72bf55a8ee95ea6cb",
+  "feature_encoding_digest": "faaa9387321c5b4fd915629de27a1b74391156cfc3d63e53ccb44ecb1efc62f6",
+  "feature_registry_version": "rust-observation-v9-action-v5-registry-1",
+  "feature_schema_version": "actor-relative-v9-python-1",
+  "features_source_path": "python/mtg_kernel_rl/features_v9.py",
+  "features_source_sha256": "d5bcd43a202a53be84db52d84882178874f6195bd3ca7e719c2101a3e3dfd874",
+  "legal_action_schema": 5,
+  "model_contract_version": "kernel-policy-value-net-11",
+  "other_tensors": "unchanged V8",
+  "predecessor_encoding_digest": "574281249cf5999ab67bbfd77c758384bcd6ab90ad835c0ca34cc231a116baf0",
+  "predecessor_feature_contract_digest": "fdef217d69a354b672b70519a8cc6ccd952004c2f26f7ebb03eedf5f30c46a78",
+  "predecessor_source_sha256": "57c73e33e01f1f394300d7c2747a20dfffe169884f380848dae1cc1ba2477807",
+  "provenance_boundary": "Engine producer authenticates public declaration history; Python checks JSON consistency.",
+  "rich_observation_schema": 9,
+  "schema": "flat-policy-v6-feature-contract-1",
+  "state_prefix": "unchanged V8 state tensor",
+  "state_suffix": [
+    "actor_attacked_this_turn",
+    "opponent_attacked_this_turn"
+  ]
+}

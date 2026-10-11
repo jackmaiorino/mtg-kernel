@@ -5793,6 +5793,93 @@
       "is_token": true,
       "scryfall_id": "63ae4f9c-ad6e-4d6a-89f1-653916bf5373",
       "java_file": "Mage/src/main/java/mage/game/permanent/token/RabbitToken.java"
+    },
+    {
+      "name": "Inspiring Paladin",
+      "mana_cost": "{2}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Knight"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_paladin_skyknight_sire.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [],
+      "java_file": "Mage.Sets/src/mage/cards/i/InspiringPaladin.java",
+      "scryfall_id": "0763be06-25b2-4d6b-ab33-a1af85aeb443",
+      "oracle_id": "95efbb81-2418-42ed-ae34-5759efff8253"
+    },
+    {
+      "name": "Skyknight Squire",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Cat",
+        "Scout"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_paladin_skyknight_sire.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [],
+      "java_file": "Mage.Sets/src/mage/cards/s/SkyknightSquire.java",
+      "scryfall_id": "fcfe4e62-c153-47b8-8e09-cedaf91f53d8",
+      "oracle_id": "7e497f6b-69e1-4fab-bb04-f687c99a8310"
+    },
+    {
+      "name": "Sire of Seven Deaths",
+      "mana_cost": "{7}",
+      "mana_value": 7,
+      "colors": [],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Eldrazi"
+      ],
+      "supertypes": [],
+      "power": 7,
+      "toughness": 7,
+      "is_land": false,
+      "produces_mana": [],
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_paladin_skyknight_sire.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [],
+      "java_file": "Mage.Sets/src/mage/cards/s/SireOfSevenDeaths.java",
+      "scryfall_id": "8d8432a7-1c8a-4cfb-947c-ecf9791063eb",
+      "oracle_id": "a15547d0-bbcb-41ee-a9ae-8325a9e7fe1f"
     }
   ]
 }

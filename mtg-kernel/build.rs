@@ -3854,6 +3854,8 @@ fn effect_recipe_for(card: &CardJson) -> String {
                 "Empyrean Eagle" => ";static=boost_other_live_controlled_creatures_with_effective_flying:1:1:layer7c:printed_source_abilities",
                 "High Fae Trickster" => ";static=controller_casts_nonland_spells_as_though_flash:while_live_battlefield_printed_abilities:does_not_grant_keyword_or_activate_or_play_lands",
                 "Paradise Druid" => ";static=source_has_hexproof_while_untapped:live_battlefield_front_face_printed_source_abilities",
+                "Inspiring Paladin" => ";static=controller_turn:first_strike_on_source_and_live_controlled_creatures_with_positive_plus_one_counters:front_face_printed_source_abilities:layer6_timestamps",
+                "Skyknight Squire" => ";static=source_positive_plus_one_counters_at_least:3:flying_and_additional_Knight_subtype:live_battlefield_front_face_printed_abilities",
                 "Billowing Shriekmass" => ";static=controller_graveyard_cards_at_least:7:boost_source:2:1:layer7c:printed_source_abilities",
                 "Dreadwing Scavenger" => ";static=controller_graveyard_cards_at_least:7:boost_source:1:1:layer7c:deathtouch:printed_source_abilities",
                 _ => "",
@@ -4142,7 +4144,8 @@ fn keywords_for(card: &CardJson) -> String {
         | "Vampire Soulcaller"
         | "Billowing Shriekmass"
         | "Dreadwing Scavenger"
-        | "Arbiter of Woe" => keywords.push("Keywords::FLYING"),
+        | "Arbiter of Woe"
+        | "Skyship Buccaneer" => keywords.push("Keywords::FLYING"),
         "Generous Ent"
         | "Writhing Chrysalis"
         | "Vitu-Ghazi Inspector"
@@ -4175,6 +4178,16 @@ fn keywords_for(card: &CardJson) -> String {
         "High Fae Trickster" => {
             keywords.push("Keywords::FLYING");
             keywords.push("Keywords::FLASH");
+        }
+        "Sire of Seven Deaths" => {
+            keywords.extend([
+                "Keywords::FIRST_STRIKE",
+                "Keywords::VIGILANCE",
+                "Keywords::MENACE",
+                "Keywords::TRAMPLE",
+                "Keywords::REACH",
+                "Keywords::LIFELINK",
+            ]);
         }
         "Elfsworn Giant" => keywords.push("Keywords::REACH"),
         "Eager Trufflesnout" => keywords.push("Keywords::TRAMPLE"),
@@ -4518,6 +4531,7 @@ fn enters_with_plus_one_counters_for(name: &str) -> &'static str {
 fn controlled_counter_keyword_for(name: &str) -> &'static str {
     match name {
         "Gnarlid Colony" => "Some(Keywords::TRAMPLE)",
+        "Inspiring Paladin" => "Some(Keywords::FIRST_STRIKE)",
         _ => "None",
     }
 }
@@ -6596,6 +6610,7 @@ fn ward_cost_for(name: &str) -> &'static str {
         "Koma, World-Eater" => "Some(WardCostDef::Generic(4))",
         "Axebane Ferox" => "Some(WardCostDef::CollectEvidence(4))",
         "Brutal Cathar" => "Some(WardCostDef::BackFacePayLife(3))",
+        "Sire of Seven Deaths" => "Some(WardCostDef::PayLife(7))",
         "Graveyard Trespasser" => "Some(WardCostDef::DiscardCard)",
         _ => build_standard_v1::ward_cost_for(name),
     }
@@ -6676,9 +6691,11 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Restless Fortress" => "attacks:defending_player_loses_two:gain_two",
         "Restless Reef" => "attacks:target_player_mills_four",
         "Restless Ridgeline" => "attacks:another_attacker_plus_two_zero:untap",
+        "Skyknight Squire" => "other_controlled_effective_creature_enters:token_or_nontoken:plus_one_counter_on_exact_bound_source:1:untargeted",
         "Brineborn Cutthroat" => "controller_cast_spell_during_opponent_turn:plus_one_counter_on_bound_source:1",
         "Nessian Hornbeetle" => "beginning_controller_combat_if_other_creature_effective_power_at_least:4:recheck_at_resolution:plus_one_counter_on_bound_source:1",
         "Micromancer" => "etb:may_search_library:instant_or_sorcery_mana_value:1:reveal_to_hand:shuffle:fail_to_find_allowed",
+        "Skyship Buccaneer" => "self_etb:intervening_if_captured_controller_declared_attackers_this_turn:declaration_history_round_and_active_seat:recheck_at_resolution:draw_controller:1",
         "Ruby, Daring Tracker" => "source_attacks_while_controller_has_effective_power_at_least:4:bound_source_pump_until_end_of_turn:2:2",
         "Courageous Goblin" => "source_attacks_while_controller_has_effective_power_at_least:4:bound_source_pump_until_end_of_turn:1:0:menace_on_exact_trigger_source",
         "Wardens of the Cycle" => "controller_end_step:intervening_if_creature_died_this_turn:mode_at_placement:gain_controller_life:2|draw_controller:1_then_lose_controller_life:1:recheck_morbid_in_each_branch:untargeted",
@@ -9988,7 +10005,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v69\n"
+            "kernel_carddb/v70\n"
         } else {
             "kernel_carddb/v34\n"
         },
@@ -10024,6 +10041,9 @@ fn codegen(cards: &[CardJson]) -> String {
         let entry_counters = enters_with_plus_one_counters_for(&c.name);
         if entry_counters != "None" {
             canon.push_str(&format!(";entry_counters={entry_counters}"));
+        }
+        if c.name == "Goblin Boarders" {
+            canon.push_str(";raid_entry_counters=controller_declared_attackers_this_turn:round_and_active_seat:printed_abilities_active:plus_one_counter:1:before_entry_events_and_sbas");
         }
         let counter_keyword = controlled_counter_keyword_for(&c.name);
         if counter_keyword != "None" {

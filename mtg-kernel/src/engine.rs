@@ -12689,6 +12689,15 @@ fn triggered_stack_item_expected_target_spec(
                     targeting_stack_item,
                     crate::card_def::WardCostDef::BackFacePayLife(*life),
                 )),
+                EffectOp::CounterUnlessPaysLifeWithChoice {
+                    ward_target,
+                    targeting_stack_item,
+                    life,
+                } => Some((
+                    ward_target,
+                    targeting_stack_item,
+                    crate::card_def::WardCostDef::PayLife(*life),
+                )),
                 EffectOp::CounterUnlessDiscardsCard {
                     ward_target,
                     targeting_stack_item,
@@ -13823,6 +13832,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 object.v4.entered_battlefield_this_turn = false;
             }
             state.trigger_uses_v1 = None;
+            state.attack_declaration_turn_v1 = None;
             #[cfg(feature = "limited-fdn-fixtures")]
             {
                 state.creature_death_turn_v1 = None;
@@ -14678,6 +14688,44 @@ pub(crate) fn static_untapped_self_keyword_for(name: &str) -> Option<Keywords> {
     }
 }
 
+pub(crate) fn static_controller_turn_self_keyword_for(name: &str) -> Option<Keywords> {
+    match name {
+        "Inspiring Paladin" => Some(Keywords::FIRST_STRIKE),
+        _ => None,
+    }
+}
+
+pub(crate) fn static_counter_keyword_controller_turn_only_for(name: &str) -> bool {
+    name == "Inspiring Paladin"
+}
+
+pub(crate) fn static_plus_one_counter_characteristics_for(
+    name: &str,
+) -> Option<(u16, Keywords, card_def::Subtype)> {
+    match name {
+        "Skyknight Squire" => Some((3, Keywords::FLYING, card_def::Subtype::Knight)),
+        _ => None,
+    }
+}
+
+fn live_plus_one_counter_characteristics(
+    state: &GameState,
+    id: ObjectId,
+) -> Option<(Keywords, card_def::Subtype)> {
+    let object = state.objects.try_get(id)?;
+    let definition = card_def::CARD_DEFS.get(object.card_def as usize)?;
+    if object.zone != Zone::Battlefield
+        || object.v4.face_index != 0
+        || !definition.is_executable()
+        || !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+    {
+        return None;
+    }
+    let (minimum, keywords, subtype) =
+        static_plus_one_counter_characteristics_for(definition.name)?;
+    (object.counters.plus1_plus1 >= i32::from(minimum)).then_some((keywords, subtype))
+}
+
 /// Whether `id` currently has `kw`, folding in every source this kernel
 /// models: the card's own static `Keywords`, `static_self_boost_for`'s
 /// conditional self-grant (Goblin Tomb Raider's haste), and any active
@@ -14733,11 +14781,24 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     if kw == Keywords::HASTE && crate::standard_cards_v1::has_copied_haste(state, id) {
         return true;
     }
+    if live_plus_one_counter_characteristics(state, id)
+        .is_some_and(|(keywords, _)| keywords.has(kw))
+    {
+        return true;
+    }
     if printed_active
         && obj.zone == Zone::Battlefield
         && obj.v4.face_index == 0
         && !obj.tapped
         && static_untapped_self_keyword_for(def.name).is_some_and(|keyword| keyword.has(kw))
+    {
+        return true;
+    }
+    if printed_active
+        && obj.zone == Zone::Battlefield
+        && obj.v4.face_index == 0
+        && state.active_player == obj.controller
+        && static_controller_turn_self_keyword_for(def.name).is_some_and(|keyword| keyword.has(kw))
     {
         return true;
     }
@@ -14771,6 +14832,8 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
                 && source.controller == obj.controller
                 && source_def.is_executable()
                 && crate::continuous_characteristics_v1::printed_abilities_active(state, source_id)
+                && (!static_counter_keyword_controller_turn_only_for(source_def.name)
+                    || (source.v4.face_index == 0 && state.active_player == source.controller))
                 && crate::continuous_characteristics_v1::grant_survives(
                     state,
                     id,
@@ -15194,6 +15257,11 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
     });
     if let Some((animation, _)) = crate::continuous_characteristics_v1::animation(state, id) {
         subtype_ids.extend(animation.subtypes.iter().map(|subtype| subtype.stable_id()));
+    }
+    if let Some((_, subtype)) = live_plus_one_counter_characteristics(state, id) {
+        if object_has_type(state, id, CardType::Creature) {
+            subtype_ids.push(subtype.stable_id());
+        }
     }
     subtype_ids.extend(
         attached_equipment_profiles(state, id)
@@ -17954,6 +18022,19 @@ pub(crate) fn finish_declare_attackers(state: &mut GameState, attackers: Vec<Obj
     }
     if !state.engine.combat.attackers.is_empty() {
         let attacker = state.active_player;
+        // Raid history belongs to the successor Limited rules scope. Keep
+        // historical default and Standard state and replay hashes intact. The
+        // Standard feature inherits Limited primitives but selects its own catalog.
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        {
+            state.attack_declaration_turn_v1 = Some(crate::state::AttackDeclarationTurnV1 {
+                turn: state.turn,
+                active_player: attacker,
+            });
+        }
         for source in state.players[attacker.index()].battlefield.clone() {
             let object = state.objects.get(source);
             if trigger::triggers_for(object.card_def).iter().any(|def| {
@@ -17977,6 +18058,24 @@ pub(crate) fn finish_declare_attackers(state: &mut GameState, attackers: Vec<Obj
     collect_and_queue_triggers(state);
     reset_priority(state);
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "engine/raid_history_tests.rs"]
+mod raid_history_tests;
+
+#[cfg(all(
+    test,
+    any(
+        not(feature = "limited-fdn-fixtures"),
+        feature = "standard-magezero-fixtures"
+    )
+))]
+#[path = "engine/legacy_attack_hash_baseline_tests.rs"]
+mod legacy_attack_hash_baseline_tests;
 
 pub(crate) fn validate_declare_blockers(
     state: &GameState,

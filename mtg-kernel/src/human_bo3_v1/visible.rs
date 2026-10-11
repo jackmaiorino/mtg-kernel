@@ -28,12 +28,12 @@ pub struct HumanLegalActionV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct HumanVisibleStateV1 {
+pub struct HumanVisibleStateV1<E = HumanExtensionsV1> {
     pub public: HumanPublicProjectionV1,
     pub own_hand: Vec<HumanPrivateCardV1>,
     pub known_library_cards: [Vec<HumanKnownLibraryCardV1>; 2],
     pub known_hand_cards: [Vec<HumanPrivateCardV1>; 2],
-    pub extensions: HumanExtensionsV1,
+    pub extensions: E,
     pub policy_context: HumanPolicyContextV1,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub known_face_down_cards: Vec<HumanFaceDownKnowledgeV1>,
@@ -69,22 +69,36 @@ pub(super) struct Handles {
 
 impl Handles {
     fn new(observation: &v6::ObservationV6) -> Result<Self, Error> {
-        let mut effect_timestamps: Vec<_> = observation
-            .projection
+        Self::from_parts(
+            &observation.projection,
+            &observation.own_hand,
+            &observation.known_hand_cards,
+            &observation.known_library_cards,
+            observation.extensions.decision_local_library.as_ref(),
+        )
+    }
+
+    pub(super) fn from_parts(
+        projection: &PublicObservationProjectionV5,
+        own_hand: &[CardPrivateV1],
+        known_hand_cards: &[Vec<CardPrivateV1>; 2],
+        known_library_cards: &[Vec<KnownLibraryCardV4>; 2],
+        search: Option<&v6::DecisionLocalLibraryV6>,
+    ) -> Result<Self, Error> {
+        let mut effect_timestamps: Vec<_> = projection
             .surface
             .continuous_effects
             .iter()
             .filter(|effect| effect.duration != EffectDurationV2::WhileAttached)
             .map(|effect| effect.timestamp)
             .collect();
-        for card in observation
-            .projection
+        for card in projection
             .surface
             .battlefield
             .iter()
             .flatten()
-            .chain(observation.projection.surface.graveyards.iter().flatten())
-            .chain(observation.projection.surface.exile.iter())
+            .chain(projection.surface.graveyards.iter().flatten())
+            .chain(projection.surface.exile.iter())
         {
             if let Some(upgrade) = &card.creature_upgrade {
                 effect_timestamps.extend(
@@ -121,8 +135,7 @@ impl Handles {
         effect_timestamps.dedup();
         let mut handles = Self {
             rows: Vec::new(),
-            current_battlefield: observation
-                .projection
+            current_battlefield: projection
                 .surface
                 .battlefield
                 .iter()
@@ -134,33 +147,33 @@ impl Handles {
         };
         // Register the complete visible zone inventory before attachments,
         // including forward references to a later battlefield row.
-        for cards in &observation.projection.surface.battlefield {
+        for cards in &projection.surface.battlefield {
             for card in cards {
                 handles.insert(&card.stable)?;
             }
         }
-        for cards in &observation.projection.surface.graveyards {
+        for cards in &projection.surface.graveyards {
             for card in cards {
                 handles.insert(&card.stable)?;
             }
         }
-        for card in &observation.projection.surface.exile {
+        for card in &projection.surface.exile {
             handles.insert(&card.stable)?;
         }
-        for card in &observation.own_hand {
+        for card in own_hand {
             handles.insert(&card.stable)?;
         }
-        for cards in &observation.known_hand_cards {
+        for cards in known_hand_cards {
             for card in cards {
                 handles.insert(&card.stable)?;
             }
         }
-        for cards in &observation.known_library_cards {
+        for cards in known_library_cards {
             for card in cards {
                 handles.insert(&card.card.stable)?;
             }
         }
-        if let Some(search) = &observation.extensions.decision_local_library {
+        if let Some(search) = search {
             for card in &search.cards {
                 handles.insert(&card.stable)?;
             }
@@ -168,7 +181,7 @@ impl Handles {
         Ok(handles)
     }
 
-    fn insert(&mut self, reference: &CardStableRefV1) -> Result<HumanCardRefV1, Error> {
+    pub(super) fn insert(&mut self, reference: &CardStableRefV1) -> Result<HumanCardRefV1, Error> {
         if let Some((_, visible)) = self.rows.iter().find(|(key, _)| key == reference) {
             return Ok(visible.clone());
         }
@@ -251,6 +264,14 @@ impl Handles {
     }
 
     fn canonicalize(&mut self, state: &HumanVisibleStateV1) -> Result<(), Error> {
+        self.canonicalize_parts(state, BTreeMap::new())
+    }
+
+    pub(super) fn canonicalize_parts<E: Serialize>(
+        &mut self,
+        state: &HumanVisibleStateV1<E>,
+        mut unary_traits: BTreeMap<String, Vec<String>>,
+    ) -> Result<(), Error> {
         // This JSON is produced solely from the explicit safe DTO above.
         // It is used internally to order safe fields, never to sanitize an
         // arbitrary engine or V6 serialization.
@@ -304,6 +325,7 @@ impl Handles {
                 without_handles(&visible)?,
                 attributes.remove(&visible.handle),
                 permissions.remove(&visible.handle).unwrap_or_default(),
+                unary_traits.remove(&visible.handle).unwrap_or_default(),
                 knowledge.get(&visible.handle),
                 visible_roles,
             );
@@ -335,7 +357,11 @@ impl Handles {
     }
 }
 
-fn interchangeable_effect_targets(state: &HumanVisibleStateV1, left: &str, right: &str) -> bool {
+fn interchangeable_effect_targets<E>(
+    state: &HumanVisibleStateV1<E>,
+    left: &str,
+    right: &str,
+) -> bool {
     let is_pair = |card: &HumanCardRefV1| card.handle == left || card.handle == right;
     for card in state
         .public
@@ -405,7 +431,7 @@ fn interchangeable_effect_targets(state: &HumanVisibleStateV1, left: &str, right
     true
 }
 
-fn without_handles<T: Serialize>(value: &T) -> Result<String, Error> {
+pub(super) fn without_handles<T: Serialize>(value: &T) -> Result<String, Error> {
     fn remove(value: &mut serde_json::Value) {
         match value {
             serde_json::Value::Object(object) => {
@@ -453,7 +479,8 @@ fn collect_roles(
                     || location.contains(".creature_upgrade.suppressed_by.")
                     || location.contains(".combat_impulse_source.")
                     || location.contains(".combat_impulse_donor.");
-                let unary_permission = location.starts_with("public.exile_play_permissions.");
+                let unary_permission = location.starts_with("public.exile_play_permissions.")
+                    || location.starts_with("extensions.ward_life_card_traits.");
                 if unordered_graph {
                     graph.insert(handle.to_owned());
                 }
@@ -497,7 +524,7 @@ fn collect_roles(
     }
 }
 
-fn sort_visible<T: Serialize>(values: &mut [T]) {
+pub(super) fn sort_visible<T: Serialize>(values: &mut [T]) {
     // Serialization of these concrete DTOs is infallible; choosing no output
     // is preferable to putting a hidden reference into a sort key.
     values.sort_by_cached_key(|value| serde_json::to_string(value).expect("human DTO serializes"));
@@ -507,22 +534,39 @@ fn project_state(
     observation: &v6::ObservationV6,
     handles: &mut Handles,
 ) -> Result<HumanVisibleStateV1, Error> {
+    project_state_parts(
+        &observation.projection,
+        &observation.own_hand,
+        &observation.known_library_cards,
+        &observation.known_hand_cards,
+        &observation.known_face_down_cards,
+        |handles| observation.extensions.project(handles),
+        handles,
+    )
+}
+
+pub(super) fn project_state_parts(
+    projection: &PublicObservationProjectionV5,
+    own_hand: &[CardPrivateV1],
+    known_library_cards: &[Vec<KnownLibraryCardV4>; 2],
+    known_hand_cards: &[Vec<CardPrivateV1>; 2],
+    known_face_down_cards: &[FaceDownCardKnowledgeV1],
+    extensions: impl FnOnce(&mut Handles) -> Result<HumanExtensionsV1, Error>,
+    handles: &mut Handles,
+) -> Result<HumanVisibleStateV1, Error> {
     let mut state = HumanVisibleStateV1 {
-        public: observation.projection.surface.project(handles)?,
-        own_hand: observation.own_hand.project(handles)?,
-        known_library_cards: observation.known_library_cards.project(handles)?,
-        known_hand_cards: observation.known_hand_cards.project(handles)?,
-        extensions: observation.extensions.project(handles)?,
-        policy_context: observation
-            .projection
-            .policy_surface_context
-            .project(handles)?,
-        known_face_down_cards: observation.known_face_down_cards.project(handles)?,
-        poison_counters: observation.projection.poison_counters,
-        poison_prevention: observation.projection.poison_prevention,
-        creatures_attacked_this_turn: observation.projection.creatures_attacked_this_turn,
-        ninja_emblems: observation.projection.ninja_emblems,
-        restricted_mana: observation.projection.restricted_mana.project(handles)?,
+        public: projection.surface.project(handles)?,
+        own_hand: own_hand.project(handles)?,
+        known_library_cards: known_library_cards.project(handles)?,
+        known_hand_cards: known_hand_cards.project(handles)?,
+        extensions: extensions(handles)?,
+        policy_context: projection.policy_surface_context.project(handles)?,
+        known_face_down_cards: known_face_down_cards.project(handles)?,
+        poison_counters: projection.poison_counters,
+        poison_prevention: projection.poison_prevention,
+        creatures_attacked_this_turn: projection.creatures_attacked_this_turn,
+        ninja_emblems: projection.ninja_emblems,
+        restricted_mana: projection.restricted_mana.project(handles)?,
     };
     for cards in &mut state.public.battlefield {
         sort_visible(cards);
@@ -595,7 +639,7 @@ fn project_state(
     Ok(state)
 }
 
-trait Project {
+pub(super) trait Project {
     type Output;
     fn project(&self, handles: &mut Handles) -> Result<Self::Output, Error>;
 }
@@ -652,6 +696,12 @@ leaf!(
 );
 
 impl<T: Project> Project for Vec<T> {
+    type Output = Vec<T::Output>;
+    fn project(&self, handles: &mut Handles) -> Result<Self::Output, Error> {
+        self.as_slice().project(handles)
+    }
+}
+impl<T: Project> Project for [T] {
     type Output = Vec<T::Output>;
     fn project(&self, handles: &mut Handles) -> Result<Self::Output, Error> {
         self.iter().map(|value| value.project(handles)).collect()

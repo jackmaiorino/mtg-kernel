@@ -244,6 +244,8 @@ pub enum TriggerCondition {
     CastSpellWithAnyColor(u8),
     ControlledCreatureWithSubtypeAttacks(Subtype),
     CastCreatureSpellPowerAtLeast(i32),
+    /// Intervening Raid condition at capture; the effect rechecks at resolution.
+    EtbAfterControllerAttackedThisTurn,
 }
 
 pub struct TriggeredAbilityDef {
@@ -927,6 +929,10 @@ const DAZZLING_ANGEL_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::OtherControlledCreatureEnters { subtype: None },
     ..etb_trigger(gain_one_life_effect)
 }];
+const SKYKNIGHT_SQUIRE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::OtherControlledCreatureEnters { subtype: None },
+    ..etb_trigger(writhing_chrysalis_counter_marker_effect)
+}];
 const CLINQUANT_SKYMAGE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::ControllerDraws,
     ..etb_trigger(writhing_chrysalis_counter_marker_effect)
@@ -1499,6 +1505,22 @@ fn micromancer_effect() -> EffectOp {
 }
 
 const MICROMANCER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(micromancer_effect)];
+
+fn skyship_buccaneer_effect() -> EffectOp {
+    EffectOp::Conditional {
+        cond: EffectCond::ControllerAttackedThisTurn,
+        then: Box::new(EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        }),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    }
+}
+
+const SKYSHIP_BUCCANEER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::EtbAfterControllerAttackedThisTurn,
+    ..etb_trigger(skyship_buccaneer_effect)
+}];
 
 fn ruby_daring_tracker_effect() -> EffectOp {
     EffectOp::BindTemporaryBoostToTriggerSource {
@@ -3307,6 +3329,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Ambush Wolf" => &AMBUSH_WOLF_TRIGGERS,
         "Tatyova, Benthic Druid" => &TATYOVA_BENTHIC_DRUID_TRIGGERS,
         "Dazzling Angel" => &DAZZLING_ANGEL_TRIGGERS,
+        "Skyknight Squire" => &SKYKNIGHT_SQUIRE_TRIGGERS,
         "Clinquant Skymage" => &CLINQUANT_SKYMAGE_TRIGGERS,
         "Mischievous Mystic" => &MISCHIEVOUS_MYSTIC_TRIGGERS,
         "Homunculus Horde" | "Homunculus Horde Token" => &HOMUNCULUS_HORDE_TRIGGERS,
@@ -3335,6 +3358,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Brineborn Cutthroat" => &BRINEBORN_CUTTHROAT_TRIGGERS,
         "Nessian Hornbeetle" => &NESSIAN_HORNBEETLE_TRIGGERS,
         "Micromancer" => &MICROMANCER_TRIGGERS,
+        "Skyship Buccaneer" => &SKYSHIP_BUCCANEER_TRIGGERS,
         "Ruby, Daring Tracker" => &RUBY_DARING_TRACKER_TRIGGERS,
         "Courageous Goblin" => &COURAGEOUS_GOBLIN_TRIGGERS,
         "Webweaver Changeling" => &WEBWEAVER_CHANGELING_TRIGGERS,
@@ -4421,6 +4445,27 @@ fn card_defs_with_event_triggers() -> &'static [bool] {
     })
 }
 
+/// The printed Ward ability currently active on one live battlefield object.
+/// Public successor observations share this predicate with trigger capture.
+pub(crate) fn active_printed_ward_cost(
+    state: &GameState,
+    source: ObjectId,
+) -> Option<crate::card_def::WardCostDef> {
+    let object = state.objects.try_get(source)?;
+    let card = crate::card_def::CARD_DEFS.get(usize::from(object.card_def))?;
+    if object.zone != Zone::Battlefield
+        || !card.is_executable()
+        || !crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+    {
+        return None;
+    }
+    card.ward_cost.filter(|cost| match cost {
+        crate::card_def::WardCostDef::BackFacePayLife(_) => object.v4.face_index == 1,
+        crate::card_def::WardCostDef::DiscardCard => true,
+        _ => object.v4.face_index == 0,
+    })
+}
+
 fn triggers_from_events(
     state: &mut GameState,
     events: &[CommittedEvent],
@@ -4883,6 +4928,13 @@ fn triggers_from_events(
                                         life,
                                     }
                                 }
+                                crate::card_def::WardCostDef::PayLife(life) => {
+                                    EffectOp::CounterUnlessPaysLifeWithChoice {
+                                        ward_target,
+                                        targeting_stack_item: *targeting_stack_item,
+                                        life,
+                                    }
+                                }
                             },
                             is_madness_offer: false,
                             kicked: false,
@@ -5195,6 +5247,10 @@ fn trigger_matches(
                 zone_change_count,
             },
         ) => *object == source && state.objects.get(source).zone_change_count == *zone_change_count,
+        (TriggerCondition::EtbAfterControllerAttackedThisTurn, event) => {
+            battlefield_entry_object(event) == Some(source)
+                && state.player_attacked_this_turn_v1(controller)
+        }
         (TriggerCondition::ControllerGainsLife, CommittedEvent::LifeGain { player, amount }) => {
             *player == controller && *amount > 0
         }
@@ -6053,6 +6109,108 @@ mod tests {
     use super::*;
     use crate::ids::PlayerId;
     use crate::state::GameState;
+
+    #[test]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    fn raid_entry_predicate_uses_actual_declarations_and_the_captured_controller() {
+        use crate::engine::{self, Action};
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::state::Step;
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state();
+            state.active_player = actor;
+            state.priority_player = actor;
+            state.turn = 3;
+            let attacker = put(&mut state, actor, "Guttersnipe", Zone::Battlefield);
+            let entrant = put(&mut state, actor, "Guttersnipe", Zone::Hand);
+            state.step = Step::DeclareAttackers;
+            engine::step(&mut state, Action::DeclareAttackers(vec![attacker])).unwrap();
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(entrant, Zone::Battlefield),
+            );
+            let entry = state
+                .engine
+                .event_log
+                .iter()
+                .find(|event| battlefield_entry_object(event) == Some(entrant))
+                .unwrap();
+            let condition = TriggerCondition::EtbAfterControllerAttackedThisTurn;
+            assert!(trigger_matches(condition, entry, entrant, actor, &state, 0));
+            assert!(!trigger_matches(
+                condition, entry, attacker, actor, &state, 0
+            ));
+            assert!(!trigger_matches(
+                condition,
+                entry,
+                entrant,
+                actor.opponent(),
+                &state,
+                0
+            ));
+            state.players[actor.index()]
+                .battlefield
+                .retain(|&id| id != entrant);
+            state.players[actor.opponent().index()]
+                .battlefield
+                .push(entrant);
+            state.objects.get_mut(entrant).controller = actor.opponent();
+            put(&mut state, actor, "Forest", Zone::Library);
+            put(&mut state, actor, "Forest", Zone::Library);
+            put(&mut state, actor.opponent(), "Forest", Zone::Library);
+            let before = state.players[actor.index()].hand.len();
+            let ctx = crate::effect::ExecCtx::no_targets(entrant, actor);
+            crate::effect::execute(&skyship_buccaneer_effect(), &ctx, &mut state);
+            assert_eq!(state.players[actor.index()].hand.len(), before + 1);
+            let mut stale: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            stale.turn += 1;
+            let before = stale.diagnostic_state_hash();
+            crate::effect::execute(&skyship_buccaneer_effect(), &ctx, &mut stale);
+            assert_eq!(stale.diagnostic_state_hash(), before);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn raid_empty_declaration_cannot_capture_or_resolve_a_draw() {
+        use crate::engine::{self, Action};
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::state::Step;
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state();
+            state.active_player = actor;
+            state.priority_player = actor;
+            state.step = Step::DeclareAttackers;
+            engine::step(&mut state, Action::DeclareAttackers(vec![])).unwrap();
+            let source = put(&mut state, actor, "Guttersnipe", Zone::Hand);
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            let entry = state
+                .engine
+                .event_log
+                .iter()
+                .find(|event| battlefield_entry_object(event) == Some(source))
+                .unwrap();
+            assert!(!trigger_matches(
+                TriggerCondition::EtbAfterControllerAttackedThisTurn,
+                entry,
+                source,
+                actor,
+                &state,
+                0
+            ));
+            let before = state.diagnostic_state_hash();
+            let ctx = crate::effect::ExecCtx::no_targets(source, actor);
+            crate::effect::execute(&skyship_buccaneer_effect(), &ctx, &mut state);
+            assert_eq!(state.diagnostic_state_hash(), before);
+        }
+    }
 
     #[test]
     #[cfg(any(
