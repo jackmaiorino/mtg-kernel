@@ -82,6 +82,13 @@ fn active(state: &GameState, source: ObjectId) -> bool {
         && crate::continuous_characteristics_v1::printed_abilities_active(state, source)
 }
 /// Called immediately after the genuine BeginningEndStep commitment.
+#[cfg(any(
+    test,
+    all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    )
+))]
 pub(crate) fn record_begin(state: &mut GameState, begin_history_index: usize) {
     if !enabled()
         || !matches!(

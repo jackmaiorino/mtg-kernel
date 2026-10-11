@@ -414,6 +414,25 @@ fn historical_registered_face_down_mask_uses_installation_snapshot_after_departu
     for actor in [PlayerId::P0, PlayerId::P1] {
         for disguised in [false, true] {
             let (mut state, _, recipient) = primitive_with_face(actor, Some(disguised));
+            // Standard's generic face-down card has no creature type. The
+            // typed control primitive correctly has no installation for that
+            // illegal target; the disguised 2/2 remains a legal creature.
+            if cfg!(feature = "standard-magezero-fixtures") && !disguised {
+                assert!(!crate::engine::effect_target_is_legal(
+                    &state,
+                    recipient,
+                    actor,
+                    crate::card_def::TargetSpec::Creature,
+                    &[Target::Object(recipient)],
+                    0,
+                ));
+                assert_eq!(state.objects.get(recipient).controller, actor.opponent());
+                assert!(installations(&state, actor).unwrap().is_empty());
+                let restored: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                assert!(installations(&restored, actor).unwrap().is_empty());
+                continue;
+            }
             let surface = PolicySurfaceV5::new();
             let name = if disguised {
                 "Face-down creature"
