@@ -101,6 +101,67 @@ fn finalize(state: &mut GameState, target: ObjectId) {
     assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
 }
 #[test]
+fn printed_copy_enters_on_transformed_face_before_authority_observes_both_seats() {
+    use mtg_kernel::event::CommittedEvent;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        put(
+            &mut state,
+            actor.opponent(),
+            "Authority of the Consuls",
+            Zone::Battlefield,
+        );
+        let target = put(&mut state, actor, "Delver of Secrets", Zone::Battlefield);
+        event::propose_and_commit(&mut state, ProposedEvent::transform_in_place(target, 1));
+        settle(&mut state);
+        begin(&mut state, actor, false);
+        finalize(&mut state, target);
+        let start = state.engine.event_history.len();
+        let mut replay = restore(&state);
+        for current in [&mut state, &mut replay] {
+            settle(current);
+            let token = current.engine.event_history[start..]
+                .iter()
+                .find_map(|event| match event {
+                    CommittedEvent::CreateToken { object, .. } => Some(*object),
+                    _ => None,
+                })
+                .unwrap();
+            let live = current.objects.get(token);
+            assert!(live.v4.is_token && live.tapped);
+            assert_eq!(live.v4.face_index, 1);
+            assert_eq!(
+                engine::effective_name(current, token),
+                "Insectile Aberration"
+            );
+            assert_eq!(engine::effective_power(current, token), 3);
+            assert!(!current.engine.event_history[start..].iter().any(|event| {
+                matches!(event, CommittedEvent::Transformed { object, .. } if *object == token)
+            }));
+            let facts: Vec<_> = current.engine.event_history[start..]
+                .iter()
+                .filter_map(|event| match event {
+                    CommittedEvent::AuthorityEntryPublicFactsV1 { capture } => Some(capture),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                facts.len(),
+                1,
+                "actual Authority entry facts for copied token"
+            );
+            assert_eq!(
+                serde_json::to_value(facts[0]).unwrap()["entrant_face_index"],
+                1
+            );
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+    }
+}
+#[test]
 fn actual_copy_of_hidden_creature_uses_neutral_pre_entry_definition_and_public_name_both_seats() {
     let neutral = card_id_by_name("Nameless Creature Copy Token")
         .expect("future internal blueprint admission with actual Self-Reflection");

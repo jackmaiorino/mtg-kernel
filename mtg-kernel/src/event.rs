@@ -149,6 +149,8 @@ pub struct ManaAddProposed {
 pub struct CreateTokenProposed {
     pub token_def: u16,
     pub controller: PlayerId,
+    /// Initialize a copied transformed face before entry replacements and observers.
+    pub entry_face_index: Option<u8>,
     pub touched_by: Vec<ReplacementId>,
 }
 
@@ -341,6 +343,15 @@ impl ProposedEvent {
         ProposedEvent::CreateToken(CreateTokenProposed {
             token_def,
             controller,
+            entry_face_index: None,
+            touched_by: Vec::new(),
+        })
+    }
+    pub(crate) fn create_transformed_copy(token_def: u16, controller: PlayerId) -> ProposedEvent {
+        ProposedEvent::CreateToken(CreateTokenProposed {
+            token_def,
+            controller,
+            entry_face_index: Some(1),
             touched_by: Vec::new(),
         })
     }
@@ -1546,6 +1557,22 @@ fn commit_with_ability_lki_and_entry_batch(
                 plotted_turn: None,
                 zone_change_count: 0,
             });
+            if let Some(face_index) = t.entry_face_index {
+                let face = token_def
+                    .transform_face
+                    .as_ref()
+                    .filter(|_| face_index == 1)
+                    .expect("copied transformed token requires a defined back face");
+                let live = state.objects.get_mut(object);
+                live.v4.is_token = true;
+                live.v4.face_index = face_index;
+                live.v4.effective_color_mask = crate::card_def::mana_colors_mask(face.colors);
+                live.v4.effective_subtype_ids =
+                    face.subtypes.iter().map(|s| s.stable_id()).collect();
+                live.v4.effective_subtype_ids.sort_unstable();
+                live.v4.effective_subtype_ids.dedup();
+                live.name = face.name.to_string();
+            }
             if cfg!(feature = "limited-fdn-fixtures") {
                 let timestamp = crate::engine::next_timestamp(state);
                 state.objects.get_mut(object).v4.layer_timestamp = Some(timestamp);

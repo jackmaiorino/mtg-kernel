@@ -666,7 +666,40 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
 
 /// Common read-only action/restore boundary. Mutable pending and stack rows
 /// must retain the independently committed original observer capture.
+fn validate_selected_catalog(state: &GameState, selected: bool) -> Result<(), String> {
+    if !selected
+        && (state
+            .engine
+            .event_history
+            .iter()
+            .chain(&state.engine.event_log)
+            .any(|event| {
+                matches!(
+                    event,
+                    CommittedEvent::CerberusObserversV1 { .. }
+                        | CommittedEvent::CerberusCaptureV1 { .. }
+                        | CommittedEvent::CerberusCollectedV1 { .. }
+                        | CommittedEvent::CerberusPublishedV1 { .. }
+                        | CommittedEvent::CerberusOperationV1 { .. }
+                        | CommittedEvent::CerberusCompletedV1 { .. }
+                )
+            })
+            || state
+                .stack
+                .iter()
+                .any(|item| matches!(item.inline_effect, Some(EffectOp::CerberusUntapV1 { .. })))
+            || pending_owners(state)
+                .any(|pending| matches!(pending.effect, EffectOp::CerberusUntapV1 { .. })))
+    {
+        return Err(
+            "Cerberus journal or runtime leaf requires its selected Limited catalog".into(),
+        );
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    validate_selected_catalog(state, enabled())?;
     if !enabled() {
         return Ok(());
     }

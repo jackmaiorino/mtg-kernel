@@ -201,6 +201,15 @@ pub(crate) fn execute(state: &mut GameState, ctx: &ExecCtx) {
                 crate::event::ProposedEvent::create_token(blueprint, ctx.controller),
             );
         }
+        CopyTokenValuesV1::Definition {
+            card_def,
+            face_index: 1,
+        } => {
+            crate::event::propose_and_commit(
+                state,
+                crate::event::ProposedEvent::create_transformed_copy(card_def, ctx.controller),
+            );
+        }
         CopyTokenValuesV1::Definition { .. } => {
             crate::standard_cards_v1::create_token_copy(state, *object, ctx.controller);
         }

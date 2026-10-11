@@ -8,6 +8,7 @@ use crate::rl_variable_cast_v1::{candidates, CandidateVariableCastV1, LegalActio
 use crate::state::GameState;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 
 pub const VARIABLE_CAST_SESSION_SCHEMA_V1: &str = "owning-variable-cast-session/v1";
 
@@ -67,6 +68,9 @@ pub struct VariableCastSnapshotV1 {
 
 #[derive(Clone)]
 pub struct VariableCastSessionV1 {
+    // Opaque snapshots are process-local. Clones retain this construction owner;
+    // another constructor cannot authenticate a saved owner or its requests.
+    owner: Arc<()>,
     state: GameState,
     surface: PolicySurfaceV5,
     episode: u64,
@@ -92,6 +96,7 @@ impl VariableCastSessionV1 {
             .next_decision(&mut state)
             .map_err(|_| VariableCastSessionErrorV1::InvalidAuthority)?;
         let mut session = Self {
+            owner: Arc::new(()),
             state,
             surface,
             episode,
@@ -116,6 +121,7 @@ impl VariableCastSessionV1 {
             .scan_context_for(crate::ids::PlayerId::P1)
             .map_err(|_| VariableCastSessionErrorV1::InvalidAuthority)?;
         digest(&(
+            Arc::as_ptr(&self.owner) as usize,
             &self.state,
             self.surface.harness_public_context(),
             p0,
@@ -170,6 +176,7 @@ impl VariableCastSessionV1 {
             .collect::<Vec<_>>();
         let commitment = digest(&(
             VARIABLE_CAST_SESSION_SCHEMA_V1,
+            Arc::as_ptr(&self.owner) as usize,
             self.episode,
             self.revision,
             self.step,
@@ -271,7 +278,7 @@ impl VariableCastSessionV1 {
         self.validate_authority()?;
         let mut restored = snapshot.session;
         restored.current()?;
-        if restored.episode != self.episode {
+        if restored.episode != self.episode || !Arc::ptr_eq(&restored.owner, &self.owner) {
             return Err(VariableCastSessionErrorV1::InvalidAuthority);
         }
         restored.revision = self
@@ -425,6 +432,55 @@ mod tests {
                 Err(VariableCastSessionErrorV1::StaleDecision)
             );
             assert_eq!(restored.current().unwrap(), second_restore);
+        }
+    }
+
+    #[test]
+    fn same_episode_foreign_owner_snapshot_and_request_refuse_readonly_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let first = ordinary(actor);
+            let mut second = ordinary(actor);
+            let before = second.current().unwrap();
+            assert_eq!(first.current().unwrap().observation, before.observation);
+            assert_ne!(first.current().unwrap().binding, before.binding);
+            assert_eq!(
+                second.restore(first.save().unwrap()),
+                Err(VariableCastSessionErrorV1::InvalidAuthority)
+            );
+            assert_eq!(second.current().unwrap(), before);
+            assert_eq!(
+                second.submit(request(&first, |_| true)),
+                Err(VariableCastSessionErrorV1::StaleDecision)
+            );
+            assert_eq!(second.current().unwrap(), before);
+            let owned = second.save().unwrap();
+            second.restore(owned).unwrap();
+            assert_eq!(second.current().unwrap().observation, before.observation);
+        }
+    }
+
+    #[test]
+    fn same_owner_public_binding_does_not_hash_opponent_hidden_identity() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state();
+            state.active_player = actor;
+            state.priority_player = actor;
+            put(&mut state, actor, "Forest", Zone::Hand);
+            let hidden = put(&mut state, actor.opponent(), "Snap", Zone::Hand);
+            let first = VariableCastSessionV1::from_state(11062, state).unwrap();
+            let mut second = first.clone();
+            let definition = crate::card_def::card_id_by_name("Lightning Bolt").unwrap();
+            let live = second.state.objects.get_mut(hidden);
+            live.card_def = definition;
+            live.name = crate::card_def::CARD_DEFS[definition as usize]
+                .object_name
+                .into();
+            live.v4 = crate::state::ObjectStateV4::from_card_def(definition);
+            // Reauthenticate a trusted backend substitution, retaining the same
+            // construction owner. Private authority differs; public bytes must not.
+            second.authority = second.authority_digest().unwrap();
+            assert_ne!(first.authority, second.authority);
+            assert_eq!(first.current().unwrap(), second.current().unwrap());
         }
     }
 
