@@ -1,10 +1,40 @@
-//! Accepted-default post-attack audit hashes. No Raid implementation or pins.
+//! Default retains the accepted a957 hashes; Standard binds accepted main2f55986.
+//! Matched both-seat controls preserve the historical Standard receipts.
 use super::*;
 use crate::policy_observation_v6::tests::{put, ready_state};
 use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
 
+#[cfg(not(feature = "standard-magezero-fixtures"))]
 #[test]
 fn accepted_default_actual_attack_hash_baseline_both_seats() {
+    actual_attack_hash_baseline_both_seats(
+        [
+            (0x47fb83da9cd811df, 0xcbc2eaf4943736a8),
+            (0x021b8dd6a3fb2f43, 0x24100b6d3bdf8d9a),
+        ],
+        "a957c358db9326cb3eacff819d6bcea38678aeb3",
+        "accepted-default-actual-attack-hash-baseline-1",
+    );
+}
+
+#[cfg(feature = "standard-magezero-fixtures")]
+#[test]
+fn accepted_current_main_standard_actual_attack_hash_baseline_both_seats() {
+    actual_attack_hash_baseline_both_seats(
+        [
+            (0x0b888429a46bd910, 0x4c26f4054b11987a),
+            (0xdfb303462e23d089, 0x1c6f5f450ebca677),
+        ],
+        "2f55986c1e5daaf4d51b50520091bc4d266e1c75",
+        "accepted-current-main-standard-actual-attack-hash-baseline-1",
+    );
+}
+
+fn actual_attack_hash_baseline_both_seats(
+    expected_rows: [(u64, u64); 2],
+    accepted_base: &str,
+    schema: &str,
+) {
     let mut rows = Vec::new();
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready_state();
@@ -29,11 +59,7 @@ fn accepted_default_actual_attack_hash_baseline_both_seats() {
         assert_eq!(session.game_state().step, Step::DeclareAttackers);
         assert_eq!(session.game_state().engine.combat.attackers, vec![attacker]);
         let core = session.privileged_core_environment_hash();
-        let (expected_diagnostic, expected_core) = match actor {
-            PlayerId::P0 => (0x47fb83da9cd811df, 0xcbc2eaf4943736a8),
-            PlayerId::P1 => (0x021b8dd6a3fb2f43, 0x24100b6d3bdf8d9a),
-            _ => unreachable!("the fixture iterates only the two supported player seats"),
-        };
+        let (expected_diagnostic, expected_core) = expected_rows[actor.index()];
         assert_eq!(diagnostic, expected_diagnostic);
         assert_eq!(session.diagnostic_state_hash(), expected_diagnostic);
         assert_eq!(core, expected_core);
@@ -53,8 +79,8 @@ fn accepted_default_actual_attack_hash_baseline_both_seats() {
         }));
     }
     let artifact = serde_json::json!({
-        "schema": "accepted-default-actual-attack-hash-baseline-1",
-        "accepted_base": "a957c358db9326cb3eacff819d6bcea38678aeb3",
+        "schema": schema,
+        "accepted_base": accepted_base,
         "standard_magezero_fixtures": cfg!(feature = "standard-magezero-fixtures"),
         "limited_fdn_fixtures": cfg!(feature = "limited-fdn-fixtures"),
         "rows": rows,
