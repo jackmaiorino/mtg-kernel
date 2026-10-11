@@ -26,6 +26,8 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha512};
 use std::fmt;
 
+mod streaming_v3;
+
 pub(crate) const NATIVE_FLAT_STATE_FEATURE_DIM_V2: usize = 219;
 pub(crate) const NATIVE_FLAT_OBJECT_FEATURE_DIM_V2: usize = 98;
 pub(crate) const NATIVE_FLAT_EDGE_FEATURE_DIM_V2: usize = 41;
@@ -285,6 +287,22 @@ pub(crate) struct NativeFlatTensorizerV2 {
     slot: DigestSlotV1,
     digests: DigestBatchV1,
 }
+
+/// Per-tensorizer work space for the successor contracts. The pending tensor
+/// is distinct from the published output so a failed fill cannot damage the
+/// last valid decision. Successful fills exchange the two sets of buffers.
+#[derive(Default)]
+pub(crate) struct NativeFlatTensorScratchV3 {
+    pending: NativeFlatDecisionTensorV2,
+    canonical_base: Vec<u8>,
+    slot: DigestSlotV1,
+    digests: DigestBatchV1,
+}
+
+#[cfg(test)]
+mod reuse_tests;
+#[cfg(test)]
+mod successor_digest_tests;
 
 /// One decision's digest messages: its state canonical JSON and each
 /// action's canonical JSON back to back.
@@ -565,6 +583,7 @@ pub(crate) struct NativeFlatActionSemanticBindingV2 {
     pub(crate) action_ref_node_indices: Vec<i64>,
 }
 
+#[derive(Default)]
 struct ActionHalfV1 {
     action_features: Vec<f32>,
     action_ref_features: Vec<f32>,
@@ -684,6 +703,7 @@ struct ObjectHalfV2 {
     node_ids: Vec<i64>,
 }
 
+#[derive(Default)]
 struct EdgeHalfV2 {
     features: Vec<f32>,
     sources: Vec<i64>,
@@ -879,6 +899,7 @@ fn finish_full_decision_v2(
 
 /// V3 owns a separate entry point and canonical observation identity. The
 /// primitive row layouts and arithmetic remain shared with V2.
+#[cfg(test)]
 pub(crate) fn fill_native_flat_decision_tensors_v3(
     view: crate::flat_policy_v3::FlatScoringDecisionViewV3<'_>,
 ) -> Result<NativeFlatDecisionTensorV2, NativeFlatTensorErrorV2> {
@@ -1168,6 +1189,148 @@ pub(crate) fn fill_native_flat_decision_tensors_v4(
         decision.action_refs().len(),
     )?;
     Ok(output)
+}
+
+/// Fills the same V3 tensors while retaining the previous work allocations.
+pub(crate) fn fill_native_flat_decision_tensors_v3_with_scratch(
+    view: crate::flat_policy_v3::FlatScoringDecisionViewV3<'_>,
+    scratch: &mut NativeFlatTensorScratchV3,
+    output: &mut NativeFlatDecisionTensorV2,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    let decision = view.common();
+    if decision.globals().acting_player != FlatRelativePlayerV1::SelfPlayer {
+        return Err(NativeFlatTensorErrorV2::ActingPlayerNotRelativeSelf);
+    }
+    validate_auxiliary_tables_v2(decision)?;
+    fill_successor_reusing_v2(
+        decision,
+        build_object_projection_v3(view)?,
+        scratch,
+        output,
+        |projection, edges| append_extension_edges_v3(view, projection, edges),
+        |output| streaming_v3::write_extensions_v3(view, output),
+    )
+}
+
+/// V4 retains its own projection and canonical feature identity.
+pub(crate) fn fill_native_flat_decision_tensors_v4_with_scratch(
+    view: crate::flat_policy_v4::FlatScoringDecisionViewV4<'_>,
+    scratch: &mut NativeFlatTensorScratchV3,
+    output: &mut NativeFlatDecisionTensorV2,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    let decision = view.common();
+    if decision.globals().acting_player != FlatRelativePlayerV1::SelfPlayer {
+        return Err(NativeFlatTensorErrorV2::ActingPlayerNotRelativeSelf);
+    }
+    validate_auxiliary_tables_v2(decision)?;
+    fill_successor_reusing_v2(
+        decision,
+        build_object_projection_v4(view)?,
+        scratch,
+        output,
+        |projection, edges| append_extension_edges_v4(view, projection, edges),
+        |output| streaming_v3::write_extensions_v4(view, output),
+    )
+}
+
+fn fill_successor_reusing_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    projection: ObjectProjectionV2,
+    scratch: &mut NativeFlatTensorScratchV3,
+    output: &mut NativeFlatDecisionTensorV2,
+    append_extensions: impl FnOnce(
+        &ObjectProjectionV2,
+        &mut EdgeHalfV2,
+    ) -> Result<(), NativeFlatTensorErrorV2>,
+    extensions: impl FnOnce(&mut Vec<u8>) -> Result<(), NativeFlatTensorErrorV2>,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    let mut buffers = std::mem::take(&mut scratch.pending);
+    let objects = encode_objects_reusing_v2(decision, projection, &mut buffers)?;
+    let mut edges = encode_edges_reusing_v2(
+        decision,
+        &objects.projection,
+        EdgeHalfV2 {
+            features: buffers.edge_features,
+            sources: buffers.edge_source_indices,
+            targets: buffers.edge_target_indices,
+        },
+    )?;
+    append_extensions(&objects.projection, &mut edges)?;
+    write_canonical_observation_with_streamed_extensions_reusing_v2(
+        decision,
+        &objects.projection,
+        extensions,
+        &mut scratch.slot.state_json,
+        &mut scratch.canonical_base,
+    )?;
+    let mut state = encode_state_head_reusing_v2(decision, buffers.state)?;
+    scratch.slot.action_json.clear();
+    scratch.slot.action_ranges.clear();
+    let mut actions = encode_action_half_reusing_v3(
+        decision,
+        Some(&objects.projection),
+        &mut scratch.slot.action_scratch,
+        true,
+        Some(DeferredActionJsonV1 {
+            json: &mut scratch.slot.action_json,
+            ranges: &mut scratch.slot.action_ranges,
+        }),
+        ActionHalfV1 {
+            action_features: buffers.action_features,
+            action_ref_features: buffers.action_ref_features,
+            action_ref_card_ids: buffers.action_ref_card_ids,
+            action_ref_action_indices: buffers.action_ref_action_indices,
+            action_ref_node_indices: buffers.action_ref_node_indices,
+        },
+    )?;
+    if actions.action_features.len()
+        != scratch.slot.action_ranges.len() * NATIVE_FLAT_ACTION_FEATURE_DIM_V1
+    {
+        return Err(NativeFlatTensorErrorV2::OutputInvariant);
+    }
+    // Keep the V3/V4 canonical messages and row order unchanged, but use the
+    // same state-plus-action multi-buffer digest path as V2.
+    let offsets = hash_prepared_slots_v2(std::slice::from_ref(&scratch.slot), &mut scratch.digests);
+    let blocks = &scratch.digests.blocks[offsets[0]..offsets[1]];
+    let head_len = state.len();
+    state.resize(head_len + NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V2, 0.0);
+    digest_block_features_v1(
+        &blocks[..ACTION_HASH_BLOCK_COUNT_V1],
+        &mut state[head_len..],
+    );
+    for (row, row_blocks) in actions
+        .action_features
+        .chunks_exact_mut(NATIVE_FLAT_ACTION_FEATURE_DIM_V1)
+        .zip(blocks[ACTION_HASH_BLOCK_COUNT_V1..].chunks_exact(ACTION_HASH_BLOCK_COUNT_V1))
+    {
+        digest_block_features_v1(
+            row_blocks,
+            &mut row[NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V1..],
+        );
+    }
+    let next = NativeFlatDecisionTensorV2 {
+        state,
+        object_features: objects.features,
+        object_card_ids: objects.card_ids,
+        object_groups: objects.groups,
+        object_node_ids: objects.node_ids,
+        edge_features: edges.features,
+        edge_source_indices: edges.sources,
+        edge_target_indices: edges.targets,
+        action_features: actions.action_features,
+        action_ref_features: actions.action_ref_features,
+        action_ref_card_ids: actions.action_ref_card_ids,
+        action_ref_action_indices: actions.action_ref_action_indices,
+        action_ref_node_indices: actions.action_ref_node_indices,
+    };
+    validate_full_output_v2(
+        &next,
+        objects.projection.node_to_raw.len(),
+        decision.actions().len(),
+        decision.action_refs().len(),
+    )?;
+    scratch.pending = std::mem::replace(output, next);
+    Ok(())
 }
 
 fn append_extension_edges_v4(
@@ -2198,15 +2361,42 @@ fn encode_objects_with_projection_v2(
     decision: FlatScoringDecisionViewV1<'_>,
     projection: ObjectProjectionV2,
 ) -> Result<ObjectHalfV2, NativeFlatTensorErrorV2> {
+    encode_objects_reusing_v2(
+        decision,
+        projection,
+        &mut NativeFlatDecisionTensorV2::default(),
+    )
+}
+
+fn clear_and_reserve_v2<T>(
+    values: &mut Vec<T>,
+    required: usize,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    values.clear();
+    values
+        .try_reserve_exact(required)
+        .map_err(|_| NativeFlatTensorErrorV2::AllocationFailed)
+}
+
+fn encode_objects_reusing_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    projection: ObjectProjectionV2,
+    buffers: &mut NativeFlatDecisionTensorV2,
+) -> Result<ObjectHalfV2, NativeFlatTensorErrorV2> {
     let output_count = projection.node_to_raw.len().max(1);
-    let mut features = try_vec_capacity(
+    let mut features = std::mem::take(&mut buffers.object_features);
+    let mut card_ids = std::mem::take(&mut buffers.object_card_ids);
+    let mut groups = std::mem::take(&mut buffers.object_groups);
+    let mut node_ids = std::mem::take(&mut buffers.object_node_ids);
+    clear_and_reserve_v2(
+        &mut features,
         output_count
             .checked_mul(NATIVE_FLAT_OBJECT_FEATURE_DIM_V2)
             .ok_or(NativeFlatTensorErrorV2::CheckedIntegerRange)?,
     )?;
-    let mut card_ids = try_vec_capacity(output_count)?;
-    let mut groups = try_vec_capacity(output_count)?;
-    let mut node_ids = try_vec_capacity(output_count)?;
+    clear_and_reserve_v2(&mut card_ids, output_count)?;
+    clear_and_reserve_v2(&mut groups, output_count)?;
+    clear_and_reserve_v2(&mut node_ids, output_count)?;
     for (node, &raw) in projection.node_to_raw.iter().enumerate() {
         let object = &decision.objects()[raw];
         append_object_features_v2(decision, raw, object, &mut features)?;
@@ -2854,11 +3044,17 @@ fn encode_edges_v2(
     decision: FlatScoringDecisionViewV1<'_>,
     projection: &ObjectProjectionV2,
 ) -> Result<EdgeHalfV2, NativeFlatTensorErrorV2> {
-    let mut output = EdgeHalfV2 {
-        features: Vec::new(),
-        sources: Vec::new(),
-        targets: Vec::new(),
-    };
+    encode_edges_reusing_v2(decision, projection, EdgeHalfV2::default())
+}
+
+fn encode_edges_reusing_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    projection: &ObjectProjectionV2,
+    mut output: EdgeHalfV2,
+) -> Result<EdgeHalfV2, NativeFlatTensorErrorV2> {
+    output.features.clear();
+    output.sources.clear();
+    output.targets.clear();
     for role in [
         FlatRelationRoleV2::KnownLibrary,
         FlatRelationRoleV2::KnownHand,
@@ -3286,8 +3482,15 @@ fn encode_state_v2(
 fn encode_state_head_v2(
     decision: FlatScoringDecisionViewV1<'_>,
 ) -> Result<Vec<f32>, NativeFlatTensorErrorV2> {
+    encode_state_head_reusing_v2(decision, Vec::new())
+}
+
+fn encode_state_head_reusing_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    mut state: Vec<f32>,
+) -> Result<Vec<f32>, NativeFlatTensorErrorV2> {
     let globals = decision.globals();
-    let mut state = Vec::with_capacity(NATIVE_FLAT_STATE_FEATURE_DIM_V2);
+    clear_and_reserve_v2(&mut state, NATIVE_FLAT_STATE_FEATURE_DIM_V2)?;
     append_one_hot_v2(&mut state, globals.phase as usize, 12)?;
     state.extend(relative_features_v2(globals.active_player)?);
     state.extend(relative_features_v2(globals.priority_player)?);
@@ -3474,11 +3677,12 @@ pub(crate) fn canonical_v3_streamed_and_reference_bytes(
     let decision = view.common();
     let projection = build_object_projection_v3(view).unwrap();
     let mut streamed = Vec::new();
-    write_canonical_observation_with_extensions_v2(
+    write_canonical_observation_with_streamed_extensions_reusing_v2(
         decision,
         &projection,
-        &canonical_extensions_v3(view).unwrap(),
+        |output| streaming_v3::write_extensions_v3(view, output),
         &mut streamed,
+        &mut Vec::new(),
     )
     .unwrap();
     let mut canonical = canonical_observation_v2(decision, &projection).unwrap();
@@ -3498,18 +3702,50 @@ fn write_canonical_observation_with_extensions_v2(
     extensions: &Value,
     output: &mut Vec<u8>,
 ) -> Result<(), NativeFlatTensorErrorV2> {
+    write_canonical_observation_with_extensions_reusing_v2(
+        decision,
+        projection,
+        extensions,
+        output,
+        &mut Vec::new(),
+    )
+}
+
+fn write_canonical_observation_with_extensions_reusing_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    projection: &ObjectProjectionV2,
+    extensions: &Value,
+    output: &mut Vec<u8>,
+    base: &mut Vec<u8>,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    write_canonical_observation_with_streamed_extensions_reusing_v2(
+        decision,
+        projection,
+        |output| append_json_v2(output, extensions),
+        output,
+        base,
+    )
+}
+
+fn write_canonical_observation_with_streamed_extensions_reusing_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    projection: &ObjectProjectionV2,
+    extensions: impl FnOnce(&mut Vec<u8>) -> Result<(), NativeFlatTensorErrorV2>,
+    output: &mut Vec<u8>,
+    base: &mut Vec<u8>,
+) -> Result<(), NativeFlatTensorErrorV2> {
     const HEAD: &[u8] = br#"{"acting_player":"self","#;
-    let mut base = Vec::new();
-    write_canonical_observation_v2(decision, projection, &mut base)?;
+    // Extensions were evaluated before the common observation in the Value
+    // caller. Preserve that error precedence while retaining both buffers.
+    output.clear();
+    output.extend_from_slice(HEAD);
+    output.extend_from_slice(br#""extensions":"#);
+    extensions(output)?;
+    write_canonical_observation_v2(decision, projection, base)?;
     if !base.starts_with(HEAD) {
         return Err(NativeFlatTensorErrorV2::CanonicalJson);
     }
-    output.clear();
-    output.reserve(base.len() + 256);
-    output.extend_from_slice(HEAD);
-    output.extend_from_slice(br#""extensions":"#);
-    serde_json::to_writer(&mut *output, extensions)
-        .map_err(|_| NativeFlatTensorErrorV2::CanonicalJson)?;
+    output.reserve(base.len());
     output.push(b',');
     output.extend_from_slice(&base[HEAD.len()..]);
     Ok(())
@@ -3557,15 +3793,15 @@ fn write_canonical_observation_v2(
         output,
     )?;
     output.extend_from_slice(br#"],"combat":"#);
-    append_json_value_v2(output, &canonical_combat_v2(decision, projection)?)?;
+    streaming_v3::combat(decision, projection, output)?;
     output.extend_from_slice(br#","continuous_effects":"#);
-    append_json_value_v2(output, &canonical_effects_v2(decision, projection)?)?;
+    streaming_v3::effects(decision, projection, output)?;
     output.extend_from_slice(br#","engine_context":"#);
-    append_json_value_v2(output, &canonical_engine_context_v2(decision, projection)?)?;
+    streaming_v3::write_engine_context(decision, projection, output)?;
     output.extend_from_slice(br#","exile":"#);
     write_canonical_public_group_v2(decision, projection, FlatObjectGroupV2::Exile, output)?;
     output.extend_from_slice(br#","exile_play_permissions":"#);
-    append_json_value_v2(output, &canonical_permissions_v2(decision, projection)?)?;
+    streaming_v3::permissions(decision, projection, output)?;
     output.extend_from_slice(br#","graveyards":["#);
     write_canonical_public_group_v2(
         decision,
@@ -3602,22 +3838,19 @@ fn write_canonical_observation_v2(
     output.push(b',');
     append_json_v2(output, &globals.players[1].mana)?;
     output.extend_from_slice(br#"],"object_relations":"#);
-    append_json_value_v2(
-        output,
-        &canonical_object_relations_v2(decision, projection)?,
-    )?;
+    streaming_v3::object_relations(decision, projection, output)?;
     output.extend_from_slice(br#","phase":"#);
     write_enum_json_v2(output, globals.phase as usize, &PHASE_NAMES_V2)?;
     output.extend_from_slice(br#","player_status":"#);
-    append_json_value_v2(output, &canonical_player_status_v2(decision)?)?;
+    streaming_v3::player_status(decision, output)?;
     output.extend_from_slice(br#","policy_surface_context":"#);
-    append_json_value_v2(output, &canonical_policy_surface_v2(decision, projection)?)?;
+    streaming_v3::write_policy_surface(decision, projection, output)?;
     output.extend_from_slice(br#","priority_player":"#);
     write_relative_player_json_v2(output, globals.priority_player, false)?;
     output.extend_from_slice(br#","stack":"#);
-    append_json_value_v2(output, &canonical_stack_v2(decision, projection)?)?;
+    streaming_v3::stack(decision, projection, output)?;
     output.extend_from_slice(br#","surface_context":"#);
-    append_json_value_v2(output, &canonical_surface_context_v2(decision, projection)?)?;
+    streaming_v3::write_surface_context(decision, projection, output)?;
     output.extend_from_slice(b"}}");
     Ok(())
 }
@@ -3627,13 +3860,6 @@ fn append_json_v2<T: Serialize + ?Sized>(
     value: &T,
 ) -> Result<(), NativeFlatTensorErrorV2> {
     serde_json::to_writer(&mut *output, value).map_err(|_| NativeFlatTensorErrorV2::CanonicalJson)
-}
-
-fn append_json_value_v2(
-    output: &mut Vec<u8>,
-    value: &Value,
-) -> Result<(), NativeFlatTensorErrorV2> {
-    append_json_v2(output, value)
 }
 
 fn append_static_json_string_v2(output: &mut Vec<u8>, value: &str) {
@@ -6263,7 +6489,34 @@ fn encode_action_half_with_projection_and_scratch_contract_v3(
     projection: Option<&ObjectProjectionV2>,
     canonical_json: &mut Vec<u8>,
     allow_chosen_creature_cost_v3: bool,
+    deferred: Option<DeferredActionJsonV1<'_>>,
+) -> Result<ActionHalfV1, NativeFlatTensorErrorV1> {
+    encode_action_half_reusing_v3(
+        decision,
+        projection,
+        canonical_json,
+        allow_chosen_creature_cost_v3,
+        deferred,
+        ActionHalfV1::default(),
+    )
+}
+
+/// These references borrow only the current decision. Reuse stays local to one
+/// action-table fill, so no borrowed object or reference survives that call.
+#[derive(Default)]
+struct ActionReferenceScratchV1<'a> {
+    resolved: Vec<ResolvedActionRefV1<'a>>,
+    projected: Vec<ProjectedActionRefV1<'a>>,
+    ordered: Vec<ResolvedActionRefV1<'a>>,
+}
+
+fn encode_action_half_reusing_v3(
+    decision: FlatScoringDecisionViewV1<'_>,
+    projection: Option<&ObjectProjectionV2>,
+    canonical_json: &mut Vec<u8>,
+    allow_chosen_creature_cost_v3: bool,
     mut deferred: Option<DeferredActionJsonV1<'_>>,
+    mut out: ActionHalfV1,
 ) -> Result<ActionHalfV1, NativeFlatTensorErrorV1> {
     if decision.globals().acting_player != FlatRelativePlayerV1::SelfPlayer {
         return Err(NativeFlatTensorErrorV1::ActingPlayerNotRelativeSelf);
@@ -6281,14 +6534,13 @@ fn encode_action_half_with_projection_and_scratch_contract_v3(
         .len()
         .checked_mul(NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V1)
         .ok_or(NativeFlatTensorErrorV1::CheckedIntegerRange)?;
-    let mut out = ActionHalfV1 {
-        action_features: try_vec_capacity(action_elements)?,
-        action_ref_features: try_vec_capacity(ref_elements)?,
-        action_ref_card_ids: try_vec_capacity(refs.len())?,
-        action_ref_action_indices: try_vec_capacity(refs.len())?,
-        action_ref_node_indices: try_vec_capacity(refs.len())?,
-    };
+    clear_and_reserve_v2(&mut out.action_features, action_elements)?;
+    clear_and_reserve_v2(&mut out.action_ref_features, ref_elements)?;
+    clear_and_reserve_v2(&mut out.action_ref_card_ids, refs.len())?;
+    clear_and_reserve_v2(&mut out.action_ref_action_indices, refs.len())?;
+    clear_and_reserve_v2(&mut out.action_ref_node_indices, refs.len())?;
     let mut ref_cursor = 0usize;
+    let mut reference_scratch = ActionReferenceScratchV1::default();
     for (action_index, action) in actions.iter().enumerate() {
         let start = usize::try_from(action.ref_start)
             .map_err(|_| NativeFlatTensorErrorV1::CheckedIntegerRange)?;
@@ -6298,7 +6550,7 @@ fn encode_action_half_with_projection_and_scratch_contract_v3(
         if start != ref_cursor || end > refs.len() {
             return Err(NativeFlatTensorErrorV1::ActionReferenceRange);
         }
-        let encoded = encode_action_with_scratch_contract_v3(
+        let encoded = encode_action_with_reference_scratch_contract_v3(
             decision,
             action_index,
             action,
@@ -6308,21 +6560,10 @@ fn encode_action_half_with_projection_and_scratch_contract_v3(
             false,
             allow_chosen_creature_cost_v3,
             deferred.as_mut(),
+            &mut reference_scratch,
+            Some((&mut out, action_index)),
         )?;
         out.action_features.extend_from_slice(&encoded.features);
-        let action_index = i64::try_from(action_index)
-            .map_err(|_| NativeFlatTensorErrorV1::CheckedIntegerRange)?;
-        for ((features, token), node) in encoded
-            .ref_features
-            .iter()
-            .zip(&encoded.ref_card_ids)
-            .zip(&encoded.ref_node_indices)
-        {
-            out.action_ref_features.extend_from_slice(features);
-            out.action_ref_card_ids.push(*token);
-            out.action_ref_action_indices.push(action_index);
-            out.action_ref_node_indices.push(*node);
-        }
         ref_cursor = end;
     }
     if ref_cursor != refs.len() {
@@ -6404,7 +6645,41 @@ fn encode_action_with_scratch_contract_v3<'a>(
     allow_chosen_creature_cost_v3: bool,
     deferred: Option<&mut DeferredActionJsonV1<'_>>,
 ) -> Result<EncodedActionV1, NativeFlatTensorErrorV1> {
-    let resolved = resolve_action_refs_v1(decision, action_index, raw_refs)?;
+    encode_action_with_reference_scratch_contract_v3(
+        decision,
+        action_index,
+        action,
+        raw_refs,
+        projection,
+        canonical_json_scratch,
+        retain_canonical_json,
+        allow_chosen_creature_cost_v3,
+        deferred,
+        &mut ActionReferenceScratchV1::default(),
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_action_with_reference_scratch_contract_v3<'a>(
+    decision: FlatScoringDecisionViewV1<'a>,
+    action_index: usize,
+    action: &FlatScorerActionCoreV1,
+    raw_refs: &'a [FlatScorerActionRefV1],
+    projection: Option<&ObjectProjectionV2>,
+    canonical_json_scratch: &mut Vec<u8>,
+    retain_canonical_json: bool,
+    allow_chosen_creature_cost_v3: bool,
+    deferred: Option<&mut DeferredActionJsonV1<'_>>,
+    reference_scratch: &mut ActionReferenceScratchV1<'a>,
+    mut aggregate: Option<(&mut ActionHalfV1, usize)>,
+) -> Result<EncodedActionV1, NativeFlatTensorErrorV1> {
+    let ActionReferenceScratchV1 {
+        resolved,
+        projected: projected_refs,
+        ordered,
+    } = reference_scratch;
+    resolve_action_refs_reusing_v1(decision, action_index, raw_refs, resolved)?;
     let mut expected = FlatScorerActionCoreV1 {
         kind: action.kind,
         ref_start: action.ref_start,
@@ -6417,14 +6692,14 @@ fn encode_action_with_scratch_contract_v3<'a>(
         Value::String(action_kind_name_v1(action.kind).to_owned()),
     );
     semantic.insert("actor".to_owned(), Value::String("self".to_owned()));
-    let mut projected_refs = Vec::<ProjectedActionRefV1<'a>>::new();
+    clear_and_reserve_v2(projected_refs, raw_refs.len())?;
 
     match action.kind {
-        FlatScorerActionKindV1::Pass => require_no_refs(&resolved)?,
+        FlatScorerActionKindV1::Pass => require_no_refs(resolved)?,
         FlatScorerActionKindV1::PlayLand
         | FlatScorerActionKindV1::CastSpell
         | FlatScorerActionKindV1::PlotSpell => {
-            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            let source = require_only_ref(resolved, ROLE_SOURCE_V1)?;
             semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
             projected_refs.push(projected_singular(source, ROLE_SOURCE_V1));
         }
@@ -6433,7 +6708,7 @@ fn encode_action_with_scratch_contract_v3<'a>(
                 return Err(NativeFlatTensorErrorV1::InvalidActionRange);
             }
             expected.mana_choice = action.mana_choice;
-            let source = require_singular_ref(&resolved, 0, ROLE_SOURCE_V1)?;
+            let source = require_singular_ref(resolved, 0, ROLE_SOURCE_V1)?;
             semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
             semantic.insert(
                 "mana_choice".to_owned(),
@@ -6449,8 +6724,8 @@ fn encode_action_with_scratch_contract_v3<'a>(
             // when `cost_target` is `Some`). An ordinary single-ref mana
             // ability still resolves with exactly one ref, matched above.
             if resolved.len() > 1 {
-                let cost_target = require_singular_ref(&resolved, 1, ROLE_CANDIDATE_V1)?;
-                require_ref_count(&resolved, 2)?;
+                let cost_target = require_singular_ref(resolved, 1, ROLE_CANDIDATE_V1)?;
+                require_ref_count(resolved, 2)?;
                 semantic.insert(
                     "cost_target".to_owned(),
                     canonical_card_ref_v1(cost_target)?,
@@ -6460,7 +6735,7 @@ fn encode_action_with_scratch_contract_v3<'a>(
         }
         FlatScorerActionKindV1::ActivateAbility => {
             expected.ability_index = action.ability_index;
-            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            let source = require_only_ref(resolved, ROLE_SOURCE_V1)?;
             semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
             semantic.insert(
                 "ability_index".to_owned(),
@@ -6475,11 +6750,11 @@ fn encode_action_with_scratch_contract_v3<'a>(
             expected.remaining = action.remaining;
             expected.target_kind = action.target_kind;
             expected.target_player = action.target_player;
-            let source = require_singular_ref(&resolved, 0, ROLE_SOURCE_V1)?;
+            let source = require_singular_ref(resolved, 0, ROLE_SOURCE_V1)?;
             semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
             semantic.insert("remaining".to_owned(), Value::from(action.remaining));
             projected_refs.push(projected_singular(source, ROLE_SOURCE_V1));
-            let (target, target_ref) = canonical_target_v1(action, &resolved, 1)?;
+            let (target, target_ref) = canonical_target_v1(action, resolved, 1)?;
             semantic.insert("target".to_owned(), target);
             if let Some(target_ref) = target_ref {
                 projected_refs.push(projected_singular(target_ref, ROLE_TARGET_OBJECT_V1));
@@ -6495,9 +6770,9 @@ fn encode_action_with_scratch_contract_v3<'a>(
             }
             expected.remaining = action.remaining;
             expected.cost_kind = action.cost_kind;
-            let source = require_singular_ref(&resolved, 0, ROLE_SOURCE_V1)?;
-            let candidate = require_singular_ref(&resolved, 1, ROLE_CANDIDATE_V1)?;
-            require_ref_count(&resolved, 2)?;
+            let source = require_singular_ref(resolved, 0, ROLE_SOURCE_V1)?;
+            let candidate = require_singular_ref(resolved, 1, ROLE_CANDIDATE_V1)?;
+            require_ref_count(resolved, 2)?;
             semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
             semantic.insert("candidate".to_owned(), canonical_card_ref_v1(candidate)?);
             semantic.insert("remaining".to_owned(), Value::from(action.remaining));
@@ -6521,7 +6796,7 @@ fn encode_action_with_scratch_contract_v3<'a>(
                 return Err(NativeFlatTensorErrorV1::InvalidActionRange);
             }
             expected.cast_mode = action.cast_mode;
-            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            let source = require_only_ref(resolved, ROLE_SOURCE_V1)?;
             semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
             semantic.insert(
                 "mode".to_owned(),
@@ -6532,7 +6807,7 @@ fn encode_action_with_scratch_contract_v3<'a>(
         FlatScorerActionKindV1::ChooseKicker | FlatScorerActionKindV1::ChooseSpellCopyPayment => {
             validate_only_flag(action.flags, FLAT_ACTION_FLAG_PAY_V1)?;
             expected.flags = action.flags;
-            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            let source = require_only_ref(resolved, ROLE_SOURCE_V1)?;
             semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
             semantic.insert(
                 "pay".to_owned(),
@@ -6546,7 +6821,7 @@ fn encode_action_with_scratch_contract_v3<'a>(
             }
             expected.mode_index = action.mode_index;
             expected.mode_count = action.mode_count;
-            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            let source = require_only_ref(resolved, ROLE_SOURCE_V1)?;
             semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
             semantic.insert("mode_index".to_owned(), Value::from(action.mode_index));
             semantic.insert("mode_count".to_owned(), Value::from(action.mode_count));
@@ -6558,7 +6833,7 @@ fn encode_action_with_scratch_contract_v3<'a>(
             }
             expected.option_index = action.option_index;
             expected.option_count = action.option_count;
-            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            let source = require_only_ref(resolved, ROLE_SOURCE_V1)?;
             semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
             semantic.insert("option_index".to_owned(), Value::from(action.option_index));
             semantic.insert("option_count".to_owned(), Value::from(action.option_count));
@@ -6575,7 +6850,7 @@ fn encode_action_with_scratch_contract_v3<'a>(
             expected.max_targets = action.max_targets;
             expected.target_kind = action.target_kind;
             expected.target_player = action.target_player;
-            let source = require_singular_ref(&resolved, 0, ROLE_SOURCE_V1)?;
+            let source = require_singular_ref(resolved, 0, ROLE_SOURCE_V1)?;
             semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
             semantic.insert(
                 "selected_count".to_owned(),
@@ -6584,7 +6859,7 @@ fn encode_action_with_scratch_contract_v3<'a>(
             semantic.insert("min_targets".to_owned(), Value::from(action.min_targets));
             semantic.insert("max_targets".to_owned(), Value::from(action.max_targets));
             projected_refs.push(projected_singular(source, ROLE_SOURCE_V1));
-            let (target, target_ref) = canonical_target_v1(action, &resolved, 1)?;
+            let (target, target_ref) = canonical_target_v1(action, resolved, 1)?;
             semantic.insert("target".to_owned(), target);
             if let Some(target_ref) = target_ref {
                 projected_refs.push(projected_singular(target_ref, ROLE_TARGET_OBJECT_V1));
@@ -6593,7 +6868,7 @@ fn encode_action_with_scratch_contract_v3<'a>(
         FlatScorerActionKindV1::FinishEffectSelection
         | FlatScorerActionKindV1::FinishTargetSelection => {
             expected.selected_count = action.selected_count;
-            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            let source = require_only_ref(resolved, ROLE_SOURCE_V1)?;
             semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
             semantic.insert(
                 "selected_count".to_owned(),
@@ -6606,7 +6881,7 @@ fn encode_action_with_scratch_contract_v3<'a>(
                 return Err(NativeFlatTensorErrorV1::InvalidActionRange);
             }
             expected.color = action.color;
-            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            let source = require_only_ref(resolved, ROLE_SOURCE_V1)?;
             semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
             semantic.insert(
                 "color".to_owned(),
@@ -6624,7 +6899,7 @@ fn encode_action_with_scratch_contract_v3<'a>(
             expected.number = action.number;
             expected.minimum = action.minimum;
             expected.maximum = action.maximum;
-            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            let source = require_only_ref(resolved, ROLE_SOURCE_V1)?;
             semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
             semantic.insert("number".to_owned(), Value::from(action.number));
             semantic.insert("minimum".to_owned(), Value::from(action.minimum));
@@ -6634,7 +6909,7 @@ fn encode_action_with_scratch_contract_v3<'a>(
         FlatScorerActionKindV1::ChooseEffectBoolean => {
             validate_only_flag(action.flags, FLAT_ACTION_FLAG_VALUE_V1)?;
             expected.flags = action.flags;
-            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            let source = require_only_ref(resolved, ROLE_SOURCE_V1)?;
             semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
             semantic.insert(
                 "value".to_owned(),
@@ -6645,7 +6920,7 @@ fn encode_action_with_scratch_contract_v3<'a>(
         FlatScorerActionKindV1::ChooseOptionalCostUse => {
             validate_only_flag(action.flags, FLAT_ACTION_FLAG_USE_COST_V1)?;
             expected.flags = action.flags;
-            require_no_refs(&resolved)?;
+            require_no_refs(resolved)?;
             semantic.insert(
                 "use_cost".to_owned(),
                 Value::Bool(action.flags & FLAT_ACTION_FLAG_USE_COST_V1 != 0),
@@ -6656,7 +6931,7 @@ fn encode_action_with_scratch_contract_v3<'a>(
                 return Err(NativeFlatTensorErrorV1::InvalidActionRange);
             }
             expected.optional_cost_choice = action.optional_cost_choice;
-            require_no_refs(&resolved)?;
+            require_no_refs(resolved)?;
             semantic.insert(
                 "choice".to_owned(),
                 Value::String(
@@ -6668,7 +6943,7 @@ fn encode_action_with_scratch_contract_v3<'a>(
         FlatScorerActionKindV1::ChooseSpellCopyRetarget => {
             validate_only_flag(action.flags, FLAT_ACTION_FLAG_CHANGE_TARGET_V1)?;
             expected.flags = action.flags;
-            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            let source = require_only_ref(resolved, ROLE_SOURCE_V1)?;
             semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
             semantic.insert(
                 "change_target".to_owned(),
@@ -6679,7 +6954,7 @@ fn encode_action_with_scratch_contract_v3<'a>(
         FlatScorerActionKindV1::ChooseMadnessCast => {
             validate_only_flag(action.flags, FLAT_ACTION_FLAG_CAST_IT_V1)?;
             expected.flags = action.flags;
-            let card = require_only_ref(&resolved, ROLE_CARD_V1)?;
+            let card = require_only_ref(resolved, ROLE_CARD_V1)?;
             semantic.insert("card".to_owned(), canonical_card_ref_v1(card)?);
             semantic.insert(
                 "cast_it".to_owned(),
@@ -6691,23 +6966,23 @@ fn encode_action_with_scratch_contract_v3<'a>(
             if resolved.is_empty() {
                 return Err(NativeFlatTensorErrorV1::ActionReferenceShape);
             }
-            let mut semantic_order = order_indexed_refs(&resolved, ROLE_CARDS_V1)?;
-            let mut cards = semantic_order
+            order_indexed_refs_reusing_v1(resolved, ROLE_CARDS_V1, ordered)?;
+            let mut cards = ordered
                 .iter()
                 .map(|reference| canonical_card_ref_v1(*reference))
                 .collect::<Result<Vec<_>, _>>()?;
             cards.sort_by_cached_key(canonical_value_bytes);
             semantic.insert("cards".to_owned(), Value::Array(cards));
-            semantic_order.sort_by_key(|reference| {
+            ordered.sort_by_key(|reference| {
                 projected_node_index_v2(reference.raw.model_object_index, projection)
                     .unwrap_or(usize::MAX)
             });
-            if semantic_order.iter().any(|reference| {
+            if ordered.iter().any(|reference| {
                 projected_node_index_v2(reference.raw.model_object_index, projection).is_err()
             }) {
                 return Err(NativeFlatTensorErrorV1::ActionReferenceObject);
             }
-            for (order, reference) in semantic_order.into_iter().enumerate() {
+            for (order, reference) in ordered.iter().copied().enumerate() {
                 projected_refs.push(ProjectedActionRefV1 {
                     resolved: reference,
                     role: ROLE_CARDS_V1,
@@ -6720,7 +6995,7 @@ fn encode_action_with_scratch_contract_v3<'a>(
         FlatScorerActionKindV1::ChooseAttackerInclusion => {
             validate_only_flag(action.flags, FLAT_ACTION_FLAG_INCLUDE_V1)?;
             expected.flags = action.flags;
-            let attacker = require_only_ref(&resolved, ROLE_ATTACKER_V1)?;
+            let attacker = require_only_ref(resolved, ROLE_ATTACKER_V1)?;
             semantic.insert("attacker".to_owned(), canonical_card_ref_v1(attacker)?);
             semantic.insert(
                 "include".to_owned(),
@@ -6731,9 +7006,9 @@ fn encode_action_with_scratch_contract_v3<'a>(
         FlatScorerActionKindV1::ChooseBlockerInclusion => {
             validate_only_flag(action.flags, FLAT_ACTION_FLAG_INCLUDE_V1)?;
             expected.flags = action.flags;
-            let attacker = require_singular_ref(&resolved, 0, ROLE_ATTACKER_V1)?;
-            let blocker = require_singular_ref(&resolved, 1, ROLE_BLOCKER_V1)?;
-            require_ref_count(&resolved, 2)?;
+            let attacker = require_singular_ref(resolved, 0, ROLE_ATTACKER_V1)?;
+            let blocker = require_singular_ref(resolved, 1, ROLE_BLOCKER_V1)?;
+            require_ref_count(resolved, 2)?;
             semantic.insert("attacker".to_owned(), canonical_card_ref_v1(attacker)?);
             semantic.insert("blocker".to_owned(), canonical_card_ref_v1(blocker)?);
             semantic.insert(
@@ -6747,11 +7022,11 @@ fn encode_action_with_scratch_contract_v3<'a>(
             if resolved.is_empty() || resolved.len() > MAX_TRIGGER_REFS_V1 {
                 return Err(NativeFlatTensorErrorV1::InvalidTriggerOrder);
             }
-            let ordered = order_indexed_refs(&resolved, ROLE_PENDING_SOURCES_V1)?;
+            order_indexed_refs_reusing_v1(resolved, ROLE_PENDING_SOURCES_V1, ordered)?;
             let mut seen = 0u8;
             let mut pending = Vec::with_capacity(ordered.len());
             let mut order = Vec::with_capacity(ordered.len());
-            for reference in ordered {
+            for reference in ordered.iter().copied() {
                 let associated = usize::from(reference.raw.associated_order);
                 if associated >= resolved.len() {
                     return Err(NativeFlatTensorErrorV1::InvalidTriggerOrder);
@@ -6787,7 +7062,7 @@ fn encode_action_with_scratch_contract_v3<'a>(
     }
     write_canonical_action_json_v1(semantic, canonical_json_scratch)?;
     let mut features =
-        explicit_action_features_contract_v3(action, &resolved, allow_chosen_creature_cost_v3)?;
+        explicit_action_features_contract_v3(action, resolved, allow_chosen_creature_cost_v3)?;
     let sha512_blocks = if let Some(deferred) = deferred {
         let start = deferred.json.len();
         deferred.json.extend_from_slice(canonical_json_scratch);
@@ -6799,19 +7074,35 @@ fn encode_action_with_scratch_contract_v3<'a>(
         sha512_blocks
     };
 
-    let mut ref_features = try_vec_capacity(projected_refs.len())?;
-    let mut ref_card_ids = try_vec_capacity(projected_refs.len())?;
-    let mut ref_node_indices = try_vec_capacity(projected_refs.len())?;
-    for reference in projected_refs {
-        ref_features.push(action_ref_features_v1(reference)?);
-        ref_card_ids.push(i64::from(reference.resolved.raw.card_token));
-        ref_node_indices.push(
-            i64::try_from(projected_node_index_v2(
-                reference.resolved.raw.model_object_index,
-                projection,
-            )?)
-            .map_err(|_| NativeFlatTensorErrorV1::CheckedIntegerRange)?,
-        );
+    let owned_ref_count = if aggregate.is_none() {
+        projected_refs.len()
+    } else {
+        0
+    };
+    let mut ref_features = try_vec_capacity(owned_ref_count)?;
+    let mut ref_card_ids = try_vec_capacity(owned_ref_count)?;
+    let mut ref_node_indices = try_vec_capacity(owned_ref_count)?;
+    for reference in projected_refs.iter().copied() {
+        let features = action_ref_features_v1(reference)?;
+        let card_id = i64::from(reference.resolved.raw.card_token);
+        let node_index = i64::try_from(projected_node_index_v2(
+            reference.resolved.raw.model_object_index,
+            projection,
+        )?)
+        .map_err(|_| NativeFlatTensorErrorV1::CheckedIntegerRange)?;
+        if let Some((out, action_index)) = aggregate.as_mut() {
+            out.action_ref_features.extend_from_slice(&features);
+            out.action_ref_card_ids.push(card_id);
+            out.action_ref_action_indices.push(
+                i64::try_from(*action_index)
+                    .map_err(|_| NativeFlatTensorErrorV1::CheckedIntegerRange)?,
+            );
+            out.action_ref_node_indices.push(node_index);
+        } else {
+            ref_features.push(features);
+            ref_card_ids.push(card_id);
+            ref_node_indices.push(node_index);
+        }
     }
     Ok(EncodedActionV1 {
         canonical_json: if retain_canonical_json {
@@ -6844,6 +7135,7 @@ fn projected_node_index_v2(
     }
 }
 
+#[cfg(test)]
 fn resolve_action_refs_v1<'a>(
     decision: FlatScoringDecisionViewV1<'a>,
     action_index: usize,
@@ -6875,6 +7167,40 @@ fn resolve_action_refs_v1<'a>(
         });
     }
     Ok(out)
+}
+
+fn resolve_action_refs_reusing_v1<'a>(
+    decision: FlatScoringDecisionViewV1<'a>,
+    action_index: usize,
+    refs: &'a [FlatScorerActionRefV1],
+    out: &mut Vec<ResolvedActionRefV1<'a>>,
+) -> Result<(), NativeFlatTensorErrorV1> {
+    clear_and_reserve_v2(out, refs.len())?;
+    for reference in refs {
+        if usize::try_from(reference.action_index).ok() != Some(action_index)
+            || reference.card_token == 0
+        {
+            return Err(NativeFlatTensorErrorV1::ActionReferenceObject);
+        }
+        let object_index = usize::try_from(reference.model_object_index)
+            .map_err(|_| NativeFlatTensorErrorV1::CheckedIntegerRange)?;
+        let object = decision
+            .objects()
+            .get(object_index)
+            .ok_or(NativeFlatTensorErrorV1::ActionReferenceObject)?;
+        if object.card_token != reference.card_token
+            || object.owner == FlatRelativePlayerV1::None
+            || object.controller == FlatRelativePlayerV1::None
+            || object.zone.is_none()
+        {
+            return Err(NativeFlatTensorErrorV1::ActionReferenceObject);
+        }
+        out.push(ResolvedActionRefV1 {
+            raw: reference,
+            object,
+        });
+    }
+    Ok(())
 }
 
 fn require_no_refs(refs: &[ResolvedActionRefV1<'_>]) -> Result<(), NativeFlatTensorErrorV1> {
@@ -6927,6 +7253,7 @@ fn projected_singular(resolved: ResolvedActionRefV1<'_>, role: u8) -> ProjectedA
     }
 }
 
+#[cfg(test)]
 fn order_indexed_refs<'a>(
     refs: &[ResolvedActionRefV1<'a>],
     role: u8,
@@ -6957,6 +7284,40 @@ fn order_indexed_refs<'a>(
         });
     }
     Ok(ordered)
+}
+
+fn order_indexed_refs_reusing_v1<'a>(
+    refs: &[ResolvedActionRefV1<'a>],
+    role: u8,
+    ordered: &mut Vec<ResolvedActionRefV1<'a>>,
+) -> Result<(), NativeFlatTensorErrorV1> {
+    if refs.iter().any(|reference| {
+        reference.raw.projection_role_id != role || reference.raw.associated_order != 0
+    }) && role != ROLE_PENDING_SOURCES_V1
+    {
+        return Err(NativeFlatTensorErrorV1::ActionReferenceShape);
+    }
+    if refs
+        .iter()
+        .any(|reference| reference.raw.projection_role_id != role)
+    {
+        return Err(NativeFlatTensorErrorV1::ActionReferenceShape);
+    }
+    clear_and_reserve_v2(ordered, refs.len())?;
+    ordered.extend_from_slice(refs);
+    ordered.sort_by_key(|reference| reference.raw.order_index);
+    if ordered
+        .iter()
+        .enumerate()
+        .any(|(index, reference)| usize::from(reference.raw.order_index) != index)
+    {
+        return Err(if role == ROLE_PENDING_SOURCES_V1 {
+            NativeFlatTensorErrorV1::InvalidTriggerOrder
+        } else {
+            NativeFlatTensorErrorV1::ActionReferenceShape
+        });
+    }
+    Ok(())
 }
 
 fn validate_only_flag(flags: u16, allowed: u16) -> Result<(), NativeFlatTensorErrorV1> {
@@ -7452,6 +7813,8 @@ mod cost_tests_v1;
 
 #[cfg(test)]
 mod tests {
+    include!("native_flat_tensorizer_v2/action_reference_tests.rs");
+    include!("native_flat_tensorizer_v2/streaming_tests.rs");
     use super::*;
     use crate::flat_policy_v2::{
         encode_observation_owned_tables_for_fixture_v2, FlatCompletedDungeonV2,

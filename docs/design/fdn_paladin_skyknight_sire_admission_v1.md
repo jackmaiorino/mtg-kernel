@@ -40,3 +40,12 @@ inputs and weights stay fixed. V8/V5 and V9/V6 admit no predecessor models
 or training/BO3 runtime. Reuse compatible evidence, qualify changed consumer
 inputs, deliver against accepted PR222, and verify actual default acceptance.
 No strength, full-pool completion or new research campaign is claimed.
+
+Current-base integration: main `2f55986c` adds Standard rules, public views and
+source bindings. The v70 repair preserves those changes while appending its
+Ward/Raid variants after the accepted enums, keeping the single existing Ward
+producer, and forwarding actor-known face-down identities through V8/V9 and
+Human views. Typed-layout provenance is regenerated from the composed sources.
+Pinned formatting, 35 deck tests, 17 V8 and seven V9 Python tests, and contract
+generator checks pass. Native and CI qualification must run on this composed
+head; the earlier e6/Native12 receipts remain historical source evidence.

@@ -318,6 +318,7 @@ mod tests {
             let card = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
             event::propose_and_commit(&mut state, ProposedEvent::zone_change(card, Zone::Exile));
             let old = PlayPermission {
+                without_mana_cost: crate::engine::FreeCastV1::default(),
                 object: card,
                 holder: actor,
                 zone_change_generation: state.objects.get(card).zone_change_count,
@@ -355,6 +356,7 @@ mod tests {
             assert_eq!(old.zone_change_generation, 1);
             assert_eq!(current_generation, 5);
             state.engine.exile_play_permissions.push(PlayPermission {
+                without_mana_cost: crate::engine::FreeCastV1::default(),
                 zone_change_generation: current_generation,
                 expiry: PlayPermissionExpiry::EndOfTurn,
                 ..old
@@ -362,6 +364,7 @@ mod tests {
             // Two grants for the same current incarnation may coexist. Keep
             // both; removing stale grants is not deduplication or action pruning.
             state.engine.exile_play_permissions.push(PlayPermission {
+                without_mana_cost: crate::engine::FreeCastV1::default(),
                 zone_change_generation: current_generation,
                 ..old
             });

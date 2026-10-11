@@ -502,6 +502,42 @@ fn lightning_bolt_is_not_a_near_neighbour_of_spy() {
 // 7. Isolation: the extractor never reads labels, names or the registry file.
 
 #[test]
+fn incubate_marker_preserves_token_closure_and_counter_meaning() {
+    let mut out = Collector::default();
+    meaning::effect_op(
+        &EffectOp::BindIncubateToTriggerSpell,
+        &Env {
+            target_spec: TargetSpec::None,
+        },
+        &mut out,
+    );
+    // Names are allowed in test expectations, never extractor inputs. This
+    // checks both profiles without the token and Standard's actual token id.
+    let expected: Vec<_> = crate::card_def::card_id_by_name("Incubator Token")
+        .into_iter()
+        .collect();
+    assert_eq!(out.created_tokens, expected);
+    assert_eq!(
+        out.atoms,
+        vec![
+            Atom::Effect(
+                EffectAtom::new(EvF::CreateToken)
+                    .player(RelF::You)
+                    .obj(ObjF::Token)
+                    .amount(AmtF::fixed(1)),
+            ),
+            Atom::Effect(
+                EffectAtom::new(EvF::PlaceCounter)
+                    .player(RelF::You)
+                    .obj(ObjF::Token)
+                    .amount(AmtF::Dynamic)
+                    .duration(DurF::Permanent),
+            ),
+        ]
+    );
+}
+
+#[test]
 fn extractor_sources_read_no_labels_or_names() {
     let names: BTreeSet<&str> = CARD_DEFS.iter().map(|d| d.name).collect();
     for (path, text) in EXTRACTOR_SOURCES_V1 {

@@ -149,7 +149,10 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
             // and sacrifices it; nothing happens if they control none.
             let player = player_ref(*player);
             match filter {
-                CreatureSacrificeFilter::Any => {}
+                CreatureSacrificeFilter::Any
+                | CreatureSacrificeFilter::Token
+                | CreatureSacrificeFilter::Nontoken
+                | CreatureSacrificeFilter::PermanentType(_) => {}
                 CreatureSacrificeFilter::GreatestPower => {
                     out.read(
                         player,
@@ -163,7 +166,12 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
             out.effect(
                 EffectAtom::moving(Some(ZoneF::Battlefield), ZoneF::Graveyard)
                     .player(player)
-                    .obj(ObjF::Typed(CardTypeF::Creature))
+                    .obj(match filter {
+                        CreatureSacrificeFilter::PermanentType(card_type) => {
+                            ObjF::Typed((*card_type).into())
+                        }
+                        _ => ObjF::Typed(CardTypeF::Creature),
+                    })
                     .amount(AmtF::fixed(1)),
             );
         }

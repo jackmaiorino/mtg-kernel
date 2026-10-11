@@ -7915,7 +7915,7 @@ fn joined_frame_is_preflight_sealed_neutral_and_lineage_complete_v1() {
     let frame = frame_joined_tape_v1(&authority, &deck_ids, deck_hashes, &tape).unwrap();
     // Authenticate the live tape above. The serializer golden below is a
     // historical input fixture, preserving the exact contract metadata at
-    // faf1045a. These three source-bound identities move when implementation
+    // faf1045a. These four source-bound identities move when implementation
     // text changes, even when the typed schema and all tensor rows stay fixed.
     // Freeze the serializer input only; production admission/framing and the
     // live-authority mutation checks in this test continue using live metadata.
@@ -7930,6 +7930,13 @@ fn joined_frame_is_preflight_sealed_neutral_and_lineage_complete_v1() {
                 let digests = &mut substep.binding.contract_digests;
                 digests.feature_inventory_sha256 = historical_digest(
                     "a2ac65c9fe3873c4fdfa3e9126a498ac4ec411d9e26732f200670105379d4b09",
+                );
+                // The V1 source also changes when new mechanics gain explicit
+                // rejection paths. Its bytes at faf1045a and f7d115fa have the
+                // same digest; freezing only the overlay/composite left this
+                // fourth source identity live in the historical wire fixture.
+                digests.base_typed_layout_sha256 = historical_digest(
+                    "bcde548e60dcf415fcbedbabeb0b4a73157908738c033d203290901488c2e4ed",
                 );
                 digests.overlay_typed_layout_sha256 = historical_digest(
                     "0ed54703d8588e0d1c6f7150367bd2c51607d05d33f75a39b09add0b3a7f8123",

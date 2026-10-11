@@ -218,11 +218,7 @@ fn every_land_in_the_batch_has_the_declared_support_and_characteristics() {
     assert_eq!(names.len(), 41);
     for name in names {
         let def = def(name);
-        let expected = if matches!(name, "Mirrex" | "Rockface Village") {
-            CardCapability::Partial
-        } else {
-            CardCapability::Full
-        };
+        let expected = CardCapability::Full;
         assert_eq!(def.capability, expected, "{name}");
         assert!(def.is_land, "{name}");
         assert_eq!(def.types, &[CardType::Land], "{name}");
@@ -492,12 +488,14 @@ fn rockface_village_red_pays_creature_spells_only() {
     let spells = castable(&mut state);
     assert!(spells.contains(&epicure));
     assert!(!spells.contains(&burst));
-    // The restricted red is never floated.
-    assert!(engine::step(
+    // Floating the red preserves its spending restriction.
+    engine::step(
         &mut state,
-        Action::ActivateManaAbilityChoice(village, ManaColor::R)
+        Action::ActivateManaAbilityChoice(village, ManaColor::R),
     )
-    .is_err());
+    .unwrap();
+    assert_eq!(state.players[0].restricted_mana_pool.0.len(), 1);
+    assert!(!castable(&mut state).contains(&burst));
     engine::step(&mut state, Action::CastSpell(epicure)).unwrap();
     next(&mut state);
     assert_eq!(state.objects.get(epicure).zone, Zone::Stack);
@@ -513,7 +511,11 @@ fn rockface_village_red_pays_creature_spells_only() {
         Zone::Battlefield,
     );
     next(&mut state);
-    engine::step(&mut state, Action::ActivateManaAbility(village)).unwrap();
+    engine::step(
+        &mut state,
+        Action::ActivateManaAbilityChoice(village, ManaColor::C),
+    )
+    .unwrap();
     assert_eq!(pool(&state, PlayerId::P0), mana(ManaColor::C));
 }
 

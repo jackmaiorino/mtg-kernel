@@ -95,7 +95,7 @@ fn mana(cost: Cost) -> String {
         text.push_str(&match pip {
             Pip::Colored(c) => format!("{{{}}}", color(*c)),
             Pip::Hybrid(a, b) => format!("{{{}/{}}}", color(*a), color(*b)),
-            Pip::Phyrexian(c) => format!("{{{}/P}}", color(*c)),
+            Pip::Phyrexian(c) | Pip::PhyrexianAnyColor(c) => format!("{{{}/P}}", color(*c)),
         });
     }
     if text.is_empty() {
@@ -196,6 +196,7 @@ fn effect_condition(condition: &EffectCond) -> Result<String, Error> {
 
 fn describe_effect(effect: &EffectOp) -> Result<String, Error> {
     Ok(match effect {
+        EffectOp::StandardLegendV1(crate::standard_legends_v1::LegendEffectV1::GwennaMana(first,second)) => format!("add {{{}}}{{{}}}; spend only on creature spells or abilities of creatures",color(*first),color(*second)),
         EffectOp::Sequence(ops) if ops.is_empty() => "do nothing".into(),
         EffectOp::Sequence(ops) => ops.iter().map(describe_effect).collect::<Result<Vec<_>, _>>()?.join("; then "),
         EffectOp::Conditional { cond, then, else_ } => format!("if {}, {}; otherwise {}", effect_condition(cond)?, describe_effect(then)?, describe_effect(else_)?),
@@ -224,6 +225,7 @@ fn describe_effect(effect: &EffectOp) -> Result<String, Error> {
         }
         EffectOp::ImpulseDraw { count, duration } => format!("exile the top {count} cards of its controller's library; that player may play them {}", match duration {
             ImpulseDuration::EndOfTurn => "until end of turn",
+            ImpulseDuration::UntilOwnersNextEndStep => "until their next end step",
             ImpulseDuration::UntilOwnersNextTurn => "until the end of their next turn",
         }),
         EffectOp::PumpControlled { filter, power, toughness, grant_haste } => {
@@ -317,6 +319,18 @@ fn target(target: &TargetRefV1, handles: &Handles, human: PlayerSeatV1) -> Resul
         }
         .into()),
         TargetRefV1::Object { object } => handles.name(object),
+        TargetRefV1::StackItem {
+            source,
+            kind,
+            stack_item_id,
+            stack_index,
+            ..
+        } => Ok(format!(
+            "{:?} of {} ({})",
+            kind,
+            handles.name(source)?,
+            handles.stack_target_label(*stack_item_id, *stack_index)?
+        )),
     }
 }
 
@@ -349,6 +363,7 @@ fn actor(action: &A) -> Option<PlayerSeatV1> {
         | A::CastSpell { actor, .. }
         | A::ActivateManaAbility { actor, .. }
         | A::ActivateAbility { actor, .. }
+        | A::TurnFaceUp { actor, .. }
         | A::PlotSpell { actor, .. }
         | A::ChooseTarget { actor, .. }
         | A::ChooseCostTarget { actor, .. }
@@ -376,6 +391,7 @@ fn actor(action: &A) -> Option<PlayerSeatV1> {
         | A::ChooseCombatDamageRange { actor, .. }
         | A::ChooseLondonMulligan { actor, .. }
         | A::ChooseLondonBottom { actor, .. }
+        | A::ChooseAttackTarget { actor, .. }
         | A::ChooseLegendPermanent { actor, .. } => Some(*actor),
         #[cfg(feature = "limited-fdn-fixtures")]
         A::ChooseTriggerOrderNext { actor, .. } => Some(*actor),
@@ -470,16 +486,22 @@ fn label_common(
             format!("Play {} as your land for the turn", handles.name(source)?)
         }
         A::CastSpell { source, .. } => format!("Begin casting {}", handles.name(source)?),
+        A::TurnFaceUp { source, .. } => format!("Turn {} face up", handles.name(source)?),
         A::ActivateAbility {
             source,
             ability_index,
+            granted_ability,
             ..
         } => {
             let def = definition(source)?;
-            let ability = def
-                .activated_abilities
-                .get(*ability_index as usize)
-                .ok_or(Error::UnsupportedPrompt)?;
+            let ability = if let Some((donor, local)) = granted_ability.as_ref() {
+                crate::standard_cards_v1::cauldron_ability_of(donor.card_db_id, *local)
+            } else {
+                def.activated_abilities
+                    .get(*ability_index as usize)
+                    .copied()
+            }
+            .ok_or(Error::UnsupportedPrompt)?;
             if ability.activation_zone != source.zone {
                 return Err(Error::UnsupportedPrompt);
             }
@@ -629,6 +651,7 @@ fn label_common(
                 | CostKind::SacrificeArtifacts => "Sacrifice",
                 CostKind::DiscardCards => "Discard",
                 CostKind::ExileFromGraveyard => "Exile from your graveyard",
+                CostKind::ExileCraftMaterial => "Exile as craft material",
                 CostKind::TapPermanents => "Tap",
                 CostKind::ReturnPermanentsToHand => "Return to its owner's hand",
                 CostKind::ChooseCreatureOrRevealCreature => {
@@ -716,6 +739,7 @@ fn label_common(
                 player,
                 structural_path,
                 option_count: count,
+                creature_options,
             }) = &pending.choice
             else {
                 return Err(Error::UnsupportedPrompt);
@@ -723,6 +747,12 @@ fn label_common(
             if pending.source.as_ref() != Some(source) || *player != human || count != option_count
             {
                 return Err(Error::UnsupportedPrompt);
+            }
+            if let Some(options) = creature_options {
+                let option = options
+                    .get(*option_index as usize)
+                    .ok_or(Error::UnsupportedPrompt)?;
+                return Ok(format!("For {}, {}", handles.name(source)?, option.label()));
             }
             let EffectOp::Choice { options, .. } =
                 pending_program(source, structural_path, observation)?
@@ -1042,6 +1072,7 @@ fn label_common(
         | A::ChooseLondonMulligan { .. }
         | A::ChooseLondonBottom { .. }
         | A::ChooseLegendPermanent { .. }
+        | A::ChooseAttackTarget { .. }
         | A::Ambiguous { .. } => return Err(Error::UnsupportedPrompt),
     })
 }

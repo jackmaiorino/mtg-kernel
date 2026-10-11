@@ -39,6 +39,8 @@ pub struct ObservationV9 {
     pub own_hand: Vec<CardPrivateV1>,
     pub known_library_cards: [Vec<KnownLibraryCardV4>; 2],
     pub known_hand_cards: [Vec<CardPrivateV1>; 2],
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub known_face_down_cards: Vec<crate::rl::FaceDownCardKnowledgeV1>,
     pub extensions: PolicyObservationExtensionsV9,
     pub visible_projection_hash: u64,
 }
@@ -60,6 +62,7 @@ impl ObservationV9 {
             own_hand: base.own_hand,
             known_library_cards: base.known_library_cards,
             known_hand_cards: base.known_hand_cards,
+            known_face_down_cards: base.known_face_down_cards,
             extensions: PolicyObservationExtensionsV9 {
                 predecessor: base.extensions,
                 attacked_this_turn: [

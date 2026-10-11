@@ -1260,6 +1260,8 @@ mod tests {
                         opponent: None,
                         opponent_kind: None,
                         opponent_search: None,
+                        runtime_rules: None,
+                        reset: None,
                     },
                     opponent: ExpandedOpponentAssignmentV1::Fixed {
                         id: "archive".into(),
@@ -1910,6 +1912,8 @@ mod tests {
                         postboard: false,
                         max_physical_decisions: 100_000,
                         max_policy_steps: 1_000_000,
+                        runtime_rules: None,
+                        reset: None,
                     },
                     opponent: ExpandedOpponentAssignmentV1::Current,
                 }],

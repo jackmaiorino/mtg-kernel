@@ -78,6 +78,7 @@ fn execute_trigger(state: &mut GameState, pending: &trigger::PendingTrigger) {
         &ExecCtx {
             source: pending.source,
             controller: pending.controller,
+            cauldron_grant: Default::default(),
             stack_item_id: None,
             targets: Vec::new(),
             target_contracts: Vec::new(),
@@ -167,6 +168,7 @@ fn cast_down_uses_the_nonlegendary_filter_and_shared_destroy_path() {
         &ExecCtx {
             source: cast_down,
             controller: PlayerId::P0,
+            cauldron_grant: Default::default(),
             stack_item_id: None,
             targets: vec![target],
             target_contracts: vec![target_contract],

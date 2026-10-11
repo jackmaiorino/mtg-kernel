@@ -69,7 +69,9 @@ fn printed_colors(mainboard: &[u16]) -> Result<Vec<ManaColor>, String> {
             .ok_or("unknown registered card")?;
         for pip in card.cost.pips {
             match *pip {
-                Pip::Colored(c) | Pip::Phyrexian(c) => present[c.pool_index()] = true,
+                Pip::Colored(c) | Pip::Phyrexian(c) | Pip::PhyrexianAnyColor(c) => {
+                    present[c.pool_index()] = true
+                }
                 Pip::Hybrid(a, b) => {
                     present[a.pool_index()] = true;
                     present[b.pool_index()] = true;

@@ -138,6 +138,7 @@ fn gain(state: &mut GameState, player: PlayerId, amount: i32) {
 
 fn place_counter(state: &mut GameState, object: ObjectId, player: PlayerId) {
     let ctx = ExecCtx {
+        cauldron_grant: Default::default(),
         stack_item_id: None,
         source: object,
         controller: player,

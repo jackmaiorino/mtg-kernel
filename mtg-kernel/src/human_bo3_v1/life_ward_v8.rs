@@ -127,6 +127,7 @@ fn project_state(
         &observation.own_hand,
         &observation.known_library_cards,
         &observation.known_hand_cards,
+        &observation.known_face_down_cards,
         |handles| {
             Ok(HumanExtensionsV1 {
                 pending_cast_object_cost: observation
@@ -223,6 +224,12 @@ fn project_state(
         known_library_cards: common.known_library_cards,
         known_hand_cards: common.known_hand_cards,
         policy_context: common.policy_context,
+        known_face_down_cards: common.known_face_down_cards,
+        poison_counters: common.poison_counters,
+        poison_prevention: common.poison_prevention,
+        creatures_attacked_this_turn: common.creatures_attacked_this_turn,
+        ninja_emblems: common.ninja_emblems,
+        restricted_mana: common.restricted_mana,
         extensions: HumanExtensionsV8 {
             pending_cast_object_cost: old.pending_cast_object_cost,
             decision_local_library: old.decision_local_library,

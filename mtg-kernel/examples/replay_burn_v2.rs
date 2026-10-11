@@ -1653,6 +1653,9 @@ fn run(
             SurfaceDecision::Decision(Decision::ChooseLegendPermanent { .. }) => {
                 return Err("unhandled-decision:ChooseLegendPermanent".to_string())
             }
+            SurfaceDecision::Decision(Decision::ChooseAttackTarget { .. }) => {
+                return Err("unhandled-decision:ChooseAttackTarget".to_string())
+            }
             SurfaceDecision::Decision(Decision::ChooseLondonMulligan { .. })
             | SurfaceDecision::Decision(Decision::ChooseLondonBottom { .. }) => {
                 return Err("unsupported-london-mulligan-protocol".to_string())
@@ -1785,6 +1788,7 @@ fn decision_player(d: &SurfaceDecision, state: &GameState) -> Option<PlayerId> {
         | SurfaceDecision::Decision(Decision::ChooseEffectBoolean { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseCombatDamageRange { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseLegendPermanent { player, .. })
+        | SurfaceDecision::Decision(Decision::ChooseAttackTarget { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseLondonMulligan { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseLondonBottom { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseEffectTargets { player, .. })
@@ -2626,6 +2630,7 @@ fn target_key(t: &Target) -> String {
     match t {
         Target::Player(p) => format!("P{}", p.index()),
         Target::Object(id) => format!("O{}", id.0),
+        Target::StackItem(id) => format!("S{}", id.0),
     }
 }
 
@@ -4174,6 +4179,8 @@ mod tests {
             x_value: Some(0),
             chosen_creature_cost_zone: None,
             chosen_creature_cost: None,
+            convoke_chosen: Vec::new(),
+            convoke_finished: false,
         });
 
         let rec = decision_record_ex(

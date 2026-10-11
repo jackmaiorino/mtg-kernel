@@ -619,6 +619,7 @@ fn mesmeric_fiend_reveals_publicly_exiles_nonland_and_returns_exact_linked_card(
             .map(|target| match target {
                 TargetRefV1::Object { object } => object.arena_id,
                 TargetRefV1::Player { .. } => panic!("hand choice exposed a player"),
+                TargetRefV1::StackItem { .. } => panic!("hand choice exposed a stack ability"),
             })
             .collect::<Vec<_>>();
         assert_eq!(ids, vec![chosen.0, other.0]);

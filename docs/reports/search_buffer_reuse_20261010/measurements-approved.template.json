@@ -1,0 +1,13 @@
+{
+  "candidate_commit": "a70a6b9db1d1148f8aab29d7da11b88bb5b1b63d",
+  "qualification_sha256": "3157f0d422894539f4ad4d29451990e1482d8ca3259eedb2c47c266d2a3ada14",
+  "phases": [
+    "qualify",
+    "abba"
+  ],
+  "limits": "20000,2,65536",
+  "root_ids": [
+    "r1-cast-A48-g3757-s97",
+    "r1-target-A48-g2506-s133"
+  ]
+}

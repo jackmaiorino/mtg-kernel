@@ -1,0 +1,174 @@
+{
+  "source_commit": "9e33d1759466bb82fff81072d340cf58a87d7adb",
+  "integration_baseline": "a957c358db9326cb3eacff819d6bcea38678aeb3",
+  "source_archive_sha256": "766f7735f299869cec016b032868b25ee01e45e22fd3ab914d5bc7e0325b3728",
+  "gameplay_source_commit": "2dbb091435c20fb278bb49c5bf334ac40bc09925",
+  "gameplay_source_archive_sha256": "5eba8b9d526b909ef15a77c0a205e6a54cc1888eb2fb200db779a0703ccc7520",
+  "compatible_evidence": "FDN and Standard integration checks and 77 Python checks ran on the gameplay source. The final source changes only rules-vector extraction, its tests and documentation. Final library/default and affected rules-vector checks ran on the final source.",
+  "toolchain": {
+    "rustc": "1.94.1 (e408947bf 2026-03-25)",
+    "llvm": "21.1.8",
+    "linker": "MSVC 14.50.35725.0",
+    "python_checks": "3.13.14"
+  },
+  "execution": {
+    "host": "HaleysPC",
+    "guard": "python/tools/host_slots_v1.py run",
+    "launcher_sha256": "2aed91f1592fba642b354f6776f882d61dacabd0ef5fffb95740c51d67012628",
+    "work_id": "haley-standard-verify-004",
+    "claim": "ee18f5d601a24d128535a12b3ded4d94",
+    "cores": [
+      10,
+      11
+    ],
+    "priority": "below_normal",
+    "cargo_jobs": 2,
+    "gpu_ordinal": null,
+    "incremental": false,
+    "debug_info": 0,
+    "target_cap_gib": 3,
+    "disk_free_floor_gib": 60
+  },
+  "checks": {
+    "fdn_compatibility": 58,
+    "standard_integration": 349,
+    "standard_library": 80,
+    "default_compatibility": 69,
+    "python": 77,
+    "rules_vector_by_profile": {
+      "default": 22,
+      "limited-fdn-fixtures": 24,
+      "standard-magezero-fixtures": 2
+    },
+    "rules_vector_ignored": {
+      "count": 1,
+      "test": "at_most_five_percent_of_fdn_cards_have_an_unseen_part",
+      "reason": "Existing ignored research gate preserves its originally failed result; not counted as passed."
+    },
+    "generated_contracts": "Both flat-policy generators passed --check unchanged."
+  },
+  "input_archive_file_sha256": {
+    "data/cards_v1.json": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
+    "data/limited/fdn_v1/cards_v1.json": "dd0596a64042291a6c36bb42f421d9cf69fa966e817d8d982815be252a286e33",
+    "data/standard/magezero_v1/cards_v1.json": "577a51fd8f0490a74ffeb49ac1e39d6675955fc53960a7b40a21e684057d9f37",
+    "data/standard/magezero_v1/decks/Standard-MonoB.dck": "f0019124eef0f11a5458b7289344bd4dfbc99fc0fa1343c30ac93112594f17a6",
+    "data/standard/magezero_v1/decks/Standard-MonoG.dck": "093d5c57c20ccaf79c48b8707712a0e260eb578a148f31b864610e17e167f50b",
+    "data/standard/magezero_v1/decks/Standard-MonoR.dck": "68dac8d49eb93096eee27e5db2582f441334db0bc14345a69894ff089593e386",
+    "data/standard/magezero_v1/decks/Standard-MonoU.dck": "e2f14a69fa9a36a0fe7e57bc803ec0034efecfdcd6c6ea8736c8f4ceba35b02b",
+    "data/standard/magezero_v1/decks/Standard-MonoW.dck": "b8b416e6acd7e3004a364ace019a5d38d8bc7f0d9c23981efa0dd365e3213ed6",
+    "data/standard/magezero_v1/decks/Standard16-5C.dck": "95f90fd18ebac5d293166f4dddef71e93172ffc076f4e461d1b528011c66e6c8",
+    "data/standard/magezero_v1/decks/Standard16-BW.dck": "aa160d0ebd6c9aceb9463db60ce9c92713fe5d2254b4674c95ae060a180ec86b",
+    "data/standard/magezero_v1/decks/Standard16-GB.dck": "5005a49d5f33498a904c234fae3f18fa1e0117f406f3778cf487033514fe2f76",
+    "data/standard/magezero_v1/decks/Standard16-GW.dck": "d04f29eff80ecf1d03cc1382bc061f11ad1428685f2997db3c21cb56f6f215e6",
+    "data/standard/magezero_v1/decks/Standard16-RB.dck": "183d4f053aada5112ff42cbcf13e827fe37917d3cb82dd68ab6c8912ce852212",
+    "data/standard/magezero_v1/decks/Standard16-RG.dck": "5eeae760a2f7c85117717e8153dd54104a400e2537f18f25b343d1af6b174edd",
+    "data/standard/magezero_v1/decks/Standard16-RW.dck": "b32cd25712aa472e75851696e9d944a31184a5402485825923fda5c7a0677a13",
+    "data/standard/magezero_v1/decks/Standard16-UB.dck": "246accf8e03e0e1d07fbadef6631118d5b7b06f548216a8e90c07c6e3bb73c00",
+    "data/standard/magezero_v1/decks/Standard16-UG.dck": "2d604993eaecdd0a91550d1bdfdf54e65421877f315da751e6f7f2d66f83d444",
+    "data/standard/magezero_v1/decks/Standard16-UR.dck": "9fe5248d3c83db907094f0d729c66a32bc5be0aa746adc1c480e729654813fe9",
+    "data/standard/magezero_v1/decks/Standard16-UW.dck": "63a3e09868434432e532aeec8562c7d6ea49be2f377a00dd22518a70715b30c3"
+  },
+  "logs": {
+    "test-standard-fdn69-haley-009.log": "2a075e1730ddfc1d4dad28d140433091eb066e031d303d5d5af108df6c7a2903",
+    "test-standard-reconciled-haley-010.log": "614e8f89a370f047f40089cc5e1e305f7d72e41a7c05e0f92ec35b05ee57d168"
+  },
+  "recovery": "Job009 completed its 58 FDN and 349 Standard integration tests, then the guard interrupted library compilation at the 3 GiB cache cap. Owned reconstructible cache artifacts were pruned only while compilers were idle; job010 completed the remaining and newly affected checks.",
+  "sessions": [
+    {
+      "decks": [
+        "Standard-MonoB",
+        "Standard-MonoG"
+      ],
+      "seed": 91621388255232,
+      "transcript_sha256": "a3cff333f8b04c38e4e1d6804fdd50acc083c63ca0df4b45731a1ea7a55e5912",
+      "casts_by_seat": [
+        5,
+        7
+      ]
+    },
+    {
+      "decks": [
+        "Standard-MonoR",
+        "Standard-MonoU"
+      ],
+      "seed": 91621388255233,
+      "transcript_sha256": "91375e1a73f3efaa946baf5576fe260acb118c13e272cdb18bf5aefed2255fc1",
+      "casts_by_seat": [
+        9,
+        6
+      ]
+    },
+    {
+      "decks": [
+        "Standard-MonoW",
+        "Standard16-5C"
+      ],
+      "seed": 91621388255234,
+      "transcript_sha256": "4fe38a48ed5b2a88179588f7c41c3028b9dc33153ece7b3b910447c1a91fad9d",
+      "casts_by_seat": [
+        10,
+        6
+      ]
+    },
+    {
+      "decks": [
+        "Standard16-BW",
+        "Standard16-GB"
+      ],
+      "seed": 91621388255235,
+      "transcript_sha256": "a2f1b39c8251bdc49ff603cea2ce5b5d4867e6c548b2ea3c86126efd21be5c6b",
+      "casts_by_seat": [
+        16,
+        7
+      ]
+    },
+    {
+      "decks": [
+        "Standard16-GW",
+        "Standard16-RB"
+      ],
+      "seed": 91621388255236,
+      "transcript_sha256": "0b5ac74405c896f49dbec628c5c71507231d73372500b250079b2d6e8ac7e624",
+      "casts_by_seat": [
+        11,
+        8
+      ]
+    },
+    {
+      "decks": [
+        "Standard16-RG",
+        "Standard16-RW"
+      ],
+      "seed": 91621388255237,
+      "transcript_sha256": "f50c2d614b62611d5e60715534743b0531723444236af732c453adfc1a1dfeec",
+      "casts_by_seat": [
+        5,
+        10
+      ]
+    },
+    {
+      "decks": [
+        "Standard16-UB",
+        "Standard16-UG"
+      ],
+      "seed": 91621388255238,
+      "transcript_sha256": "64d65add557e590a10469ce57c75e1cc95ef71f33310dcdacc5a46c7f09f6ee1",
+      "casts_by_seat": [
+        9,
+        13
+      ]
+    },
+    {
+      "decks": [
+        "Standard16-UR",
+        "Standard16-UW"
+      ],
+      "seed": 91621388255239,
+      "transcript_sha256": "a0a4f47233e9d596d8b2817adda3e0acf1f2c22929d8c0416538a4062a4a173b",
+      "casts_by_seat": [
+        13,
+        10
+      ]
+    }
+  ]
+}

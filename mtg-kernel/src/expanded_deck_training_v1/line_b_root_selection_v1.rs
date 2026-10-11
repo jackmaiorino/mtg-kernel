@@ -111,6 +111,7 @@ pub(super) fn select_line_b_root_v1(
     let episode = &trajectory.episode;
     let configs = episode.configurations()?;
     let mut session = episode_session_v1(episode, &configs)?;
+    super::restore_reset_cut_v1(&mut session, episode)?;
     let mut best: Option<LineBRootV1> = None;
     let mut eligible = 0_usize;
     for (index, row) in trajectory.decisions.iter().enumerate() {

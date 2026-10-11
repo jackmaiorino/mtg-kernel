@@ -444,6 +444,7 @@ fn actual_natural_two_and_three_game_returns_replay_legacy_parity_and_equal_matc
             max_physical_decisions: cfg.max_physical_decisions,
             max_policy_steps: cfg.max_policy_steps,
             opening_protocol: Bo3OpeningProtocolV1::KeepSevenV2,
+            runtime_rules: None,
         },
         registrations(&cfg).unwrap(),
         &packages[0].gameplay.identity.model.weights_sha256,

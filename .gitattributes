@@ -24,3 +24,7 @@ data/limited/smoke_v1/*.dck text eol=lf
 
 # Preserve the MageZero release's CRLF deck bytes so their SHA-256s match.
 data/standard/magezero_v1/decks/*.dck text eol=crlf
+
+# Retain the original bytes of these captured verification receipts.
+docs/reports/search_buffer_reuse_20261010/catalog-receipt.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+docs/reports/search_buffer_reuse_20261010/inventory.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
