@@ -27,3 +27,14 @@ retain their separate identities and refusal behavior. Their complete variable
 consumer successors and training admission remain open; this preparation
 does not claim model or strength qualification. Resolve these documented gaps
 before claiming broader Limited completion. No research execution is launched.
+
+
+The actual Native35 generator emitted396 definitions with candidate identity
+9a77854e83bfb1bc before its typed producer compile failure. Native36 at71a0fd0d
+fixes that producer, passes both all-test typechecks, and generates the same
+identity. Actual printed/owning/Human/lint/replay completion is still pending.
+This appended v74 profile preserves v73 and every earlier profile literal,
+adds historical v73 read and refusal before publication/resume store access,
+and changes only the current live-catalog canaries. No formal measurement,
+model/weight identity or predecessor profile is repinned. The new profile
+itself still requires actual native and default qualification.
