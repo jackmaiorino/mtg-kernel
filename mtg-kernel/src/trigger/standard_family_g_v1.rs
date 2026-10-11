@@ -381,3 +381,34 @@ pub(super) const SURRAK_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
     condition: TriggerCondition::ControlledCreatureOrCreatureSpellBecomesTargetOfOpponent,
     ..etb_trigger(draw_one_effect)
 }];
+
+fn golem_token_effect() -> EffectOp {
+    create_named_token("Golem Token")
+}
+pub(super) const SANDSTORM_SALVAGER_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(golem_token_effect)];
+fn white_vampire_token_effect() -> EffectOp {
+    create_named_token("Vampire Token")
+}
+fn draw_one_lose_one_effect() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        },
+        EffectOp::LoseLife {
+            player: PlayerRef::Controller,
+            amount: 1,
+        },
+    ])
+}
+pub(super) const PREACHER_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::AttacksPlayerWithMostLife,
+        ..etb_trigger(white_vampire_token_effect)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::AttacksIfControllerMostLife,
+        ..etb_trigger(draw_one_lose_one_effect)
+    },
+];

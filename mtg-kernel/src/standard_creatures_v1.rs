@@ -31,6 +31,8 @@ pub enum CreatureEffectV1 {
     GingerEvasion,
     ToughCookieAnimate,
     WurmletCounterIfFirstResolution,
+    HarvesterWeakening,
+    SalvagerBoostTokens,
 }
 
 fn upgrade(state: &GameState, id: ObjectId) -> Option<&CreatureUpgradeV1> {
@@ -171,12 +173,92 @@ pub(crate) fn animated_creature(state: &GameState, id: ObjectId) -> bool {
         })
 }
 
+/// The base catalog has player-only attack declarations. The integration
+/// with attack_target_v1 overrides this predicate to exclude planeswalkers.
+pub(crate) fn attacks_player(_state: &GameState, _attacker: ObjectId) -> bool {
+    true
+}
+
 pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: ObjectId) -> bool {
     !upgrade(state, attacker).is_some_and(|value| value.haste_blockers_only)
         || crate::engine::has_effective_keyword(state, blocker, Keywords::HASTE)
 }
 
 pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameState) {
+    if effect == CreatureEffectV1::SalvagerBoostTokens {
+        let objects: Vec<_> = state
+            .objects
+            .iter()
+            .filter_map(|(object, live)| {
+                (live.zone == Zone::Battlefield
+                    && live.controller == ctx.controller
+                    && live.v4.is_token
+                    && crate::engine::object_has_type(
+                        state,
+                        object,
+                        crate::card_def::CardType::Creature,
+                    ))
+                .then_some(crate::effect::EffectObjectBinding {
+                    object,
+                    expected_zone: Zone::Battlefield,
+                    expected_zone_change_count: live.zone_change_count,
+                })
+            })
+            .collect();
+        for object in &objects {
+            if crate::event::add_plus_one_counters(state, object.object, ctx.controller, 1).is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
+        }
+        for object in objects {
+            crate::effect::install_temporary_boost(state, object, 0, 0, Keywords::TRAMPLE);
+        }
+        return;
+    }
+    if effect == CreatureEffectV1::HarvesterWeakening {
+        let Some(crate::state::Target::Object(target)) = ctx.targets.first().copied() else {
+            return;
+        };
+        if !ctx.target_contracts.first().is_some_and(|&contract| {
+            crate::engine::target_contract_matches_live(state, ctx.targets[0], contract)
+        }) || !ctx.ability_source_contract.is_some_and(|source| {
+            crate::engine::effect_target_is_legal_from_ability_source(
+                state,
+                source,
+                ctx.controller,
+                crate::card_def::TargetSpec::Creature,
+                &ctx.targets,
+                0,
+            )
+        }) {
+            return;
+        }
+        let count = state
+            .objects
+            .iter()
+            .filter(|(id, object)| {
+                object.zone == Zone::Battlefield
+                    && object.controller == ctx.controller
+                    && object.v4.is_token
+                    && crate::engine::has_effective_subtype(state, *id, Subtype::Blood)
+            })
+            .count();
+        let amount = i32::try_from(count)
+            .unwrap_or(i32::MAX / 2)
+            .saturating_mul(-2);
+        let binding = crate::effect::EffectObjectBinding {
+            object: target,
+            expected_zone: Zone::Battlefield,
+            expected_zone_change_count: state.objects.get(target).zone_change_count,
+        };
+        crate::effect::install_temporary_boost(state, binding, amount, amount, Keywords::NONE);
+        return;
+    }
     if effect == CreatureEffectV1::ToughCookieAnimate {
         let Some(crate::state::Target::Object(target)) = ctx.targets.first().copied() else {
             return;
@@ -254,6 +336,9 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
     match effect {
         CreatureEffectV1::WurmletCounterIfFirstResolution => {
             unreachable!("resolution marker handled above")
+        }
+        CreatureEffectV1::HarvesterWeakening | CreatureEffectV1::SalvagerBoostTokens => {
+            unreachable!("independent effect handled above")
         }
         CreatureEffectV1::ToughCookieAnimate => unreachable!("targeted animation handled above"),
         CreatureEffectV1::GingerEvasion => value.haste_blockers_only = true,

@@ -4045,6 +4045,8 @@ fn keywords_for(card: &CardJson) -> String {
     match card.name.as_str() {
         "Faerie Dreamthief" => keywords.push("Keywords::FLYING"),
         "Surrak, Elusive Hunter" => keywords.push("Keywords::TRAMPLE"),
+        "Preacher of the Schism" => keywords.push("Keywords::DEATHTOUCH"),
+        "Vampire Token" => keywords.push("Keywords::LIFELINK"),
         "Gingerbrute" => keywords.push("Keywords::HASTE"),
         "Surge Engine" => keywords.push("Keywords::DEFENDER"),
         "Spyglass Siren" => keywords.push("Keywords::FLYING"),
@@ -5468,6 +5470,24 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             },
         ],
         // MageZero Standard family G.
+        "Bloodtithe Harvester" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Tap, AbilityCostRecipe::SacrificeSelf],
+            effect: AbilityEffectRecipe::CreatureUpgrade("HarvesterWeakening"),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: true,
+            target_spec: "Creature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Sandstorm Salvager" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ManaCost("{2}"), AbilityCostRecipe::Tap],
+            effect: AbilityEffectRecipe::CreatureUpgrade("SalvagerBoostTokens"),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Faerie Dreamthief" => &[ActivatedAbilityRecipe {
             cost: &[
                 AbilityCostRecipe::ManaCost("{2}{B}"),
@@ -6517,6 +6537,9 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Faerie Dreamthief" => "etb:surveil:1",
         "Teething Wurmlet" => "controlled_artifact_enters:gain_life:1;first_resolution_each_turn:source_counter:1",
         "Surrak, Elusive Hunter" => "opponent_targets_controlled_creature_or_creature_spell:draw:1",
+        "Bloodtithe Harvester" => "etb:create_blood_token:1",
+        "Sandstorm Salvager" => "etb:create_golem_token:1",
+        "Preacher of the Schism" => "attacks_player_with_most_life:create_white_vampire_token;attacks_while_controller_most_life:draw:1:lose_life:1",
         "Tough Cookie" => "etb:create_food_token:1",
         "Kellan, Planar Trailblazer" => "granted_combat_damage_player:impulse:1:end_of_turn",
         "Spyglass Siren" => "etb:create_map_token:1",

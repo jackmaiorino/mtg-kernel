@@ -187,6 +187,11 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
                 obj: ObjF::Typed(CardTypeF::Creature),
             });
         }
+        TriggerCondition::AttacksIfControllerMostLife
+        | TriggerCondition::AttacksPlayerWithMostLife => {
+            out.trigger(TrigF::Attacks);
+            out.control(ControlF::Conditional);
+        }
         TriggerCondition::Attacks => {
             // The source's exact incarnation is declared as an attacker.
             out.trigger(TrigF::Attacks);

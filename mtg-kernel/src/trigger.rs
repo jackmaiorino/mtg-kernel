@@ -227,6 +227,8 @@ pub enum TriggerCondition {
     /// Conditions owned by the Standard catalog's card module.
     StandardV1(crate::standard_cards_v1::StandardTriggerV1),
     ControlledArtifactEnters,
+    AttacksIfControllerMostLife,
+    AttacksPlayerWithMostLife,
     ControlledCreatureOrCreatureSpellBecomesTargetOfOpponent,
 }
 
@@ -3157,7 +3159,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Generous Ent" | "Tough Cookie" => &GENEROUS_ENT_TRIGGERS,
         "Gingerbread Cabin" => &GINGERBREAD_CABIN_TRIGGERS,
         "Writhing Chrysalis" => &WRITHING_CHRYSALIS_TRIGGERS,
-        "Blood Fountain" => &BLOOD_FOUNTAIN_TRIGGERS,
+        "Blood Fountain" | "Bloodtithe Harvester" => &BLOOD_FOUNTAIN_TRIGGERS,
         "Sagu Wildling" => &SAGU_WILDLING_TRIGGERS,
         "Kessig Flamebreather" => &KESSIG_FLAMEBREATHER_TRIGGERS,
         "Balmor, Battlemage Captain" => &BALMOR_TRIGGERS,
@@ -3237,6 +3239,10 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Enduring Innocence" => &ENDURING_INNOCENCE_TRIGGERS,
         "Monk Token" => &MONASTERY_SWIFTSPEAR_TRIGGERS,
         "Kellan, Planar Trailblazer" => &KELLAN_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Sandstorm Salvager" => &standard_family_g_v1::SANDSTORM_SALVAGER_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Preacher of the Schism" => &standard_family_g_v1::PREACHER_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Faerie Dreamthief" => &standard_family_g_v1::FAERIE_DREAMTHIEF_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
@@ -4869,6 +4875,29 @@ fn trigger_matches(
                     .is_some_and(|item| {
                         crate::engine::stack_spell_mana_value(state, item) >= minimum
                     })
+        }
+        (TriggerCondition::AttacksIfControllerMostLife, event) => {
+            trigger_matches(
+                TriggerCondition::Attacks,
+                event,
+                source,
+                controller,
+                state,
+                draws_this_turn_at_event,
+            ) && state.players[controller.index()].life
+                >= state.players[controller.opponent().index()].life
+        }
+        (TriggerCondition::AttacksPlayerWithMostLife, event) => {
+            trigger_matches(
+                TriggerCondition::Attacks,
+                event,
+                source,
+                controller,
+                state,
+                draws_this_turn_at_event,
+            ) && crate::standard_creatures_v1::attacks_player(state, source)
+                && state.players[controller.opponent().index()].life
+                    >= state.players[controller.index()].life
         }
         (TriggerCondition::ControlledArtifactEnters, event) => battlefield_entry_object(event)
             .is_some_and(|object| {

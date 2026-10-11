@@ -31,6 +31,35 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
         EffectOp::CreatureUpgrade(effect) => {
             use crate::standard_creatures_v1::CreatureEffectV1;
+            if matches!(effect, CreatureEffectV1::SalvagerBoostTokens) {
+                plain_counter(
+                    RelF::You,
+                    ObjF::Typed(CardTypeF::Creature),
+                    AmtF::fixed(1),
+                    out,
+                );
+                out.effect(
+                    EffectAtom::new(EvF::GrantKeyword)
+                        .player(RelF::You)
+                        .obj(ObjF::Typed(CardTypeF::Creature))
+                        .duration(DurF::EndOfTurn)
+                        .keyword(keyword_bits(crate::card_def::Keywords::TRAMPLE)[0]),
+                );
+            }
+            if matches!(effect, CreatureEffectV1::HarvesterWeakening) {
+                out.effect(
+                    EffectAtom::new(EvF::StatChange)
+                        .obj(ObjF::Typed(CardTypeF::Creature))
+                        .amount(AmtF::Dynamic)
+                        .duration(DurF::EndOfTurn),
+                );
+                out.read(
+                    RelF::You,
+                    Some(ZoneF::Battlefield),
+                    Some(ObjF::Token),
+                    AggF::Count,
+                );
+            }
             out.control(ControlF::Conditional);
             if matches!(effect, CreatureEffectV1::WurmletCounterIfFirstResolution) {
                 plain_counter(RelF::You, ObjF::ThisObject, AmtF::fixed(1), out);

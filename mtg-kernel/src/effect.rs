@@ -2555,7 +2555,7 @@ pub struct ExecCtx {
     pub x_value: u16,
 }
 
-fn install_temporary_boost(
+pub(crate) fn install_temporary_boost(
     state: &mut GameState,
     binding: EffectObjectBinding,
     power: i32,

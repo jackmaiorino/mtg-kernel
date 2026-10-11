@@ -1821,6 +1821,130 @@ fn surrak_draws_for_opponent_targeting_creature_spells_and_battlefield_creatures
 }
 
 #[test]
+fn bloodtithe_harvester_counts_controlled_blood_tokens_at_resolution() {
+    let mut state = ready(Step::Main1);
+    let harvester = put(&mut state, PlayerId::P0, "Bloodtithe Harvester", Zone::Hand);
+    move_to(&mut state, harvester, Zone::Battlefield);
+    settled(&mut state);
+    let blood = battlefield_tokens(&state, PlayerId::P0, "Blood Token")[0];
+    let second = put(&mut state, PlayerId::P0, "Blood Token", Zone::Battlefield);
+    put(&mut state, PlayerId::P1, "Blood Token", Zone::Battlefield);
+    let target = put(
+        &mut state,
+        PlayerId::P1,
+        "Hullbreaker Horror",
+        Zone::Battlefield,
+    );
+    state.objects.get_mut(harvester).summoning_sick = false;
+    state.step = Step::BeginCombat;
+    assert!(!activatable(&mut state).contains(&(harvester, 0)));
+    state.step = Step::Main1;
+    engine::step(&mut state, Action::ActivateAbility(harvester, 0)).unwrap();
+    next(&mut state);
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+    next(&mut state);
+    assert_eq!(state.objects.get(harvester).zone, Zone::Graveyard);
+    move_to(&mut state, second, Zone::Exile);
+    settled(&mut state);
+    assert_eq!(engine::effective_power(&state, target), 5);
+    assert_eq!(engine::effective_toughness(&state, target), 6);
+    assert_eq!(state.objects.get(blood).zone, Zone::Battlefield);
+}
+
+#[test]
+fn sandstorm_salvager_boosts_only_current_controlled_creature_tokens() {
+    let mut state = ready(Step::Main1);
+    let salvager = put(&mut state, PlayerId::P0, "Sandstorm Salvager", Zone::Hand);
+    move_to(&mut state, salvager, Zone::Battlefield);
+    settled(&mut state);
+    let golem = battlefield_tokens(&state, PlayerId::P0, "Golem Token")[0];
+    let other = put(&mut state, PlayerId::P1, "Golem Token", Zone::Battlefield);
+    let food = put(&mut state, PlayerId::P0, "Food Token", Zone::Battlefield);
+    state.objects.get_mut(salvager).summoning_sick = false;
+    state.players[0].mana_pool = pool(&[], 2);
+    engine::step(&mut state, Action::ActivateAbility(salvager, 0)).unwrap();
+    next(&mut state);
+    move_to(&mut state, salvager, Zone::Graveyard);
+    settled(&mut state);
+    assert_eq!(state.objects.get(golem).counters.plus1_plus1, 1);
+    assert_eq!(engine::effective_power(&state, golem), 4);
+    assert!(engine::has_effective_keyword(
+        &state,
+        golem,
+        Keywords::TRAMPLE
+    ));
+    assert_eq!(state.objects.get(other).counters.plus1_plus1, 0);
+    assert_eq!(state.objects.get(food).counters.plus1_plus1, 0);
+    let late = put(&mut state, PlayerId::P0, "Golem Token", Zone::Battlefield);
+    assert!(!engine::has_effective_keyword(
+        &state,
+        late,
+        Keywords::TRAMPLE
+    ));
+    state.step = Step::End;
+    for _ in 0..20 {
+        if state.active_player == PlayerId::P1 {
+            break;
+        }
+        match next(&mut state) {
+            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    assert!(!engine::has_effective_keyword(
+        &state,
+        golem,
+        Keywords::TRAMPLE
+    ));
+    assert_eq!(state.objects.get(golem).counters.plus1_plus1, 1);
+}
+
+#[test]
+fn preacher_life_comparison_is_evaluated_when_it_attacks_and_ties_trigger_both() {
+    for (life, expected_tokens, expected_draws) in [(10, 1, 0), (20, 1, 1), (30, 0, 1)] {
+        let mut state = ready(Step::DeclareAttackers);
+        state.players[0].life = life;
+        let preacher = put(
+            &mut state,
+            PlayerId::P0,
+            "Preacher of the Schism",
+            Zone::Battlefield,
+        );
+        attack_unblocked(&mut state, vec![preacher]);
+        assert_eq!(
+            battlefield_tokens(&state, PlayerId::P0, "Vampire Token").len(),
+            expected_tokens
+        );
+        assert_eq!(state.players[0].hand.len(), expected_draws);
+        assert_eq!(state.players[0].life, life - expected_draws as i32);
+        for token in battlefield_tokens(&state, PlayerId::P0, "Vampire Token") {
+            assert!(engine::has_effective_keyword(
+                &state,
+                token,
+                Keywords::LIFELINK
+            ));
+            assert_eq!(engine::object_color_mask(&state, token), 1);
+        }
+    }
+    let mut state = ready(Step::DeclareAttackers);
+    state.players[0].life = 30;
+    let preacher = put(
+        &mut state,
+        PlayerId::P0,
+        "Preacher of the Schism",
+        Zone::Battlefield,
+    );
+    next(&mut state);
+    engine::step(&mut state, Action::DeclareAttackers(vec![preacher])).unwrap();
+    // Losing the lead after the trigger is created does not cancel it.
+    state.players[0].life = 10;
+    pass_until_blocks(&mut state);
+    assert_eq!(state.players[0].hand.len(), 1);
+    assert_eq!(state.players[0].life, 9);
+    assert!(battlefield_tokens(&state, PlayerId::P0, "Vampire Token").is_empty());
+}
+
+#[test]
 fn hired_claw_pings_when_lizards_attack() {
     let mut state = ready(Step::DeclareAttackers);
     put(&mut state, PlayerId::P0, "Hired Claw", Zone::Battlefield);
