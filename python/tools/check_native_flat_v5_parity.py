@@ -57,7 +57,7 @@ def main() -> None:
                "feature_contract_digest": features.feature_contract_fingerprint(),
                "feature_encoding_digest": features.encoding_contract_fingerprint(),
                "python": sys.version, "torch": torch.__version__,
-               "scope": "Registered state encoding parity; no Sire gameplay or model/training admission."}
+               "scope": "Registered state and explicitly named typed tensor-boundary encoding parity; no life producer, Sire gameplay or model/training admission."}
     with args.receipt.open("x", encoding="utf-8") as handle:
         handle.write(json.dumps(receipt, sort_keys=True, indent=2) + "\n")
     print(json.dumps(receipt, sort_keys=True))

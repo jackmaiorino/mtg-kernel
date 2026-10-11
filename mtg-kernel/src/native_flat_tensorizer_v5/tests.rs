@@ -115,6 +115,133 @@ fn encoded_json(output: &NativeFlatPolicyDecisionV5) -> serde_json::Value {
         "action_ref_node_indices": tensor.action_ref_node_indices})
 }
 
+fn typed_life_boundary_case(pending: bool) -> serde_json::Value {
+    use crate::flat_policy_v5::{FlatQueuedWardLifePaymentV5, FlatWardLifePaymentV5};
+    use crate::policy_observation_v8::{QueuedWardLifePaymentV8, WardLifePaymentV8};
+    let (mut state, _, source) = crate::policy_observation_v6::tests::ward_multi_targeter_state();
+    if pending {
+        state.players[0].life = 3;
+        crate::policy_observation_v6::tests::reach_ward_payment(&mut state);
+    } else {
+        state.players[1].battlefield.retain(|&id| id != source);
+        state.players[0].battlefield.push(source);
+        state.objects.get_mut(source).controller = PlayerId::P0;
+    }
+    let session = FastActorSessionV1::from_v5_fixture_state(state);
+    let e = expected(&session);
+    let mut encoder = NativeFlatPolicyEncoderV5::default();
+    let original = encoder.encode(&session, e).unwrap();
+    let (mut observation, semantics) = session.flat_rich_current_input_v5(e).unwrap();
+    let mut buffers = OwnedScoringV5::default();
+    let mut flat = FlatDecisionEncoderV5::default();
+    let mut decision = session
+        .encode_current_flat_scoring_decision_owned_v5(
+            e,
+            &mut flat,
+            &mut FlatScoringOwnedBuffersV2 {
+                objects: &mut buffers.objects,
+                relations: &mut buffers.relations,
+                object_subtypes: &mut buffers.object_subtypes,
+                ability_uses: &mut buffers.ability_uses,
+                goads: &mut buffers.goads,
+                completed_dungeons: &mut buffers.completed_dungeons,
+                effect_subtype_changes: &mut buffers.effect_subtype_changes,
+                context_path_elements: &mut buffers.context_path_elements,
+                actions: &mut buffers.actions,
+                action_refs: &mut buffers.action_refs,
+            },
+        )
+        .unwrap();
+    // A typed tensor-boundary fixture replaces already authenticated Generic
+    // relations. It exercises no life-payment producer, binding or gameplay.
+    if let Some(payment) = observation.extensions.pending_ward_payment.take() {
+        observation.extensions.pending_ward_life_payment = Some(WardLifePaymentV8 {
+            targeting_stack_index: payment.targeting_stack_index,
+            payer: payment.payer,
+            life: 3,
+        });
+    }
+    for (index, queued) in std::mem::take(&mut observation.extensions.queued_ward_payments)
+        .into_iter()
+        .enumerate()
+    {
+        observation
+            .extensions
+            .queued_ward_life_payments
+            .push(QueuedWardLifePaymentV8 {
+                stack_index: queued.stack_index,
+                payment: WardLifePaymentV8 {
+                    targeting_stack_index: queued.payment.targeting_stack_index,
+                    payer: queued.payment.payer,
+                    life: 3 + index as u8,
+                },
+            });
+    }
+    if let Some(payment) = decision.extensions.pending_ward_payment.take() {
+        decision.extensions.pending_ward_life_payment = Some(FlatWardLifePaymentV5 {
+            targeting_stack_index: payment.targeting_stack_index,
+            targeting_source_object: payment.targeting_source_object,
+            ward_source_object: payment.ward_source_object,
+            payer: payment.payer,
+            life: 3,
+        });
+    }
+    for (index, queued) in std::mem::take(&mut decision.extensions.queued_ward_payments)
+        .into_iter()
+        .enumerate()
+    {
+        decision
+            .extensions
+            .queued_ward_life_payments
+            .push(FlatQueuedWardLifePaymentV5 {
+                stack_index: queued.stack_index,
+                payment: FlatWardLifePaymentV5 {
+                    targeting_stack_index: queued.payment.targeting_stack_index,
+                    targeting_source_object: queued.payment.targeting_source_object,
+                    ward_source_object: queued.payment.ward_source_object,
+                    payer: queued.payment.payer,
+                    life: 3 + index as u8,
+                },
+            });
+    }
+    let mut tensor = NativeFlatDecisionTensorV5::default();
+    NativeFlatTensorizerV5::default()
+        .fill(buffers.view(&decision), &mut tensor)
+        .unwrap();
+    let typed = NativeFlatPolicyDecisionV5 {
+        binding: original.binding(),
+        tensor,
+    };
+    let life_edges = typed
+        .edge_features()
+        .chunks_exact(41)
+        .filter(|edge| edge[15] == 38.0 / 64.0 || edge[15] == 39.0 / 64.0)
+        .collect::<Vec<_>>();
+    assert_eq!(life_edges.len(), 2);
+    assert!(life_edges.iter().all(|edge| edge[17] == 1.0));
+    if pending {
+        assert!(life_edges.iter().any(|edge| edge[15] == 38.0 / 64.0));
+    } else {
+        assert_ne!(life_edges[0][14], life_edges[1][14]);
+        assert_ne!(life_edges[0][20], life_edges[1][20]);
+    }
+    let actions = semantics
+        .into_iter()
+        .enumerate()
+        .map(|(index, semantic)| {
+            crate::rl::make_legal_action_v5(index as u32, semantic, None).unwrap()
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({"name": if pending { "typed_boundary_life_pending_exact" } else { "typed_boundary_life_queued_multi_targeter" },
+        "observation": observation, "legal_actions": actions, "tensors": encoded_json(&typed)})
+}
+
+#[test]
+fn life_payment_tensor_boundary_distinguishes_targeters_and_exact_life() {
+    typed_life_boundary_case(false);
+    typed_life_boundary_case(true);
+}
+
 #[test]
 fn independent_v5_source_descriptor_model_and_old_loader_refusal() {
     assert_eq!(
@@ -266,6 +393,8 @@ fn v5_parity_fixture_export_from_actual_registered_states() {
             "legal_actions": actions, "tensors": encoded_json(&output)}));
         assert_eq!(session.privileged_core_environment_hash(), before);
     }
+    cases.push(typed_life_boundary_case(false));
+    cases.push(typed_life_boundary_case(true));
     if let Ok(path) = std::env::var("MTG_FLAT_V5_PARITY_EXPORT") {
         use std::io::Write;
         let payload = serde_json::json!({"schema": "flat-v5-native-python-parity-1",

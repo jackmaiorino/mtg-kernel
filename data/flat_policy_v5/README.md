@@ -44,5 +44,8 @@ Native tests cover stale/forged binding refusal, snapshot replay, exact hidden
 trigger positions, captured-controller divergence and printed-trait aliases.
 They export registered-state inputs and all thirteen tensors for the independent
 Python checker. These tests are prepared but have not yet run. Registered
-fixtures do not cover front-life payment relations; those require separate
-typed boundary checks and actual Sire gameplay after registration.
+fixtures do not cover front-life payment relations. Two separate typed tensor
+boundary cases replace authenticated Generic relations with life fees to check
+multiple targeters, captured-controller divergence and an exact-life menu.
+These cases exercise encoding only; they do not authenticate life payments or
+their bindings. Actual Sire gameplay after registration remains pending.
