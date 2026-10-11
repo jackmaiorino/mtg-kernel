@@ -2040,6 +2040,7 @@ fn validate_physical_spell_cast_origin(
             origin.origin_zone == Zone::Graveyard
                 && source.owner == item.controller
                 && holder == item.controller
+                && permission_zone_change_count == origin.origin_zone_change_count
                 && matches!(
                     cast_method,
                     CastMethodV4::Normal | CastMethodV4::Alternative
@@ -25393,6 +25394,82 @@ mod tests {
         ));
         assert_eq!(activated.objects.get(spell).zone, Zone::Stack);
         assert_eq!(activated.stack.last().map(|item| item.source), Some(spell));
+    }
+
+    #[test]
+    #[cfg(feature = "standard-magezero-fixtures")]
+    fn finalized_case_cast_rejects_a_restored_prior_incarnation_grant() {
+        let mut state = ready_game_in_main1(0);
+        let case = put_on_battlefield(&mut state, PlayerId::P0, "Case of the Uneaten Feast");
+        let creature = put_in_graveyard(&mut state, PlayerId::P0, "Llanowar Elves");
+        let grant = crate::standard_cards_v1::uneaten_feast_grant();
+        let context = ExecCtx::no_targets(case, PlayerId::P0);
+        effect::execute(&grant, &context, &mut state);
+        let prior_generation = state.objects.get(creature).zone_change_count;
+
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(creature, Zone::Hand));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(creature, Zone::Graveyard),
+        );
+        let current_generation = state.objects.get(creature).zone_change_count;
+        assert_ne!(prior_generation, current_generation);
+        assert!(!crate::standard_cards_v1::graveyard_cast_granted(
+            &state,
+            creature,
+            PlayerId::P0,
+            current_generation,
+        ));
+        effect::execute(&grant, &context, &mut state);
+        // Two resolved Case grants in the same turn retain both records.
+        for generation in [prior_generation, current_generation] {
+            assert!(crate::standard_cards_v1::graveyard_cast_granted(
+                &state,
+                creature,
+                PlayerId::P0,
+                generation,
+            ));
+        }
+        state.players[0].mana_pool[ManaColor::G.pool_index()] = 1;
+        step(&mut state, Action::CastSpell(creature)).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert!(state.engine.pending_cast.is_none());
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        let item = restored.stack.last().unwrap();
+        validate_spell_stack_source(&restored, item).unwrap();
+        let mut forged_origin = item.v4.source_contract.unwrap().spell_cast_origin.unwrap();
+        assert_eq!(forged_origin.origin_zone_change_count, current_generation);
+        assert_eq!(forged_origin.finalized_method, Some(CastMethodV4::Normal));
+        forged_origin.route = SpellCastRouteV4::GraveyardPermissionV1 {
+            holder: PlayerId::P0,
+            permission_zone_change_count: prior_generation,
+        };
+        // Keep both serialized copies consistent. Only the grant's generation
+        // is stale; the source and cast-origin generations remain current.
+        restored.objects.get_mut(creature).v4.spell_cast_origin = Some(forged_origin);
+        restored
+            .stack
+            .last_mut()
+            .unwrap()
+            .v4
+            .source_contract
+            .as_mut()
+            .unwrap()
+            .spell_cast_origin = Some(forged_origin);
+        let mut forged: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&restored).unwrap()).unwrap();
+        assert!(validate_spell_stack_source(&forged, forged.stack.last().unwrap()).is_err());
+        forged.engine.priority_passes = [true, true];
+        assert!(matches!(
+            advance_until_decision(&mut forged),
+            Decision::Halted { source, .. } if source == creature
+        ));
+        assert_eq!(forged.objects.get(creature).zone, Zone::Stack);
+        assert_eq!(forged.stack.last().map(|item| item.source), Some(creature));
     }
 
     #[test]
