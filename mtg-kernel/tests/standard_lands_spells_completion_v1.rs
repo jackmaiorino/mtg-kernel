@@ -441,6 +441,85 @@ fn invoke_despair_sacrifices_each_type_or_loses_life_and_draws() {
 }
 
 #[test]
+fn katilda_hasty_human_mana_agrees_for_manual_activation_and_automatic_payment() {
+    let mut state = ready(Step::Main1);
+    let katilda = put(
+        &mut state,
+        PlayerId::P0,
+        "Katilda, Dawnhart Prime",
+        Zone::Battlefield,
+    );
+    let human = put(
+        &mut state,
+        PlayerId::P0,
+        "Hajar, Loyal Bodyguard",
+        Zone::Battlefield,
+    );
+    // Tersa has haste, but is an Orc Wizard and receives no Human-only grant.
+    let tersa = put(
+        &mut state,
+        PlayerId::P0,
+        "Tersa Lightshatter",
+        Zone::Battlefield,
+    );
+    for source in [katilda, human, tersa] {
+        state.objects.get_mut(source).summoning_sick = true;
+    }
+    let spell = put(&mut state, PlayerId::P0, "Boltwave", Zone::Hand);
+    let cost = CARD_DEFS[state.objects.get(spell).card_def as usize].cost;
+    assert!(mtg_kernel::mana::can_pay(&cost, 0, PlayerId::P0, &state).is_none());
+    assert!(matches!(
+        next(&mut state),
+        Decision::CastSpellOrPass { mana_abilities, .. }
+            if !mana_abilities.contains(&human) && !mana_abilities.contains(&tersa)
+    ));
+    assert!(engine::step(
+        &mut state,
+        Action::ActivateManaAbilityChoice(human, ManaColor::R),
+    )
+    .is_err());
+
+    mtg_kernel::effect::execute(
+        &mtg_kernel::effect::EffectOp::GrantKeywordTargetUntilEndOfTurn {
+            object: mtg_kernel::effect::ObjectRef::ThisSource,
+            keyword: Keywords::HASTE,
+        },
+        &mtg_kernel::effect::ExecCtx::no_targets(human, PlayerId::P0),
+        &mut state,
+    );
+    assert!(matches!(
+        next(&mut state),
+        Decision::CastSpellOrPass { mana_abilities, .. }
+            if mana_abilities.contains(&human) && !mana_abilities.contains(&tersa)
+    ));
+    let plan = mtg_kernel::mana::can_pay(&cost, 0, PlayerId::P0, &state).unwrap();
+    assert_eq!(plan.taps, vec![(human, ManaColor::R)]);
+
+    for manual in [false, true] {
+        let mut current = state.clone();
+        if manual {
+            engine::step(
+                &mut current,
+                Action::ActivateManaAbilityChoice(human, ManaColor::R),
+            )
+            .unwrap();
+            assert!(current.objects.get(human).tapped);
+            assert_eq!(current.players[0].mana_pool, pool(&[(ManaColor::R, 1)], 0));
+            assert!(engine::step(
+                &mut current,
+                Action::ActivateManaAbilityChoice(human, ManaColor::R),
+            )
+            .is_err());
+        }
+        cast(&mut current, spell, &[]);
+        settled(&mut current);
+        assert!(current.objects.get(human).tapped);
+        assert_eq!(current.players[0].mana_pool, [0; 6]);
+        assert_eq!(current.players[1].life, 17);
+    }
+}
+
+#[test]
 fn hajar_locks_in_legendary_creatures_and_katilda_grants_colored_mana() {
     let mut state = ready(Step::Main1);
     let hajar = put(

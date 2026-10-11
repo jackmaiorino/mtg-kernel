@@ -7773,9 +7773,7 @@ pub(crate) fn available_mana_ability_choices_into(
     let Some(def) = card_def::CARD_DEFS.get(object.card_def as usize) else {
         return;
     };
-    if !(object.tapped
-        || object_has_type(state, source, CardType::Creature) && object.summoning_sick)
-    {
+    if !(object.tapped || creature_summoning_sick(state, source, def)) {
         for color in crate::standard_legends_v1::katilda_mana_colors(state, source) {
             out.push(color);
         }
