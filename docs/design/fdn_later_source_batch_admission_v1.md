@@ -5,7 +5,7 @@ source and precise rules companions. It appends printed definitions404-406
 and the two separately prepared internal observer sentinels407-408. All prior
 registry records and frozen286/24 external-token inputs remain identical.
 Engine Full markers enable actual printed fixture qualification; accepted
-coverage remains188 Full/1 Partial/97 Missing. No new coverage is accepted.
+coverage remains193 Full/1 Partial/92 Missing. No new coverage is accepted.
 
 Crystal source and its precise descriptor are composed but remain unregistered
 because mixed consumable-prevention replacement ordering is still incomplete.
@@ -149,3 +149,20 @@ event/mode prefixes and each distinct observation admission are preserved.
 These new groups and repairs require exact composed-source native checks.
 Prepared Librarian source remains separate and unregistered. No consumer,
 model, sampler, strength or accepted206-card claim follows from source review.
+
+Composition3f13d8c5f71fe619af12ddf103141f326715c1bc closes the named foreign
+Authority-storage omission with independent admission flags and a genuine
+both-seat captured-entry refusal test. Named read-only source re-review is
+CLEAR. Native65 is submitted through supportedhandle
+ba75aede4d5040f4a7da6625199f5bc5/supervisor139288 on four BelowNormal cores.
+Its97 groups request543 total occurrences, including the three explicitly
+ignored preexisting Store cases, all13 prospective printed cards, the new
+consumer groups, both all-test compiles, three strict lints and full legacy
+exports. The first incremental bundle fetch failed on four ancestors absent
+from the genuine shallow remote repository before any build was spawned.
+A complete same-head Git bundle resolved that prerequisite; source/helper
+SHA-256s and clean detached Git HEAD were verified before supported launch.
+The submitted manifest is verified cold. Runtime qualification is pending.
+
+All83 affected Python cases pass on3f13: deck/registry/frozen pool, Limited
+session and existing V8/V9 features. The whole candidate diff check passes.
