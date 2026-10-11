@@ -1395,6 +1395,11 @@ pub enum EffectOp {
     /// Move all creature cards from both graveyards into one battlefield
     /// entry batch under the effect controller; physical owners are unchanged.
     ReturnAllGraveyardCreaturesUnderController,
+    /// Sample the exact targeted creature's signed current power once and
+    /// add that amount until cleanup. Subsequent changes are not doubled.
+    DoubleTargetPowerUntilEndOfTurn {
+        target_index: u8,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -14716,6 +14721,30 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 event::ProposedEvent::damage(ctx.source, Target::Player(controller), *amount),
             );
         }
+        EffectOp::DoubleTargetPowerUntilEndOfTurn { target_index } => {
+            let index = usize::from(*target_index);
+            if !ctx.target_incarnation_matches(index, state) {
+                return;
+            }
+            let Some(Target::Object(object)) = ctx.targets.get(index).copied() else {
+                return;
+            };
+            let live = state.objects.get(object);
+            if live.zone != Zone::Battlefield
+                || !crate::engine::object_has_type(state, object, CardType::Creature)
+            {
+                return;
+            }
+            let binding = EffectObjectBinding {
+                object,
+                expected_zone: Zone::Battlefield,
+                expected_zone_change_count: live.zone_change_count,
+            };
+            let power = crate::engine::effective_power(state, object);
+            if power != 0 {
+                install_temporary_boost(state, binding, power, 0, Keywords::NONE);
+            }
+        }
         EffectOp::PumpTargetUntilEndOfTurnDynamic {
             target,
             power,
@@ -17256,6 +17285,78 @@ mod filtered_library_search_tests {
                 LibraryCardFilter::InstantOrSorceryManaValue(1)
             )
             .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod sampled_target_power_tests {
+    use super::*;
+
+    #[test]
+    fn signed_current_power_is_sampled_once_without_zero_or_incarnation_leakage() {
+        let card = crate::card_def::card_id_by_name("Llanowar Elves").unwrap();
+        for player in [PlayerId::P0, PlayerId::P1] {
+            for delta in [-2, -1, 0, 2] {
+                let mut state = GameState::new_from_libraries(
+                    &[card],
+                    &[card],
+                    |_| "Llanowar Elves".into(),
+                    1115,
+                );
+                let target = state.players[player.index()].library[0];
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change(target, Zone::Battlefield),
+                );
+                let binding = EffectObjectBinding {
+                    object: target,
+                    expected_zone: Zone::Battlefield,
+                    expected_zone_change_count: state.objects.get(target).zone_change_count,
+                };
+                install_temporary_boost(&mut state, binding, delta, 0, Keywords::NONE);
+                let sampled = crate::engine::effective_power(&state, target);
+                let before = state.engine.until_end_of_turn.len();
+                let mut ctx = ExecCtx::no_targets(target, player);
+                ctx.targets = vec![Target::Object(target)];
+                ctx.target_contracts = vec![StackTargetContractV4::capture(
+                    &state,
+                    Target::Object(target),
+                )];
+                let op = EffectOp::DoubleTargetPowerUntilEndOfTurn { target_index: 0 };
+                let mut replay: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                for current in [&mut state, &mut replay] {
+                    execute(&op, &ctx, current);
+                    assert_eq!(crate::engine::effective_power(current, target), sampled * 2);
+                    assert_eq!(crate::engine::effective_toughness(current, target), 1);
+                    assert_eq!(
+                        current.engine.until_end_of_turn.len(),
+                        before + usize::from(sampled != 0)
+                    );
+                    install_temporary_boost(current, binding, 3, 0, Keywords::NONE);
+                    assert_eq!(
+                        crate::engine::effective_power(current, target),
+                        sampled * 2 + 3
+                    );
+                    event::propose_and_commit(
+                        current,
+                        event::ProposedEvent::zone_change(target, Zone::Graveyard),
+                    );
+                    event::propose_and_commit(
+                        current,
+                        event::ProposedEvent::zone_change(target, Zone::Battlefield),
+                    );
+                    assert_eq!(crate::engine::effective_power(current, target), 1);
+                    let before = serde_json::to_vec(&*current).unwrap();
+                    execute(&op, &ctx, current);
+                    assert_eq!(serde_json::to_vec(&*current).unwrap(), before);
+                }
+                assert_eq!(
+                    serde_json::to_value(state).unwrap(),
+                    serde_json::to_value(replay).unwrap()
+                );
+            }
         }
     }
 }

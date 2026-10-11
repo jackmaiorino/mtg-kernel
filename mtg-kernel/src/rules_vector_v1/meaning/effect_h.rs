@@ -33,6 +33,22 @@ fn exile_self(out: &mut Collector) {
 pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     let _ = env;
     match op {
+        EffectOp::DoubleTargetPowerUntilEndOfTurn { target_index } => {
+            let (player, obj) = target_ref(TargetRef::Target(*target_index), env);
+            out.read(
+                RelF::ObjectController,
+                Some(ZoneF::Battlefield),
+                Some(obj),
+                AggF::Characteristic,
+            );
+            out.effect(
+                EffectAtom::new(EvF::StatChange)
+                    .maybe_player(player)
+                    .obj(obj)
+                    .amount(AmtF::Dynamic)
+                    .duration(DurF::EndOfTurn),
+            );
+        }
         EffectOp::CounterUnlessCollectsEvidence {
             ward_target,
             targeting_stack_item,

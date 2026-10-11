@@ -99,6 +99,7 @@ impl Scan<'_> {
             | UntapObject { .. }
             | AnimateSource
             | PumpTargetUntilEndOfTurnDynamic { .. }
+            | DoubleTargetPowerUntilEndOfTurn { .. }
             | LookTopSelectByTypeToHandBottomRest { .. }
             | LookTopPickToHandBottomRest { .. }
             | DrawCardsDynamic { .. }

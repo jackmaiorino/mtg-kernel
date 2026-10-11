@@ -3429,6 +3429,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
             "ReturnAttackingCreaturesToOwnersHands(currentCombat,currentCreatureType,simultaneous)",
             "EffectOp::ReturnAttackingCreaturesToOwnersHands",
         ),
+        "Bulk Up" => program(
+            "Creature",
+            "DoubleTargetPowerUntilEndOfTurn(Target0,signedCurrentPowerSample,exactIncarnation,layer7c,zeroNoEffect)",
+            "EffectOp::DoubleTargetPowerUntilEndOfTurn { target_index: 0 }",
+        ),
         "Exsanguinate" => program(
             "None",
             "LoseOpponentsLifeXThenGainLifeLost(announcedX,actualCommittedLoss)",
@@ -4396,6 +4401,13 @@ fn bestow_for(name: &str) -> String {
 /// substrate as alternative, additional, and activated-ability costs.
 fn flashback_for(name: &str) -> String {
     match name {
+        "Bulk Up" => {
+            let (pips, generic, x_count) = parse_cost("{4}{R}{R}");
+            format!(
+                "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})] }})",
+                pips.join(", ")
+            )
+        }
         "Faithless Looting" => {
             let (pips, generic, x_count) = parse_cost("{2}{R}");
             format!(
