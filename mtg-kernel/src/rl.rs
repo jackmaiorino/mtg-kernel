@@ -2438,7 +2438,7 @@ fn build_policy_observation_storage_v6(
         false,
         false,
         false,
-        false,
+        (false, false),
     )
 }
 
@@ -2468,7 +2468,7 @@ pub(crate) fn sower_observation_storage_v1(
         false,
         false,
         false,
-        false,
+        (false, false),
     )
 }
 
@@ -2498,7 +2498,7 @@ pub(crate) fn employment_observation_storage_v1(
         false,
         true,
         false,
-        false,
+        (false, false),
     )
 }
 
@@ -2528,7 +2528,7 @@ pub(crate) fn wildwood_observation_storage_v1(
         true,
         false,
         false,
-        false,
+        (false, false),
     )
 }
 
@@ -2558,7 +2558,7 @@ pub(crate) fn cerberus_observation_storage_v1(
         false,
         false,
         true,
-        false,
+        (false, false),
     )
 }
 
@@ -2588,7 +2588,7 @@ pub(crate) fn authority_observation_storage_v1(
         false,
         false,
         false,
-        true,
+        (true, false),
     )
 }
 
@@ -2618,7 +2618,37 @@ pub(crate) fn frenzied_observation_storage_v1(
         false,
         false,
         false,
+        (false, false),
+    )
+}
+
+pub(crate) fn juggernaut_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::juggernaut_public_v1::validate_state(state).map_err(RlContractError)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_common(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
         false,
+        false,
+        false,
+        false,
+        (false, true),
     )
 }
 
@@ -2629,8 +2659,14 @@ fn build_policy_observation_storage_common(
     accept_wildwood: bool,
     accept_temporary_control: bool,
     accept_cerberus: bool,
-    accept_authority: bool,
+    accepted_statics: (bool, bool),
 ) -> Result<PolicyObservationStorageV6> {
+    let (accept_authority, accept_combat_rules) = accepted_statics;
+    if !accept_combat_rules && crate::combat_static_rules_v1::requires_successor(request.state) {
+        return Err(RlContractError(
+            "printed combat statics require their selected successor".into(),
+        ));
+    }
     if !accept_authority && crate::authority_of_the_consuls_v1::requires_successor(request.state) {
         return Err(RlContractError(
             "Authority requires its selected public/Human successor".into(),

@@ -1982,6 +1982,19 @@ pub struct EntersWithPlusOneCountersDef {
     pub if_kicked: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CombatStaticRulesDef {
+    pub must_attack_each_combat: bool,
+    pub cant_be_blocked_by_subtype: Option<Subtype>,
+}
+
+impl CombatStaticRulesDef {
+    pub const NONE: Self = Self {
+        must_attack_each_combat: false,
+        cant_be_blocked_by_subtype: None,
+    };
+}
+
 pub struct CardDef {
     pub name: &'static str,
     pub capability: CardCapability,
@@ -2195,6 +2208,8 @@ pub struct CardDef {
     pub animation: Option<AnimationDef>,
     /// Generic-cost reducers for printed activated abilities.
     pub activated_ability_generic_reductions: &'static [ActivatedAbilityGenericReductionDef],
+    /// Printed combat rules, active only on the live front-face creature.
+    pub combat_static_rules: CombatStaticRulesDef,
 }
 
 impl CardDef {
