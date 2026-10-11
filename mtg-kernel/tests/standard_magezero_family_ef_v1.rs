@@ -3089,6 +3089,29 @@ fn cauldron_granted_sacrifice_ability_keeps_its_frozen_identity() {
     );
     let serialized = serde_json::to_string(&state).unwrap();
     state = serde_json::from_str(&serialized).unwrap();
+    let observation = mtg_kernel::rl::observe_v2(
+        &state,
+        &mtg_kernel::surface_v2::HarnessSurfaceV2::new(),
+        P0,
+        0,
+    )
+    .unwrap();
+    let grant = observation
+        .projection
+        .surface
+        .stack
+        .last()
+        .unwrap()
+        .granted_ability
+        .as_ref()
+        .expect("public stack retains the granted ability's frozen donor");
+    assert_eq!(grant.0.arena_id, donor.0);
+    assert_eq!(grant.0.zone, Zone::Exile);
+    assert_ne!(
+        grant.0.zone_change_count,
+        state.objects.get(donor).zone_change_count
+    );
+    assert_eq!(grant.1, 0);
     resolve_stack(&mut state);
     assert_eq!(state.objects.get(victim).zone, Zone::Graveyard);
 }
