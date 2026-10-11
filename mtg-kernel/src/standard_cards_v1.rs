@@ -2167,23 +2167,11 @@ fn exile_target_until_source_leaves() -> EffectOp {
     }
 }
 
-fn return_exiled_by_source() -> EffectOp {
-    EffectOp::ReturnObjectsExiledBySource
-}
-
 /// "When this enters, exile target ... until this leaves the battlefield."
-const EXILE_UNTIL_LEAVES_TRIGGERS: [TriggeredAbilityDef; 2] = [
-    trigger(TriggerCondition::Etb, exile_target_until_source_leaves),
-    TriggeredAbilityDef {
-        condition: TriggerCondition::LeftBattlefield,
-        // Leave triggers use the departed battlefield incarnation.
-        home_zone: Zone::Graveyard,
-        intervening_if_kicked: false,
-        intervening_if_controls_another_source_card: false,
-        face_index: 0,
-        effect: return_exiled_by_source,
-    },
-];
+const EXILE_UNTIL_LEAVES_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
+    TriggerCondition::Etb,
+    exile_target_until_source_leaves,
+)];
 
 /// The target of a triggered ability of this module's cards, by printed
 /// name and the trigger's effect; `None` when the module doesn't own it.
@@ -3538,16 +3526,8 @@ fn aegis_copy_template() -> EffectOp {
         },
     )
 }
-const AEGIS_TRIGGERS: [TriggeredAbilityDef; 3] = [
+const AEGIS_TRIGGERS: [TriggeredAbilityDef; 2] = [
     trigger(TriggerCondition::Etb, exile_target_until_source_leaves),
-    TriggeredAbilityDef {
-        condition: TriggerCondition::LeftBattlefield,
-        home_zone: Zone::Graveyard,
-        intervening_if_kicked: false,
-        intervening_if_controls_another_source_card: false,
-        face_index: 0,
-        effect: return_exiled_by_source,
-    },
     trigger(
         TriggerCondition::StandardV1(StandardTriggerV1::AegisAttached),
         aegis_copy_template,

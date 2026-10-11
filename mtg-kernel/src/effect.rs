@@ -14007,6 +14007,18 @@ pub(crate) fn linked_hand_exile_kind(card_def: u16) -> Option<LinkedHandExileKin
     }
 }
 
+pub(crate) fn battlefield_exile_until_source_leaves(card_def: u16) -> bool {
+    matches!(
+        crate::card_def::CARD_DEFS[card_def as usize].name,
+        "Brutal Cathar"
+            | "Assimilation Aegis"
+            | "Seam Rip"
+            | "Dusk Rose Reliquary"
+            | "Sheltered by Ghosts"
+            | "Hardlight Containment"
+    )
+}
+
 /// Returns the card an "until this leaves" source exiled once that exact
 /// battlefield incarnation (`left_zone_change_count`) has left. Called from
 /// the zone-change commit, so the return happens immediately rather than
@@ -14023,17 +14035,14 @@ pub(crate) fn return_cards_exiled_until_source_leaves(
                 && record.source.zone == Zone::Battlefield
                 && (linked_hand_exile_kind(record.source.card_def)
                     == Some(LinkedHandExileKind::UntilSourceLeaves)
-                    || crate::card_def::CARD_DEFS[record.source.card_def as usize].name
-                        == "Brutal Cathar")
+                    || battlefield_exile_until_source_leaves(record.source.card_def))
         });
         let Some(position) = position else { break };
         let record = state.engine.linked_exile_records.remove(position);
         if state.objects.try_get(record.exiled).is_some_and(|live| {
             live.zone == Zone::Exile && live.zone_change_count == record.exiled_zone_change_count
         }) {
-            let to = if crate::card_def::CARD_DEFS[record.source.card_def as usize].name
-                == "Brutal Cathar"
-            {
+            let to = if battlefield_exile_until_source_leaves(record.source.card_def) {
                 Zone::Battlefield
             } else {
                 Zone::Hand
@@ -17866,8 +17875,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     && source.zone == Zone::Battlefield
                     && source.zone_change_count == source_contract.zone_change_count
             });
-            let until_leaves = crate::card_def::CARD_DEFS[source_contract.card_def as usize].name
-                == "Brutal Cathar";
+            let until_leaves = battlefield_exile_until_source_leaves(source_contract.card_def);
             if until_leaves && !source_is_live {
                 return;
             }

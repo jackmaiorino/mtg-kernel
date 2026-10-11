@@ -25,6 +25,17 @@ impl Scan<'_> {
             || a.attached_to
                 .is_some_and(|x| self.same(x.object, x.zone_change_count))
     }
+    fn creature_choice(
+        &self,
+        kind: &crate::standard_creature_choices_v1::CreatureChoiceV1,
+    ) -> bool {
+        match kind {
+            crate::standard_creature_choices_v1::CreatureChoiceV1::AegisCopy { host, .. } => {
+                self.same(host.object, host.zone_change_count)
+            }
+            _ => false,
+        }
+    }
     fn copy(&self, spell: &crate::state::StackItem) -> bool {
         self.raw(spell.source)
             || spell.targets.iter().any(|target| match target {
@@ -43,6 +54,9 @@ impl Scan<'_> {
         match op {
             CopySpellSnapshot { spell } => self.copy(spell),
             CastExiledWithoutMana { card, .. } | PlayExiledLand { card } => self.b(card),
+            CreatureChoiceV1(kind) | CreatureChoiceAnswerV1 { kind, .. } => {
+                self.creature_choice(kind)
+            }
             Sequence(ops) | Choice { options: ops, .. } => ops.iter().any(|x| self.op(x)),
             Conditional { then, else_, .. } => self.op(then) || self.op(else_),
             MayPayCostThen {
@@ -93,8 +107,6 @@ impl Scan<'_> {
             | DealDamage { .. }
             | DistributePlusOneCounters { .. }
             | CreatureUpgrade(_)
-            | CreatureChoiceV1(_)
-            | CreatureChoiceAnswerV1 { .. }
             | ReturnTargetPermanentToBattlefield { .. }
             | GainLife { .. }
             | LoseLife { .. }
@@ -690,9 +702,9 @@ impl Scan<'_> {
                         } => self.fs(expected_remaining_frames),
                         Generic => false,
                         CreatureChoiceV1 {
+                            kind,
                             expected_remaining_frames,
-                            ..
-                        } => self.fs(expected_remaining_frames),
+                        } => self.creature_choice(kind) || self.fs(expected_remaining_frames),
                         OwnerLibraryTopOrBottom {
                             object,
                             expected_remaining_frames,

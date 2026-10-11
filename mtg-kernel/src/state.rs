@@ -2425,6 +2425,7 @@ impl GameState {
         moving.attachments.clear();
         moving.v4.attached_to = None;
         moving.v4.exiled_by = None;
+        crate::standard_cards_v1::refresh_aegis_copies(self);
     }
 
     /// Checks the exact two-way attachment graph. Restored state must never

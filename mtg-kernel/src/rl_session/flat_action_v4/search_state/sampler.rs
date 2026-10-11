@@ -25,6 +25,11 @@ fn conflicts(
             || s.v4.ability_source_contract.as_ref().is_some_and(&ability)
             || s.v4.granted_by.as_ref().is_some_and(&ability)
             || s.v4
+                .cauldron_grant
+                .0
+                .as_ref()
+                .is_some_and(|grant| ability(&grant.host) || ability(&grant.donor))
+            || s.v4
                 .hidden_ability_source
                 .is_some_and(|x| same(x.object, x.zone_change_count))
             || s.v4
@@ -46,9 +51,13 @@ fn conflicts(
             .is_some_and(|p| stack(&p.resolving_item))
         || e.initiative_source.as_ref().is_some_and(&ability)
         || e.monarch_source.as_ref().is_some_and(&ability)
-        || e.pending_activation
-            .as_ref()
-            .is_some_and(|p| same(p.source, p.source_zone_change_count))
+        || e.pending_activation.as_ref().is_some_and(|p| {
+            same(p.source, p.source_zone_change_count)
+                || p.cauldron_grant
+                    .0
+                    .as_ref()
+                    .is_some_and(|grant| ability(&grant.host) || ability(&grant.donor))
+        })
         || e.pending_land_play
             .as_ref()
             .is_some_and(|p| same(p.source, p.source_zone_change_count))

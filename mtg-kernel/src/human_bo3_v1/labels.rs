@@ -141,6 +141,7 @@ fn effect_condition(condition: &EffectCond) -> Result<String, Error> {
 
 fn describe_effect(effect: &EffectOp) -> Result<String, Error> {
     Ok(match effect {
+        EffectOp::StandardLegendV1(crate::standard_legends_v1::LegendEffectV1::GwennaMana(first,second)) => format!("add {{{}}}{{{}}}; spend only on creature spells or abilities of creatures",color(*first),color(*second)),
         EffectOp::Sequence(ops) if ops.is_empty() => "do nothing".into(),
         EffectOp::Sequence(ops) => ops.iter().map(describe_effect).collect::<Result<Vec<_>, _>>()?.join("; then "),
         EffectOp::Conditional { cond, then, else_ } => format!("if {}, {}; otherwise {}", effect_condition(cond)?, describe_effect(then)?, describe_effect(else_)?),

@@ -2633,6 +2633,12 @@ fn assimilation_aegis_makes_the_equipped_creature_a_copy_of_the_exiled_card() {
         &mut state,
         ProposedEvent::zone_change(aegis, Zone::Graveyard),
     );
+    assert_eq!(state.objects.get(terror).name, "Tolarian Terror");
+    assert_eq!(
+        state.objects.get(elves).zone,
+        Zone::Battlefield,
+        "return duration ends immediately"
+    );
     resolve_stack(&mut state);
     assert_eq!(state.objects.get(terror).name, "Tolarian Terror");
     assert_eq!(engine::effective_power(&state, terror), 5);
@@ -3270,15 +3276,25 @@ fn aegis_controller_chooses_among_exiled_cards_at_resolution() {
     let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
     let host = put(&mut state, P0, "Tolarian Terror", Zone::Battlefield);
     let aegis = cast_aegis(&mut state, &[Target::Object(elves)]);
-    let channeler = to_graveyard(&mut state, P1, "Essence Channeler");
-    event::propose_and_commit(
+    let channeler = put(&mut state, P1, "Essence Channeler", Zone::Battlefield);
+    let mut ctx = mtg_kernel::effect::ExecCtx::no_targets(aegis, P0);
+    ctx.ability_source_contract = Some(mtg_kernel::state::AbilitySourceContractV4::capture(
+        &state, aegis,
+    ));
+    ctx.targets = vec![Target::Object(channeler)];
+    ctx.target_contracts = vec![mtg_kernel::state::StackTargetContractV4::capture(
+        &state,
+        Target::Object(channeler),
+    )];
+    mtg_kernel::effect::execute(
+        &mtg_kernel::effect::EffectOp::ExileTargetLinkedToSource {
+            object: mtg_kernel::effect::ObjectRef::Target(0),
+        },
+        &ctx,
         &mut state,
-        ProposedEvent::zone_change(channeler, Zone::Exile),
     );
-    state.objects.get_mut(channeler).v4.exiled_by = Some(mtg_kernel::state::ObjectLinkV4 {
-        object: aegis,
-        zone_change_count: state.objects.get(aegis).zone_change_count,
-    });
+    assert_eq!(state.engine.linked_exile_records.len(), 2);
+    assert!(state.engine.halted.is_none());
     stop_with_aegis_copy_trigger(&mut state, aegis, host);
     loop {
         match next(&mut state) {
@@ -3295,4 +3311,38 @@ fn aegis_controller_chooses_among_exiled_cards_at_resolution() {
     }
     resolve_stack(&mut state);
     assert_eq!(state.objects.get(host).name, "Essence Channeler");
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(aegis, Zone::Graveyard),
+    );
+    assert_eq!(state.objects.get(elves).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(channeler).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(host).name, "Tolarian Terror");
+}
+
+#[test]
+fn aegis_leaving_before_its_etb_resolves_does_not_exile_the_target() {
+    let mut state = game();
+    let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let aegis = put(&mut state, P0, "Assimilation Aegis", Zone::Battlefield);
+    loop {
+        match next(&mut state) {
+            Decision::ChooseTargets { .. } => {
+                act(&mut state, Action::ChooseTarget(Target::Object(elves)));
+                break;
+            }
+            Decision::OrderTriggers { pending, .. } => act(
+                &mut state,
+                Action::OrderTriggers((0..pending.len()).collect()),
+            ),
+            other => panic!("unexpected ETB decision {other:?}"),
+        }
+    }
+    next(&mut state);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(aegis, Zone::Graveyard),
+    );
+    resolve_stack(&mut state);
+    assert_eq!(state.objects.get(elves).zone, Zone::Battlefield);
 }
