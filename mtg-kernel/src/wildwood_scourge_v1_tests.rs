@@ -184,3 +184,23 @@ fn real_registered_nyxborn_normal_x_entry_and_restore_both_seats() {
         );
     }
 }
+
+#[test]
+fn absent_unpublished_capture_queue_preserves_legacy_bytes_and_hash() {
+    use std::hash::{Hash, Hasher};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, _, _) = ready(actor);
+        assert!(state.wildwood_waiting_v1.is_none());
+        let bytes = serde_json::to_vec(&state).unwrap();
+        assert!(!String::from_utf8(bytes.clone())
+            .unwrap()
+            .contains("wildwood_waiting_v1"));
+        let mut before = std::collections::hash_map::DefaultHasher::new();
+        state.hash(&mut before);
+        assert!(take_captures(&mut state).is_empty());
+        let mut after = std::collections::hash_map::DefaultHasher::new();
+        state.hash(&mut after);
+        assert_eq!(before.finish(), after.finish());
+        assert_eq!(bytes, serde_json::to_vec(&state).unwrap());
+    }
+}

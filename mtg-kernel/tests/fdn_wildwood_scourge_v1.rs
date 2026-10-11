@@ -128,6 +128,13 @@ fn queued(state: &GameState, source: ObjectId) -> usize {
         .filter(|p| p.source == source)
         .count()
         + state.stack.iter().filter(|p| p.source == source).count()
+        + state
+            .wildwood_waiting_v1
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .filter(|p| p.source == source)
+            .count()
 }
 
 #[test]
@@ -480,6 +487,158 @@ fn actual_witness_changes_recipient_hydra_classification_at_counter_event_time()
         settle(&mut state);
         settle(&mut replay);
         assert_eq!(state.objects.get(source).counters.plus1_plus1, 3);
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+    }
+}
+
+fn transfer_for_capture_test(state: &mut GameState, id: ObjectId, controller: PlayerId) {
+    // Typed control-primitive setup, not a claim of a printed theft spell.
+    for player in &mut state.players {
+        player.battlefield.retain(|candidate| *candidate != id);
+    }
+    state.players[controller.index()].battlefield.push(id);
+    state.objects.get_mut(id).controller = controller;
+}
+
+#[test]
+fn reversed_counter_events_publish_captured_ap_before_nap_and_restore_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let ap_source = scourge(&mut state, actor);
+        let nap_source = scourge(&mut state, actor);
+        transfer_for_capture_test(&mut state, nap_source, actor.opponent());
+        let ap_elf = add(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        let nap_elf = add(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        counters(&mut state, actor, nap_elf, 1);
+        counters(&mut state, actor.opponent(), ap_elf, 1);
+        let waiting = state.wildwood_waiting_v1.as_ref().unwrap();
+        assert_eq!(
+            waiting.iter().map(|p| p.controller).collect::<Vec<_>>(),
+            [actor.opponent(), actor]
+        );
+        assert!(state.engine.pending_triggers.is_empty());
+        transfer_for_capture_test(&mut state, ap_source, actor.opponent());
+        transfer_for_capture_test(&mut state, nap_source, actor);
+        let mut replay = restore(&state);
+        for branch in [&mut state, &mut replay] {
+            next(branch); // Genuine checkpoint publishes the unpublished batch.
+            assert!(branch.wildwood_waiting_v1.is_none());
+            assert_eq!(
+                branch
+                    .stack
+                    .iter()
+                    .map(|p| (p.source, p.controller))
+                    .collect::<Vec<_>>(),
+                [(ap_source, actor), (nap_source, actor.opponent())]
+            );
+            settle(branch);
+            assert_eq!(branch.objects.get(ap_source).counters.plus1_plus1, 3);
+            assert_eq!(branch.objects.get(nap_source).counters.plus1_plus1, 3);
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+    }
+}
+
+#[test]
+fn mixed_ordinary_etb_and_counter_captures_share_apnap_and_selected_order_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let ap_source = scourge(&mut state, actor);
+        let nap_source = scourge(&mut state, actor);
+        transfer_for_capture_test(&mut state, nap_source, actor.opponent());
+        let ap_elf = add(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        let nap_elf = add(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        // Existing typed zone/counter producers in one unpublished event batch.
+        counters(&mut state, actor, nap_elf, 1);
+        let ap_etb = add(&mut state, actor, "Dwynen's Elite", Zone::Battlefield);
+        counters(&mut state, actor.opponent(), ap_elf, 1);
+        let nap_etb = add(
+            &mut state,
+            actor.opponent(),
+            "Dwynen's Elite",
+            Zone::Battlefield,
+        );
+        let mut replay = restore(&state);
+        for branch in [&mut state, &mut replay] {
+            for controller in [actor, actor.opponent()] {
+                let Decision::OrderTriggers { player, pending } = next(branch) else {
+                    panic!("mixed controller group must offer real ordering");
+                };
+                assert_eq!(player, controller);
+                assert_eq!(pending.len(), 2);
+                assert!(pending.iter().all(|p| p.controller == controller));
+                engine::step(branch, Action::OrderTriggers(vec![1, 0])).unwrap();
+            }
+            next(branch);
+            assert_eq!(
+                branch
+                    .stack
+                    .iter()
+                    .map(|p| (p.source, p.controller))
+                    .collect::<Vec<_>>(),
+                [
+                    (ap_etb, actor),
+                    (ap_source, actor),
+                    (nap_etb, actor.opponent()),
+                    (nap_source, actor.opponent())
+                ]
+            );
+            settle(branch);
+            assert_eq!(branch.objects.get(ap_source).counters.plus1_plus1, 3);
+            assert_eq!(branch.objects.get(nap_source).counters.plus1_plus1, 3);
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+    }
+}
+
+#[test]
+fn unpublished_collection_does_not_reorder_or_reset_an_existing_target_stage() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let source = scourge(&mut state, actor);
+        let elf = add(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        let savior = add(&mut state, actor, "Felidar Savior", Zone::Battlefield);
+        assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(source))).unwrap();
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseTargets { remaining: 1, .. }
+        ));
+        let existing = state.engine.pending_triggers.clone();
+        assert_eq!(existing[0].source, savior);
+        assert!(existing[0].placement_ordered);
+        assert_eq!(existing[0].targets, [Target::Object(source)]);
+        // Typed checkpoint transport probe while a genuine placement stage exists.
+        // This does not claim players can produce counters during target selection.
+        counters(&mut state, actor, elf, 1);
+        let mut replay = restore(&state);
+        for branch in [&mut state, &mut replay] {
+            let fresh = mtg_kernel::trigger::collect_and_process(branch);
+            assert_eq!(fresh.len(), 1);
+            assert_eq!(fresh[0].source, source);
+            assert!(!fresh[0].placement_ordered);
+            assert_eq!(branch.engine.pending_triggers, existing);
+            assert!(branch.wildwood_waiting_v1.is_none());
+        }
         assert_eq!(
             serde_json::to_vec(&state).unwrap(),
             serde_json::to_vec(&replay).unwrap()

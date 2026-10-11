@@ -4433,7 +4433,7 @@ pub fn collect_and_process(state: &mut GameState) -> Vec<PendingTrigger> {
 /// spell counts, source membership, or other trigger conditions.
 pub(crate) fn capture_triggers_without_sba(state: &mut GameState) -> Vec<PendingTrigger> {
     crate::engine::refresh_face_down_lookers(state);
-    let mut waiting = Vec::new();
+    let mut waiting = crate::wildwood_scourge_v1::take_captures(state);
     match crate::life_gain_turn_v1::take_captures(state) {
         Ok(captures) => waiting.extend(captures),
         Err(source) => {
@@ -4485,6 +4485,9 @@ pub(crate) fn collect_and_process_with_waiting(
     if state.pending_legend_rule_v1.is_some() {
         return Vec::new();
     }
+    // SBA entry/replacement work can itself commit counters. Merge those
+    // immediate captures before the same checkpoint's one APNAP ordering.
+    new_triggers.extend(crate::wildwood_scourge_v1::take_captures(state));
     let sba_events: Vec<CommittedEvent> = state.engine.event_log.drain(..).collect();
     #[cfg(feature = "standard-magezero-fixtures")]
     new_triggers.extend(crate::standard_keywords_v1::note_life_loss(

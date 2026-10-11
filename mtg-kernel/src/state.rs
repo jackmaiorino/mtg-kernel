@@ -1977,6 +1977,10 @@ pub struct GameState {
     /// Absent in historical snapshots until a declaration is committed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attack_declaration_turn_v1: Option<AttackDeclarationTurnV1>,
+    /// Event-time captures not yet published at a trigger-placement checkpoint.
+    /// Kept separate from already ordered or target-suspended pending triggers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wildwood_waiting_v1: Option<Vec<crate::trigger::PendingTrigger>>,
 }
 
 /// The round counter and active seat together identify the declaring turn.
@@ -2144,6 +2148,10 @@ impl Hash for GameState {
         if let Some(history) = &self.attack_declaration_turn_v1 {
             "attack-declaration-turn-v1".hash(state);
             history.hash(state);
+        }
+        if let Some(waiting) = &self.wildwood_waiting_v1 {
+            "wildwood-waiting-v1".hash(state);
+            waiting.hash(state);
         }
     }
 }
@@ -2346,6 +2354,7 @@ impl GameState {
             standard_v1: None,
             legend_pending_v1: None,
             attack_declaration_turn_v1: None,
+            wildwood_waiting_v1: None,
         };
         crate::life_gain_turn_v1::initialize_for_pool(&mut state);
         state

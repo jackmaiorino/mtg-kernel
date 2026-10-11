@@ -96,7 +96,12 @@ pub(crate) fn capture_counter_event(state: &mut GameState, event: &CommittedEven
                 })
             })
             .collect::<Vec<_>>();
-        state.engine.pending_triggers.extend(captures);
+        if !captures.is_empty() {
+            state
+                .wildwood_waiting_v1
+                .get_or_insert_with(Vec::new)
+                .extend(captures);
+        }
     }
     #[cfg(any(
         not(feature = "limited-fdn-fixtures"),
@@ -105,6 +110,13 @@ pub(crate) fn capture_counter_event(state: &mut GameState, event: &CommittedEven
     {
         let _ = (state, event);
     }
+}
+
+/// Move unpublished event-time captures to the resolution's normal waiting
+/// batch. Only that batch receives APNAP ordering; existing placement stages
+/// in engine.pending_triggers retain their selected order and target choices.
+pub(crate) fn take_captures(state: &mut GameState) -> Vec<crate::trigger::PendingTrigger> {
+    state.wildwood_waiting_v1.take().unwrap_or_default()
 }
 
 #[cfg(test)]
