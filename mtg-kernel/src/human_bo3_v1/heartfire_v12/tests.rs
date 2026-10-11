@@ -465,7 +465,11 @@ mod printed {
                         put(&mut state, actor.opponent(), target_name, Zone::Battlefield)
                     };
                     let color = engine::object_color_mask(&state, source);
-                    state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+                    // Leave one mana for the real Bolt response after the
+                    // activation cost, preserving an observable priority menu.
+                    // A pass-only fast-session menu would resolve the ability
+                    // before this fixture inspects its saved stack damage.
+                    state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 2;
                     let base = FastActorSessionV1::from_human_v8_fixture_state(state);
                     let predecessor = HumanRaidSessionV9::from_session(base.clone()).unwrap();
                     let mut session = HumanHeartfireSessionV12::from_session(base).unwrap();
