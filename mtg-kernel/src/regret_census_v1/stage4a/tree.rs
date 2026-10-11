@@ -472,9 +472,10 @@ impl Tree {
     }
 
     /// Backs up one natural terminal result over a completed simulation's
-    /// path (inserting its new node, if any).
-    pub(crate) fn backup(&mut self, path: &[(Key, usize)], new: Option<(Key, Node)>, win: bool) {
-        if let Some((k, n)) = new {
+    /// path, inserting its new nodes (one under B1; with depth retention, the
+    /// first expansion and its retained tail).
+    pub(crate) fn backup(&mut self, path: &[(Key, usize)], new: Vec<(Key, Node)>, win: bool) {
+        for (k, n) in new {
             self.nodes.insert(k, n);
         }
         for (k, a) in path {

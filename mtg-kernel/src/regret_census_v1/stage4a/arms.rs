@@ -317,6 +317,8 @@ pub(crate) struct EvalOut {
     pub(crate) d: DStats,
     pub(crate) e: Value,
     pub(crate) fault: Option<String>,
+    /// E's frozen-execution choices (see `EStats::decisions`); not serialized.
+    pub(crate) decisions: Vec<(u64, u32, u8)>,
 }
 
 impl EvalOut {
@@ -357,6 +359,7 @@ fn finish(end: Result<End, PlayErr>, suffix: Suffix, meter: &Meter, c: &Counters
         d: DStats::default(),
         e: Value::Null,
         fault,
+        decisions: Vec::new(),
     }
 }
 
@@ -671,14 +674,20 @@ impl Roles {
         c: &mut Counters,
         suffix: &mut Suffix,
         mut trace: Option<&mut Trace>,
-    ) -> Result<(Vec<(Key, usize)>, Option<(Key, Node)>, End), PlayErr> {
+        retain: usize,
+        staged: &std::collections::HashSet<Key>,
+        rec: &mut SimRecord,
+    ) -> Result<(Vec<(Key, usize)>, Vec<(Key, Node)>, End), PlayErr> {
         let mut path: Vec<(Key, usize)> = Vec::new();
-        let mut new: Option<(Key, Node)> = None;
+        let mut new: Vec<(Key, Node)> = Vec::new();
         let mut parent: (Key, Vec<u8>) = ([0u8; 32], b"root".to_vec());
+        let (spent0, calls0) = (meter.spent, c.inference);
         let mut in_tree = true;
         let mut depth = 0u32;
         let mut last_phys: Option<u64> = None;
         loop {
+            rec.transitions = meter.spent - spent0;
+            rec.policy_calls = c.inference - calls0;
             if let Some(end) = terminal(&s, ctx.focal) {
                 return Ok((path, new, end));
             }
@@ -701,6 +710,10 @@ impl Roles {
                         let (edge_index, edge) = match tree.find(&key, &parent.0, &parent.1, &cn)? {
                             Found::Hit(node) => {
                                 src = SelSrc::Tree;
+                                rec.existing += 1;
+                                if staged.contains(&key) {
+                                    rec.staged_hits += 1;
+                                }
                                 let e = node.select_with(ctx.urgency);
                                 (e, cn.edges[e].clone())
                             }
@@ -725,8 +738,10 @@ impl Roles {
                                     ctx.seeds,
                                 );
                                 let e = node.select_with(ctx.urgency);
-                                new = Some((key, node));
+                                new.push((key, node));
                                 in_tree = false;
+                                rec.first_depth = depth;
+                                rec.before = (meter.spent - spent0, c.inference - calls0);
                                 (e, cn.edges[e].clone())
                             }
                         };
@@ -734,6 +749,24 @@ impl Roles {
                         let live = live_index(&cn, &edge)?;
                         parent = (key, edge);
                         live
+                    } else if !in_tree && new.len() < retain && depth <= MAX_DEPTH {
+                        // Depth retention (D8): stage this choice node and
+                        // the rollout's own action; the rollout is unchanged.
+                        let cn = canon(&s, d)?;
+                        let key = child_key(&parent.0, &parent.1, &cn);
+                        let a = act(&mut self.focal, &s, &d, c)?;
+                        let edge = cn.menu[a as usize].clone();
+                        let e = cn
+                            .edges
+                            .iter()
+                            .position(|x| *x == edge)
+                            .ok_or_else(|| PlayErr::Fault("staged edge not in menu".into()))?;
+                        let node =
+                            Node::new(&key, parent.0, parent.1.clone(), cn, depth, ctx.seeds);
+                        path.push((key, e));
+                        new.push((key, node));
+                        parent = (key, edge);
+                        a
                     } else {
                         act(&mut self.focal, &s, &d, c)?
                     };
@@ -778,8 +811,23 @@ impl Roles {
     pub(crate) fn select_e_traced(
         &mut self,
         ctx: &RootCtx,
-        mut trace: Option<&mut Trace>,
+        trace: Option<&mut Trace>,
     ) -> (Selection, Tree) {
+        self.select_e_retaining(ctx, trace, 1, None)
+    }
+
+    /// `select_e_traced` with up to `retain` new choice nodes per natural
+    /// simulation (1 is B1, the formal rule) and optional per-simulation
+    /// records. Selection, rollouts and sampling are otherwise unchanged.
+    pub(crate) fn select_e_retaining(
+        &mut self,
+        ctx: &RootCtx,
+        mut trace: Option<&mut Trace>,
+        retain: usize,
+        mut records: Option<&mut Vec<SimRecord>>,
+    ) -> (Selection, Tree) {
+        let retain = retain.max(1);
+        let mut staged: std::collections::HashSet<Key> = std::collections::HashSet::new();
         let started = Instant::now();
         let mut sel = Selection::default();
         let mut tree = Tree::default();
@@ -812,6 +860,10 @@ impl Roles {
             if let Some(t) = trace.as_deref_mut() {
                 t.sim_begin(index, meter.spent);
             }
+            let mut rec = SimRecord {
+                index,
+                ..SimRecord::default()
+            };
             let r = self.simulate(
                 ctx,
                 &tree,
@@ -820,12 +872,31 @@ impl Roles {
                 &mut c,
                 &mut suffix,
                 trace.as_deref_mut(),
+                retain,
+                &staged,
+                &mut rec,
             );
+            rec.outcome = match &r {
+                Ok((_, _, End::Natural { win: true })) => 1,
+                Ok((_, _, End::Natural { win: false })) => 2,
+                Ok((_, _, End::NonNatural)) => 3,
+                Err(PlayErr::Truncated) => 4,
+                Err(PlayErr::Fault(_)) => 5,
+            };
+            if let Ok((_, new, End::Natural { .. })) = &r {
+                rec.new_nodes = new.len();
+                for (k, _) in new.iter().skip(1) {
+                    staged.insert(*k);
+                }
+            }
+            if let Some(v) = records.as_deref_mut() {
+                v.push(rec);
+            }
             if let Some(t) = trace.as_deref_mut() {
                 let (end, new) = match &r {
-                    Ok((_, new, End::Natural { win: true })) => ("win", new.as_ref().map(|x| &x.0)),
+                    Ok((_, new, End::Natural { win: true })) => ("win", new.first().map(|x| &x.0)),
                     Ok((_, new, End::Natural { win: false })) => {
-                        ("loss", new.as_ref().map(|x| &x.0))
+                        ("loss", new.first().map(|x| &x.0))
                     }
                     Ok((_, _, End::NonNatural)) => ("nonnatural", None),
                     Err(PlayErr::Truncated) => ("truncated", None),
@@ -915,6 +986,7 @@ impl Roles {
             let mut out = finish(r, suffix, &meter, &c);
             out.fallback_root = !stats.root_qualified;
             out.e = stats.json();
+            out.decisions = std::mem::take(&mut stats.decisions);
             return out;
         }
         let mut dstats = DStats::default();
@@ -1037,6 +1109,17 @@ impl Roles {
                     } else {
                         act(&mut self.focal, s, &d, c)?
                     };
+                    stats.decisions.push((
+                        d.physical_decision_id,
+                        d.substep_index,
+                        match src {
+                            EvalSrc::TreeEdge => 0,
+                            EvalSrc::MatchedNoQualified => 1,
+                            EvalSrc::FirstMiss => 2,
+                            EvalSrc::AfterMiss => 3,
+                            EvalSrc::DepthLimit => 4,
+                        },
+                    ));
                     if let Some(t) = trace.as_deref_mut() {
                         let key = seen.as_ref().map(|x| &x.0);
                         let hit = seen.as_ref().and_then(|x| x.1);
@@ -1082,6 +1165,28 @@ impl Roles {
     }
 }
 
+/// Per-simulation selection accounting (diagnostic only; never read by
+/// selection, backup or execution).
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct SimRecord {
+    pub(crate) index: u64,
+    /// 1 win, 2 natural nonwin, 3 nonnatural, 4 truncated, 5 fault.
+    pub(crate) outcome: u8,
+    /// Selection transitions and policy calls in this simulation.
+    pub(crate) transitions: u64,
+    pub(crate) policy_calls: u64,
+    /// (transitions, policy calls) before the first expansion.
+    pub(crate) before: (u64, u64),
+    /// Physical focal depth of the first expansion (0: none).
+    pub(crate) first_depth: u32,
+    /// Existing tree nodes traversed before the first expansion.
+    pub(crate) existing: u32,
+    /// Of those, nodes first created as retained tail nodes.
+    pub(crate) staged_hits: u32,
+    /// Nodes committed by this simulation (natural endings only).
+    pub(crate) new_nodes: usize,
+}
+
 /// Trace only: the lookup key, the matched node with its frozen choice, and
 /// the chosen edge index of one frozen-execution decision.
 type Seen<'a> = (Key, Option<(&'a Node, Option<usize>)>, usize);
@@ -1096,6 +1201,11 @@ pub(crate) struct EStats {
     pub(crate) max_hit_depth: u32,
     /// (depth, supporting backups) of each executed tree edge.
     pub(crate) executed: Vec<(u32, u64)>,
+    /// Every frozen-execution choice (two or more legal actions) of the
+    /// focal player: (physical decision, substep, source), source 0 tree
+    /// edge, 1 matched node without a supported action, 2 first history
+    /// miss, 3 after a miss, 4 past the depth limit. Not serialized.
+    pub(crate) decisions: Vec<(u64, u32, u8)>,
 }
 
 impl EStats {
