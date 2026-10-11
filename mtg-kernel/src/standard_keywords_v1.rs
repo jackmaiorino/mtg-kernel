@@ -6,10 +6,8 @@
 //! its controller speed 1 if they have none. Each player with speed then has
 //! the inherent triggered ability "Whenever one or more opponents lose life
 //! during your turn, if your speed is less than 4, increase your speed by 1.
-//! This ability triggers only once each turn." This kernel applies that
-//! increase directly when the life-loss event batch is processed instead of
-//! putting the inherent trigger on the stack. This omits its response and
-//! ordering window, so Burnout Bashtronaut remains Partial. "Max speed"
+//! This ability triggers only once each turn." The player's inherent trigger
+//! joins the ordinary APNAP trigger-ordering and priority windows. "Max speed"
 //! abilities read `speed == 4`.
 //!
 //! Day and night (726): the designation starts when a daybound permanent
@@ -27,7 +25,8 @@ use crate::event::CommittedEvent;
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::{Cost, PaymentPlan, Pip};
 use crate::state::{
-    CreatureDeathTurnV1, DayNightV1, DescendedTurnV1, GameState, SpeedV1, StackItem, Target, Zone,
+    AbilitySourceContractV4, CreatureDeathTurnV1, DayNightV1, DescendedTurnV1, GameState, SpeedV1,
+    StackItem, Target, Zone,
 };
 
 /// Definitions with "Start your engines!".
@@ -51,16 +50,23 @@ pub(crate) fn start_your_engines(state: &mut GameState) {
         if speed(state, player) != 0 {
             continue;
         }
-        let starts = state.players[player.index()].battlefield.iter().any(|&id| {
-            has_start_your_engines(state.objects.get(id).card_def)
-                && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
-        });
-        if starts {
+        let starts = state.players[player.index()]
+            .battlefield
+            .iter()
+            .copied()
+            .find(|&id| {
+                has_start_your_engines(state.objects.get(id).card_def)
+                    && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+            });
+        if let Some(source) = starts {
+            let contract = AbilitySourceContractV4::capture(state, source);
             let speed = state.speed_v1.get_or_insert(SpeedV1 {
                 speeds: [0; 2],
                 last_increase: None,
+                sources: [None; 2],
             });
             speed.speeds[player.index()] = 1;
+            speed.sources[player.index()] = Some(contract);
         }
     }
 }
@@ -78,9 +84,12 @@ fn opponent_lost_life(events: &[CommittedEvent], active: PlayerId) -> bool {
 
 /// Speed's once-per-turn increase for the active player, applied to one
 /// committed event batch.
-pub(crate) fn note_life_loss(state: &mut GameState, events: &[CommittedEvent]) {
+pub(crate) fn note_life_loss(
+    state: &mut GameState,
+    events: &[CommittedEvent],
+) -> Option<crate::trigger::PendingTrigger> {
     let Some(current) = state.speed_v1 else {
-        return;
+        return None;
     };
     let active = state.active_player;
     let stamp = CreatureDeathTurnV1 {
@@ -93,11 +102,37 @@ pub(crate) fn note_life_loss(state: &mut GameState, events: &[CommittedEvent]) {
         || current.last_increase == Some(stamp)
         || !opponent_lost_life(events, active)
     {
-        return;
+        return None;
     }
-    let speed = state.speed_v1.as_mut().expect("checked above");
-    speed.speeds[active.index()] += 1;
-    speed.last_increase = Some(stamp);
+    let source = current.sources[active.index()].or_else(|| {
+        state
+            .objects
+            .iter()
+            .find(|(_, object)| {
+                object.controller == active && has_start_your_engines(object.card_def)
+            })
+            .map(|(id, _)| AbilitySourceContractV4::capture(state, id))
+    })?;
+    state
+        .speed_v1
+        .as_mut()
+        .expect("checked above")
+        .last_increase = Some(stamp);
+    Some(crate::trigger::PendingTrigger {
+        controller: active,
+        source: source.source,
+        granted_by: None,
+        effect: crate::effect::EffectOp::IncreaseSpeed { player: active },
+        is_madness_offer: false,
+        kicked: false,
+        target_spec: crate::card_def::TargetSpec::None,
+        targets: Vec::new(),
+        target_contracts: Vec::new(),
+        placement_ordered: false,
+        source_contract: Some(source),
+        optional_additional_cost_paid: None,
+        paid_cost_refs: Vec::new(),
+    })
 }
 
 /// Keywords a battlefield permanent has from its own "Max speed" ability.

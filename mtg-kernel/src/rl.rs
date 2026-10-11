@@ -6726,6 +6726,8 @@ fn pending_effect_semantic_v4(
                             }
                             | crate::effect::EffectTargetSelectionPurpose::ScryLibrary { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryOne { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::WardCards { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand {
                                 ..
@@ -6760,7 +6762,9 @@ fn pending_effect_semantic_v4(
                     ) && acting_player == *player;
                     let redact_search_shape = matches!(
                         purpose,
-                        crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { .. }
+                        crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::WardCards { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
                             | crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. } | crate::effect::EffectTargetSelectionPurpose::SearchLibraryCardsToDestination { .. }
@@ -6874,7 +6878,10 @@ fn pending_effect_semantic_v4(
                                     TargetSelectionPurposeV4::LibraryOrder
                                 }
                             },
-                            crate::effect::EffectTargetSelectionPurpose::ExileOneFromGraveyard {
+                            crate::effect::EffectTargetSelectionPurpose::CopyTarget { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::WardCards { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::ExileOneFromGraveyard {
                                 ..
                             }
                             | crate::effect::EffectTargetSelectionPurpose::ExileOneMatchingFromGraveyard {
@@ -6935,7 +6942,8 @@ fn pending_effect_semantic_v4(
                         | crate::effect::EffectBooleanChoicePurpose::CounterTargetUnlessPaysGeneric {
                             ..
                         } => BooleanChoicePurposeV4::PayCost,
-                        crate::effect::EffectBooleanChoicePurpose::PayManaThen { .. }
+                        crate::effect::EffectBooleanChoicePurpose::WardLife { .. }
+                        | crate::effect::EffectBooleanChoicePurpose::PayManaThen { .. }
                         | crate::effect::EffectBooleanChoicePurpose::PayExileFromGraveyardThen {
                             ..
                         } => BooleanChoicePurposeV4::PayCost,

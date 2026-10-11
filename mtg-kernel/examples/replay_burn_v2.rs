@@ -4178,6 +4178,8 @@ mod tests {
             x_value: Some(0),
             chosen_creature_cost_zone: None,
             chosen_creature_cost: None,
+            convoke_chosen: Vec::new(),
+            convoke_finished: false,
         });
 
         let rec = decision_record_ex(

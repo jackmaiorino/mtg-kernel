@@ -1859,6 +1859,8 @@ fn rl_contract_engine_pending_cast_context_changes_hash() {
         x_value: Some(0),
         chosen_creature_cost_zone: None,
         chosen_creature_cost: None,
+        convoke_chosen: Vec::new(),
+        convoke_finished: false,
     });
     let mut b = a.clone();
     b.engine.pending_cast.as_mut().unwrap().targets_chosen = vec![Target::Player(PlayerId::P0)];

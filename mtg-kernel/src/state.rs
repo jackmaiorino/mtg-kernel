@@ -1575,6 +1575,8 @@ pub struct CreatureDeathTurnV1 {
 pub struct SpeedV1 {
     pub speeds: [u8; 2],
     pub last_increase: Option<CreatureDeathTurnV1>,
+    #[serde(default)]
+    pub sources: [Option<AbilitySourceContractV4>; 2],
 }
 
 impl SpeedV1 {
@@ -4145,6 +4147,8 @@ mod tests {
             x_value: Some(0),
             chosen_creature_cost_zone: None,
             chosen_creature_cost: None,
+            convoke_chosen: Vec::new(),
+            convoke_finished: false,
         });
         let ordinary_contract = state.diagnostic_state_hash();
         state

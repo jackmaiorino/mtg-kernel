@@ -813,6 +813,13 @@ pub(super) fn prepare_final_spell_payment_v1(
         ordered_objects: choices.ordered_objects,
         chosen_power_lki: None,
     };
+    if selected.convoke {
+        if !pending.convoke_finished {
+            return None;
+        }
+        prepared.mana =
+            super::standard_cast_convoke::payment(resources, pending, &pending.convoke_chosen)?;
+    }
     // Ordinary mana-only spells require no whole-state projection.
     if selected.component_groups.is_empty()
         && discarded.is_empty()

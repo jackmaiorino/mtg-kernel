@@ -325,6 +325,8 @@ pub enum Subtype {
     Praetor,
     Ox,
     Llama,
+    /// Enchantment subtype of Role tokens. Not a creature type.
+    Role,
 }
 
 impl Subtype {

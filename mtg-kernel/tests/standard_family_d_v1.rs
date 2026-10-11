@@ -258,6 +258,19 @@ fn burn(state: &mut GameState, player: PlayerId, target: Target) {
     settled(state);
 }
 
+fn burn_with_ward(state: &mut GameState, player: PlayerId, target: Target, answer: Action) {
+    state.priority_player = player;
+    let spell = put(state, player, "Burst Lightning", Zone::Hand);
+    add_mana(state, player, &[ManaColor::R], 0);
+    cast(state, spell, &[target]);
+    assert!(matches!(
+        settle(state),
+        Some(Decision::ChooseEffectTargets { .. } | Decision::ChooseEffectBoolean { .. })
+    ));
+    engine::step(state, answer).unwrap();
+    settled(state);
+}
+
 #[test]
 fn burnout_bashtronaut_starts_and_raises_speed_once_per_turn() {
     let mut state = ready();
@@ -304,6 +317,7 @@ fn burnout_bashtronaut_pumps_and_has_double_strike_at_max_speed() {
         Keywords::DOUBLE_STRIKE
     ));
     state.speed_v1 = Some(SpeedV1 {
+        sources: [None; 2],
         speeds: [4, 0],
         last_increase: None,
     });
@@ -714,6 +728,22 @@ fn axebane_ferox_ward_counters_unless_evidence_is_collected() {
     let second = put(&mut state, PlayerId::P1, "Burst Lightning", Zone::Hand);
     add_mana(&mut state, PlayerId::P1, &[ManaColor::R], 0);
     cast(&mut state, second, &[Target::Object(ferox)]);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectTargets {
+            player: PlayerId::P1,
+            can_finish: true,
+            ..
+        })
+    ));
+    for card in bashtronauts.iter().chain(std::iter::once(&first)) {
+        engine::step(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(*card)),
+        )
+        .unwrap();
+    }
+    engine::step(&mut state, Action::FinishEffectSelection).unwrap();
     settled(&mut state);
     assert_eq!(state.objects.get(ferox).damage, 2);
     let exiled: Vec<_> = state.exile.clone();
@@ -813,12 +843,21 @@ fn hopeful_initiate_removes_two_counters_to_destroy_an_artifact() {
         }
         other => panic!("expected a target, got {other:?}"),
     }
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseCostTargets { remaining: 2, .. }
+    ));
+    engine::step(&mut state, Action::ChooseCostTarget(challenger)).unwrap();
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseCostTargets { remaining: 1, .. }
+    ));
+    engine::step(&mut state, Action::ChooseCostTarget(challenger)).unwrap();
     settled(&mut state);
     assert_eq!(state.objects.get(wellspring).zone, Zone::Graveyard);
-    // Each counter comes off the creature with the most: the Challenger's
-    // first, then (tied at one) the earlier Initiate's.
-    assert_eq!(state.objects.get(challenger).counters.plus1_plus1, 1);
-    assert_eq!(state.objects.get(initiate).counters.plus1_plus1, 0);
+    // Both counters can come from the same chosen creature.
+    assert_eq!(state.objects.get(challenger).counters.plus1_plus1, 0);
+    assert_eq!(state.objects.get(initiate).counters.plus1_plus1, 1);
 }
 
 fn incubators(state: &GameState, player: PlayerId) -> Vec<ObjectId> {
@@ -942,13 +981,23 @@ fn brutal_cathar_becomes_moonrage_brute_at_night_and_back_by_day() {
     ));
 
     // Ward—pay 3 life: P1 pays and the spell resolves.
-    burn(&mut state, PlayerId::P1, Target::Object(cathar));
+    burn_with_ward(
+        &mut state,
+        PlayerId::P1,
+        Target::Object(cathar),
+        Action::ChooseEffectBoolean(true),
+    );
     assert_eq!(state.players[1].life, 17);
     assert_eq!(state.objects.get(cathar).damage, 2);
 
-    // At 3 life P1 can't pay without dying, so the spell is countered.
+    // At 3 life P1 may decline the legal but lethal payment.
     state.players[1].life = 3;
-    burn(&mut state, PlayerId::P1, Target::Object(cathar));
+    burn_with_ward(
+        &mut state,
+        PlayerId::P1,
+        Target::Object(cathar),
+        Action::ChooseEffectBoolean(false),
+    );
     assert_eq!(state.players[1].life, 3);
     assert_eq!(state.objects.get(cathar).damage, 2);
 
@@ -1059,15 +1108,57 @@ fn knight_errant_of_eos_convokes_and_takes_creatures_up_to_the_count() {
     // Three mana plus two creatures (the white Initiate pays {W}).
     add_mana(&mut state, PlayerId::P0, &[], 3);
     cast(&mut state, knight, &[]);
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectTargets {
+            can_finish: false,
+            ..
+        }
+    ));
+    engine::step(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(initiate)),
+    )
+    .unwrap();
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectTargets {
+            can_finish: false,
+            ..
+        }
+    ));
+    engine::step(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(challenger)),
+    )
+    .unwrap();
+    engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectTargets {
+            can_finish: true,
+            ..
+        })
+    ));
+    engine::step(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(top[2])),
+    )
+    .unwrap();
+    engine::step(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(top[4])),
+    )
+    .unwrap();
     settled(&mut state);
     assert_eq!(state.objects.get(knight).zone, Zone::Battlefield);
     assert!(state.objects.get(initiate).tapped);
     assert!(state.objects.get(challenger).tapped);
     assert_eq!(state.objects.get(knight).v4.convoked_creatures_v1, 2);
-    // X = 2: the two-drop, then the topmost one-drop; never the five-drop.
+    // The controller chooses which two qualifying creatures, regardless of library order.
     let hand = &state.players[0].hand;
-    assert!(hand.contains(&top[2]) && hand.contains(&top[0]));
-    assert!(!hand.contains(&top[4]) && !hand.contains(&top[1]));
+    assert!(hand.contains(&top[2]) && hand.contains(&top[4]));
+    assert!(!hand.contains(&top[0]) && !hand.contains(&top[1]));
     assert_eq!(state.players[0].mana_pool, [0; 6]);
 }
 
@@ -1695,7 +1786,7 @@ fn graveyard_trespasser_exiles_a_graveyard_card_and_drains_for_a_creature() {
 }
 
 #[test]
-fn graveyard_trespasser_ward_makes_opponents_discard_their_cheapest_card() {
+fn graveyard_trespasser_ward_lets_opponents_choose_the_discarded_card() {
     let mut state = ready();
     let trespasser = put(
         &mut state,
@@ -1705,14 +1796,24 @@ fn graveyard_trespasser_ward_makes_opponents_discard_their_cheapest_card() {
     );
     let hellkite = put(&mut state, PlayerId::P0, "Nova Hellkite", Zone::Hand);
     let mountain = put(&mut state, PlayerId::P0, "Mountain", Zone::Hand);
-    burn(&mut state, PlayerId::P0, Target::Object(trespasser));
-    assert_eq!(state.objects.get(mountain).zone, Zone::Graveyard);
-    assert_eq!(state.objects.get(hellkite).zone, Zone::Hand);
+    burn_with_ward(
+        &mut state,
+        PlayerId::P0,
+        Target::Object(trespasser),
+        Action::ChooseEffectTarget(Target::Object(hellkite)),
+    );
+    assert_eq!(state.objects.get(mountain).zone, Zone::Hand);
+    assert_eq!(state.objects.get(hellkite).zone, Zone::Graveyard);
     assert_eq!(state.objects.get(trespasser).damage, 2);
 
     // With only the Hellkite left it is discarded too; then an empty hand
     // can't pay and the spell is countered.
-    burn(&mut state, PlayerId::P0, Target::Object(trespasser));
+    burn_with_ward(
+        &mut state,
+        PlayerId::P0,
+        Target::Object(trespasser),
+        Action::ChooseEffectTarget(Target::Object(mountain)),
+    );
     assert_eq!(state.objects.get(hellkite).zone, Zone::Graveyard);
     assert_eq!(state.objects.get(trespasser).zone, Zone::Graveyard);
     let mut state = ready();
@@ -2012,6 +2113,13 @@ fn make_disappear_casualty_can_sacrifice_a_transformed_incubator() {
     assert!(state.engine.halted.is_none());
     assert_ne!(state.objects.get(incubator).zone, Zone::Battlefield);
     assert_eq!(state.stack.len(), 3);
+    assert!(!state.stack[2].is_copy);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectTargets { .. })
+    ));
+    engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+    next(&mut state);
     assert!(state.stack[2].is_copy);
     assert_eq!(state.stack[2].targets, vec![Target::Object(burst)]);
 }
@@ -2022,6 +2130,13 @@ fn make_disappear_with_casualty_copies_itself() {
     let (fodder, burst) = make_disappear_a_burn(&mut state, true);
     assert_eq!(state.objects.get(fodder).zone, Zone::Graveyard);
     assert_eq!(state.stack.len(), 3);
+    assert!(!state.stack[2].is_copy);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectTargets { .. })
+    ));
+    engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+    next(&mut state);
     assert!(state.stack[2].is_copy);
     assert_eq!(state.stack[2].targets, vec![Target::Object(burst)]);
 
@@ -2331,4 +2446,293 @@ fn stolen_enduring_death_triggers_for_its_controller_and_returns_to_its_owner() 
             mtg_kernel::card_def::CardType::Creature,
         ));
     }
+}
+
+#[test]
+fn ward_evidence_is_optional_and_incomplete_subsets_cannot_finish() {
+    for decline in [false, true] {
+        let mut state = ready();
+        let ferox = put(&mut state, PlayerId::P1, "Axebane Ferox", Zone::Battlefield);
+        let small = put(
+            &mut state,
+            PlayerId::P0,
+            "Burnout Bashtronaut",
+            Zone::Graveyard,
+        );
+        let big = put(&mut state, PlayerId::P0, "Nova Hellkite", Zone::Graveyard);
+        let spell = put(&mut state, PlayerId::P0, "Burst Lightning", Zone::Hand);
+        add_mana(&mut state, PlayerId::P0, &[ManaColor::R], 0);
+        cast(&mut state, spell, &[Target::Object(ferox)]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets {
+                can_finish: true,
+                ..
+            })
+        ));
+        if decline {
+            engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+            settled(&mut state);
+            assert_eq!(state.objects.get(ferox).damage, 0);
+            assert_eq!(state.objects.get(big).zone, Zone::Graveyard);
+        } else {
+            engine::step(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(small)),
+            )
+            .unwrap();
+            assert!(matches!(
+                next(&mut state),
+                Decision::ChooseEffectTargets {
+                    can_finish: false,
+                    ..
+                }
+            ));
+            let before = state.clone();
+            assert!(engine::step(&mut state, Action::FinishEffectSelection).is_err());
+            assert_eq!(state, before);
+            let encoded = serde_json::to_string(&state).unwrap();
+            let mut restored: GameState = serde_json::from_str(&encoded).unwrap();
+            for s in [&mut state, &mut restored] {
+                engine::step(s, Action::ChooseEffectTarget(Target::Object(big))).unwrap();
+                settled(s);
+                assert_eq!(s.objects.get(ferox).damage, 2);
+                assert_eq!(s.objects.get(small).zone, Zone::Exile);
+                assert_eq!(s.objects.get(big).zone, Zone::Exile);
+            }
+            assert_eq!(state, restored);
+        }
+    }
+}
+
+#[test]
+fn moonrage_brute_ward_permits_the_legal_lethal_life_payment() {
+    let mut state = ready();
+    state.day_night_v1 = Some(mtg_kernel::state::DayNightV1::Night);
+    let cathar = put(&mut state, PlayerId::P1, "Brutal Cathar", Zone::Battlefield);
+    next(&mut state);
+    state.players[0].life = 3;
+    let spell = put(&mut state, PlayerId::P0, "Burst Lightning", Zone::Hand);
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::R], 0);
+    cast(&mut state, spell, &[Target::Object(cathar)]);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectBoolean {
+            player: PlayerId::P0,
+            ..
+        })
+    ));
+    engine::step(&mut state, Action::ChooseEffectBoolean(true)).unwrap();
+    let _ = engine::advance_until_decision(&mut state);
+    assert_eq!(state.players[0].life, 0);
+    assert!(state.engine.halted.is_none());
+}
+
+#[test]
+fn cathar_leaving_before_its_trigger_resolves_does_not_exile_the_target() {
+    let mut state = ready();
+    let victim = put(
+        &mut state,
+        PlayerId::P1,
+        "Emberheart Challenger",
+        Zone::Battlefield,
+    );
+    let cathar = put(&mut state, PlayerId::P0, "Brutal Cathar", Zone::Hand);
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::W], 2);
+    cast(&mut state, cathar, &[]);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseTargets { .. })
+    ));
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(victim))).unwrap();
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::zone_change(cathar, Zone::Hand),
+    );
+    settled(&mut state);
+    assert_eq!(state.objects.get(victim).zone, Zone::Battlefield);
+    assert!(state.engine.linked_exile_records.is_empty());
+}
+
+#[test]
+fn cathar_returns_every_linked_card_immediately_when_it_leaves() {
+    let mut state = ready();
+    let first = put(
+        &mut state,
+        PlayerId::P1,
+        "Emberheart Challenger",
+        Zone::Battlefield,
+    );
+    let second = put(
+        &mut state,
+        PlayerId::P1,
+        "Monastery Swiftspear",
+        Zone::Battlefield,
+    );
+    let cathar = put(&mut state, PlayerId::P0, "Brutal Cathar", Zone::Hand);
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::W], 2);
+    cast(&mut state, cathar, &[]);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseTargets { .. })
+    ));
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(first))).unwrap();
+    settled(&mut state);
+    state.day_night_v1 = Some(mtg_kernel::state::DayNightV1::Night);
+    next(&mut state);
+    state.day_night_v1 = Some(mtg_kernel::state::DayNightV1::Day);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseTargets { .. })
+    ));
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(second))).unwrap();
+    settled(&mut state);
+    assert_eq!(state.engine.linked_exile_records.len(), 2);
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::zone_change(cathar, Zone::Hand),
+    );
+    assert_eq!(state.objects.get(first).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(second).zone, Zone::Battlefield);
+    assert!(state.engine.linked_exile_records.is_empty());
+    settled(&mut state);
+}
+
+#[test]
+fn speed_increase_waits_on_the_stack_and_survives_its_original_source() {
+    let mut state = ready();
+    let source = put(
+        &mut state,
+        PlayerId::P0,
+        "Burnout Bashtronaut",
+        Zone::Battlefield,
+    );
+    next(&mut state);
+    assert_eq!(speed(&state, PlayerId::P0), 1);
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::zone_change(source, Zone::Graveyard),
+    );
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::life_loss(PlayerId::P1, 1),
+    );
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(speed(&state, PlayerId::P0), 1);
+    assert!(state.stack.iter().any(|item| matches!(
+        item.inline_effect,
+        Some(mtg_kernel::effect::EffectOp::IncreaseSpeed {
+            player: PlayerId::P0
+        })
+    )));
+    settled(&mut state);
+    assert_eq!(speed(&state, PlayerId::P0), 2);
+}
+
+#[test]
+fn enduring_and_impending_enchantments_do_not_pay_creature_sacrifice_costs() {
+    for name in [
+        "Enduring Curiosity",
+        "Enduring Innocence",
+        "Overlord of the Mistmoors",
+    ] {
+        let mut state = ready();
+        let enchantment = put(&mut state, PlayerId::P0, name, Zone::Battlefield);
+        if name.starts_with("Enduring") {
+            state
+                .objects
+                .get_mut(enchantment)
+                .v4
+                .enduring_enchantment_v1 = true;
+        } else {
+            state.objects.get_mut(enchantment).v4.time_counters_v1 = 3;
+        }
+        for _ in 0..2 {
+            put(
+                &mut state,
+                PlayerId::P0,
+                "Monastery Swiftspear",
+                Zone::Battlefield,
+            );
+        }
+        put(&mut state, PlayerId::P0, "Nova Hellkite", Zone::Graveyard);
+        let dread = put(&mut state, PlayerId::P0, "Dread Return", Zone::Graveyard);
+        let decision = next(&mut state);
+        assert!(!format!("{decision:?}").is_empty());
+        assert!(!engine::object_has_type(
+            &state,
+            enchantment,
+            mtg_kernel::card_def::CardType::Creature
+        ));
+        assert!(
+            !matches!(decision, Decision::CastSpellOrPass { castable_spells, .. } if castable_spells.contains(&dread))
+        );
+    }
+}
+
+#[test]
+fn monstrous_rage_roles_replace_only_the_same_controllers_old_role() {
+    let mut state = ready();
+    let host = put(
+        &mut state,
+        PlayerId::P1,
+        "Novice Inspector",
+        Zone::Battlefield,
+    );
+    for _ in 0..2 {
+        let rage = put(&mut state, PlayerId::P0, "Monstrous Rage", Zone::Hand);
+        add_mana(&mut state, PlayerId::P0, &[ManaColor::R], 0);
+        cast(&mut state, rage, &[Target::Object(host)]);
+        settled(&mut state);
+    }
+    let roles = state.objects.get(host).attachments.clone();
+    assert_eq!(roles.len(), 1);
+    assert_eq!(power_toughness(&state, host), (6, 3));
+    assert!(engine::has_effective_keyword(
+        &state,
+        host,
+        Keywords::TRAMPLE
+    ));
+    state.priority_player = PlayerId::P1;
+    let rage = put(&mut state, PlayerId::P1, "Monstrous Rage", Zone::Hand);
+    add_mana(&mut state, PlayerId::P1, &[ManaColor::R], 0);
+    cast(&mut state, rage, &[Target::Object(host)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(host).attachments.len(), 2);
+    assert_eq!(power_toughness(&state, host), (9, 4));
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::zone_change(host, Zone::Hand),
+    );
+    settled(&mut state);
+    assert!(state
+        .objects
+        .iter()
+        .all(|(_, object)| object.name != "Monster" || object.zone != Zone::Battlefield));
+}
+
+#[test]
+fn casualty_copy_survives_original_countering_and_can_retarget() {
+    let mut state = ready();
+    let (_, burst) = make_disappear_a_burn(&mut state, true);
+    let original = state.stack[1].source;
+    assert!(!state.stack[2].is_copy);
+    state.priority_player = PlayerId::P1;
+    let negate = put(&mut state, PlayerId::P1, "Negate", Zone::Hand);
+    add_mana(&mut state, PlayerId::P1, &[ManaColor::U], 1);
+    cast(&mut state, negate, &[Target::Object(original)]);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectTargets { .. })
+    ));
+    assert_eq!(state.objects.get(original).zone, Zone::Graveyard);
+    let before = serde_json::to_string(&state).unwrap();
+    let mut restored: GameState = serde_json::from_str(&before).unwrap();
+    for state in [&mut state, &mut restored] {
+        engine::step(state, Action::ChooseEffectTarget(Target::Object(burst))).unwrap();
+        settled(state);
+        assert_eq!(state.objects.get(burst).zone, Zone::Graveyard);
+        assert_eq!(state.players[0].life, 20);
+    }
+    assert_eq!(state, restored);
 }

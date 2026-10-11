@@ -1628,16 +1628,11 @@ fn warp_exile_effect() -> EffectOp {
 /// When it enters or transforms into Brutal Cathar, exile target creature an
 /// opponent controls until it leaves the battlefield (Journey to Nowhere's
 /// linked exile). Daybound; Moonrage Brute is its nightbound back face.
-const BRUTAL_CATHAR_TRIGGERS: [TriggeredAbilityDef; 3] = [
+const BRUTAL_CATHAR_TRIGGERS: [TriggeredAbilityDef; 2] = [
     etb_trigger(journey_to_nowhere_etb_effect),
     TriggeredAbilityDef {
         condition: TriggerCondition::TransformsIntoFrontFace,
         ..etb_trigger(journey_to_nowhere_etb_effect)
-    },
-    TriggeredAbilityDef {
-        condition: TriggerCondition::LeftBattlefield,
-        home_zone: Zone::Graveyard,
-        ..etb_trigger(journey_to_nowhere_ltb_effect)
     },
 ];
 
@@ -3560,6 +3555,16 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
         return true;
     }
 
+    if card.name == "Burnout Bashtronaut" && matches!(effect, EffectOp::IncreaseSpeed { .. }) {
+        return true;
+    }
+    if matches!(
+        card.optional_additional_cost,
+        Some(crate::card_def::OptionalAdditionalCostDef::Casualty(_))
+    ) && matches!(effect, EffectOp::CopySpellSnapshot { .. })
+    {
+        return true;
+    }
     if card.name == "Weather the Storm" && matches!(effect, EffectOp::CreateStormCopies { .. }) {
         return true;
     }
@@ -3908,6 +3913,46 @@ fn sba_fixed_point_with_protected_triggers(
             changed = true;
         }
 
+        // 704.5: one Role per controller may enchant a permanent. Keep the
+        // newest timestamp, independently for each controller, at the SBA
+        // checkpoint after the resolving effect has finished.
+        let obsolete_roles = state
+            .objects
+            .iter()
+            .filter_map(|(id, role)| {
+                if role.zone != Zone::Battlefield
+                    || !crate::card_def::CARD_DEFS[role.card_def as usize]
+                        .subtypes
+                        .contains(&crate::card_def::Subtype::Role)
+                {
+                    return None;
+                }
+                let host = role.v4.attached_to?;
+                let timestamp = role.v4.layer_timestamp.unwrap_or(0);
+                state
+                    .objects
+                    .iter()
+                    .any(|(other_id, other)| {
+                        other_id != id
+                            && other.zone == Zone::Battlefield
+                            && other.controller == role.controller
+                            && other.v4.attached_to == Some(host)
+                            && crate::card_def::CARD_DEFS[other.card_def as usize]
+                                .subtypes
+                                .contains(&crate::card_def::Subtype::Role)
+                            && other.v4.layer_timestamp.unwrap_or(0) > timestamp
+                    })
+                    .then_some(id)
+            })
+            .collect::<Vec<_>>();
+        for id in obsolete_roles {
+            crate::event::commit(
+                state,
+                crate::event::ProposedEvent::zone_change(id, Zone::Graveyard),
+            );
+            changed = true;
+        }
+
         // 704.5s: after a Saga's final chapter ability leaves the stack, its
         // controller sacrifices it. The chapter trigger is protected across
         // the pre-placement SBA checkpoint by its exact source incarnation.
@@ -4016,7 +4061,7 @@ pub(crate) fn collect_and_process_with_waiting(
     // `EngineState::pending_kicked_source`'s doc).
     let kicked_source = state.engine.pending_kicked_source.take();
     #[cfg(feature = "standard-magezero-fixtures")]
-    crate::standard_keywords_v1::note_life_loss(state, &events);
+    waiting.extend(crate::standard_keywords_v1::note_life_loss(state, &events));
 
     // Trigger conditions are evaluated at the moment their event happens,
     // before the following SBA check (603.2/704.3). In particular, an ETB
@@ -4037,7 +4082,10 @@ pub(crate) fn collect_and_process_with_waiting(
     }
     let sba_events: Vec<CommittedEvent> = state.engine.event_log.drain(..).collect();
     #[cfg(feature = "standard-magezero-fixtures")]
-    crate::standard_keywords_v1::note_life_loss(state, &sba_events);
+    new_triggers.extend(crate::standard_keywords_v1::note_life_loss(
+        state,
+        &sba_events,
+    ));
     new_triggers.extend(triggers_from_events(state, &sba_events, None));
 
     // 603.3d: a triggered ability requiring targets is removed from the

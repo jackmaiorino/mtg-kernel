@@ -67,6 +67,13 @@ mod counter_distribution_v1;
 #[path = "spell_costs_v1.rs"]
 #[allow(dead_code)]
 mod spell_costs_v1;
+#[path = "standard_cast_convoke.rs"]
+mod standard_cast_convoke;
+#[path = "standard_spell_copy.rs"]
+mod standard_spell_copy;
+pub(crate) use standard_spell_copy::{
+    copy_snapshot_legal_targets, materialize_copy_snapshot, validate_copy_snapshot,
+};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EngineState {
@@ -728,7 +735,7 @@ pub enum ChosenCreatureCostZoneV1 {
     Hand,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingCast {
     pub spell: ObjectId,
     /// Exact physical source incarnation and stack provenance captured after
@@ -825,6 +832,39 @@ pub struct PendingCast {
     /// Exact chosen creature incarnation for that additional cost.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chosen_creature_cost: Option<EffectObjectBinding>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub convoke_chosen: Vec<EffectObjectBinding>,
+    #[serde(default, skip_serializing_if = "bool_is_false")]
+    pub convoke_finished: bool,
+}
+impl std::hash::Hash for PendingCast {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash(&self.spell, state);
+        std::hash::Hash::hash(&self.source_contract, state);
+        std::hash::Hash::hash(&self.controller, state);
+        std::hash::Hash::hash(&self.target_spec, state);
+        std::hash::Hash::hash(&self.targets_chosen, state);
+        std::hash::Hash::hash(&self.target_contracts, state);
+        std::hash::Hash::hash(&self.target_selection_finished, state);
+        std::hash::Hash::hash(&self.is_flashback, state);
+        std::hash::Hash::hash(&self.cast_mode, state);
+        std::hash::Hash::hash(&self.additional_cost_discarded, state);
+        std::hash::Hash::hash(&self.mode_chosen, state);
+        std::hash::Hash::hash(&self.origin_zone, state);
+        std::hash::Hash::hash(&self.sacrifice_chosen, state);
+        std::hash::Hash::hash(&self.kicked, state);
+        std::hash::Hash::hash(&self.optional_additional_cost_paid, state);
+        std::hash::Hash::hash(&self.optional_additional_cost_chosen, state);
+        std::hash::Hash::hash(&self.optional_additional_cost_selection_finished, state);
+        std::hash::Hash::hash(&self.x_value, state);
+        std::hash::Hash::hash(&self.chosen_creature_cost_zone, state);
+        std::hash::Hash::hash(&self.chosen_creature_cost, state);
+        if !self.convoke_chosen.is_empty() || self.convoke_finished {
+            std::hash::Hash::hash(&0x636f6e766f6b6531_u64, state);
+            std::hash::Hash::hash(&self.convoke_chosen, state);
+            std::hash::Hash::hash(&self.convoke_finished, state);
+        }
+    }
 }
 
 fn default_optional_additional_cost_declined() -> Option<bool> {
@@ -3958,6 +3998,58 @@ fn controlled_plus_one_counter_removals(
     Some(removals)
 }
 
+fn counter_removal_cost(components: &[CostComponent]) -> Option<u8> {
+    components.iter().find_map(|cost| match cost {
+        CostComponent::RemovePlusOneCountersFromControlledCreatures(n) => Some(*n),
+        _ => None,
+    })
+}
+fn counter_removal_candidates(
+    state: &GameState,
+    player: PlayerId,
+    chosen: &[EffectObjectBinding],
+) -> Vec<EffectObjectBinding> {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter_map(|id| {
+            let object = state.objects.get(id);
+            let taken = chosen.iter().filter(|b| b.object == id).count() as i32;
+            (object.controller == player
+                && object.zone == Zone::Battlefield
+                && object_has_type(state, id, CardType::Creature)
+                && object.counters.plus1_plus1 > taken)
+                .then_some(EffectObjectBinding {
+                    object: id,
+                    expected_zone: Zone::Battlefield,
+                    expected_zone_change_count: object.zone_change_count,
+                })
+        })
+        .collect()
+}
+fn validate_counter_removal_prefix(
+    state: &GameState,
+    player: PlayerId,
+    needed: u8,
+    chosen: &[EffectObjectBinding],
+) -> Result<(), String> {
+    if chosen.len() > usize::from(needed) {
+        return Err("too many counter-removal choices".into());
+    }
+    for (index, binding) in chosen.iter().enumerate() {
+        if !counter_removal_candidates(state, player, &chosen[..index]).contains(binding) {
+            return Err(
+                "counter-removal choice changed creature, counter count or incarnation".into(),
+            );
+        }
+    }
+    if controlled_plus_one_counter_removals(player, state, needed).is_none() {
+        return Err("counter-removal cost cannot complete".into());
+    }
+    Ok(())
+}
+
 fn activation_tap_cost_subtype(components: &[CostComponent]) -> Option<card_def::Subtype> {
     components.iter().find_map(|component| match component {
         CostComponent::TapOtherUntappedControlledPermanentWithSubtype(subtype) => Some(*subtype),
@@ -4757,6 +4849,23 @@ fn validate_cost_component_choices_v1(
             return None;
         }
     }
+    if let Some(needed) = counter_removal_cost(components) {
+        let bindings = object_cost_chosen
+            .iter()
+            .map(|&id| {
+                state.objects.try_get(id).map(|object| EffectObjectBinding {
+                    object: id,
+                    expected_zone: Zone::Battlefield,
+                    expected_zone_change_count: object.zone_change_count,
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        if bindings.len() != usize::from(needed)
+            || validate_counter_removal_prefix(state, player, needed, &bindings).is_err()
+        {
+            return None;
+        }
+    }
     if components.contains(&CostComponent::RemoveChargeCounterFromSelf)
         && state.objects.get(source).counters.charge <= 0
     {
@@ -5130,9 +5239,8 @@ fn commit_cost_components_from_plan_v1(
                 event::propose_and_commit(state, ProposedEvent::tap(object_cost_chosen[0]));
             }
             CostComponent::RemovePlusOneCountersFromControlledCreatures(amount) => {
-                let removals = controlled_plus_one_counter_removals(player, state, *amount)
-                    .expect("preflighted counter removal remains payable");
-                for creature in removals {
+                debug_assert_eq!(object_cost_chosen.len(), usize::from(*amount));
+                for &creature in object_cost_chosen {
                     state.objects.get_mut(creature).counters.plus1_plus1 -= 1;
                 }
             }
@@ -9664,6 +9772,7 @@ pub(crate) fn validate_pending_cast(
             return Err("pending cast discard binding or stage changed".to_string());
         }
     }
+    standard_cast_convoke::validate(state, pending)?;
     Ok(())
 }
 
@@ -10226,6 +10335,9 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         });
     }
 
+    if standard_cast_convoke::active(state, &pending) && !pending.convoke_finished {
+        return Some(standard_cast_convoke::decision(state, &pending));
+    }
     if pending.additional_cost_discarded.is_none() {
         let add = def.additional_cost.expect(
             "additional_cost_discarded is None only when begin_cast saw an additional_cost",
@@ -10348,6 +10460,24 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
         }
     }
 
+    if let Some(needed) = counter_removal_cost(ability.cost) {
+        if pending.object_cost_chosen.len() < usize::from(needed) {
+            return Some(Decision::ChooseCostTargets {
+                player: pending.controller,
+                source: pending.source,
+                cost_kind: CostKind::RemoveCounters,
+                remaining: needed - pending.object_cost_chosen.len() as u8,
+                candidates: counter_removal_candidates(
+                    state,
+                    pending.controller,
+                    &pending.object_cost_chosen,
+                )
+                .into_iter()
+                .map(|b| b.object)
+                .collect(),
+            });
+        }
+    }
     if let Some(filter) = return_permanent_filter_in(ability.cost) {
         if pending.object_cost_chosen.is_empty() {
             let candidates = return_permanent_cost_candidates(
@@ -10631,6 +10761,7 @@ pub(crate) fn validate_pending_activation(
         }
     }
 
+    let counter_cost = counter_removal_cost(ability.cost);
     let return_filter = return_permanent_filter_in(ability.cost);
     let tap_cost_subtype = activation_tap_cost_subtype(ability.cost);
     let sacrifice_cost = activation_controlled_object_cost(ability.cost);
@@ -10641,7 +10772,8 @@ pub(crate) fn validate_pending_activation(
         + usize::from(sacrifice_cost.is_some())
         + usize::from(returns_unblocked_attacker)
         + usize::from(craft_material)
-        + usize::from(crew_requirement(ability.cost).is_some());
+        + usize::from(crew_requirement(ability.cost).is_some())
+        + usize::from(counter_cost.is_some());
     if let Some(required) = crew_requirement(ability.cost) {
         let candidates = crew_candidates(state, pending.controller, &[]);
         if pending
@@ -10679,6 +10811,14 @@ pub(crate) fn validate_pending_activation(
     }
     if interactive_families == 0 && !pending.object_cost_chosen.is_empty() {
         return Err("activation without an object cost carries chosen cost objects".to_string());
+    }
+    if let Some(needed) = counter_cost {
+        validate_counter_removal_prefix(
+            state,
+            pending.controller,
+            needed,
+            &pending.object_cost_chosen,
+        )?;
     }
     if return_filter.is_some() || tap_cost_subtype.is_some() || returns_unblocked_attacker {
         if pending.object_cost_chosen.len() > 1 {
@@ -11562,6 +11702,35 @@ fn triggered_stack_item_expected_target_spec(
         crate::standard_cards_v1::is_hasty_copy_incarnation(state, contract)
     }) {
         return Err("delayed sacrifice trigger lost its token copy".to_string());
+    }
+    if let EffectOp::IncreaseSpeed { player } = inline_effect {
+        if *player != item.controller || state.speed_v1.is_none() {
+            return Err("speed trigger changed player or lost the designation".into());
+        }
+        if let Some(source) = state
+            .speed_v1
+            .and_then(|speed| speed.sources[player.index()])
+        {
+            if ability_source_contract != Some(source) {
+                return Err("speed trigger changed its historical source".into());
+            }
+        }
+    }
+    if let EffectOp::CopySpellSnapshot { spell } = inline_effect {
+        validate_copy_snapshot(state, spell)?;
+        if item.source == spell.source {
+            if !matches!(
+                spell.v4.optional_additional_cost_paid,
+                Some(OptionalAdditionalCostDef::Casualty(_))
+            ) || ability_source_contract.is_none_or(|source| {
+                spell.v4.source_contract.is_none_or(|cast| {
+                    source.source != cast.source
+                        || source.zone_change_count != cast.zone_change_count
+                })
+            }) {
+                return Err("casualty trigger lost its paid source spell".into());
+            }
+        }
     }
     if let EffectOp::ResolveInitiativeTrigger { binding } = inline_effect {
         let Some(source_contract) = ability_source_contract else {
@@ -14355,6 +14524,7 @@ enum PendingCastActionStage {
     ChooseXValue,
     Discard,
     AwaitEngineAdvance,
+    ChooseConvoke,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14456,6 +14626,9 @@ fn pending_cast_action_stage(
     if pending.x_value.is_none() {
         return Ok(PendingCastActionStage::ChooseXValue);
     }
+    if standard_cast_convoke::active(state, pending) && !pending.convoke_finished {
+        return Ok(PendingCastActionStage::ChooseConvoke);
+    }
     Ok(PendingCastActionStage::AwaitEngineAdvance)
 }
 
@@ -14463,6 +14636,9 @@ fn action_matches_pending_cast_stage(action: &Action, stage: PendingCastActionSt
     matches!(
         (stage, action),
         (
+            PendingCastActionStage::ChooseConvoke,
+            Action::ChooseEffectTarget(_) | Action::FinishEffectSelection
+        ) | (
             PendingCastActionStage::ChooseKicker,
             Action::ChooseKicker(_)
         ) | (
@@ -14544,8 +14720,10 @@ fn pending_activation_action_stage(
         has_unblocked_attacker_return_cost(ability.cost) && pending.object_cost_chosen.is_empty();
     let craft_material_incomplete =
         has_craft_material_cost(ability.cost) && pending.object_cost_chosen.is_empty();
-    if return_cost_incomplete
+    if counter_removal_cost(ability.cost)
+        .is_some_and(|n| pending.object_cost_chosen.len() < usize::from(n))
         || craft_material_incomplete
+        || return_cost_incomplete
         || sacrifice_cost_incomplete
         || tap_cost_incomplete
         || unblocked_attacker_return_cost_incomplete
@@ -14882,7 +15060,9 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
             }
         }
         Action::ChooseEffectTarget(target) => {
-            if state.engine.pending_cast.is_some() {
+            if state.engine.pending_cast.as_ref().is_some_and(|p| standard_cast_convoke::active(state, p) && p.x_value.is_some() && !p.convoke_finished) {
+                standard_cast_convoke::choose(state, target)
+            } else if state.engine.pending_cast.is_some() {
                 apply_choose_collect_evidence_target(state, target)
             } else if state.engine.pending_activation.is_some() {
                 if pending_activation_action_stage(state,state.engine.pending_activation.as_ref().unwrap())? == PendingActivationActionStage::Crew {
@@ -14893,7 +15073,9 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
             }
         }
         Action::FinishEffectSelection => {
-            if state.engine.pending_cast.is_some() {
+            if state.engine.pending_cast.as_ref().is_some_and(|p| standard_cast_convoke::active(state, p) && p.x_value.is_some() && !p.convoke_finished) {
+                standard_cast_convoke::finish(state)
+            } else if state.engine.pending_cast.is_some() {
                 finish_optional_cast_or_collect_evidence(state)
             } else if state.engine.pending_activation.is_some() {
                 if pending_activation_action_stage(state,state.engine.pending_activation.as_ref().unwrap())? == PendingActivationActionStage::Crew {
@@ -15579,6 +15761,24 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
             );
         }
 
+        if let Some(needed) = counter_removal_cost(ability.cost) {
+            if pending.object_cost_chosen.len() >= usize::from(needed) {
+                return Err("counter-removal cost is complete".into());
+            }
+            let binding =
+                counter_removal_candidates(state, pending.controller, &pending.object_cost_chosen)
+                    .into_iter()
+                    .find(|b| b.object == id)
+                    .ok_or("illegal counter-removal creature")?;
+            state
+                .engine
+                .pending_activation
+                .as_mut()
+                .unwrap()
+                .object_cost_chosen
+                .push(binding);
+            return Ok(());
+        }
         if let Some(filter) = return_permanent_filter_in(ability.cost) {
             if !pending.object_cost_chosen.is_empty() {
                 return Err("activation object cost has already been selected".to_string());
@@ -16130,79 +16330,6 @@ pub(crate) fn create_storm_spell_copies(
         validate_spell_stack_source(&staged, &copy)?;
         validated_stack_item_target_spec(&copy, &staged)?;
     }
-    *state = staged;
-    Ok(())
-}
-
-/// Casualty's "when you cast this spell, copy it": the copy goes on the stack
-/// at once, above its parent, with the parent's targets and modes. The
-/// copy keeps those targets (the optional retarget is not offered).
-fn copy_spell_keeping_targets(
-    state: &mut GameState,
-    parent_stack_item: StackItemId,
-) -> Result<(), String> {
-    let parent = state
-        .stack
-        .iter()
-        .find(|item| item.v4.stack_item_id == parent_stack_item)
-        .cloned()
-        .ok_or("casualty copy lost its parent spell")?;
-    let parent_contract = parent
-        .v4
-        .source_contract
-        .ok_or("casualty parent spell lost its source contract")?;
-    let mut staged = state.clone();
-    let copy_source = staged.objects.push(crate::state::GameObject {
-        card_def: parent_contract.card_def,
-        name: staged.objects.get(parent.source).name.clone(),
-        owner: parent_contract.owner,
-        controller: parent_contract.controller,
-        zone: Zone::Stack,
-        tapped: false,
-        summoning_sick: false,
-        damage: 0,
-        counters: Default::default(),
-        attachments: Vec::new(),
-        v4: ObjectStateV4::from_card_def(parent_contract.card_def),
-        spell_copy_origin: Some(SpellCopyOriginV4 {
-            parent: parent_contract.source,
-            parent_card_def: parent_contract.card_def,
-            parent_owner: parent_contract.owner,
-            parent_controller: parent_contract.controller,
-            parent_stack_zone_change_count: parent_contract.zone_change_count,
-            parent_was_copy: false,
-        }),
-        plotted_turn: None,
-        zone_change_count: 0,
-    });
-    let stack_item_id = next_stack_item_id(&mut staged);
-    let source_contract =
-        StackSourceContractV4::capture(&staged, copy_source, CastMethodV4::Normal);
-    let copy = StackItem {
-        kind: StackItemKind::Spell,
-        source: copy_source,
-        controller: parent.controller,
-        targets: parent.targets.clone(),
-        is_copy: true,
-        inline_effect: None,
-        discarded: Vec::new(),
-        is_flashback: false,
-        mode_chosen: parent.mode_chosen,
-        madness_offer: false,
-        kicked: false,
-        v4: StackStateV4 {
-            stack_item_id,
-            cast_method: Some(CastMethodV4::Normal),
-            source_contract: Some(source_contract),
-            target_spec: parent.v4.target_spec,
-            target_contracts: parent.v4.target_contracts.clone(),
-            ..StackStateV4::default()
-        },
-    };
-    staged.stack.push(copy.clone());
-    validate_spell_stack_source(&staged, &copy)?;
-    validated_stack_item_target_spec(&copy, &staged)?;
-    log_final_targeting_events(&mut staged, stack_item_id)?;
     *state = staged;
     Ok(())
 }
@@ -17218,6 +17345,8 @@ fn begin_cast_ex(
         },
         chosen_creature_cost_zone: None,
         chosen_creature_cost: None,
+        convoke_chosen: Vec::new(),
+        convoke_finished: false,
     });
 }
 
@@ -17416,7 +17545,29 @@ fn finalize_owned_cast(
         paid_optional_additional_cost,
         Some(OptionalAdditionalCostDef::Casualty(_))
     ) {
-        copy_spell_keeping_targets(state, stack_item_id)?;
+        let spell = state
+            .stack
+            .iter()
+            .find(|item| item.v4.stack_item_id == stack_item_id)
+            .cloned()
+            .ok_or("casualty spell missing after cast")?;
+        state.engine.pending_triggers.push(PendingTrigger {
+            controller: spell.controller,
+            source: spell.source,
+            granted_by: None,
+            effect: EffectOp::CopySpellSnapshot {
+                spell: Box::new(spell.clone()),
+            },
+            is_madness_offer: false,
+            kicked: false,
+            target_spec: TargetSpec::None,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
+            source_contract: Some(AbilitySourceContractV4::capture(state, spell.source)),
+            optional_additional_cost_paid: None,
+            paid_cost_refs: Vec::new(),
+        });
     }
     crate::standard_cards_v1::note_spell_cast(state, pending.spell);
 
@@ -17709,12 +17860,14 @@ fn push_paid_activation(
         },
     };
     let mut paid_cost_objects = discarded.clone();
-    paid_cost_objects.extend(
-        pending
-            .object_cost_chosen
-            .iter()
-            .map(|binding| binding.object),
-    );
+    if counter_removal_cost(ability.cost).is_none() {
+        paid_cost_objects.extend(
+            pending
+                .object_cost_chosen
+                .iter()
+                .map(|binding| binding.object),
+        );
+    }
     if ability.cost.iter().any(|component| {
         matches!(
             component,

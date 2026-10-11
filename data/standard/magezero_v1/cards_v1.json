@@ -6001,6 +6001,64 @@
         "once_per_incarnation_activation"
       ],
       "java_file": "Mage.Sets/src/mage/cards/s/SurgeEngine.java"
+    },
+    {
+      "engine_capability": "full",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RG.dck",
+        "Standard16-UR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "temporary_boost",
+        "role_token"
+      ],
+      "name": "Monstrous Rage",
+      "java_file": "Mage.Sets/src/mage/cards/m/MonstrousRage.java"
+    },
+    {
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [
+        "Aura",
+        "Role"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "aura",
+        "static_boost",
+        "trample"
+      ],
+      "name": "Monster Role Token",
+      "is_token": true,
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/MonsterRoleToken.java"
     }
   ]
 }

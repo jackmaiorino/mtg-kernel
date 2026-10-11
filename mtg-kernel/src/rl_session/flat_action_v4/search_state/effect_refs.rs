@@ -25,9 +25,17 @@ impl Scan<'_> {
             || a.attached_to
                 .is_some_and(|x| self.same(x.object, x.zone_change_count))
     }
+    fn copy(&self, spell: &crate::state::StackItem) -> bool {
+        self.raw(spell.source)
+            || spell.targets.iter().any(|target| match target {
+                Target::Object(id) => self.raw(*id),
+                Target::Player(_) => false,
+            })
+    }
     fn op(&self, op: &EffectOp) -> bool {
         use EffectOp::*;
         match op {
+            CopySpellSnapshot { spell } => self.copy(spell),
             Sequence(ops) | Choice { options: ops, .. } => ops.iter().any(|x| self.op(x)),
             Conditional { then, else_, .. } => self.op(then) || self.op(else_),
             MayPayCostThen {
@@ -58,7 +66,8 @@ impl Scan<'_> {
             ResolveMonarchTrigger { binding } => self.a(&binding.source),
             StandardV1(op) => op.bound_objects().iter().any(|chosen| self.b(chosen)),
             // Other current leaf programs carry symbolic refs, not physical bindings.
-            DealDamage { .. }
+            IncreaseSpeed { .. }
+            | DealDamage { .. }
             | DistributePlusOneCounters { .. }
             | CreatureUpgrade(_)
             | ReturnTargetPermanentToBattlefield { .. }
@@ -74,6 +83,7 @@ impl Scan<'_> {
             | AttachSourceToTarget { .. }
             | AddCountersToTarget { .. }
             | CreateTokenAndAttachSource { .. }
+            | CreateRoleAttachedToTarget { .. }
             | AddMana { .. }
             | AddManaDynamic { .. }
             | CreateToken { .. }
@@ -207,6 +217,20 @@ impl Scan<'_> {
     fn f(&self, f: &EffectFrame) -> bool {
         use EffectFrame::*;
         match f {
+            CopyTarget { choice, selected } => {
+                self.copy(&choice.spell)
+                    || self.fs(&choice.remaining)
+                    || selected
+                        .as_ref()
+                        .and_then(|candidate| candidate.expected_object)
+                        .is_some_and(|b| self.b(&b))
+            }
+            ConvokeLook { choice, selected } => {
+                self.bs(&choice.prefix) || self.bs(selected) || self.fs(&choice.remaining)
+            }
+            WardPayment {
+                choice, selected, ..
+            } => self.bs(&choice.candidates) || self.bs(selected) || self.fs(&choice.remaining),
             Program { op, .. } => self.op(op),
             MoveObjectsBatch { objects, .. }
             | MillLibraryBatch { objects, .. }
@@ -411,6 +435,9 @@ impl Scan<'_> {
     fn purpose(&self, p: &EffectTargetSelectionPurpose) -> bool {
         use EffectTargetSelectionPurpose::*;
         match p {
+            CopyTarget { choice } => self.copy(&choice.spell) || self.fs(&choice.remaining),
+            ConvokeLook { choice } => self.bs(&choice.prefix) || self.fs(&choice.remaining),
+            WardCards { choice } => self.bs(&choice.candidates) || self.fs(&choice.remaining),
             OrderIntoGraveyard { .. } | OrderMilledIntoGraveyard => false,
             StandardBreachChoiceV1 {
                 chosen,
@@ -614,6 +641,9 @@ impl Scan<'_> {
             PendingEffectChoice::ChooseBoolean { purpose, .. } => {
                 use EffectBooleanChoicePurpose::*;
                 match purpose {
+                    WardLife { choice } => {
+                        self.bs(&choice.candidates) || self.fs(&choice.remaining)
+                    }
                     ShuffleLibrary { .. }
                     | CounterUnlessPaysGeneric { .. }
                     | CounterTargetUnlessPaysGeneric { .. } => false,
@@ -715,6 +745,7 @@ pub(super) fn conflicts(
         if let Some(g) = &p.answered_choice_guard {
             use EffectAnsweredChoiceGuard::*;
             let guard_conflicts = match g {
+                StandardSelection { frame } => s.f(frame),
                 OwnerLibrarySecondOrBottom { frame }
                 | CounterUnlessPaysGeneric { frame }
                 | CounterTargetUnlessPaysGeneric { frame }

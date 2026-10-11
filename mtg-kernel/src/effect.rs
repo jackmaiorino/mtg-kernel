@@ -15,6 +15,13 @@
 //! (`event::commit`) mutates `GameState` in response to card behavior (see the
 //! crate-level invariants in `lib.rs`).
 
+mod standard_ward;
+use standard_ward::WardPaymentChoice;
+mod standard_look;
+use standard_look::ConvokeLookChoice;
+mod standard_copy;
+use standard_copy::CopyTargetChoice;
+
 use crate::card_def::{
     CardType, DynamicValueDef, Keywords, OptionalAdditionalCostDef, PermanentFilter,
     PermanentFilterDef, Subtype,
@@ -1422,6 +1429,18 @@ pub enum EffectOp {
         toughness: i32,
     },
     CreatureUpgrade(crate::standard_creatures_v1::CreatureEffectV1),
+    /// Resolution of the player's inherent once-per-turn speed trigger.
+    IncreaseSpeed {
+        player: PlayerId,
+    },
+    CopySpellSnapshot {
+        spell: Box<StackItem>,
+    },
+    /// Create an Aura token attached to the resolved creature target.
+    CreateRoleAttachedToTarget {
+        target_index: u8,
+        token_def: u16,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -1782,6 +1801,19 @@ pub enum EffectFrame {
         path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
     },
+    WardPayment {
+        choice: WardPaymentChoice,
+        selected: Vec<EffectObjectBinding>,
+        pay: bool,
+    },
+    ConvokeLook {
+        choice: ConvokeLookChoice,
+        selected: Vec<EffectObjectBinding>,
+    },
+    CopyTarget {
+        choice: CopyTargetChoice,
+        selected: Option<EffectTargetCandidate>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -2106,6 +2138,15 @@ pub enum EffectTargetSelectionPurpose {
         original_candidates: Vec<Target>,
         canonical_path: Vec<u16>,
     },
+    WardCards {
+        choice: WardPaymentChoice,
+    },
+    ConvokeLook {
+        choice: ConvokeLookChoice,
+    },
+    CopyTarget {
+        choice: CopyTargetChoice,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -2213,6 +2254,9 @@ pub enum EffectBooleanChoicePurpose {
         source: EffectObjectBinding,
         canonical_path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
+    },
+    WardLife {
+        choice: WardPaymentChoice,
     },
 }
 
@@ -2438,6 +2482,9 @@ pub enum EffectAnsweredChoiceGuard {
         canonical_path: Vec<u16>,
         remaining_frames: Vec<EffectFrame>,
     },
+    StandardSelection {
+        frame: Box<EffectFrame>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2619,11 +2666,16 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::PutObjectInOwnersLibraryTopOrBottom { .. }
         | EffectOp::SurveilOne { .. }
         | EffectOp::CounterUnlessPaysGeneric { .. }
+        | EffectOp::CopySpellSnapshot { .. }
+        | EffectOp::CounterUnlessPaysLife { .. }
+        | EffectOp::CounterUnlessDiscardsCard { .. }
+        | EffectOp::CounterUnlessCollectsEvidence { .. }
         | EffectOp::CounterTargetUnlessPaysGeneric { .. }
         | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
         | EffectOp::LookTopPickToHandBottomRest { .. }
         | EffectOp::DiscardBasicLandOrCards { .. }
         | EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. }
+        | EffectOp::LookTopTakeCreaturesManaValueAtMostThenShuffle { .. }
         | EffectOp::ExploreTarget { .. }
         | EffectOp::ExileOneFromPlayersGraveyard { .. }
         | EffectOp::MayExileFromPlayersGraveyardMatchingThen { .. }
@@ -2942,6 +2994,16 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
         drop(token);
     }
 
+    let ward_minimum = if let EffectTargetSelectionPurpose::WardCards { choice } = purpose {
+        let picked = selected
+            .iter()
+            .chain(std::iter::once(&legal[position]))
+            .filter_map(|candidate| candidate.expected_object)
+            .collect::<Vec<_>>();
+        Some(standard_ward::selection_minimum(state, choice, &picked))
+    } else {
+        None
+    };
     let continuation = state.engine.pending_effect.as_mut().unwrap();
     let PendingEffectChoice::SelectTargets {
         selected,
@@ -2955,10 +3017,14 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
         unreachable!("validated target-selection choice above")
     };
     selected.push(legal.remove(position));
+    if let Some(minimum) = ward_minimum {
+        *min_targets = minimum;
+    }
 
     let required = usize::from(*min_targets).saturating_sub(selected.len());
-    if (*ordered && required == 1 && legal.len() == 1)
-        || (!*ordered && required > 0 && required == legal.len())
+    if ward_minimum.is_none()
+        && ((*ordered && required == 1 && legal.len() == 1)
+            || (!*ordered && required > 0 && required == legal.len()))
     {
         selected.append(legal);
     }
@@ -3118,6 +3184,18 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
         } => {
             path.push(u16::from(value));
             match purpose {
+                EffectBooleanChoicePurpose::WardLife { choice } => {
+                    let frame = EffectFrame::WardPayment {
+                        choice,
+                        selected: Vec::new(),
+                        pay: value,
+                    };
+                    continuation.answered_choice_guard =
+                        Some(EffectAnsweredChoiceGuard::StandardSelection {
+                            frame: Box::new(frame.clone()),
+                        });
+                    continuation.frames.push(frame);
+                }
                 EffectBooleanChoicePurpose::ShuffleLibrary {
                     player: library_player,
                 } => {
@@ -3537,6 +3615,20 @@ fn complete_resumable_target_selection(
         });
         return Ok(());
     }
+    if let EffectTargetSelectionPurpose::CopyTarget { choice } = purpose {
+        if selected.len() > 1 {
+            return Err("too many replacement targets".into());
+        }
+        let frame = EffectFrame::CopyTarget {
+            choice,
+            selected: selected.into_iter().next(),
+        };
+        continuation.answered_choice_guard = Some(EffectAnsweredChoiceGuard::StandardSelection {
+            frame: Box::new(frame.clone()),
+        });
+        continuation.frames.push(frame);
+        return Ok(());
+    }
     let mut objects = selected
         .into_iter()
         .map(|candidate| {
@@ -3714,6 +3806,32 @@ fn complete_resumable_target_selection(
                 ),
                 path: canonical_path,
             });
+        }
+        EffectTargetSelectionPurpose::CopyTarget { .. } => {
+            unreachable!("handled target choices before object conversion")
+        }
+        EffectTargetSelectionPurpose::ConvokeLook { choice } => {
+            let frame = EffectFrame::ConvokeLook {
+                choice,
+                selected: objects,
+            };
+            continuation.answered_choice_guard =
+                Some(EffectAnsweredChoiceGuard::StandardSelection {
+                    frame: Box::new(frame.clone()),
+                });
+            continuation.frames.push(frame);
+        }
+        EffectTargetSelectionPurpose::WardCards { choice } => {
+            let frame = EffectFrame::WardPayment {
+                choice,
+                pay: !objects.is_empty(),
+                selected: objects,
+            };
+            continuation.answered_choice_guard =
+                Some(EffectAnsweredChoiceGuard::StandardSelection {
+                    frame: Box::new(frame.clone()),
+                });
+            continuation.frames.push(frame);
         }
         EffectTargetSelectionPurpose::AttachReturningAura {
             aura,
@@ -5026,6 +5144,10 @@ fn validated_definition_owned_root_effect(
     } else {
         return Err("answered effect frame lost its definition-owned root program".to_string());
     };
+    if let EffectOp::CopySpellSnapshot { spell } = &*root {
+        crate::engine::validate_copy_snapshot(state, spell)?;
+        return Ok(root);
+    }
     if pending.resolving_item.kind == crate::state::StackItemKind::TriggeredAbility {
         let card_def = state
             .objects
@@ -6143,7 +6265,10 @@ fn validate_answered_choice_guard(
             if pending.frames.iter().any(|frame| {
                 matches!(
                     frame,
-                    EffectFrame::OwnerLibraryPlacement { .. }
+                    EffectFrame::WardPayment { .. }
+                        | EffectFrame::ConvokeLook { .. }
+                        | EffectFrame::CopyTarget { .. }
+                        | EffectFrame::OwnerLibraryPlacement { .. }
                         | EffectFrame::ResolveCounterUnlessPaysGeneric { .. }
                         | EffectFrame::ResolveCounterTargetUnlessPaysGeneric { .. }
                         | EffectFrame::ExileChosenGraveyardCard { .. }
@@ -6157,6 +6282,19 @@ fn validate_answered_choice_guard(
                 )
             }) {
                 return Err("typed answered-choice frame has no matching guard".to_string());
+            }
+        }
+        Some(EffectAnsweredChoiceGuard::StandardSelection { frame }) => {
+            if pending.choice.is_some()
+                || pending.frames.last() != Some(&**frame)
+                || !matches!(
+                    **frame,
+                    EffectFrame::WardPayment { .. }
+                        | EffectFrame::ConvokeLook { .. }
+                        | EffectFrame::CopyTarget { .. }
+                )
+            {
+                return Err("Standard selection lost its authenticated answer frame".into());
             }
         }
         Some(EffectAnsweredChoiceGuard::OwnerLibrarySecondOrBottom { frame }) => {
@@ -7065,6 +7203,68 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                                 .collect::<Vec<_>>()
                     {
                         return Err("chosen-permanent candidates changed".to_string());
+                    }
+                }
+                EffectTargetSelectionPurpose::CopyTarget { choice } => {
+                    standard_copy::validate(state, pending, choice)?;
+                    let mut all = selected.clone();
+                    all.extend(legal.iter().cloned());
+                    let expected = standard_copy::candidates(state, pending, choice)?;
+                    if all.len() != expected.len()
+                        || !all.iter().all(|x| expected.contains(x))
+                        || *chooser != pending.ctx.controller
+                        || *path != choice.path
+                        || *ordered
+                        || *min_targets != 0
+                        || *max_targets != 1
+                    {
+                        return Err("copy target candidates changed".into());
+                    }
+                }
+                EffectTargetSelectionPurpose::ConvokeLook { choice } => {
+                    standard_look::validate_choice(state, pending, choice)?;
+                    let all = selected
+                        .iter()
+                        .chain(legal)
+                        .filter_map(|c| c.expected_object)
+                        .collect::<Vec<_>>();
+                    validate_exact_binding_permutation(
+                        &standard_look::candidates(state, choice)?,
+                        &all,
+                        "convoke look candidates",
+                    )?;
+                    if *chooser != choice.player
+                        || *path != choice.path
+                        || *ordered
+                        || *min_targets != 0
+                        || *max_targets != choice.max_taken
+                    {
+                        return Err("convoke look choice shape changed".into());
+                    }
+                }
+                EffectTargetSelectionPurpose::WardCards { choice } => {
+                    standard_ward::validate_choice(state, pending, choice)?;
+                    let picked = selected
+                        .iter()
+                        .filter_map(|c| c.expected_object)
+                        .collect::<Vec<_>>();
+                    let all = selected
+                        .iter()
+                        .chain(legal)
+                        .filter_map(|c| c.expected_object)
+                        .collect::<Vec<_>>();
+                    validate_exact_binding_permutation(
+                        &choice.candidates,
+                        &all,
+                        "Ward candidates",
+                    )?;
+                    if *chooser != choice.payer
+                        || *path != choice.path
+                        || *ordered
+                        || *min_targets != standard_ward::selection_minimum(state, choice, &picked)
+                        || *max_targets != standard_ward::maximum(choice)
+                    {
+                        return Err("Ward card choice shape changed".into());
                     }
                 }
                 EffectTargetSelectionPurpose::AttachReturningAura {
@@ -8027,6 +8227,15 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
             purpose,
             ..
         } => match purpose {
+            EffectBooleanChoicePurpose::WardLife { choice } => {
+                standard_ward::validate_choice(state, pending, choice)?;
+                if *player != choice.payer
+                    || *path != choice.path
+                    || !matches!(*choice.root, EffectOp::CounterUnlessPaysLife { .. })
+                {
+                    return Err("Ward life choice shape changed".into());
+                }
+            }
             EffectBooleanChoicePurpose::ShuffleLibrary {
                 player: library_player,
             } => {
@@ -8557,8 +8766,38 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
     }
 
     while let Some(frame) = continuation.frames.pop() {
+        if matches!(
+            frame,
+            EffectFrame::WardPayment { .. }
+                | EffectFrame::ConvokeLook { .. }
+                | EffectFrame::CopyTarget { .. }
+        ) {
+            if continuation.answered_choice_guard.take()
+                != Some(EffectAnsweredChoiceGuard::StandardSelection {
+                    frame: Box::new(frame.clone()),
+                })
+            {
+                return Err("Standard selection answer changed before execution".into());
+            }
+        }
         let EffectFrame::Program { op, path } = frame else {
             match frame {
+                EffectFrame::CopyTarget { choice, selected } => {
+                    if standard_copy::finish(state, &mut continuation, choice, selected)? {
+                        state.engine.pending_effect = Some(continuation);
+                        return Ok(ResumableProgress::Suspended);
+                    }
+                }
+                EffectFrame::ConvokeLook { choice, selected } => {
+                    standard_look::finish(state, &continuation, &choice, &selected)?;
+                }
+                EffectFrame::WardPayment {
+                    choice,
+                    selected,
+                    pay,
+                } => {
+                    standard_ward::resolve_payment(state, &continuation, &choice, &selected, pay)?;
+                }
                 EffectFrame::MoveObjectsBatch {
                     objects,
                     to_zone,
@@ -10412,6 +10651,44 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     op: if branch == 0 { *then } else { *else_ },
                     path: branch_path,
                 });
+            }
+            EffectOp::LookTopTakeCreaturesManaValueAtMostThenShuffle {
+                count,
+                max_taken,
+                max_mana_value,
+            } => {
+                if standard_look::stage(
+                    state,
+                    &mut continuation,
+                    count,
+                    max_taken,
+                    max_mana_value,
+                    path,
+                )? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
+            EffectOp::CopySpellSnapshot { spell } => {
+                let choice = CopyTargetChoice {
+                    spell,
+                    targets: Vec::new(),
+                    contracts: Vec::new(),
+                    path,
+                    remaining: continuation.frames.clone(),
+                };
+                if standard_copy::stage(state, &mut continuation, choice)? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
+            op @ (EffectOp::CounterUnlessPaysLife { .. }
+            | EffectOp::CounterUnlessDiscardsCard { .. }
+            | EffectOp::CounterUnlessCollectsEvidence { .. }) => {
+                if standard_ward::stage(state, &mut continuation, op, path)? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
             }
             EffectOp::Choice {
                 controller,
@@ -12987,24 +13264,33 @@ pub(crate) fn return_cards_exiled_until_source_leaves(
     source: ObjectId,
     left_zone_change_count: u32,
 ) {
-    let Some(position) = state.engine.linked_exile_records.iter().position(|record| {
-        record.source.source == source
-            && record.source.zone_change_count == left_zone_change_count
-            && record.source.zone == Zone::Battlefield
-            && linked_hand_exile_kind(record.source.card_def)
-                == Some(LinkedHandExileKind::UntilSourceLeaves)
-    }) else {
-        return;
-    };
-    let record = state.engine.linked_exile_records.remove(position);
-    let still_exiled = state.objects.try_get(record.exiled).is_some_and(|live| {
-        live.zone == Zone::Exile && live.zone_change_count == record.exiled_zone_change_count
-    });
-    if still_exiled {
-        event::propose_and_commit(
-            state,
-            event::ProposedEvent::zone_change_preserving_known_identity(record.exiled, Zone::Hand),
-        );
+    loop {
+        let position = state.engine.linked_exile_records.iter().position(|record| {
+            record.source.source == source
+                && record.source.zone_change_count == left_zone_change_count
+                && record.source.zone == Zone::Battlefield
+                && (linked_hand_exile_kind(record.source.card_def)
+                    == Some(LinkedHandExileKind::UntilSourceLeaves)
+                    || crate::card_def::CARD_DEFS[record.source.card_def as usize].name
+                        == "Brutal Cathar")
+        });
+        let Some(position) = position else { break };
+        let record = state.engine.linked_exile_records.remove(position);
+        if state.objects.try_get(record.exiled).is_some_and(|live| {
+            live.zone == Zone::Exile && live.zone_change_count == record.exiled_zone_change_count
+        }) {
+            let to = if crate::card_def::CARD_DEFS[record.source.card_def as usize].name
+                == "Brutal Cathar"
+            {
+                Zone::Battlefield
+            } else {
+                Zone::Hand
+            };
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::zone_change_preserving_known_identity(record.exiled, to),
+            );
+        }
     }
 }
 
@@ -14725,6 +15011,19 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 state,
             );
         }
+        EffectOp::CopySpellSnapshot { .. } => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        EffectOp::IncreaseSpeed { player } => {
+            if let Some(speed) = state.speed_v1.as_mut() {
+                speed.speeds[player.index()] = speed.speeds[player.index()]
+                    .saturating_add(1)
+                    .min(crate::state::SpeedV1::MAX);
+            }
+        }
         EffectOp::CounterUnlessDiscardsCard {
             targeting_stack_item,
             ..
@@ -15762,6 +16061,53 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 i32::from(*plus1_plus1),
             );
         }
+        EffectOp::CreateRoleAttachedToTarget {
+            target_index,
+            token_def,
+        } => {
+            if !ctx.target_incarnation_matches(usize::from(*target_index), state) {
+                return;
+            }
+            let Target::Object(host) = ctx.resolve_target(TargetRef::Target(*target_index)) else {
+                return;
+            };
+            if !crate::engine::object_has_type(state, host, crate::card_def::CardType::Creature)
+                || state.objects.get(host).zone != Zone::Battlefield
+            {
+                return;
+            }
+            let Some(def) = crate::card_def::CARD_DEFS.get(usize::from(*token_def)) else {
+                return;
+            };
+            if !def.is_token
+                || !def.has_full_support()
+                || !def
+                    .attachment
+                    .is_some_and(crate::card_def::AttachmentDef::is_creature_aura)
+            {
+                return;
+            }
+            let host_generation = state.objects.get(host).zone_change_count;
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::create_token(*token_def, ctx.controller),
+            );
+            let Some(crate::event::CommittedEvent::CreateToken { object, .. }) =
+                state.engine.event_log.last().cloned()
+            else {
+                return;
+            };
+            let token_generation = state.objects.get(object).zone_change_count;
+            if state
+                .attach_object_exact(object, token_generation, host, host_generation)
+                .is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
         EffectOp::CreateTokenAndAttachSource { token_def } => {
             let Some(token) = crate::card_def::CARD_DEFS.get(*token_def as usize) else {
                 state.engine.halted = Some((
@@ -16588,6 +16934,12 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     && source.zone == Zone::Battlefield
                     && source.zone_change_count == source_contract.zone_change_count
             });
+            let until_leaves = crate::card_def::CARD_DEFS[source_contract.card_def as usize].name
+                == "Brutal Cathar";
+            if until_leaves && !source_is_live {
+                return;
+            }
+            let target_card_def = state.objects.get(object).card_def;
             let target_owner = state.objects.get(object).owner;
             event::propose_and_commit(
                 state,
@@ -16603,7 +16955,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     zone_change_count: source_contract.zone_change_count,
                 };
                 if state.engine.linked_exile_records.iter().any(|record| {
-                    record.source == source_contract
+                    (!until_leaves && record.source == source_contract)
                         || (record.exiled == object
                             && record.exiled_zone_change_count == exiled_zone_change_count)
                 }) {

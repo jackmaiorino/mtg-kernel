@@ -3506,6 +3506,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
             "Sequence(PumpTargetUntilEndOfTurn(3,0),GrantKeywordTargetUntilEndOfTurn(Target0,FirstStrike))",
             "EffectOp::Sequence(vec![EffectOp::PumpTargetUntilEndOfTurnDynamic { target: TargetRef::Target(0), power: DynamicValueDef::Fixed(3), toughness: DynamicValueDef::Fixed(0) }, EffectOp::GrantKeywordTargetUntilEndOfTurn { object: ObjectRef::Target(0), keyword: Keywords::FIRST_STRIKE }])",
         ),
+        "Monstrous Rage" => program(
+            "Creature",
+            "Sequence(PumpTargetUntilEndOfTurn(2,0),CreateRoleAttachedToTarget(Monster Role Token))",
+            "EffectOp::Sequence(vec![EffectOp::PumpTargetUntilEndOfTurnDynamic { target: TargetRef::Target(0), power: DynamicValueDef::Fixed(2), toughness: DynamicValueDef::Fixed(0) }, EffectOp::CreateRoleAttachedToTarget { target_index: 0, token_def: crate::card_def::card_id_by_name(\"Monster Role Token\").expect(\"Monster Role Token in CARD_DEFS\") }])",
+        ),
         // Put a +1/+1 counter on target creature you control. It gains
         // hexproof until end of turn.
         "Snakeskin Veil" => program(
@@ -4289,6 +4294,7 @@ fn additional_mana_abilities_for(name: &str) -> String {
 
 fn object_name_for(name: &str) -> &str {
     match name {
+        "Monster Role Token" => "Monster",
         "Sacred Cat Embalmed Token" => "Sacred Cat",
         "Homunculus Horde Token" => "Homunculus Horde",
         "Iridescent Vinelasher Offspring Token" => "Iridescent Vinelasher",
@@ -6352,6 +6358,7 @@ fn attachment_for(name: &str) -> &'static str {
         "Bind the Monster" => "Some(AttachmentDef::AuraCreature { prevents_untap: true })",
         "Witness Protection" => "Some(AttachmentDef::AuraCreatureOverride(CreatureCharacteristicsOverrideDef { name: \"Legitimate Businessperson\", subtype: Subtype::Citizen, colors: &[ManaColor::G, ManaColor::W], power: 1, toughness: 1, loses_abilities: true }))",
         "Twinblade Blessing" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 0, toughness: 0, keywords: Keywords::DOUBLE_STRIKE, per_controlled_subtype: None }))",
+        "Monster Role Token" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 1, toughness: 1, keywords: Keywords::TRAMPLE, per_controlled_subtype: None }))",
         "Blanchwood Armor" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 1, toughness: 1, keywords: Keywords::NONE, per_controlled_subtype: Some(Subtype::Forest) }))",
         _ => "None",
     }
@@ -10037,6 +10044,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Mite" => "Subtype::Mite",
         "Sphere" => "Subtype::Sphere",
         "Town" => "Subtype::Town",
+        "Role" => "Subtype::Role",
         "Golem" => "Subtype::Golem",
         "Boar" => "Subtype::Boar",
         "Cyclops" => "Subtype::Cyclops",

@@ -102,6 +102,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::AttachSourceToTarget { .. }
         | EffectOp::AddCountersToTarget { .. }
         | EffectOp::CreateTokenAndAttachSource { .. }
+        | EffectOp::CreateRoleAttachedToTarget { .. }
         | EffectOp::AddMana { .. }
         | EffectOp::AddManaDynamic { .. }
         | EffectOp::CreateToken { .. }
@@ -223,7 +224,9 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. } => {
             effect_g::effect_op(op, env, out)
         }
-        EffectOp::CounterUnlessCollectsEvidence { .. }
+        EffectOp::CopySpellSnapshot { .. }
+        | EffectOp::IncreaseSpeed { .. }
+        | EffectOp::CounterUnlessCollectsEvidence { .. }
         | EffectOp::CounterUnlessPaysLife { .. }
         | EffectOp::CounterUnlessDiscardsCard { .. }
         | EffectOp::BindConvokedCreatureCountToLookTop { .. }

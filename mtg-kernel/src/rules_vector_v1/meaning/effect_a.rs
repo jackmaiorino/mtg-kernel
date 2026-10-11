@@ -417,7 +417,8 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                 out,
             );
         }
-        EffectOp::CreateTokenAndAttachSource { token_def } => {
+        EffectOp::CreateTokenAndAttachSource { token_def }
+        | EffectOp::CreateRoleAttachedToTarget { token_def, .. } => {
             // The token is created under the ability's controller even if
             // the Equipment left; the live source then attaches to it.
             out.effect(
