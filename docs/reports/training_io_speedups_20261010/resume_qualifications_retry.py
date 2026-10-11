@@ -34,9 +34,9 @@ def now():
 
 
 def pin(path):
-    path = Path(path)
-    with path.open('rb') as stream:
-        return {'path': str(path), 'sha256': hashlib.file_digest(stream, 'sha256').hexdigest()}
+    spelling = str(path)
+    with Path(path).open('rb') as stream:
+        return {'path': spelling, 'sha256': hashlib.file_digest(stream, 'sha256').hexdigest()}
 
 
 def checked(ref):
