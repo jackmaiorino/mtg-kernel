@@ -1573,6 +1573,10 @@ pub enum EffectOp {
     /// A token copy of the current copiable values of one legal controlled
     /// creature. Appended; ordinary copy/flashback authority is inherited.
     CreateControlledCreatureTargetCopyV1,
+    /// Sower of Chaos: rule-changing restriction on the legal original target.
+    PreventTargetBlockingUntilEndOfTurn {
+        target_index: u8,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -18460,6 +18464,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     },
                 );
             }
+        }
+        EffectOp::PreventTargetBlockingUntilEndOfTurn { target_index } => {
+            crate::sower_of_chaos_v1::install(state, ctx, *target_index);
         }
         EffectOp::GrantKeywordTargetUntilEndOfTurn { object, keyword } => {
             let object = ctx.resolve_object(*object);

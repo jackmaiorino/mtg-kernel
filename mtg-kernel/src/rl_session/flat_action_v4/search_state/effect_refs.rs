@@ -242,6 +242,7 @@ impl Scan<'_> {
             | MaterializeStormCopies
             | CreateStormCopies { .. }
             | DamageCannotBePreventedThisTurn
+            | PreventTargetBlockingUntilEndOfTurn { .. }
             | AddMinusOneMinusOneCounter { .. }
             | RevealHandChooseNonlandToLinkedExile { .. }
             | ReturnLinkedExiledCardToOwnersHand

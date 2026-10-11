@@ -339,6 +339,8 @@ pub enum Subtype {
     Minotaur,
     /// Prepared Scavenging Ooze; choice-array admission remains separate.
     Ooze,
+    /// Prepared Sower source; choice-array admission remains separate.
+    Devil,
 }
 
 impl Subtype {
@@ -809,6 +811,7 @@ impl Subtype {
                 | Subtype::Juggernaut
                 | Subtype::Minotaur
                 | Subtype::Ooze
+                | Subtype::Devil
         )
     }
 }
