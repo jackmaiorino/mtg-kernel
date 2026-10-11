@@ -478,6 +478,24 @@ fn sha256_debug<T: std::fmt::Debug + ?Sized>(value: &T) -> String {
     format!("{:x}", Sha256::digest(format!("{value:?}").as_bytes()))
 }
 
+fn historical_runtime_fixture_binding(mut decision: FlatDecisionV1) -> FlatDecisionV1 {
+    // These row goldens were recorded with the f7d115fa source identities.
+    // Production metadata must still match the live contract, but source-only
+    // refusal paths must not require rebinding historical model-row evidence.
+    assert_eq!(
+        decision.binding.contract_digests,
+        FLAT_POLICY_CONTRACT_DIGESTS_V1
+    );
+    let digest = |hex: &str| {
+        std::array::from_fn(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap())
+    };
+    decision.binding.contract_digests.feature_inventory_sha256 =
+        digest("fc3df2927fd6430e38fb65d879d3a77deef78ef4757f904d5dca780ec4d46a47");
+    decision.binding.contract_digests.typed_layout_sha256 =
+        digest("bcde548e60dcf415fcbedbabeb0b4a73157908738c033d203290901488c2e4ed");
+    decision
+}
+
 #[test]
 fn runtime_typed_row_count_and_digest_goldens_are_exact() {
     let golden: Value =
@@ -509,7 +527,7 @@ fn runtime_typed_row_count_and_digest_goldens_are_exact() {
         let mut buffers = OwnedBuffers::ample();
         let encoded = encode(&session, expected, &mut encoder, &mut buffers);
         let model_digest = sha256_debug(&(
-            encoded,
+            historical_runtime_fixture_binding(encoded),
             &buffers.objects[..usize::try_from(encoded.active_object_count).unwrap()],
             &buffers.relations[..usize::try_from(encoded.active_relation_count).unwrap()],
             &buffers.object_subtypes
@@ -574,7 +592,7 @@ fn runtime_typed_row_count_and_digest_goldens_are_exact() {
             let encoded = encode(&session, expected, &mut encoder, &mut buffers);
             if encoded.active_relation_count > 0 {
                 let model_digest = sha256_debug(&(
-                    encoded,
+                    historical_runtime_fixture_binding(encoded),
                     &buffers.objects[..usize::try_from(encoded.active_object_count).unwrap()],
                     &buffers.relations[..usize::try_from(encoded.active_relation_count).unwrap()],
                     &buffers.object_subtypes

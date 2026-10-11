@@ -30,22 +30,32 @@ Standard definitions appended after the unchanged 192-definition Pauper registry
 Burst Lightning, whose behavior is shared with the FDN build, then each Standard batch in merge
 order. FDN definitions are not included, so FDN batches never move Standard card ids.
 
-Build with `cargo build --locked -p mtg-kernel --features standard-magezero-fixtures`. The feature
-also enables `limited-fdn-fixtures` for its rules behavior, but `build.rs` appends this file
-instead of the FDN one and uses the separate `kernel_carddb_standard/vN` identity. Only
-`standard_magezero_catalog_v1`, the Standard card tests (`standard_lands_v1`) and the
-`card_def::` library tests are expected to pass in this build; the other Limited tests are tied to FDN cards and identity.
+The completion candidate uses `kernel_carddb_standard/v7`: 253 appended definitions,
+including 32 token or masked-face definitions, after the frozen 192-definition Pauper prefix.
+All 225 distinct nonbasic cards have source implementations and Full admission flags.
+Python fixture checks resolve all 16 decks, preserving the 62-card Mono-U fixture and empty
+sideboards. These admission checks do not establish complete runtime support. Native
+compilation, affected behavior tests, the observed v7 catalog hash, and deterministic terminal
+public-session/replay validation remain pending in
+[`standard_completion_v1.md`](../../../docs/reports/standard_completion_v1.md).
 
-Inspect coverage without a build:
+Build with the pinned toolchain and the host's supported guarded launcher:
+`cargo +1.94.1 build --locked -p mtg-kernel --features standard-magezero-fixtures`.
+The feature also enables `limited-fdn-fixtures` for shared rules behavior, but `build.rs`
+appends this Standard file instead of the FDN registry. Run the Standard catalog, card,
+choice and observation tests selected by CI; FDN-only catalog and card tests use a separate
+build. The frozen Pauper and FDN registry files and IDs are unchanged.
+
+Inspect fixture admission without a native build:
 
 ```
+python -m unittest discover -s python/tests -p test_standard_decks_v1.py
 python python/tools/limited_decks_v1.py inventory --registry-extension data/standard/magezero_v1/cards_v1.json \
   --card-names data/standard/magezero_v1/card_names.json --deck data/standard/magezero_v1/decks/Standard-MonoR.dck
 ```
 
-`docs/reports/standard_magezero_inventory_v1.md` lists the missing cards by mechanic family and which
-thread owns each family.
-
-The tracked pool has 91 Full nonbasic cards, 21 Partial cards and 113 missing cards. No complete MageZero deck resolves yet. Full deck admission refuses every Partial definition. Their current behavior remains available for development; see `docs/design/standard_family_g_v1.md` and `docs/design/standard_family_d_keywords_v1.md` for the missing mechanics.
-
-The first lands batch adds 39 Full lands. Mirrex remains Partial because poison counters are absent from policy observations; Rockface Village remains Partial because restricted red mana cannot be floated. Their engine primitives are retained for development. See `docs/design/standard_lands_v1.md`.
+[`standard_magezero_inventory_v1.md`](../../../docs/reports/standard_magezero_inventory_v1.md)
+keeps the mechanic-family index. Generic public observations carry Standard state, including
+poison, restricted floating mana, new choices and effective face/Room identity. Frozen Pauper
+model encoders explicitly refuse unsupported Standard state; new Standard policy training
+is outside this engineering task.

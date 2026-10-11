@@ -128,6 +128,9 @@ pub enum Pip {
     Colored(ManaColor),
     Hybrid(ManaColor, ManaColor),
     Phyrexian(ManaColor),
+    /// Runtime payment permission: retain the printed Phyrexian color and
+    /// the two-life alternative, but any color of mana may pay the pip.
+    PhyrexianAnyColor(ManaColor),
 }
 
 /// A spell/ability's mana requirement. `pips` is `'static` because every
@@ -178,6 +181,7 @@ pub struct ManaSource {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PaymentPlan {
+    pub restricted_pool_used: Vec<usize>,
     /// Newly tapped sources and the color each was tapped for, in the order
     /// they were committed (provenance).
     pub taps: Vec<(ObjectId, ManaColor)>,
@@ -211,6 +215,75 @@ pub struct PaymentPlan {
     /// records no surplus: the mana was added and spent atomically and
     /// never reaches the pool.
     pub surplus: [u8; 6],
+}
+
+/// One floating restricted unit, retaining its producing incarnation after
+/// that permanent leaves. Keeping it separate prevents an ordinary ability
+/// payment from treating restricted colored mana as generic unrestricted mana.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RestrictedManaUnitV1 {
+    pub color: ManaColor,
+    pub restriction: crate::card_def::ManaSpendRestrictionDef,
+    pub source: crate::state::ObjectLinkV4,
+    pub source_card_def: u16,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct RestrictedManaPoolV1(pub Vec<RestrictedManaUnitV1>);
+impl RestrictedManaPoolV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+impl std::hash::Hash for RestrictedManaPoolV1 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        if !self.0.is_empty() {
+            std::hash::Hash::hash(&"restricted-mana-pool/v1", state);
+            std::hash::Hash::hash(&self.0, state);
+        }
+    }
+}
+
+fn spell_floating_pool(
+    state: &GameState,
+    player: PlayerId,
+    creature_spell: bool,
+    legendary_spell: bool,
+) -> [u8; 6] {
+    let mut pool = state.players[player.index()].mana_pool;
+    for unit in &state.players[player.index()].restricted_mana_pool.0 {
+        if restriction_permits(unit.restriction, creature_spell, legendary_spell) {
+            pool[unit.color.pool_index()] = pool[unit.color.pool_index()].saturating_add(1);
+        }
+    }
+    pool
+}
+
+fn separate_restricted_spending(
+    plan: &mut PaymentPlan,
+    state: &GameState,
+    player: PlayerId,
+    creature_spell: bool,
+    legendary_spell: bool,
+) {
+    {
+        for (index, unit) in state.players[player.index()]
+            .restricted_mana_pool
+            .0
+            .iter()
+            .enumerate()
+        {
+            if !restriction_permits(unit.restriction, creature_spell, legendary_spell) {
+                continue;
+            }
+            let used = &mut plan.pool_used[unit.color.pool_index()];
+            if *used > 0 {
+                *used -= 1;
+                plan.restricted_pool_used.push(index);
+            }
+        }
+    }
 }
 
 /// Parallel source alternatives may refer to the same physical permanent:
@@ -272,9 +345,12 @@ pub fn can_pay_spell(
     creature_spell: bool,
 ) -> Option<PaymentPlan> {
     let sources = gather_sources_for_spell(player, state, creature_spell);
-    let pool = state.players[player.index()].mana_pool;
-    solve(cost, x_value, pool, &sources)
-        .filter(|plan| life_payment_affordable(plan.life_paid, state.players[player.index()].life))
+    let pool = spell_floating_pool(state, player, creature_spell, false);
+    let mut plan = solve(cost, x_value, pool, &sources).filter(|plan| {
+        life_payment_affordable(plan.life_paid, state.players[player.index()].life)
+    })?;
+    separate_restricted_spending(&mut plan, state, player, creature_spell, false);
+    Some(plan)
 }
 
 /// Owned-pip counterpart to `can_pay` for serialized resolution-time costs.
@@ -287,7 +363,7 @@ pub fn can_pay_owned(
     state: &GameState,
 ) -> Option<PaymentPlan> {
     let sources = gather_sources(player, state);
-    let pool = state.players[player.index()].mana_pool;
+    let pool = spell_floating_pool(state, player, false, false);
     let mut plan = PaymentPlan::default();
     let mut pool_remaining = pool;
     let mut used = vec![false; sources.len()];
@@ -302,6 +378,7 @@ pub fn can_pay_owned(
     {
         return None;
     }
+    separate_restricted_spending(&mut plan, state, player, false, false);
     life_payment_affordable(plan.life_paid, state.players[player.index()].life).then_some(plan)
 }
 
@@ -382,16 +459,40 @@ pub(crate) fn plan_spell_mana_total_v1(
     excluded: &[ObjectId],
     additional_life: u32,
 ) -> Option<PaymentPlan> {
+    plan_spell_mana_total_with_restrictions_v1(
+        pips,
+        generic,
+        player,
+        state,
+        creature_spell,
+        excluded,
+        additional_life,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn plan_spell_mana_total_with_restrictions_v1(
+    pips: &[Pip],
+    generic: u32,
+    player: PlayerId,
+    state: &GameState,
+    creature_spell: bool,
+    excluded: &[ObjectId],
+    additional_life: u32,
+    legendary_spell: bool,
+) -> Option<PaymentPlan> {
     let life = i64::from(state.players[player.index()].life);
     if additional_life != 0 && i64::from(additional_life) > life {
         return None;
     }
     let mana_life_budget = (life - i64::from(additional_life)).max(0);
-    let sources = gather_sources_for_spell(player, state, creature_spell)
-        .into_iter()
-        .filter(|source| !excluded.contains(&source.id))
-        .collect::<Vec<_>>();
-    let pool = state.players[player.index()].mana_pool;
+    let sources =
+        gather_sources_for_spell_restrictions_v1(player, state, creature_spell, legendary_spell)
+            .into_iter()
+            .filter(|source| !excluded.contains(&source.id))
+            .collect::<Vec<_>>();
+    let pool = spell_floating_pool(state, player, creature_spell, legendary_spell);
 
     let mut plan = PaymentPlan::default();
     let mut pool_remaining = pool;
@@ -409,6 +510,7 @@ pub(crate) fn plan_spell_mana_total_v1(
     ) {
         return None;
     }
+    separate_restricted_spending(&mut plan, state, player, creature_spell, legendary_spell);
     let total_life = i64::from(plan.life_paid) + i64::from(additional_life);
     (total_life == 0 || total_life <= i64::from(state.players[player.index()].life)).then_some(plan)
 }
@@ -485,7 +587,7 @@ pub(crate) fn plan_spell_mana_total_with_convoke_v1(
         sources.push(source);
     }
     let mut plan = PaymentPlan::default();
-    let mut pool = state.players[player.index()].mana_pool;
+    let mut pool = spell_floating_pool(state, player, creature_spell, false);
     let mut used = vec![false; sources.len()];
     if !solve_pips_with_life_budget_v1(
         pips,
@@ -511,6 +613,7 @@ pub(crate) fn plan_spell_mana_total_with_convoke_v1(
             true
         }
     });
+    separate_restricted_spending(&mut plan, state, player, creature_spell, false);
     Some((plan, convoked))
 }
 
@@ -602,10 +705,37 @@ pub fn gather_sources_for_spell(
     state: &GameState,
     creature_spell: bool,
 ) -> Vec<ManaSource> {
+    gather_sources_for_spell_restrictions_v1(player, state, creature_spell, false)
+}
+
+fn restriction_permits(
+    restriction: crate::card_def::ManaSpendRestrictionDef,
+    creature_spell: bool,
+    legendary_spell: bool,
+) -> bool {
+    match restriction {
+        crate::card_def::ManaSpendRestrictionDef::Unrestricted => true,
+        crate::card_def::ManaSpendRestrictionDef::CreatureSpell
+        | crate::card_def::ManaSpendRestrictionDef::CreatureSpellOrCreatureAbility => {
+            creature_spell
+        }
+        crate::card_def::ManaSpendRestrictionDef::LegendarySpell => legendary_spell,
+    }
+}
+
+fn gather_sources_for_spell_restrictions_v1(
+    player: PlayerId,
+    state: &GameState,
+    creature_spell: bool,
+    legendary_spell: bool,
+) -> Vec<ManaSource> {
     let mut sources = Vec::new();
     for &id in &state.players[player.index()].battlefield {
         let obj = state.objects.get(id);
-        if obj.tapped || !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+        let granted_colors = crate::standard_legends_v1::katilda_mana_colors(state, id);
+        if obj.tapped
+            || (granted_colors.is_empty()
+                && !crate::continuous_characteristics_v1::printed_abilities_active(state, id))
         {
             continue;
         }
@@ -616,9 +746,8 @@ pub fn gather_sources_for_spell(
         // contract, including an incarnation-local chosen color. A creature
         // source also obeys summoning sickness for the tap symbol in its
         // activation cost.
-        if crate::engine::object_has_type(state, id, crate::card_def::CardType::Creature)
-            && obj.summoning_sick
-            && !crate::engine::has_effective_keyword(state, id, crate::card_def::Keywords::HASTE)
+        if crate::engine::creature_summoning_sick(state, id, def)
+            || !crate::standard_cards_v1::mana_abilities_active(state, id, def)
         {
             continue;
         }
@@ -627,10 +756,15 @@ pub fn gather_sources_for_spell(
         } else {
             Vec::new()
         };
-        if creature_spell {
+        for color in granted_colors {
+            if !choices.contains(&color) {
+                choices.push(color);
+            }
+        }
+        {
             for restricted in def.restricted_mana_abilities {
-                match restricted.restriction {
-                    crate::card_def::ManaSpendRestrictionDef::CreatureSpell => {}
+                if !restriction_permits(restricted.restriction, creature_spell, legendary_spell) {
+                    continue;
                 }
                 for &color in restricted.colors {
                     if !choices.contains(&color) {
@@ -664,13 +798,15 @@ pub fn can_pay_excluding_sources(
         .into_iter()
         .filter(|source| !excluded.contains(&source.id))
         .collect::<Vec<_>>();
-    solve(
+    let mut plan = solve(
         cost,
         x_value,
-        state.players[player.index()].mana_pool,
+        spell_floating_pool(state, player, false, false),
         &sources,
     )
-    .filter(|plan| life_payment_affordable(plan.life_paid, state.players[player.index()].life))
+    .filter(|plan| life_payment_affordable(plan.life_paid, state.players[player.index()].life))?;
+    separate_restricted_spending(&mut plan, state, player, false, false);
+    Some(plan)
 }
 
 /// One-source convenience wrapper for paid mana abilities whose own tap cost
@@ -780,6 +916,7 @@ fn solve_pips_with_life_budget_v1(
         Pip::Colored(c) => vec![c],
         Pip::Hybrid(a, b) => vec![a, b],
         Pip::Phyrexian(c) => vec![c],
+        Pip::PhyrexianAnyColor(_) => GENERIC_POOL_PAYMENT_ORDER.to_vec(),
     };
 
     // Prefer floating mana, but backtrack if Phyrexian life payment must
@@ -852,7 +989,9 @@ fn solve_pips_with_life_budget_v1(
     }
 
     // Phyrexian pips may also be paid with 2 life instead of mana.
-    if matches!(pip, Pip::Phyrexian(_)) && i64::from(plan.life_paid) + 2 <= max_life_payment {
+    if matches!(pip, Pip::Phyrexian(_) | Pip::PhyrexianAnyColor(_))
+        && i64::from(plan.life_paid) + 2 <= max_life_payment
+    {
         plan.life_paid += 2;
         if solve_pips_with_life_budget_v1(
             pips,
@@ -1002,6 +1141,53 @@ fn pay_generic_with_source_choices_v1(
         }
     }
     needed == 0
+}
+
+/// Creature-card activations may spend Gwenna mana, including from the hand
+/// and graveyard. Other restricted pools remain unavailable.
+pub(crate) fn plan_activation_mana_v1(
+    cost: &Cost,
+    x: u8,
+    player: PlayerId,
+    state: &GameState,
+    source: ObjectId,
+    excluded: &[ObjectId],
+) -> Option<PaymentPlan> {
+    let eligible =
+        crate::engine::object_has_type(state, source, crate::card_def::CardType::Creature);
+    if !eligible
+        || state.players[player.index()]
+            .restricted_mana_pool
+            .0
+            .is_empty()
+    {
+        return can_pay_excluding_sources(cost, x, player, state, excluded);
+    }
+    let mut projected = state.clone();
+    let allowed = state.players[player.index()]
+        .restricted_mana_pool
+        .0
+        .iter()
+        .enumerate()
+        .filter(|(_, unit)| {
+            unit.restriction
+                == crate::card_def::ManaSpendRestrictionDef::CreatureSpellOrCreatureAbility
+        })
+        .map(|(index, unit)| (index, unit.color))
+        .collect::<Vec<_>>();
+    for &(_, color) in &allowed {
+        projected.players[player.index()].mana_pool[color.pool_index()] =
+            projected.players[player.index()].mana_pool[color.pool_index()].checked_add(1)?;
+    }
+    let mut plan = can_pay_excluding_sources(cost, x, player, &projected, excluded)?;
+    for (index, color) in allowed {
+        let used = &mut plan.pool_used[color.pool_index()];
+        if *used > 0 {
+            *used -= 1;
+            plan.restricted_pool_used.push(index);
+        }
+    }
+    Some(plan)
 }
 
 #[cfg(test)]

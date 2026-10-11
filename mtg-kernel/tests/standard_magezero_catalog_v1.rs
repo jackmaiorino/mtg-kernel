@@ -6,7 +6,8 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use mtg_kernel::card_def::{
-    card_id_by_name, preflight_fully_supported_deck, CardCapability, CARD_DEFS, KERNEL_CARDDB_HASH,
+    card_id_by_name, preflight_fully_supported_deck, CardCapability, CardType, Subtype, CARD_DEFS,
+    KERNEL_CARDDB_HASH,
 };
 use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::ids::{ObjectId, PlayerId};
@@ -14,7 +15,7 @@ use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 
 /// Appended after the 192 Pauper definitions, in registry order.
-const STANDARD_APPENDED: [&str; 119] = [
+const STANDARD_APPENDED: [&str; 254] = [
     "Plains",
     "Burst Lightning",
     "Shock",
@@ -134,128 +135,407 @@ const STANDARD_APPENDED: [&str; 119] = [
     "Spara's Headquarters",
     "Ziatora's Proving Ground",
     "Starting Town",
+    "Teferi, Temporal Pilgrim",
+    "Teferi Spirit Token",
+    "Cecil, Dark Knight",
+    "Polukranos Reborn",
+    "Phyrexian Hydra Reach Token",
+    "Phyrexian Hydra Lifelink Token",
+    "Ojer Axonil, Deepest Might",
+    "Blue Sun's Twilight",
+    "Unholy Annex // Ritual Chamber",
+    "Demon Flying Token",
+    "Seam Rip",
+    "Dusk Rose Reliquary",
+    "Sheltered by Ghosts",
+    "Hardlight Containment",
+    "Basilisk Collar",
+    "Candy Trail",
+    "Warleader's Call",
+    "Lunar Convocation",
+    "Bat Flying Token",
+    "Simulacrum Synthesizer",
+    "Karn Construct Token",
+    "Case of the Gateway Express",
+    "Innkeeper's Talent",
+    "Stormchaser's Talent",
+    "Otter Prowess Token",
+    "Case of the Uneaten Feast",
+    "Liliana of the Veil",
+    "Breach the Multiverse",
+    "Fable of the Mirror-Breaker",
+    "Fable Goblin Shaman Token",
+    "Repurposing Bay",
+    "The Irencrag",
+    "Clay-Fired Bricks",
+    "Cosmium Gnome Token",
+    "Braided Net",
+    "Chandra, Hope's Beacon",
+    "Assimilation Aegis",
+    "Agatha's Soul Cauldron",
+    "Reckoner Bankbuster",
+    "Subterranean Schooner",
+    "Spring-Loaded Sawblades",
+    "Pilot Token",
+    "Resolute Reinforcements",
+    "Soldier Token",
+    "Spyglass Siren",
+    "Sheoldred, the Apocalypse",
+    "Dark Confidant",
+    "Regal Bunnicorn",
+    "Abrade",
+    "Boltwave",
+    "Essence Scatter",
+    "Snakeskin Veil",
+    "Sleight of Hand",
+    "Stock Up",
+    "Shore Up",
+    "Big Score",
+    "Cut Down",
+    "Go for the Throat",
+    "Anoint with Affliction",
+    "Gleeful Demolition",
+    "Phyrexian Goblin Token",
+    "Soulstone Sanctuary",
+    "Otawara, Soaring City",
+    "Restless Bivouac",
+    "Restless Cottage",
+    "Restless Fortress",
+    "Restless Reef",
+    "Restless Ridgeline",
+    "Restless Prairie",
+    "Restless Vinestalk",
+    "Sheoldred's Edict",
+    "Invoke Despair",
+    "Kellan, Planar Trailblazer",
+    "Surge Engine",
+    "Monstrous Rage",
+    "Monster Role Token",
+    "Gingerbrute",
+    "Tough Cookie",
+    "Faerie Dreamthief",
+    "Teething Wurmlet",
+    "Surrak, Elusive Hunter",
+    "Bloodtithe Harvester",
+    "Sandstorm Salvager",
+    "Preacher of the Schism",
+    "Golem Token",
+    "Vampire Token",
+    "United Battlefront",
+    "Kayla's Reconstruction",
+    "Lupinflower Village",
+    "Fomori Vault",
+    "Mudflat Village",
+    "Boseiju, Who Endures",
+    "Takenuma, Abandoned Mire",
+    "Sokenzan, Crucible of Defiance",
+    "Fountainport",
+    "Maelstrom Pulse",
+    "Tear Asunder",
+    "Witchstalker Frenzy",
+    "Colorless Spirit Token",
+    "Fish Token",
+    "Plaza of Heroes",
+    "Gix's Command",
+    "Imodane's Recruiter",
+    "Virtue of Loyalty",
+    "Knight Vigilance Token",
+    "Kaito, Bane of Nightmares",
+    "Face-down creature",
+    "Face-down card",
+    "Zoetic Glyph",
+    "Collector's Cage",
+    "Mosswood Dreadknight",
+    "Questing Druid",
+    "Floodpits Drowner",
+    "Essence Channeler",
+    "Brightglass Gearhulk",
+    "Jodah, the Unifier",
+    "Katilda, Dawnhart Prime",
+    "Lagrella, the Magpie",
+    "Shanna, Purifying Blade",
+    "Melira, the Living Cure",
+    "Gwenna, Eyes of Gaea",
+    "Hajar, Loyal Bodyguard",
+    "Halana and Alena, Partners",
+    "Djeru and Hazoret",
+    "Ertai Resurrected",
+    "Skrelv, Defector Mite",
+    "Etali, Primal Conqueror",
+    "Tersa Lightshatter",
+    "Tishana's Tidebinder",
+    "Thousand Moons Smithy",
+    "Gnome Soldier Token",
+    "Glissa Sunslayer",
+    "Tranquil Frillback",
+    "Zoraline, Cosmos Caller",
+    "Witness Protection",
 ];
 
-/// Every distinct nonbasic card in the 16 decks that this build fully
-/// supports. Each Standard card batch extends this list.
-const SUPPORTED_NONBASIC: [&str; 91] = [
+/// All distinct nonbasic deck cards admitted by the completion candidate.
+/// Runtime acceptance is tracked separately in standard_completion_v1.md.
+const SUPPORTED_NONBASIC: [&str; 225] = [
+    "Abrade",
     "Adarkar Wastes",
     "Adeline, Resplendent Cathar",
+    "Agatha's Soul Cauldron",
     "Aloe Alchemist",
+    "Anoint with Affliction",
     "Ascendant Packleader",
+    "Assimilation Aegis",
+    "Axebane Ferox",
+    "Basilisk Collar",
     "Battlefield Forge",
+    "Big Score",
     "Blackcleave Cliffs",
     "Bloodletter of Aclazotz",
+    "Bloodtithe Harvester",
     "Blooming Marsh",
+    "Blue Sun's Twilight",
+    "Boltwave",
+    "Boseiju, Who Endures",
+    "Braided Net",
+    "Breach the Multiverse",
+    "Brightglass Gearhulk",
     "Brushland",
+    "Brutal Cathar",
+    "Burnout Bashtronaut",
     "Burst Lightning",
+    "Candy Trail",
+    "Case of the Gateway Express",
+    "Case of the Uneaten Feast",
     "Caves of Koilos",
+    "Cecil, Dark Knight",
     "Cenote Scout",
+    "Chandra, Hope's Beacon",
     "Chrome Host Seedshark",
+    "Clay-Fired Bricks",
+    "Collector's Cage",
     "Concealed Courtyard",
     "Consider",
     "Coppercoat Vanguard",
     "Copperline Gorge",
     "Cori-Steel Cutter",
+    "Cut Down",
+    "Dark Confidant",
     "Darkslick Shores",
     "Darkstar Augur",
     "Deep-Cavern Bat",
     "Deserted Beach",
     "Destroy Evil",
     "Dissipate",
+    "Djeru and Hazoret",
     "Dreamroot Cascade",
     "Duress",
+    "Dusk Rose Reliquary",
     "Eiganjo, Seat of the Empire",
     "Elegant Parlor",
     "Emberheart Challenger",
+    "Enduring Curiosity",
+    "Enduring Innocence",
+    "Ertai Resurrected",
+    "Essence Channeler",
+    "Essence Scatter",
+    "Etali, Primal Conqueror",
+    "Evolving Adaptive",
+    "Extraction Specialist",
+    "Fable of the Mirror-Breaker",
     "Fading Hope",
+    "Faerie Dreamthief",
     "Floodfarm Verge",
+    "Floodpits Drowner",
+    "Flourishing Bloom-Kin",
     "Flow of Knowledge",
+    "Fomori Vault",
     "Forsaken Miner",
+    "Fountainport",
     "Full Bore",
     "Gatekeeper of Malakir",
     "Get Lost",
+    "Gingerbrute",
+    "Gix's Command",
+    "Gleeful Demolition",
+    "Glissa Sunslayer",
     "Gloomlake Verge",
+    "Go for the Throat",
+    "Graveyard Trespasser",
+    "Gwenna, Eyes of Gaea",
+    "Hajar, Loyal Bodyguard",
+    "Halana and Alena, Partners",
     "Hard-Hitting Question",
+    "Hardlight Containment",
+    "Haughty Djinn",
     "Haunted Ridge",
     "Heartfire Hero",
     "Hired Claw",
+    "Hopeful Initiate",
     "Hullbreaker Horror",
     "Hushwood Verge",
+    "Imodane's Recruiter",
     "Impulse",
+    "Innkeeper's Talent",
     "Inspiring Vantage",
+    "Invoke Despair",
     "Iridescent Vinelasher",
     "Jetmir's Garden",
+    "Jodah, the Unifier",
+    "Kaito, Bane of Nightmares",
     "Karplusan Forest",
+    "Katilda, Dawnhart Prime",
+    "Kayla's Reconstruction",
+    "Kellan, Planar Trailblazer",
+    "Knight-Errant of Eos",
+    "Lagrella, the Magpie",
     "Lightning Strike",
+    "Liliana of the Veil",
     "Llanowar Elves",
     "Llanowar Wastes",
+    "Lunar Convocation",
+    "Lupinflower Village",
     "Lush Portico",
+    "Maelstrom Pulse",
+    "Make Disappear",
     "Manifold Mouse",
+    "Melira, the Living Cure",
+    "Memory Deluge",
+    "Mirrex",
     "Mishra's Foundry",
     "Monastery Swiftspear",
+    "Monstrous Rage",
+    "Mosswood Dreadknight",
+    "Mudflat Village",
     "Negate",
     "Nova Hellkite",
     "Novice Inspector",
+    "Ojer Axonil, Deepest Might",
     "Opt",
+    "Otawara, Soaring City",
     "Overgrown Farmland",
+    "Overlord of the Mistmoors",
     "Pawpatch Recruit",
     "Phantom Interference",
+    "Plaza of Heroes",
+    "Polukranos Reborn",
+    "Preacher of the Schism",
+    "Questing Druid",
+    "Quirion Beastcaller",
     "Razorkin Needlehead",
     "Razorverge Thicket",
+    "Reckoner Bankbuster",
+    "Recruitment Officer",
+    "Regal Bunnicorn",
+    "Repurposing Bay",
+    "Resolute Reinforcements",
+    "Restless Bivouac",
+    "Restless Cottage",
+    "Restless Fortress",
+    "Restless Prairie",
+    "Restless Reef",
+    "Restless Ridgeline",
+    "Restless Vinestalk",
     "Riverpyre Verge",
+    "Rockface Village",
     "Rockfall Vale",
     "Ruin-Lurker Bat",
+    "Sandstorm Salvager",
     "Sanguine Evangelist",
     "Seachrome Coast",
+    "Seam Rip",
     "Sentinel of the Nameless City",
+    "Shanna, Purifying Blade",
+    "Sharp-Eyed Rookie",
+    "Sheltered by Ghosts",
+    "Sheoldred's Edict",
+    "Sheoldred, the Apocalypse",
     "Shivan Reef",
     "Shock",
     "Shoot the Sheriff",
+    "Shore Up",
+    "Simulacrum Synthesizer",
+    "Skrelv, Defector Mite",
+    "Sleight of Hand",
     "Slickshot Show-Off",
+    "Snakeskin Veil",
+    "Sokenzan, Crucible of Defiance",
+    "Soulstone Sanctuary",
     "Spara's Headquarters",
     "Spell Pierce",
     "Spirebluff Canal",
+    "Spring-Loaded Sawblades",
+    "Spyglass Siren",
     "Starting Town",
+    "Stock Up",
+    "Stormchaser's Talent",
+    "Subterranean Schooner",
     "Sulfurous Springs",
+    "Surge Engine",
+    "Surrak, Elusive Hunter",
+    "Takenuma, Abandoned Mire",
+    "Tear Asunder",
+    "Teething Wurmlet",
+    "Teferi, Temporal Pilgrim",
+    "Tersa Lightshatter",
+    "Thalia, Guardian of Thraben",
+    "The Irencrag",
     "Thirst for Discovery",
     "Thornspire Verge",
+    "Thousand Moons Smithy",
+    "Tishana's Tidebinder",
     "Tolarian Terror",
+    "Tough Cookie",
+    "Tranquil Frillback",
     "Underground Mortuary",
     "Underground River",
+    "Unholy Annex // Ritual Chamber",
+    "United Battlefront",
     "Unstoppable Slasher",
+    "Virtue of Loyalty",
     "Voldaren Epicure",
     "Warden of the Inner Sky",
+    "Warleader's Call",
     "Wastewood Verge",
+    "Witchstalker Frenzy",
     "Yavimaya Coast",
     "Yotian Frontliner",
     "Ziatora's Proving Ground",
+    "Zoetic Glyph",
+    "Zoraline, Cosmos Caller",
 ];
 
-/// Definitions retained for development with incomplete printed behavior.
-/// Full deck admission must refuse every one.
-const PARTIAL: [&str; 21] = [
-    "Mirrex",
-    "Rockface Village",
-    "Memory Deluge",
-    "Recruitment Officer",
-    "Evolving Adaptive",
-    "Extraction Specialist",
-    "Haughty Djinn",
-    "Quirion Beastcaller",
-    "Sharp-Eyed Rookie",
-    "Thalia, Guardian of Thraben",
-    "Flourishing Bloom-Kin",
-    "Enduring Curiosity",
-    "Enduring Innocence",
-    "Overlord of the Mistmoors",
-    "Axebane Ferox",
-    "Brutal Cathar",
-    "Burnout Bashtronaut",
-    "Graveyard Trespasser",
-    "Hopeful Initiate",
-    "Knight-Errant of Eos",
-    "Make Disappear",
+/// Token and masked-face definitions needed by the Standard rules.
+const STANDARD_TOKENS: [&str; 32] = [
+    "Human Token",
+    "Iridescent Vinelasher Offspring Token",
+    "Incubator Token",
+    "Bat Token",
+    "Darkstar Augur Offspring Token",
+    "Pawpatch Recruit Offspring Token",
+    "Manifold Mouse Offspring Token",
+    "Monk Token",
+    "White Insect Token",
+    "Spirit Token",
+    "Phyrexian Mite Token",
+    "Teferi Spirit Token",
+    "Phyrexian Hydra Reach Token",
+    "Phyrexian Hydra Lifelink Token",
+    "Demon Flying Token",
+    "Bat Flying Token",
+    "Karn Construct Token",
+    "Otter Prowess Token",
+    "Fable Goblin Shaman Token",
+    "Cosmium Gnome Token",
+    "Pilot Token",
+    "Soldier Token",
+    "Phyrexian Goblin Token",
+    "Monster Role Token",
+    "Golem Token",
+    "Vampire Token",
+    "Colorless Spirit Token",
+    "Fish Token",
+    "Knight Vigilance Token",
+    "Face-down creature",
+    "Face-down card",
+    "Gnome Soldier Token",
 ];
 
 const BASICS: [&str; 5] = ["Plains", "Island", "Swamp", "Mountain", "Forest"];
@@ -312,17 +592,16 @@ fn standard_registry_appends_to_the_pauper_prefix_without_fdn() {
     assert_eq!(card_id_by_name("Ajani, Caller of the Pride"), None);
     assert!(CARD_DEFS
         .iter()
-        .all(|def| def.capability == CardCapability::Full
-            || def.is_token
-            || (PARTIAL.contains(&def.object_name) && def.capability == CardCapability::Partial)));
+        .all(|def| def.capability == CardCapability::Full));
 }
 
 #[test]
 fn standard_catalog_identity_is_frozen() {
-    const EXPECTED_STANDARD_V5: u64 = 0x76e9_ff43_6405_2c72;
+    // Observed from the pinned native build, including the shared Aura fixture.
+    const EXPECTED_STANDARD_COMPLETION: u64 = 0xd237_d074_94e5_3952;
     assert_eq!(
-        KERNEL_CARDDB_HASH, EXPECTED_STANDARD_V5,
-        "Standard catalog hash {KERNEL_CARDDB_HASH:#018x}"
+        KERNEL_CARDDB_HASH, EXPECTED_STANDARD_COMPLETION,
+        "Standard completion catalog identity changed: {KERNEL_CARDDB_HASH:#018x}"
     );
 }
 
@@ -656,8 +935,13 @@ fn memory_deluge_looks_at_the_mana_spent_and_flashes_back() {
     resolve_stack(&mut state, &mut first);
     assert_eq!(state.objects.get(library[0]).zone, Zone::Hand);
     assert_eq!(state.objects.get(library[3]).zone, Zone::Hand);
-    // The rest keeps its looked-at order on the bottom.
-    assert_eq!(&state.players[0].library[8..], &[library[1], library[2]]);
+    // Randomization changes only the unselected bottom subset.
+    let mut bottom = state.players[0].library[8..].to_vec();
+    bottom.sort_unstable();
+    let mut expected_bottom = vec![library[1], library[2]];
+    expected_bottom.sort_unstable();
+    assert_eq!(bottom, expected_bottom);
+    assert_eq!(&state.players[0].library[..8], &library[4..]);
 
     // Flashback for {5}{U}{U} spends seven mana, so it looks at seven.
     assert_eq!(state.objects.get(deluge).zone, Zone::Graveyard);
@@ -984,14 +1268,51 @@ fn get_lost_uses_the_live_controller_even_when_destruction_is_prevented() {
 }
 
 #[test]
-fn incomplete_cards_are_partial_and_refused_by_full_deck_admission() {
-    for name in PARTIAL {
-        let id = card_id_by_name(name).unwrap();
-        assert_eq!(
-            CARD_DEFS[id as usize].capability,
-            CardCapability::Partial,
-            "{name}"
-        );
-        assert!(preflight_fully_supported_deck(&[id]).is_err(), "{name}");
+fn all_sixteen_magezero_decks_pass_full_catalog_admission() {
+    for (name, rows) in decks() {
+        let mut deck = Vec::new();
+        for (count, card_name) in rows {
+            let id = card_id_by_name(&card_name).unwrap_or_else(|| panic!("{name}: {card_name}"));
+            deck.extend(std::iter::repeat_n(id, count as usize));
+        }
+        preflight_fully_supported_deck(&deck).unwrap_or_else(|error| panic!("{name}: {error:?}"));
     }
+}
+
+#[test]
+fn all_standard_tokens_are_full_token_definitions() {
+    for name in STANDARD_TOKENS {
+        let id = card_id_by_name(name).expect(name);
+        let definition = &CARD_DEFS[id as usize];
+        assert!(definition.is_token, "{name}");
+        assert_eq!(definition.capability, CardCapability::Full, "{name}");
+    }
+}
+
+#[test]
+fn standard_creature_subtypes_are_available_to_type_choices_and_changeling() {
+    for name in STANDARD_APPENDED {
+        let definition = &CARD_DEFS[card_id_by_name(name).expect(name) as usize];
+        if !definition.has_type(CardType::Creature) {
+            continue;
+        }
+        for &subtype in definition.subtypes {
+            // Food remains an artifact type on Gingerbrute and Tough Cookie.
+            if subtype == Subtype::Food {
+                assert!(!subtype.is_creature_type());
+                assert!(!Subtype::CREATURE_TYPES.contains(&subtype));
+                continue;
+            }
+            assert!(subtype.is_creature_type(), "{name}: {subtype:?}");
+            assert!(
+                Subtype::CREATURE_TYPES.contains(&subtype),
+                "{name}: {subtype:?}"
+            );
+        }
+    }
+    assert!(Subtype::OUTLAW_TYPES.contains(&Subtype::Warlock));
+    assert_eq!(Subtype::Elder.stable_id(), 127);
+    assert_eq!(Subtype::Wurm.stable_id(), 144);
+    assert_eq!(Subtype::Artificer.stable_id(), 145);
+    assert_eq!(Subtype::Orc.stable_id(), 146);
 }

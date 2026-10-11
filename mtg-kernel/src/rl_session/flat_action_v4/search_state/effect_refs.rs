@@ -25,9 +25,38 @@ impl Scan<'_> {
             || a.attached_to
                 .is_some_and(|x| self.same(x.object, x.zone_change_count))
     }
+    fn creature_choice(
+        &self,
+        kind: &crate::standard_creature_choices_v1::CreatureChoiceV1,
+    ) -> bool {
+        match kind {
+            crate::standard_creature_choices_v1::CreatureChoiceV1::AegisCopy { host, .. } => {
+                self.same(host.object, host.zone_change_count)
+            }
+            _ => false,
+        }
+    }
+    fn copy(&self, spell: &crate::state::StackItem) -> bool {
+        self.raw(spell.source)
+            || spell.targets.iter().any(|target| match target {
+                Target::Object(id) => self.raw(*id),
+                Target::Player(_) => false,
+                Target::StackItem(id) => self
+                    .state
+                    .stack
+                    .iter()
+                    .find(|item| item.v4.stack_item_id == *id)
+                    .is_some_and(|item| self.raw(item.source)),
+            })
+    }
     fn op(&self, op: &EffectOp) -> bool {
         use EffectOp::*;
         match op {
+            CopySpellSnapshot { spell } => self.copy(spell),
+            CastExiledWithoutMana { card, .. } | PlayExiledLand { card } => self.b(card),
+            CreatureChoiceV1(kind) | CreatureChoiceAnswerV1 { kind, .. } => {
+                self.creature_choice(kind)
+            }
             Sequence(ops) | Choice { options: ops, .. } => ops.iter().any(|x| self.op(x)),
             Conditional { then, else_, .. } => self.op(then) || self.op(else_),
             MayPayCostThen {
@@ -56,8 +85,28 @@ impl Scan<'_> {
             | EnterUndercityRoom { binding, .. }
             | ResolveUndercityThrone { binding } => self.a(&binding.source),
             ResolveMonarchTrigger { binding } => self.a(&binding.source),
+            StandardV1(op) => op.bound_objects().iter().any(|chosen| self.b(chosen)),
             // Other current leaf programs carry symbolic refs, not physical bindings.
-            DealDamage { .. }
+            StandardLegendV1(op) => match op {
+                crate::standard_legends_v1::LegendEffectV1::ReturnBoundPermanent(object)
+                | crate::standard_legends_v1::LegendEffectV1::CountersOnReturnedPermanent(object) => {
+                    self.b(object)
+                }
+                crate::standard_legends_v1::LegendEffectV1::JodahCastSnapshot(binding) => {
+                    self.same(binding.source.source, binding.source.zone_change_count)
+                }
+                _ => false,
+            },
+            DiscardUpToThenDraw { .. }
+            | ExileRandomGraveyardCardPlayableThisTurn { .. }
+            | ExileUntilThenCastV1 { .. }
+            | Discover { .. }
+            | Hideaway { .. }
+            | PlayHideawayIfThreeDistinctPowers
+            | IncreaseSpeed { .. }
+            | DealDamage { .. }
+            | DistributePlusOneCounters { .. }
+            | CreatureUpgrade(_)
             | ReturnTargetPermanentToBattlefield { .. }
             | GainLife { .. }
             | LoseLife { .. }
@@ -71,6 +120,7 @@ impl Scan<'_> {
             | AttachSourceToTarget { .. }
             | AddCountersToTarget { .. }
             | CreateTokenAndAttachSource { .. }
+            | CreateRoleAttachedToTarget { .. }
             | AddMana { .. }
             | AddManaDynamic { .. }
             | CreateToken { .. }
@@ -98,6 +148,12 @@ impl Scan<'_> {
             | GainLifeDynamic { .. }
             | UntapObject { .. }
             | AnimateSource
+            | AnimateSourcePermanentlyV1
+            | LookTopSelectV1 { .. }
+            | SelectObjectsV1 { .. }
+            | DestroyCreaturesPowerAtMostV1 { .. }
+            | DestroyPermanentsSharingTargetNameV1 { .. }
+            | CreateTokensWithHasteUntilEndOfTurnV1 { .. }
             | PumpTargetUntilEndOfTurnDynamic { .. }
             | LookTopSelectByTypeToHandBottomRest { .. }
             | LookTopPickToHandBottomRest { .. }
@@ -129,6 +185,8 @@ impl Scan<'_> {
             | BindOilCounterToTriggerSource
             | BindTemporaryBoostToTriggerSource { .. }
             | BoostControlledCreaturesUntilEndOfTurn { .. }
+            | SetTargetBasePowerToughnessUntilEndOfTurn { .. }
+            | BoostOtherControlledCreaturesUntilEndOfTurn { .. }
             | GainLifeByAttackingSubtypeCount { .. }
             | CreatureTargetPowerDamage { .. }
             | PreventCombatDamageToTargetThisTurn { .. }
@@ -202,6 +260,49 @@ impl Scan<'_> {
     fn f(&self, f: &EffectFrame) -> bool {
         use EffectFrame::*;
         match f {
+            CopyTarget { choice, selected } => {
+                self.copy(&choice.spell)
+                    || self.fs(&choice.remaining)
+                    || selected
+                        .as_ref()
+                        .and_then(|candidate| candidate.expected_object)
+                        .is_some_and(|b| self.b(&b))
+            }
+            DiscardDraw { choice, selected } => {
+                self.bs(&choice.hand) || self.bs(selected) || self.fs(&choice.remaining)
+            }
+            ExileBatchSelect { choice, .. } | ExileBatchResume { choice } => {
+                self.fs(&choice.remaining)
+                    || self.bs(&choice.cast)
+                    || choice
+                        .scans
+                        .iter()
+                        .any(|scan| self.bs(&scan.original_library) || self.bs(&scan.exiled))
+            }
+            Hideaway { choice, selected } => {
+                self.bs(&choice.prefix) || self.bs(selected) || self.fs(&choice.remaining)
+            }
+            ExilePlay { choice, .. } | DiscoverRemainder { choice } => {
+                choice.card.is_some_and(|b| self.b(&b))
+                    || self.bs(&choice.rejected)
+                    || self.bs(&choice.original_library)
+                    || self.fs(&choice.remaining)
+            }
+            ConvokeLook { choice, selected } => {
+                self.bs(&choice.prefix) || self.bs(selected) || self.fs(&choice.remaining)
+            }
+            WardPayment {
+                choice, selected, ..
+            } => self.bs(&choice.candidates) || self.bs(selected) || self.fs(&choice.remaining),
+            PayGenericDrawV1 {
+                expected_remaining_frames,
+                ..
+            } => self.fs(expected_remaining_frames),
+            ApplySelectedObjectsV1 {
+                original_candidates,
+                selected,
+                ..
+            } => self.bs(original_candidates) || self.bs(selected),
             Program { op, .. } => self.op(op),
             MoveObjectsBatch { objects, .. }
             | MillLibraryBatch { objects, .. }
@@ -406,7 +507,30 @@ impl Scan<'_> {
     fn purpose(&self, p: &EffectTargetSelectionPurpose) -> bool {
         use EffectTargetSelectionPurpose::*;
         match p {
+            CopyTarget { choice } => self.copy(&choice.spell) || self.fs(&choice.remaining),
+            DiscardDraw { choice } => self.bs(&choice.hand) || self.fs(&choice.remaining),
+            ExileBatch { choice } => {
+                self.fs(&choice.remaining)
+                    || self.bs(&choice.cast)
+                    || choice
+                        .scans
+                        .iter()
+                        .any(|scan| self.bs(&scan.original_library) || self.bs(&scan.exiled))
+            }
+            Hideaway { choice } => self.bs(&choice.prefix) || self.fs(&choice.remaining),
+            ConvokeLook { choice } => self.bs(&choice.prefix) || self.fs(&choice.remaining),
+            WardCards { choice } => self.bs(&choice.candidates) || self.fs(&choice.remaining),
             OrderIntoGraveyard { .. } | OrderMilledIntoGraveyard => false,
+            StandardBreachChoiceV1 {
+                chosen,
+                original_candidates,
+                later,
+                ..
+            } => {
+                self.bs(chosen)
+                    || self.bs(original_candidates)
+                    || later.as_ref().is_some_and(|(_, cards)| self.bs(cards))
+            }
             AttachReturningAura {
                 aura,
                 original_candidates,
@@ -489,7 +613,23 @@ impl Scan<'_> {
                 then,
                 ..
             } => self.bs(original_graveyard) || self.bs(candidates) || self.op(then),
-            SacrificeCreature {
+            SelectObjectsV1 {
+                original_candidates,
+                ..
+            }
+            | SacrificeCreature {
+                original_candidates,
+                ..
+            }
+            | StandardChoosePermanentV1 {
+                original_candidates,
+                ..
+            }
+            | StandardSeparatePilesV1 {
+                original_candidates,
+                ..
+            }
+            | StandardDiscardToDrawV1 {
                 original_candidates,
                 ..
             }
@@ -497,6 +637,16 @@ impl Scan<'_> {
                 original_candidates,
                 ..
             } => self.bs(original_candidates),
+            StandardCopyTargetV1 {
+                copy_source,
+                original_candidates,
+                ..
+            } => {
+                self.raw(*copy_source)
+                    || original_candidates
+                        .iter()
+                        .any(|t| matches!(t, crate::state::Target::Object(id) if self.raw(*id)))
+            }
             DuressDiscard {
                 original_hand,
                 eligible,
@@ -546,7 +696,15 @@ impl Scan<'_> {
                 options.iter().any(|o| self.op(o)) || {
                     use EffectOptionChoicePurpose::*;
                     match purpose {
+                        PayGenericDrawV1 {
+                            expected_remaining_frames,
+                            ..
+                        } => self.fs(expected_remaining_frames),
                         Generic => false,
+                        CreatureChoiceV1 {
+                            kind,
+                            expected_remaining_frames,
+                        } => self.creature_choice(kind) || self.fs(expected_remaining_frames),
                         OwnerLibraryTopOrBottom {
                             object,
                             expected_remaining_frames,
@@ -561,6 +719,10 @@ impl Scan<'_> {
                         ChooseColor {
                             expected_remaining_frames,
                             ..
+                        }
+                        | StandardManaCombinationV1 {
+                            expected_remaining_frames,
+                            ..
                         } => self.fs(expected_remaining_frames),
                         UndercityRoute {
                             binding,
@@ -573,6 +735,15 @@ impl Scan<'_> {
             PendingEffectChoice::ChooseBoolean { purpose, .. } => {
                 use EffectBooleanChoicePurpose::*;
                 match purpose {
+                    ExilePlay { choice } => {
+                        choice.card.is_some_and(|b| self.b(&b))
+                            || self.bs(&choice.rejected)
+                            || self.bs(&choice.original_library)
+                            || self.fs(&choice.remaining)
+                    }
+                    WardLife { choice } => {
+                        self.bs(&choice.candidates) || self.fs(&choice.remaining)
+                    }
                     ShuffleLibrary { .. }
                     | CounterUnlessPaysGeneric { .. }
                     | CounterTargetUnlessPaysGeneric { .. } => false,
@@ -588,6 +759,17 @@ impl Scan<'_> {
                         ..
                     } => self.bs(original_graveyard) || self.bs(candidates) || self.op(then),
                     LookAtTopMayRevealThen { top, then, .. } => self.b(top) || self.op(then),
+                    StandardSacrificePileV1 {
+                        pile_a,
+                        pile_b,
+                        expected_remaining_frames,
+                        ..
+                    } => self.bs(pile_a) || self.bs(pile_b) || self.fs(expected_remaining_frames),
+                    StandardMayBecomeEverflameV1 {
+                        source,
+                        expected_remaining_frames,
+                        ..
+                    } => self.b(source) || self.fs(expected_remaining_frames),
                 }
             }
         }
@@ -596,6 +778,139 @@ impl Scan<'_> {
 
 pub(super) fn op_conflicts(state: &GameState, pool: &[ObjectId], op: &EffectOp) -> bool {
     Scan { state, pool }.op(op)
+}
+
+fn continuation_conflicts(
+    s: &Scan<'_>,
+    p: &EffectContinuation,
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+) -> bool {
+    if s.fs(&p.frames)
+        || p.choice.as_ref().is_some_and(|c| {
+            if !plan.is_some_and(|p| p.matches(c)) {
+                return s.choice(c);
+            }
+            // Throne exempts only its private full-library snapshot. Public
+            // reveal, source and selected/legal references still cannot move.
+            if let PendingEffectChoice::SelectTargets {
+                purpose:
+                    EffectTargetSelectionPurpose::UndercityThroneCreature {
+                        binding,
+                        revealed_prefix,
+                        candidates,
+                        ..
+                    },
+                selected,
+                legal,
+                ..
+            } = c
+            {
+                s.a(&binding.source)
+                    || s.bs(revealed_prefix)
+                    || s.bs(candidates)
+                    || selected.iter().chain(legal).any(|c| {
+                        c.expected_object.as_ref().is_some_and(|b| s.b(b))
+                            || matches!(c.target,crate::state::Target::Object(id) if s.raw(id))
+                    })
+            } else {
+                false
+            }
+        })
+        || p.ctx.discarded.iter().any(|id| s.raw(*id))
+        || p.ctx
+            .targets
+            .iter()
+            .any(|t| matches!(t,crate::state::Target::Object(id) if s.raw(*id)))
+        || p.ctx
+            .hidden_ability_source
+            .is_some_and(|x| s.same(x.object, x.zone_change_count))
+        || p.ctx
+            .ability_source_contract
+            .as_ref()
+            .is_some_and(|a| s.a(a))
+        || p.ctx
+            .cauldron_grant
+            .0
+            .as_ref()
+            .is_some_and(|grant| s.a(&grant.host) || s.a(&grant.donor))
+    {
+        return true;
+    }
+    if let Some(g) = &p.answered_choice_guard {
+        use EffectAnsweredChoiceGuard::*;
+        let guard_conflicts = match g {
+            StandardSelection { frame } => s.f(frame),
+            CreatureChoiceV1 {
+                kind,
+                remaining_frames,
+                ..
+            } => s.creature_choice(kind) || s.fs(remaining_frames),
+            OwnerLibrarySecondOrBottom { frame }
+            | CounterUnlessPaysGeneric { frame }
+            | CounterTargetUnlessPaysGeneric { frame }
+            | ExileOneFromGraveyard { frame }
+            | SurveilLibraryOne { frame }
+            | SurveilLibraryMany { frame }
+            | ExileOneMatchingFromGraveyard { frame }
+            | SacrificeCreature { frame }
+            | PayManaThen { frame }
+            | LinkedExileFromRevealedHand { frame }
+            | SearchLibraryToBattlefieldTapped { frame }
+            | UndercityRoute { frame }
+            | UndercityThrone { frame } => s.f(frame),
+            AttachReturningAura {
+                aura,
+                host,
+                remaining_frames,
+                ..
+            } => s.b(aura) || s.b(host) || s.fs(remaining_frames),
+            StandardChosenPermanentV1 {
+                chosen,
+                remaining_frames,
+                ..
+            } => s.b(chosen) || s.fs(remaining_frames),
+            StandardPilesSeparatedV1 {
+                pile_a,
+                pile_b,
+                remaining_frames,
+                ..
+            } => s.bs(pile_a) || s.bs(pile_b) || s.fs(remaining_frames),
+            StandardPileChosenV1 {
+                pile,
+                remaining_frames,
+                ..
+            } => s.bs(pile) || s.fs(remaining_frames),
+            StandardBreachChosenV1 {
+                cards,
+                remaining_frames,
+                ..
+            }
+            | StandardDiscardChosenV1 {
+                cards,
+                remaining_frames,
+                ..
+            } => s.bs(cards) || s.fs(remaining_frames),
+            StandardEverflameChosenV1 {
+                source,
+                remaining_frames,
+                ..
+            } => s.b(source) || s.fs(remaining_frames),
+            StandardCopyRetargetedV1 {
+                copy_source,
+                target,
+                remaining_frames,
+                ..
+            } => {
+                s.raw(*copy_source)
+                    || matches!(target, crate::state::Target::Object(id) if s.raw(*id))
+                    || s.fs(remaining_frames)
+            }
+        };
+        if guard_conflicts {
+            return true;
+        }
+    }
+    false
 }
 
 pub(super) fn conflicts(
@@ -613,77 +928,31 @@ pub(super) fn conflicts(
             return true;
         }
     }
-    if let Some(p) = &state.engine.pending_effect {
-        if s.fs(&p.frames)
-            || p.choice.as_ref().is_some_and(|c| {
-                if !plan.is_some_and(|p| p.matches(c)) {
-                    return s.choice(c);
-                }
-                // Throne exempts only its private full-library snapshot. Public
-                // reveal, source and selected/legal references still cannot move.
-                if let PendingEffectChoice::SelectTargets {
-                    purpose:
-                        EffectTargetSelectionPurpose::UndercityThroneCreature {
-                            binding,
-                            revealed_prefix,
-                            candidates,
-                            ..
-                        },
-                    selected,
-                    legal,
-                    ..
-                } = c
-                {
-                    s.a(&binding.source)
-                        || s.bs(revealed_prefix)
-                        || s.bs(candidates)
-                        || selected.iter().chain(legal).any(|c| {
-                            c.expected_object.as_ref().is_some_and(|b| s.b(b))
-                                || matches!(c.target,crate::state::Target::Object(id) if s.raw(id))
-                        })
-                } else {
-                    false
-                }
-            })
-            || p.ctx.discarded.iter().any(|id| s.raw(*id))
-            || p.ctx
-                .targets
-                .iter()
-                .any(|t| matches!(t,crate::state::Target::Object(id) if s.raw(*id)))
-            || p.ctx
-                .hidden_ability_source
-                .is_some_and(|x| s.same(x.object, x.zone_change_count))
-            || p.ctx
-                .ability_source_contract
-                .as_ref()
-                .is_some_and(|a| s.a(a))
-        {
+    if state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(|p| continuation_conflicts(&s, p, plan))
+    {
+        return true;
+    }
+    if let Some(standard) = &state.standard_v1 {
+        if standard.references_incarnation(|id, generation| s.same(id, generation)) {
             return true;
         }
-        if let Some(g) = &p.answered_choice_guard {
-            use EffectAnsweredChoiceGuard::*;
-            let guard_conflicts = match g {
-                OwnerLibrarySecondOrBottom { frame }
-                | CounterUnlessPaysGeneric { frame }
-                | CounterTargetUnlessPaysGeneric { frame }
-                | ExileOneFromGraveyard { frame }
-                | SurveilLibraryOne { frame }
-                | SurveilLibraryMany { frame }
-                | ExileOneMatchingFromGraveyard { frame }
-                | SacrificeCreature { frame }
-                | PayManaThen { frame }
-                | LinkedExileFromRevealedHand { frame }
-                | SearchLibraryToBattlefieldTapped { frame }
-                | UndercityRoute { frame }
-                | UndercityThrone { frame } => s.f(frame),
-                AttachReturningAura {
-                    aura,
-                    host,
-                    remaining_frames,
-                    ..
-                } => s.b(aura) || s.b(host) || s.fs(remaining_frames),
-            };
-            if guard_conflicts {
+        if let Some(resolution) = &standard.resolution_play {
+            if resolution.permission.as_ref().is_some_and(|p| s.b(&p.card))
+                || resolution.kicked_source.is_some_and(|id| s.raw(id))
+                || resolution
+                    .suspended
+                    .as_ref()
+                    .is_some_and(|p| continuation_conflicts(&s, p, None))
+                || resolution.deferred_triggers.iter().any(|t| {
+                    s.op(&t.effect)
+                        || t.source_contract.as_ref().is_some_and(|a| s.a(a))
+                        || t.granted_by.as_ref().is_some_and(|a| s.a(a))
+                })
+            {
                 return true;
             }
         }
@@ -694,15 +963,20 @@ pub(super) fn conflicts(
             Damage { source, target, .. } => {
                 s.raw(*source) || matches!(target,crate::state::Target::Object(id) if s.raw(*id))
             }
+            LeftBattlefieldCopyV1 { source, .. } => s.raw(source.source),
             ZoneChange { object, .. }
             | Tap { object }
             | CreateToken { object, .. }
             | Sacrificed { object, .. }
+            | TurnedFaceUp { object, .. }
             | Transformed { object, .. } => s.raw(*object),
             PlusOneCountersAdded { object, .. }
             | PrintedAbilitiesRemovedBeforeZoneChange { object, .. }
             | WasCreatureBeforeLeavingBattlefield { object, .. }
-            | PowerBeforeLeavingBattlefield { object, .. } => s.raw(*object),
+            | PowerBeforeLeavingBattlefield { object, .. }
+            | LeftBattlefieldFaceV1 { object, .. }
+            | RoomDoorUnlockedV1 { object, .. }
+            | ClassLevelGainedV1 { object, .. } => s.raw(*object),
             Draw { object, .. } => object.is_some_and(|id| s.raw(id)),
             SpellCast { spell, .. } => s.raw(*spell),
             Targeted { target, .. } => s.raw(*target),
@@ -724,7 +998,8 @@ pub(super) fn conflicts(
             | UpkeepBegan { .. }
             | CrimeCommitted { .. }
             | BeginningOfCombat { .. }
-            | BeginningEndStep { .. } => false,
+            | BeginningEndStep { .. }
+            | BeginningPrecombatMainV1 { .. } => false,
         }
     })
 }

@@ -1,26 +1,27 @@
 # MageZero Standard pool inventory
 
-The `standard-magezero-fixtures` catalog targets the 16-deck Standard opponent pool MageZero trains against (`data/standard/magezero_v1/`). As of `kernel_carddb_standard/v5`, the decks use 225 distinct nonbasic cards: 91 are Full, 21 are Partial and 113 are missing. No deck resolves yet. `mtg-kernel/tests/standard_magezero_catalog_v1.rs` and `python/tests/test_standard_decks_v1.py` track Full admission.
+The `standard-magezero-fixtures` completion candidate targets all 16 unchanged MageZero
+Standard opponent decks in `data/standard/magezero_v1/`. Its v7 registry contains the
+192-definition Pauper prefix and 253 appended definitions, with all 225 distinct nonbasic
+deck cards marked Full for acceptance testing. Python admission resolves all 16 decks;
+there are zero Partial or missing deck entries. The extension includes 32 token or
+masked-face definitions. Existing Standard IDs retain their append order.
 
-## Order of work
+**Runtime verification is pending.** Admission flags and source coverage do not prove
+complete gameplay support. The integration lead owns compilation, affected behavior tests,
+the observed catalog hash, terminal public-session execution/replay, and final review.
+The current verification record is `docs/reports/standard_completion_v1.md`.
 
-The five mono-color decks come first: they are MageZero's original opponents and together need 61 cards, marked "(mono)" below. Each two-color deck then needs 12 to 16 more cards and the 5-color deck 18.
+## Scope and ownership
 
-## Ownership
+The completion integrates families A through H below in one deliverable. Lands/spells,
+keyword and creature workers supplied bounded source checkpoints; the integration lead
+owns cross-family repairs and final acceptance. Shared FDN cards are copied into the
+Standard extension so FDN batches cannot shift Standard IDs. Deck files, the Pauper
+registry and the FDN registry remain unchanged.
 
-Work is split by mechanic family so threads do not build the same engine primitive twice. Every batch appends to `data/standard/magezero_v1/cards_v1.json` and bumps the Standard identity (`kernel_carddb_standard/vN` in `build.rs`, the frozen hash and `STANDARD_APPENDED`/`SUPPORTED_NONBASIC` in the catalog test, and the Python test's list), so batches rebase and take the next version just before opening and merge one at a time. These bumps never touch the FDN Limited identity.
-
-Initial threads and merge order (each tells the next when it merges; later batches take the next free version):
-
-1. Removal, counters and card selection (family C), v2.
-2. Creatures with triggered and static abilities (family G), v3.
-3. New set keywords (family D), v4.
-4. Lands (families A and B), v5. Mono-deck lands first; dual lands are needed by every two-color deck. The first lands batch covers all of family A plus Mishra's Foundry, Eiganjo, Mirrex and Rockface Village; the Restless lands, the other channel lands and the remaining utility lands follow in a second lands batch.
-5. Non-creature permanents, planeswalkers and transforming legends (families E and F), v6.
-
-The 5-color deck's legends (family H) wait until those land.
-
-**Cards shared with FDN.** Abrade, Boltwave, Essence Scatter, Kellan, Planar Trailblazer, Resolute Reinforcements, Snakeskin Veil and Soulstone Sanctuary are also in the FDN reference pool. Their behavior is owned by the FDN threads (`docs/reports/fdn_remaining_pool_inventory_v1.md`). Once one merges there, a Standard batch only copies its registry entry into the Standard file, since `build.rs` keys card behavior by name.
+The family lists below index the source coverage. They are not a list of missing cards
+or independent per-card verification receipts.
 
 ## Families
 ### A. Dual lands (37 cards; 0 needed by a mono deck)
@@ -42,7 +43,8 @@ The 5-color deck's legends (family H) wait until those land.
 
 ### C. Removal, counters and card selection (35 cards; 15 needed by a mono deck)
 
-`kernel_carddb_standard/v2` fully supports the mono cards here except the FDN-owned Essence Scatter and Partial Memory Deluge, plus Opt. Shoot the Sheriff counts every outlaw subtype: Pirate, Rogue and Warlock, plus Assassin and Mercenary since family G appended them in v3. Memory Deluge's bottom-order approximation is excluded from full deck admission.
+The completion includes the shared FDN spells, player-controlled card selection, all six
+Gix's Command mode pairs, and seeded random bottom order for Memory Deluge.
 
 - **Removal and burn**: Cut Down, Go for the Throat, Lightning Strike (mono), Shock (mono), Destroy Evil (mono), Sheoldred's Edict, Shoot the Sheriff (mono), Hard-Hitting Question (mono), Maelstrom Pulse, Tear Asunder, Witchstalker Frenzy, Fading Hope (mono), Get Lost (mono), Anoint with Affliction, Gleeful Demolition, Invoke Despair, Gix's Command, Abrade, Boltwave
 - **Counterspells**: Dissipate (mono), Essence Scatter (mono), Negate (mono)
@@ -51,7 +53,9 @@ The 5-color deck's legends (family H) wait until those land.
 
 ### D. New set keywords (2022-2025) (32 cards; 13 needed by a mono deck)
 
-Family D adds 18 Full cards and retains 11 Partial definitions. Full deck admission refuses Axebane Ferox, Brutal Cathar, Burnout Bashtronaut, Enduring Curiosity, Enduring Innocence, Flourishing Bloom-Kin, Graveyard Trespasser, Hopeful Initiate, Knight-Errant of Eos, Make Disappear and Overlord of the Mistmoors. Their missing choices, timing and effective-type handling are recorded in `docs/design/standard_family_d_keywords_v1.md`. Monstrous Rage, Zoetic Glyph and Collector's Cage remain deferred.
+The completion includes the earlier Partial cards plus Monstrous Rage, Zoetic Glyph and
+Collector's Cage. Ward, convoke, casualty, disguise, hideaway and discover use explicit
+choices; see `docs/design/standard_family_d_keywords_v1.md`.
 
 - **Offspring**: Pawpatch Recruit, Darkstar Augur, Iridescent Vinelasher (mono), Manifold Mouse
 - **Valiant / prowess**: Emberheart Challenger (mono), Heartfire Hero, Monastery Swiftspear
@@ -77,7 +81,9 @@ Family D adds 18 Full cards and retains 11 Partial definitions. Full deck admiss
 
 ### G. Creatures with triggered and static abilities (48 cards; 22 needed by a mono deck)
 
-`kernel_carddb_standard/v3` adds 14 Full and seven Partial family G definitions. Kellan, Planar Trailblazer remains FDN-owned. Recruitment Officer, Quirion Beastcaller, Extraction Specialist, Sharp-Eyed Rookie, Evolving Adaptive, Thalia and Haughty Djinn are excluded from full deck admission until their printed behavior is complete (`docs/design/standard_family_g_v1.md`).
+The completion includes the shared FDN creatures, target/allocation choices, departed
+creature characteristics, permanent restriction expiry, spell-cost adjustments and
+randomized bottom order. See `docs/design/standard_family_g_v1.md`.
 
 - **ETB / dies / attack triggers**: Deep-Cavern Bat (mono), Sentinel of the Nameless City (mono), Spyglass Siren, Bloodtithe Harvester, Brightglass Gearhulk, Extraction Specialist (mono), Faerie Dreamthief, Floodpits Drowner, Gatekeeper of Malakir (mono), Glissa Sunslayer, Hired Claw (mono), Preacher of the Schism, Recruitment Officer (mono), Resolute Reinforcements, Sandstorm Salvager, Tersa Lightshatter, Tishana's Tidebinder, Tranquil Frillback, Unstoppable Slasher (mono), Zoraline, Cosmos Caller, Cenote Scout (mono), Novice Inspector (mono), Sharp-Eyed Rookie (mono), Dark Confidant, Essence Channeler, Kellan, Planar Trailblazer (mono)
 - **Spell-cast and counter growth**: Ascendant Packleader (mono), Evolving Adaptive (mono), Quirion Beastcaller (mono), Teething Wurmlet, Hullbreaker Horror (mono), Surrak, Elusive Hunter, Warden of the Inner Sky (mono)
@@ -88,6 +94,7 @@ Family D adds 18 Full cards and retains 11 Partial definitions. Full deck admiss
 
 - **Legends**: Jodah, the Unifier, Katilda, Dawnhart Prime, Lagrella, the Magpie, Shanna, Purifying Blade, Melira, the Living Cure, Gwenna, Eyes of Gaea, Hajar, Loyal Bodyguard, Halana and Alena, Partners, Djeru and Hazoret, Ertai Resurrected, Skrelv, Defector Mite
 
-Memory Deluge is Partial: its current implementation keeps the bottomed cards in looked-at order, so full deck admission refuses it until subset randomization is implemented. The registry retains its definition and flashback behavior for development.
-
-Lands v5 admits 39 Full lands. Mirrex and Rockface Village are Partial: poison counters need policy observations, and restricted red mana needs a floating-pool representation. Their definitions remain executable for development and are refused by Full deck admission.
+Mirrex poison and restricted floating mana for Rockface Village and the other restricted
+sources are represented in generic observations. The remaining utility, channel and
+Restless lands and Soulstone Sanctuary are included in the candidate; see
+`docs/design/standard_lands_v1.md`.

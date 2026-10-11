@@ -37,6 +37,17 @@ window; see [`limited_priority_windows_v1.md`](docs/design/limited_priority_wind
 Full Foundations card coverage and complete Limited rules are being developed
 under [issue #110](https://github.com/jackmaiorino/mtg-kernel/issues/110).
 
+## MageZero Standard completion candidate
+
+The opt-in `standard-magezero-fixtures` build includes the unchanged 16-deck MageZero
+Standard pool and source implementations for its 225 nonbasic cards. The v7 catalog
+admits every deck, with fixture checks preserving the 62-card Mono-U list and empty
+sideboards. Native behavior tests, the final catalog hash and terminal public-session
+replay verification are pending; admission alone is not a verified gameplay result.
+See the [fixture README](data/standard/magezero_v1/README.md) and
+[completion record](docs/reports/standard_completion_v1.md). Generic observations expose
+Standard state; frozen Pauper policy encoders may explicitly refuse it.
+
 ## Cycle-4 routing refusals
 
 | Tool | Refusal |

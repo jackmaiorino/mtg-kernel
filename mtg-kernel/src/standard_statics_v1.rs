@@ -38,8 +38,28 @@ pub(crate) fn conditional_self_keywords(state: &GameState, id: ObjectId) -> Keyw
     };
     let controller = state.objects.get(id).controller;
     match name {
+        "Djeru and Hazoret" if state.players[controller.index()].hand.len() <= 1 => {
+            Keywords(Keywords::VIGILANCE.0 | Keywords::HASTE.0)
+        }
         // "This creature has first strike during your turn."
         "Razorkin Needlehead" if state.active_player == controller => Keywords::FIRST_STRIKE,
+        "Essence Channeler" if state.player_lost_life_this_turn_v1(controller) => {
+            Keywords(Keywords::FLYING.0 | Keywords::VIGILANCE.0)
+        }
+        "Teething Wurmlet"
+            if state
+                .objects
+                .iter()
+                .filter(|(object_id, object)| {
+                    object.zone == Zone::Battlefield
+                        && object.controller == controller
+                        && crate::engine::object_has_type(state, *object_id, CardType::Artifact)
+                })
+                .count()
+                >= 3 =>
+        {
+            Keywords::DEATHTOUCH
+        }
         // "As long as this creature has three or more counters on it, it has
         // flying and vigilance."
         "Warden of the Inner Sky" if total_counters(state, id) >= 3 => {
@@ -56,24 +76,23 @@ pub(crate) fn apply_conditional_entry_counters(state: &mut GameState, id: Object
         return;
     };
     let controller = state.objects.get(id).controller;
+    let count = crate::standard_cards_v1::scale_counters(state, controller, 1);
     match name {
         // "This creature enters with a +1/+1 counter on it if you control a
         // permanent with mana value 4 or greater."
         "Ascendant Packleader" => {
-            let controls_big_permanent =
-                state.players[controller.index()]
-                    .battlefield
-                    .iter()
-                    .any(|&other| {
-                        other != id
-                            && CARD_DEFS[state.objects.get(other).card_def as usize].mana_value >= 4
-                    });
+            let controls_big_permanent = state.players[controller.index()]
+                .battlefield
+                .iter()
+                .any(|&other| other != id && crate::engine::object_mana_value(state, other) >= 4);
             if controls_big_permanent {
-                state.objects.get_mut(id).counters.plus1_plus1 += 1;
+                state.objects.get_mut(id).counters.plus1_plus1 += count;
             }
         }
         // "This creature enters with an oil counter on it."
-        "Evolving Adaptive" => state.objects.get_mut(id).counters.oil += 1,
+        "Evolving Adaptive" => {
+            state.objects.get_mut(id).counters.oil += i16::try_from(count).unwrap_or(i16::MAX)
+        }
         _ => {}
     }
 }
@@ -95,7 +114,7 @@ pub(crate) fn self_counter_boost(state: &GameState, id: ObjectId) -> (i32, i32) 
 pub(crate) fn reads_counter_lki(card_def: u16) -> bool {
     matches!(
         CARD_DEFS.get(card_def as usize).map(|def| def.name),
-        Some("Quirion Beastcaller" | "Unstoppable Slasher")
+        Some("Quirion Beastcaller" | "Unstoppable Slasher" | "Essence Channeler")
     )
 }
 
@@ -148,6 +167,11 @@ pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> 
     }
     let controller = object.controller;
     let count = match definition.name {
+        "Regal Bunnicorn" => state.players[controller.index()]
+            .battlefield
+            .iter()
+            .filter(|&&permanent| !crate::engine::object_has_type(state, permanent, CardType::Land))
+            .count(),
         // "Adeline's power is equal to the number of creatures you control."
         "Adeline, Resplendent Cathar" => state.players[controller.index()]
             .battlefield
@@ -171,6 +195,15 @@ pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> 
         _ => return None,
     };
     Some(i32::try_from(count).unwrap_or(i32::MAX))
+}
+
+pub(crate) fn characteristic_defining_toughness(state: &GameState, id: ObjectId) -> Option<i32> {
+    let object = state.objects.try_get(id)?;
+    if CARD_DEFS.get(object.card_def as usize)?.name == "Regal Bunnicorn" {
+        characteristic_defining_power(state, id)
+    } else {
+        None
+    }
 }
 
 /// Life `player` actually loses when they would lose `amount` (from damage,
@@ -259,6 +292,60 @@ fn restriction_active(
         && state.objects.get(restriction.source.object).controller == restriction.controller
 }
 
+/// A "for as long as" duration ends permanently the first time its
+/// condition becomes false, even if control returns later (CR 611.2b).
+pub(crate) fn expire_attack_block_restrictions(state: &mut GameState) {
+    let mut restrictions = state
+        .attack_block_restrictions_v1
+        .take()
+        .unwrap_or_default();
+    restrictions.retain(|restriction| restriction_active(state, restriction));
+    state.attack_block_restrictions_v1 = (!restrictions.is_empty()).then_some(restrictions);
+}
+
+pub(crate) fn record_creature_stats_lki(state: &mut GameState, id: ObjectId) {
+    if !crate::engine::object_has_type(state, id, CardType::Creature) {
+        return;
+    }
+    let source = crate::state::ObjectLinkV4 {
+        object: id,
+        zone_change_count: state.objects.get(id).zone_change_count,
+    };
+    let entry = crate::state::CreatureStatsLkiV1 {
+        source,
+        power: crate::engine::effective_power(state, id),
+        toughness: crate::engine::effective_toughness(state, id),
+    };
+    let entries = state.creature_stats_lki_v1.get_or_insert_with(Vec::new);
+    if !entries.iter().any(|old| old.source == source) {
+        entries.push(entry);
+    }
+}
+
+pub(crate) fn current_or_last_creature_stats(
+    state: &GameState,
+    binding: crate::effect::EffectObjectBinding,
+) -> Option<(i32, i32)> {
+    if state.objects.try_get(binding.object).is_some_and(|object| {
+        object.zone == Zone::Battlefield
+            && object.zone_change_count == binding.expected_zone_change_count
+    }) {
+        return Some((
+            crate::engine::effective_power(state, binding.object),
+            crate::engine::effective_toughness(state, binding.object),
+        ));
+    }
+    state
+        .creature_stats_lki_v1
+        .as_ref()?
+        .iter()
+        .find_map(|entry| {
+            (entry.source.object == binding.object
+                && entry.source.zone_change_count == binding.expected_zone_change_count)
+                .then_some((entry.power, entry.toughness))
+        })
+}
+
 /// Whether a recorded restriction stops `id` from attacking or blocking.
 pub(crate) fn cant_attack_or_block(state: &GameState, id: ObjectId) -> bool {
     state
@@ -303,6 +390,8 @@ pub(crate) enum StandardStaticV1 {
     GrantsWardToOtherHumans,
     /// Power equals the number of creatures its controller controls.
     PowerEqualsControlledCreatures,
+    /// Power and toughness equal controlled nonland permanents.
+    PowerToughnessEqualsControlledNonlandPermanents,
     /// Power equals the number of instant and sorcery cards in its
     /// controller's graveyard.
     PowerEqualsGraveyardInstantsAndSorceries,
@@ -322,6 +411,12 @@ pub(crate) enum StandardStaticV1 {
 /// (`reads_counter_lki`) has an entry.
 pub(crate) fn rules_vector_statics(name: &str) -> &'static [StandardStaticV1] {
     match name {
+        "Teething Wurmlet" => &[StandardStaticV1::ConditionalSelfKeywords(
+            Keywords::DEATHTOUCH,
+        )],
+        "Essence Channeler" => &[StandardStaticV1::ConditionalSelfKeywords(Keywords(
+            Keywords::FLYING.0 | Keywords::VIGILANCE.0,
+        ))],
         "Razorkin Needlehead" => &[StandardStaticV1::ConditionalSelfKeywords(
             Keywords::FIRST_STRIKE,
         )],
@@ -337,6 +432,7 @@ pub(crate) fn rules_vector_statics(name: &str) -> &'static [StandardStaticV1] {
         ],
         "Coppercoat Vanguard" => &[StandardStaticV1::GrantsWardToOtherHumans],
         "Adeline, Resplendent Cathar" => &[StandardStaticV1::PowerEqualsControlledCreatures],
+        "Regal Bunnicorn" => &[StandardStaticV1::PowerToughnessEqualsControlledNonlandPermanents],
         "Haughty Djinn" => &[
             StandardStaticV1::PowerEqualsGraveyardInstantsAndSorceries,
             StandardStaticV1::YourInstantsAndSorceriesCostOneLess,

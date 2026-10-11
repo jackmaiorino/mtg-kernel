@@ -310,6 +310,30 @@ pub enum Subtype {
     Dog,
     /// Appended for Ghalta; existing observation subtype ids remain fixed.
     Elder,
+    /// Appended for the MageZero Standard permanents and planeswalkers.
+    /// Existing stable ids remain fixed. Teferi is a planeswalker type.
+    Teferi,
+    God,
+    Room,
+    Case,
+    Class,
+    Liliana,
+    Gnome,
+    Chandra,
+    Vehicle,
+    Pilot,
+    /// MageZero Standard creature completion; prior identities are unchanged.
+    Siren,
+    Praetor,
+    Ox,
+    Llama,
+    /// Enchantment subtype of Role tokens. Not a creature type.
+    Role,
+    Kaito,
+    /// Appended for the completed Standard catalog, preserving all prior ids.
+    Wurm,
+    Artificer,
+    Orc,
 }
 
 impl Subtype {
@@ -375,66 +399,160 @@ impl Subtype {
         Subtype::Squirrel,
         Subtype::Insect,
         Subtype::Fish,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Angel,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Noble,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Unicorn,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Beast,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Cleric,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Homunculus,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Merfolk,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Octopus,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Hyena,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Raccoon,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Citizen,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Turtle,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Gremlin,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Dinosaur,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Warlock,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Archer,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Lizard,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Golem,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Boar,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Cyclops,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Shark,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Elk,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Demon,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Dwarf,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Berserker,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Otter,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Elephant,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Construct,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Dog,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Elder,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Ox,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Llama,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Scout,
         #[cfg(feature = "standard-magezero-fixtures")]
@@ -468,6 +586,24 @@ impl Subtype {
         Subtype::AssemblyWorker,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Mite,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::God,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Gnome,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Pilot,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Siren,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Praetor,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Skeleton,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Wurm,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Artificer,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Orc,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -476,7 +612,10 @@ impl Subtype {
     pub const OUTLAW_TYPES: &'static [Subtype] = &[
         Subtype::Pirate,
         Subtype::Rogue,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Warlock,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Assassin,
@@ -534,6 +673,22 @@ impl Subtype {
     /// materializes every true entry into an object's effective subtype set;
     /// card, artifact, enchantment, and land subtypes remain excluded.
     pub const fn is_creature_type(self) -> bool {
+        // Extend the Standard choice surface without changing the frozen
+        // Pauper/FDN changeling projections or their subtype hashes.
+        if cfg!(feature = "standard-magezero-fixtures")
+            && matches!(
+                self,
+                Subtype::Skeleton
+                    | Subtype::God
+                    | Subtype::Gnome
+                    | Subtype::Pilot
+                    | Subtype::Wurm
+                    | Subtype::Artificer
+                    | Subtype::Orc
+            )
+        {
+            return true;
+        }
         matches!(
             self,
             Subtype::Ape
@@ -606,6 +761,8 @@ impl Subtype {
                 | Subtype::Elephant
                 | Subtype::Construct
                 | Subtype::Dog
+                | Subtype::Ox
+                | Subtype::Llama
                 | Subtype::Hyena
                 | Subtype::Raccoon
                 | Subtype::Citizen
@@ -636,6 +793,8 @@ impl Subtype {
                 | Subtype::Sheep
                 | Subtype::AssemblyWorker
                 | Subtype::Mite
+                | Subtype::Siren
+                | Subtype::Praetor
                 | Subtype::Elder
         )
     }
@@ -839,6 +998,29 @@ pub enum TargetSpec {
     UpToOneOtherControlledPermanent,
     /// Zero to two controlled creatures other than the captured source incarnation.
     UpToTwoOtherControlledCreatures,
+    /// A single-object target filter owned by the Standard catalog's card
+    /// module. Stable id 60 follows the ids 42-59 that the FDN and other
+    /// Standard batches claim.
+    StandardV1(crate::standard_cards_v1::StandardTargetV1),
+    /// Any number of controlled creatures, with placement-time allocations.
+    CounterDistribution,
+    CreaturePowerPlusToughnessAtMostFive,
+    NonartifactCreature,
+    ArtifactCreatureEnchantmentOrPlaneswalker,
+    AnotherAttackingCreature,
+    UpToOneOtherCreature,
+    ControlledNoncreatureArtifactPermanent,
+    CardInOwnGraveyardWithAnySubtype([Subtype; 4]),
+    OpponentArtifactEnchantmentOrNonbasicLand,
+    LegendaryCreature,
+    CreatureWithStunCounter,
+    StackObject,
+    StackAbility,
+    AnotherCreatureOrPlaneswalker,
+    UpToOneStackAbility,
+    AnotherArtifactOrCreature,
+    UpToTwoOtherCreaturesDifferentControllers,
+    ArtifactOrEnchantmentThenPlayer,
 }
 
 impl TargetSpec {
@@ -907,6 +1089,25 @@ impl TargetSpec {
             TargetSpec::PermanentCardInOwnGraveyard => 57,
             TargetSpec::UpToOneOtherControlledPermanent => 58,
             TargetSpec::UpToTwoOtherControlledCreatures => 59,
+            TargetSpec::StandardV1(_) => 60,
+            TargetSpec::CounterDistribution => 70,
+            TargetSpec::CreaturePowerPlusToughnessAtMostFive => 90,
+            TargetSpec::NonartifactCreature => 91,
+            TargetSpec::ArtifactCreatureEnchantmentOrPlaneswalker => 92,
+            TargetSpec::AnotherAttackingCreature => 93,
+            TargetSpec::UpToOneOtherCreature => 94,
+            TargetSpec::ControlledNoncreatureArtifactPermanent => 71,
+            TargetSpec::CardInOwnGraveyardWithAnySubtype(_) => 95,
+            TargetSpec::OpponentArtifactEnchantmentOrNonbasicLand => 96,
+            TargetSpec::LegendaryCreature => 97,
+            TargetSpec::CreatureWithStunCounter => 72,
+            TargetSpec::StackObject => 98,
+            TargetSpec::StackAbility => 99,
+            TargetSpec::AnotherCreatureOrPlaneswalker => 100,
+            TargetSpec::UpToOneStackAbility => 73,
+            TargetSpec::AnotherArtifactOrCreature => 101,
+            TargetSpec::UpToTwoOtherCreaturesDifferentControllers => 102,
+            TargetSpec::ArtifactOrEnchantmentThenPlayer => 74,
         }
     }
 }
@@ -1016,6 +1217,10 @@ pub enum PermanentFilter {
     /// can be embedded in `effect::EffectOp::PumpAllUntilEndOfTurn`, which
     /// (like every other `EffectOp` variant) must derive those traits.
     Land,
+    /// A controlled artifact other than the ability's own source
+    /// (Repurposing Bay's "Sacrifice another artifact"). Appended.
+    AnotherArtifact,
+    Token,
 }
 
 /// One component of a composite cost. Composable (a real cost is `&'static
@@ -1047,7 +1252,10 @@ pub enum CostComponent {
     SacrificeLands(u8),
     /// Sacrifice `count` controlled permanents matching `filter`, announced
     /// one at a time through `Decision::ChooseCostTargets`.
-    SacrificeControlled { count: u8, filter: PermanentFilter },
+    SacrificeControlled {
+        count: u8,
+        filter: PermanentFilter,
+    },
     /// An ordinary mana payment, solved by `mana::solve` same as a spell's
     /// printed cost.
     Mana(Cost),
@@ -1093,7 +1301,10 @@ pub enum CostComponent {
     /// tap regardless of summoning sickness because this is not {T}.
     /// Activations only; staged one pick at a time like
     /// `SacrificeControlled`.
-    TapControlled { count: u8, filter: PermanentFilter },
+    TapControlled {
+        count: u8,
+        filter: PermanentFilter,
+    },
     /// Remove `n` +1/+1 counters from among creatures the payer controls
     /// (MageZero Standard, Hopeful Initiate). Paid without a choice: each
     /// counter comes off the controlled creature with the most +1/+1
@@ -1110,6 +1321,32 @@ pub enum CostComponent {
     /// The source is excluded from both selection and atomic payment.
     /// Appended for Hungry Ghoul, preserving all older cost variants.
     SacrificeOtherControlledCreatures(u8),
+    /// A planeswalker loyalty cost (606.4): a positive amount puts that many
+    /// loyalty counters on the source, a negative one removes that many and
+    /// requires at least as many. Any ability with this component is a
+    /// loyalty ability, so it is sorcery-speed and shares the source's
+    /// one-loyalty-activation-per-turn limit (606.3). Appended for the
+    /// Standard planeswalkers.
+    Loyalty(i32),
+    /// Choose X and remove X loyalty counters as the activation cost.
+    LoyaltyX,
+    /// Tap any selected creatures with total crew power at least this value.
+    Crew(u8),
+    /// Craft with artifact's material (702.167a): exile one other artifact
+    /// the payer controls or one artifact card from their own graveyard.
+    /// The exact object is staged through `Decision::ChooseCostTargets`
+    /// before any payment commits. Appended for the Standard craft cards.
+    ExileCraftArtifactMaterial,
+    /// "Remove a net counter from this" (Braided Net). The counters live in
+    /// `standard_cards_v1`'s per-incarnation state.
+    RemoveNetCounterFromSelf,
+    RemoveChargeCounterFromSelf,
+}
+
+impl CostComponent {
+    pub const fn is_loyalty(self) -> bool {
+        matches!(self, Self::Loyalty(_) | Self::LoyaltyX)
+    }
 }
 
 /// Optional additional costs chosen while announcing a spell. The selected
@@ -1139,9 +1376,17 @@ pub enum AttachmentDef {
     AuraCreatureOverride(CreatureCharacteristicsOverrideDef),
     /// Enchanted creature gets a static power/toughness bonus and keywords.
     AuraCreatureStatic(AuraCreatureStaticDef),
+    /// Enchant artifact; add creature characteristics without removing types.
+    AuraArtifactAnimation(AnimationDef),
 }
 
 impl AttachmentDef {
+    pub const fn enchanted_type(self) -> CardType {
+        match self {
+            Self::AuraArtifactAnimation(_) => CardType::Artifact,
+            _ => CardType::Creature,
+        }
+    }
     pub const fn is_creature_aura(self) -> bool {
         matches!(
             self,
@@ -1207,7 +1452,10 @@ pub enum AltCostCondition {
     /// Impending N: cast from hand for this cost, the permanent enters with
     /// N time counters and isn't a creature while it has any
     /// (`ObjectStateV4::time_counters_v1`, `standard_keywords_v1`).
-    ImpendingFromHand { time_counters: u8 },
+    ImpendingFromHand {
+        time_counters: u8,
+    },
+    DisguiseFromHand,
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -1265,6 +1513,26 @@ pub struct ActivatedAbilityDef {
     /// `None` means unrestricted. Appended for Quirion Ranger without
     /// changing any existing ability selector.
     pub max_activations_per_turn: Option<u8>,
+    /// Transforming-card face this ability is printed on. `None` means the
+    /// card's only face (every single-faced card); `Some(face)` limits the
+    /// ability to a battlefield permanent showing that face. Appended for the
+    /// Standard double-faced legends.
+    pub face: Option<u8>,
+}
+
+impl ActivatedAbilityDef {
+    /// True iff this is a planeswalker loyalty ability (606.3).
+    pub fn is_loyalty_ability(&self) -> bool {
+        self.cost.iter().any(|component| component.is_loyalty())
+    }
+
+    /// The loyalty counters this ability's cost adds (positive) or removes.
+    pub fn loyalty_delta(&self) -> Option<i32> {
+        self.cost.iter().find_map(|component| match component {
+            CostComponent::Loyalty(delta) => Some(*delta),
+            _ => None,
+        })
+    }
 }
 
 /// A source-relative restriction that applies while announcing a non-mana
@@ -1410,17 +1678,24 @@ pub enum EntersTappedUnlessControllerDef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManaAbilityConditionDef {
     /// The verges: "Activate only if you control a [first] or a [second]."
-    ControllerControlsPermanentWithEitherSubtype { first: Subtype, second: Subtype },
+    ControllerControlsPermanentWithEitherSubtype {
+        first: Subtype,
+        second: Subtype,
+    },
     /// Mirrex: "Activate only if this land entered the battlefield this
     /// turn."
     SourceEnteredThisTurn,
+    ControlledLegendaryPermanentHasColor(ManaColor),
 }
 
 /// What a restricted mana ability's mana may pay for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ManaSpendRestrictionDef {
     /// "Spend this mana only to cast a creature spell."
     CreatureSpell,
+    LegendarySpell,
+    Unrestricted,
+    CreatureSpellOrCreatureAbility,
 }
 
 /// A `{T}: Add one mana of a listed color` ability whose mana carries a
@@ -1441,6 +1716,8 @@ pub struct RestrictedManaAbilityDef {
 /// subtypes become the listed ones; the keywords are added.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AnimationDef {
+    /// False for animations with no stated duration, such as Soulstone Sanctuary.
+    pub until_end_of_turn: bool,
     pub power: i16,
     pub toughness: i16,
     pub artifact: bool,
@@ -1532,6 +1809,7 @@ pub enum DynamicCountDef {
     /// Nonnegative total effective power of the caster's live creatures.
     /// Negative powers contribute before the aggregate is floored at zero.
     ControllerCreatureTotalPower,
+    CreaturesAttackedThisTurn,
 }
 
 /// Reduces only the generic portion of a spell's mana cost, flooring at
@@ -1753,6 +2031,10 @@ pub struct CardDef {
     pub mode2: Option<ModeDef>,
     /// Optional third printed mode. Piracy Charm is the first consumer.
     pub mode3: Option<ModeDef>,
+    /// Additional printed mode combinations, starting at index 3.
+    pub additional_modes: &'static [ModeDef],
+    /// Replaces the target specification when the kicker is paid.
+    pub kicked_target_spec: Option<TargetSpec>,
     /// A permanent token (`cards_v1.json`'s own `is_token`, e.g. Blood),
     /// never itself a deck card -- read by `trigger::sba_fixed_point` for
     /// 111.8/704.5d ("if a token is in a zone other than the battlefield,
@@ -1937,6 +2219,32 @@ impl CardDef {
             }
         }
         self.keywords
+    }
+
+    pub fn printed_mode_target(&self, mode: u8, kicked: bool) -> Option<TargetSpec> {
+        if kicked && self.kicked_target_spec.is_some() {
+            return self.kicked_target_spec;
+        }
+        match mode {
+            0 => Some(self.target_spec),
+            1 => self.mode2.as_ref().map(|m| m.target_spec),
+            2 => self.mode3.as_ref().map(|m| m.target_spec),
+            _ => self
+                .additional_modes
+                .get(usize::from(mode) - 3)
+                .map(|m| m.target_spec),
+        }
+    }
+    pub fn printed_mode_effect(&self, mode: u8) -> Option<EffectOp> {
+        match mode {
+            0 => (self.spell_effect)(),
+            1 => self.mode2.as_ref().map(|m| (m.effect)()),
+            2 => self.mode3.as_ref().map(|m| (m.effect)()),
+            _ => self
+                .additional_modes
+                .get(usize::from(mode) - 3)
+                .map(|m| (m.effect)()),
+        }
     }
 
     pub fn is_castable(&self) -> bool {
@@ -2187,6 +2495,32 @@ mod tests {
 
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
+    fn creature_type_choice_ids_preserve_pauper_and_foundations_profiles() {
+        // The ordered lists from ddff546a are also the changeling subtype
+        // projection and creature-type choice surface in these profiles.
+        let expected: &[u16] = &[
+            0, 2, 3, 5, 6, 7, 8, 9, 10, 11, 13, 14, 18, 19, 20, 21, 22, 24, 25, 26, 27, 29, 30, 31,
+            32, 33, 35, 36, 37, 38, 39, 41, 42, 43, 44, 45, 46, 48, 49, 50, 51, 52, 53, 54, 55, 56,
+            57, 58, 59, 60, 63, 64, 65, 66, 67, 70, 72, 73,
+        ];
+        let mut expected = expected.to_vec();
+        if cfg!(feature = "limited-fdn-fixtures") {
+            expected.extend_from_slice(&[
+                79, 80, 81, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99,
+                100, 101, 102, 103, 104, 119, 124, 125, 126, 109,
+            ]);
+        }
+        assert_eq!(
+            Subtype::CREATURE_TYPES
+                .iter()
+                .map(|value| value.stable_id())
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+
+    #[test]
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
     fn card_defs_len_matches_pool() {
         // Hero Token remains id 159 and Clue Token remains id 160. Skeleton
         // Token is appended as id 161 without renumbering earlier ids.
@@ -2307,6 +2641,11 @@ mod tests {
             (TargetSpec::PermanentCardInOwnGraveyard, 57),
             (TargetSpec::UpToOneOtherControlledPermanent, 58),
             (TargetSpec::UpToTwoOtherControlledCreatures, 59),
+            (TargetSpec::CounterDistribution, 70),
+            (TargetSpec::ControlledNoncreatureArtifactPermanent, 71),
+            (TargetSpec::CreatureWithStunCounter, 72),
+            (TargetSpec::UpToOneStackAbility, 73),
+            (TargetSpec::ArtifactOrEnchantmentThenPlayer, 74),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);
@@ -2483,9 +2822,12 @@ mod tests {
     fn ward_costs_fail_closed_outside_the_static_generic_creature_shape() {
         for def in CARD_DEFS.iter().filter(|def| def.ward_cost.is_some()) {
             assert!(def.is_castable(), "{} is not executable", def.name);
+            // Dusk Rose Reliquary (Standard catalog) is the one warded
+            // artifact; ward on a noncreature permanent uses the same
+            // targeted-permanent trigger.
             assert!(
-                def.has_type(CardType::Creature),
-                "{} is not a creature",
+                def.has_type(CardType::Creature) || def.has_type(CardType::Artifact),
+                "{} is not a creature or artifact",
                 def.name
             );
             match def.ward_cost.unwrap() {

@@ -126,7 +126,7 @@ fn printed_cost(cost: &Cost, out: &mut Vec<PrintedF>) {
         match *pip {
             Pip::Colored(color) => per_color[color as usize] += 1,
             Pip::Hybrid(_, _) => out.push(PrintedF::HybridPip),
-            Pip::Phyrexian(_) => out.push(PrintedF::PhyrexianPip),
+            Pip::Phyrexian(_) | Pip::PhyrexianAnyColor(_) => out.push(PrintedF::PhyrexianPip),
         }
     }
     for color in ManaColor::ALL {
@@ -331,6 +331,7 @@ fn mana_ability_condition_facts(
                 AggF::Any,
             );
         }
+        crate::card_def::ManaAbilityConditionDef::ControlledLegendaryPermanentHasColor(_) => out.read(RelF::You,Some(ZoneF::Battlefield),Some(ObjF::Permanent),AggF::Count),
         crate::card_def::ManaAbilityConditionDef::SourceEnteredThisTurn => out.read(
             RelF::You,
             Some(ZoneF::Battlefield),
@@ -349,8 +350,15 @@ fn activated(walk: &mut Walk, ctx: CtxF, key: &str, ability: &ActivatedAbilityDe
         sorcery_speed_only,
         activation_target_filter,
         max_activations_per_turn,
+        face,
     } = *ability;
     let program = effect();
+    if let Some(face) = face {
+        // Keep every historical single-faced record byte-identical.
+        walk.rec(&format!("{key}/face"), json!(face));
+        walk.opaque
+            .push("activated ability is restricted to a printed face");
+    }
     walk.rec(
         key,
         json!({
@@ -438,6 +446,8 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         madness_cost,
         mode2,
         mode3,
+        additional_modes,
+        kicked_target_spec,
         is_token,
         escape,
         mana_ability_choices,
@@ -595,11 +605,20 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         }),
     );
 
+    if let Some(spec) = kicked_target_spec {
+        if let Some(op) = spell_effect() {
+            walk.program(CtxF::Mode, "kicked_spell", *spec, &op);
+        }
+    }
     // Resolution programs.
     if let Some(op) = spell_effect() {
         walk.program(CtxF::Spell, "spell", *target_spec, &op);
     }
-    for mode in [mode2, mode3].into_iter().flatten() {
+    for mode in [mode2, mode3]
+        .into_iter()
+        .flatten()
+        .chain(additional_modes.iter())
+    {
         let program = (mode.effect)();
         walk.program(CtxF::Mode, "mode", mode.target_spec, &program);
     }
@@ -775,7 +794,10 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 );
             }
             match restricted.restriction {
-                crate::card_def::ManaSpendRestrictionDef::CreatureSpell => {
+                crate::card_def::ManaSpendRestrictionDef::Unrestricted => {}
+                crate::card_def::ManaSpendRestrictionDef::CreatureSpell
+                | crate::card_def::ManaSpendRestrictionDef::CreatureSpellOrCreatureAbility
+                | crate::card_def::ManaSpendRestrictionDef::LegendarySpell => {
                     out.control(ControlF::Conditional)
                 }
             }
@@ -834,6 +856,7 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
     }
     if let Some(animation) = animation {
         let crate::card_def::AnimationDef {
+            until_end_of_turn,
             power,
             toughness,
             artifact,
@@ -847,6 +870,7 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 "power": power,
                 "toughness": toughness,
                 "artifact": artifact,
+                "until_end_of_turn": until_end_of_turn,
                 "colors": colors.iter().map(|c| format!("{c:?}")).collect::<Vec<_>>(),
                 "subtypes": subtypes.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>(),
                 "keywords": keywords.0,
@@ -1332,6 +1356,18 @@ fn optional_cost_facts(cost: crate::card_def::OptionalAdditionalCostDef, out: &m
 
 fn attachment_facts(aura: AttachmentDef, out: &mut Collector) {
     match aura {
+        AttachmentDef::AuraArtifactAnimation(animation) => {
+            out.effect(EffectAtom::new(EvF::Attach).obj(ObjF::Typed(CardTypeF::Artifact)));
+            out.effect(
+                EffectAtom::new(EvF::SetCharacteristic)
+                    .obj(ObjF::AttachedObject)
+                    .amount(AmtF::stat(
+                        i64::from(animation.power),
+                        i64::from(animation.toughness),
+                    ))
+                    .duration(DurF::WhileOnBattlefield),
+            );
+        }
         AttachmentDef::AuraCreature { prevents_untap } => {
             out.effect(EffectAtom::new(EvF::Attach).obj(ObjF::Typed(CardTypeF::Creature)));
             if prevents_untap {
@@ -1557,6 +1593,20 @@ fn standard_statics(name: &str, walk: &mut Walk) {
                         .player(RelF::You)
                         .obj(ObjF::Typed(CardTypeF::Creature))
                         .duration(DurF::WhileOnBattlefield),
+                );
+            }
+            StandardStaticV1::PowerToughnessEqualsControlledNonlandPermanents => {
+                out.read(
+                    RelF::You,
+                    Some(ZoneF::Battlefield),
+                    Some(ObjF::NonlandPermanent),
+                    AggF::Count,
+                );
+                out.effect(
+                    EffectAtom::new(EvF::SetCharacteristic)
+                        .obj(ObjF::ThisObject)
+                        .amount(AmtF::Dynamic)
+                        .duration(DurF::Permanent),
                 );
             }
             StandardStaticV1::PowerEqualsControlledCreatures => {

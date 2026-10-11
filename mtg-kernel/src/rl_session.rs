@@ -665,6 +665,7 @@ fn flat_cost_kind_v1(kind: CostKind) -> u8 {
         CostKind::RemoveCounters => 10,
         CostKind::PutCounters => 11,
         CostKind::ChooseCreatureOrRevealCreature => 12,
+        CostKind::ExileCraftMaterial => 13,
     }
 }
 
@@ -815,15 +816,26 @@ where
                 push_ref(FlatActionRefRoleV1::Candidate, 0, 0, cost_target)?;
             }
         }
+        ActionSemanticV1::TurnFaceUp { actor, source } => {
+            check_actor(*actor)?;
+            core.kind = FlatActionKindV1::ActivateAbility;
+            core.ability_index = 255;
+            push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+        }
         ActionSemanticV1::ActivateAbility {
             actor,
             source,
             ability_index,
+            granted_ability,
         } => {
             check_actor(*actor)?;
             core.kind = FlatActionKindV1::ActivateAbility;
             core.ability_index = *ability_index;
             push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+            if let Some((donor, local)) = granted_ability.as_ref() {
+                core.number = i32::from(*local);
+                push_ref(FlatActionRefRoleV1::Card, 0, 0, donor)?;
+            }
         }
         ActionSemanticV1::PlotSpell { actor, source } => {
             check_actor(*actor)?;
@@ -844,6 +856,9 @@ where
             core.remaining = *remaining;
             push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
             match target {
+                TargetRefV1::StackItem { .. } => {
+                    return Err(FlatActionDecisionSliceErrorV1::InvalidActionRange)
+                }
                 TargetRefV1::Player { player } => {
                     core.target_kind = 1;
                     core.target_player = flat_relative_seat_v1(*player, expected_actor)? + 1;
@@ -937,6 +952,9 @@ where
             core.max_targets = *max_targets;
             push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
             match target {
+                TargetRefV1::StackItem { .. } => {
+                    return Err(FlatActionDecisionSliceErrorV1::InvalidActionRange)
+                }
                 TargetRefV1::Player { player } => {
                     core.target_kind = 1;
                     core.target_player = flat_relative_seat_v1(*player, expected_actor)? + 1;
@@ -1128,7 +1146,8 @@ where
         }
         ActionSemanticV1::ChooseLegendPermanent { .. }
         | ActionSemanticV1::ChooseLondonMulligan { .. }
-        | ActionSemanticV1::ChooseLondonBottom { .. } => {
+        | ActionSemanticV1::ChooseLondonBottom { .. }
+        | ActionSemanticV1::ChooseAttackTarget { .. } => {
             return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
         }
         #[cfg(feature = "limited-fdn-fixtures")]
@@ -1331,7 +1350,8 @@ fn flat_visible_action_object_components_v1(
         .ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?;
     let owner: PlayerSeatV1 = object.owner.into();
     let controller: PlayerSeatV1 = object.controller.into();
-    if object.card_def != reference.card_db_id
+    if crate::rl::projected_card_def(state, object_id, object.zone_change_count)
+        != reference.card_db_id
         || owner != reference.owner
         || controller != reference.controller
         || object.zone != reference.zone
@@ -1733,6 +1753,15 @@ fn flat_validate_current_decision_relations_v1(
                     )?;
                 }
             }
+            ActionSemanticV1::TurnFaceUp { source, .. } => {
+                flat_validate_controller_zone_v1(
+                    state,
+                    current.actor,
+                    source,
+                    current.actor,
+                    Zone::Battlefield,
+                )?;
+            }
             ActionSemanticV1::ActivateAbility {
                 source,
                 ability_index,
@@ -1753,6 +1782,15 @@ fn flat_validate_current_decision_relations_v1(
                     // The engine reserves exactly the next slot for an
                     // equipment-granted battlefield ability. The authoritative
                     // origin check below still requires that actual offer.
+                    Zone::Battlefield
+                } else if crate::standard_cards_v1::capture_cauldron_grant(
+                    state,
+                    ObjectId(source.arena_id),
+                    *ability_index,
+                )
+                .0
+                .is_some()
+                {
                     Zone::Battlefield
                 } else {
                     return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
@@ -2128,6 +2166,16 @@ fn flat_validate_origin_decision_v1(
             }
             for (object, expected_ability_index) in activatable_abilities {
                 let candidate = &candidates[cursor];
+                if *expected_ability_index == 255 {
+                    if !matches!((&candidate.semantic,&candidate.policy_action),
+                        (ActionSemanticV1::TurnFaceUp{actor,source},PolicyActionV5::Surface(SurfaceAction::Action(Action::ActivateAbility(action,255))))
+                        if actor_matches(*actor,*player)&&flat_ref_matches_object_v1(source,*object)&&action==object)
+                    {
+                        return Err(invalid());
+                    }
+                    cursor += 1;
+                    continue;
+                }
                 if !matches!(
                     (&candidate.semantic, &candidate.policy_action),
                     (
@@ -2135,6 +2183,7 @@ fn flat_validate_origin_decision_v1(
                             actor,
                             source,
                             ability_index,
+                            ..
                         },
                         PolicyActionV5::Surface(SurfaceAction::Action(Action::ActivateAbility(
                             action,
@@ -2629,6 +2678,7 @@ fn flat_validate_origin_decision_v1(
         | Decision::ChooseLegendPermanent { .. }
         | Decision::ChooseLondonMulligan { .. }
         | Decision::ChooseLondonBottom { .. }
+        | Decision::ChooseAttackTarget { .. }
         | Decision::DeclareAttackers { .. }
         | Decision::DeclareBlockers { .. }
         | Decision::GameOver { .. }
@@ -2702,6 +2752,10 @@ fn flat_validate_semantic_policy_pair_v1(
                 && ObjectId(expected_cost_target.arena_id) == *actual_cost_target
         }
         (
+            ActionSemanticV1::TurnFaceUp { source, .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ActivateAbility(actual, 255))),
+        ) => ObjectId(source.arena_id) == *actual,
+        (
             ActionSemanticV1::ActivateAbility {
                 source,
                 ability_index,
@@ -2768,7 +2822,8 @@ fn flat_validate_semantic_policy_pair_v1(
         (
             ActionSemanticV1::ChooseLegendPermanent { .. }
             | ActionSemanticV1::ChooseLondonMulligan { .. }
-            | ActionSemanticV1::ChooseLondonBottom { .. },
+            | ActionSemanticV1::ChooseLondonBottom { .. }
+            | ActionSemanticV1::ChooseAttackTarget { .. },
             _,
         ) => return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic),
         (
@@ -13467,6 +13522,7 @@ mod tests {
                 actor,
                 source: a.clone(),
                 ability_index: 7,
+                granted_ability: Default::default(),
             },
             ActionSemanticV1::PlotSpell {
                 actor,
@@ -14727,6 +14783,7 @@ mod tests {
                 actor: PlayerSeatV1::P1,
                 source: battlefield_source.clone(),
                 ability_index: 3,
+                granted_ability: Default::default(),
             },
         ];
         let mut derived_actions = Vec::new();

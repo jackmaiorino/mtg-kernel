@@ -599,7 +599,7 @@ fn run(
                             rec.player,
                             rec.action_type,
                             legal_targets,
-                            legal_targets.iter().map(|tg| match tg { Target::Player(p) => format!("P{}", p.index()), Target::Object(id) => state.objects.get(*id).name.clone() }).collect::<Vec<_>>()
+                            legal_targets.iter().map(|tg| match tg { Target::Player(p) => format!("P{}", p.index()), Target::Object(id) => state.objects.get(*id).name.clone(), Target::StackItem(id) => format!("stack item {}", id.0) }).collect::<Vec<_>>()
                         );
                     }
                     return Err(format!(
@@ -773,6 +773,9 @@ fn run(
             SurfaceDecision::Decision(Decision::ChooseLegendPermanent { .. }) => {
                 return Err("unhandled-decision:ChooseLegendPermanent".to_string())
             }
+            SurfaceDecision::Decision(Decision::ChooseAttackTarget { .. }) => {
+                return Err("unhandled-decision:ChooseAttackTarget".to_string())
+            }
             SurfaceDecision::Decision(Decision::ChooseLondonMulligan { .. })
             | SurfaceDecision::Decision(Decision::ChooseLondonBottom { .. }) => {
                 return Err("unsupported-london-mulligan-protocol".to_string())
@@ -818,6 +821,7 @@ fn decision_player(d: &SurfaceDecision, state: &GameState) -> Option<PlayerId> {
         | SurfaceDecision::Decision(Decision::ChooseEffectBoolean { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseCombatDamageRange { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseLegendPermanent { player, .. })
+        | SurfaceDecision::Decision(Decision::ChooseAttackTarget { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseLondonMulligan { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseLondonBottom { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseEffectTargets { player, .. })
@@ -1404,6 +1408,7 @@ fn target_key(t: &Target) -> String {
     match t {
         Target::Player(p) => format!("P{}", p.index()),
         Target::Object(id) => format!("O{}", id.0),
+        Target::StackItem(id) => format!("S{}", id.0),
     }
 }
 
@@ -1476,6 +1481,9 @@ fn java_reference_target_shortcut(
 ) -> Option<Target> {
     if !legal_targets.contains(&Target::Player(PlayerId::P0))
         || !legal_targets.contains(&Target::Player(PlayerId::P1))
+        || legal_targets
+            .iter()
+            .any(|target| matches!(target, Target::StackItem(_)))
     {
         return None; // not this pool's AnyTarget shape
     }
@@ -1483,7 +1491,7 @@ fn java_reference_target_shortcut(
         .iter()
         .filter_map(|t| match t {
             Target::Object(id) => Some(state.objects.get(*id).name.as_str()),
-            Target::Player(_) => None,
+            Target::Player(_) | Target::StackItem(_) => None,
         })
         .collect();
     creature_names.sort_unstable();

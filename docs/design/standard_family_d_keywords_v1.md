@@ -1,20 +1,12 @@
 # MageZero Standard family D: new set keywords v1
 
-Third batch of the MageZero Standard catalog (`kernel_carddb_standard/v4`),
-covering mechanic family D of
-`docs/reports/standard_magezero_inventory_v1.md`.
-Every card's printed behavior was read from its XMage card file (path in the
-registry entry). All new behavior is gated on the `standard-magezero-fixtures`
-feature, so the Pauper and FDN Limited identities are unchanged.
-
-The batch adds 18 Full cards and 11 Partial definitions. Across the tracked
-pool, 52 nonbasic cards are Full, 19 are Partial and 154 are missing. No
-complete MageZero deck resolves yet. Partial cards are refused by full-deck
-admission; their current behavior remains available for development.
-
-The fixed v4 identity is `0xd62111f185e47a13`, after these capability
-corrections. The original head's `0x58c7c4e68b6ef277` identified the
-definitions before them.
+Family D of the MageZero Standard v7 completion candidate covers the set keywords
+used by the unchanged deck pool. Printed behavior follows each card's XMage source
+(path in its registry entry) and official rules where needed. The completion includes
+all family D cards and Full admission flags; combined native/runtime verification is
+pending in `docs/reports/standard_completion_v1.md`. The original v4 batch identities
+are historical, and the v7 hash must be frozen from the integration build. Pauper and
+FDN registry files and catalog identities remain separate.
 
 ## Cards
 
@@ -32,7 +24,7 @@ definitions before them.
 | Chrome Host Seedshark | Mono-U | Incubate, Incubator token transform |
 | Brutal Cathar / Moonrage Brute | Mono-W | Daybound, nightbound, ward—pay 3 life |
 | Knight-Errant of Eos | Mono-W | Convoke, look-at-top choice |
-| Flourishing Bloom-Kin | Mono-G | +1/+1 per Forest (disguise omitted, below) |
+| Flourishing Bloom-Kin | Mono-G | +1/+1 per Forest, disguise and face-up Forest choices |
 | Monastery Swiftspear, Heartfire Hero, Slickshot Show-Off | two-color | Prowess, valiant, plot |
 | Sanguine Evangelist, Darkstar Augur | two-color | Battle cry, offspring, upkeep reveal |
 | Ruin-Lurker Bat | two-color | Descend end-step scry |
@@ -68,9 +60,9 @@ Mouse offspring tokens, Incubator, Bat, Monk, White Insect and Spirit.
   each turn begins. Daybound permanents follow it at the state check and
   enter transformed at night. `TriggeredAbilityDef::face_index` lets a
   transform back face carry its own triggers.
-- **Convoke** is the card's alternative cost, so the existing cast-mode choice
-  decides whether to convoke. The number of creatures tapped rides onto the
-  permanent.
+- **Convoke** asks for the creature subset and each tapped creature's mana
+  contribution while paying the spell. The number tapped rides onto the
+  permanent for Knight-Errant's subsequent card selection.
 - **Unearth** is a graveyard activation. The returned creature gains haste,
   its end-step trigger exiles it, and a leave-the-battlefield replacement
   exiles it instead of any other zone (including state-based deaths).
@@ -81,8 +73,8 @@ Mouse offspring tokens, Incubator, Bat, Monk, White Insect and Spirit.
   its controller's end steps.
 - **Enduring** creatures have a death trigger that returns their exact
   graveyard incarnation as a noncreature enchantment under its owner's control.
-- **Casualty** shares Bargain's sacrifice-one optional cost path. A casualty
-  cast puts a copy with the same targets on the stack.
+- **Casualty** shares Bargain's sacrifice-one optional cost path. Its copy
+  trigger creates a spell copy with independently chosen legal targets.
 - **Spree** is modeled as one printed mode per mode set (Phantom Interference:
   Spirit, counter, both). Each mode adds its `+{N}` surcharge to the cast cost,
   and only affordable mode sets are offered.
@@ -94,67 +86,53 @@ Mouse offspring tokens, Incubator, Bat, Monk, White Insect and Spirit.
   the ops). Its name-keyed statics and Spree surcharges are read through
   `standard_keywords_v1::rules_vector_statics` and `spree_extra_generic`.
 
-## Simplifications
+## Completion implementation
 
-Incomplete printed behavior stays Partial. Full deck admission refuses:
+The completion branch replaces the earlier deterministic approximations with
+player choices: optional Ward payments and evidence/discard subsets, convoke
+subsets and Knight-Errant's zero-through-two selection, Hopeful Initiate counter
+payments, and a real casualty copy trigger with independent target choices.
+Cathar returns every card linked to the departing incarnation immediately;
+speed increases through an ordinary triggered ability. Effective creature
+eligibility is used for Enduring and impending sacrifice costs.
 
-| Card | Remaining work |
-| --- | --- |
-| Axebane Ferox | Decline ward or select an evidence subset |
-| Brutal Cathar | Choose ward life payment, allow legal lethal payment; correct until-leaves exile and multiple linked exiles |
-| Graveyard Trespasser | Decline ward or select the discarded card |
-| Hopeful Initiate | Choose the creatures and counters used to pay its activation |
-| Knight-Errant of Eos | Choose convoke creatures and mana; choose zero through two eligible revealed creatures |
-| Make Disappear | Put the casualty trigger on the stack and offer new copy targets |
-| Burnout Bashtronaut | Put the inherent speed trigger on the stack with its response and ordering window |
-| Enduring Curiosity, Enduring Innocence, Overlord of the Mistmoors | Use effective noncreature types throughout costs and effects; Gatekeeper's edict and Dread Return's sacrifice cost still read printed Creature |
-| Flourishing Bloom-Kin | Face-down disguise and its turned-face-up trigger |
+Monstrous Rage creates a Monster Role attached to its exact creature target.
+The Role rule keeps only the newest Role controlled by a player on that host.
+Zoetic Glyph uses the shared timestamped artifact animation profile and its
+death trigger discovers 3. Discover offers a real free cast, with the rejected
+exiles returned in random bottom order after casting completes.
 
-These development approximations remain in the recipes:
+Flourishing Bloom-Kin can be cast face down for three generic mana. Its
+face-down spell and permanent have the public 2/2 colorless creature profile
+and ward 2. The controller pays 4G to turn it face up as a special action,
+then its trigger offers zero through two Forests, choosing the first for the
+battlefield tapped and the second for hand. Index 255 in the existing
+ActivateAbility action envelope is reserved for this special action, with
+a distinct public TurnFaceUp semantic and human label; it
+creates no activated ability, permits ordinary priority timing, and retains
+priority. Losing the face-up disguise ability prevents paying that cost.
 
-- **Ward payments are automatic.** The targeting player always pays a ward
-  cost they can pay: collect evidence exiles the smallest-total qualifying
-  subset, pay life pays when it leaves them above 0, and ward—discard
-  discards their lowest-mana-value card.
-- **Convoke and training costs are chosen deterministically.** Convoke taps
-  creatures in a fixed order, and Hopeful Initiate's counter removal takes
-  from the creature with the most +1/+1 counters.
-- **Casualty's copy keeps the original's targets** and is created immediately
-  as part of casting, not by a separate trigger. No new targets are offered.
-- **Speed increases immediately**, omitting the inherent trigger's response
-  window. A player can otherwise respond before speed 4 grants double strike.
-- **Cori-Steel Cutter's attach choice** is made when the trigger resolves,
-  before the Monk token exists.
-- **Overlord of the Mistmoors' end-step trigger** is only collected while it
-  has time counters.
-- **Not-a-creature permanents** (impending, Enduring enchantments) are handled
-  by the type query, attack and block checks. Other code that reads printed
-  types directly still sees a creature.
-- **Unearth's haste** lasts until end of turn rather than indefinitely, which
-  is equivalent since the creature is exiled at end of turn.
-- **Phantom Interference's both-modes set** creates its Spirit just before the
-  counter program runs, in printed order, because a counter-unless-pays
-  program must stay rooted.
-- **Flourishing Bloom-Kin has no disguise.** The engine has no face-down
-  objects, so it can only be hard-cast and its turned-face-up trigger never
-  fires. Because a printed ability is missing, its registry entry is
-  `partial` and full-deck admission refuses it.
+Collector's Cage privately chooses one of the top five cards, exiles it face
+down, and puts the rest on the bottom in random order. Its exact source link
+survives the source leaving. Each player who controlled that incarnation can
+look at the hidden card. Its activation adds the counter before checking for
+three distinct controlled creature powers and offering the linked card as a
+free spell or a legal land play.
 
-## Deferred
+Generic public references mask face-down definitions. Modern observations
+carry actual identities in a separate authorized-viewer knowledge list; flat
+model rows and action references use the same actor-authorized identity.
+Existing observations and hashes omit these fields when no face-down cards
+exist. Free casting uses the shared parent-resolution continuation and the
+ordinary target, mode, additional-cost, and tax pipeline.
 
-- **Monstrous Rage** needs the creature-Aura static profile from the FDN
-  token and Aura batch (#168). That batch has merged, so it is the next
-  follow-up.
-- **Zoetic Glyph** needs an artifact Aura that makes its host a creature.
-  Family E's vehicles need the same artifact-becomes-creature primitive, so
-  it waits for that batch rather than building it twice. Discover lands with
-  it.
-- **Collector's Cage** needs hideaway's face-down exile.
+Full flags enable completion-candidate admission. Compilation and the combined
+behavior tests remain pending; source and inventory checks do not replace them.
 
 ## Tests
 
 `mtg-kernel/tests/standard_family_d_v1.rs` covers implemented behavior,
-capability refusals, all three Spree mode payments, two pending Incubator
+candidate admission, all three Spree mode payments, two pending Incubator
 activations, battle cry across zone changes, Seedshark with an Omen spell,
 and a stolen Enduring creature's death trigger and owner return. Casualty's
 transformed-Incubator regression exercises effective creature eligibility

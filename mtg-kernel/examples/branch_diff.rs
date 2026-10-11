@@ -434,6 +434,7 @@ fn target_key(t: &Target) -> String {
     match t {
         Target::Player(p) => format!("P{}", p.index()),
         Target::Object(id) => format!("O{}", id.0),
+        Target::StackItem(id) => format!("S{}", id.0),
     }
 }
 
@@ -449,6 +450,9 @@ fn target_name(state: &GameState, t: &Target, p0_name: &str, p1_name: &str) -> S
             }
         }
         Target::Object(id) => state.objects.get(*id).name.clone(),
+        Target::StackItem(id) => {
+            panic!("branch_diff has no Mage-pinned stack-ability target renderer for {id:?}")
+        }
     }
 }
 
@@ -788,6 +792,11 @@ fn fixed_continuation_action(decision: &SurfaceDecision) -> Result<SurfaceAction
         SurfaceDecision::Decision(Decision::ChooseLegendPermanent { candidates, .. }) => {
             Ok(SurfaceAction::Action(Action::ChooseLegendPermanent(
                 *candidates.first().ok_or("empty legend group")?,
+            )))
+        }
+        SurfaceDecision::Decision(Decision::ChooseAttackTarget { candidates, .. }) => {
+            Ok(SurfaceAction::Action(Action::ChooseAttackTarget(
+                *candidates.first().ok_or("empty attack target list")?,
             )))
         }
         SurfaceDecision::Decision(Decision::ChooseCombatDamageRange { .. }) => {

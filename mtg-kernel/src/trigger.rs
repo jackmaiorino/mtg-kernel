@@ -24,6 +24,10 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "standard-magezero-fixtures")]
 mod standard_family_g_v1;
+#[cfg(feature = "standard-magezero-fixtures")]
+mod standard_lands_v2;
+#[cfg(feature = "standard-magezero-fixtures")]
+mod standard_legends_v1;
 
 /// Trigger conditions this increment's kernel can match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -228,6 +232,16 @@ pub enum TriggerCondition {
     /// This source attacks while its controller controls a creature with
     /// effective power at least four. Checked only when the event is captured.
     AttacksWhileControllerHasPowerFourCreature,
+    /// Conditions owned by the Standard catalog's card module.
+    StandardV1(crate::standard_cards_v1::StandardTriggerV1),
+    ControlledArtifactEnters,
+    AttacksIfControllerMostLife,
+    AttacksPlayerWithMostLife,
+    ControlledCreatureOrCreatureSpellBecomesTargetOfOpponent,
+    TurnedFaceUp,
+    CastSpellWithAnyColor(u8),
+    ControlledCreatureWithSubtypeAttacks(Subtype),
+    CastCreatureSpellPowerAtLeast(i32),
 }
 
 pub struct TriggeredAbilityDef {
@@ -354,7 +368,7 @@ fn contains_source_binding_template(effect: &EffectOp) -> bool {
     }
 }
 
-fn battlefield_entry_object(event: &CommittedEvent) -> Option<ObjectId> {
+pub(crate) fn battlefield_entry_object(event: &CommittedEvent) -> Option<ObjectId> {
     match event {
         CommittedEvent::ZoneChange {
             object,
@@ -389,6 +403,11 @@ fn materialize_trigger_event_effect(
                 then: Box::new(materialize_trigger_source_program(*then, source, state)),
             };
         }
+    }
+    if let Some(effect) =
+        crate::standard_cards_v1::materialize_event(&(trigger.effect)(), event, state)
+    {
+        return effect;
     }
     if matches!(
         (trigger.effect)(),
@@ -1082,6 +1101,13 @@ pub fn unselected_trigger_modes(
     effect: &EffectOp,
 ) -> Option<Vec<(TargetSpec, EffectOp)>> {
     let card = crate::card_def::CARD_DEFS.get(card_def as usize)?;
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if card.name == "Ertai Resurrected" && *effect == standard_legends_v1::ertai_effect() {
+        return Some(standard_legends_v1::ertai_modes());
+    }
+    if let Some(modes) = crate::standard_creature_choices_v1::trigger_modes(card_def, effect) {
+        return Some(modes);
+    }
     if card.name == "Apothecary Stomper" && *effect == apothecary_stomper_effect() {
         return Some(apothecary_stomper_modes());
     }
@@ -1667,16 +1693,11 @@ fn warp_exile_effect() -> EffectOp {
 /// When it enters or transforms into Brutal Cathar, exile target creature an
 /// opponent controls until it leaves the battlefield (Journey to Nowhere's
 /// linked exile). Daybound; Moonrage Brute is its nightbound back face.
-const BRUTAL_CATHAR_TRIGGERS: [TriggeredAbilityDef; 3] = [
+const BRUTAL_CATHAR_TRIGGERS: [TriggeredAbilityDef; 2] = [
     etb_trigger(journey_to_nowhere_etb_effect),
     TriggeredAbilityDef {
         condition: TriggerCondition::TransformsIntoFrontFace,
         ..etb_trigger(journey_to_nowhere_etb_effect)
-    },
-    TriggeredAbilityDef {
-        condition: TriggerCondition::LeftBattlefield,
-        home_zone: Zone::Graveyard,
-        ..etb_trigger(journey_to_nowhere_ltb_effect)
     },
 ];
 
@@ -3104,6 +3125,50 @@ const DELVER_OF_SECRETS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
 /// static `CARD_DEFS` entry, but its by-name `match` is a long chain of string
 /// compares, and trigger collection calls it for every object in every zone on
 /// every committed event batch.
+fn tersa_discard_draw() -> EffectOp {
+    EffectOp::DiscardUpToThenDraw {
+        player: PlayerRef::Controller,
+        maximum: 2,
+    }
+}
+fn tersa_random_exile() -> EffectOp {
+    EffectOp::ExileRandomGraveyardCardPlayableThisTurn {
+        player: PlayerRef::Controller,
+        minimum_cards: 7,
+    }
+}
+const TERSA_LIGHTSHATTER_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    etb_trigger(tersa_discard_draw),
+    TriggeredAbilityDef {
+        condition: TriggerCondition::AttacksWithControllerGraveyardCardCountAtLeast(7),
+        ..etb_trigger(tersa_random_exile)
+    },
+];
+fn zoetic_glyph_discover() -> EffectOp {
+    EffectOp::Discover { limit: 3 }
+}
+fn collectors_cage_hideaway() -> EffectOp {
+    EffectOp::Hideaway { count: 5 }
+}
+const ZOETIC_GLYPH_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::LeftBattlefieldToGraveyard,
+    home_zone: Zone::Graveyard,
+    ..etb_trigger(zoetic_glyph_discover)
+}];
+const COLLECTORS_CAGE_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(collectors_cage_hideaway)];
+fn bloom_kin_search() -> EffectOp {
+    EffectOp::SearchLibraryCardsToDestination {
+        player: PlayerRef::Controller,
+        filter: crate::effect::LibraryCardFilter::LandWithSubtype(Subtype::Forest),
+        max_targets: 2,
+        destination: crate::effect::LibrarySearchDestinationV1::FirstBattlefieldTappedRestHand,
+    }
+}
+const BLOOM_KIN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::TurnedFaceUp,
+    ..etb_trigger(bloom_kin_search)
+}];
+
 pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
     static TABLE: std::sync::OnceLock<Box<[&'static [TriggeredAbilityDef]]>> =
         std::sync::OnceLock::new();
@@ -3122,10 +3187,16 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
     if !card.is_executable() {
         return &[];
     }
+    if card.name == "Flourishing Bloom-Kin" {
+        return &BLOOM_KIN_TRIGGERS;
+    }
     if card.equipment.is_some_and(|equipment| equipment.job_select) {
         return &JOB_SELECT_TRIGGERS;
     }
     match card.name {
+        "Tersa Lightshatter" => &TERSA_LIGHTSHATTER_TRIGGERS,
+        "Zoetic Glyph" => &ZOETIC_GLYPH_TRIGGERS,
+        "Collector's Cage" => &COLLECTORS_CAGE_TRIGGERS,
         "Celestial Armor" => &CELESTIAL_ARMOR_TRIGGERS,
         "Exemplar of Light" => &EXEMPLAR_OF_LIGHT_TRIGGERS,
         "Vanguard Seraph" => &VANGUARD_SERAPH_TRIGGERS,
@@ -3196,10 +3267,10 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Guttersnipe" => &GUTTERSNIPE_TRIGGERS,
         "Murmuring Mystic" => &MURMURING_MYSTIC_TRIGGERS,
         "Voldaren Epicure" => &VOLDAREN_EPICURE_TRIGGERS,
-        "Generous Ent" => &GENEROUS_ENT_TRIGGERS,
+        "Generous Ent" | "Tough Cookie" => &GENEROUS_ENT_TRIGGERS,
         "Gingerbread Cabin" => &GINGERBREAD_CABIN_TRIGGERS,
         "Writhing Chrysalis" => &WRITHING_CHRYSALIS_TRIGGERS,
-        "Blood Fountain" => &BLOOD_FOUNTAIN_TRIGGERS,
+        "Blood Fountain" | "Bloodtithe Harvester" => &BLOOD_FOUNTAIN_TRIGGERS,
         "Sagu Wildling" => &SAGU_WILDLING_TRIGGERS,
         "Kessig Flamebreather" => &KESSIG_FLAMEBREATHER_TRIGGERS,
         "Balmor, Battlemage Captain" => &BALMOR_TRIGGERS,
@@ -3281,6 +3352,71 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Enduring Curiosity" => &ENDURING_CURIOSITY_TRIGGERS,
         "Enduring Innocence" => &ENDURING_INNOCENCE_TRIGGERS,
         "Monk Token" => &MONASTERY_SWIFTSPEAR_TRIGGERS,
+        "Kellan, Planar Trailblazer" => &KELLAN_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Tishana's Tidebinder" => &standard_family_g_v1::TIDEBINDER_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Glissa Sunslayer" => &standard_family_g_v1::GLISSA_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Tranquil Frillback" => &standard_family_g_v1::FRILLBACK_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Zoraline, Cosmos Caller" => &standard_family_g_v1::ZORALINE_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Brightglass Gearhulk" => &standard_family_g_v1::BRIGHTGLASS_GEARHULK_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Essence Channeler" => &standard_family_g_v1::ESSENCE_CHANNELER_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Floodpits Drowner" => &standard_family_g_v1::FLOODPITS_DROWNER_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Questing Druid" => &standard_family_g_v1::QUESTING_DRUID_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Mosswood Dreadknight" => &standard_family_g_v1::MOSSWOOD_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Imodane's Recruiter" => &standard_family_g_v1::IMODANE_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Virtue of Loyalty" => &standard_family_g_v1::VIRTUE_LOYALTY_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Sandstorm Salvager" => &standard_family_g_v1::SANDSTORM_SALVAGER_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Preacher of the Schism" => &standard_family_g_v1::PREACHER_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Faerie Dreamthief" => &standard_family_g_v1::FAERIE_DREAMTHIEF_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Teething Wurmlet" => &standard_family_g_v1::TEETHING_WURMLET_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Surrak, Elusive Hunter" => &standard_family_g_v1::SURRAK_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Spyglass Siren" => &standard_family_g_v1::SPYGLASS_SIREN_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Dark Confidant" => &standard_family_g_v1::DARK_CONFIDANT_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Sheoldred, the Apocalypse" => &standard_family_g_v1::SHEOLDRED_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Lagrella, the Magpie" => &self::standard_legends_v1::LAGRELLA,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Shanna, Purifying Blade" => &self::standard_legends_v1::SHANNA,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Djeru and Hazoret" => &self::standard_legends_v1::DJERU,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Gwenna, Eyes of Gaea" => &self::standard_legends_v1::GWENNA,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Ertai Resurrected" => &self::standard_legends_v1::ERTAI,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Halana and Alena, Partners" => &self::standard_legends_v1::HALANA,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Restless Bivouac" => &standard_lands_v2::BIVOUAC,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Restless Cottage" => &standard_lands_v2::COTTAGE,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Restless Fortress" => &standard_lands_v2::FORTRESS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Restless Prairie" => &standard_lands_v2::PRAIRIE,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Restless Vinestalk" => &standard_lands_v2::VINESTALK,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Restless Reef" => &standard_lands_v2::REEF,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Restless Ridgeline" => &standard_lands_v2::RIDGELINE,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Novice Inspector" => &standard_family_g_v1::NOVICE_INSPECTOR_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
@@ -3313,7 +3449,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Extraction Specialist" => &standard_family_g_v1::EXTRACTION_SPECIALIST_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Hullbreaker Horror" => &standard_family_g_v1::HULLBREAKER_HORROR_TRIGGERS,
-        _ => &[],
+        name => crate::standard_cards_v1::triggers_for(name),
     }
 }
 
@@ -3323,6 +3459,13 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         return TargetSpec::None;
     };
     match card.name {
+        "Lagrella, the Magpie" => TargetSpec::UpToTwoOtherCreaturesDifferentControllers,
+        "Halana and Alena, Partners" => TargetSpec::AnotherControlledCreature,
+        "Restless Bivouac" => TargetSpec::ControlledCreature,
+        "Restless Cottage" => TargetSpec::UpToOneCardInGraveyards,
+        "Restless Reef" => TargetSpec::AnyPlayer,
+        "Restless Vinestalk" => TargetSpec::UpToOneOtherCreature,
+        "Restless Ridgeline" => TargetSpec::AnotherAttackingCreature,
         "Celestial Armor" => TargetSpec::ControlledCreature,
         "Sun-Blessed Healer" => TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(2),
         "Elvish Regrower" => TargetSpec::PermanentCardInOwnGraveyard,
@@ -3358,6 +3501,10 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         "Deep-Cavern Bat" | "Hired Claw" => TargetSpec::TargetOpponent,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Extraction Specialist" => TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(2),
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Floodpits Drowner" => TargetSpec::OpponentControlledCreature,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Tishana's Tidebinder" => TargetSpec::UpToOneStackAbility,
         _ => TargetSpec::None,
     }
 }
@@ -3393,6 +3540,13 @@ fn standard_trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetS
                 TargetSpec::None
             })
         }
+        "Quirion Beastcaller" => Some(
+            if matches!(effect, EffectOp::DistributePlusOneCounters { .. }) {
+                TargetSpec::CounterDistribution
+            } else {
+                TargetSpec::None
+            },
+        ),
         "Graveyard Trespasser" => Some(match effect {
             EffectOp::ExileGraveyardTargetsDrainPerCreature { max_targets: 1 } => {
                 TargetSpec::UpToOneCardInGraveyards
@@ -3436,7 +3590,7 @@ pub(crate) fn required_optional_additional_cost_for_trigger(
 
 /// Authenticates the finite set of effects a definition-owned trigger can
 /// place on the stack, including Moon-Circuit Hacker's event-frozen branch.
-fn source_bound_trigger_program_matches(template: &EffectOp, effect: &EffectOp) -> bool {
+pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: &EffectOp) -> bool {
     if template == effect {
         return true;
     }
@@ -3512,11 +3666,14 @@ fn source_bound_trigger_program_matches(template: &EffectOp, effect: &EffectOp) 
                 ..
             },
         ) => count == actual_count && max_taken == actual_max_taken,
-        _ => false,
+        _ => crate::standard_cards_v1::template_matches(template, effect),
     }
 }
 
 pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
+    if crate::standard_creature_choices_v1::trigger_target_spec(card_def, effect).is_some() {
+        return true;
+    }
     let Some(card) = crate::card_def::CARD_DEFS.get(card_def as usize) else {
         return false;
     };
@@ -3562,6 +3719,30 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
     {
         return true;
     }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if card.name == "Ertai Resurrected"
+        && standard_legends_v1::ertai_modes()
+            .iter()
+            .any(|(_, branch)| branch == effect)
+    {
+        return true;
+    }
+    if matches!(
+        (card.name, effect),
+        (
+            "Melira, the Living Cure",
+            EffectOp::StandardLegendV1(
+                crate::standard_legends_v1::LegendEffectV1::ReturnBoundPermanent(_)
+            )
+        ) | (
+            "Lagrella, the Magpie",
+            EffectOp::StandardLegendV1(
+                crate::standard_legends_v1::LegendEffectV1::CountersOnReturnedPermanent(_)
+            )
+        )
+    ) {
+        return true;
+    }
     if triggers_for(card_def)
         .iter()
         .any(|trigger| source_bound_trigger_program_matches(&(trigger.effect)(), effect))
@@ -3569,6 +3750,16 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
         return true;
     }
 
+    if card.name == "Burnout Bashtronaut" && matches!(effect, EffectOp::IncreaseSpeed { .. }) {
+        return true;
+    }
+    if matches!(
+        card.optional_additional_cost,
+        Some(crate::card_def::OptionalAdditionalCostDef::Casualty(_))
+    ) && matches!(effect, EffectOp::CopySpellSnapshot { .. })
+    {
+        return true;
+    }
     if card.name == "Weather the Storm" && matches!(effect, EffectOp::CreateStormCopies { .. }) {
         return true;
     }
@@ -3587,6 +3778,9 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    if let Some(spec) = crate::standard_creature_choices_v1::trigger_target_spec(card_def, effect) {
+        return Some(spec);
+    }
     // The monarch end-step draw trigger is engine-owned like Initiative's
     // Undercity trigger, but (unlike Avenging Hunter's fixed Initiative
     // source) its source is never one fixed card: Azure Fleet Admiral's ETB
@@ -3600,6 +3794,18 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
     if matches!(effect, EffectOp::ResolveMonarchTrigger { .. }) {
         return Some(TargetSpec::None);
     }
+    // Reflection of Kiki-Jiki's delayed "sacrifice it" trigger belongs to
+    // whatever token it copied; `engine` checks that exact incarnation.
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if matches!(
+        effect,
+        EffectOp::StandardV1(
+            crate::standard_cards_v1::StandardOpV1::SacrificeSourceAtEndStep
+                | crate::standard_cards_v1::StandardOpV1::SacrificeBoundAtEndStep { .. }
+        )
+    ) {
+        return Some(TargetSpec::None);
+    }
     if !trigger_effect_matches(card_def, effect) {
         return None;
     }
@@ -3609,6 +3815,38 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
         return Some(TargetSpec::None);
     }
     let card = crate::card_def::CARD_DEFS.get(card_def as usize)?;
+    if card.name == "Essence Channeler" {
+        return Some(
+            if matches!(
+                effect,
+                EffectOp::CreatureUpgrade(
+                    crate::standard_creatures_v1::CreatureEffectV1::EssenceTransferCounters
+                )
+            ) {
+                TargetSpec::ControlledCreature
+            } else {
+                TargetSpec::None
+            },
+        );
+    }
+    if matches!(
+        effect,
+        EffectOp::StandardLegendV1(
+            crate::standard_legends_v1::LegendEffectV1::ReturnBoundPermanent(_)
+                | crate::standard_legends_v1::LegendEffectV1::CountersOnReturnedPermanent(_)
+        )
+    ) {
+        return Some(TargetSpec::None);
+    }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if card.name == "Ertai Resurrected" {
+        return Some(
+            standard_legends_v1::ertai_modes()
+                .iter()
+                .find(|(_, branch)| branch == effect)
+                .map_or(TargetSpec::None, |(spec, _)| *spec),
+        );
+    }
     if card.name == "Apothecary Stomper" {
         return Some(
             apothecary_stomper_modes()
@@ -3641,6 +3879,9 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
             TargetSpec::TargetOpponent
         } else if card.name == "Journey to Nowhere" && *effect == journey_to_nowhere_etb_effect() {
             TargetSpec::CreatureOtherThanSource
+        } else if let Some(spec) = crate::standard_cards_v1::trigger_target_spec(card.name, effect)
+        {
+            spec
         } else if card.name == "Avenging Hunter" {
             match effect {
                 EffectOp::ResolveInitiativeTrigger { binding } => match binding.kind {
@@ -3704,7 +3945,8 @@ pub struct PendingTrigger {
     /// across later zone changes of the same physical card.
     #[serde(default)]
     pub source_contract: Option<AbilitySourceContractV4>,
-    /// Exact Equipment incarnation that granted this trigger to `source`.
+    /// Exact source incarnation that granted this trigger, either attached
+    /// Equipment or the host's own earlier upgrading activation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub granted_by: Option<AbilitySourceContractV4>,
     /// Exact cast-scoped optional additional cost inherited by this ETB.
@@ -3795,6 +4037,8 @@ fn sba_fixed_point_with_protected_triggers(
     protected_triggers: &[PendingTrigger],
 ) {
     loop {
+        #[cfg(feature = "standard-magezero-fixtures")]
+        crate::standard_cards_v1::refresh_aegis_copies(state);
         if crate::legend_rule_v1::stage(state, protected_triggers) {
             return;
         }
@@ -3858,12 +4102,23 @@ fn sba_fixed_point_with_protected_triggers(
                     return None;
                 }
                 let definition = &crate::card_def::CARD_DEFS[aura.card_def as usize];
-                if !definition
-                    .attachment
-                    .is_some_and(crate::card_def::AttachmentDef::is_creature_aura)
-                {
-                    return None;
+                if crate::standard_cards_v1::is_aura(definition) {
+                    // This module's Auras: the enchant restriction includes
+                    // control ("enchant creature you control").
+                    let valid = aura.v4.attached_to.is_some_and(|link| {
+                        state.objects.try_get(link.object).is_some_and(|host| {
+                            host.zone_change_count == link.zone_change_count
+                                && host.attachments.contains(&id)
+                        }) && crate::standard_cards_v1::aura_host_legal(
+                            definition,
+                            aura.controller,
+                            link.object,
+                            state,
+                        ) == Some(true)
+                    });
+                    return (!valid).then_some(id);
                 }
+                let attachment = definition.attachment?;
                 let valid = aura.v4.attached_to.is_some_and(|link| {
                     state.objects.try_get(link.object).is_some_and(|host| {
                         host.zone == Zone::Battlefield
@@ -3871,7 +4126,7 @@ fn sba_fixed_point_with_protected_triggers(
                             && crate::engine::object_has_type(
                                 state,
                                 link.object,
-                                crate::card_def::CardType::Creature,
+                                attachment.enchanted_type(),
                             )
                             && host.attachments.contains(&id)
                     })
@@ -3880,6 +4135,46 @@ fn sba_fixed_point_with_protected_triggers(
             })
             .collect::<Vec<_>>();
         for id in invalid_auras {
+            crate::event::commit(
+                state,
+                crate::event::ProposedEvent::zone_change(id, Zone::Graveyard),
+            );
+            changed = true;
+        }
+
+        // 704.5: one Role per controller may enchant a permanent. Keep the
+        // newest timestamp, independently for each controller, at the SBA
+        // checkpoint after the resolving effect has finished.
+        let obsolete_roles = state
+            .objects
+            .iter()
+            .filter_map(|(id, role)| {
+                if role.zone != Zone::Battlefield
+                    || !crate::card_def::CARD_DEFS[role.card_def as usize]
+                        .subtypes
+                        .contains(&crate::card_def::Subtype::Role)
+                {
+                    return None;
+                }
+                let host = role.v4.attached_to?;
+                let timestamp = role.v4.layer_timestamp.unwrap_or(0);
+                state
+                    .objects
+                    .iter()
+                    .any(|(other_id, other)| {
+                        other_id != id
+                            && other.zone == Zone::Battlefield
+                            && other.controller == role.controller
+                            && other.v4.attached_to == Some(host)
+                            && crate::card_def::CARD_DEFS[other.card_def as usize]
+                                .subtypes
+                                .contains(&crate::card_def::Subtype::Role)
+                            && other.v4.layer_timestamp.unwrap_or(0) > timestamp
+                    })
+                    .then_some(id)
+            })
+            .collect::<Vec<_>>();
+        for id in obsolete_roles {
             crate::event::commit(
                 state,
                 crate::event::ProposedEvent::zone_change(id, Zone::Graveyard),
@@ -3944,7 +4239,10 @@ fn sba_fixed_point_with_protected_triggers(
         let leaving: Vec<ObjectId> = state
             .objects
             .iter()
-            .filter(|(_, obj)| obj.zone != Zone::Battlefield && token_defs[obj.card_def as usize])
+            .filter(|(_, obj)| {
+                obj.zone != Zone::Battlefield
+                    && (token_defs[obj.card_def as usize] || obj.v4.is_token)
+            })
             .map(|(id, _)| id)
             .collect();
         for id in leaving {
@@ -3967,13 +4265,13 @@ pub fn collect_and_process(state: &mut GameState) -> Vec<PendingTrigger> {
     collect_and_process_with_waiting(state, Vec::new())
 }
 
-pub(crate) fn collect_and_process_with_waiting(
-    state: &mut GameState,
-    mut waiting: Vec<PendingTrigger>,
-) -> Vec<PendingTrigger> {
-    if state.pending_legend_rule_v1.is_some() {
-        return Vec::new();
-    }
+/// Capture events at their current characteristics without checking SBAs or
+/// placing abilities on the stack. A resolving instruction may cast several
+/// spells; each cast must capture its triggers before the next one changes
+/// spell counts, source membership, or other trigger conditions.
+pub(crate) fn capture_triggers_without_sba(state: &mut GameState) -> Vec<PendingTrigger> {
+    crate::engine::refresh_face_down_lookers(state);
+    let mut waiting = Vec::new();
     match crate::life_gain_turn_v1::take_captures(state) {
         Ok(captures) => waiting.extend(captures),
         Err(source) => {
@@ -3985,14 +4283,12 @@ pub(crate) fn collect_and_process_with_waiting(
         }
     }
     let events: Vec<CommittedEvent> = state.engine.event_log.drain(..).collect();
-    // Single-shot: `engine::resolve_top_of_stack` set this immediately
-    // before the resolution whose events we're about to match, explicitly
-    // (`Some`/`None`) every single time -- taking it here means it can never
-    // carry over into a later, unrelated `collect_and_process` call (see
-    // `EngineState::pending_kicked_source`'s doc).
-    let kicked_source = state.engine.pending_kicked_source.take();
+    // The resolution owner retains this marker until its final checkpoint.
+    // Events are drained once, so keeping it through a partial capture cannot
+    // duplicate any trigger.
+    let kicked_source = state.engine.pending_kicked_source;
     #[cfg(feature = "standard-magezero-fixtures")]
-    crate::standard_keywords_v1::note_life_loss(state, &events);
+    waiting.extend(crate::standard_keywords_v1::note_life_loss(state, &events));
 
     // Trigger conditions are evaluated at the moment their event happens,
     // before the following SBA check (603.2/704.3). In particular, an ETB
@@ -4000,6 +4296,22 @@ pub(crate) fn collect_and_process_with_waiting(
     // check, so match the pre-SBA batch while its sources still occupy the
     // zones from which their abilities function.
     waiting.extend(triggers_from_events(state, &events, kicked_source));
+    waiting
+}
+
+pub(crate) fn collect_and_process_with_waiting(
+    state: &mut GameState,
+    mut waiting: Vec<PendingTrigger>,
+) -> Vec<PendingTrigger> {
+    if state.pending_legend_rule_v1.is_some() {
+        return Vec::new();
+    }
+    waiting.extend(capture_triggers_without_sba(state));
+    // This checkpoint ends the resolving item's ownership of its kick marker.
+    state.engine.pending_kicked_source = None;
+    if state.engine.halted.is_some() {
+        return Vec::new();
+    }
     let mut new_triggers = waiting;
 
     // Conversely, SBAs can create new trigger events themselves. Lethal
@@ -4013,7 +4325,10 @@ pub(crate) fn collect_and_process_with_waiting(
     }
     let sba_events: Vec<CommittedEvent> = state.engine.event_log.drain(..).collect();
     #[cfg(feature = "standard-magezero-fixtures")]
-    crate::standard_keywords_v1::note_life_loss(state, &sba_events);
+    new_triggers.extend(crate::standard_keywords_v1::note_life_loss(
+        state,
+        &sba_events,
+    ));
     new_triggers.extend(triggers_from_events(state, &sba_events, None));
 
     // 603.3d: a triggered ability requiring targets is removed from the
@@ -4065,344 +4380,463 @@ fn triggers_from_events(
                         && object.zone_change_count == entry.source.zone_change_count
                 })
     });
+    let mut new_triggers = state.legend_pending_v1.take().unwrap_or_default();
     if events.is_empty() {
         // Nothing can match an empty batch; only the use-ledger pruning
         // above is observable.
         uses.sort_by_key(|entry| (entry.source.object, entry.ability_index));
         state.trigger_uses_v1 = (!uses.is_empty()).then_some(uses);
-        return Vec::new();
+        return new_triggers;
     }
     let draws_this_turn_at = draws_this_turn_snapshot(events, state);
-    let mut new_triggers = Vec::new();
     let may_trigger = card_defs_with_event_triggers();
-    for (id, obj) in state.objects.iter() {
-        // Most objects (lands, vanilla creatures, every library card of a
-        // definition with no triggered ability) can never match; skip them
-        // without touching their large `CardDef` entry.
-        if !may_trigger[obj.card_def as usize] {
-            continue;
-        }
-        let card = &crate::card_def::CARD_DEFS[obj.card_def as usize];
-        if !card.is_executable() {
-            continue;
-        }
-        if let Some(saga) = card.saga.as_ref() {
-            for ev in events {
-                let CommittedEvent::SagaChapter {
-                    source,
-                    source_zone_change_count,
-                    controller,
-                    chapter,
-                } = ev
-                else {
-                    continue;
-                };
-                if *source != id
-                    || *chapter == 0
-                    || usize::from(*chapter) > saga.chapter_effects.len()
-                    || obj.zone_change_count < *source_zone_change_count
-                    || (obj.zone_change_count == *source_zone_change_count
-                        && (obj.zone != Zone::Battlefield || obj.v4.face_index != 0))
-                {
-                    continue;
-                }
-                let effect = (saga.chapter_effects[usize::from(*chapter - 1)])();
-                new_triggers.push(PendingTrigger {
-                    controller: *controller,
-                    source: id,
-                    target_spec: target_spec_for_trigger(obj.card_def, &effect)
-                        .expect("Saga chapter effect is definition-owned"),
-                    effect,
-                    is_madness_offer: false,
-                    kicked: false,
-                    targets: Vec::new(),
-                    target_contracts: Vec::new(),
-                    placement_ordered: false,
-                    source_contract: Some(AbilitySourceContractV4 {
-                        source: id,
-                        card_def: obj.card_def,
-                        owner: obj.owner,
-                        controller: *controller,
-                        zone: Zone::Battlefield,
-                        zone_change_count: *source_zone_change_count,
-                        attached_to: None,
-                    }),
-                    granted_by: None,
-                    optional_additional_cost_paid: None,
-                    paid_cost_refs: Vec::new(),
-                });
+    let mut copied_definitions = Vec::new();
+    for event in events {
+        if let CommittedEvent::LeftBattlefieldCopyV1 { source, .. } = event {
+            let key = (source.source, source.card_def);
+            if !copied_definitions.contains(&key) {
+                copied_definitions.push(key);
             }
         }
-        for (ability_index, def) in triggers_for(obj.card_def).iter().enumerate() {
-            // These abilities were captured at the actual life-gain commit,
-            // before later operations can change battlefield membership.
-            if matches!(
-                def.condition,
-                TriggerCondition::ControllerFirstLifeGain { .. }
-            ) {
-                continue;
-            }
-            let uses_leave_lki = matches!(
-                def.condition,
-                TriggerCondition::LeftBattlefieldToGraveyard
-                    | TriggerCondition::LeftBattlefield
-                    | TriggerCondition::DiesWithoutCounters
-            );
-            // Enduring keeps a graveyard-incarnation binding for its return,
-            // but its death ability and controller come from the battlefield.
-            let uses_death_lki =
-                uses_leave_lki || def.condition == TriggerCondition::DiesIfWasCreature;
-            if !uses_leave_lki
-                && (obj.zone != def.home_zone
-                    || !crate::continuous_characteristics_v1::printed_abilities_active(state, id))
-            {
-                continue;
-            }
-            // A `TriggeredAbilityDef` names one printed face's ability text
-            // (Delver of Secrets: the trigger prints on the front half only,
-            // Insectile Aberration carries none). `face_index` can only be
-            // nonzero for a battlefield permanent with a `transform_face`,
-            // and any zone change resets it to 0 (`reset_for_zone_change`),
-            // so this is a no-op for every `uses_leave_lki`/non-battlefield
-            // home zone case; it mirrors the same "front face only"
-            // exclusion the Saga chapter/completion paths already apply
-            // unconditionally (`obj.v4.face_index != 0` at this file's own
-            // SBA and chapter-matching sites).
-            if obj.v4.face_index != def.face_index {
-                continue;
-            }
-            for (i, ev) in events.iter().enumerate() {
-                if uses_death_lki && i.checked_sub(1).and_then(|index| events.get(index)).is_some_and(|event| matches!(event, CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange { object, .. } if *object == id)) {
-                    continue;
-                }
-                let event_controller = match ev {
-                    CommittedEvent::ZoneChange {
-                        object,
-                        from: Zone::Battlefield,
-                        controller_before,
-                        ..
-                    } if *object == id && uses_death_lki => *controller_before,
-                    _ => obj.controller,
-                };
+    }
+    for (id, live_obj) in state.objects.iter() {
+        // Resolution-granted abilities belong to the host incarnation, even
+        // after it stops copying the definition that supplied the activation.
+        if let Some(grant) = crate::standard_creatures_v1::combat_impulse_grant(state, id) {
+            for (index, event) in events.iter().enumerate() {
                 if trigger_matches(
-                    def.condition,
-                    ev,
+                    TriggerCondition::DealsCombatDamageToPlayer,
+                    event,
                     id,
-                    event_controller,
+                    live_obj.controller,
                     state,
-                    draws_this_turn_at[i],
+                    draws_this_turn_at[index],
                 ) {
-                    let kicked = Some(id) == kicked_source;
-                    if def.intervening_if_kicked && !kicked {
-                        continue;
-                    }
-                    if def.intervening_if_controls_another_source_card {
-                        let source_def = obj.card_def;
-                        let controls_another = state.players[event_controller.index()]
-                            .battlefield
-                            .iter()
-                            .copied()
-                            .any(|other| {
-                                other != id && state.objects.get(other).card_def == source_def
-                            });
-                        if !controls_another {
-                            continue;
-                        }
-                    }
-                    let effect = if card.name == "Moon-Circuit Hacker"
-                        && matches!(def.condition, TriggerCondition::DealsCombatDamageToPlayer)
-                    {
-                        moon_circuit_hacker_combat_effect_for_entered_this_turn(
-                            obj.v4.entered_battlefield_turn == Some(state.turn),
-                        )
-                    } else {
-                        #[cfg(feature = "standard-magezero-fixtures")]
-                        if card.name == "Quirion Beastcaller"
-                            && matches!(def.condition, TriggerCondition::LeftBattlefieldToGraveyard)
-                        {
-                            standard_family_g_v1::quirion_beastcaller_dies_effect(
-                                state,
-                                id,
-                                event_controller,
-                            )
-                        } else {
-                            materialize_trigger_event_effect(def, id, state, ev)
-                        }
-                        #[cfg(not(feature = "standard-magezero-fixtures"))]
-                        materialize_trigger_event_effect(def, id, state, ev)
-                    };
-                    let required_optional_cost =
-                        required_optional_additional_cost_for_trigger(obj.card_def, &effect);
-                    let (paid_optional_cost, paid_cost_refs) =
-                        if let Some(required) = required_optional_cost {
-                            let matching = events
-                                .iter()
-                                .filter_map(|event| match event {
-                                    CommittedEvent::OptionalAdditionalCostPaid {
-                                        source,
-                                        kind,
-                                        paid_cost_refs,
-                                    } if *source == id => Some((*kind, paid_cost_refs.clone())),
-                                    _ => None,
-                                })
-                                .collect::<Vec<_>>();
-                            let [(kind, refs)] = matching.as_slice() else {
-                                continue;
-                            };
-                            if *kind != required {
-                                continue;
-                            }
-                            (Some(required), refs.clone())
-                        } else {
-                            (None, Vec::new())
-                        };
-                    let target_spec =
-                        target_spec_for_trigger(obj.card_def, &effect).unwrap_or(TargetSpec::None);
-                    if let Some(maximum) = per_turn_trigger_cap(def.condition) {
-                        let ability_index =
-                            u16::try_from(ability_index).expect("bounded definition abilities");
-                        let source = crate::state::ObjectLinkV4 {
-                            object: id,
-                            zone_change_count: obj.zone_change_count,
-                        };
-                        if let Some(entry) = uses.iter_mut().find(|entry| {
-                            entry.source == source && entry.ability_index == ability_index
-                        }) {
-                            if entry.uses >= maximum {
-                                continue;
-                            }
-                            entry.uses += 1;
-                        } else {
-                            if maximum == 0 {
-                                continue;
-                            }
-                            uses.push(crate::state::TriggerUseV1 {
-                                source,
-                                ability_index,
-                                turn: state.turn,
-                                active_player: state.active_player,
-                                uses: 1,
-                            });
-                        }
-                    }
-                    let source_contract = match ev {
-                        CommittedEvent::ZoneChange {
-                            object,
-                            from,
-                            controller_before,
-                            ..
-                        } if *object == id && uses_leave_lki => {
-                            let Some(zone_change_count) = obj.zone_change_count.checked_sub(1)
-                            else {
-                                continue;
-                            };
-                            Some(AbilitySourceContractV4 {
-                                source: id,
-                                card_def: obj.card_def,
-                                owner: obj.owner,
-                                controller: *controller_before,
-                                zone: *from,
-                                zone_change_count,
-                                attached_to: None,
-                            })
-                        }
-                        _ if obj.zone == Zone::Stack => None,
-                        _ => {
-                            let mut contract = AbilitySourceContractV4::capture(state, id);
-                            contract.controller = event_controller;
-                            Some(contract)
-                        }
-                    };
                     new_triggers.push(PendingTrigger {
-                        controller: event_controller,
+                        controller: live_obj.controller,
                         source: id,
-                        granted_by: None,
-                        effect,
-                        is_madness_offer: false,
-                        kicked,
-                        target_spec,
-                        targets: Vec::new(),
-                        target_contracts: Vec::new(),
-                        placement_ordered: false,
-                        source_contract,
-                        optional_additional_cost_paid: paid_optional_cost,
-                        paid_cost_refs,
-                    });
-                }
-            }
-        }
-        if obj.zone == Zone::Battlefield
-            && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
-        {
-            let ward_cost = card.ward_cost.filter(|cost| match cost {
-                crate::card_def::WardCostDef::BackFacePayLife(_) => obj.v4.face_index == 1,
-                crate::card_def::WardCostDef::DiscardCard => true,
-                _ => obj.v4.face_index == 0,
-            });
-            if let Some(ward_cost) = ward_cost {
-                for event in events {
-                    let CommittedEvent::Targeted {
-                        target,
-                        target_zone_change_count,
-                        targeting_stack_item,
-                        targeting_controller,
-                    } = event
-                    else {
-                        continue;
-                    };
-                    if *target != id
-                        || *target_zone_change_count != obj.zone_change_count
-                        || *targeting_controller == obj.controller
-                    {
-                        continue;
-                    }
-                    let ward_target = crate::state::StackTargetContractV4::capture(
-                        state,
-                        crate::state::Target::Object(id),
-                    );
-                    new_triggers.push(PendingTrigger {
-                        controller: obj.controller,
-                        source: id,
-                        granted_by: None,
-                        effect: match ward_cost {
-                            crate::card_def::WardCostDef::Generic(generic) => {
-                                EffectOp::CounterUnlessPaysGeneric {
-                                    ward_target,
-                                    targeting_stack_item: *targeting_stack_item,
-                                    generic,
-                                }
-                            }
-                            crate::card_def::WardCostDef::CollectEvidence(minimum_mana_value) => {
-                                EffectOp::CounterUnlessCollectsEvidence {
-                                    ward_target,
-                                    targeting_stack_item: *targeting_stack_item,
-                                    minimum_mana_value,
-                                }
-                            }
-                            crate::card_def::WardCostDef::DiscardCard => {
-                                EffectOp::CounterUnlessDiscardsCard {
-                                    ward_target,
-                                    targeting_stack_item: *targeting_stack_item,
-                                }
-                            }
-                            crate::card_def::WardCostDef::BackFacePayLife(life) => {
-                                EffectOp::CounterUnlessPaysLife {
-                                    ward_target,
-                                    targeting_stack_item: *targeting_stack_item,
-                                    life,
-                                }
-                            }
-                        },
+                        source_contract: Some(AbilitySourceContractV4::capture(state, id)),
+                        granted_by: Some(grant),
+                        effect: kellan_impulse_effect(),
                         is_madness_offer: false,
                         kicked: false,
                         target_spec: TargetSpec::None,
                         targets: Vec::new(),
                         target_contracts: Vec::new(),
                         placement_ordered: false,
-                        source_contract: Some(AbilitySourceContractV4::capture(state, id)),
                         optional_additional_cost_paid: None,
                         paid_cost_refs: Vec::new(),
                     });
+                }
+            }
+        }
+        for definition in
+            std::iter::once(live_obj.card_def).chain(copied_definitions.iter().filter_map(
+                |(source, definition)| {
+                    (*source == id && *definition != live_obj.card_def).then_some(*definition)
+                },
+            ))
+        {
+            let snapshot;
+            let obj = if definition == live_obj.card_def {
+                live_obj
+            } else {
+                snapshot = crate::state::GameObject {
+                    card_def: definition,
+                    ..live_obj.clone()
+                };
+                &snapshot
+            };
+            // Most objects (lands, vanilla creatures, every library card of a
+            // definition with no triggered ability) can never match; skip them
+            // without touching their large `CardDef` entry.
+            if !may_trigger[obj.card_def as usize]
+                && (obj.attachments.is_empty()
+                    || crate::standard_cards_v1::granted_wards(state, id).is_empty())
+            {
+                continue;
+            }
+            let card = &crate::card_def::CARD_DEFS[obj.card_def as usize];
+            if !card.is_executable() {
+                continue;
+            }
+            if let Some(saga) = card.saga.as_ref() {
+                for ev in events {
+                    let CommittedEvent::SagaChapter {
+                        source,
+                        source_zone_change_count,
+                        controller,
+                        chapter,
+                    } = ev
+                    else {
+                        continue;
+                    };
+                    if *source != id
+                        || *chapter == 0
+                        || usize::from(*chapter) > saga.chapter_effects.len()
+                        || obj.zone_change_count < *source_zone_change_count
+                        || (obj.zone_change_count == *source_zone_change_count
+                            && (obj.zone != Zone::Battlefield || obj.v4.face_index != 0))
+                    {
+                        continue;
+                    }
+                    let effect = (saga.chapter_effects[usize::from(*chapter - 1)])();
+                    new_triggers.push(PendingTrigger {
+                        controller: *controller,
+                        source: id,
+                        target_spec: target_spec_for_trigger(obj.card_def, &effect)
+                            .expect("Saga chapter effect is definition-owned"),
+                        effect,
+                        is_madness_offer: false,
+                        kicked: false,
+                        targets: Vec::new(),
+                        target_contracts: Vec::new(),
+                        placement_ordered: false,
+                        source_contract: Some(AbilitySourceContractV4 {
+                            source: id,
+                            card_def: obj.card_def,
+                            owner: obj.owner,
+                            controller: *controller,
+                            zone: Zone::Battlefield,
+                            zone_change_count: *source_zone_change_count,
+                            attached_to: None,
+                        }),
+                        granted_by: None,
+                        optional_additional_cost_paid: None,
+                        paid_cost_refs: Vec::new(),
+                    });
+                }
+            }
+            for (ability_index, def) in triggers_for(obj.card_def).iter().enumerate() {
+                // Kept in the definition table for mechanical description;
+                // its runtime producer is the persisted grant above.
+                if crate::standard_creatures_v1::grants_combat_impulse(obj.card_def)
+                    && (def.effect)() == kellan_impulse_effect()
+                {
+                    continue;
+                }
+                // These abilities were captured at the actual life-gain commit,
+                // before later operations can change battlefield membership.
+                if matches!(
+                    def.condition,
+                    TriggerCondition::ControllerFirstLifeGain { .. }
+                ) {
+                    continue;
+                }
+                let uses_leave_lki = matches!(
+                    def.condition,
+                    TriggerCondition::LeftBattlefieldToGraveyard
+                        | TriggerCondition::LeftBattlefield
+                        | TriggerCondition::DiesWithoutCounters
+                        | TriggerCondition::DiesIfWasCreature
+                        | TriggerCondition::StandardV1(_)
+                );
+                // Enduring keeps a graveyard-incarnation binding for its return,
+                // but its death ability and controller come from the battlefield.
+                let uses_death_lki =
+                    uses_leave_lki || def.condition == TriggerCondition::DiesIfWasCreature;
+                let ability_active =
+                    crate::continuous_characteristics_v1::printed_abilities_active(state, id);
+                if !uses_leave_lki && (obj.zone != def.home_zone || !ability_active) {
+                    continue;
+                }
+                // A `TriggeredAbilityDef` names one printed face's ability text
+                // (Delver of Secrets: the trigger prints on the front half only,
+                // Insectile Aberration carries none). `face_index` can only be
+                // nonzero for a battlefield permanent with a `transform_face`,
+                // and any zone change resets it to 0 (`reset_for_zone_change`),
+                // so this is a no-op for every `uses_leave_lki`/non-battlefield
+                // home zone case; it mirrors the same "front face only"
+                // exclusion the Saga chapter/completion paths already apply
+                // unconditionally (`obj.v4.face_index != 0` at this file's own
+                // SBA and chapter-matching sites).
+                // Leave triggers check the face that left (per event, below).
+                let printed_face = def.face_index;
+                if !uses_leave_lki && obj.v4.face_index != printed_face {
+                    continue;
+                }
+                for (i, ev) in events.iter().enumerate() {
+                    let copied_departure =
+                        crate::standard_cards_v1::copied_departure_at(events, i, id);
+                    let event_definition = if matches!(ev,CommittedEvent::ZoneChange { object, from: Zone::Battlefield, .. } if *object == id)
+                    {
+                        copied_departure.map_or(live_obj.card_def, |source| source.card_def)
+                    } else {
+                        live_obj.card_def
+                    };
+                    if definition != event_definition {
+                        continue;
+                    }
+                    if let TriggerCondition::StandardV1(condition) = def.condition {
+                        if !crate::standard_cards_v1::trigger_matches(
+                            condition, events, i, id, state,
+                        ) {
+                            continue;
+                        }
+                    } else if uses_leave_lki
+                        && crate::standard_cards_v1::departure_face(events, i, id)
+                            .unwrap_or(obj.v4.face_index)
+                            != printed_face
+                    {
+                        continue;
+                    }
+                    if uses_leave_lki && i.checked_sub(1).and_then(|index| events.get(index)).is_some_and(|event| matches!(event, CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange { object, .. } if *object == id)) {
+                    continue;
+                }
+                    let event_controller = match ev {
+                        CommittedEvent::ZoneChange {
+                            object,
+                            from: Zone::Battlefield,
+                            controller_before,
+                            ..
+                        } if *object == id && uses_death_lki => *controller_before,
+                        _ => obj.controller,
+                    };
+                    if trigger_matches(
+                        def.condition,
+                        ev,
+                        id,
+                        event_controller,
+                        state,
+                        draws_this_turn_at[i],
+                    ) {
+                        let kicked = Some(id) == kicked_source;
+                        if def.intervening_if_kicked && !kicked {
+                            continue;
+                        }
+                        if def.intervening_if_controls_another_source_card {
+                            let source_def = obj.card_def;
+                            let controls_another = state.players[event_controller.index()]
+                                .battlefield
+                                .iter()
+                                .copied()
+                                .any(|other| {
+                                    other != id && state.objects.get(other).card_def == source_def
+                                });
+                            if !controls_another {
+                                continue;
+                            }
+                        }
+                        let effect = if card.name == "Moon-Circuit Hacker"
+                            && matches!(def.condition, TriggerCondition::DealsCombatDamageToPlayer)
+                        {
+                            moon_circuit_hacker_combat_effect_for_entered_this_turn(
+                                obj.v4.entered_battlefield_turn == Some(state.turn),
+                            )
+                        } else {
+                            #[cfg(feature = "standard-magezero-fixtures")]
+                            if card.name == "Quirion Beastcaller"
+                                && matches!(
+                                    def.condition,
+                                    TriggerCondition::LeftBattlefieldToGraveyard
+                                )
+                            {
+                                standard_family_g_v1::quirion_beastcaller_dies_effect(
+                                    state,
+                                    id,
+                                    event_controller,
+                                )
+                            } else {
+                                materialize_trigger_event_effect(def, id, state, ev)
+                            }
+                            #[cfg(not(feature = "standard-magezero-fixtures"))]
+                            materialize_trigger_event_effect(def, id, state, ev)
+                        };
+                        let required_optional_cost =
+                            required_optional_additional_cost_for_trigger(obj.card_def, &effect);
+                        let (paid_optional_cost, paid_cost_refs) =
+                            if let Some(required) = required_optional_cost {
+                                let matching = events
+                                    .iter()
+                                    .filter_map(|event| match event {
+                                        CommittedEvent::OptionalAdditionalCostPaid {
+                                            source,
+                                            kind,
+                                            paid_cost_refs,
+                                        } if *source == id => Some((*kind, paid_cost_refs.clone())),
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>();
+                                let [(kind, refs)] = matching.as_slice() else {
+                                    continue;
+                                };
+                                if *kind != required {
+                                    continue;
+                                }
+                                (Some(required), refs.clone())
+                            } else {
+                                (None, Vec::new())
+                            };
+                        let target_spec = target_spec_for_trigger(obj.card_def, &effect)
+                            .unwrap_or(TargetSpec::None);
+                        let limit =
+                            per_turn_trigger_cap(def.condition).or_else(|| match def.condition {
+                                TriggerCondition::StandardV1(condition) => {
+                                    crate::standard_cards_v1::trigger_limit_per_turn(condition)
+                                }
+                                _ => None,
+                            });
+                        if let Some(maximum) = limit {
+                            let ability_index =
+                                u16::try_from(ability_index).expect("bounded definition abilities");
+                            let source = crate::state::ObjectLinkV4 {
+                                object: id,
+                                zone_change_count: obj.zone_change_count,
+                            };
+                            if let Some(entry) = uses.iter_mut().find(|entry| {
+                                entry.source == source && entry.ability_index == ability_index
+                            }) {
+                                if entry.uses >= maximum {
+                                    continue;
+                                }
+                                entry.uses += 1;
+                            } else {
+                                if maximum == 0 {
+                                    continue;
+                                }
+                                uses.push(crate::state::TriggerUseV1 {
+                                    source,
+                                    ability_index,
+                                    turn: state.turn,
+                                    active_player: state.active_player,
+                                    uses: 1,
+                                });
+                            }
+                        }
+                        let source_contract = match ev {
+                            CommittedEvent::ZoneChange {
+                                object,
+                                from,
+                                controller_before,
+                                ..
+                            } if *object == id
+                                && uses_leave_lki
+                                && def.condition != TriggerCondition::DiesIfWasCreature =>
+                            {
+                                let Some(zone_change_count) = obj.zone_change_count.checked_sub(1)
+                                else {
+                                    continue;
+                                };
+                                Some(copied_departure.unwrap_or(AbilitySourceContractV4 {
+                                    source: id,
+                                    card_def: obj.card_def,
+                                    owner: obj.owner,
+                                    controller: *controller_before,
+                                    zone: *from,
+                                    zone_change_count,
+                                    attached_to: None,
+                                }))
+                            }
+                            _ if obj.zone == Zone::Stack => None,
+                            _ => {
+                                let mut contract = AbilitySourceContractV4::capture(state, id);
+                                contract.controller = event_controller;
+                                Some(contract)
+                            }
+                        };
+                        new_triggers.push(PendingTrigger {
+                            controller: event_controller,
+                            source: id,
+                            granted_by: None,
+                            effect,
+                            is_madness_offer: false,
+                            kicked,
+                            target_spec,
+                            targets: Vec::new(),
+                            target_contracts: Vec::new(),
+                            placement_ordered: false,
+                            source_contract,
+                            optional_additional_cost_paid: paid_optional_cost,
+                            paid_cost_refs,
+                        });
+                    }
+                }
+            }
+            if definition == live_obj.card_def
+                && obj.zone == Zone::Battlefield
+                && (crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+                    || obj.v4.face_down_v1.is_some_and(|face| face.disguised)
+                        && crate::continuous_characteristics_v1::removal_timestamp(state, id)
+                            .is_none())
+            {
+                let ward_cost = if obj.v4.face_down_v1.is_some_and(|face| face.disguised) {
+                    Some(crate::card_def::WardCostDef::Generic(2))
+                } else {
+                    card.ward_cost.filter(|cost| match cost {
+                        crate::card_def::WardCostDef::BackFacePayLife(_) => obj.v4.face_index == 1,
+                        crate::card_def::WardCostDef::DiscardCard => true,
+                        _ => obj.v4.face_index == 0,
+                    })
+                };
+                for ward_cost in ward_cost.into_iter().chain(
+                    crate::standard_cards_v1::granted_wards(state, id)
+                        .into_iter()
+                        .map(crate::card_def::WardCostDef::Generic),
+                ) {
+                    for event in events {
+                        let CommittedEvent::Targeted {
+                            target,
+                            target_zone_change_count,
+                            targeting_stack_item,
+                            targeting_controller,
+                        } = event
+                        else {
+                            continue;
+                        };
+                        if *target != id
+                            || *target_zone_change_count != obj.zone_change_count
+                            || *targeting_controller == obj.controller
+                        {
+                            continue;
+                        }
+                        let ward_target = crate::state::StackTargetContractV4::capture(
+                            state,
+                            crate::state::Target::Object(id),
+                        );
+                        new_triggers.push(PendingTrigger {
+                            controller: obj.controller,
+                            source: id,
+                            granted_by: None,
+                            effect: match ward_cost {
+                                crate::card_def::WardCostDef::Generic(generic) => {
+                                    EffectOp::CounterUnlessPaysGeneric {
+                                        ward_target,
+                                        targeting_stack_item: *targeting_stack_item,
+                                        generic,
+                                    }
+                                }
+                                crate::card_def::WardCostDef::CollectEvidence(
+                                    minimum_mana_value,
+                                ) => EffectOp::CounterUnlessCollectsEvidence {
+                                    ward_target,
+                                    targeting_stack_item: *targeting_stack_item,
+                                    minimum_mana_value,
+                                },
+                                crate::card_def::WardCostDef::DiscardCard => {
+                                    EffectOp::CounterUnlessDiscardsCard {
+                                        ward_target,
+                                        targeting_stack_item: *targeting_stack_item,
+                                    }
+                                }
+                                crate::card_def::WardCostDef::BackFacePayLife(life) => {
+                                    EffectOp::CounterUnlessPaysLife {
+                                        ward_target,
+                                        targeting_stack_item: *targeting_stack_item,
+                                        life,
+                                    }
+                                }
+                            },
+                            is_madness_offer: false,
+                            kicked: false,
+                            target_spec: TargetSpec::None,
+                            targets: Vec::new(),
+                            target_contracts: Vec::new(),
+                            placement_ordered: false,
+                            source_contract: Some(AbilitySourceContractV4::capture(state, id)),
+                            optional_additional_cost_paid: None,
+                            paid_cost_refs: Vec::new(),
+                        });
+                    }
                 }
             }
         }
@@ -4570,6 +5004,11 @@ fn triggers_from_events(
         });
     }
 
+    #[cfg(feature = "standard-magezero-fixtures")]
+    new_triggers.extend(crate::standard_cards_v1::end_step_delayed_triggers(
+        state, events,
+    ));
+
     uses.sort_by_key(|entry| (entry.source.object, entry.ability_index));
     state.trigger_uses_v1 = (!uses.is_empty()).then_some(uses);
     new_triggers
@@ -4691,6 +5130,13 @@ fn trigger_matches(
     draws_this_turn_at_event: u32,
 ) -> bool {
     match (cond, ev) {
+        (
+            TriggerCondition::TurnedFaceUp,
+            CommittedEvent::TurnedFaceUp {
+                object,
+                zone_change_count,
+            },
+        ) => *object == source && state.objects.get(source).zone_change_count == *zone_change_count,
         (TriggerCondition::ControllerGainsLife, CommittedEvent::LifeGain { player, amount }) => {
             *player == controller && *amount > 0
         }
@@ -4721,6 +5167,17 @@ fn trigger_matches(
             },
         ) => *player == controller,
         (
+            TriggerCondition::CastCreatureSpellPowerAtLeast(minimum),
+            CommittedEvent::SpellCast {
+                spell,
+                controller: caster,
+            },
+        ) => {
+            *caster == controller
+                && selected_spell_types(state, *spell).contains(&CardType::Creature)
+                && crate::engine::effective_power(state, *spell) >= minimum
+        }
+        (
             TriggerCondition::CastCreatureSpell,
             CommittedEvent::SpellCast {
                 spell,
@@ -4737,6 +5194,13 @@ fn trigger_matches(
                 controller: caster, ..
             },
         ) => *caster == controller,
+        (
+            TriggerCondition::CastSpellWithAnyColor(mask),
+            CommittedEvent::SpellCast {
+                spell,
+                controller: caster,
+            },
+        ) => *caster == controller && crate::engine::object_color_mask(state, *spell) & mask != 0,
         (
             TriggerCondition::CastSpellDuringOpponentsTurn,
             CommittedEvent::SpellCast {
@@ -4761,6 +5225,34 @@ fn trigger_matches(
                         crate::engine::stack_spell_mana_value(state, item) >= minimum
                     })
         }
+        (TriggerCondition::AttacksIfControllerMostLife, event) => {
+            trigger_matches(
+                TriggerCondition::Attacks,
+                event,
+                source,
+                controller,
+                state,
+                draws_this_turn_at_event,
+            ) && state.players[controller.index()].life
+                >= state.players[controller.opponent().index()].life
+        }
+        (TriggerCondition::AttacksPlayerWithMostLife, event) => {
+            trigger_matches(
+                TriggerCondition::Attacks,
+                event,
+                source,
+                controller,
+                state,
+                draws_this_turn_at_event,
+            ) && crate::standard_creatures_v1::attacks_player(state, source)
+                && state.players[controller.opponent().index()].life
+                    >= state.players[controller.index()].life
+        }
+        (TriggerCondition::ControlledArtifactEnters, event) => battlefield_entry_object(event)
+            .is_some_and(|object| {
+                state.objects.get(object).controller == controller
+                    && crate::engine::object_has_type(state, object, CardType::Artifact)
+            }),
         (TriggerCondition::ControlledCreatureEntersOutgrowingSource { another }, event) => {
             let Some(object) = battlefield_entry_object(event) else {
                 return false;
@@ -4850,6 +5342,21 @@ fn trigger_matches(
                 })
                 .count();
             count >= usize::from(minimum_count)
+        }
+        (
+            TriggerCondition::ControlledCreatureWithSubtypeAttacks(subtype),
+            CommittedEvent::DeclaredAttacker {
+                source: attacker,
+                source_zone_change_count,
+                controller: event_controller,
+            },
+        ) => {
+            *event_controller == controller
+                && state.objects.try_get(*attacker).is_some_and(|o| {
+                    o.zone == Zone::Battlefield
+                        && o.zone_change_count == *source_zone_change_count
+                        && crate::engine::has_effective_subtype(state, *attacker, subtype)
+                })
         }
         (
             TriggerCondition::Attacks,
@@ -5093,6 +5600,30 @@ fn trigger_matches(
             CommittedEvent::CrimeCommitted { player, .. },
         ) => *player == controller,
         (
+            TriggerCondition::ControlledCreatureOrCreatureSpellBecomesTargetOfOpponent,
+            CommittedEvent::Targeted {
+                target,
+                target_zone_change_count,
+                targeting_controller,
+                ..
+            },
+        ) => {
+            *targeting_controller != controller
+                && state.objects.try_get(*target).is_some_and(|object| {
+                    object.controller == controller
+                        && object.zone_change_count == *target_zone_change_count
+                        && match object.zone {
+                            Zone::Battlefield => {
+                                crate::engine::object_has_type(state, *target, CardType::Creature)
+                            }
+                            Zone::Stack => {
+                                selected_spell_types(state, *target).contains(&CardType::Creature)
+                            }
+                            _ => false,
+                        }
+                })
+        }
+        (
             TriggerCondition::ControlledCreatureBecomesTargetOfOpponent,
             CommittedEvent::Targeted {
                 target,
@@ -5219,6 +5750,8 @@ fn trigger_matches(
                 && *target_zone_change_count == state.objects.get(source).zone_change_count
                 && *targeting_controller == controller
         }
+        // Matched against the whole event batch before this is called.
+        (TriggerCondition::StandardV1(_), _) => true,
         _ => false,
     }
 }
@@ -5431,6 +5964,18 @@ pub(crate) fn pending_trigger_choose_targets_gate_v1(
         historical_public_source_ordinal_ceiling_v1(state)?.checked_add(trigger_position)?;
     Some((pending.source, contract, ordinal))
 }
+
+pub(crate) fn kellan_impulse_effect() -> EffectOp {
+    EffectOp::ImpulseDraw {
+        count: 1,
+        duration: crate::effect::ImpulseDuration::EndOfTurn,
+    }
+}
+/// This definition is active only while Kellan retains its granted ability.
+const KELLAN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::DealsCombatDamageToPlayer,
+    ..etb_trigger(kellan_impulse_effect)
+}];
 
 #[cfg(test)]
 mod tests {

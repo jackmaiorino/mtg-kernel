@@ -13,7 +13,7 @@
 use super::*;
 
 /// The bucket `AmtF::fixed` assigns to `n`.
-fn bucket(n: i64) -> u8 {
+pub(super) fn bucket(n: i64) -> u8 {
     match AmtF::fixed(n) {
         AmtF::Fixed(bucket) => bucket,
         AmtF::Unit
@@ -41,6 +41,11 @@ fn threshold(out: &mut Collector, player: RelF, zone: ZoneF, obj: ObjF, minimum:
 /// The event a triggered ability waits for, plus any intervening reads.
 pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector) {
     match condition {
+        TriggerCondition::StandardV1(_) => {
+            // Its exact typed payload remains in the source record; these new
+            // histories/Rooms/Cases are outside the frozen facet vocabulary.
+            out.atoms.push(Atom::Opaque);
+        }
         TriggerCondition::Etb => {
             // Any zone change of the source itself to the battlefield.
             out.trigger(TrigF::SelfEnters);
@@ -173,6 +178,11 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
                 nth: 0,
             });
         }
+        TriggerCondition::ControlledArtifactEnters => {
+            out.trigger(TrigF::OtherEnters {
+                obj: ObjF::Typed(CardTypeF::Artifact),
+            });
+        }
         TriggerCondition::OtherControlledCreatureEnters { subtype } => {
             // A creature other than the source enters under the controller's
             // control. Vocabulary gap: ObjF has no subtype class, so the
@@ -181,6 +191,11 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
             out.trigger(TrigF::OtherEnters {
                 obj: ObjF::Typed(CardTypeF::Creature),
             });
+        }
+        TriggerCondition::AttacksIfControllerMostLife
+        | TriggerCondition::AttacksPlayerWithMostLife => {
+            out.trigger(TrigF::Attacks);
+            out.control(ControlF::Conditional);
         }
         TriggerCondition::Attacks => {
             // The source's exact incarnation is declared as an attacker.
@@ -265,7 +280,8 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
             // nearest is the attack declaration.
             out.trigger(TrigF::Attacks);
         }
-        TriggerCondition::ControllerAttacksWithSubtype(subtype) => {
+        TriggerCondition::ControlledCreatureWithSubtypeAttacks(subtype)
+        | TriggerCondition::ControllerAttacksWithSubtype(subtype) => {
             // The controller declares attackers including one with the
             // subtype. Vocabulary gap: no "you attack" event and ObjF has no
             // subtype class.
@@ -299,6 +315,24 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
             out.trigger(TrigF::SpellCast {
                 by: RelF::You,
                 obj: ObjF::Spell,
+            });
+        }
+        TriggerCondition::CastSpellWithAnyColor(_) => {
+            out.trigger(TrigF::SpellCast {
+                by: RelF::You,
+                obj: ObjF::Spell,
+            });
+            out.read(
+                RelF::You,
+                Some(ZoneF::Stack),
+                Some(ObjF::Spell),
+                AggF::Characteristic,
+            );
+        }
+        TriggerCondition::CastCreatureSpellPowerAtLeast(_) => {
+            out.trigger(TrigF::SpellCast {
+                by: RelF::You,
+                obj: ObjF::Typed(CardTypeF::Creature),
             });
         }
         TriggerCondition::CastSpellDuringOpponentsTurn => {
@@ -395,7 +429,7 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
                 AggF::Characteristic,
             );
         }
-        TriggerCondition::TransformsIntoFrontFace => {
+        TriggerCondition::TransformsIntoFrontFace | TriggerCondition::TurnedFaceUp => {
             // The source transforms to face zero. Vocabulary gap: no
             // transform event; the gate is marked conditional.
             out.control(ControlF::Conditional);
@@ -415,7 +449,8 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
                 AggF::EventThisTurn,
             );
         }
-        TriggerCondition::ControlledCreatureBecomesTargetOfOpponent => {
+        TriggerCondition::ControlledCreatureOrCreatureSpellBecomesTargetOfOpponent
+        | TriggerCondition::ControlledCreatureBecomesTargetOfOpponent => {
             // A creature the controller controls becomes the target of a
             // spell or ability an opponent controls. Vocabulary gap: no
             // "becomes the target" event; the gate is marked conditional.
@@ -510,6 +545,40 @@ fn move_self_cost(out: &mut Collector, from: ZoneF, to: ZoneF) {
 /// One component of an activation, flashback or additional cost.
 pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
     match component {
+        CostComponent::LoyaltyX => {
+            // Announcement chooses X; payment removes that many loyalty
+            // counters. Counter kind, variable quantity and the loyalty
+            // activation restriction are outside the frozen cost vocabulary.
+            out.cost(CostAtom::RemoveCounters);
+            out.atoms.push(Atom::Opaque);
+        }
+        CostComponent::RemoveChargeCounterFromSelf => {
+            // Exactly one charge counter leaves the source as payment.
+            out.cost(CostAtom::RemoveCounters);
+            out.atoms.push(Atom::Opaque); // Counter kind and quantity.
+        }
+        CostComponent::Crew(required) => {
+            // The payer selects untapped creatures, excluding the source,
+            // whose total crew power meets the threshold, then taps them.
+            // Summoning sickness is irrelevant; this is not a tap symbol.
+            let _ = required; // No summed-power threshold facet.
+            out.cost(CostAtom::TapOthers);
+            out.control(ControlF::ChooseObjects);
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Typed(CardTypeF::Creature)),
+                AggF::Characteristic,
+            );
+            out.atoms.push(Atom::Opaque);
+        }
+        CostComponent::Loyalty(_)
+        | CostComponent::ExileCraftArtifactMaterial
+        | CostComponent::RemoveNetCounterFromSelf => {
+            // Distinct loyalty/net counters and the craft zone union are not
+            // ordinary mana, tap or sacrifice costs in the frozen vocabulary.
+            out.atoms.push(Atom::Opaque);
+        }
         CostComponent::Tap => {
             // Taps the source (summoning-sickness rule checked to pay).
             out.cost(CostAtom::Tap);
@@ -565,6 +634,9 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
             out.atoms.push(Atom::Opaque);
         }
         CostComponent::SacrificeControlled { count, filter } => {
+            if filter == PermanentFilter::AnotherArtifact {
+                out.atoms.push(Atom::Opaque);
+            }
             // The component itself restricts candidates to the payer's
             // permanents, so the filter's relation adds nothing.
             let (obj, relation) = reads::permanent_filter(filter);

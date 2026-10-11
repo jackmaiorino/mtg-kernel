@@ -33,6 +33,114 @@ fn exile_self(out: &mut Collector) {
 pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     let _ = env;
     match op {
+        EffectOp::CastExiledWithoutMana {
+            card,
+            maximum_mana_value,
+        } => {
+            // This instruction casts during resolution, moving the exact
+            // exile card to the stack. It does not grant lasting permission.
+            let _ = (card, maximum_mana_value);
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Exile), ZoneF::Stack)
+                    .player(RelF::You)
+                    .obj(ObjF::AnyCard)
+                    .amount(AmtF::fixed(1)),
+            );
+            // The base mana waiver, X=0, selected-form value limit and
+            // resumed parent resolution have no facets in this vocabulary.
+            out.atoms.push(Atom::Opaque);
+        }
+        EffectOp::PlayExiledLand { card } => {
+            let _ = card;
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Exile), ZoneF::Battlefield)
+                    .player(RelF::You)
+                    .obj(ObjF::Typed(CardTypeF::Land))
+                    .amount(AmtF::fixed(1)),
+            );
+            // Uses a remaining land play on the controller's turn, inside
+            // resolution, including ordinary as-enters land choices.
+            out.atoms.push(Atom::Opaque);
+        }
+        EffectOp::DiscardUpToThenDraw { player, maximum } => {
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Hand), ZoneF::Graveyard)
+                    .player(player_ref(*player))
+                    .obj(ObjF::AnyCard)
+                    .amount(AmtF::fixed(i64::from(*maximum))),
+            );
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Library), ZoneF::Hand)
+                    .player(player_ref(*player))
+                    .obj(ObjF::AnyCard)
+                    .amount(AmtF::fixed(i64::from(*maximum))),
+            );
+        }
+        EffectOp::ExileRandomGraveyardCardPlayableThisTurn { player, .. } => {
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Graveyard), ZoneF::Exile)
+                    .player(player_ref(*player))
+                    .obj(ObjF::AnyCard)
+                    .amount(AmtF::fixed(1)),
+            );
+        }
+        EffectOp::ExileUntilThenCastV1 {
+            players,
+            return_rest_to_bottom,
+            ..
+        } => {
+            for player in players {
+                out.effect(
+                    EffectAtom::moving(Some(ZoneF::Library), ZoneF::Exile)
+                        .player(player_ref(*player))
+                        .obj(ObjF::AnyCard),
+                );
+                if *return_rest_to_bottom {
+                    out.effect(
+                        EffectAtom::moving(Some(ZoneF::Exile), ZoneF::Library)
+                            .player(player_ref(*player))
+                            .obj(ObjF::AnyCard),
+                    );
+                }
+            }
+        }
+        EffectOp::Discover { limit: _ } => {
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Library), ZoneF::Exile)
+                    .player(RelF::You)
+                    .obj(ObjF::AnyCard),
+            );
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Exile), ZoneF::Hand)
+                    .player(RelF::You)
+                    .obj(ObjF::AnyCard)
+                    .amount(AmtF::fixed(1)),
+            );
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Exile), ZoneF::Library)
+                    .player(RelF::You)
+                    .obj(ObjF::AnyCard),
+            );
+        }
+        EffectOp::Hideaway { count } => {
+            let mut look = EffectAtom::new(EvF::Look)
+                .player(RelF::You)
+                .obj(ObjF::AnyCard)
+                .amount(AmtF::fixed(i64::from(*count)));
+            look.from = Some(ZoneF::Library);
+            out.effect(look);
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Library), ZoneF::Exile)
+                    .player(RelF::You)
+                    .obj(ObjF::AnyCard)
+                    .amount(AmtF::fixed(1)),
+            );
+        }
+        EffectOp::PlayHideawayIfThreeDistinctPowers => {
+            // The fixed vocabulary has no free-play or distinct-power atom.
+        }
+        EffectOp::CopySpellSnapshot { .. } | EffectOp::IncreaseSpeed { .. } => { /* Runtime player ability, described by StartYourEnginesMaxSpeedDoubleStrike. */
+        }
         EffectOp::CounterUnlessCollectsEvidence {
             ward_target,
             targeting_stack_item,

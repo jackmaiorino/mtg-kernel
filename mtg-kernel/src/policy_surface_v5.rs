@@ -83,6 +83,7 @@ impl PolicyDecisionV5 {
                     | Decision::ChooseLegendPermanent { player, .. }
                     | Decision::ChooseLondonMulligan { player, .. }
                     | Decision::ChooseLondonBottom { player, .. }
+                    | Decision::ChooseAttackTarget { player, .. }
                     | Decision::ChooseOptionalCost { player, .. }
                     | Decision::ChooseSpellCopyPayment { player, .. }
                     | Decision::ChooseSpellCopyRetarget { player, .. }

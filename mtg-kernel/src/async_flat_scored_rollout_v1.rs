@@ -5983,9 +5983,21 @@ mod tests {
                     batch.action_offsets()[decision_index + 1]
                         - batch.action_offsets()[decision_index],
                 ]);
+                let mut contract = batch.contract();
+                assert_eq!(contract.contract_digests, FLAT_POLICY_CONTRACT_DIGESTS_V1);
+                // Preserve the original scorer bytes under their f7d115fa
+                // source identities. Source-only unsupported-mechanic guards
+                // do not change these five packets' model-visible contents.
+                let digest = |hex: &str| {
+                    std::array::from_fn(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap())
+                };
+                contract.contract_digests.feature_inventory_sha256 =
+                    digest("fc3df2927fd6430e38fb65d879d3a77deef78ef4757f904d5dca780ec4d46a47");
+                contract.contract_digests.typed_layout_sha256 =
+                    digest("bcde548e60dcf415fcbedbabeb0b4a73157908738c033d203290901488c2e4ed");
                 self.payloads.push(format!(
                     "{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}",
-                    batch.contract(),
+                    contract,
                     decision.globals(),
                     decision.objects(),
                     decision.relations(),

@@ -120,7 +120,7 @@ fn build_catalog() -> Result<PublicFeatureCatalogV1, String> {
         for pip in cost.pips {
             let index = match *pip {
                 Pip::Colored(color) => 5 + color.pool_index(),
-                Pip::Phyrexian(color) => 11 + color.pool_index(),
+                Pip::Phyrexian(color) | Pip::PhyrexianAnyColor(color) => 11 + color.pool_index(),
                 Pip::Hybrid(a, b) => pair_index(a, b)?,
             };
             row[index] += 0.125;

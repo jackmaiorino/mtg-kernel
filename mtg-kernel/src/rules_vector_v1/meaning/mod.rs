@@ -84,6 +84,12 @@ pub(crate) fn target_ref(target: TargetRef, env: &Env) -> (Option<RelF>, ObjF) {
 /// Facets of one resolution program. Recurses through nested programs.
 pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
+        EffectOp::StandardV1(_) => {
+            // Preserve the exact serialized payload in the source record.
+            // Do not invent ordinary facets for new histories, counters,
+            // copy/control/type changes or Standard continuation semantics.
+            out.atoms.push(Atom::Opaque);
+        }
         EffectOp::Sequence(..)
         | EffectOp::Conditional { .. }
         | EffectOp::Choice { .. }
@@ -102,6 +108,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::AttachSourceToTarget { .. }
         | EffectOp::AddCountersToTarget { .. }
         | EffectOp::CreateTokenAndAttachSource { .. }
+        | EffectOp::CreateRoleAttachedToTarget { .. }
         | EffectOp::AddMana { .. }
         | EffectOp::AddManaDynamic { .. }
         | EffectOp::CreateToken { .. }
@@ -127,7 +134,8 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::UntapObject { .. }
         | EffectOp::PumpTargetUntilEndOfTurnDynamic { .. }
         | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
-        | EffectOp::LookTopPickToHandBottomRest { .. } => effect_b::effect_op(op, env, out),
+        | EffectOp::LookTopPickToHandBottomRest { .. }
+        | EffectOp::LookTopSelectV1 { .. } => effect_b::effect_op(op, env, out),
         EffectOp::GainLifeEqualToPaidCostManaValue { .. }
         | EffectOp::MoveAllTargets { .. }
         | EffectOp::ExploreTarget { .. }
@@ -209,7 +217,11 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::DestroyAllCreatures
         | EffectOp::SearchLibraryCardsToDestination { .. }
         | EffectOp::CreateTokensDynamic { .. } => effect_f::effect_op(op, env, out),
-        EffectOp::BindEntrantOutgrowsSourceThen { .. }
+        EffectOp::CreatureChoiceV1(_)
+        | EffectOp::CreatureChoiceAnswerV1 { .. }
+        | EffectOp::CreatureUpgrade(_)
+        | EffectOp::DistributePlusOneCounters { .. }
+        | EffectOp::BindEntrantOutgrowsSourceThen { .. }
         | EffectOp::IfEntrantOutgrowsSourceThen { .. }
         | EffectOp::BindOilCounterToTriggerSource
         | EffectOp::PutOilCounterOnBoundObject { .. }
@@ -221,7 +233,17 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. } => {
             effect_g::effect_op(op, env, out)
         }
-        EffectOp::CounterUnlessCollectsEvidence { .. }
+        EffectOp::CastExiledWithoutMana { .. }
+        | EffectOp::PlayExiledLand { .. }
+        | EffectOp::DiscardUpToThenDraw { .. }
+        | EffectOp::ExileRandomGraveyardCardPlayableThisTurn { .. }
+        | EffectOp::ExileUntilThenCastV1 { .. }
+        | EffectOp::Discover { .. }
+        | EffectOp::Hideaway { .. }
+        | EffectOp::PlayHideawayIfThreeDistinctPowers
+        | EffectOp::CopySpellSnapshot { .. }
+        | EffectOp::IncreaseSpeed { .. }
+        | EffectOp::CounterUnlessCollectsEvidence { .. }
         | EffectOp::CounterUnlessPaysLife { .. }
         | EffectOp::CounterUnlessDiscardsCard { .. }
         | EffectOp::BindConvokedCreatureCountToLookTop { .. }
@@ -245,6 +267,92 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::ExileGraveyardTargetsDrainPerCreature { .. }
         | EffectOp::RemoveTimeCounterFromSource
         | EffectOp::ReturnSourceAsEnduringEnchantment => effect_h::effect_op(op, env, out),
-        EffectOp::AnimateSource => effect_i::effect_op(op, env, out),
+        EffectOp::StandardLegendV1(_)
+        | EffectOp::AnimateSource
+        | EffectOp::AnimateSourcePermanentlyV1
+        | EffectOp::SetTargetBasePowerToughnessUntilEndOfTurn { .. }
+        | EffectOp::BoostOtherControlledCreaturesUntilEndOfTurn { .. }
+        | EffectOp::SelectObjectsV1 { .. }
+        | EffectOp::DestroyCreaturesPowerAtMostV1 { .. }
+        | EffectOp::DestroyPermanentsSharingTargetNameV1 { .. }
+        | EffectOp::CreateTokensWithHasteUntilEndOfTurnV1 { .. } => {
+            effect_i::effect_op(op, env, out)
+        }
+    }
+}
+
+#[cfg(test)]
+mod standard_completion_tests {
+    use super::*;
+
+    #[test]
+    fn resolution_cast_and_land_play_have_distinct_destinations_without_persistent_permission() {
+        let card = crate::effect::EffectObjectBinding {
+            object: crate::ids::ObjectId(1),
+            expected_zone: crate::state::Zone::Exile,
+            expected_zone_change_count: 2,
+        };
+        for (op, destination) in [
+            (
+                EffectOp::CastExiledWithoutMana {
+                    card,
+                    maximum_mana_value: Some(3),
+                },
+                ZoneF::Stack,
+            ),
+            (EffectOp::PlayExiledLand { card }, ZoneF::Battlefield),
+        ] {
+            let mut out = Collector::default();
+            effect_op(
+                &op,
+                &Env {
+                    target_spec: TargetSpec::None,
+                },
+                &mut out,
+            );
+            assert!(out.atoms.iter().any(|atom| matches!(atom,
+                Atom::Effect(effect) if effect.ev == EvF::Move
+                    && effect.from == Some(ZoneF::Exile) && effect.to == Some(destination))));
+            assert!(!out.atoms.iter().any(|atom| matches!(atom,
+                Atom::Effect(effect) if effect.ev == EvF::PlayPermission)));
+            assert!(out.atoms.contains(&Atom::Opaque));
+        }
+    }
+
+    #[test]
+    fn crew_members_do_not_inherit_a_current_controller_restriction() {
+        use crate::standard_cards_v1::StandardTargetV1 as S;
+        for (filter, controller) in [
+            (S::CrewedSourceThisTurn, None),
+            (S::TappedOpponentCreature, Some(RelF::Opponent)),
+        ] {
+            let mut out = Collector::default();
+            targets::target_spec(TargetSpec::StandardV1(filter), &mut out);
+            assert!(out.atoms.iter().any(|atom| matches!(atom,
+                Atom::Target(TargetAtom::Object { obj, controller: actual, zone, .. })
+                    if *obj == ObjF::Typed(CardTypeF::Creature)
+                        && *actual == controller && *zone == ZoneF::Battlefield)));
+            assert!(out.atoms.contains(&Atom::Opaque));
+        }
+    }
+
+    #[test]
+    fn crew_and_counter_payments_are_costs_without_changing_legacy_loyalty_atoms() {
+        let mut crew = Collector::default();
+        triggers_costs::cost_component(CostComponent::Crew(3), &mut crew);
+        assert!(crew.atoms.contains(&Atom::Cost(CostAtom::TapOthers)));
+        assert!(!crew.atoms.contains(&Atom::Cost(CostAtom::Tap)));
+        for cost in [
+            CostComponent::LoyaltyX,
+            CostComponent::RemoveChargeCounterFromSelf,
+        ] {
+            let mut out = Collector::default();
+            triggers_costs::cost_component(cost, &mut out);
+            assert!(out.atoms.contains(&Atom::Cost(CostAtom::RemoveCounters)));
+            assert!(!out.atoms.iter().any(|atom| matches!(atom, Atom::Effect(_))));
+        }
+        let mut legacy = Collector::default();
+        triggers_costs::cost_component(CostComponent::Loyalty(-2), &mut legacy);
+        assert_eq!(legacy.atoms, [Atom::Opaque]);
     }
 }

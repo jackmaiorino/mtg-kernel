@@ -62,6 +62,14 @@ pub struct Counters {
     /// state hash while zero, so every earlier snapshot and hash is unchanged.
     #[serde(default, skip_serializing_if = "is_zero_i16")]
     pub oil: i16,
+    #[serde(default, skip_serializing_if = "counter_i32_zero")]
+    pub charge: i32,
+    #[serde(default, skip_serializing_if = "counter_i32_zero")]
+    pub net: i32,
+}
+
+fn counter_i32_zero(value: &i32) -> bool {
+    *value == 0
 }
 
 fn is_zero_i16(value: &i16) -> bool {
@@ -77,6 +85,8 @@ impl Counters {
             || self.stun != 0
             || self.lore != 0
             || self.oil != 0
+            || self.charge != 0
+            || self.net != 0
     }
 }
 
@@ -97,6 +107,14 @@ impl std::hash::Hash for Counters {
         self.minus0_minus1.hash(state);
         self.stun.hash(state);
         self.lore.hash(state);
+        if self.charge != 0 {
+            b"charge_v1".hash(state);
+            self.charge.hash(state);
+        }
+        if self.net != 0 {
+            b"net_v1".hash(state);
+            self.net.hash(state);
+        }
         if self.oil != 0 {
             b"oil_counters_v1".hash(state);
             self.oil.hash(state);
@@ -245,12 +263,34 @@ pub struct ObjectStateV4 {
     /// (every animation lasts until end of turn) and by every zone change.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub animation_timestamp: Option<u64>,
+    /// Latest layer-7b base setting until cleanup, kept on this incarnation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temporary_base_pt_v1: Option<(i16, i16, u64)>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creature_upgrade: Option<crate::standard_creatures_v1::CreatureUpgradeV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skrelv_grants_v1: Option<Vec<crate::standard_legends_v1::SkrelvGrantV1>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub melira_protection_v1: Option<Vec<AbilitySourceContractV4>>,
     /// True from this incarnation's battlefield entry until the next untap
     /// step. `entered_battlefield_turn` is a round number shared by both
     /// players' turns, so it cannot answer "entered this turn" (Mirrex).
     /// Only Standard builds set it, so other catalogs keep their bytes.
     #[serde(default, skip_serializing_if = "bool_is_false")]
     pub entered_battlefield_this_turn: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub face_down_v1: Option<FaceDownV1>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FaceDownV1 {
+    pub disguised: bool,
+    /// Seats with continuing permission to look at this hidden identity.
+    pub lookers: u8,
+    pub hidden_by: Option<ObjectLinkV4>,
+    /// Public source identity at hideaway resolution, retained if the Cage leaves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden_by_source: Option<AbilitySourceContractV4>,
 }
 
 impl Hash for ObjectStateV4 {
@@ -299,12 +339,32 @@ impl Hash for ObjectStateV4 {
         if self.enduring_enchantment_v1 {
             "enduring-enchantment/v1".hash(state);
         }
+        if let Some(grants) = &self.melira_protection_v1 {
+            "melira_protection/v1".hash(state);
+            grants.hash(state);
+        }
+        if let Some(grants) = &self.skrelv_grants_v1 {
+            "skrelv_grants/v1".hash(state);
+            grants.hash(state);
+        }
+        if let Some(setting) = self.temporary_base_pt_v1 {
+            "temporary-base-pt/v1".hash(state);
+            setting.hash(state);
+        }
         if let Some(timestamp) = self.animation_timestamp {
             "animation_timestamp/v1".hash(state);
             timestamp.hash(state);
         }
+        if let Some(upgrade) = &self.creature_upgrade {
+            "creature_upgrade/v1".hash(state);
+            upgrade.hash(state);
+        }
         if self.entered_battlefield_this_turn {
             "entered_battlefield_this_turn/v1".hash(state);
+        }
+        if let Some(face_down) = self.face_down_v1 {
+            "face_down/v1".hash(state);
+            face_down.hash(state);
         }
     }
 }
@@ -363,13 +423,22 @@ impl ObjectStateV4 {
             time_counters_v1: 0,
             enduring_enchantment_v1: false,
             animation_timestamp: None,
+            temporary_base_pt_v1: None,
+            creature_upgrade: None,
+            skrelv_grants_v1: None,
+            melira_protection_v1: None,
             entered_battlefield_this_turn: false,
+            face_down_v1: None,
         }
     }
 
     pub fn reset_for_zone_change(&mut self, card_def: u16, to_zone: Zone, turn: u32) {
+        // A token copy of a nontoken card stays a token in every zone, so
+        // the state-based action can make it cease to exist (111.7).
+        let was_token = self.is_token;
         let base = ObjectStateV4::from_card_def(card_def);
         *self = base;
+        self.is_token |= was_token;
         if to_zone == Zone::Battlefield {
             self.entered_battlefield_turn = Some(turn);
             self.entered_battlefield_this_turn = cfg!(feature = "standard-magezero-fixtures");
@@ -596,6 +665,11 @@ pub struct PlayerState {
     pub graveyard: Vec<ObjectId>,
     /// [W, U, B, R, G, C].
     pub mana_pool: [u8; 6],
+    #[serde(
+        default,
+        skip_serializing_if = "crate::mana::RestrictedManaPoolV1::is_empty"
+    )]
+    pub restricted_mana_pool: crate::mana::RestrictedManaPoolV1,
     pub has_lost: bool,
     pub lands_played_this_turn: u8,
     /// Set by `event::commit` when a `Draw` was attempted against an empty
@@ -616,6 +690,11 @@ pub struct PlayerState {
     /// bytes.
     #[serde(default, skip_serializing_if = "PoisonCountersV1::is_zero")]
     pub poison_counters: PoisonCountersV1,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::standard_legends_v1::PoisonPreventionV1::is_false"
+    )]
+    pub poison_prevention_v1: crate::standard_legends_v1::PoisonPreventionV1,
 }
 
 /// A player's poison counter count. Hashes nothing while zero.
@@ -647,6 +726,7 @@ impl PlayerState {
             battlefield: Vec::new(),
             graveyard: Vec::new(),
             mana_pool: [0; 6],
+            restricted_mana_pool: Default::default(),
             has_lost: false,
             lands_played_this_turn: 0,
             drew_from_empty: false,
@@ -654,6 +734,7 @@ impl PlayerState {
             spells_cast_this_turn: 0,
             dungeon: DungeonStateV4::default(),
             poison_counters: PoisonCountersV1::default(),
+            poison_prevention_v1: Default::default(),
         }
     }
 }
@@ -682,6 +763,8 @@ pub enum Step {
 pub enum Target {
     Object(ObjectId),
     Player(PlayerId),
+    /// An exact spell or ability stack incarnation, distinct from its source.
+    StackItem(StackItemId),
 }
 
 /// Publicly distinguishable origin of a stack item. This is stamped by the
@@ -741,6 +824,27 @@ pub enum SpellCastRouteV4 {
     /// `engine::PlayPermission`, and a card exiled by any other means never
     /// carries it.
     AdventureExile,
+    /// Casting a card from its owner's graveyard under a "you may cast this
+    /// card from your graveyard" grant held by the Standard catalog's card
+    /// module (Case of the Uneaten Feast), for the grant's exact graveyard
+    /// incarnation.
+    GraveyardPermissionV1 {
+        holder: PlayerId,
+        permission_zone_change_count: u32,
+    },
+    ResolvingEffectV1 {
+        holder: PlayerId,
+        maximum_mana_value: Option<u16>,
+    },
+    /// Mosswood Dreadknight grants only its Adventure form from this exact graveyard incarnation.
+    GraveyardAdventure {
+        holder: PlayerId,
+        permission_zone_change_count: u32,
+    },
+    ExileFreePermission {
+        holder: PlayerId,
+        permission_zone_change_count: u32,
+    },
 }
 
 /// Incarnation-local cast provenance stored on the physical source object
@@ -949,11 +1053,58 @@ pub enum StackTargetContractV4 {
         #[serde(default)]
         spell_copy_origin: Option<SpellCopyOriginV4>,
     },
+    StackItem {
+        stack_item_id: StackItemId,
+        source: ObjectId,
+        card_def: u16,
+        owner: PlayerId,
+        controller: PlayerId,
+        source_zone: Zone,
+        source_zone_change_count: u32,
+        kind: StackItemKind,
+    },
 }
 
 impl StackTargetContractV4 {
     pub fn capture(state: &GameState, target: Target) -> StackTargetContractV4 {
         match target {
+            Target::StackItem(stack_item_id) => {
+                let item = state
+                    .stack
+                    .iter()
+                    .find(|item| item.v4.stack_item_id == stack_item_id)
+                    .expect("captured stack target exists");
+                let (card_def, owner, source_zone, source_zone_change_count) =
+                    if let Some(source) = item.v4.ability_source_contract {
+                        (
+                            source.card_def,
+                            source.owner,
+                            source.zone,
+                            source.zone_change_count,
+                        )
+                    } else {
+                        let source = item
+                            .v4
+                            .source_contract
+                            .expect("spell stack target has provenance");
+                        (
+                            source.card_def,
+                            source.owner,
+                            Zone::Stack,
+                            source.zone_change_count,
+                        )
+                    };
+                StackTargetContractV4::StackItem {
+                    stack_item_id,
+                    source: item.source,
+                    card_def,
+                    owner,
+                    controller: item.controller,
+                    source_zone,
+                    source_zone_change_count,
+                    kind: item.kind,
+                }
+            }
             Target::Player(player) => StackTargetContractV4::Player(player),
             Target::Object(object) => {
                 let live = state.objects.get(object);
@@ -972,6 +1123,9 @@ impl StackTargetContractV4 {
 
     pub const fn target(self) -> Target {
         match self {
+            StackTargetContractV4::StackItem { stack_item_id, .. } => {
+                Target::StackItem(stack_item_id)
+            }
             StackTargetContractV4::Player(player) => Target::Player(player),
             StackTargetContractV4::Object { object, .. } => Target::Object(object),
         }
@@ -994,125 +1148,208 @@ pub fn stack_target_contract_is_structurally_valid(
     if contract.target() != target {
         return false;
     }
-    let shape_is_valid = matches!(
-        (spec, target_index, contract),
-        (
-            TargetSpec::AnyPlayer
-                | TargetSpec::AnyTarget
-                | TargetSpec::PlayerThenTheirCreature
-                | TargetSpec::TargetOpponent,
-            0,
-            StackTargetContractV4::Player(_),
-        ) | (
-            TargetSpec::UpToTwoPlayers,
-            0 | 1,
-            StackTargetContractV4::Player(_),
-        ) | (
-            TargetSpec::PlayerThenTheirCreature,
-            1,
-            StackTargetContractV4::Object {
-                zone: Zone::Battlefield,
-                ..
-            },
-        ) | (
-            TargetSpec::AnyTarget
-                | TargetSpec::AnyPermanent
-                | TargetSpec::BluePermanent
-                | TargetSpec::RedPermanent
-                | TargetSpec::NonlandPermanent
-                | TargetSpec::Creature
-                | TargetSpec::CreatureOtherThanSource
-                | TargetSpec::NonlegendaryCreature
-                | TargetSpec::NonblackCreature
-                | TargetSpec::ArtifactPermanent
-                | TargetSpec::EnchantmentPermanent
-                | TargetSpec::ControlledCreature
-                | TargetSpec::UpToOneOtherControlledPermanent
-                | TargetSpec::OpponentControlledCreature
-                | TargetSpec::UpToOneTappedCreature
-                | TargetSpec::NoncreatureArtifactPermanent
-                | TargetSpec::Land
-                | TargetSpec::OpponentArtifactOrEnchantmentPermanent
-                | TargetSpec::ArtifactOrEnchantmentPermanent
-                | TargetSpec::AttackingOrBlockingCreature
-                | TargetSpec::CreatureOrPlaneswalker
-                | TargetSpec::ArtifactEnchantmentOrFlyingCreature
-                | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour
-                | TargetSpec::OpponentNonlandPermanent
-                | TargetSpec::NonOutlawCreature
-                | TargetSpec::CreatureToughnessAtLeastFour
-                | TargetSpec::CreatureEnchantmentOrPlaneswalker
-                | TargetSpec::AnotherControlledCreature
-                | TargetSpec::ControlledCreatureWithSubtype(_)
-                | TargetSpec::AttackingCreatureWithSubtype(_)
-                | TargetSpec::ControlledPermanentWithAnySubtype(_),
-            0,
-            StackTargetContractV4::Object {
-                zone: Zone::Battlefield,
-                ..
-            },
-        ) | (
-            TargetSpec::UpToTwoCreatures
-                | TargetSpec::UpToTwoOtherControlledCreatures
-                | TargetSpec::ExactlyTwoArtifactPermanents
-                | TargetSpec::ControlledCreatureThenOpponentCreature
-                | TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker,
-            0 | 1,
-            StackTargetContractV4::Object {
-                zone: Zone::Battlefield,
-                ..
-            },
-        ) | (
-            TargetSpec::CreatureOrLandCardInGraveyard
-                | TargetSpec::CreatureCardInOwnGraveyard
-                | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_)
-                | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_)
-                | TargetSpec::PermanentCardInOwnGraveyard,
-            0,
-            StackTargetContractV4::Object {
-                zone: Zone::Graveyard,
-                ..
-            },
-        ) | (
-            TargetSpec::UpToTwoCreatureCardsInOwnGraveyard,
-            0 | 1,
-            StackTargetContractV4::Object {
-                zone: Zone::Graveyard,
-                ..
-            },
-        ) | (
-            TargetSpec::UpToTwoCardsInGraveyards,
-            0 | 1,
-            StackTargetContractV4::Object {
-                zone: Zone::Graveyard,
-                ..
-            },
-        ) | (
-            TargetSpec::UpToOneCardInGraveyards,
-            0,
-            StackTargetContractV4::Object {
-                zone: Zone::Graveyard,
-                ..
-            },
-        ) | (
-            TargetSpec::AnySpellOnStack
-                | TargetSpec::InstantSpellOnStack
-                | TargetSpec::BlueSpellOnStack
-                | TargetSpec::RedSpellOnStack
-                | TargetSpec::ArtifactOrEnchantmentSpellOnStack
-                | TargetSpec::SorcerySpellOnStack
-                | TargetSpec::NoncreatureSpellOnStack
-                | TargetSpec::CreatureSpellOnStack
-                | TargetSpec::ArtifactSpellOnStack
-                | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. }
-                | TargetSpec::SpellYouDontControl,
-            0,
-            StackTargetContractV4::Object {
-                zone: Zone::Stack,
-                ..
-            },
-        )
-    );
+    if let StackTargetContractV4::StackItem {
+        stack_item_id,
+        source,
+        card_def,
+        owner,
+        source_zone_change_count,
+        kind,
+        ..
+    } = contract
+    {
+        let allowed = matches!(spec, TargetSpec::StackObject)
+            || (matches!(
+                spec,
+                TargetSpec::StackAbility | TargetSpec::UpToOneStackAbility
+            ) && matches!(
+                kind,
+                StackItemKind::ActivatedAbility | StackItemKind::TriggeredAbility
+            ));
+        return allowed
+            && target_index == 0
+            && stack_item_id.0 > 0
+            && stack_item_id.0 <= state.engine.next_stack_item_id
+            && state.objects.try_get(source).is_some_and(|live| {
+                live.card_def == card_def
+                    && live.owner == owner
+                    && live.zone_change_count >= source_zone_change_count
+            })
+            && state
+                .stack
+                .iter()
+                .find(|item| item.v4.stack_item_id == stack_item_id)
+                .is_none_or(|_| StackTargetContractV4::capture(state, target) == contract);
+    }
+    if let TargetSpec::StandardV1(filter) = spec {
+        if target_index >= usize::from(filter.counts().0) {
+            return false;
+        }
+        let matches_kind = match &contract {
+            StackTargetContractV4::Object { zone, .. } => {
+                *zone == crate::standard_cards_v1::target_zone(filter)
+            }
+            StackTargetContractV4::StackItem { .. } => false,
+            StackTargetContractV4::Player(_) => matches!(
+                filter,
+                crate::standard_cards_v1::StandardTargetV1::UpToTwoAnyTargets
+            ),
+        };
+        if !matches_kind {
+            return false;
+        }
+    }
+    let shape_is_valid = matches!(spec, TargetSpec::StandardV1(_))
+        || matches!(
+            (spec, target_index, contract),
+            (
+                TargetSpec::ArtifactOrEnchantmentThenPlayer,
+                0,
+                StackTargetContractV4::Object {
+                    zone: Zone::Battlefield,
+                    ..
+                }
+            ) | (
+                TargetSpec::ArtifactOrEnchantmentThenPlayer,
+                1,
+                StackTargetContractV4::Player(_)
+            ) | (
+                TargetSpec::CounterDistribution,
+                _,
+                StackTargetContractV4::Object {
+                    zone: Zone::Battlefield,
+                    ..
+                }
+            ) | (
+                TargetSpec::AnyPlayer
+                    | TargetSpec::AnyTarget
+                    | TargetSpec::PlayerThenTheirCreature
+                    | TargetSpec::TargetOpponent,
+                0,
+                StackTargetContractV4::Player(_),
+            ) | (
+                TargetSpec::UpToTwoPlayers,
+                0 | 1,
+                StackTargetContractV4::Player(_),
+            ) | (
+                TargetSpec::PlayerThenTheirCreature,
+                1,
+                StackTargetContractV4::Object {
+                    zone: Zone::Battlefield,
+                    ..
+                },
+            ) | (
+                TargetSpec::AnyTarget
+                    | TargetSpec::AnyPermanent
+                    | TargetSpec::BluePermanent
+                    | TargetSpec::RedPermanent
+                    | TargetSpec::NonlandPermanent
+                    | TargetSpec::Creature
+                    | TargetSpec::CreatureOtherThanSource
+                    | TargetSpec::NonlegendaryCreature
+                    | TargetSpec::NonblackCreature
+                    | TargetSpec::ArtifactPermanent
+                    | TargetSpec::EnchantmentPermanent
+                    | TargetSpec::ControlledCreature
+                    | TargetSpec::UpToOneOtherControlledPermanent
+                    | TargetSpec::OpponentControlledCreature
+                    | TargetSpec::UpToOneTappedCreature
+                    | TargetSpec::ControlledNoncreatureArtifactPermanent
+                    | TargetSpec::CreatureWithStunCounter
+                    | TargetSpec::LegendaryCreature
+                    | TargetSpec::OpponentArtifactEnchantmentOrNonbasicLand
+                    | TargetSpec::NoncreatureArtifactPermanent
+                    | TargetSpec::Land
+                    | TargetSpec::OpponentArtifactOrEnchantmentPermanent
+                    | TargetSpec::ArtifactOrEnchantmentPermanent
+                    | TargetSpec::AttackingOrBlockingCreature
+                    | TargetSpec::AnotherArtifactOrCreature
+                    | TargetSpec::AnotherCreatureOrPlaneswalker
+                    | TargetSpec::CreatureOrPlaneswalker
+                    | TargetSpec::ArtifactEnchantmentOrFlyingCreature
+                    | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour
+                    | TargetSpec::OpponentNonlandPermanent
+                    | TargetSpec::CreaturePowerPlusToughnessAtMostFive
+                    | TargetSpec::NonartifactCreature
+                    | TargetSpec::UpToOneOtherCreature
+                    | TargetSpec::AnotherAttackingCreature
+                    | TargetSpec::ArtifactCreatureEnchantmentOrPlaneswalker
+                    | TargetSpec::NonOutlawCreature
+                    | TargetSpec::CreatureToughnessAtLeastFour
+                    | TargetSpec::CreatureEnchantmentOrPlaneswalker
+                    | TargetSpec::AnotherControlledCreature
+                    | TargetSpec::ControlledCreatureWithSubtype(_)
+                    | TargetSpec::AttackingCreatureWithSubtype(_)
+                    | TargetSpec::ControlledPermanentWithAnySubtype(_),
+                0,
+                StackTargetContractV4::Object {
+                    zone: Zone::Battlefield,
+                    ..
+                },
+            ) | (
+                TargetSpec::UpToTwoCreatures
+                    | TargetSpec::UpToTwoOtherCreaturesDifferentControllers
+                    | TargetSpec::UpToTwoOtherControlledCreatures
+                    | TargetSpec::ExactlyTwoArtifactPermanents
+                    | TargetSpec::ControlledCreatureThenOpponentCreature
+                    | TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker,
+                0 | 1,
+                StackTargetContractV4::Object {
+                    zone: Zone::Battlefield,
+                    ..
+                },
+            ) | (
+                TargetSpec::CreatureOrLandCardInGraveyard
+                    | TargetSpec::CreatureCardInOwnGraveyard
+                    | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_)
+                    | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_)
+                    | TargetSpec::PermanentCardInOwnGraveyard
+                    | TargetSpec::CardInOwnGraveyardWithAnySubtype(_),
+                0,
+                StackTargetContractV4::Object {
+                    zone: Zone::Graveyard,
+                    ..
+                },
+            ) | (
+                TargetSpec::UpToTwoCreatureCardsInOwnGraveyard,
+                0 | 1,
+                StackTargetContractV4::Object {
+                    zone: Zone::Graveyard,
+                    ..
+                },
+            ) | (
+                TargetSpec::UpToTwoCardsInGraveyards,
+                0 | 1,
+                StackTargetContractV4::Object {
+                    zone: Zone::Graveyard,
+                    ..
+                },
+            ) | (
+                TargetSpec::UpToOneCardInGraveyards,
+                0,
+                StackTargetContractV4::Object {
+                    zone: Zone::Graveyard,
+                    ..
+                },
+            ) | (
+                TargetSpec::AnySpellOnStack
+                    | TargetSpec::InstantSpellOnStack
+                    | TargetSpec::BlueSpellOnStack
+                    | TargetSpec::RedSpellOnStack
+                    | TargetSpec::ArtifactOrEnchantmentSpellOnStack
+                    | TargetSpec::SorcerySpellOnStack
+                    | TargetSpec::NoncreatureSpellOnStack
+                    | TargetSpec::CreatureSpellOnStack
+                    | TargetSpec::ArtifactSpellOnStack
+                    | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. }
+                    | TargetSpec::SpellYouDontControl,
+                0,
+                StackTargetContractV4::Object {
+                    zone: Zone::Stack,
+                    ..
+                },
+            )
+        );
     if !shape_is_valid {
         return false;
     }
@@ -1193,12 +1430,16 @@ pub struct StackStateV4 {
     /// its captured zone while the ability waits or resolves.
     #[serde(default)]
     pub ability_source_contract: Option<AbilitySourceContractV4>,
-    /// Exact Equipment incarnation that granted a triggered or activated
-    /// ability to this stack item's source creature (Black Mage's Rod's
-    /// granted trigger; Viridian Longbow's granted tap ability). `None` for
-    /// every printed, non-granted ability and for spells.
+    /// Historical source that granted this ability: attached Equipment,
+    /// an exiled activated-ability donor, or the host's earlier upgrading
+    /// activation. `None` for printed, non-granted abilities and spells.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub granted_by: Option<AbilitySourceContractV4>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::cauldron_grants_v1::CauldronGrantRecordV1::is_empty"
+    )]
+    pub cauldron_grant: crate::cauldron_grants_v1::CauldronGrantRecordV1,
     /// Optional additional cost actually paid for this exact cast or the
     /// triggered ability produced by it. Internal cast provenance only;
     /// existing public stack schemas continue to expose the associated
@@ -1489,11 +1730,28 @@ pub struct CreatureDeathTurnV1 {
 /// Each player's speed (Aetherdrift's Start your engines!), indexed by seat.
 /// Zero means the player has no speed. `last_increase` stamps the turn in
 /// which the active player's once-per-turn speed increase last happened.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SpeedV1 {
     pub speeds: [u8; 2],
     pub last_increase: Option<CreatureDeathTurnV1>,
+    #[serde(default, skip_serializing_if = "speed_sources_empty")]
+    pub sources: [Option<AbilitySourceContractV4>; 2],
+}
+
+fn speed_sources_empty(sources: &[Option<AbilitySourceContractV4>; 2]) -> bool {
+    sources.iter().all(Option::is_none)
+}
+
+impl Hash for SpeedV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.speeds.hash(state);
+        self.last_increase.hash(state);
+        if !speed_sources_empty(&self.sources) {
+            "speed-sources/v1".hash(state);
+            self.sources.hash(state);
+        }
+    }
 }
 
 impl SpeedV1 {
@@ -1548,6 +1806,9 @@ pub struct FirstLifeGainCaptureV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GameState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creatures_attacked_turn_v1: Option<(u32, PlayerId, Vec<ObjectLinkV4>)>,
+
     pub objects: Arena<GameObject>,
     pub players: [PlayerState; 2],
     pub turn: u32,
@@ -1618,6 +1879,10 @@ pub struct GameState {
     /// everywhere else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub counter_lki_v1: Option<Vec<CounterLkiV1>>,
+    /// Power and toughness of departed Standard creatures, keyed by exact
+    /// battlefield incarnation for intervening-if trigger comparisons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creature_stats_lki_v1: Option<Vec<CreatureStatsLkiV1>>,
     /// Players who lost life this turn. Only `standard-magezero-fixtures`
     /// builds record it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1639,6 +1904,11 @@ pub struct GameState {
     /// Engine-only history. Absence preserves historical bytes and hashes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub life_gain_turn_v1: Option<LifeGainTurnV1>,
+    /// Card state for the MageZero Standard catalog's own cards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub standard_v1: Option<crate::standard_cards_v1::StandardStateV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legend_pending_v1: Option<Vec<crate::trigger::PendingTrigger>>,
 }
 
 /// Which players lost life during one turn (Hired Claw: "only if an
@@ -1663,10 +1933,29 @@ pub struct AttackBlockRestrictionV1 {
 }
 
 /// The counters one exact battlefield incarnation had as it left.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CounterLkiV1 {
     pub source: ObjectLinkV4,
     pub counters: Counters,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extras: Option<crate::standard_creatures_v1::CounterExtrasV1>,
+}
+impl Hash for CounterLkiV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.source.hash(state);
+        self.counters.hash(state);
+        if let Some(extras) = self.extras {
+            "counter-lki-extras/v1".hash(state);
+            extras.hash(state);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CreatureStatsLkiV1 {
+    pub source: ObjectLinkV4,
+    pub power: i32,
+    pub toughness: i32,
 }
 
 impl GameState {
@@ -1692,6 +1981,11 @@ impl GameState {
 /// its `EnvironmentV2` arm (explicit discriminant).
 impl Hash for GameState {
     fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(attacked) = &self.creatures_attacked_turn_v1 {
+            "creatures-attacked-turn-v1".hash(state);
+            attacked.hash(state);
+        }
+
         self.objects.hash(state);
         self.players.hash(state);
         self.turn.hash(state);
@@ -1734,6 +2028,10 @@ impl Hash for GameState {
             "counter-lki-v1".hash(state);
             lki.hash(state);
         }
+        if let Some(lki) = &self.creature_stats_lki_v1 {
+            "creature-stats-lki-v1".hash(state);
+            lki.hash(state);
+        }
         if let Some(loss) = &self.life_loss_turn_v1 {
             "life-loss-turn-v1".hash(state);
             loss.hash(state);
@@ -1754,9 +2052,17 @@ impl Hash for GameState {
             "descended-v1".hash(state);
             descended.hash(state);
         }
+        if let Some(pending) = &self.legend_pending_v1 {
+            "legend_pending/v1".hash(state);
+            pending.hash(state);
+        }
         if let Some(history) = &self.life_gain_turn_v1 {
             "life-gain-turn-v1".hash(state);
             history.hash(state);
+        }
+        if let Some(standard) = &self.standard_v1 {
+            "standard-v1".hash(state);
+            standard.hash(state);
         }
     }
 }
@@ -1834,6 +2140,15 @@ impl GameState {
             active_player: self.active_player,
             players,
         });
+    }
+
+    pub fn creatures_attacked_this_turn_v1(&self) -> u32 {
+        self.creatures_attacked_turn_v1
+            .as_ref()
+            .filter(|(turn, active, _)| *turn == self.turn && *active == self.active_player)
+            .map_or(0, |(_, _, objects)| {
+                u32::try_from(objects.len()).unwrap_or(u32::MAX)
+            })
     }
 
     pub fn creature_died_this_turn_v1(&self) -> bool {
@@ -1927,14 +2242,18 @@ impl GameState {
             planeswalkers_v1: None,
             trigger_uses_v1: None,
             creature_death_turn_v1: None,
+            creatures_attacked_turn_v1: None,
             london_mulligans_v1: None,
             counter_lki_v1: None,
+            creature_stats_lki_v1: None,
             life_loss_turn_v1: None,
             attack_block_restrictions_v1: None,
             speed_v1: None,
             day_night_v1: None,
             descended_v1: None,
             life_gain_turn_v1: None,
+            standard_v1: None,
+            legend_pending_v1: None,
         };
         crate::life_gain_turn_v1::initialize_for_pool(&mut state);
         state
@@ -2105,6 +2424,7 @@ impl GameState {
         moving.attachments.clear();
         moving.v4.attached_to = None;
         moving.v4.exiled_by = None;
+        crate::standard_cards_v1::refresh_aegis_copies(self);
     }
 
     /// Checks the exact two-way attachment graph. Restored state must never
@@ -2187,7 +2507,9 @@ impl GameState {
             zone_change_count: target_zone_change_count,
         };
         let changed_host = source_live.v4.attached_to != Some(host_link);
-        if cfg!(feature = "limited-fdn-fixtures") && changed_host {
+        if (cfg!(feature = "limited-fdn-fixtures") || cfg!(feature = "standard-magezero-fixtures"))
+            && changed_host
+        {
             let timestamp = crate::engine::next_timestamp(self);
             self.objects.get_mut(source).v4.layer_timestamp = Some(timestamp);
         }
@@ -2203,6 +2525,10 @@ impl GameState {
         attachments.push(source);
         attachments.sort_unstable();
         attachments.dedup();
+        crate::standard_cards_v1::refresh_aegis_copies(self);
+        if changed_host {
+            crate::standard_cards_v1::aegis_attached(self, source, host_link);
+        }
         self.validate_attachment_relations()
     }
 
@@ -2587,9 +2913,70 @@ impl GameState {
     /// ordinal. Fallible: callers must propagate the error. Crate-private
     /// because no external caller requires it; effect frames are the only
     /// consumers.
+    /// Sample one public graveyard card without changing either zone order
+    /// or library knowledge. Reuses the checked environment randomness
+    /// transaction on a private projection and commits only its RNG state.
+    pub(crate) fn random_graveyard_card_v1(
+        &mut self,
+        owner: PlayerId,
+    ) -> Result<Option<ObjectId>, LibraryShuffleError> {
+        let owner = library_shuffle_owner(owner)?;
+        let cards = self.players[owner.index()]
+            .graveyard
+            .iter()
+            .copied()
+            .filter(|id| {
+                let card = self.objects.get(*id);
+                card.zone == Zone::Graveyard
+                    && card.owner == owner
+                    && !card.v4.is_token
+                    && !crate::card_def::CARD_DEFS[card.card_def as usize].is_token
+                    && card.spell_copy_origin.is_none()
+            })
+            .collect::<Vec<_>>();
+        if cards.len() < 2 {
+            return Ok(cards.first().copied());
+        }
+        let mut projected = self.clone();
+        projected.players[owner.index()].library = cards;
+        projected.shuffle_library(owner)?;
+        let chosen = projected.players[owner.index()].library.first().copied();
+        self.randomness = projected.randomness;
+        Ok(chosen)
+    }
+
     pub(crate) fn shuffle_library(&mut self, owner: PlayerId) -> Result<(), LibraryShuffleError> {
         let token = self.preflight_library_shuffle(owner)?;
         self.commit_library_shuffle(owner, token)
+    }
+
+    /// Randomizes only the bottom `count` cards. The same checked randomness
+    /// transaction supplies both legacy and environment-v2 permutations;
+    /// unrelated library positions and their known identities stay intact.
+    pub(crate) fn randomize_library_bottom_v1(
+        &mut self,
+        owner: PlayerId,
+        count: usize,
+    ) -> Result<(), LibraryShuffleError> {
+        let owner = library_shuffle_owner(owner)?;
+        let len = self.players[owner.index()].library.len();
+        let count = count.min(len);
+        if count < 2 {
+            return Ok(());
+        }
+        let start = len - count;
+        let mut staged = self.clone();
+        staged.players[owner.index()].library =
+            self.players[owner.index()].library[start..].to_vec();
+        staged.shuffle_library(owner)?;
+        self.players[owner.index()].library[start..]
+            .copy_from_slice(&staged.players[owner.index()].library);
+        self.randomness = staged.randomness;
+        for observer in [PlayerId::P0, PlayerId::P1] {
+            self.library_knowledge[observer.index()][owner.index()]
+                .retain(|entry| (entry.position as usize) < start);
+        }
+        Ok(())
     }
 
     /// Read-only shared view of the legacy RNG; `None` on an environment-v2
@@ -2898,6 +3285,30 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn absent_speed_source_bindings_preserve_the_legacy_encoding() {
+        #[derive(Hash, Serialize)]
+        struct LegacySpeed {
+            speeds: [u8; 2],
+            last_increase: Option<CreatureDeathTurnV1>,
+        }
+        let previous = LegacySpeed {
+            speeds: [2, 3],
+            last_increase: Some(CreatureDeathTurnV1 {
+                turn: 5,
+                active_player: PlayerId::P1,
+            }),
+        };
+        let wire = serde_json::to_string(&previous).unwrap();
+        let current: SpeedV1 = serde_json::from_str(&wire).unwrap();
+        assert_eq!(serde_json::to_string(&current).unwrap(), wire);
+        let mut old_hash = std::collections::hash_map::DefaultHasher::new();
+        let mut new_hash = std::collections::hash_map::DefaultHasher::new();
+        previous.hash(&mut old_hash);
+        current.hash(&mut new_hash);
+        assert_eq!(old_hash.finish(), new_hash.finish());
+    }
 
     fn two_card_libraries() -> (Vec<u16>, Vec<u16>) {
         (vec![1, 2, 3], vec![4, 5, 6, 7])
@@ -4011,6 +4422,8 @@ mod tests {
             x_value: Some(0),
             chosen_creature_cost_zone: None,
             chosen_creature_cost: None,
+            convoke_chosen: Vec::new(),
+            convoke_finished: false,
         });
         let ordinary_contract = state.diagnostic_state_hash();
         state

@@ -1269,6 +1269,7 @@ fn rl_contract_active_exile_permission_holder_and_expiry_are_public() {
         .engine
         .exile_play_permissions
         .push(PlayPermission {
+            without_mana_cost: mtg_kernel::engine::FreeCastV1::default(),
             object: bolt,
             holder: PlayerId::P0,
             zone_change_generation: 3,
@@ -1859,6 +1860,8 @@ fn rl_contract_engine_pending_cast_context_changes_hash() {
         x_value: Some(0),
         chosen_creature_cost_zone: None,
         chosen_creature_cost: None,
+        convoke_chosen: Vec::new(),
+        convoke_finished: false,
     });
     let mut b = a.clone();
     b.engine.pending_cast.as_mut().unwrap().targets_chosen = vec![Target::Player(PlayerId::P0)];

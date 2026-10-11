@@ -1267,6 +1267,9 @@ fn target_parts(
     actor: PlayerSeatV1,
 ) -> (FlatTargetKindV1, FlatRelativePlayerV1) {
     match target {
+        TargetRefV1::StackItem { .. } => {
+            unreachable!("fixed policy rejects stack item targets before encoding")
+        }
         TargetRefV1::Player { player } => {
             (FlatTargetKindV1::Player, relative_player(*player, actor))
         }
@@ -1522,6 +1525,9 @@ impl FlatDecisionEncoderV1 {
         ordinal: u32,
         current_turn: u32,
     ) -> Result<u32, FlatDecisionErrorV1> {
+        if card.counters.oil != 0 || card.counters.charge != 0 || card.counters.net != 0 {
+            return Err(FlatDecisionErrorV1::ObservationContract);
+        }
         let index = self.add_stable(
             &card.stable,
             actor,
@@ -1682,6 +1688,49 @@ impl FlatDecisionEncoderV1 {
     }
 
     fn build_globals(&mut self, observation: &ObservationV5) -> Result<(), FlatDecisionErrorV1> {
+        if observation
+            .projection
+            .creatures_attacked_this_turn
+            .is_some()
+            || observation.projection.poison_counters.is_some()
+            || observation.projection.ninja_emblems.is_some()
+            || observation.projection.poison_prevention.is_some()
+            || observation
+                .projection
+                .surface
+                .exile_play_permissions
+                .iter()
+                .any(|permission| {
+                    permission.without_mana_cost.0
+                        || matches!(
+                            permission.expiry,
+                            PlayPermissionExpiryV2::UntilHoldersNextEndStep
+                        )
+                })
+            || observation.projection.restricted_mana.is_some()
+            || observation.projection.surface.stack.iter().any(|item| {
+                item.granted_ability.is_some()
+                    || item.counter_distribution.is_some()
+                    || item.counter_transfer.is_some()
+            })
+            || observation
+                .projection
+                .surface
+                .battlefield
+                .iter()
+                .flatten()
+                .chain(observation.projection.surface.graveyards.iter().flatten())
+                .chain(observation.projection.surface.exile.iter())
+                .any(|card| {
+                    card.creature_upgrade.is_some()
+                        || card.characteristics.effective_identity.is_some()
+                        || card.characteristics.base_pt_until_end_of_turn.is_some()
+                        || card.characteristics.legend_rules.is_some()
+                        || card.characteristics.legend_return_sources.is_some()
+                })
+        {
+            return Err(FlatDecisionErrorV1::ObservationContract);
+        }
         let actor = observation.acting_player;
         let p = &observation.projection.surface;
         let seats = [actor, opponent(actor)];
@@ -1715,6 +1764,15 @@ impl FlatDecisionEncoderV1 {
         }
 
         let engine = &p.engine_context;
+        if engine.pending_activation.as_ref().is_some_and(|pending| {
+            pending.crew_finished
+                || pending.loyalty_x.is_some()
+                || pending.granted_ability.is_some()
+        }) || engine.pending_triggers.iter().any(|pending| {
+            pending.counter_distribution.is_some() || pending.counter_transfer.is_some()
+        }) {
+            return Err(FlatDecisionErrorV1::ObservationContract);
+        }
         let pending_cast = engine
             .pending_cast
             .as_ref()
@@ -1799,6 +1857,11 @@ impl FlatDecisionEncoderV1 {
                 },
             )
             .transpose()?;
+        if engine.pending_spell_copy.as_ref().is_some_and(|pending| {
+            matches!(pending.inherited_target, TargetRefV1::StackItem { .. })
+        }) {
+            return Err(FlatDecisionErrorV1::ObservationContract);
+        }
         let pending_spell_copy = engine.pending_spell_copy.as_ref().map(|pending| {
             let (inherited_target_kind, inherited_target_player) =
                 target_parts(&pending.inherited_target, actor);
@@ -1818,7 +1881,11 @@ impl FlatDecisionEncoderV1 {
                     player,
                     structural_path,
                     option_count,
+                    creature_options,
                 }) => {
+                    if creature_options.is_some() {
+                        return Err(FlatDecisionErrorV1::ObservationContract);
+                    }
                     let (path_start, path_count) = self.append_context_elements(
                         FlatContextKindV1::PendingEffect,
                         0,
@@ -2467,6 +2534,7 @@ impl FlatDecisionEncoderV1 {
     ) -> FlatPermissionRelationDataV1 {
         let (expiry, holder_turn_started) = match permission.expiry {
             PlayPermissionExpiryV2::EndOfTurn => (0, false),
+            PlayPermissionExpiryV2::UntilHoldersNextEndStep => (2, false),
             PlayPermissionExpiryV2::UntilHoldersNextTurn {
                 holder_turn_started,
             } => (1, holder_turn_started),
@@ -2570,6 +2638,7 @@ impl FlatDecisionEncoderV1 {
     ) -> Result<(), FlatDecisionErrorV1> {
         let target_object = match target {
             TargetRefV1::Object { object } => Some(self.resolve_reference(object, actor)?),
+            TargetRefV1::StackItem { .. } => return Err(FlatDecisionErrorV1::ObservationContract),
             TargetRefV1::Player { .. } => None,
         };
         let context_object = self.context_object_index(
@@ -2686,6 +2755,9 @@ impl FlatDecisionEncoderV1 {
                 let target_object = match target {
                     TargetRefV1::Object { object } => {
                         Some(self.resolve_historical_stack_target(object, actor)?)
+                    }
+                    TargetRefV1::StackItem { .. } => {
+                        return Err(FlatDecisionErrorV1::ObservationContract)
                     }
                     TargetRefV1::Player { .. } => None,
                 };
@@ -3924,6 +3996,64 @@ mod tests {
         Ok(encoder)
     }
 
+    #[test]
+    fn frozen_encoder_rejects_creature_upgrades_in_every_public_zone() {
+        let session = FastActorSessionV1::reset_with_limits(90_120, 127, 128, 16_384);
+        let base = session
+            .flat_policy_observation_v1(expected(&session))
+            .unwrap();
+        for owner in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+            for zone in [Zone::Battlefield, Zone::Graveyard, Zone::Exile] {
+                let mut observation = base.clone();
+                let card = synthetic_public(synthetic_stable(98_120, 1, owner, owner, zone));
+                let cards = match zone {
+                    Zone::Battlefield => {
+                        &mut observation.projection.surface.battlefield[seat_index(owner)]
+                    }
+                    Zone::Graveyard => {
+                        &mut observation.projection.surface.graveyards[seat_index(owner)]
+                    }
+                    Zone::Exile => &mut observation.projection.surface.exile,
+                    _ => unreachable!(),
+                };
+                cards.push(card);
+                assert_eq!(
+                    FlatDecisionEncoderV1::default().build_globals(&observation),
+                    Ok(())
+                );
+                let cards = match zone {
+                    Zone::Battlefield => {
+                        &mut observation.projection.surface.battlefield[seat_index(owner)]
+                    }
+                    Zone::Graveyard => {
+                        &mut observation.projection.surface.graveyards[seat_index(owner)]
+                    }
+                    Zone::Exile => &mut observation.projection.surface.exile,
+                    _ => unreachable!(),
+                };
+                cards.last_mut().unwrap().creature_upgrade =
+                    Some(crate::standard_creatures_v1::CreatureUpgradeV1 {
+                        // Mosswood's permission persists on its graveyard row.
+                        graveyard_adventure: Some(
+                            crate::standard_creatures_v1::GraveyardAdventurePermissionV1 {
+                                holder: match owner {
+                                    PlayerSeatV1::P0 => crate::ids::PlayerId::P0,
+                                    PlayerSeatV1::P1 => crate::ids::PlayerId::P1,
+                                },
+                                holder_turn_started: false,
+                            },
+                        ),
+                        ..Default::default()
+                    });
+                assert_eq!(
+                    FlatDecisionEncoderV1::default().build_globals(&observation),
+                    Err(FlatDecisionErrorV1::ObservationContract),
+                    "{zone:?} {owner:?}"
+                );
+            }
+        }
+    }
+
     fn synthetic_stable(
         arena_id: u32,
         card_db_id: u16,
@@ -3954,6 +4084,9 @@ mod tests {
                 minus0_minus1: 0,
                 stun: 0,
                 lore: 0,
+                oil: 0,
+                charge: 0,
+                net: 0,
             },
             attachments: Vec::new(),
             plotted_turn: None,
@@ -3964,7 +4097,12 @@ mod tests {
             ability_uses_this_turn: Vec::new(),
             skip_next_untap: false,
             goaded_by: Vec::new(),
+            creature_upgrade: None,
             characteristics: CardCharacteristicsV2 {
+                effective_identity: None,
+                base_pt_until_end_of_turn: None,
+                legend_rules: None,
+                legend_return_sources: None,
                 type_flags: CardTypeFlagsV2 {
                     land: false,
                     creature: true,
@@ -4009,6 +4147,12 @@ mod tests {
 
     fn flip_target_seats(target: &mut TargetRefV1) {
         match target {
+            TargetRefV1::StackItem {
+                source, controller, ..
+            } => {
+                flip_stable_seats(source);
+                *controller = opponent(*controller);
+            }
             TargetRefV1::Player { player } => *player = opponent(*player),
             TargetRefV1::Object { object } => flip_stable_seats(object),
         }
@@ -4202,6 +4346,9 @@ mod tests {
             .surface
             .stack
             .push(StackItemPublicV2 {
+                counter_distribution: None,
+                counter_transfer: None,
+                granted_ability: None,
                 stack_index: 0,
                 source: stack_source,
                 controller: actor,
@@ -4316,6 +4463,9 @@ mod tests {
             .surface
             .stack
             .push(StackItemPublicV2 {
+                counter_distribution: None,
+                counter_transfer: None,
+                granted_ability: None,
                 stack_index: 0,
                 source: stack_source,
                 controller: actor,
@@ -4402,6 +4552,9 @@ mod tests {
             .surface
             .stack
             .push(StackItemPublicV2 {
+                counter_distribution: None,
+                counter_transfer: None,
+                granted_ability: None,
                 stack_index: u32::try_from(observation.projection.surface.stack.len()).unwrap(),
                 source: synthetic_stable(90_029, 3, actor, actor, Zone::Stack),
                 controller: actor,
@@ -4505,6 +4658,7 @@ mod tests {
             });
         observation.projection.surface.exile_play_permissions = vec![
             ExilePlayPermissionPublicV2 {
+                without_mana_cost: crate::engine::FreeCastV1::default(),
                 object: exile_b.clone(),
                 holder: other,
                 play_or_cast: PlayOrCastV2::Cast,
@@ -4514,6 +4668,7 @@ mod tests {
                 },
             },
             ExilePlayPermissionPublicV2 {
+                without_mana_cost: crate::engine::FreeCastV1::default(),
                 object: exile_a.clone(),
                 holder: actor,
                 play_or_cast: PlayOrCastV2::Play,
@@ -4521,6 +4676,7 @@ mod tests {
                 expiry: PlayPermissionExpiryV2::EndOfTurn,
             },
             ExilePlayPermissionPublicV2 {
+                without_mana_cost: crate::engine::FreeCastV1::default(),
                 object: exile_a.clone(),
                 holder: actor,
                 play_or_cast: PlayOrCastV2::Play,
@@ -4530,6 +4686,7 @@ mod tests {
                 },
             },
             ExilePlayPermissionPublicV2 {
+                without_mana_cost: crate::engine::FreeCastV1::default(),
                 object: exile_a.clone(),
                 holder: other,
                 play_or_cast: PlayOrCastV2::Play,
@@ -4537,6 +4694,7 @@ mod tests {
                 expiry: PlayPermissionExpiryV2::EndOfTurn,
             },
             ExilePlayPermissionPublicV2 {
+                without_mana_cost: crate::engine::FreeCastV1::default(),
                 object: exile_a.clone(),
                 holder: actor,
                 play_or_cast: PlayOrCastV2::Cast,
@@ -4544,6 +4702,7 @@ mod tests {
                 expiry: PlayPermissionExpiryV2::EndOfTurn,
             },
             ExilePlayPermissionPublicV2 {
+                without_mana_cost: crate::engine::FreeCastV1::default(),
                 object: exile_a.clone(),
                 holder: actor,
                 play_or_cast: PlayOrCastV2::Play,

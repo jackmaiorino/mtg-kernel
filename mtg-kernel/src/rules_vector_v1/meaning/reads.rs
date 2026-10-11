@@ -272,6 +272,20 @@ pub(crate) fn effect_cond(cond: &EffectCond, env: &Env, out: &mut Collector) {
             // Full legality also includes captured incarnation and protection.
             out.atoms.push(Atom::Opaque);
         }
+        EffectCond::PlayerControlsPermanentType { player, card_type } => {
+            let _ = (player, card_type);
+            out.atoms.push(Atom::Opaque);
+        }
+        EffectCond::TargetControlledByController(slot)
+        | EffectCond::TargetControllerPoisonAtLeast(slot, _) => {
+            out.read(
+                RelF::ObjectController,
+                None,
+                Some(env.target_obj(*slot)),
+                AggF::Characteristic,
+            );
+            out.atoms.push(Atom::Opaque);
+        }
     }
 }
 
@@ -394,6 +408,15 @@ pub(crate) fn dynamic_count(count: DynamicCountDef, out: &mut Collector) -> AmtF
             }
             AmtF::Dynamic
         }
+        DynamicCountDef::CreaturesAttackedThisTurn => {
+            out.read(
+                RelF::EachPlayer,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Typed(CardTypeF::Creature)),
+                AggF::EventThisTurn,
+            );
+            AmtF::Dynamic
+        }
         DynamicCountDef::ControllerDrawsThisTurn => {
             // The caster's draws this turn. Vocabulary gap: no aggregate
             // for the number of events this turn.
@@ -514,8 +537,16 @@ pub(crate) fn library_card_filter(filter: LibraryCardFilter, out: &mut Collector
             let _ = subtypes;
             ObjF::BasicLand
         }
-        LibraryCardFilter::AnyLand => ObjF::Typed(CardTypeF::Land),
+        LibraryCardFilter::AnyLand | LibraryCardFilter::LandWithBasicLandType => {
+            ObjF::Typed(CardTypeF::Land)
+        }
         LibraryCardFilter::AnyCard => ObjF::AnyCard,
+        LibraryCardFilter::ArtifactCreatureOrEnchantmentManaValueAtMost(_) => ObjF::Permanent,
+        LibraryCardFilter::ArtifactWithManaValue(_) => {
+            // The frozen vocabulary lacks an exact mana-value read predicate.
+            out.atoms.push(Atom::Opaque);
+            ObjF::Typed(CardTypeF::Artifact)
+        }
     }
 }
 
@@ -529,9 +560,13 @@ pub(crate) fn permanent_filter(filter: PermanentFilter) -> (ObjF, Option<RelF>) 
             // permanent.
             (ObjF::Permanent, None)
         }
-        PermanentFilter::Artifact => (ObjF::Typed(CardTypeF::Artifact), None),
+        PermanentFilter::Artifact | PermanentFilter::AnotherArtifact => {
+            // Source exclusion is marked opaque by the consuming cost.
+            (ObjF::Typed(CardTypeF::Artifact), None)
+        }
         PermanentFilter::Creature => (ObjF::Typed(CardTypeF::Creature), None),
         PermanentFilter::Land => (ObjF::Typed(CardTypeF::Land), None),
+        PermanentFilter::Token => (ObjF::Token, None),
     }
 }
 

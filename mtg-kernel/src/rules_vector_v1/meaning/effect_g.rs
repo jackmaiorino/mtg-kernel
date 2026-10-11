@@ -29,6 +29,212 @@ fn plain_counter(player: RelF, obj: ObjF, amount: AmtF, out: &mut Collector) {
 
 pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
+        EffectOp::CreatureChoiceV1(kind) | EffectOp::CreatureChoiceAnswerV1 { kind, .. } => {
+            use crate::standard_creature_choices_v1::CreatureChoiceV1;
+            if !matches!(kind, CreatureChoiceV1::AegisCopy { .. }) {
+                out.control(ControlF::Optional);
+            }
+            match kind {
+                CreatureChoiceV1::AegisCopy { .. } => {
+                    out.control(ControlF::ChooseObjects);
+                    out.effect(EffectAtom::new(EvF::Copy).obj(ObjF::Typed(CardTypeF::Creature)));
+                }
+                CreatureChoiceV1::GlissaCounters(remaining) => out.effect(
+                    EffectAtom::new(EvF::RemoveCounter)
+                        .obj(ObjF::Permanent)
+                        .amount(AmtF::fixed(i64::from(*remaining))),
+                ),
+                CreatureChoiceV1::FrillbackPayment => {
+                    out.cost(CostAtom::Mana);
+                    out.control(ControlF::Conditional);
+                    for (_, effect) in crate::standard_creature_choices_v1::frillback_modes(1) {
+                        super::effect_op(&effect, env, out);
+                    }
+                }
+                CreatureChoiceV1::ZoralinePayment => {
+                    out.cost(CostAtom::Mana);
+                    out.cost(CostAtom::PayLife(triggers_costs::bucket(2)));
+                    out.control(ControlF::Conditional);
+                    super::effect_op(
+                        &crate::standard_creature_choices_v1::zoraline_return(),
+                        env,
+                        out,
+                    );
+                }
+            }
+        }
+        EffectOp::CreatureUpgrade(effect) => {
+            use crate::standard_creatures_v1::CreatureEffectV1;
+            if matches!(effect, CreatureEffectV1::FinalityReturnedTarget) {
+                plain_counter(RelF::You, ObjF::NonlandPermanent, AmtF::fixed(1), out);
+            }
+            if matches!(effect, CreatureEffectV1::TidebinderCounter) {
+                // The frozen vocabulary has CounterSpell but no separate ability-counter atom.
+                out.effect(EffectAtom::new(EvF::CounterSpell).obj(ObjF::AnyCard));
+                out.control(ControlF::Conditional);
+                out.read(
+                    RelF::You,
+                    Some(ZoneF::Battlefield),
+                    Some(ObjF::ThisObject),
+                    AggF::Characteristic,
+                );
+            }
+            if matches!(effect, CreatureEffectV1::EssenceTransferCounters) {
+                plain_counter(
+                    RelF::You,
+                    ObjF::Typed(CardTypeF::Creature),
+                    AmtF::Dynamic,
+                    out,
+                );
+                out.read(
+                    RelF::You,
+                    Some(ZoneF::Battlefield),
+                    Some(ObjF::ThisObject),
+                    AggF::Characteristic,
+                );
+            }
+            if matches!(effect, CreatureEffectV1::FloodpitsTapStun) {
+                out.effect(
+                    EffectAtom::new(EvF::Tap)
+                        .player(RelF::Opponent)
+                        .obj(ObjF::Typed(CardTypeF::Creature)),
+                );
+                plain_counter(
+                    RelF::Opponent,
+                    ObjF::Typed(CardTypeF::Creature),
+                    AmtF::fixed(1),
+                    out,
+                );
+            }
+            if matches!(effect, CreatureEffectV1::FloodpitsShuffle) {
+                out.effect(
+                    EffectAtom::moving(Some(ZoneF::Battlefield), ZoneF::Library)
+                        .obj(ObjF::Typed(CardTypeF::Creature)),
+                );
+                out.effect(EffectAtom::new(EvF::Shuffle));
+            }
+            if matches!(effect, CreatureEffectV1::MosswoodGraveyardAdventure) {
+                let mut permission = EffectAtom::new(EvF::PlayPermission)
+                    .player(RelF::You)
+                    .obj(ObjF::ThisObject)
+                    .duration(DurF::UntilYourNextTurn);
+                permission.from = Some(ZoneF::Graveyard);
+                out.effect(permission);
+            }
+            if matches!(effect, CreatureEffectV1::VirtueCountersUntap) {
+                plain_counter(
+                    RelF::You,
+                    ObjF::Typed(CardTypeF::Creature),
+                    AmtF::fixed(1),
+                    out,
+                );
+                out.effect(
+                    EffectAtom::new(EvF::Untap)
+                        .player(RelF::You)
+                        .obj(ObjF::Typed(CardTypeF::Creature)),
+                );
+            }
+            if matches!(effect, CreatureEffectV1::SalvagerBoostTokens) {
+                plain_counter(
+                    RelF::You,
+                    ObjF::Typed(CardTypeF::Creature),
+                    AmtF::fixed(1),
+                    out,
+                );
+                out.effect(
+                    EffectAtom::new(EvF::GrantKeyword)
+                        .player(RelF::You)
+                        .obj(ObjF::Typed(CardTypeF::Creature))
+                        .duration(DurF::EndOfTurn)
+                        .keyword(keyword_bits(crate::card_def::Keywords::TRAMPLE)[0]),
+                );
+            }
+            if matches!(effect, CreatureEffectV1::HarvesterWeakening) {
+                out.effect(
+                    EffectAtom::new(EvF::StatChange)
+                        .obj(ObjF::Typed(CardTypeF::Creature))
+                        .amount(AmtF::Dynamic)
+                        .duration(DurF::EndOfTurn),
+                );
+                out.read(
+                    RelF::You,
+                    Some(ZoneF::Battlefield),
+                    Some(ObjF::Token),
+                    AggF::Count,
+                );
+            }
+            out.control(ControlF::Conditional);
+            if matches!(effect, CreatureEffectV1::WurmletCounterIfFirstResolution) {
+                plain_counter(RelF::You, ObjF::ThisObject, AmtF::fixed(1), out);
+                out.read(RelF::You, None, Some(ObjF::ThisObject), AggF::EventThisTurn);
+            }
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::ThisObject),
+                AggF::Characteristic,
+            );
+            if matches!(effect, CreatureEffectV1::ToughCookieAnimate) {
+                out.effect(
+                    EffectAtom::new(EvF::StatChange)
+                        .player(RelF::You)
+                        .obj(ObjF::Typed(CardTypeF::Artifact))
+                        .duration(DurF::EndOfTurn),
+                );
+            }
+            if matches!(
+                effect,
+                CreatureEffectV1::KellanRogue | CreatureEffectV1::SurgeBlue
+            ) {
+                out.effect(
+                    EffectAtom::new(EvF::StatChange)
+                        .player(RelF::You)
+                        .obj(ObjF::ThisObject)
+                        .duration(DurF::Permanent),
+                );
+            }
+            let keyword = match effect {
+                CreatureEffectV1::KellanRogue => Some(crate::card_def::Keywords::DOUBLE_STRIKE),
+                CreatureEffectV1::SurgeUnblockable => {
+                    Some(crate::card_def::Keywords::CANT_BE_BLOCKED)
+                }
+                CreatureEffectV1::GingerEvasion => Some(crate::card_def::Keywords::CANT_BE_BLOCKED),
+                _ => None,
+            };
+            if let Some(keyword) = keyword {
+                let duration = if matches!(effect, CreatureEffectV1::GingerEvasion) {
+                    DurF::EndOfTurn
+                } else {
+                    DurF::Permanent
+                };
+                out.effect(
+                    EffectAtom::new(EvF::GrantKeyword)
+                        .player(RelF::You)
+                        .obj(ObjF::ThisObject)
+                        .duration(duration)
+                        .keyword(keyword_bits(keyword)[0]),
+                );
+            }
+            if matches!(effect, CreatureEffectV1::KellanDetective) {
+                super::effect_op(
+                    &EffectOp::ImpulseDraw {
+                        count: 1,
+                        duration: crate::effect::ImpulseDuration::EndOfTurn,
+                    },
+                    env,
+                    out,
+                );
+            }
+        }
+        EffectOp::DistributePlusOneCounters { .. } => {
+            plain_counter(
+                RelF::You,
+                ObjF::Typed(CardTypeF::Creature),
+                AmtF::Dynamic,
+                out,
+            );
+            out.control(ControlF::ChooseBranch);
+        }
         EffectOp::BindEntrantOutgrowsSourceThen { then } => {
             // Authored trigger marker. Collection binds the entering
             // creature and the source; at resolution `then` runs only if the

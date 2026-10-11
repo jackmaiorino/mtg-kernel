@@ -36,10 +36,14 @@ use crate::state::{
 use crate::surface_v2::{SurfaceAction, SurfaceDecision, H2_PREDICATE_VERSION};
 use crate::KERNEL_VERSION;
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
+#[path = "rl_legacy_hash_v1.rs"]
+mod legacy_hash_v1;
+
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeSet, HashSet};
 use std::fmt;
 use std::fs::{self, File};
+use std::hash::Hash;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
@@ -197,13 +201,25 @@ impl From<PlayerId> for PlayerSeatV1 {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CountersV1 {
     pub plus1_plus1: i16,
     pub minus1_minus1: i16,
     pub minus0_minus1: i16,
     pub stun: i16,
     pub lore: i16,
+    #[serde(default, skip_serializing_if = "counter_i16_zero")]
+    pub oil: i16,
+    #[serde(default, skip_serializing_if = "counter_i32_zero")]
+    pub charge: i32,
+    #[serde(default, skip_serializing_if = "counter_i32_zero")]
+    pub net: i32,
+}
+fn counter_i16_zero(value: &i16) -> bool {
+    *value == 0
+}
+fn counter_i32_zero(value: &i32) -> bool {
+    *value == 0
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -271,8 +287,25 @@ pub struct KeywordFlagsV2 {
     pub landwalk_mask: u8,
 }
 
+/// Effective identity when printed catalog identity is insufficient, such as
+/// an unlocked Room door or a transforming face with different supertypes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct EffectiveIdentityV1 {
+    pub names: Vec<String>,
+    pub mana_value: u16,
+    pub supertypes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CardCharacteristicsV2 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_identity: Option<EffectiveIdentityV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legend_return_sources: Option<Vec<CardStableRefV1>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legend_rules: Option<crate::standard_legends_v1::LegendCharacteristicsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_pt_until_end_of_turn: Option<[i16; 2]>,
     pub type_flags: CardTypeFlagsV2,
     pub base_power: Option<i32>,
     pub base_toughness: Option<i32>,
@@ -296,7 +329,7 @@ pub struct GoadPublicV4 {
     pub expires_at_turn: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CardPublicV2 {
     pub stable: CardStableRefV1,
     pub card_name: String,
@@ -313,14 +346,29 @@ pub struct CardPublicV2 {
     pub ability_uses_this_turn: Vec<AbilityUsePublicV4>,
     pub skip_next_untap: bool,
     pub goaded_by: Vec<GoadPublicV4>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creature_upgrade: Option<crate::standard_creatures_v1::CreatureUpgradeV1>,
     pub characteristics: CardCharacteristicsV2,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "target_kind", rename_all = "snake_case")]
 pub enum TargetRefV1 {
-    Player { player: PlayerSeatV1 },
-    Object { object: CardStableRefV1 },
+    Player {
+        player: PlayerSeatV1,
+    },
+    Object {
+        object: CardStableRefV1,
+    },
+    StackItem {
+        stack_item_id: u64,
+        /// Current public stack row, absent once the targeted item departed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stack_index: Option<u32>,
+        source: CardStableRefV1,
+        controller: PlayerSeatV1,
+        kind: StackItemKindV2,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -356,7 +404,7 @@ impl From<StackItemKind> for StackItemKindV2 {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StackItemPublicV2 {
     pub stack_index: u32,
     pub source: CardStableRefV1,
@@ -372,6 +420,12 @@ pub struct StackItemPublicV2 {
     pub face_index: u8,
     pub x_value: u16,
     pub paid_cost_refs: Vec<CardStableRefV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counter_distribution: Option<CounterDistributionPublicV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counter_transfer: Option<crate::standard_creatures_v1::CounterTransferV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub granted_ability: Option<(CardStableRefV1, u16)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -472,10 +526,13 @@ pub enum PlayOrCastV2 {
 pub enum PlayPermissionExpiryV2 {
     EndOfTurn,
     UntilHoldersNextTurn { holder_turn_started: bool },
+    UntilHoldersNextEndStep,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ExilePlayPermissionPublicV2 {
+    #[serde(default, skip_serializing_if = "crate::engine::FreeCastV1::is_false")]
+    pub without_mana_cost: crate::engine::FreeCastV1,
     pub object: CardStableRefV1,
     pub holder: PlayerSeatV1,
     pub play_or_cast: PlayOrCastV2,
@@ -516,7 +573,7 @@ pub struct PendingCastSemanticV2 {
     pub kicked: Option<bool>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingActivationSemanticV2 {
     pub source: Option<CardStableRefV1>,
     pub controller: PlayerSeatV1,
@@ -525,6 +582,35 @@ pub struct PendingActivationSemanticV2 {
     pub cost_discard_paid: Option<Vec<CardStableRefV1>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub object_cost_chosen: Vec<CardStableRefV1>,
+    #[serde(default, skip_serializing_if = "crate::engine::bool_is_false")]
+    pub crew_finished: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loyalty_x: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub granted_ability: Option<(CardStableRefV1, u16)>,
+}
+
+impl std::hash::Hash for PendingActivationSemanticV2 {
+    fn hash<H: std::hash::Hasher>(&self, hash: &mut H) {
+        std::hash::Hash::hash(&self.source, hash);
+        std::hash::Hash::hash(&self.controller, hash);
+        std::hash::Hash::hash(&self.ability_index, hash);
+        std::hash::Hash::hash(&self.chosen_targets, hash);
+        std::hash::Hash::hash(&self.cost_discard_paid, hash);
+        std::hash::Hash::hash(&self.object_cost_chosen, hash);
+        if self.crew_finished {
+            std::hash::Hash::hash(b"crew_finished_v1", hash);
+            std::hash::Hash::hash(&true, hash);
+        }
+        if let Some(x) = self.loyalty_x {
+            std::hash::Hash::hash(b"loyalty_x_v1", hash);
+            std::hash::Hash::hash(&x, hash);
+        }
+        if let Some(grant) = &self.granted_ability {
+            std::hash::Hash::hash(b"granted_ability_v1", hash);
+            std::hash::Hash::hash(grant, hash);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -615,13 +701,15 @@ pub enum BooleanChoicePurposeV4 {
     PayCost,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "choice_kind", rename_all = "snake_case")]
 pub enum PendingEffectChoiceSemanticV4 {
     Options {
         player: PlayerSeatV1,
         structural_path: Vec<u16>,
         option_count: u16,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        creature_options: Option<Vec<crate::standard_creature_choices_v1::CreatureChoiceOptionV1>>,
     },
     Targets {
         player: PlayerSeatV1,
@@ -667,12 +755,56 @@ pub enum PendingTriggerKindV2 {
     MadnessOffer,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingTriggerSemanticV2 {
     pub source: Option<CardStableRefV1>,
     pub controller: PlayerSeatV1,
     pub trigger_kind: PendingTriggerKindV2,
     pub kicked: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counter_distribution: Option<CounterDistributionPublicV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counter_transfer: Option<crate::standard_creatures_v1::CounterTransferV1>,
+}
+
+/// Public announcement facts. These counters are allocated before priority.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CounterDistributionPublicV1 {
+    pub total: u32,
+    pub targets: Vec<TargetRefV1>,
+    pub amounts: Vec<u32>,
+}
+
+fn public_counter_transfer(
+    state: &GameState,
+    effect: Option<&crate::effect::EffectOp>,
+    source: Option<crate::state::AbilitySourceContractV4>,
+) -> Option<crate::standard_creatures_v1::CounterTransferV1> {
+    let source = source?;
+    matches!(
+        effect?,
+        crate::effect::EffectOp::CreatureUpgrade(
+            crate::standard_creatures_v1::CreatureEffectV1::EssenceTransferCounters
+        )
+    )
+    .then(|| crate::standard_creatures_v1::counter_transfer_snapshot(state, source))
+}
+
+fn public_counter_distribution(
+    effect: Option<&crate::effect::EffectOp>,
+    targets: Vec<TargetRefV1>,
+) -> Option<CounterDistributionPublicV1> {
+    let crate::effect::EffectOp::DistributePlusOneCounters {
+        total, allocations, ..
+    } = effect?
+    else {
+        return None;
+    };
+    Some(CounterDistributionPublicV1 {
+        total: *total,
+        targets,
+        amounts: allocations.clone(),
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -885,7 +1017,16 @@ pub struct ObservationV2 {
     pub known_library_cards: [Vec<KnownLibraryCardV4>; 2],
     /// Acting-observer-only revealed hand identities, indexed by hand owner.
     pub known_hand_cards: [Vec<CardPrivateV1>; 2],
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub known_face_down_cards: Vec<FaceDownCardKnowledgeV1>,
     pub visible_projection_hash: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FaceDownCardKnowledgeV1 {
+    pub object: CardStableRefV1,
+    pub card_db_id: u16,
+    pub card_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -919,6 +1060,17 @@ pub struct PublicFoundationsCombatV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublicObservationProjectionV5 {
+    /// Public counters, omitted in games with no poison to preserve frozen observations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poison_counters: Option<[u16; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poison_prevention: Option<[bool; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creatures_attacked_this_turn: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ninja_emblems: Option<[u16; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restricted_mana: Option<[Vec<PublicRestrictedManaV1>; 2]>,
     #[serde(flatten)]
     pub surface: PublicObservationProjectionV2,
     pub policy_surface_context: PolicySurfaceContextV5,
@@ -926,6 +1078,15 @@ pub struct PublicObservationProjectionV5 {
     pub foundations_combat: Option<PublicFoundationsCombatV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub london_mulligans: Option<PublicLondonMulligansV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicRestrictedManaV1 {
+    pub color: ManaColor,
+    pub restriction: crate::card_def::ManaSpendRestrictionDef,
+    pub source_card_def: u16,
+    /// A current public permanent reference, or None after the producer left.
+    pub source: Option<CardStableRefV1>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -951,7 +1112,31 @@ pub struct ObservationV5 {
     pub own_hand: Vec<CardPrivateV1>,
     pub known_library_cards: [Vec<KnownLibraryCardV4>; 2],
     pub known_hand_cards: [Vec<CardPrivateV1>; 2],
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub known_face_down_cards: Vec<FaceDownCardKnowledgeV1>,
     pub visible_projection_hash: u64,
+}
+
+/// Public provenance of an ability granted by a specific exiled card.
+/// None emits no hash bytes, preserving the original activation action.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct GrantedAbilityPublicV1(pub Option<(CardStableRefV1, u16)>);
+impl GrantedAbilityPublicV1 {
+    pub fn is_none(&self) -> bool {
+        self.0.is_none()
+    }
+    pub fn as_ref(&self) -> Option<&(CardStableRefV1, u16)> {
+        self.0.as_ref()
+    }
+}
+impl Hash for GrantedAbilityPublicV1 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        if let Some(grant) = &self.0 {
+            "granted-ability-public/v1".hash(state);
+            grant.hash(state);
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -982,6 +1167,8 @@ pub enum ActionSemanticV1 {
         actor: PlayerSeatV1,
         source: CardStableRefV1,
         ability_index: u8,
+        #[serde(default, skip_serializing_if = "GrantedAbilityPublicV1::is_none")]
+        granted_ability: GrantedAbilityPublicV1,
     },
     PlotSpell {
         actor: PlayerSeatV1,
@@ -1146,6 +1333,19 @@ pub enum ActionSemanticV1 {
         actor: PlayerSeatV1,
         remaining: u8,
         card: CardStableRefV1,
+    },
+    /// 508.1b: `attacker` attacks `target`, the defending player or one of
+    /// their planeswalkers.
+    ChooseAttackTarget {
+        actor: PlayerSeatV1,
+        attacker: CardStableRefV1,
+        target: TargetRefV1,
+    },
+    /// Turn a disguised permanent face up. The wire action uses the
+    /// reserved index 255; unlike activation, this is a special action.
+    TurnFaceUp {
+        actor: PlayerSeatV1,
+        source: CardStableRefV1,
     },
 }
 
@@ -1774,6 +1974,7 @@ fn build_observation_v2(
         own_hand,
         known_library_cards: known_library_cards_v4(state, acting_player, text_mode)?,
         known_hand_cards: known_hand_cards_v4(state, acting_player, text_mode)?,
+        known_face_down_cards: known_face_down_cards_v1(state, acting_player, text_mode)?,
         visible_projection_hash: 0,
     })
 }
@@ -1887,6 +2088,18 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
         substep_index,
         substep_count,
         projection: PublicObservationProjectionV5 {
+            poison_counters: public_poison_counters_v1(state),
+            ninja_emblems: crate::standard_cards_v1::ninja_emblems(state),
+            poison_prevention: {
+                let flags = [
+                    state.players[0].poison_prevention_v1.0,
+                    state.players[1].poison_prevention_v1.0,
+                ];
+                flags.iter().any(|x| *x).then_some(flags)
+            },
+            creatures_attacked_this_turn: (state.creatures_attacked_this_turn_v1() != 0)
+                .then(|| state.creatures_attacked_this_turn_v1()),
+            restricted_mana: public_restricted_mana_v1(state)?,
             surface: base.projection,
             policy_surface_context,
             london_mulligans: public_london_mulligans_v1(state),
@@ -1895,6 +2108,7 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
         known_hand_cards: base.known_hand_cards,
+        known_face_down_cards: base.known_face_down_cards,
         visible_projection_hash: 0,
     })
 }
@@ -1921,6 +2135,40 @@ fn public_foundations_combat_v1(state: &GameState) -> Result<Option<PublicFounda
             })
         })
         .transpose()
+}
+
+fn public_restricted_mana_v1(
+    state: &GameState,
+) -> Result<Option<[Vec<PublicRestrictedManaV1>; 2]>> {
+    let mut pools = [Vec::new(), Vec::new()];
+    for (index, pool) in pools.iter_mut().enumerate() {
+        for unit in &state.players[index].restricted_mana_pool.0 {
+            let source = state
+                .objects
+                .try_get(unit.source.object)
+                .filter(|object| {
+                    object.zone == Zone::Battlefield
+                        && object.zone_change_count == unit.source.zone_change_count
+                })
+                .map(|_| card_ref(state, unit.source.object))
+                .transpose()?;
+            pool.push(PublicRestrictedManaV1 {
+                color: unit.color,
+                restriction: unit.restriction,
+                source_card_def: unit.source_card_def,
+                source,
+            });
+        }
+    }
+    Ok(pools.iter().any(|pool| !pool.is_empty()).then_some(pools))
+}
+
+fn public_poison_counters_v1(state: &GameState) -> Option<[u16; 2]> {
+    let counts = [
+        state.players[0].poison_counters.0,
+        state.players[1].poison_counters.0,
+    ];
+    (counts != [0, 0]).then_some(counts)
 }
 
 fn public_london_mulligans_v1(state: &GameState) -> Option<PublicLondonMulligansV1> {
@@ -2065,6 +2313,18 @@ fn build_policy_observation_v6(request: PolicyObservationBuildV5<'_>) -> Result<
         substep_index,
         substep_count,
         projection: PublicObservationProjectionV5 {
+            poison_counters: public_poison_counters_v1(state),
+            ninja_emblems: crate::standard_cards_v1::ninja_emblems(state),
+            poison_prevention: {
+                let flags = [
+                    state.players[0].poison_prevention_v1.0,
+                    state.players[1].poison_prevention_v1.0,
+                ];
+                flags.iter().any(|x| *x).then_some(flags)
+            },
+            creatures_attacked_this_turn: (state.creatures_attacked_this_turn_v1() != 0)
+                .then(|| state.creatures_attacked_this_turn_v1()),
+            restricted_mana: public_restricted_mana_v1(state)?,
             surface: base.projection,
             policy_surface_context,
             foundations_combat: public_foundations_combat_v1(state)?,
@@ -2073,6 +2333,7 @@ fn build_policy_observation_v6(request: PolicyObservationBuildV5<'_>) -> Result<
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
         known_hand_cards: base.known_hand_cards,
+        known_face_down_cards: base.known_face_down_cards,
         extensions,
         visible_projection_hash: 0,
     })
@@ -2764,10 +3025,24 @@ fn core_surface_action_candidates_v1(
                 for &(id, ability_index) in activatable_abilities {
                     push_action(
                         &mut out,
-                        ActionSemanticV1::ActivateAbility {
-                            actor,
-                            source: card_ref(state, id)?,
-                            ability_index,
+                        if ability_index == 255 {
+                            ActionSemanticV1::TurnFaceUp {
+                                actor,
+                                source: card_ref(state, id)?,
+                            }
+                        } else {
+                            ActionSemanticV1::ActivateAbility {
+                                actor,
+                                source: card_ref(state, id)?,
+                                ability_index,
+                                granted_ability: GrantedAbilityPublicV1(public_granted_ability(
+                                    crate::standard_cards_v1::capture_cauldron_grant(
+                                        state,
+                                        id,
+                                        ability_index,
+                                    ),
+                                )),
+                            }
                         },
                         SurfaceAction::Action(Action::ActivateAbility(id, ability_index)),
                     )?;
@@ -3082,6 +3357,25 @@ fn core_surface_action_candidates_v1(
                     )?;
                 }
             }
+            Decision::ChooseAttackTarget {
+                player,
+                attacker,
+                candidates,
+            } => {
+                let actor = (*player).into();
+                let attacker = card_ref(state, *attacker)?;
+                for &target in candidates {
+                    push_action(
+                        &mut out,
+                        ActionSemanticV1::ChooseAttackTarget {
+                            actor,
+                            attacker: attacker.clone(),
+                            target: target_ref(state, target)?,
+                        },
+                        SurfaceAction::Action(Action::ChooseAttackTarget(target)),
+                    )?;
+                }
+            }
             Decision::ChooseLegendPermanent { player, candidates } => {
                 let actor = (*player).into();
                 let references = candidates
@@ -3374,6 +3668,7 @@ pub fn acting_player_for_surface_decision(
             | Decision::ChooseLegendPermanent { player, .. }
             | Decision::ChooseLondonMulligan { player, .. }
             | Decision::ChooseLondonBottom { player, .. }
+            | Decision::ChooseAttackTarget { player, .. }
             | Decision::ChooseOptionalCost { player, .. }
             | Decision::ChooseSpellCopyPayment { player, .. }
             | Decision::ChooseSpellCopyRetarget { player, .. }
@@ -5160,6 +5455,44 @@ fn player_status_v1(player: &crate::state::PlayerState) -> PlayerStatusV1 {
     }
 }
 
+pub(crate) fn projected_card_def(state: &GameState, id: ObjectId, generation: u32) -> u16 {
+    let object = state.objects.get(id);
+    if object.zone_change_count == generation {
+        if let Some(face) = object.v4.face_down_v1 {
+            return crate::card_def::card_id_by_name(if face.disguised {
+                "Face-down creature"
+            } else {
+                "Face-down card"
+            })
+            .expect("face-down sentinel registered");
+        }
+    }
+    object.card_def
+}
+fn known_face_down_cards_v1(
+    state: &GameState,
+    observer: PlayerId,
+    text_mode: ObservationTextModeV2,
+) -> Result<Vec<FaceDownCardKnowledgeV1>> {
+    state
+        .objects
+        .iter()
+        .filter(|(_, object)| {
+            object
+                .v4
+                .face_down_v1
+                .is_some_and(|face| face.lookers & (1 << observer.index()) != 0)
+        })
+        .map(|(id, object)| {
+            Ok(FaceDownCardKnowledgeV1 {
+                object: card_ref(state, id)?,
+                card_db_id: object.card_def,
+                card_name: text_mode.card_name(object.card_def),
+            })
+        })
+        .collect()
+}
+
 fn card_ref(state: &GameState, id: ObjectId) -> Result<CardStableRefV1> {
     let object = state
         .objects
@@ -5167,7 +5500,7 @@ fn card_ref(state: &GameState, id: ObjectId) -> Result<CardStableRefV1> {
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
     Ok(CardStableRefV1 {
         arena_id: id.0,
-        card_db_id: object.card_def,
+        card_db_id: projected_card_def(state, id, object.zone_change_count),
         owner: object.owner.into(),
         controller: object.controller.into(),
         zone: object.zone,
@@ -5308,12 +5641,64 @@ fn paid_cost_card_refs(refs: &[PaidCostRefV4], acting_player: PlayerId) -> Vec<C
         .collect()
 }
 
+pub(crate) fn stack_item_target_ref_from_contract(
+    state: &GameState,
+    contract: crate::state::StackTargetContractV4,
+) -> Result<TargetRefV1> {
+    let crate::state::StackTargetContractV4::StackItem {
+        stack_item_id,
+        source,
+        card_def,
+        owner,
+        controller,
+        source_zone,
+        source_zone_change_count,
+        kind,
+    } = contract
+    else {
+        return Err(RlContractError(
+            "expected a stack-item target contract".into(),
+        ));
+    };
+    Ok(TargetRefV1::StackItem {
+        stack_item_id: stack_item_id.0,
+        stack_index: state
+            .stack
+            .iter()
+            .position(|item| item.v4.stack_item_id == stack_item_id)
+            .map(|index| index as u32),
+        controller: controller.into(),
+        kind: kind.into(),
+        source: CardStableRefV1 {
+            arena_id: source.0,
+            card_db_id: card_def,
+            owner: owner.into(),
+            controller: controller.into(),
+            zone: source_zone,
+            zone_change_count: source_zone_change_count,
+        },
+    })
+}
+pub(crate) fn stack_item_target_ref(
+    state: &GameState,
+    id: crate::ids::StackItemId,
+) -> Result<TargetRefV1> {
+    if !state.stack.iter().any(|item| item.v4.stack_item_id == id) {
+        return Err(RlContractError("stack target no longer exists".into()));
+    }
+    stack_item_target_ref_from_contract(
+        state,
+        crate::state::StackTargetContractV4::capture(state, Target::StackItem(id)),
+    )
+}
+
 fn target_ref_visible(
     state: &GameState,
     target: Target,
     acting_player: PlayerId,
 ) -> Result<Option<TargetRefV1>> {
     match target {
+        Target::StackItem(id) => Ok(Some(stack_item_target_ref(state, id)?)),
         Target::Player(player) => Ok(Some(TargetRefV1::Player {
             player: player.into(),
         })),
@@ -5346,6 +5731,9 @@ fn effect_target_ref_visible(
     target: Target,
     acting_player: PlayerId,
 ) -> Result<TargetRefV1> {
+    if let Target::StackItem(id) = target {
+        return stack_item_target_ref(state, id);
+    }
     let Target::Object(object_id) = target else {
         let Target::Player(player) = target else {
             unreachable!("Target has only player and object variants")
@@ -5400,7 +5788,12 @@ fn public_card(state: &GameState, id: ObjectId) -> Result<CardPublicV1> {
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
     Ok(CardPublicV1 {
         stable: card_ref(state, id)?,
-        card_name: if crate::continuous_characteristics_v1::creature_override(state, id).is_some() {
+        card_name: if object.v4.face_down_v1.is_some() {
+            card_name(projected_card_def(state, id, object.zone_change_count))
+        } else if object.v4.face_index == 1
+            || card_effective_identity_v1(state, id).is_some()
+            || crate::continuous_characteristics_v1::creature_override(state, id).is_some()
+        {
             engine::effective_name(state, id).to_string()
         } else {
             card_name(object.card_def)
@@ -5416,6 +5809,9 @@ fn public_card(state: &GameState, id: ObjectId) -> Result<CardPublicV1> {
             minus0_minus1: object.counters.minus0_minus1,
             stun: object.counters.stun,
             lore: object.counters.lore,
+            oil: object.counters.oil,
+            charge: object.counters.charge,
+            net: object.counters.net,
         },
         attachments: object.attachments.iter().map(|id| id.0).collect(),
         plotted_turn: object.plotted_turn,
@@ -5433,8 +5829,11 @@ fn public_card_v2(
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
     Ok(CardPublicV2 {
         stable: card_ref(state, id)?,
-        card_name: if matches!(text_mode, ObservationTextModeV2::FullArtifact)
+        card_name: if object.v4.face_down_v1.is_some() {
+            text_mode.card_name(projected_card_def(state, id, object.zone_change_count))
+        } else if matches!(text_mode, ObservationTextModeV2::FullArtifact)
             && (object.v4.face_index == 1
+                || card_effective_identity_v1(state, id).is_some()
                 || crate::continuous_characteristics_v1::creature_override(state, id).is_some())
         {
             engine::effective_name(state, id).to_string()
@@ -5453,6 +5852,9 @@ fn public_card_v2(
             minus0_minus1: object.counters.minus0_minus1,
             stun: object.counters.stun,
             lore: object.counters.lore,
+            oil: object.counters.oil,
+            charge: object.counters.charge,
+            net: object.counters.net,
         },
         attachments: object.attachments.iter().map(|id| id.0).collect(),
         plotted_turn: object.plotted_turn,
@@ -5480,6 +5882,7 @@ fn public_card_v2(
                 expires_at_turn: entry.expires_at_turn,
             })
             .collect(),
+        creature_upgrade: object.v4.creature_upgrade.clone(),
         characteristics: card_characteristics_v2(state, id),
     })
 }
@@ -5573,12 +5976,54 @@ fn known_hand_cards_v4(
     Ok(result)
 }
 
+fn card_effective_identity_v1(state: &GameState, id: ObjectId) -> Option<EffectiveIdentityV1> {
+    let object = state.objects.get(id);
+    if object.v4.face_down_v1.is_some() {
+        return None;
+    }
+    let definition = &CARD_DEFS[object.card_def as usize];
+    let needs_identity = definition.name == "Unholy Annex // Ritual Chamber"
+        || engine::effective_supertypes(state, id) != definition.supertypes;
+    needs_identity.then(|| EffectiveIdentityV1 {
+        names: engine::effective_names(state, id)
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        mana_value: engine::object_mana_value(state, id),
+        supertypes: engine::effective_supertypes(state, id)
+            .iter()
+            .map(|value| format!("{value:?}"))
+            .collect(),
+    })
+}
+
 fn card_characteristics_v2(state: &GameState, id: ObjectId) -> CardCharacteristicsV2 {
     let object = state.objects.get(id);
     let base_power = engine::effective_base_power(state, id);
     let base_toughness = engine::effective_base_toughness(state, id);
     let has_pt = base_power.is_some() || base_toughness.is_some();
     CardCharacteristicsV2 {
+        effective_identity: card_effective_identity_v1(state, id),
+        legend_rules: crate::standard_legends_v1::characteristics(state, id),
+        legend_return_sources: object.v4.melira_protection_v1.as_ref().map(|sources| {
+            sources
+                .iter()
+                .map(|source| CardStableRefV1 {
+                    arena_id: source.source.0,
+                    card_db_id: source.card_def,
+                    owner: source.owner.into(),
+                    controller: source.controller.into(),
+                    zone: source.zone,
+                    zone_change_count: source.zone_change_count,
+                })
+                .collect()
+        }),
+        base_pt_until_end_of_turn: state
+            .objects
+            .get(id)
+            .v4
+            .temporary_base_pt_v1
+            .map(|(power, toughness, _)| [power, toughness]),
         type_flags: CardTypeFlagsV2 {
             land: engine::object_has_type(state, id, CardType::Land),
             creature: engine::object_has_type(state, id, CardType::Creature),
@@ -5612,9 +6057,11 @@ fn card_characteristics_v2(state: &GameState, id: ObjectId) -> CardCharacteristi
                 id,
                 Keywords::PROTECTION_FROM_MONOCOLORED,
             ),
-            ward_generic: if crate::continuous_characteristics_v1::printed_abilities_active(
-                state, id,
-            ) {
+            ward_generic: if object.v4.face_down_v1.is_some_and(|face| face.disguised)
+                && crate::continuous_characteristics_v1::removal_timestamp(state, id).is_none()
+            {
+                2
+            } else if crate::continuous_characteristics_v1::printed_abilities_active(state, id) {
                 object.v4.ward_generic
             } else {
                 0
@@ -5706,6 +6153,50 @@ fn object_relations_public_v4(
         let Some(source) = visible_card_ref(state, id, acting_player)? else {
             continue;
         };
+        if let Some(face) = object
+            .v4
+            .face_down_v1
+            .filter(|face| face.hidden_by.is_some())
+        {
+            let contract = face.hidden_by_source.ok_or_else(|| {
+                RlContractError("hideaway relation lost its historical source".into())
+            })?;
+            let link = face.hidden_by.expect("filtered linked hideaway");
+            let cage = state.objects.try_get(link.object).ok_or_else(|| {
+                RlContractError("hideaway relation lost its source object".into())
+            })?;
+            if face.disguised
+                || object.zone != Zone::Exile
+                || contract.source != link.object
+                || contract.zone_change_count != link.zone_change_count
+                || contract.zone != Zone::Battlefield
+                || cage.owner != contract.owner
+                || cage.card_def != contract.card_def
+                || cage.zone_change_count < contract.zone_change_count
+                || crate::card_def::CARD_DEFS[contract.card_def as usize].name != "Collector's Cage"
+            {
+                return Err(RlContractError(
+                    "hideaway relation changed its source incarnation".into(),
+                ));
+            }
+            let exiled_by = if cage.zone_change_count == contract.zone_change_count {
+                visible_card_ref(state, link.object, acting_player)?
+                    .ok_or_else(|| RlContractError("live hideaway source is hidden".into()))?
+            } else {
+                CardStableRefV1 {
+                    arena_id: contract.source.0,
+                    card_db_id: contract.card_def,
+                    owner: contract.owner.into(),
+                    controller: contract.controller.into(),
+                    zone: contract.zone,
+                    zone_change_count: contract.zone_change_count,
+                }
+            };
+            out.push(ObjectRelationPublicV4::ExiledBy {
+                object: source.clone(),
+                exiled_by,
+            });
+        }
         if let Some(link) = object.v4.attached_to {
             let target = state.objects.try_get(link.object).ok_or_else(|| {
                 RlContractError("attached_to relation points at a missing object".to_string())
@@ -5799,16 +6290,32 @@ fn object_relations_public_v4(
 
 fn validate_linked_exile_records_public_v4(state: &GameState) -> Result<()> {
     for (index, record) in state.engine.linked_exile_records.iter().enumerate() {
+        let definition = crate::card_def::CARD_DEFS
+            .get(record.source.card_def as usize)
+            .ok_or_else(|| RlContractError("linked-exile source definition is missing".into()))?;
+        let until_leaves =
+            crate::effect::battlefield_exile_until_source_leaves(record.source.card_def);
+        let hand_exile = crate::effect::linked_hand_exile_kind(record.source.card_def).is_some();
         if record.source.zone != Zone::Battlefield
-            || record.source.attached_to.is_some()
-            || crate::card_def::CARD_DEFS
-                .get(record.source.card_def as usize)
-                .is_none_or(|definition| {
-                    !matches!(definition.name, "Mesmeric Fiend" | "Journey to Nowhere")
-                })
+            || (record.source.attached_to.is_some()
+                && !definition
+                    .subtypes
+                    .contains(&crate::card_def::Subtype::Aura))
+            || !(until_leaves
+                || hand_exile
+                || matches!(
+                    definition.name,
+                    "Journey to Nowhere" | "Lagrella, the Magpie"
+                ))
             || state.engine.linked_exile_records[..index]
                 .iter()
-                .any(|other| other.source == record.source)
+                .any(|other| {
+                    (other.exiled == record.exiled
+                        && other.exiled_zone_change_count == record.exiled_zone_change_count)
+                        || (other.source == record.source
+                            && !until_leaves
+                            && definition.name != "Lagrella, the Magpie")
+                })
         {
             return Err(RlContractError(
                 "linked-exile record has an invalid or duplicate source contract".to_string(),
@@ -6226,6 +6733,7 @@ fn exile_play_permissions_public_v2(state: &GameState) -> Result<Vec<ExilePlayPe
             continue;
         }
         out.push(ExilePlayPermissionPublicV2 {
+            without_mana_cost: perm.without_mana_cost,
             object: card_ref(state, perm.object)?,
             holder: perm.holder.into(),
             play_or_cast: match perm.play_or_cast {
@@ -6235,6 +6743,9 @@ fn exile_play_permissions_public_v2(state: &GameState) -> Result<Vec<ExilePlayPe
             zone_change_generation: perm.zone_change_generation,
             expiry: match perm.expiry {
                 PlayPermissionExpiry::EndOfTurn => PlayPermissionExpiryV2::EndOfTurn,
+                PlayPermissionExpiry::UntilHoldersNextEndStep => {
+                    PlayPermissionExpiryV2::UntilHoldersNextEndStep
+                }
                 PlayPermissionExpiry::UntilHoldersNextTurn {
                     holder_turn_started,
                 } => PlayPermissionExpiryV2::UntilHoldersNextTurn {
@@ -6485,6 +6996,19 @@ fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<Engin
                         PendingTriggerKindV2::TriggeredAbility
                     },
                     kicked: p.kicked,
+                    counter_transfer: public_counter_transfer(
+                        state,
+                        Some(&p.effect),
+                        p.source_contract,
+                    ),
+                    counter_distribution: public_counter_distribution(
+                        Some(&p.effect),
+                        p.targets
+                            .iter()
+                            .copied()
+                            .map(|target| target_ref(state, target))
+                            .collect::<Result<Vec<_>>>()?,
+                    ),
                 })
             })
             .collect::<Result<Vec<_>>>()?,
@@ -6553,6 +7077,7 @@ fn pending_effect_semantic_v4(
                         legal_colors: legal_colors.clone(),
                     }),
                     _ => Ok(PendingEffectChoiceSemanticV4::Options {
+                        creature_options: if matches!(purpose, crate::effect::EffectOptionChoicePurpose::CreatureChoiceV1 {..}) { Some(options.iter().filter_map(|op| crate::standard_creature_choices_v1::public_option(op, &pending.ctx, state)).collect()) } else { None },
                         player: (*player).into(),
                         structural_path: path.clone(),
                         option_count: options.len().try_into().map_err(|_| {
@@ -6581,6 +7106,10 @@ fn pending_effect_semantic_v4(
                             }
                             | crate::effect::EffectTargetSelectionPurpose::ScryLibrary { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryOne { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::Hideaway { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::DiscardDraw { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::WardCards { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand {
                                 ..
@@ -6615,7 +7144,11 @@ fn pending_effect_semantic_v4(
                     ) && acting_player == *player;
                     let redact_search_shape = matches!(
                         purpose,
-                        crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { .. }
+                        crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::Hideaway { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::DiscardDraw { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::WardCards { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
                             | crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. } | crate::effect::EffectTargetSelectionPurpose::SearchLibraryCardsToDestination { .. }
@@ -6729,7 +7262,13 @@ fn pending_effect_semantic_v4(
                                     TargetSelectionPurposeV4::LibraryOrder
                                 }
                             },
-                            crate::effect::EffectTargetSelectionPurpose::ExileOneFromGraveyard {
+                            crate::effect::EffectTargetSelectionPurpose::ExileBatch { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::CopyTarget { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::Hideaway { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::DiscardDraw { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::WardCards { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::ExileOneFromGraveyard {
                                 ..
                             }
                             | crate::effect::EffectTargetSelectionPurpose::ExileOneMatchingFromGraveyard {
@@ -6750,9 +7289,25 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand {
                                 ..
                             } => TargetSelectionPurposeV4::CardSelection,
+                            crate::effect::EffectTargetSelectionPurpose::SelectObjectsV1 { rule, .. } => if rule.zone == Zone::Battlefield { TargetSelectionPurposeV4::PermanentSelection } else { TargetSelectionPurposeV4::CardSelection },
                             crate::effect::EffectTargetSelectionPurpose::SacrificeCreature {
                                 ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::StandardChoosePermanentV1 {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::StandardSeparatePilesV1 {
+                                ..
                             } => TargetSelectionPurposeV4::PermanentSelection,
+                            crate::effect::EffectTargetSelectionPurpose::StandardBreachChoiceV1 {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::StandardDiscardToDrawV1 {
+                                ..
+                            } => TargetSelectionPurposeV4::CardSelection,
+                            crate::effect::EffectTargetSelectionPurpose::StandardCopyTargetV1 {
+                                ..
+                            } => TargetSelectionPurposeV4::EffectTargets,
                         },
                     })
                 }
@@ -6775,14 +7330,22 @@ fn pending_effect_semantic_v4(
                         | crate::effect::EffectBooleanChoicePurpose::CounterTargetUnlessPaysGeneric {
                             ..
                         } => BooleanChoicePurposeV4::PayCost,
-                        crate::effect::EffectBooleanChoicePurpose::PayManaThen { .. }
+                        crate::effect::EffectBooleanChoicePurpose::WardLife { .. }
+                        | crate::effect::EffectBooleanChoicePurpose::PayManaThen { .. }
                         | crate::effect::EffectBooleanChoicePurpose::PayExileFromGraveyardThen {
                             ..
                         } => BooleanChoicePurposeV4::PayCost,
-                        crate::effect::EffectBooleanChoicePurpose::SearchLibraryToBattlefieldTapped {
+                        crate::effect::EffectBooleanChoicePurpose::ExilePlay { .. }
+                        | crate::effect::EffectBooleanChoicePurpose::SearchLibraryToBattlefieldTapped {
                             ..
                         }
                         | crate::effect::EffectBooleanChoicePurpose::LookAtTopMayRevealThen {
+                            ..
+                        }
+                        | crate::effect::EffectBooleanChoicePurpose::StandardSacrificePileV1 {
+                            ..
+                        }
+                        | crate::effect::EffectBooleanChoicePurpose::StandardMayBecomeEverflameV1 {
                             ..
                         } => BooleanChoicePurposeV4::OptionalEffect,
                     },
@@ -6870,6 +7433,27 @@ fn pending_activation_semantic_v2(
             None => None,
         },
         object_cost_chosen: visible_card_refs(state, &object_cost_chosen, acting_player)?,
+        crew_finished: p.crew_finished,
+        loyalty_x: p.loyalty_x,
+        granted_ability: public_granted_ability(p.cauldron_grant),
+    })
+}
+
+fn public_granted_ability(
+    record: crate::cauldron_grants_v1::CauldronGrantRecordV1,
+) -> Option<(CardStableRefV1, u16)> {
+    record.0.map(|grant| {
+        (
+            CardStableRefV1 {
+                arena_id: grant.donor.source.0,
+                card_db_id: grant.donor.card_def,
+                owner: grant.donor.owner.into(),
+                controller: grant.donor.controller.into(),
+                zone: grant.donor.zone,
+                zone_change_count: grant.donor.zone_change_count,
+            },
+            grant.local_index,
+        )
     })
 }
 
@@ -7205,6 +7789,16 @@ fn stack_item_public_v2(
         face_index: item.v4.face_index,
         x_value: item.v4.x_value,
         paid_cost_refs: paid_cost_card_refs(&item.v4.paid_cost_refs, acting_player),
+        granted_ability: public_granted_ability(item.v4.cauldron_grant),
+        counter_transfer: public_counter_transfer(
+            state,
+            item.inline_effect.as_ref(),
+            item.v4.ability_source_contract,
+        ),
+        counter_distribution: public_counter_distribution(
+            item.inline_effect.as_ref(),
+            stack_target_refs(state, item)?,
+        ),
     })
 }
 
@@ -7260,7 +7854,7 @@ fn stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRef
     }
     Ok(CardStableRefV1 {
         arena_id: item.source.0,
-        card_db_id: card_def,
+        card_db_id: projected_card_def(state, item.source, zone_change_count),
         owner: owner.into(),
         controller: controller.into(),
         zone,
@@ -7287,6 +7881,9 @@ fn stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<TargetRe
                 ));
             }
             Ok(match contract {
+                contract @ crate::state::StackTargetContractV4::StackItem { .. } => {
+                    stack_item_target_ref_from_contract(state, contract)?
+                }
                 crate::state::StackTargetContractV4::Player(player) => TargetRefV1::Player {
                     player: player.into(),
                 },
@@ -7318,7 +7915,7 @@ fn stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<TargetRe
                     TargetRefV1::Object {
                         object: CardStableRefV1 {
                             arena_id: object.0,
-                            card_db_id: card_def,
+                            card_db_id: projected_card_def(state, object, zone_change_count),
                             owner: owner.into(),
                             controller: controller.into(),
                             zone,
@@ -7333,6 +7930,7 @@ fn stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<TargetRe
 
 fn target_ref(state: &GameState, target: Target) -> Result<TargetRefV1> {
     match target {
+        Target::StackItem(id) => stack_item_target_ref(state, id),
         Target::Player(player) => Ok(TargetRefV1::Player {
             player: player.into(),
         }),
@@ -7383,6 +7981,8 @@ fn visible_projection_hash_v2(observation: &ObservationV2) -> Result<u64> {
         own_hand: &'a [CardPrivateV1],
         known_library_cards: &'a [Vec<KnownLibraryCardV4>; 2],
         known_hand_cards: &'a [Vec<CardPrivateV1>; 2],
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        known_face_down_cards: &'a Vec<FaceDownCardKnowledgeV1>,
     }
 
     stable_hash_json(&ObservationHashInput {
@@ -7396,6 +7996,7 @@ fn visible_projection_hash_v2(observation: &ObservationV2) -> Result<u64> {
         own_hand: &observation.own_hand,
         known_library_cards: &observation.known_library_cards,
         known_hand_cards: &observation.known_hand_cards,
+        known_face_down_cards: &observation.known_face_down_cards,
     })
 }
 
@@ -7419,6 +8020,8 @@ fn visible_projection_hash_v5(observation: &ObservationV5) -> Result<u64> {
         own_hand: &'a [CardPrivateV1],
         known_library_cards: &'a [Vec<KnownLibraryCardV4>; 2],
         known_hand_cards: &'a [Vec<CardPrivateV1>; 2],
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        known_face_down_cards: &'a Vec<FaceDownCardKnowledgeV1>,
     }
 
     stable_hash_json(&ObservationHashInput {
@@ -7436,6 +8039,7 @@ fn visible_projection_hash_v5(observation: &ObservationV5) -> Result<u64> {
         own_hand: &observation.own_hand,
         known_library_cards: &observation.known_library_cards,
         known_hand_cards: &observation.known_hand_cards,
+        known_face_down_cards: &observation.known_face_down_cards,
     })
 }
 

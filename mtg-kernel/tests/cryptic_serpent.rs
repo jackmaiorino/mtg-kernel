@@ -273,6 +273,7 @@ fn ordinary_exile_cast_permission_reuses_the_same_dynamic_cost_path() {
     };
     state.exile.push(serpent);
     state.engine.exile_play_permissions.push(PlayPermission {
+        without_mana_cost: mtg_kernel::engine::FreeCastV1::default(),
         object: serpent,
         holder: PlayerId::P0,
         zone_change_generation: serpent_generation,

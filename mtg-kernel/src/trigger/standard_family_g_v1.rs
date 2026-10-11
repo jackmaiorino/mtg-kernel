@@ -3,10 +3,8 @@
 //! the `triggers_for` and target-spec tables.
 
 use super::{etb_trigger, TriggerCondition, TriggeredAbilityDef};
-use crate::card_def::{CardType, Subtype};
-use crate::effect::{
-    CreatureSacrificeFilter, EffectObjectBinding, EffectOp, ObjectRef, PlayerRef, TargetRef,
-};
+use crate::card_def::Subtype;
+use crate::effect::{CreatureSacrificeFilter, EffectOp, ObjectRef, PlayerRef, TargetRef};
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::{GameState, Zone};
 
@@ -120,7 +118,11 @@ fn adaptive_oil_counter_effect() -> EffectOp {
 /// so it is built by `quirion_beastcaller_dies_effect` when the trigger is
 /// created.
 fn empty_distribution_effect() -> EffectOp {
-    EffectOp::Sequence(Vec::new())
+    EffectOp::DistributePlusOneCounters {
+        total: 0,
+        allocations: Vec::new(),
+        finalized: true,
+    }
 }
 
 /// Quirion Beastcaller: "Whenever you cast a creature spell, put a +1/+1
@@ -138,72 +140,29 @@ pub(super) const QUIRION_BEASTCALLER_TRIGGERS: [TriggeredAbilityDef; 2] = [
     },
 ];
 
-/// Quirion Beastcaller's dies program: X counters read from the dying
-/// incarnation's last-known counters, each one a choice among the creatures
-/// `controller` controls as the trigger is created. Deviation: the printed
-/// ability targets and divides as it goes on the stack; here the creatures
-/// are fixed at trigger time and each counter is placed during resolution,
-/// so a creature that has left by then simply receives nothing.
+/// Freeze X from the departing incarnation. Allocation is announced during
+/// trigger placement before opponents get priority.
 pub(super) fn quirion_beastcaller_dies_effect(
     state: &GameState,
     source: ObjectId,
-    controller: PlayerId,
+    _controller: PlayerId,
 ) -> EffectOp {
-    let counters = state
+    let total = state
         .objects
         .get(source)
         .zone_change_count
         .checked_sub(1)
         .and_then(|departed| state.counter_lki_for(source, departed))
-        .map_or(0, |counters| counters.plus1_plus1.max(0));
-    let options: Vec<EffectOp> = state.players[controller.index()]
-        .battlefield
-        .iter()
-        .copied()
-        .filter(|&creature| crate::engine::object_has_type(state, creature, CardType::Creature))
-        .map(|creature| EffectOp::PutPlusOnePlusOneCounterOnBoundObject {
-            object: EffectObjectBinding {
-                object: creature,
-                expected_zone: Zone::Battlefield,
-                expected_zone_change_count: state.objects.get(creature).zone_change_count,
-            },
-        })
-        .collect();
-    if options.is_empty() {
-        return empty_distribution_effect();
+        .map_or(0, |counters| counters.plus1_plus1.max(0) as u32);
+    EffectOp::DistributePlusOneCounters {
+        total,
+        allocations: Vec::new(),
+        finalized: total == 0,
     }
-    let step = EffectOp::Choice {
-        controller: PlayerRef::Controller,
-        options,
-    };
-    EffectOp::Sequence(vec![step; counters as usize])
 }
 
-/// Whether `effect` has the shape `quirion_beastcaller_dies_effect` builds:
-/// identical counter placements among distinct battlefield incarnations.
 pub(super) fn is_quirion_beastcaller_dies_effect(effect: &EffectOp) -> bool {
-    let EffectOp::Sequence(steps) = effect else {
-        return false;
-    };
-    let Some(first) = steps.first() else {
-        return true;
-    };
-    let EffectOp::Choice {
-        controller: PlayerRef::Controller,
-        options,
-    } = first
-    else {
-        return false;
-    };
-    !options.is_empty()
-        && steps.iter().all(|step| step == first)
-        && options.iter().enumerate().all(|(index, option)| {
-            matches!(
-                option,
-                EffectOp::PutPlusOnePlusOneCounterOnBoundObject { object }
-                    if object.expected_zone == Zone::Battlefield
-            ) && !options[..index].contains(option)
-        })
+    matches!(effect, EffectOp::DistributePlusOneCounters { .. })
 }
 
 fn that_player_loses_half_life_effect() -> EffectOp {
@@ -348,3 +307,219 @@ pub(super) fn hullbreaker_horror_effect() -> EffectOp {
             .collect(),
     }
 }
+
+/// Flying and a Map on entry.
+pub(super) const SPYGLASS_SIREN_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(create_map_effect)];
+
+fn reveal_top_lose_life() -> EffectOp {
+    EffectOp::RevealTopCardToHandLoseLifeEqualToManaValue
+}
+pub(super) const DARK_CONFIDANT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningOfUpkeep {
+        controller_only: true,
+    },
+    ..etb_trigger(reveal_top_lose_life)
+}];
+
+fn gain_two_life() -> EffectOp {
+    EffectOp::GainLife {
+        player: PlayerRef::Controller,
+        amount: 2,
+    }
+}
+fn opponent_loses_two_life() -> EffectOp {
+    EffectOp::LoseLife {
+        player: PlayerRef::Opponent,
+        amount: 2,
+    }
+}
+pub(super) const SHEOLDRED_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::ControllerDraws,
+        ..etb_trigger(gain_two_life)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::OpponentDraws,
+        ..etb_trigger(opponent_loses_two_life)
+    },
+];
+
+fn surveil_one_effect() -> EffectOp {
+    EffectOp::Surveil {
+        player: PlayerRef::Controller,
+        count: 1,
+    }
+}
+pub(super) const FAERIE_DREAMTHIEF_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(surveil_one_effect)];
+
+fn wurmlet_effect() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::GainLife {
+            player: PlayerRef::Controller,
+            amount: 1,
+        },
+        EffectOp::CreatureUpgrade(
+            crate::standard_creatures_v1::CreatureEffectV1::WurmletCounterIfFirstResolution,
+        ),
+    ])
+}
+pub(super) const TEETHING_WURMLET_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControlledArtifactEnters,
+    ..etb_trigger(wurmlet_effect)
+}];
+fn draw_one_effect() -> EffectOp {
+    EffectOp::DrawCards {
+        player: PlayerRef::Controller,
+        count: 1,
+    }
+}
+pub(super) const SURRAK_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControlledCreatureOrCreatureSpellBecomesTargetOfOpponent,
+    ..etb_trigger(draw_one_effect)
+}];
+
+fn golem_token_effect() -> EffectOp {
+    create_named_token("Golem Token")
+}
+pub(super) const SANDSTORM_SALVAGER_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(golem_token_effect)];
+fn white_vampire_token_effect() -> EffectOp {
+    create_named_token("Vampire Token")
+}
+fn draw_one_lose_one_effect() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        },
+        EffectOp::LoseLife {
+            player: PlayerRef::Controller,
+            amount: 1,
+        },
+    ])
+}
+pub(super) const PREACHER_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::AttacksPlayerWithMostLife,
+        ..etb_trigger(white_vampire_token_effect)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::AttacksIfControllerMostLife,
+        ..etb_trigger(draw_one_lose_one_effect)
+    },
+];
+
+fn imodane_rally_effect() -> EffectOp {
+    EffectOp::BoostPlayerCreaturesUntilEndOfTurn {
+        player: PlayerRef::Controller,
+        power: 1,
+        toughness: 0,
+        keywords: crate::card_def::Keywords::HASTE,
+    }
+}
+pub(super) const IMODANE_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(imodane_rally_effect)];
+fn virtue_counters_untap_effect() -> EffectOp {
+    EffectOp::CreatureUpgrade(crate::standard_creatures_v1::CreatureEffectV1::VirtueCountersUntap)
+}
+pub(super) const VIRTUE_LOYALTY_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningControllerEndStep,
+    ..etb_trigger(virtue_counters_untap_effect)
+}];
+
+fn mosswood_graveyard_adventure_effect() -> EffectOp {
+    EffectOp::CreatureUpgrade(
+        crate::standard_creatures_v1::CreatureEffectV1::MosswoodGraveyardAdventure,
+    )
+}
+pub(super) const MOSSWOOD_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::LeftBattlefieldToGraveyard,
+    ..etb_trigger(mosswood_graveyard_adventure_effect)
+}];
+
+pub(super) const QUESTING_DRUID_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastSpellWithAnyColor(0b01111),
+    ..etb_trigger(counter_on_source_effect)
+}];
+
+fn floodpits_tap_stun_effect() -> EffectOp {
+    EffectOp::CreatureUpgrade(crate::standard_creatures_v1::CreatureEffectV1::FloodpitsTapStun)
+}
+pub(super) const FLOODPITS_DROWNER_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(floodpits_tap_stun_effect)];
+
+fn essence_transfer_counters_effect() -> EffectOp {
+    EffectOp::CreatureUpgrade(
+        crate::standard_creatures_v1::CreatureEffectV1::EssenceTransferCounters,
+    )
+}
+pub(super) const ESSENCE_CHANNELER_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::ControllerGainsLife,
+        ..etb_trigger(counter_on_source_effect)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::LeftBattlefieldToGraveyard,
+        ..etb_trigger(essence_transfer_counters_effect)
+    },
+];
+
+fn brightglass_search_effect() -> EffectOp {
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: vec![
+            EffectOp::Sequence(vec![]),
+            EffectOp::SearchLibraryToHandUpTo {
+                player: PlayerRef::Controller,
+                filter:
+                    crate::effect::LibraryCardFilter::ArtifactCreatureOrEnchantmentManaValueAtMost(
+                        1,
+                    ),
+                max_targets: 2,
+            },
+        ],
+    }
+}
+pub(super) const BRIGHTGLASS_GEARHULK_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(brightglass_search_effect)];
+
+fn tidebinder_counter_effect() -> EffectOp {
+    EffectOp::CreatureUpgrade(crate::standard_creatures_v1::CreatureEffectV1::TidebinderCounter)
+}
+pub(super) const TIDEBINDER_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(tidebinder_counter_effect)];
+
+fn frillback_payment_effect() -> EffectOp {
+    EffectOp::CreatureChoiceV1(
+        crate::standard_creature_choices_v1::CreatureChoiceV1::FrillbackPayment,
+    )
+}
+fn zoraline_payment_effect() -> EffectOp {
+    EffectOp::CreatureChoiceV1(
+        crate::standard_creature_choices_v1::CreatureChoiceV1::ZoralinePayment,
+    )
+}
+fn zoraline_bat_effect() -> EffectOp {
+    EffectOp::GainLife {
+        player: PlayerRef::Controller,
+        amount: 1,
+    }
+}
+pub(super) const FRILLBACK_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(frillback_payment_effect)];
+pub(super) const GLISSA_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::DealsCombatDamageToPlayer,
+    ..etb_trigger(crate::standard_creature_choices_v1::glissa_marker)
+}];
+pub(super) const ZORALINE_TRIGGERS: [TriggeredAbilityDef; 3] = [
+    etb_trigger(zoraline_payment_effect),
+    TriggeredAbilityDef {
+        condition: TriggerCondition::Attacks,
+        ..etb_trigger(zoraline_payment_effect)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::ControlledCreatureWithSubtypeAttacks(Subtype::Bat),
+        ..etb_trigger(zoraline_bat_effect)
+    },
+];

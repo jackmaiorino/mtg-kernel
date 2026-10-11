@@ -1,15 +1,14 @@
 # MageZero Standard lands v1
 
-First lands batch for the `standard-magezero-fixtures` catalog (families A and B of
-`docs/reports/standard_magezero_inventory_v1.md`). It covers the four mono-deck lands that
-the batch owns (Mishra's Foundry, Eiganjo, Seat of the Empire, Mirrex, Rockface Village)
-and all 37 dual lands. Soulstone Sanctuary stays with the FDN threads; the Restless lands,
-the other channel lands and the remaining utility lands are the second lands batch, which
-reuses the animation and channel primitives added here.
+The v7 completion candidate includes all 58 lands in families A and B of
+`docs/reports/standard_magezero_inventory_v1.md`, including Soulstone Sanctuary,
+all seven Restless lands, all five channel lands and the remaining utility lands.
+Mirrex poison observations and restricted floating mana are implemented. All entries
+have Full admission flags for the combined acceptance checks; native/runtime
+verification remains pending in `docs/reports/standard_completion_v1.md`.
 
-The batch admits 39 Full lands. Mirrex is Partial until public poison counters are
-represented in policy observations. Rockface Village is Partial until the floating mana
-pool represents spending restrictions. Full deck admission refuses both.
+The original land batch established the reusable rules below; the completion adds
+its remaining consumers without reordering existing Standard definitions.
 
 Card text comes from the XMage card files named in each registry entry
 (`magefree/mage` master). Every definition appends to `data/standard/magezero_v1/cards_v1.json`.
@@ -49,17 +48,14 @@ number shared by both players' turns, so Standard builds also mark
 `{T}, Pay 1 life: Add one mana of any color.` is a life payment, not damage: it needs
 `life >= 1` (119.4) and is not damage for prevention or lifelink.
 
-**Creature-only mana** (`CardDef::restricted_mana_abilities`). Rockface Village's
-`{T}: Add {R}. Spend this mana only to cast a creature spell.` is never offered as an
-explicit action, because the floating pool has no way to carry a spending restriction.
-Instead the payment planner (`mana::can_pay_spell`) adds the restricted color to the
-land's source choices only while it pays the total cost of a creature card cast normally,
-with Kicker or Delve included. Bestow, Adventure and Omen forms and X costs do not use it
-yet; none of those spells is in the Standard catalog. The player
-loses the option of floating restricted mana ahead of time. This omits legal lines, such
-as floating the Village's red before Cleansing Wildfire destroys it, then using that red
-to cast Voldaren Epicure after Wildfire resolves. Rockface Village stays Partial. The lands in the second batch with "spend only on creature spells" or
-"legendary spells" mana (Lupinflower Village, Mudflat Village, Plaza of Heroes) reuse it.
+**Restricted floating mana.** Rockface Village, Lupinflower Village and Mudflat
+Village can explicitly produce restricted mana before it is spent. The mana pool
+preserves the source and spending restriction through later payment. Plaza of Heroes
+also supports its legendary-spell and shared-legend-color mana choices. Payment
+planning uses the selected spell form and retains restrictions for mana floated across
+priority windows. The same representation supports Gwenna's creature-spell or
+creature-ability mana and source provenance for Thousand Moons Smithy. Public
+observations expose the restricted pool; frozen encoders refuse unsupported entries.
 
 **Land animation** (`CardDef::animation`, `ObjectStateV4::animation`). Mishra's Foundry's
 `{2}` ability resolves `EffectOp::AnimateSource`, which records the source incarnation's
@@ -93,11 +89,10 @@ Players gain `poison_counters`; combat damage a creature with toxic N deals to a
 gives that player N poison counters (702.164c), and a player with ten or more poison
 counters loses the game as a state-based action (704.5c). `Keywords::TOXIC_1` is a new
 keyword bit. "Can't block" reuses family D's name-keyed rule
-(`standard_keywords_v1::cant_block`, Forsaken Miner's). Poison is public rules state,
-but the current `PlayerStatusV1` policy observation has no poison field. Mirrex remains
-Partial for that reason. The Mite token keeps the existing Full token-construction
-invariant so the implemented primitive can execute in development; it is not a deck
-card, and its producer is refused by Full deck admission.
+(`standard_keywords_v1::cant_block`, Forsaken Miner's). Poison is public rules state. Generic observations include poison counters for both
+players, omitting the extension when both counts are zero. The token and Mirrex are
+Full admission candidates. Melira's replacement and Innkeeper's Talent's counter
+doubling apply through the shared poison event path.
 
 Rockface Village's `{R}, {T}` sorcery-speed ability gives target Lizard, Mouse, Otter or
 Raccoon you control +1/+0 and haste until end of turn
@@ -111,13 +106,14 @@ Sphere and Town append after it; family D already added Mouse. Assembly-Worker a
 are added to `CREATURE_TYPES` only under the Standard feature, and Otter is listed once. New `CardDef`
 fields are appended with empty defaults and enter the catalog contract only when a card
 sets them, so the Pauper (`kernel_carddb/v34`) and FDN Limited identities do not move. The
-Standard catalog moves to `kernel_carddb_standard/v5`. New object and player state
+completion catalog is `kernel_carddb_standard/v7`; its numeric hash is pending the
+native integration build. New object and player state
 (`animation_timestamp`, `entered_battlefield_this_turn`, `poison_counters`) is skipped on the wire
 and in state hashes while empty, so existing states keep their bytes.
 
 ## Tests
 
-`mtg-kernel/tests/standard_lands_v1.rs` checks every land's characteristics, each entry
+`mtg-kernel/tests/standard_lands_v1.rs` checks the initial batch's characteristics, each entry
 condition on both sides of its threshold, painland damage per color, verge and Mirrex
 conditions, Starting Town's life payment, Rockface Village's red mana paying a creature
 spell and not a noncreature spell, Foundry animating, attacking, being pumped and reverting
@@ -133,3 +129,9 @@ and Eiganjo's reduction as static abilities, the verge and Mirrex conditions on 
 abilities, Rockface's creature-only red as a conditional mana ability, Starting Town's life
 payment as a cost, and Mishra's Foundry's animation in the definition record with
 `EffectOp::AnimateSource` in its own meaning slice (`meaning/effect_i.rs`).
+
+Completion coverage is in `standard_lands_spells_completion_v1.rs` and
+`standard_characteristics_completion_v1.rs`: restricted floating mana and provenance,
+poison projection, utility/channel/Restless abilities, permanent Soulstone animation,
+effective Room mana values and nonlegendary Temple of Power. Test source exists;
+combined native execution is pending.
