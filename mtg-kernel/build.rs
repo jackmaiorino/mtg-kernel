@@ -3708,6 +3708,7 @@ fn effect_recipe_for(card: &CardJson) -> String {
                 "Mocking Sprite" | "Archmage of Runes" => ";static=controller_instant_or_sorcery_spells_cost_generic_less:1:total_cost_after_additional_and_x_before_one_floor:printed_source_abilities",
                 "Empyrean Eagle" => ";static=boost_other_live_controlled_creatures_with_effective_flying:1:1:layer7c:printed_source_abilities",
                 "High Fae Trickster" => ";static=controller_casts_nonland_spells_as_though_flash:while_live_battlefield_printed_abilities:does_not_grant_keyword_or_activate_or_play_lands",
+                "Paradise Druid" => ";static=source_has_hexproof_while_untapped:live_battlefield_front_face_printed_source_abilities",
                 "Billowing Shriekmass" => ";static=controller_graveyard_cards_at_least:7:boost_source:2:1:layer7c:printed_source_abilities",
                 "Dreadwing Scavenger" => ";static=controller_graveyard_cards_at_least:7:boost_source:1:1:layer7c:deathtouch:printed_source_abilities",
                 _ => "",

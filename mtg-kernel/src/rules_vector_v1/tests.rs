@@ -826,6 +826,11 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
     (
         "engine.rs",
+        "Paradise Druid",
+        "read via engine::static_untapped_self_keyword_for (untapped predicate opaque)",
+    ),
+    (
+        "engine.rs",
         "High Fae Trickster",
         "read via engine::static_controller_casts_with_flash_for_v1 (timing opaque)",
     ),
