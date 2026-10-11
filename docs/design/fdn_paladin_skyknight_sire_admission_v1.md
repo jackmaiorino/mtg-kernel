@@ -5,7 +5,7 @@ This composition follows v69 PR222 and retains unregistered Raid preparation.
 IDs387-389 append Inspiring Paladin, Skyknight Squire and Sire of Seven Deaths;
 earlier definitions/printing IDs stay fixed. The40-card reference resolves.
 Prospective188Full/1Partial/97Missing remains unaccepted. Actual accepted
-default is177Full/1Partial/108Missing until current-head CI and integration.
+default is185Full/1Partial/100Missing until current-head CI and integration.
 
 Pinned Mage a5c90fe180021e70e2a644ade00eeab07f857a40 supplies metadata/rules.
 All18 actual card gameplay groups pass on Haley from18525218. The actual

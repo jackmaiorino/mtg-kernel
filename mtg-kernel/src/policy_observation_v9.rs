@@ -188,25 +188,25 @@ mod tests {
             put(
                 &mut first,
                 actor.opponent(),
-                "Fleeting Distraction",
+                "Snap",
                 Zone::Hand,
             );
             put(
                 &mut second,
                 actor.opponent(),
-                "Stroke of Midnight",
+                "Lightning Bolt",
                 Zone::Hand,
             );
             put(
                 &mut first,
                 actor.opponent(),
-                "Stroke of Midnight",
+                "Lightning Bolt",
                 Zone::Library,
             );
             put(
                 &mut second,
                 actor.opponent(),
-                "Fleeting Distraction",
+                "Snap",
                 Zone::Library,
             );
             assert_eq!(observe(&first, actor), observe(&second, actor));

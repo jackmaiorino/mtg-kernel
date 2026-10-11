@@ -1,7 +1,7 @@
 # Public Raid observation preparation
 
 Issue110 still requires all286 frozen Play Booster names and24 token
-records. Accepted default remains177Full/1Partial/108Missing. This source
+records. Accepted default remains185Full/1Partial/100Missing. This source
 composes three-card4ad732e0 and Raid72b51950; neither Skyship Buccaneer nor
 Goblin Boarders is registered. Research/experiment ownership stays with Claude.
 
