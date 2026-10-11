@@ -699,4 +699,174 @@ mod tests {
         assert_eq!(v["own_hand"][0]["n"], "y");
         assert_eq!(v["stack"][0]["n"], "q");
     }
+
+    /// A small actor view: two seats' battlefields, a stack spell with one
+    /// object target, an aura relation, and a menu naming objects.
+    fn view(bf: Vec<Value>, target: (u64, u64), source: (u64, u64)) -> (Value, Vec<Value>) {
+        let obs = serde_json::json!({"projection":{
+            "battlefield":[[{"stable":{"arena_id":90,"card_db_id":5,"zone_change_count":1},"tapped":false,"damage":0,"attachments":[]}], bf],
+            "stack":[{"source":{"arena_id":source.0,"card_db_id":41,"zone":"Stack","zone_change_count":source.1},
+                "targets":[{"object":{"arena_id":target.0,"card_db_id":19,"zone":"Battlefield","zone_change_count":target.1},"target_kind":"object"}]}],
+            "object_relations":[]},"step_index":7});
+        let menu = vec![
+            serde_json::json!({"action_kind":"pass"}),
+            serde_json::json!({"action_kind":"activate","source":{"arena_id":90,"zone_change_count":1}}),
+        ];
+        (obs, menu)
+    }
+
+    fn creature(id: u64, zcc: u64, damage: u64, tapped: bool, attachments: Vec<u64>) -> Value {
+        serde_json::json!({"stable":{"arena_id":id,"card_db_id":19,"zone_change_count":zcc},
+            "tapped":tapped,"damage":damage,"attachments":attachments})
+    }
+
+    fn rename(v: &mut Value, f: &impl Fn(u64) -> u64) {
+        match v {
+            Value::Object(m) => {
+                if let Some(id) = m.get("arena_id").and_then(Value::as_u64) {
+                    m.insert("arena_id".into(), Value::from(f(id)));
+                }
+                if let Some(Value::Array(a)) = m.get_mut("attachments") {
+                    for x in a.iter_mut() {
+                        *x = Value::from(f(x.as_u64().unwrap()));
+                    }
+                }
+                for (k, x) in m.iter_mut() {
+                    if k != "attachments" {
+                        rename(x, f);
+                    }
+                }
+            }
+            Value::Array(a) => a.iter_mut().for_each(|x| rename(x, f)),
+            _ => {}
+        }
+    }
+
+    fn c((obs, menu): (Value, Vec<Value>)) -> (Canon, Mapping) {
+        canon_values(obs, menu).unwrap()
+    }
+
+    /// Positive: a consistent renaming of every handle leaves the canonical
+    /// view and sorted edges unchanged, and the mapping is the renaming.
+    #[test]
+    fn canonical_view_is_invariant_under_consistent_renaming() {
+        let bf = vec![
+            creature(11, 3, 0, false, vec![]),
+            creature(12, 3, 2, true, vec![]),
+        ];
+        let base = view(bf, (12, 3), (40, 0));
+        let f = |id: u64| 1000 - 7 * id;
+        let mut renamed = base.clone();
+        rename(&mut renamed.0, &f);
+        renamed.1.iter_mut().for_each(|m| rename(m, &f));
+        let (a, ma) = c(base);
+        let (b, mb) = c(renamed);
+        assert_eq!(a, b);
+        assert_eq!(mb.order, ma.order.iter().map(|&x| f(x)).collect::<Vec<_>>());
+        // Live candidates bind one to one.
+        for (i, m) in a.menu.iter().enumerate() {
+            assert_eq!(live_index(&b, m).unwrap(), i as u32);
+        }
+    }
+
+    /// Positive: permuting a declared-unordered list of distinct entries
+    /// leaves the canonical view unchanged.
+    #[test]
+    fn distinct_entries_are_order_free() {
+        let x = creature(11, 3, 0, false, vec![]);
+        let y = creature(12, 3, 2, true, vec![]);
+        let a = c(view(vec![x.clone(), y.clone()], (12, 3), (40, 0))).0;
+        let b = c(view(vec![y, x], (12, 3), (40, 0))).0;
+        assert_eq!(a, b);
+    }
+
+    /// Failing invariance witness (collab LANES/search-identity-audit-20261011):
+    /// two visibly identical copies tie in the content sort, so their
+    /// declared-unordered list order (engine order) decides which canonical
+    /// handle each receives, and a target naming "the first copy" and one
+    /// naming "the second" get different canonical views although the two
+    /// views are the same labeled graph up to exchanging the copies. This
+    /// asserts the current behavior; a repair must flip it deliberately.
+    #[test]
+    fn equal_copy_order_changes_target_identity() {
+        let x = creature(11, 3, 0, false, vec![]);
+        let y = creature(12, 3, 0, false, vec![]);
+        let first = c(view(vec![x.clone(), y.clone()], (11, 3), (40, 0))).0;
+        let permuted = c(view(vec![y.clone(), x.clone()], (11, 3), (40, 0))).0;
+        assert_ne!(first.obs, permuted.obs, "list permutation changed the view");
+        // Equivalently, targeting either copy: an exchange of the two handles.
+        let other = c(view(vec![x, y], (12, 3), (40, 0))).0;
+        assert_ne!(first.obs, other.obs);
+        assert_eq!(permuted.obs, other.obs);
+        assert_eq!(first.edges, other.edges);
+    }
+
+    /// Second failing invariance witness: the sort mask also nulls
+    /// `attachments`, so two entries that differ only in what is attached
+    /// to them tie, and engine order again decides their canonical handles
+    /// (the attachment itself stays visible, so targets remain distinct).
+    #[test]
+    fn attachment_only_difference_ties() {
+        let x = creature(11, 3, 0, false, vec![]);
+        let y = creature(12, 3, 0, false, vec![90]);
+        let a = c(view(vec![x.clone(), y.clone()], (12, 3), (40, 0))).0;
+        let b = c(view(vec![y, x], (12, 3), (40, 0))).0;
+        assert_ne!(a.obs, b.obs, "list permutation changed the view");
+    }
+
+    /// Negative controls: targets that differ in damage, tapped state, an
+    /// attachment, or incarnation stay distinct, whatever the list order.
+    #[test]
+    fn real_target_distinctions_survive() {
+        let cases = [
+            (
+                creature(11, 3, 0, false, vec![]),
+                creature(12, 3, 2, false, vec![]),
+            ),
+            (
+                creature(11, 3, 0, false, vec![]),
+                creature(12, 3, 0, true, vec![]),
+            ),
+            (
+                creature(11, 3, 0, false, vec![]),
+                creature(12, 3, 0, false, vec![90]),
+            ),
+        ];
+        for (i, (x, y)) in cases.into_iter().enumerate() {
+            let tx = c(view(vec![x.clone(), y.clone()], (11, 3), (40, 0))).0;
+            let ty = c(view(vec![x.clone(), y.clone()], (12, 3), (40, 0))).0;
+            let ty_perm = c(view(vec![y, x], (12, 3), (40, 0))).0;
+            assert_ne!(tx.obs, ty.obs);
+            // Entries differing only in attachments tie in the masked sort
+            // (see `attachment_only_difference_ties`).
+            if i < 2 {
+                assert_eq!(ty, ty_perm);
+            }
+        }
+        // A stale target reference (an earlier incarnation of the same
+        // object) differs from a current one.
+        let bf = vec![
+            creature(11, 4, 0, false, vec![]),
+            creature(12, 3, 0, false, vec![]),
+        ];
+        let current = c(view(bf.clone(), (11, 4), (40, 0))).0;
+        let stale = c(view(bf.clone(), (11, 3), (40, 0))).0;
+        assert_ne!(current.obs, stale.obs);
+        // A frozen trigger source from an earlier incarnation differs from
+        // the object's current incarnation as source.
+        let frozen = c(view(bf.clone(), (12, 3), (11, 3))).0;
+        let live = c(view(bf, (12, 3), (11, 4))).0;
+        assert_ne!(frozen.obs, live.obs);
+    }
+
+    /// The stack, its targets and combat orders keep engine order.
+    #[test]
+    fn ordered_structures_are_not_sorted() {
+        let mut v = serde_json::json!({"stack":[{"n":2},{"n":1}],"targets":[{"n":2},{"n":1}],
+            "combat":{"attack_order":[{"n":2},{"n":1}]}});
+        sort_object_lists(&mut v);
+        assert_eq!(v["stack"][0]["n"], 2);
+        assert_eq!(v["targets"][0]["n"], 2);
+        assert_eq!(v["combat"]["attack_order"][0]["n"], 2);
+    }
 }

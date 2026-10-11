@@ -401,6 +401,7 @@ pub(super) fn sim_report(
     selection_transitions: u64,
     selection_calls: u64,
     attempted: u64,
+    sampler_rejected: u64,
 ) -> Value {
     const NAMES: [&str; 6] = [
         "win",
@@ -485,7 +486,10 @@ pub(super) fn sim_report(
         "reconciles":{"attempts_equal_accepted_plus_rejections":attempted == records.len() as u64,
             "transitions_equal_selection_total":total_t == selection_transitions,
             "calls_equal_selection_total":total_c == selection_calls,
-            "buckets_sum_to_totals":bucket_ok},
+            "buckets_sum_to_totals":bucket_ok,
+            "snapshots_within_totals":records.iter().all(SimRecord::snapshots_within_totals),
+            "rejections_equal_sampler_count":rejected as u64 == sampler_rejected,
+            "natural_expansion_iff_committed":natural.iter().all(|r| r.expansion.is_some() == (r.new_nodes > 0))},
         "natural":{"count":natural.len(),"expanded":expanded.len(),"not_expanded":natural.len() - expanded.len(),
             "pooled_share_of_natural_work":{
                 "transitions":{"tree_prefix":share(0, 0),"after_expansion":share(1, 0),"depth_tail_without_expansion":share(2, 0)},
@@ -511,7 +515,18 @@ pub(super) fn sim_report(
 /// - `support_after_first_fallback`: structurally zero under exact-history
 ///   lookup with a permanent miss fallback (expected, not a finding).
 pub(super) fn world_metrics(out: &EvalOut) -> Value {
-    let groups = choice_groups(&out.decisions);
+    let mut m = decision_metrics(&out.decisions);
+    m["end"] = json!(out.end);
+    m["win"] = json!(out.w);
+    m["valid"] = json!(!out.unknown);
+    m["transitions"] = json!(out.transitions);
+    m["spy"] = out.suffix.json();
+    m
+}
+
+/// The decision-derived part of `world_metrics`.
+fn decision_metrics(decisions: &[(u64, u32, u8)]) -> Value {
+    let groups = choice_groups(decisions);
     let full = |v: &Vec<(u32, u8)>| v.iter().all(|&(_, s)| s == 0);
     let l = groups.iter().take_while(|(_, v)| full(v)).count();
     let first_rec = groups.iter().filter(|(_, v)| v[0].1 == 0).count();
@@ -538,15 +553,14 @@ pub(super) fn world_metrics(out: &EvalOut) -> Value {
                 .map(move |&(sub, s)| [g as u64, u64::from(sub), u64::from(s)])
         })
         .collect();
-    json!({"end":out.end,"win":out.w,"valid":!out.unknown,"transitions":out.transitions,
-        "groups":groups.len(),"L":l,
+    json!({"groups":groups.len(),"L":l,
         "first_recorded_choice_controlled":first_rec,
         "first_recorded_choice_share":if groups.is_empty() { 0.0 } else { first_rec as f64 / groups.len() as f64 },
         "substep0_groups":zero_groups,"substep0_controlled":zero_controlled,
         "substep0_share":(zero_groups > 0).then(|| zero_controlled as f64 / zero_groups as f64),
         "descendant_first_recorded_controlled":descendants,"support_after_first_fallback":after,
         "first_unsupported_group":first_of(1),"first_miss_group":first_of(2),
-        "choices":choices,"spy":out.suffix.json()})
+        "choices":choices})
 }
 
 /// Focal nonforced choices grouped by physical decision, in order:
@@ -727,6 +741,7 @@ pub(super) fn root_arm(
         sel.transitions,
         sel.inference,
         sel.attempted,
+        sel.sampler.rejected,
     );
     let mut dump = group_dump(&tree, &cap.created, opts.groups);
     let captured = cap.committed.len();
@@ -908,6 +923,169 @@ mod tests {
                     "D8 retained no tail"
                 );
             }
+        }
+    }
+
+    use super::super::arms::Snap;
+
+    fn rec(
+        outcome: u8,
+        t: u64,
+        c: u64,
+        exp: Option<(u64, u64)>,
+        lim: Option<(u64, u64)>,
+    ) -> SimRecord {
+        let snap = |(transitions, calls): (u64, u64)| Snap {
+            depth: 3,
+            transitions,
+            calls,
+        };
+        SimRecord {
+            outcome,
+            transitions: t,
+            policy_calls: c,
+            expansion: exp.map(snap),
+            depth_limit: lim.map(snap),
+            new_nodes: usize::from(exp.is_some() && outcome <= 2),
+            ..SimRecord::default()
+        }
+    }
+
+    /// Each kind of ending lands in exactly one set of buckets, and the
+    /// buckets always sum to the simulation's measured totals.
+    #[test]
+    fn accounting_buckets_cover_every_ending() {
+        // No expansion, ended inside the tree: all prefix.
+        let a = rec(1, 40, 5, None, None);
+        assert_eq!(a.buckets(), [(40, 5), (0, 0), (0, 0)]);
+        // Expansion and natural completion.
+        let b = rec(2, 100, 30, Some((12, 4)), None);
+        assert_eq!(b.buckets(), [(12, 4), (88, 26), (0, 0)]);
+        // Depth-only rollout without expansion.
+        let c = rec(2, 90, 20, None, Some((50, 9)));
+        assert_eq!(c.buckets(), [(50, 9), (0, 0), (40, 11)]);
+        // Expansion followed by truncation: the final work counts after it.
+        let d = rec(4, 17, 6, Some((10, 2)), None);
+        assert_eq!(d.buckets(), [(10, 2), (7, 4), (0, 0)]);
+        // A fault after inference, before any expansion.
+        let e = rec(5, 3, 2, None, None);
+        assert_eq!(e.buckets(), [(3, 2), (0, 0), (0, 0)]);
+        // A sampler rejection did no work.
+        let f = rec(SimRecord::REJECTED, 0, 0, None, None);
+        assert_eq!(f.buckets(), [(0, 0); 3]);
+        let all = [a, b, c, d, e, f];
+        let r = sim_report(&all, 1, 250, 63, 6, 1);
+        assert_eq!(
+            r["reconciles"]["attempts_equal_accepted_plus_rejections"],
+            true
+        );
+        assert_eq!(r["reconciles"]["transitions_equal_selection_total"], true);
+        assert_eq!(r["reconciles"]["calls_equal_selection_total"], true);
+        assert_eq!(r["reconciles"]["buckets_sum_to_totals"], true);
+        assert_eq!(r["accepted"], 5);
+        assert_eq!(r["sampler_rejections"], 1);
+        assert_eq!(
+            r["by_outcome"]["nonwin"]["depth_limited_without_expansion"],
+            1
+        );
+        assert_eq!(
+            r["by_outcome"]["truncated"]["transitions"]["after_expansion"],
+            7
+        );
+        assert_eq!(r["natural"]["expanded"], 1);
+        assert_eq!(r["natural"]["first_expansion_depth_histogram"]["none"], 2);
+        // Natural pooled shares: 230 transitions, of which 102 prefix.
+        let share = r["natural"]["pooled_share_of_natural_work"]["transitions"]["tree_prefix"]
+            .as_f64()
+            .unwrap();
+        assert!((share - 102.0 / 230.0).abs() < 1e-12);
+        // Conditional means use the expanded natural simulations only.
+        assert_eq!(
+            r["natural"]["mean_among_expanded"]["transitions_after_expansion"],
+            88.0
+        );
+        // A total that does not match the selection is reported, not hidden.
+        let bad = sim_report(&all, 1, 251, 63, 7, 0);
+        assert_eq!(
+            bad["reconciles"]["transitions_equal_selection_total"],
+            false
+        );
+        assert_eq!(
+            bad["reconciles"]["attempts_equal_accepted_plus_rejections"],
+            false
+        );
+    }
+
+    /// L counts physical groups; the legacy first-recorded-choice metric and
+    /// the actual substep-zero metric differ when substep 0 was forced.
+    #[test]
+    fn group_and_substep_semantics() {
+        // Group 7: substep 0 forced (absent), substep 1 tree-executed.
+        // Group 8: substeps 0 and 1 tree-executed. Group 9: substep 0 miss.
+        let d = [(7, 1, 0), (8, 0, 0), (8, 1, 0), (9, 0, 2), (9, 1, 3)];
+        let m = decision_metrics(&d);
+        assert_eq!(m["groups"], 3);
+        assert_eq!(m["L"], 2);
+        assert_eq!(m["first_recorded_choice_controlled"], 2);
+        assert_eq!(m["substep0_groups"], 2);
+        assert_eq!(m["substep0_controlled"], 1);
+        assert_eq!(m["substep0_share"], 0.5);
+        assert_eq!(m["first_miss_group"], 2);
+        assert_eq!(m["choices"][0], json!([0, 1, 0]));
+        // Only a forced substep zero: no qualifying group, share undefined.
+        let f = decision_metrics(&[(4, 2, 0)]);
+        assert_eq!(f["substep0_groups"], 0);
+        assert_eq!(f["substep0_share"], Value::Null);
+        assert_eq!(f["first_recorded_choice_controlled"], 1);
+    }
+
+    /// Real selection: every ending is reconciled, and an expansion is
+    /// recorded exactly when the simulation added a node or was cut after one.
+    #[test]
+    #[ignore = "native qualification: fixture game and small searches"]
+    fn selection_accounting_reconciles() {
+        let policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let mut roles = bank_roles(&policy, std::slice::from_ref(&policy)).unwrap();
+        let s = root();
+        let prior = DeckPrior::new(&(0..RUNTIME_DECKS.len()).collect::<Vec<_>>());
+        let seeds = RootSeeds {
+            model: "test".into(),
+            root: "branch".into(),
+        };
+        let limits = Limits {
+            select_cap: 20_000,
+            ..Limits::FORMAL
+        };
+        let ctx = guide_ctx(&s, PlayerId(0), 0, &seeds, &prior, limits).unwrap();
+        for retain in [1usize, 8] {
+            let mut records = Vec::new();
+            let (sel, tree) = roles.select_e_retaining(&ctx, None, retain, Some(&mut records));
+            let r = sim_report(
+                &records,
+                retain,
+                sel.transitions,
+                sel.inference,
+                sel.attempted,
+                sel.sampler.rejected,
+            );
+            for k in [
+                "attempts_equal_accepted_plus_rejections",
+                "transitions_equal_selection_total",
+                "calls_equal_selection_total",
+                "buckets_sum_to_totals",
+                "snapshots_within_totals",
+                "rejections_equal_sampler_count",
+                "natural_expansion_iff_committed",
+            ] {
+                assert_eq!(r["reconciles"][k], true, "{k} retain {retain}");
+            }
+            for x in records.iter().filter(|x| x.outcome <= 2) {
+                assert_eq!(x.expansion.is_some(), x.new_nodes > 0);
+            }
+            assert_eq!(
+                records.iter().map(|x| x.new_nodes).sum::<usize>(),
+                tree.nodes.len()
+            );
         }
     }
 

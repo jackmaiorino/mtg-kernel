@@ -1371,12 +1371,25 @@ impl SimRecord {
     /// the first expansion, and the depth-limit tail without an expansion.
     pub(crate) fn buckets(&self) -> [(u64, u64); 3] {
         let total = (self.transitions, self.policy_calls);
-        let rest = |s: Snap| (total.0 - s.transitions, total.1 - s.calls);
+        let rest = |s: Snap| {
+            (
+                total.0.saturating_sub(s.transitions),
+                total.1.saturating_sub(s.calls),
+            )
+        };
         match (self.expansion, self.depth_limit) {
             (Some(e), _) => [(e.transitions, e.calls), rest(e), (0, 0)],
             (None, Some(l)) => [(l.transitions, l.calls), (0, 0), rest(l)],
             (None, None) => [total, (0, 0), (0, 0)],
         }
+    }
+
+    /// Every recorded snapshot lies within the simulation's totals.
+    pub(crate) fn snapshots_within_totals(&self) -> bool {
+        [self.expansion, self.depth_limit]
+            .iter()
+            .flatten()
+            .all(|s| s.transitions <= self.transitions && s.calls <= self.policy_calls)
     }
 }
 

@@ -5,6 +5,9 @@ CLI:
   compare     --b1 B1ROWS... --d8 D8ROWS... --out RESULT.json
 
 Panel roots are the 36 IDs of cases.txt; the two named roots are reported apart.
+Labels (erratum, collab LANES/search-identity-audit-20261011): L counts physical groups;
+"share"/"first_substep" are the first-recorded-choice metrics (not necessarily substep 0);
+"selection_seconds" is elapsed wall time, not CPU.
 Per root, evaluation metrics average over its 16 worlds; lineages average roots.
 Missing roots, failed searches, rejected samples and invalid (nonnatural, truncated,
 faulted) evaluations make the comparison incomplete; they are never losses.
@@ -103,12 +106,18 @@ def root_eval(r):
     if r["selection_failed"] or len(valid) != 16:
         return None
     m = lambda k: st.mean(w[k] for w in valid)  # noqa: E731
-    return {"L": m("L"), "L_values": [w["L"] for w in valid], "share": m("first_substep_share"),
-            "first_substep": m("first_substep_controlled"), "descendants": m("descendant_controlled"),
+    # Row schema v2 renamed the v1 fields: "first_substep_*" counted a group's first
+    # recorded nonforced choice, which need not be substep zero.
+    v2 = r.get("schema") == "branch-root-v2"
+    share = "first_recorded_choice_share" if v2 else "first_substep_share"
+    first = "first_recorded_choice_controlled" if v2 else "first_substep_controlled"
+    desc = "descendant_first_recorded_controlled" if v2 else "descendant_controlled"
+    return {"L": m("L"), "L_values": [w["L"] for w in valid], "share": m(share),
+            "first_substep": m(first), "descendants": m(desc),
             "after_fallback": m("support_after_first_fallback"), "wins": sum(w["win"] for w in valid),
             "first_unsupported": [w["first_unsupported_group"] for w in valid],
             "first_miss": [w["first_miss_group"] for w in valid],
-            "selection_seconds": r["timing"]["selection"], "states": [w["world_state_hash"] for w in valid],
+            "selection_seconds": r["timing"]["selection_wall_seconds" if v2 else "selection"], "states": [w["world_state_hash"] for w in valid],
             "outcomes": [w["win"] for w in valid]}
 
 
