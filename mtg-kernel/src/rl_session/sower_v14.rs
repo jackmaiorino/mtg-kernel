@@ -14,51 +14,6 @@ pub(crate) struct SowerDecisionBindingV14 {
     observation: SowerObservationV1,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::policy_observation_v6::tests::{put, ready_state};
-
-    #[test]
-    fn complete_ordered_binding_observation_identity_seat_and_menu_changes_refuse_readonly() {
-        for actor in [PlayerId::P0, PlayerId::P1] {
-            let mut state = ready_state();
-            state.active_player = actor;
-            state.priority_player = actor;
-            put(&mut state, actor, "Forest", Zone::Hand);
-            put(&mut state, actor, "Mountain", Zone::Hand);
-            let mut session = FastActorSessionV1::from_sower_v14_fixture_state(state);
-            let FastActorResponseV1::Decision(expected) = session.current_response() else {
-                panic!("real priority decision");
-            };
-            let (_, _, binding) = session
-                .sower_current_decision_input_v14(expected, actor.into())
-                .unwrap();
-            let before = session.privileged_core_environment_hash();
-            let mut forged = binding.clone();
-            forged.candidates.reverse();
-            assert!(session
-                .sower_validate_bound_decision_v14(expected, actor.into(), &forged)
-                .is_err());
-            let mut forged = binding.clone();
-            forged.observation.producer_sha256.clear();
-            assert!(session
-                .sower_validate_bound_decision_v14(expected, actor.into(), &forged)
-                .is_err());
-            assert!(session
-                .sower_current_decision_input_v14(expected, actor.opponent().into())
-                .is_err());
-            assert_eq!(session.privileged_core_environment_hash(), before);
-            session.sower_fixture_state_mut().players[actor.index()].life += 1;
-            let before = session.privileged_core_environment_hash();
-            assert!(session
-                .sower_validate_bound_decision_v14(expected, actor.into(), &binding)
-                .is_err());
-            assert_eq!(session.privileged_core_environment_hash(), before);
-        }
-    }
-}
-
 pub(super) fn normalized_origin(
     session: &FastActorSessionV1,
     current: &FastActorCurrentDecisionV1,
@@ -103,6 +58,8 @@ impl FastActorSessionV1 {
     /// Explicit backend opt-in for the separate Sower projector.
     /// It consumes the session; predecessor adapters keep their old mode.
     pub fn into_sower_v14(mut self) -> Result<Self, RlContractError> {
+        // Validate before any advancement can expire a malformed active marker.
+        crate::sower_restriction_capture_v1::active(&self.state)?;
         self.flat_action_contract_mode = FlatActionContractModeV1::SowerV14;
         self.flat_action_cache_spare = None;
         self.flat_action_cache_spare_v2 = None;
@@ -127,6 +84,17 @@ impl FastActorSessionV1 {
         session.flat_action_contract_mode = FlatActionContractModeV1::SowerV14;
         session.flat_action_cache_spare = None;
         session.flat_action_cache_spare_v2 = None;
+        if let Err(error) = crate::sower_restriction_capture_v1::active(&session.state) {
+            session.terminal = Some(halted_terminal(
+                &session.deck_ids,
+                session.deck_hashes,
+                session.episode_id,
+                format!("fail_closed:sower_v14:{error}"),
+                session.policy_step_count,
+                session.physical_decision_count,
+            ));
+            return session;
+        }
         session.advance_to_decision_or_terminal();
         session
     }
@@ -205,5 +173,50 @@ impl FastActorSessionV1 {
             return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::policy_observation_v6::tests::{put, ready_state};
+
+    #[test]
+    fn complete_ordered_binding_observation_identity_seat_and_menu_changes_refuse_readonly() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state();
+            state.active_player = actor;
+            state.priority_player = actor;
+            put(&mut state, actor, "Forest", Zone::Hand);
+            put(&mut state, actor, "Mountain", Zone::Hand);
+            let mut session = FastActorSessionV1::from_sower_v14_fixture_state(state);
+            let FastActorResponseV1::Decision(expected) = session.current_response() else {
+                panic!("real priority decision");
+            };
+            let (_, _, binding) = session
+                .sower_current_decision_input_v14(expected, actor.into())
+                .unwrap();
+            let before = session.privileged_core_environment_hash();
+            let mut forged = binding.clone();
+            forged.candidates.reverse();
+            assert!(session
+                .sower_validate_bound_decision_v14(expected, actor.into(), &forged)
+                .is_err());
+            let mut forged = binding.clone();
+            forged.observation.producer_sha256.clear();
+            assert!(session
+                .sower_validate_bound_decision_v14(expected, actor.into(), &forged)
+                .is_err());
+            assert!(session
+                .sower_current_decision_input_v14(expected, actor.opponent().into())
+                .is_err());
+            assert_eq!(session.privileged_core_environment_hash(), before);
+            session.sower_fixture_state_mut().players[actor.index()].life += 1;
+            let before = session.privileged_core_environment_hash();
+            assert!(session
+                .sower_validate_bound_decision_v14(expected, actor.into(), &binding)
+                .is_err());
+            assert_eq!(session.privileged_core_environment_hash(), before);
+        }
     }
 }

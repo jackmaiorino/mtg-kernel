@@ -123,3 +123,18 @@ No sentinel or live registry change occurs. Exacta6f147629bec051fcdf89e26d897871
 is submitted as Native58, same81 requests, supportedhandle
 f26802ee6bca44d9824043380270382c/supervisor160848. Actual57guard101 and absent
 supervisor were verified after exact owned terminal-helper release before reuse.
+
+Native58 actuala6f completed101/101:78 passed and3 failed among all81 requested
+cases. Both all-test typechecks and complete Default/Standard replay bytes
+passed. Both strict lints failed on Sower tuple complexity and test placement.
+Squad and Self requested groups passed; Heartfire history6 also passed.
+Heartfire Human2 and Sower public1 failed. Final evidence is cold mirrored.
+Only exact owned terminal helper141636 was released after job/path/start checks;
+actualguard101 and absent supervisor160848 were observed before target reuse.
+
+Root0c4 repairs physical Heartfire cast funding and the old planeswalker refusal
+expectation. Review found that V12 still shares that frozen input refusal, so
+an explicit authenticated V12 input successor is required before qualification.
+Sowerf9a is composed at53984: validate captures before conversion/advancement,
+retain exact malformed state bytes, alias the tuple and move the actual tests.
+Scoped source review is CLEAR. Repaired native gameplay/lint is still pending.

@@ -391,7 +391,10 @@ mod printed {
         let source = put(state, actor, "Heartfire Immolator", Zone::Hand);
         state.active_player = actor;
         state.priority_player = actor;
-        state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 2;
+        // Fund the printed 1R cost without leaving red response mana on the
+        // opponent who may also control an unrelated Shivan Dragon.
+        state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+        state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
         assert!(matches!(
             engine::advance_until_decision(state),
             Decision::CastSpellOrPass { .. }
@@ -484,7 +487,13 @@ mod printed {
                     assert_eq!(
                         HumanDecisionProjectorV9::new(actor.into())
                             .project_current(&predecessor, e),
-                        Err(Error::UnsupportedPrompt)
+                        // V9 maps its unsupported planeswalker observation to
+                        // StaleDecision before action-label projection occurs.
+                        Err(if walker {
+                            Error::StaleDecision
+                        } else {
+                            Error::UnsupportedPrompt
+                        })
                     );
                     let mut projector = HumanHeartfireProjectorV12::new(actor.into());
                     let prompt = projector.project_current(&session, e).unwrap();

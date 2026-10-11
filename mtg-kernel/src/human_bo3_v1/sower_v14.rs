@@ -152,18 +152,17 @@ fn state(
         restricted_mana: old.restricted_mana,
     })
 }
+type ProjectedSowerV14 = (
+    HumanVisibleStateV1<HumanSowerExtensionsV14>,
+    Vec<HumanLegalActionV1>,
+    Vec<u32>,
+);
+
 fn project_base(
     observation: &SowerObservationV1,
     actions: &[ActionSemanticV1],
     human: PlayerSeatV1,
-) -> Result<
-    (
-        HumanVisibleStateV1<HumanSowerExtensionsV14>,
-        Vec<HumanLegalActionV1>,
-        Vec<u32>,
-    ),
-    Error,
-> {
+) -> Result<ProjectedSowerV14, Error> {
     if observation.acting_player != human {
         return Err(Error::NotHumanTurn);
     }
