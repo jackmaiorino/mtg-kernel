@@ -110,3 +110,16 @@ filters now include the legacy siblings; Self filters explicitly include their
 four precise-meaning cases. Its source is verified in a clean real Git worktree,
 manifest is cold mirrored and no current result is claimed yet. Sentinel JSON
 is preparation only; it changes neither the frozen pool nor the live catalog.
+
+Native57 stopped101/101 in the first Limited all-test compile: three Sower
+fixture calls used an obsolete three-argument ZoneChange API, and the factored
+continuous-effects helper left Heartfire history's call unresolved. No tests,
+Standard check, lints or exports ran. The exact failed source/log/guard are cold
+retained. Root e39d6d14 uses the actual destination-only event API and passes
+false to the shared helper for Heartfire, retaining its frozen refusal. Self
+fixture7d9e9b80 is also composed; it preserves typed refusal while sentinels are
+absent and checks masked original/neutral copy if separately admitted later.
+No sentinel or live registry change occurs. Exacta6f147629bec051fcdf89e26d897871f22a0752d
+is submitted as Native58, same81 requests, supportedhandle
+f26802ee6bca44d9824043380270382c/supervisor160848. Actual57guard101 and absent
+supervisor were verified after exact owned terminal-helper release before reuse.
