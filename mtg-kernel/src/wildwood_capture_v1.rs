@@ -33,6 +33,10 @@ pub(crate) fn owns_definition(id: u16) -> bool {
         && matches!(crate::trigger::triggers_for(id), [ability] if ability.condition == crate::trigger::TriggerCondition::AnotherControlledNonHydraCreatureGetsPlusOneCounters && (ability.effect)() == crate::wildwood_scourge_v1::counter_program_v1())
 }
 
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 pub(crate) fn capture(
     state: &mut GameState,
     event: &CommittedEvent,
