@@ -366,8 +366,10 @@ mod copied_printed {
         for player in [actor, actor.opponent()] {
             put(&mut state, player, "Island", Zone::Library);
         }
-        put(&mut state, actor.opponent(), "Lightning Bolt", Zone::Hand);
-        state.players[actor.opponent().index()].mana_pool[ManaColor::R.pool_index()] = 1;
+        // Preserve a real response without funding the target Dragon's
+        // unrelated pump ability, refused by the inherited Human labels.
+        put(&mut state, actor.opponent(), "Think Twice", Zone::Hand);
+        state.players[actor.opponent().index()].mana_pool[ManaColor::U.pool_index()] = 2;
         let donor = put(&mut state, actor, "Heartfire Immolator", Zone::Hand);
         state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 2;
         engine::step(&mut state, Action::CastSpell(donor)).unwrap();

@@ -371,8 +371,10 @@ mod printed {
         // The inherited surface force-passes the activator's fresh own item.
         // Keep a real opponent response so its authenticated stack facts can
         // be inspected before both players pass and resolve it.
-        put(&mut state, actor.opponent(), "Lightning Bolt", Zone::Hand);
-        state.players[actor.opponent().index()].mana_pool[ManaColor::R.pool_index()] = 1;
+        // Blue response mana does not enable Shivan Dragon's unrelated pump
+        // ability, which the inherited Human labels explicitly refuse.
+        put(&mut state, actor.opponent(), "Think Twice", Zone::Hand);
+        state.players[actor.opponent().index()].mana_pool[ManaColor::U.pool_index()] = 2;
         state
     }
     fn settle_raw(state: &mut GameState) {
