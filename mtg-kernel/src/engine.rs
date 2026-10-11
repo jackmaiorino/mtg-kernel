@@ -2373,10 +2373,12 @@ fn validate_creature_upgrade_trigger_contract(
 ) -> Result<(), String> {
     validate_historical_ability_source_contract(state, host)?;
     validate_historical_ability_source_contract(state, grant)?;
-    if host.source != grant.source
-        || host.zone_change_count != grant.zone_change_count
+    let direct = host.source == grant.source
+        && host.zone_change_count == grant.zone_change_count
+        && grant.zone == Zone::Battlefield;
+    let borrowed = host.source != grant.source && grant.zone == Zone::Exile;
+    if (!direct && !borrowed)
         || host.zone != Zone::Battlefield
-        || grant.zone != Zone::Battlefield
         || host.controller != controller
         || !crate::standard_creatures_v1::grants_combat_impulse(grant.card_def)
         || *effect != trigger::kellan_impulse_effect()
@@ -9297,6 +9299,7 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
                     Some((UnsupportedMechanic::InvalidEffectContinuation, p.source));
                 return;
             };
+            let frozen = freeze_activation_source(state, &p, ability);
             // Keep the state-changing payment outside `debug_assert!`: the
             // macro (including its argument) is compiled out in release
             // builds, but costs must be paid in every profile. The complete
@@ -9329,7 +9332,7 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
                 .pending_activation
                 .take()
                 .expect("validated activation discard retains its activation");
-            push_paid_activation(state, p, chosen);
+            push_paid_activation(state, p, chosen, frozen);
         }
         DiscardResume::FinishSpellResolution { source, to_zone } => {
             // See `DiscardResume::FinishSpellResolution`'s doc: this is the
@@ -12431,7 +12434,11 @@ fn triggered_stack_item_expected_target_spec(
         return Err("triggered stack item source definition is not executable".to_string());
     }
     let granted_trigger = match (ability_source_contract, item.v4.granted_by) {
-        (Some(host), Some(grant)) if host.source == grant.source => {
+        (Some(host), Some(grant))
+            if host.source == grant.source
+                || (grant.zone == Zone::Exile
+                    && *inline_effect == trigger::kellan_impulse_effect()) =>
+        {
             validate_creature_upgrade_trigger_contract(
                 state,
                 host,
@@ -13221,6 +13228,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         paid_cost_refs: item.v4.paid_cost_refs.clone(),
         hidden_ability_source: item.v4.hidden_ability_source,
         ability_source_contract: item.v4.ability_source_contract,
+        cauldron_grant: item.v4.cauldron_grant,
         kicked: item.kicked,
         optional_additional_cost_paid: item.v4.optional_additional_cost_paid,
         x_value: item.v4.x_value,
@@ -18769,6 +18777,7 @@ fn finalize_activation(state: &mut GameState) {
         pending.source,
     )
     .expect("validate_pending_activation already confirmed this ability index resolves");
+    let frozen = freeze_activation_source(state, &pending, ability);
     let ability = &ability;
     let mut discarded = Vec::new();
     if ability
@@ -18823,7 +18832,7 @@ fn finalize_activation(state: &mut GameState) {
         ));
         return;
     }
-    let host = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
+    let host = &card_def::CARD_DEFS[frozen.source.card_def as usize];
     if pending.cauldron_grant.0.is_none()
         && crate::standard_cards_v1::is_special_action(host, pending.ability_index)
     {
@@ -18835,11 +18844,47 @@ fn finalize_activation(state: &mut GameState) {
         state.priority_player = pending.controller;
         return;
     }
-    push_paid_activation(state, pending, discarded);
+    push_paid_activation(state, pending, discarded, frozen);
     if let Some(target) = ninjutsu_target {
         if let Some(item) = state.stack.last() {
             crate::standard_cards_v1::record_ninjutsu_target(state, item.v4.stack_item_id, target);
         }
+    }
+}
+
+/// Cost payment can end a copy effect or remove a granting Equipment. Capture
+/// the producing definition and contracts while the activation is still legal.
+struct FrozenActivationSource {
+    ability: ActivatedAbilityDef,
+    source: AbilitySourceContractV4,
+    granted_by: Option<AbilitySourceContractV4>,
+}
+
+fn freeze_activation_source(
+    state: &GameState,
+    pending: &PendingActivation,
+    ability: ActivatedAbilityDef,
+) -> FrozenActivationSource {
+    let source = AbilitySourceContractV4::capture(state, pending.source);
+    let granted_by = if let Some(grant) = pending.cauldron_grant.0 {
+        debug_assert_eq!(grant.host, source);
+        Some(grant.donor)
+    } else if pending.ability_index as usize
+        == card_def::CARD_DEFS[source.card_def as usize]
+            .activated_abilities
+            .len()
+    {
+        let (equipment, _) =
+            equipped_granted_activated_ability_with_equipment(state, pending.source)
+                .expect("validated equipment-granted activation");
+        Some(AbilitySourceContractV4::capture(state, equipment))
+    } else {
+        None
+    };
+    FrozenActivationSource {
+        ability,
+        source,
+        granted_by,
     }
 }
 
@@ -18851,15 +18896,9 @@ fn push_paid_activation(
     state: &mut GameState,
     pending: PendingActivation,
     discarded: Vec<ObjectId>,
+    frozen: FrozenActivationSource,
 ) {
-    // Resolve and, for a granted ability, freeze its granting Equipment's
-    // exact incarnation right here -- the only place this needs a live
-    // lookup. From this point on the stack item is self-contained: every
-    // later read (`validated_stack_item_target_spec`,
-    // `stack_targets_still_legal`) goes through
-    // `resolved_stack_activated_ability`'s frozen/LKI path instead of
-    // re-deriving from live equipment state, so a response that destroys
-    // the Equipment or this creature can't halt the ability's resolution.
+    // The prepayment snapshot survives source departure and copy reversion.
     if let Some(grant) = pending.cauldron_grant.0 {
         crate::standard_cards_v1::note_cauldron_activation(state, grant);
     } else {
@@ -18869,54 +18908,16 @@ fn push_paid_activation(
             pending.ability_index as usize,
         );
     }
-    let host_card_def = state.objects.get(pending.source).card_def;
-    let printed_len = card_def::CARD_DEFS[host_card_def as usize]
-        .activated_abilities
-        .len();
-    let (ability, granted_by) = if let Some(grant) = pending.cauldron_grant.0 {
-        (
-            crate::standard_cards_v1::cauldron_ability_of(grant.donor.card_def, grant.local_index)
-                .expect("validated frozen Cauldron ability"),
-            Some(grant.donor),
-        )
-    } else if (pending.ability_index as usize) < printed_len {
-        (
-            card_def::CARD_DEFS[host_card_def as usize].activated_abilities
-                [pending.ability_index as usize],
-            None,
-        )
-    } else if pending.ability_index as usize == printed_len {
-        let (equipment_id, ability) =
-            equipped_granted_activated_ability_with_equipment(state, pending.source).expect(
-                "callers validate this ability index resolves before pushing the activation",
-            );
-        (
-            ability,
-            Some(AbilitySourceContractV4::capture(state, equipment_id)),
-        )
-    } else {
-        panic!("validated activation lost its grant provenance")
-    };
-    let ability = &ability;
+    let ability = &frozen.ability;
+    let granted_by = frozen.granted_by;
     let source = state.objects.get(pending.source);
-    let ability_source_contract =
-        pending
-            .cauldron_grant
-            .0
-            .map(|grant| grant.host)
-            .unwrap_or(AbilitySourceContractV4 {
-                source: pending.source,
-                card_def: source.card_def,
-                owner: source.owner,
-                controller: pending.controller,
-                zone: ability.activation_zone,
-                zone_change_count: pending.source_zone_change_count,
-                attached_to: if source.zone_change_count == pending.source_zone_change_count {
-                    source.v4.attached_to
-                } else {
-                    None
-                },
-            });
+    let mut ability_source_contract = frozen.source;
+    // Preserve the legacy departure encoding for ordinary activated sources.
+    if pending.cauldron_grant.0.is_none()
+        && source.zone_change_count != pending.source_zone_change_count
+    {
+        ability_source_contract.attached_to = None;
+    }
     let mut paid_cost_objects = discarded.clone();
     if counter_removal_cost(ability.cost).is_none() {
         paid_cost_objects.extend(

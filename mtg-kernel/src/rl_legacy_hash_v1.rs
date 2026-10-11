@@ -222,6 +222,72 @@ mod tests {
         value.hash(&mut hash);
         hash.0
     }
+    #[test]
+    fn absent_borrowed_origins_preserve_context_and_creature_upgrade_hashes() {
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        let state =
+            GameState::new_from_libraries(&[forest; 12], &[forest; 12], |_| "Forest".into(), 9);
+        let source = state.players[0].library[0];
+        let mut ctx = crate::effect::ExecCtx::no_targets(source, crate::ids::PlayerId::P0);
+        // The original context hashes these six fields before any nonempty
+        // optional provenance. Appended empty grant records add no bytes.
+        assert_eq!(
+            bytes(&ctx),
+            bytes(&(
+                ctx.source,
+                ctx.controller,
+                &ctx.targets,
+                &ctx.target_contracts,
+                &ctx.discarded,
+                ctx.kicked
+            ))
+        );
+        assert!(!serde_json::to_value(&ctx)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .contains_key("cauldron_grant"));
+        let contract = crate::state::AbilitySourceContractV4::capture(&state, source);
+        let before = bytes(&ctx);
+        ctx.cauldron_grant.0 = Some(crate::cauldron_grants_v1::CauldronGrantV1 {
+            host: contract,
+            donor: contract,
+            local_index: 0,
+        });
+        assert_ne!(bytes(&ctx), before);
+
+        let mut upgrade = crate::standard_creatures_v1::CreatureUpgradeV1::default();
+        assert_eq!(
+            bytes(&upgrade),
+            bytes(&(
+                (
+                    upgrade.finality,
+                    upgrade.temporary_creature,
+                    &upgrade.suppressed_by,
+                    upgrade.graveyard_adventure,
+                    upgrade.haste_blockers_only,
+                    &upgrade.creature_types,
+                    upgrade.base_stats
+                ),
+                (
+                    upgrade.color,
+                    &upgrade.keyword_grants,
+                    &upgrade.keyword_losses,
+                    upgrade.combat_impulse,
+                    &upgrade.once_activated,
+                    upgrade.wurmlet_resolved_turn
+                )
+            ))
+        );
+        assert!(!serde_json::to_value(&upgrade)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .contains_key("combat_impulse_donor"));
+        let before = bytes(&upgrade);
+        upgrade.combat_impulse_donor = Some(contract);
+        assert_ne!(bytes(&upgrade), before);
+    }
     fn preserves_legacy<L: Hash + Serialize + serde::de::DeserializeOwned>(
         value: &(impl Hash + Serialize),
     ) {

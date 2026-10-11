@@ -41,7 +41,12 @@ fn conflicts(
                 .is_some_and(|x| same(x.source, x.zone_change_count))
     };
     let e = &state.engine;
-    if e.pending_triggers.iter().any(|t| {
+    if state.objects.iter().any(|(_, object)| {
+        object.v4.creature_upgrade.as_ref().is_some_and(|upgrade| {
+            upgrade.combat_impulse_source.as_ref().is_some_and(&ability)
+                || upgrade.combat_impulse_donor.as_ref().is_some_and(&ability)
+        })
+    }) || e.pending_triggers.iter().any(|t| {
         super::effect_refs::op_conflicts(state, pool, &t.effect)
             || t.source_contract.as_ref().is_some_and(&ability)
             || t.granted_by.as_ref().is_some_and(&ability)
