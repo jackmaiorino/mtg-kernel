@@ -19,16 +19,17 @@ fn ready(actor: PlayerId, names: &[&str]) -> GameState {
         .map(|name| card_id_by_name(name).unwrap())
         .collect();
     let forest = card_id_by_name("Forest").unwrap();
+    let opponent_cards = [forest; 40];
     let mut state = GameState::new_from_libraries_with_starting_player_v1(
         if actor == PlayerId::P0 {
             &cards
         } else {
-            &[forest; 40]
+            &opponent_cards
         },
         if actor == PlayerId::P1 {
             &cards
         } else {
-            &[forest; 40]
+            &opponent_cards
         },
         |id| CARD_DEFS[id as usize].object_name.into(),
         110_331,
@@ -179,7 +180,8 @@ fn real_cast_optional_power_pick_reveal_random_bottom_and_restored_replay_both_s
                 player, source: current, selected_count: 0, min_targets: 0, max_targets: 1,
                 ref legal_targets, can_finish: true,
             } if player == actor && current == source && *legal_targets == vec![Target::Object(original[0]), Target::Object(original[1])]));
-            let random_before = serde_json::to_vec(&state.randomness).unwrap();
+            let random_before =
+                serde_json::to_vec(state.legacy_rng().expect("legacy fixture")).unwrap();
             let mut restored = restore(&state);
             for current in [&mut state, &mut restored] {
                 readonly(current, Action::ChooseTarget(Target::Object(original[0])));
@@ -212,7 +214,7 @@ fn real_cast_optional_power_pick_reveal_random_bottom_and_restored_replay_both_s
                     sort_ids(expected_rest)
                 );
                 assert_ne!(
-                    serde_json::to_vec(&current.randomness).unwrap(),
+                    serde_json::to_vec(current.legacy_rng().expect("legacy fixture")).unwrap(),
                     random_before
                 );
                 assert_eq!(
