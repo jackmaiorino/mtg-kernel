@@ -24,3 +24,13 @@ generated definitions, retaining v74 and all older historical readers and
 refusals before store access. No model, learned policy, strength, experiment
 or full-pool completion is claimed. PR224/v73/Divine integration remain
 prerequisites; accepted default coverage remains185 Full.
+
+
+Native38 actual generator emitted397 definitions/hash7c55bd95d42ed77d
+before two fixture compile errors. f00e1aa2 fixes those assertions to global
+exile with independent owner checks. This v75 profile derives from retained
+actual generation, preserves v74 and all older profile constants/readers,
+appends its classifier and enum, and rejects stale v74 publisher/resume before
+store access. Only current live FDN canaries change. Actual qualification of
+printed/consumer rules, profile, typechecks/lint and default delivery remain
+separate and pending; no model, formal measurement or strength repin occurs.
