@@ -6997,6 +6997,7 @@ fn viable_pending_spell_forms(
             if form == 0
                 && pending.origin_zone == Zone::Graveyard
                 && supported_adventure(def).is_some()
+                && !pending_has_graveyard_creature_permission(pending, state)
             {
                 continue;
             }
@@ -7179,6 +7180,25 @@ fn graveyard_permission_zone_change_count(
             live.zone_change_count,
         ))
     .then_some(live.zone_change_count)
+}
+
+/// Case's permission belongs to the pre-announcement graveyard incarnation.
+/// It can coexist with Mosswood's separate permission for its Adventure.
+fn pending_has_graveyard_creature_permission(pending: &PendingCast, state: &GameState) -> bool {
+    pending.origin_zone == Zone::Graveyard
+        && pending.source_contract.owner == pending.controller
+        && pending
+            .source_contract
+            .spell_cast_origin
+            .is_some_and(|origin| {
+                origin.origin_zone == Zone::Graveyard
+                    && crate::standard_cards_v1::graveyard_cast_granted(
+                        state,
+                        pending.spell,
+                        pending.controller,
+                        origin.origin_zone_change_count,
+                    )
+            })
 }
 
 fn unambiguous_graveyard_cast_method(def: &card_def::CardDef) -> Option<CastMethodV4> {
@@ -7500,6 +7520,7 @@ fn castable_spells(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
         for &id in &state.players[owner.index()].graveyard {
             if crate::standard_creatures_v1::graveyard_adventure_allowed(state, id, player)
                 && is_castable_now(player, id, CastMethodV4::Normal, state)
+                && !out.contains(&id)
             {
                 out.push(id);
             }
@@ -9960,11 +9981,24 @@ pub(crate) fn validate_pending_cast(
                 && (has_spell_form_choice(def) || mode == 0)
         }
     };
-    if pending.origin_zone == Zone::Graveyard
-        && supported_adventure(def).is_some()
-        && pending.mode_chosen == Some(0)
-    {
-        return Err("graveyard Adventure permission cannot cast the permanent form".to_string());
+    if pending.origin_zone == Zone::Graveyard && supported_adventure(def).is_some() {
+        if pending.mode_chosen == Some(0)
+            && !pending_has_graveyard_creature_permission(pending, state)
+        {
+            return Err(
+                "graveyard Adventure permission cannot cast the permanent form".to_string(),
+            );
+        }
+        if pending.mode_chosen == Some(1)
+            && !pending
+                .source_contract
+                .spell_cast_origin
+                .is_some_and(|origin| {
+                    matches!(origin.route, SpellCastRouteV4::GraveyardAdventure { .. })
+                })
+        {
+            return Err("graveyard creature permission cannot cast the Adventure form".to_string());
+        }
     }
     if !mode_shape_valid {
         return Err("pending cast mode selection is noncanonical".to_string());
@@ -18604,12 +18638,31 @@ fn finalize_owned_cast(
             .find(|reference| reference.object == binding.object)
             .copied()
     });
+    let used_graveyard_creature_permission =
+        matches!(
+            cast_method,
+            CastMethodV4::Normal | CastMethodV4::Alternative
+        ) && pending_has_graveyard_creature_permission(&pending, state);
     let source_v4 = &mut state.objects.get_mut(pending.spell).v4;
     let cast_origin = source_v4
         .spell_cast_origin
         .as_mut()
         .expect("validated pending cast retains its frozen origin evidence");
     debug_assert!(cast_origin.finalized_method.is_none());
+    // Announcement retains Mosswood's route while either form is possible.
+    // Choosing the creature uses Case's independent permission instead; the
+    // finalized spell must record the permission that actually authorized it.
+    if used_graveyard_creature_permission
+        && matches!(
+            cast_origin.route,
+            SpellCastRouteV4::GraveyardAdventure { .. }
+        )
+    {
+        cast_origin.route = SpellCastRouteV4::GraveyardPermissionV1 {
+            holder: pending.controller,
+            permission_zone_change_count: cast_origin.origin_zone_change_count,
+        };
+    }
     cast_origin.finalized_method = Some(cast_method);
     debug_assert!(source_v4.finalized_cast_binding.is_none());
     source_v4.finalized_cast_binding = Some(FinalizedCastBindingV1 {

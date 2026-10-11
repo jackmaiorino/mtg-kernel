@@ -1790,6 +1790,128 @@ fn case_of_the_uneaten_feast_gains_life_solves_and_lets_creatures_be_cast_from_t
     assert!(engine::step(&mut state, Action::CastSpell(flash)).is_err());
 }
 
+#[test]
+fn case_and_mosswood_graveyard_permissions_offer_only_their_authorized_forms() {
+    use mtg_kernel::state::{CastMethodV4, SpellCastRouteV4};
+
+    for (case_permission, adventure_permission) in
+        [(false, false), (true, false), (false, true), (true, true)]
+    {
+        let mut original = game();
+        let knight = put(
+            &mut original,
+            P0,
+            "Mosswood Dreadknight",
+            if adventure_permission {
+                Zone::Battlefield
+            } else {
+                Zone::Hand
+            },
+        );
+        event::propose_and_commit(
+            &mut original,
+            ProposedEvent::zone_change(knight, Zone::Graveyard),
+        );
+        settle(&mut original);
+        if case_permission {
+            // Isolate the resolved Case grant; solving and paying its sacrifice
+            // are exercised by the preceding Case integration regression.
+            let case = put(
+                &mut original,
+                P0,
+                "Case of the Uneaten Feast",
+                Zone::Battlefield,
+            );
+            mtg_kernel::effect::execute(
+                &mtg_kernel::standard_cards_v1::uneaten_feast_grant(),
+                &mtg_kernel::effect::ExecCtx::no_targets(case, P0),
+                &mut original,
+            );
+            settle(&mut original);
+        }
+
+        for (form, allowed, color) in [
+            (0, case_permission, ManaColor::G),
+            (1, adventure_permission, ManaColor::B),
+        ] {
+            let mut state = original.clone();
+            state.players[0].mana_pool[color.pool_index()] = 1;
+            state.players[0].mana_pool[5] = 1;
+            let Decision::CastSpellOrPass {
+                castable_spells, ..
+            } = next(&mut state)
+            else {
+                panic!("expected a cast offer");
+            };
+            assert_eq!(
+                castable_spells.iter().filter(|&&id| id == knight).count(),
+                usize::from(allowed)
+            );
+            if !allowed {
+                assert!(engine::step(&mut state, Action::CastSpell(knight)).is_err());
+                continue;
+            }
+
+            // Payable costs for both forms expose the real choice when both
+            // independent permissions are present.
+            state.players[0].mana_pool[ManaColor::G.pool_index()] = 1;
+            state.players[0].mana_pool[ManaColor::B.pool_index()] = 1;
+            act(&mut state, Action::CastSpell(knight));
+            let mut restored: GameState =
+                serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+            for state in [&mut state, &mut restored] {
+                let decision = next(state);
+                if case_permission && adventure_permission {
+                    assert!(
+                        matches!(decision, Decision::ChooseSpellMode { legal_modes, .. } if legal_modes == vec![0, 1])
+                    );
+                    act(state, Action::ChooseSpellMode(form));
+                    assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
+                } else {
+                    assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
+                }
+                let spell = state.stack.last().unwrap();
+                assert_eq!(spell.source, knight);
+                assert_eq!(
+                    spell.v4.cast_method,
+                    Some(if form == 0 {
+                        CastMethodV4::Normal
+                    } else {
+                        CastMethodV4::Omen
+                    })
+                );
+                let route = spell
+                    .v4
+                    .source_contract
+                    .unwrap()
+                    .spell_cast_origin
+                    .unwrap()
+                    .route;
+                assert!(if form == 0 {
+                    matches!(route, SpellCastRouteV4::GraveyardPermissionV1 { .. })
+                } else {
+                    matches!(route, SpellCastRouteV4::GraveyardAdventure { .. })
+                });
+                let before_hand = state.players[0].hand.len();
+                settle(state);
+                assert_eq!(
+                    state.objects.get(knight).zone,
+                    if form == 0 {
+                        Zone::Battlefield
+                    } else {
+                        Zone::Exile
+                    }
+                );
+                assert_eq!(
+                    state.players[0].hand.len(),
+                    before_hand + usize::from(form == 1)
+                );
+            }
+            assert_eq!(state, restored);
+        }
+    }
+}
+
 // ---- Liliana of the Veil -----------------------------------------------
 
 #[test]
