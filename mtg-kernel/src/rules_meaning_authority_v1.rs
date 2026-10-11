@@ -155,7 +155,7 @@ pub fn meaning_v1(
         || (def.spell_effect)()
             != Some(EffectOp::MoveObject {
                 object: ObjectRef::ThisSource,
-                to: Zone::Battlefield,
+                to_zone: Zone::Battlefield,
             })
         || !def.activated_abilities.is_empty()
         || def.alt_cost.is_some()
@@ -230,7 +230,14 @@ pub fn meaning_v1(
             def.types,
             def.colors,
             def.subtypes,
-            def.supertypes,
+            def.supertypes
+                .iter()
+                .map(|supertype| match supertype {
+                    crate::card_def::Supertype::Basic => "Basic",
+                    crate::card_def::Supertype::Snow => "Snow",
+                    crate::card_def::Supertype::Legendary => "Legendary",
+                })
+                .collect::<Vec<_>>(),
         ),
         (
             format!("{:?}", ability.condition),
