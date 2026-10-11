@@ -1639,6 +1639,19 @@ pub struct GameState {
     /// Engine-only history. Absence preserves historical bytes and hashes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub life_gain_turn_v1: Option<LifeGainTurnV1>,
+    /// A successful nonempty attack declaration in the current turn.
+    /// Absent in historical snapshots until a declaration is committed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attack_declaration_turn_v1: Option<AttackDeclarationTurnV1>,
+}
+
+/// The round counter and active seat together identify the declaring turn.
+/// Only the active player can declare attackers in this two-player engine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttackDeclarationTurnV1 {
+    pub turn: u32,
+    pub active_player: PlayerId,
 }
 
 /// Which players lost life during one turn (Hired Claw: "only if an
@@ -1758,6 +1771,10 @@ impl Hash for GameState {
             "life-gain-turn-v1".hash(state);
             history.hash(state);
         }
+        if let Some(history) = &self.attack_declaration_turn_v1 {
+            "attack-declaration-turn-v1".hash(state);
+            history.hash(state);
+        }
     }
 }
 
@@ -1810,6 +1827,16 @@ impl PaidCostRefV4 {
 }
 
 impl GameState {
+    /// Raid reads declaration history, independent of surviving attackers,
+    /// current controllers, drained events or the current combat object.
+    pub fn player_attacked_this_turn_v1(&self, player: PlayerId) -> bool {
+        self.attack_declaration_turn_v1.is_some_and(|history| {
+            history.turn == self.turn
+                && history.active_player == self.active_player
+                && history.active_player == player
+        })
+    }
+
     pub fn player_lost_life_this_turn_v1(&self, player: PlayerId) -> bool {
         self.life_loss_turn_v1.is_some_and(|loss| {
             loss.turn == self.turn
@@ -1935,6 +1962,7 @@ impl GameState {
             day_night_v1: None,
             descended_v1: None,
             life_gain_turn_v1: None,
+            attack_declaration_turn_v1: None,
         };
         crate::life_gain_turn_v1::initialize_for_pool(&mut state);
         state
