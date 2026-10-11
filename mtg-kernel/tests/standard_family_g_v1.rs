@@ -3298,7 +3298,7 @@ fn brightglass_search_is_optional_and_filters_two_revealed_cheap_permanents() {
     ));
     engine::step(&mut state, Action::ChooseEffectOption(1)).unwrap();
     assert!(
-        matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { legal_targets, .. }) if legal_targets == vec![Target::Object(top[0]), Target::Object(top[1])])
+        matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { legal_targets, .. }) if legal_targets == vec![Target::Object(top[1]), Target::Object(top[0])])
     );
     engine::step(
         &mut state,

@@ -7820,6 +7820,35 @@
         "finality_counter"
       ],
       "java_file": "Mage.Sets/src/mage/cards/z/ZoralineCosmosCaller.java"
+    },
+    {
+      "name": "Witness Protection",
+      "engine_capability": "full",
+      "mana_cost": "{U}",
+      "mana_value": 1,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [
+        "Aura"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "enchant_creature",
+        "characteristic_override",
+        "loses_all_abilities"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/w/WitnessProtection.java"
     }
   ]
 }

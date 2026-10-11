@@ -4224,6 +4224,7 @@ pub fn crew_animation() -> EffectOp {
 pub(crate) fn cleanup(state: &mut GameState) {
     if let Some(standard) = state.standard_v1.as_mut() {
         standard.crewed_creatures.clear();
+        standard.graveyard_casts.clear();
     }
 }
 pub(crate) fn begin_turn(state: &mut GameState) {

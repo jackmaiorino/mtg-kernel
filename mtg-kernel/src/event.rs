@@ -1694,6 +1694,12 @@ fn commit_zone_change(
     });
     let owner = state.objects.get(id).owner;
     let from_zone = state.objects.get(id).zone;
+    // A resolving permanent enters under its spell controller (608.3),
+    // including a spell cast from another player's exile through Etali.
+    let battlefield_controller = battlefield_controller.or_else(|| {
+        (from_zone == Zone::Stack && to_zone == Zone::Battlefield)
+            .then_some(state.objects.get(id).controller)
+    });
     refresh_paid_creature_power_lki(state, id, from_zone);
     let informed_observer_mask =
         if preserve_known_identity && from_zone == Zone::Library && to_zone == Zone::Hand {
@@ -1762,8 +1768,8 @@ fn commit_zone_change(
         let obj = state.objects.get_mut(id);
         obj.zone = to_zone;
         // A zone change creates a new object with no carried-over control
-        // effect. Moves to Stack are engine actions and never enter this
-        // helper, so every destination handled here begins owner-controlled.
+        // effect. A resolving permanent or an explicit controller override
+        // chooses the battlefield controller; other destinations use the owner.
         obj.controller = if to_zone == Zone::Battlefield {
             battlefield_controller.unwrap_or(owner)
         } else {

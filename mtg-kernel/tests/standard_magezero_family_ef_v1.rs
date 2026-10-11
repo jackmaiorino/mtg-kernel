@@ -1740,6 +1740,11 @@ fn case_of_the_uneaten_feast_gains_life_solves_and_lets_creatures_be_cast_from_t
         &mut state,
         ProposedEvent::zone_change(elves, Zone::Graveyard),
     );
+    let flash = put(&mut state, P0, "Resolute Reinforcements", Zone::Hand);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(flash, Zone::Graveyard),
+    );
     state.players[0].mana_pool[ManaColor::G.pool_index()] = 1;
     match next(&mut state) {
         Decision::CastSpellOrPass {
@@ -1759,6 +1764,30 @@ fn case_of_the_uneaten_feast_gains_life_solves_and_lets_creatures_be_cast_from_t
     act(&mut state, Action::CastSpell(elves));
     settle(&mut state);
     assert_eq!(state.objects.get(elves).zone, Zone::Battlefield);
+
+    state.players[0].mana_pool[ManaColor::W.pool_index()] = 2;
+    assert!(matches!(
+        next(&mut state),
+        Decision::CastSpellOrPass { castable_spells, .. } if castable_spells.contains(&flash)
+    ));
+    let round = state.turn;
+    // Enter cleanup through the engine so its end-of-turn effects actually run.
+    state.step = Step::End;
+    loop {
+        let decision = next(&mut state);
+        if state.active_player == P1 && state.priority_player == P0 {
+            break;
+        }
+        assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
+        act(&mut state, Action::Pass);
+    }
+    assert_eq!(state.turn, round, "cleanup occurs within the same round");
+    state.players[0].mana_pool[ManaColor::W.pool_index()] = 2;
+    assert!(matches!(
+        next(&mut state),
+        Decision::CastSpellOrPass { castable_spells, .. } if !castable_spells.contains(&flash)
+    ));
+    assert!(engine::step(&mut state, Action::CastSpell(flash)).is_err());
 }
 
 // ---- Liliana of the Veil -----------------------------------------------
@@ -3123,7 +3152,8 @@ fn bankbuster_last_charge_creates_tokens_even_if_source_leaves_in_response() {
     );
     resolve_stack(&mut state);
     assert_eq!(battlefield_named(&state, P0, "Pilot").len(), 1);
-    assert_eq!(battlefield_named(&state, P0, "Treasure").len(), 1);
+    let treasure_name = CARD_DEFS[card_id_by_name("Treasure Token").unwrap() as usize].object_name;
+    assert_eq!(battlefield_named(&state, P0, treasure_name).len(), 1);
 }
 
 #[test]
@@ -3275,6 +3305,8 @@ fn etali_free_casts_opponents_spell_then_transforms_and_poison_uses_damage_lki()
     assert_eq!(state.objects.get(foreign).zone, Zone::Battlefield);
     assert_eq!(state.objects.get(foreign).controller, P0);
     assert_eq!(state.objects.get(foreign).owner, P1);
+    assert!(state.players[P0.index()].battlefield.contains(&foreign));
+    assert!(!state.players[P1.index()].battlefield.contains(&foreign));
     state.players[0].mana_pool[ManaColor::G.pool_index()] = 10;
     act(&mut state, Action::ActivateAbility(etali, 0));
     resolve_stack(&mut state);
@@ -3757,6 +3789,8 @@ fn aegis_copied_activations_freeze_the_printed_ability_before_sacrificing_the_ho
         equip_aegis(&mut state, aegis, host);
         let source_generation = state.objects.get(host).zone_change_count;
         let pitch = put(&mut state, P0, "Forest", Zone::Hand);
+        // Two candidates keep the resumed discard-payment path a real choice.
+        let keep = put(&mut state, P0, "Island", Zone::Hand);
         let before_life = state.players[0].life;
         let before_library = state.players[0].library.len();
         state.players[0].mana_pool[ManaColor::U.pool_index()] = 2;
@@ -3782,6 +3816,7 @@ fn aegis_copied_activations_freeze_the_printed_ability_before_sacrificing_the_ho
             assert_eq!(state.players[0].life, before_life + 3);
         } else {
             assert_eq!(state.objects.get(pitch).zone, Zone::Graveyard);
+            assert_eq!(state.objects.get(keep).zone, Zone::Hand);
             assert_eq!(state.players[0].library.len(), before_library - 1);
         }
     }

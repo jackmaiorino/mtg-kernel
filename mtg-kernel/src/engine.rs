@@ -7353,7 +7353,8 @@ fn is_castable_now(
                     .is_some()
                 })
             };
-            let main_ok = state.objects.get(id).zone != Zone::Graveyard
+            let main_ok = (state.objects.get(id).zone != Zone::Graveyard
+                || graveyard_permission_zone_change_count(player, id, state).is_some())
                 && main_timing_ok
                 && (((normal_ok() || alt_ok())
                     && !viable_printed_spell_modes(def, id, player, state).is_empty())
@@ -17824,6 +17825,8 @@ pub(crate) fn finish_declare_attackers(state: &mut GameState, attackers: Vec<Obj
                         )
                         | trigger::TriggerCondition::AttacksWithGreaterPowerAttacker
                         | trigger::TriggerCondition::AttacksWhileControllerHasPowerFourCreature
+                        | trigger::TriggerCondition::AttacksIfControllerMostLife
+                        | trigger::TriggerCondition::AttacksPlayerWithMostLife
                 )
             })
         {
