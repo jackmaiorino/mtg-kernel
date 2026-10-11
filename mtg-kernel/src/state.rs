@@ -1048,7 +1048,6 @@ pub struct FinalizedCastBindingV1 {
 
 impl std::hash::Hash for FinalizedCastBindingV1 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        use std::hash::Hash;
         self.x_value.hash(state);
         self.chosen_creature_cost.hash(state);
         if let Some(kicked) = self.variable_targeting_kicked {

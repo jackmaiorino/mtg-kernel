@@ -51,7 +51,7 @@ fn absent_variable_source_binding_preserves_legacy_finalized_record_json_and_has
         chosen_creature_cost: Option<PaidCostRefV4>,
     }
     fn hash(value: &impl std::hash::Hash) -> u64 {
-        use std::hash::{Hash, Hasher};
+        use std::hash::Hasher;
         let mut h = std::collections::hash_map::DefaultHasher::new();
         value.hash(&mut h);
         h.finish()
