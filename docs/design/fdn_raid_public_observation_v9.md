@@ -16,18 +16,27 @@ The pair exposes no hidden identity or source handle. Stale round/active
 seat history projects false. The complete successor projection, including
 the pair, binds its own visible hash. V8 source/bytes remain unchanged.
 
-Four prepared native groups cover real declarations for either seat,
+Four native groups cover real declarations for either seat,
 identical predecessor projections after combat cleanup with differing Raid
 history, snapshot restoration, stale-turn refusal, hidden hand/library
 identity invariance, explicit V9 round trip and V8 shape refusal. They
-have passed the Limited all-test typecheck, but remain unrun. Formatting
-and diff checks do not qualify gameplay.
+passed the Limited all-test typecheck. Native2 passed three groups; the
+privacy group panicked on its unregistered Opt fixture before comparing
+observations. The repaired fixture uses registered spells and awaits a
+rerun. Formatting and diff checks do not qualify gameplay.
 Engine history/declaration lifecycle has its separate inherited primitives.
 
-This is artifact transport preparation. A separately pinned actor-relative
-tensor successor, authenticated scorer binding, Human successor and actual
-cross-consumer cases remain required before Raid registration/admission.
+This is consumer preparation. Python V9 appends two actor-relative public
+flags to the unchanged V8 state prefix, retains the other twelve tensors,
+refuses malformed/unknown fields and assigns explicit successor identities.
+Six V9 and seventeen V8 cases pass; exact-source review is clear. Native
+scorer binding, Human successor and actual cross-consumer cases remain
+required before Raid registration/admission.
 V9 does not admit an existing model, runtime, training lane or evaluation.
 The three-card candidate's actual v70 identity2a7fae6a5d9cc7a5 is generated;
-its local profile changes remain unqualified. Reuse inherited evidence, qualify the new source through the
-supported launcher when capacity returns, and preserve failed receipts.
+its Limited native record group passes 153 cases with three existing
+ignores. Publisher/resume/science successors and complete native consumers
+remain pending. Native3 failed a stale catalog-size canary (387 versus
+390); that assertion is repaired. Native4 uses the supported Haley guard
+from b77e4fb5, with corrected Windows test-module filters. Failed receipts
+remain preserved; zero-case filters from Native3 provide no evidence.

@@ -18,7 +18,11 @@ then passed and actually generated v70 identity2a7fae6a5d9cc7a5, with
 sourceSHA256b8976c3d4069a4fabfdb2edf86d84fccb6693324061ebfe6dab28d37e209838a.
 The copied generated source matches exactly. Local profile preparation now
 appends that identity, preserves historical v69 decode and adds stale-v69
-publication/resume refusals. These new profile tests remain uncompiled/unrun.
+publication/resume refusals. The Limited record/profile group now passes
+153 cases, with three existing ignores. Native3 then failed the stale
+definition-count canary (387 versus 390). The canary is repaired. Its
+publisher/resume/science filters matched zero cases and provide no evidence;
+Native4 corrects those filters and checks the remaining actual consumers.
 
 Six additional parity states use registered Sire and actual engine casts:
 visible printed fee, exact-life pending payment and two targeting spells,
