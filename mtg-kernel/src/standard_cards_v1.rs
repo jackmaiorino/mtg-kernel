@@ -3307,8 +3307,6 @@ const CLAY_FIRED_BRICKS_TRIGGERS: [TriggeredAbilityDef; 2] = [
 
 // ---- Craft: Braided Net // Braided Quipu ----------------------------------
 
-const BRAIDED_NET: &str = "Braided Net";
-
 /// "{T}, Remove a net counter from Braided Net: Tap another target nonland
 /// permanent. Its activated abilities can't be activated for as long as it
 /// remains tapped."

@@ -3142,7 +3142,7 @@ fn floodpits_drowner_taps_stuns_then_shuffles_both_owners() {
     settled(&mut state);
     assert!(state.objects.get(target).tapped);
     assert_eq!(state.objects.get(target).counters.stun, 1);
-    state.objects.get_mut(drowner).summoned_sick = false;
+    state.objects.get_mut(drowner).summoning_sick = false;
     state.players[0].mana_pool = pool(&[(ManaColor::U, 1)], 1);
     assert!(activatable(&mut state).contains(&(drowner, 0)));
     engine::step(&mut state, Action::ActivateAbility(drowner, 0)).unwrap();

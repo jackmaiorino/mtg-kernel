@@ -235,22 +235,6 @@ fn upgrade(state: &GameState, id: ObjectId) -> Option<&CreatureUpgradeV1> {
         .flatten()
 }
 
-/// Layer 7b: compare effect timestamps, independently of ability removal.
-pub(crate) fn base_stats(state: &GameState, id: ObjectId) -> Option<(i32, i32)> {
-    let value = upgrade(state, id)?;
-    let (power, toughness, timestamp) = value
-        .base_stats
-        .into_iter()
-        .chain(value.temporary_creature)
-        .max_by_key(|entry| entry.2)?;
-    if crate::continuous_characteristics_v1::creature_override(state, id)
-        .is_some_and(|(_, other)| other > timestamp)
-    {
-        return None;
-    }
-    Some((i32::from(power), i32::from(toughness)))
-}
-
 pub(crate) fn color(state: &GameState, id: ObjectId) -> Option<u8> {
     let (color, timestamp) = upgrade(state, id)?.color?;
     if crate::continuous_characteristics_v1::creature_override(state, id)
