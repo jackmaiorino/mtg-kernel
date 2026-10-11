@@ -273,11 +273,15 @@ fn actual_future_printed_human_cast_target_restore_resolution_and_expiry() {
         let predecessor = HumanRaidSessionV9::from_session(base.clone()).unwrap();
         let mut session = HumanEmploymentSessionV18::from_session(base).unwrap();
         let current = expected(&session);
-        assert!(HumanDecisionProjectorV9::new(actor.into())
+        let prior = HumanDecisionProjectorV9::new(actor.into())
             .project_current(&predecessor, current)
-            .is_err());
+            .unwrap();
         let mut projector = HumanEmploymentProjectorV18::new(actor.into());
         let prompt = projector.project_current(&session, current).unwrap();
+        // Before any control installation, the ordinary casting menu and
+        // public state remain representable through the predecessor.
+        assert_eq!(prior.state.public, prompt.state.public);
+        assert_eq!(prior.actions.len(), prompt.actions.len());
         let cast = request(&prompt, "Begin casting Involuntary Employment");
         assert!(prompt.actions[cast.action_index as usize]
             .label
@@ -327,6 +331,10 @@ fn actual_future_printed_human_cast_target_restore_resolution_and_expiry() {
         assert_eq!(public.installations[0].current_has_haste, Some(true));
         assert_eq!(public.installations[0].current_tapped, Some(false));
         let current = expected(&session);
+        let predecessor = HumanRaidSessionV9::from_session(session.inner.clone()).unwrap();
+        assert!(HumanDecisionProjectorV9::new(current.acting_player)
+            .project_current(&predecessor, current)
+            .is_err());
         let prompt = HumanEmploymentProjectorV18::new(current.acting_player)
             .project_current(&session, current)
             .unwrap();
