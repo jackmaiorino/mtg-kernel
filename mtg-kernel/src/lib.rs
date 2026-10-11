@@ -529,3 +529,4 @@ pub fn run_experimental_burn_net8_cuda_train_v1() -> Result<(), Box<dyn std::err
 
 pub mod cauldron_grants_v1;
 mod crystal_barricade_v1;
+pub mod rules_meaning_cerberus_v1;

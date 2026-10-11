@@ -11,6 +11,75 @@ use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameState, Step, Zone};
 
+#[test]
+fn actual_selected_step_and_trigger_meanings_reject_each_changed_fact() {
+    use mtg_kernel::rules_meaning_cerberus_v1::{self as selected, RootV1};
+    let id = card_id_by_name("Slumbering Cerberus").expect("requires actual printed admission");
+    let selector = selected::live_selector().unwrap();
+    for root in [
+        RootV1::ControllerUntapStepRestriction,
+        RootV1::PrintedEndStepTrigger { trigger_index: 0 },
+    ] {
+        let record = selected::meaning(&selector, id, root).unwrap();
+        selected::validate(&record).unwrap();
+        let value = serde_json::to_value(&record).unwrap();
+        let roundtrip = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(record, roundtrip);
+        let mut wrong_hash = record.clone();
+        wrong_hash.root_sha256.push('x');
+        assert!(selected::validate(&wrong_hash).is_err());
+        let variant = match root {
+            RootV1::ControllerUntapStepRestriction => "ControllerUntapStepRestriction",
+            _ => "PrintedEndStepTrigger",
+        };
+        let fields: Vec<_> = value["rule"][variant]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(
+            fields.len(),
+            if matches!(root, RootV1::ControllerUntapStepRestriction) {
+                5
+            } else {
+                13
+            }
+        );
+        for field in fields {
+            let mut forged = value.clone();
+            let old = forged["rule"][variant][&field].as_bool().unwrap();
+            forged["rule"][variant][&field] = serde_json::Value::Bool(!old);
+            let forged = serde_json::from_value(forged).unwrap();
+            assert!(
+                selected::validate(&forged).is_err(),
+                "accepted forged {field}"
+            );
+        }
+        let mut invented_admission = record.clone();
+        invented_admission.public_human_sampler_and_model_admitted = true;
+        assert!(selected::validate(&invented_admission).is_err());
+        let mut unknown = value.clone();
+        unknown["rule"][variant]["extra"] = serde_json::Value::Bool(true);
+        assert!(serde_json::from_value::<selected::MeaningV1>(unknown).is_err());
+        let mut unknown = value;
+        unknown["extra"] = serde_json::Value::Bool(true);
+        assert!(serde_json::from_value::<selected::MeaningV1>(unknown).is_err());
+    }
+    assert_eq!(
+        selected::meaning(
+            &selector,
+            id,
+            RootV1::PrintedEndStepTrigger { trigger_index: 1 }
+        ),
+        Err(selected::ErrorV1::WrongRoot)
+    );
+    let mut forged =
+        serde_json::to_value(RootV1::PrintedEndStepTrigger { trigger_index: 0 }).unwrap();
+    forged["PrintedEndStepTrigger"]["extra"] = serde_json::Value::Bool(true);
+    assert!(serde_json::from_value::<RootV1>(forged).is_err());
+}
+
 fn ready(actor: PlayerId) -> GameState {
     let forest = card_id_by_name("Forest").unwrap();
     let mut state = GameState::new_from_libraries_with_starting_player_v1(
