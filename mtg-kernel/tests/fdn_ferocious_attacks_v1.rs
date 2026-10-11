@@ -61,21 +61,6 @@ fn next(state: &mut GameState) -> Decision {
     choice
 }
 
-fn priority(state: &mut GameState, player: PlayerId) {
-    let Decision::CastSpellOrPass {
-        player: chooser, ..
-    } = next(state)
-    else {
-        panic!("priority decision absent");
-    };
-    if chooser != player {
-        engine::step(state, Action::Pass).unwrap();
-        assert!(
-            matches!(next(state), Decision::CastSpellOrPass { player: chooser, .. } if chooser == player)
-        );
-    }
-}
-
 fn cast(state: &mut GameState, spell: ObjectId, target: Option<Target>) {
     assert!(
         matches!(next(state), Decision::CastSpellOrPass { castable_spells, .. } if castable_spells.contains(&spell))
@@ -275,7 +260,7 @@ fn actual_attack_threshold_uses_friendly_power_and_source_and_replays_cleanup() 
                     let base = if name == "Ruby, Daring Tracker" { 1 } else { 2 };
                     assert_eq!(
                         engine::effective_power(current, source),
-                        base + i32::from(own_counters) + delta
+                        base + own_counters + delta
                     );
                     assert_eq!(
                         engine::has_effective_keyword(current, source, Keywords::MENACE),
@@ -284,7 +269,7 @@ fn actual_attack_threshold_uses_friendly_power_and_source_and_replays_cleanup() 
                     cleanup(current);
                     assert_eq!(
                         engine::effective_power(current, source),
-                        base + i32::from(own_counters)
+                        base + own_counters
                     );
                     assert!(!engine::has_effective_keyword(
                         current,

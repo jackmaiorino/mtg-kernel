@@ -58,3 +58,12 @@ A sixth actual fixture group installs registered Witness Protection at the
 trigger boundary with its next layer timestamp. It checks printed-trigger and
 Ruby mana removal, pending grants newer/older than ability removal, restored
 resolution and cleanup. It remains uncompiled and unexecuted.
+
+Native16 at source bded94c1 completed the Limited Koma regression, combined
+engine tests (140), both ferocious primitive tests, rules tests (21 plus one
+ignored), and mana tests (7). All six actual-card fixture groups compiled,
+but are still unexecuted because their card names remain unregistered.
+The final strict lint step failed on an unused fixture helper and two redundant
+integer conversions. Those fixture-only issues are repaired for a lint rerun.
+Guard d3104f29d74c4ab39454a452c998cdb3 ended with exit 101; the failure log is
+retained at C:/mtg-node/fdn110-prepared-admit-native-haley-16.log.
