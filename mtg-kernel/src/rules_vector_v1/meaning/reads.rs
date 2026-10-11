@@ -228,6 +228,16 @@ pub(crate) fn effect_cond(cond: &EffectCond, env: &Env, out: &mut Collector) {
                 at_least(i64::from(*minimum)),
             );
         }
+        EffectCond::ControllerAttackedThisTurn => {
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Typed(CardTypeF::Creature)),
+                AggF::EventThisTurn,
+            );
+            // EventThisTurn cannot distinguish declarations from other events.
+            out.atoms.push(Atom::Opaque);
+        }
         EffectCond::CreatureDiedThisTurn => {
             // Any creature, either player's, went battlefield -> graveyard
             // this turn.

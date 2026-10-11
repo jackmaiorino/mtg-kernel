@@ -1176,6 +1176,33 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         walk.opaque.push("printed source cannot block");
     }
 
+    if let Some(count) = crate::fdn_raid_v1::entry_counter_count_for(name) {
+        walk.rec(
+            "raid_entry_counter",
+            json!({"count":count,"if_controller_attacked_this_turn":true}),
+        );
+        walk.ability(CtxF::Static, |out| {
+            out.control(ControlF::Conditional);
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Typed(CardTypeF::Creature)),
+                AggF::EventThisTurn,
+            );
+            // The vocabulary cannot name Raid's exact declaration predicate.
+            out.atoms.push(Atom::Opaque);
+            for ev in [EvF::PlaceCounter, EvF::StatChange] {
+                out.effect(
+                    EffectAtom::new(ev)
+                        .player(RelF::You)
+                        .obj(ObjF::ThisObject)
+                        .amount(AmtF::fixed(i64::from(count)))
+                        .duration(DurF::Permanent),
+                );
+            }
+        });
+    }
+
     #[cfg(feature = "standard-magezero-fixtures")]
     standard_statics(name, &mut walk);
     #[cfg(feature = "standard-magezero-fixtures")]

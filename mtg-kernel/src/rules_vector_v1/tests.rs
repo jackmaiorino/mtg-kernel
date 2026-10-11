@@ -621,6 +621,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Needletooth Pack",
     "Hare Apparent",
     "Micromancer",
+    "Skyship Buccaneer",
     "Arbiter of Woe",
     "Armasaur Guide",
     "Mischievous Pup",
@@ -826,6 +827,11 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    (
+        "fdn_raid_v1.rs",
+        "Goblin Boarders",
+        "read via entry_counter_count_for: conditional declaration history and permanent counter/stat change (exact Raid predicate opaque)",
+    ),
     (
         "engine.rs",
         "Paradise Druid",

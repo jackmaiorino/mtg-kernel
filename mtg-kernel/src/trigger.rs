@@ -230,6 +230,8 @@ pub enum TriggerCondition {
     AttacksWhileControllerHasPowerFourCreature,
     /// Intervening condition checked at capture and by the resolving program.
     BeginningControllerCombatWithOtherCreaturePowerAtLeast(i32),
+    /// Intervening Raid condition at capture; the effect rechecks at resolution.
+    EtbAfterControllerAttackedThisTurn,
 }
 
 pub struct TriggeredAbilityDef {
@@ -1473,6 +1475,22 @@ fn micromancer_effect() -> EffectOp {
 }
 
 const MICROMANCER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(micromancer_effect)];
+
+fn skyship_buccaneer_effect() -> EffectOp {
+    EffectOp::Conditional {
+        cond: EffectCond::ControllerAttackedThisTurn,
+        then: Box::new(EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        }),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    }
+}
+
+const SKYSHIP_BUCCANEER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::EtbAfterControllerAttackedThisTurn,
+    ..etb_trigger(skyship_buccaneer_effect)
+}];
 
 fn ruby_daring_tracker_effect() -> EffectOp {
     EffectOp::BindTemporaryBoostToTriggerSource {
@@ -3264,6 +3282,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Brineborn Cutthroat" => &BRINEBORN_CUTTHROAT_TRIGGERS,
         "Nessian Hornbeetle" => &NESSIAN_HORNBEETLE_TRIGGERS,
         "Micromancer" => &MICROMANCER_TRIGGERS,
+        "Skyship Buccaneer" => &SKYSHIP_BUCCANEER_TRIGGERS,
         "Ruby, Daring Tracker" => &RUBY_DARING_TRACKER_TRIGGERS,
         "Courageous Goblin" => &COURAGEOUS_GOBLIN_TRIGGERS,
         "Webweaver Changeling" => &WEBWEAVER_CHANGELING_TRIGGERS,
@@ -4749,6 +4768,10 @@ fn trigger_matches(
     draws_this_turn_at_event: u32,
 ) -> bool {
     match (cond, ev) {
+        (TriggerCondition::EtbAfterControllerAttackedThisTurn, event) => {
+            battlefield_entry_object(event) == Some(source)
+                && state.player_attacked_this_turn_v1(controller)
+        }
         (TriggerCondition::ControllerGainsLife, CommittedEvent::LifeGain { player, amount }) => {
             *player == controller && *amount > 0
         }
@@ -5508,6 +5531,111 @@ mod tests {
     use super::*;
     use crate::ids::PlayerId;
     use crate::state::GameState;
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn raid_entry_predicate_uses_actual_declarations_and_the_captured_controller() {
+        use crate::engine::{self, Action};
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::state::Step;
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state();
+            state.active_player = actor;
+            state.priority_player = actor;
+            state.turn = 3;
+            let attacker = put(&mut state, actor, "Guttersnipe", Zone::Battlefield);
+            let entrant = put(&mut state, actor, "Guttersnipe", Zone::Hand);
+            state.step = Step::DeclareAttackers;
+            engine::step(
+                &mut state,
+                Action::DeclareAttackers {
+                    attackers: vec![attacker],
+                },
+            )
+            .unwrap();
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(entrant, Zone::Battlefield),
+            );
+            let entry = state
+                .engine
+                .event_log
+                .iter()
+                .find(|event| battlefield_entry_object(event) == Some(entrant))
+                .unwrap();
+            let condition = TriggerCondition::EtbAfterControllerAttackedThisTurn;
+            assert!(trigger_matches(condition, entry, entrant, actor, &state, 0));
+            assert!(!trigger_matches(
+                condition, entry, attacker, actor, &state, 0
+            ));
+            assert!(!trigger_matches(
+                condition,
+                entry,
+                entrant,
+                actor.opponent(),
+                &state,
+                0
+            ));
+            state.players[actor.index()]
+                .battlefield
+                .retain(|&id| id != entrant);
+            state.players[actor.opponent().index()]
+                .battlefield
+                .push(entrant);
+            state.objects.get_mut(entrant).controller = actor.opponent();
+            put(&mut state, actor, "Forest", Zone::Library);
+            put(&mut state, actor, "Forest", Zone::Library);
+            put(&mut state, actor.opponent(), "Forest", Zone::Library);
+            let before = state.players[actor.index()].hand.len();
+            let ctx = crate::effect::ExecCtx::no_targets(entrant, actor);
+            crate::effect::execute(&skyship_buccaneer_effect(), &ctx, &mut state);
+            assert_eq!(state.players[actor.index()].hand.len(), before + 1);
+            let mut stale: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            stale.turn += 1;
+            let before = stale.diagnostic_state_hash();
+            crate::effect::execute(&skyship_buccaneer_effect(), &ctx, &mut stale);
+            assert_eq!(stale.diagnostic_state_hash(), before);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn raid_empty_declaration_cannot_capture_or_resolve_a_draw() {
+        use crate::engine::{self, Action};
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::state::Step;
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state();
+            state.active_player = actor;
+            state.priority_player = actor;
+            state.step = Step::DeclareAttackers;
+            engine::step(&mut state, Action::DeclareAttackers { attackers: vec![] }).unwrap();
+            let source = put(&mut state, actor, "Guttersnipe", Zone::Hand);
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            let entry = state
+                .engine
+                .event_log
+                .iter()
+                .find(|event| battlefield_entry_object(event) == Some(source))
+                .unwrap();
+            assert!(!trigger_matches(
+                TriggerCondition::EtbAfterControllerAttackedThisTurn,
+                entry,
+                source,
+                actor,
+                &state,
+                0
+            ));
+            let before = state.diagnostic_state_hash();
+            let ctx = crate::effect::ExecCtx::no_targets(source, actor);
+            crate::effect::execute(&skyship_buccaneer_effect(), &ctx, &mut state);
+            assert_eq!(state.diagnostic_state_hash(), before);
+        }
+    }
 
     #[test]
     #[cfg(any(
