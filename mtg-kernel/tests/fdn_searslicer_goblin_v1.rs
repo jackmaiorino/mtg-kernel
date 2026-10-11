@@ -308,6 +308,11 @@ fn pre_capture_control_ability_suppression_and_post_capture_suppression_are_dist
             if mode == 1 {
                 witness(&mut state, actor, card);
             }
+            if mode == 2 {
+                // Witness is an enchantment; this actual registered static
+                // permission makes the end-step response legal.
+                put(&mut state, actor, "High Fae Trickster", Zone::Battlefield);
+            }
             end(&mut state);
             assert_eq!(state.stack.len(), usize::from(mode == 2));
             if mode == 2 {

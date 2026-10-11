@@ -36,7 +36,10 @@ and producer source. Wrong roots, forged selectors, foreign definitions and
 default/Standard catalogs refuse. It records the precise declaration and
 captured-controller semantics. Frozen RulesVectorV1 gains only the exhaustive
 new-condition branch with Opaque for the missing declaration predicate; existing
-condition paths and outputs remain unchanged by source inspection. A global
+condition paths and atom/feature meanings remain unchanged by source inspection.
+Extractor source provenance changes with the exhaustive branch; frozen archived
+identities are not overwritten or relabeled. Byte parity still needs execution.
+A global
 vector vocabulary, full model/profile successor and source-qualified parity
 remain separate work. This narrow companion does not declare the card admitted.
 
