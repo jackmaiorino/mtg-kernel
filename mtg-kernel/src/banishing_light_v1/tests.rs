@@ -185,3 +185,437 @@ fn exiled_aura_without_host_stays_exiled_and_its_capture_cannot_be_erased_both_s
         );
     }
 }
+
+fn linked_aura(actor: PlayerId) -> (GameState, ObjectId, ObjectId, ObjectId) {
+    let mut state = ready(actor);
+    for player in [actor, actor.opponent()] {
+        put(&mut state, player, "Lightning Bolt", Zone::Hand);
+        put(&mut state, player, "Mountain", Zone::Battlefield);
+    }
+    let host = put(
+        &mut state,
+        actor.opponent(),
+        "Llanowar Elves",
+        Zone::Battlefield,
+    );
+    let aura = put(&mut state, actor.opponent(), "Pacifism", Zone::Battlefield);
+    state.attach_object_exact(aura, 0, host, 0).unwrap();
+    let source = put(&mut state, actor, "Banishing Light", Zone::Hand);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(source, Zone::Battlefield),
+    );
+    assert!(
+        matches!(next(&mut state), Decision::ChooseTargets { legal_targets, .. }
+        if legal_targets.contains(&Target::Object(aura)))
+    );
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(aura))).unwrap();
+    finish_stack(&mut state);
+    assert_eq!(state.objects.get(aura).zone, Zone::Exile);
+    (state, source, aura, host)
+}
+
+fn assert_owner_choice(state: &mut GameState, owner: PlayerId, aura: ObjectId, host: ObjectId) {
+    assert!(matches!(next(state), Decision::ChooseEffectTargets {
+        player, source, selected_count: 0, min_targets: 1, max_targets: 1,
+        legal_targets, can_finish: false,
+    } if player==owner && source==aura && legal_targets.contains(&Target::Object(host))));
+    validate_state(state).unwrap();
+}
+
+#[test]
+#[ignore = "requires future actual Banishing Light registration; no admission bypass"]
+fn actual_source_departure_returns_aura_by_untargeted_owner_choice_with_shroud_and_hexproof() {
+    use crate::card_def::Keywords;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for keyword in [Keywords::SHROUD, Keywords::HEXPROOF] {
+            let (mut state, source, aura, host) = linked_aura(actor);
+            let host_generation = state.objects.get(host).zone_change_count;
+            crate::effect::install_temporary_boost(
+                &mut state,
+                crate::effect::EffectObjectBinding {
+                    object: host,
+                    expected_zone: Zone::Battlefield,
+                    expected_zone_change_count: host_generation,
+                },
+                0,
+                0,
+                keyword,
+            );
+            let targeted = state
+                .engine
+                .event_history
+                .iter()
+                .filter(|event| matches!(event, CommittedEvent::Targeted { .. }))
+                .count();
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+            assert_owner_choice(&mut state, actor.opponent(), aura, host);
+            assert_eq!(state.objects.get(source).zone, Zone::Hand);
+            assert_eq!(state.objects.get(aura).zone, Zone::Exile);
+            let mut restored = replay(&state);
+            for branch in [&mut state, &mut restored] {
+                let before = serde_json::to_vec(branch).unwrap();
+                assert!(engine::step(branch, Action::Pass).is_err());
+                assert_eq!(serde_json::to_vec(branch).unwrap(), before);
+                engine::step(branch, Action::ChooseEffectTarget(Target::Object(host))).unwrap();
+                assert_eq!(branch.objects.get(aura).zone, Zone::Battlefield);
+                assert_eq!(branch.objects.get(aura).controller, actor.opponent());
+                assert_eq!(
+                    branch.objects.get(aura).v4.attached_to.unwrap().object,
+                    host
+                );
+                assert_eq!(
+                    branch
+                        .engine
+                        .event_history
+                        .iter()
+                        .filter(|event| matches!(event, CommittedEvent::Targeted { .. }))
+                        .count(),
+                    targeted
+                );
+                validate_state(branch).unwrap();
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&restored).unwrap()
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires future actual Banishing Light registration; no admission bypass"]
+fn real_broken_wings_resolution_is_owned_until_attachment_and_departure_then_restores_exactly() {
+    use crate::mana::ManaColor;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source, aura, host) = linked_aura(actor);
+        let spell = put(&mut state, actor, "Broken Wings", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 3;
+        for _ in 0..4 {
+            if matches!(next(&mut state),Decision::CastSpellOrPass {player,..} if player==actor) {
+                break;
+            }
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+        assert!(
+            matches!(next(&mut state),Decision::ChooseTargets {legal_targets,..}
+            if legal_targets.contains(&Target::Object(source)))
+        );
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(source))).unwrap();
+        for _ in 0..8 {
+            match next(&mut state) {
+                Decision::ChooseEffectTargets {
+                    source: visible, ..
+                } if visible == aura => break,
+                Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+                other => panic!("{other:?}"),
+            }
+        }
+        assert_owner_choice(&mut state, actor.opponent(), aura, host);
+        assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
+        assert_eq!(state.objects.get(spell).zone, Zone::Stack);
+        assert!(
+            state.stack.iter().any(|item| item.source == spell),
+            "genuine resolving spell remains visible"
+        );
+        assert!(!state
+            .engine
+            .event_history
+            .iter()
+            .any(|event| matches!(event,
+            CommittedEvent::ZoneChange {object,from:Zone::Stack,..} if *object==spell)));
+        let mut restored = replay(&state);
+        for branch in [&mut state, &mut restored] {
+            engine::step(branch, Action::ChooseEffectTarget(Target::Object(host))).unwrap();
+            assert_eq!(branch.objects.get(aura).zone, Zone::Battlefield);
+            assert_eq!(
+                branch.objects.get(aura).v4.attached_to.unwrap().object,
+                host
+            );
+            assert_eq!(branch.objects.get(spell).zone, Zone::Graveyard);
+            assert_eq!(branch.engine.event_history.iter().filter(|event|matches!(event,
+                CommittedEvent::ZoneChange {object,from:Zone::Stack,to:Zone::Graveyard,..} if *object==spell)).count(),1);
+            validate_state(branch).unwrap();
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires future actual Banishing Light registration; no admission bypass"]
+fn restored_owner_checkpoint_erasure_coherent_menu_and_operation_rewrites_refuse_readonly() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source, aura, host) = linked_aura(actor);
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+        assert_owner_choice(&mut state, actor.opponent(), aura, host);
+        for mode in 0..7 {
+            let mut bad = replay(&state);
+            match mode {
+                0 => bad.engine.linked_aura_operation_v1 = Default::default(),
+                1 => {
+                    bad.engine.linked_aura_operation_v1 = Default::default();
+                    bad.engine.event_history.retain(|event| {
+                        !matches!(event, CommittedEvent::BanishingAuraHostsCapturedV1 { .. })
+                    });
+                }
+                2 => {
+                    bad.engine
+                        .linked_aura_operation_v1
+                        .pending
+                        .as_mut()
+                        .unwrap()
+                        .choice
+                        .owner = actor
+                }
+                3 => {
+                    bad.engine
+                        .linked_aura_operation_v1
+                        .pending
+                        .as_mut()
+                        .unwrap()
+                        .operation =
+                        crate::linked_aura_operation_v1::OperationV1::Step(Action::Pass)
+                }
+                4 => bad.objects.get_mut(host).zone_change_count += 1,
+                5 => {
+                    bad.engine
+                        .linked_aura_operation_v1
+                        .pending
+                        .as_mut()
+                        .unwrap()
+                        .operation = crate::linked_aura_operation_v1::OperationV1::Commit(
+                        ProposedEvent::zone_change(source, Zone::Hand),
+                    )
+                }
+                _ => {
+                    bad.engine
+                        .linked_aura_operation_v1
+                        .pending
+                        .as_mut()
+                        .unwrap()
+                        .original
+                        .players[actor.index()]
+                    .mana_pool = [3; 6];
+                    bad.players[actor.index()].mana_pool = [3; 6];
+                }
+            }
+            let before = serde_json::to_vec(&bad).unwrap();
+            assert!(
+                engine::step(&mut bad, Action::ChooseEffectTarget(Target::Object(host))).is_err()
+            );
+            assert_eq!(before, serde_json::to_vec(&bad).unwrap());
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires future actual Banishing Light registration; no admission bypass"]
+fn accepted_physical_sequence_stops_before_draw_and_shuffle_and_replays_rng_once() {
+    use crate::effect::{EffectOp, ExecCtx, ObjectRef, PlayerRef};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source, aura, host) = linked_aura(actor);
+        let hand_before = state.players[actor.index()].hand.len();
+        let library_before = state.players[actor.index()].library.clone();
+        // Accepted physical opcode boundary, not a fabricated printed spell.
+        let op = EffectOp::Sequence(vec![
+            EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Hand,
+            },
+            EffectOp::DrawCards {
+                player: PlayerRef::Controller,
+                count: 1,
+            },
+            EffectOp::LookTopTakeCreaturesManaValueAtMostThenShuffle {
+                count: 0,
+                max_taken: 0,
+                max_mana_value: 0,
+            },
+        ]);
+        crate::effect::execute(&op, &ExecCtx::no_targets(source, actor), &mut state);
+        assert_owner_choice(&mut state, actor.opponent(), aura, host);
+        assert_eq!(
+            state.players[actor.index()].hand.len(),
+            hand_before + 1,
+            "only the departed source moved"
+        );
+        assert_eq!(
+            state.players[actor.index()].library,
+            library_before,
+            "tail has not drawn/shuffled"
+        );
+        let mut restored = replay(&state);
+        for branch in [&mut state, &mut restored] {
+            engine::step(branch, Action::ChooseEffectTarget(Target::Object(host))).unwrap();
+            assert_eq!(branch.players[actor.index()].hand.len(), hand_before + 2);
+            assert_eq!(
+                branch.players[actor.index()].library.len(),
+                library_before.len() - 1
+            );
+            assert_eq!(
+                branch.objects.get(aura).v4.attached_to.unwrap().object,
+                host
+            );
+            validate_state(branch).unwrap();
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires future actual Banishing Light registration; no admission bypass"]
+fn simultaneous_departures_complete_before_returns_and_keep_prior_owner_answers_on_restore() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, first_source, first_aura, host) = linked_aura(actor);
+        let second_aura = put(&mut state, actor.opponent(), "Pacifism", Zone::Battlefield);
+        state
+            .attach_object_exact(
+                second_aura,
+                0,
+                host,
+                state.objects.get(host).zone_change_count,
+            )
+            .unwrap();
+        let second_source = put(&mut state, actor, "Banishing Light", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(second_source, Zone::Battlefield),
+        );
+        assert!(
+            matches!(next(&mut state),Decision::ChooseTargets {legal_targets,..}
+            if legal_targets.contains(&Target::Object(second_aura)))
+        );
+        engine::step(
+            &mut state,
+            Action::ChooseTarget(Target::Object(second_aura)),
+        )
+        .unwrap();
+        finish_stack(&mut state);
+        event::propose_and_commit_batch(
+            &mut state,
+            vec![
+                ProposedEvent::zone_change(first_source, Zone::Hand),
+                ProposedEvent::zone_change(second_source, Zone::Hand),
+            ],
+        );
+        assert_owner_choice(&mut state, actor.opponent(), first_aura, host);
+        assert_eq!(state.objects.get(first_source).zone, Zone::Hand);
+        assert_eq!(
+            state.objects.get(second_source).zone,
+            Zone::Hand,
+            "entire simultaneous departure preceded return choice"
+        );
+        engine::step(&mut state, Action::ChooseEffectTarget(Target::Object(host))).unwrap();
+        assert_owner_choice(&mut state, actor.opponent(), second_aura, host);
+        assert_eq!(state.objects.get(first_aura).zone, Zone::Battlefield);
+        assert_eq!(state.objects.get(second_aura).zone, Zone::Exile);
+        assert_eq!(
+            state
+                .engine
+                .linked_aura_operation_v1
+                .pending
+                .as_ref()
+                .unwrap()
+                .answers
+                .len(),
+            1
+        );
+        let mut restored = replay(&state);
+        for branch in [&mut state, &mut restored] {
+            engine::step(branch, Action::ChooseEffectTarget(Target::Object(host))).unwrap();
+            for aura in [first_aura, second_aura] {
+                assert_eq!(branch.objects.get(aura).zone, Zone::Battlefield);
+                assert_eq!(
+                    branch.objects.get(aura).v4.attached_to.unwrap().object,
+                    host
+                );
+                assert_eq!(branch.engine.event_history.iter().filter(|event|matches!(event,
+                    CommittedEvent::ZoneChange {object,from:Zone::Exile,to:Zone::Battlefield,..} if *object==aura)).count(),1);
+            }
+            validate_state(branch).unwrap();
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires future actual Banishing Light registration; no admission bypass"]
+fn real_registered_activation_cost_pauses_before_publication_at_physical_copy_boundary() {
+    use crate::mana::ManaColor;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source, aura, host) = linked_aura(actor);
+        let heartfire = card_id_by_name("Heartfire Immolator").expect("actual admitted operand");
+        let generation = state.objects.get(source).zone_change_count;
+        let original = state.objects.get(source).card_def;
+        // Physical copiable-characteristics substrate only. This does not
+        // claim an admitted printed producer which makes this copy in FDN.
+        state
+            .standard_v1
+            .get_or_insert_with(Default::default)
+            .copied_card_defs
+            .extend([
+                (source, generation, original),
+                (source, generation, heartfire),
+            ]);
+        let live = state.objects.get_mut(source);
+        live.card_def = heartfire;
+        live.name = CARD_DEFS[heartfire as usize].object_name.into();
+        live.v4.effective_color_mask = ObjectStateV4::from_card_def(heartfire).effective_color_mask;
+        live.v4.effective_subtype_ids =
+            ObjectStateV4::from_card_def(heartfire).effective_subtype_ids;
+        state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+        for _ in 0..4 {
+            if matches!(next(&mut state),Decision::CastSpellOrPass {player,..} if player==actor) {
+                break;
+            }
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        engine::step(&mut state, Action::ActivateAbility(source, 0)).unwrap();
+        assert!(
+            matches!(next(&mut state),Decision::ChooseTargets {legal_targets,..}
+            if legal_targets.contains(&Target::Object(host)))
+        );
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(host))).unwrap();
+        assert_owner_choice(&mut state, actor.opponent(), aura, host);
+        assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
+        assert_eq!(
+            state.players[actor.index()].mana_pool[ManaColor::R.pool_index()],
+            0
+        );
+        assert!(
+            !state.stack.iter().any(|item| item.source == source),
+            "cost owner has not published activation"
+        );
+        let mut restored = replay(&state);
+        for branch in [&mut state, &mut restored] {
+            engine::step(branch, Action::ChooseEffectTarget(Target::Object(host))).unwrap();
+            assert_eq!(branch.objects.get(aura).zone, Zone::Battlefield);
+            assert_eq!(
+                branch.players[actor.index()].mana_pool[ManaColor::R.pool_index()],
+                0
+            );
+            let activated = branch
+                .stack
+                .iter()
+                .find(|item| item.source == source)
+                .expect("original paid activation publishes after return");
+            assert_eq!(activated.targets, [Target::Object(host)]);
+            assert_eq!(activated.controller, actor);
+            validate_state(branch).unwrap();
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+    }
+}

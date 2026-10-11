@@ -7811,6 +7811,9 @@ fn validate_standard_choose_permanent_origin(
 }
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
+    if crate::linked_aura_operation_v1::has_pending(state) {
+        return crate::linked_aura_operation_v1::validate(state);
+    }
     temporary_control_v1::authority::validate(state)?;
     crate::self_reflection_v1::validate_live_stack(state)?;
     crate::authority_of_the_consuls_v1::validate_state(state)?;
@@ -14768,6 +14771,9 @@ pub(crate) fn return_cards_exiled_until_source_leaves(
     source: ObjectId,
     left_zone_change_count: u32,
 ) {
+    if crate::linked_aura_operation_v1::defer_departure(state, source, left_zone_change_count) {
+        return;
+    }
     loop {
         let position = state.engine.linked_exile_records.iter().position(|record| {
             record.source.source == source
@@ -14815,7 +14821,24 @@ pub(crate) fn return_cards_exiled_until_source_leaves(
                                     }
                                 }
                             }
-                            Ok(_) => {} // Nonempty choices require the owning departure continuation.
+                            Ok(choice) => {
+                                match crate::linked_aura_operation_v1::request(state, choice) {
+                                    Ok(true) => {
+                                        crate::banishing_light_v1::record_expiry(
+                                            state,
+                                            record,
+                                            return_start,
+                                            None,
+                                        );
+                                        continue;
+                                    }
+                                    Ok(false) => continue,
+                                    Err(_) => {
+                                        state.engine.halted=Some((crate::engine::UnsupportedMechanic::InvalidEffectContinuation,source));
+                                        return;
+                                    }
+                                }
+                            }
                             Err(_) => {
                                 state.engine.halted = Some((
                                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -16102,6 +16125,21 @@ fn creature_matches_filter(
 }
 
 pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
+    if crate::linked_aura_operation_v1::needs_event_owner(state)
+        && crate::linked_aura_operation_v1::event(
+            state,
+            crate::linked_aura_operation_v1::OperationV1::Effect {
+                op: op.clone(),
+                ctx: ctx.clone(),
+            },
+        )
+    {
+        return;
+    }
+    execute_without_linked_aura_v1(op, ctx, state);
+}
+
+pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
     match op {
         EffectOp::Sequence(ops) => {
             for inner in ops {

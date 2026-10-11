@@ -1062,7 +1062,9 @@ pub(super) fn conflicts(
             | BanishingLinkInstalledV1 { .. }
             | BanishingLinkExpiredV1 { .. }
             | BanishingRecipientCeasedV1 { .. }
-            | BanishingAuraHostsCapturedV1 { .. } => true,
+            | BanishingAuraHostsCapturedV1 { .. }
+            | BanishingAuraHostChosenV1 { .. }
+            | BanishingAuraOperationStartedV1 { .. } => true,
             CerberusCaptureV1 { capture } => s.raw(capture.source.source),
             CerberusObserversV1 { sources, .. } => {
                 sources.iter().any(|source| s.raw(source.source))

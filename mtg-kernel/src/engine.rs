@@ -290,6 +290,12 @@ pub struct EngineState {
     /// engine; omitted from snapshots and ignored by `Hash` while default.
     #[serde(default, skip_serializing_if = "RuntimeRulesV1::is_default")]
     pub runtime_rules: RuntimeRulesV1,
+    /// Genuine immediate owner operation; absent legacy bytes and hashes are unchanged.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::linked_aura_operation_v1::StateV1::is_empty"
+    )]
+    pub linked_aura_operation_v1: crate::linked_aura_operation_v1::StateV1,
 }
 
 /// Opt-in rules-presentation options that change which choices the engine
@@ -1559,7 +1565,7 @@ pub enum Decision {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Action {
     PlayLand(ObjectId),
     CastSpell(ObjectId),
@@ -5972,14 +5978,17 @@ fn commit_cost_components_from_plan_v1(
 /// half of a `SacrificeLands` sub-cost, once `Decision::ChooseCostTargets`
 /// has already decided *which* permanents (`PendingCast::sacrifice_chosen`).
 fn commit_sacrifice(state: &mut GameState, chosen: &[ObjectId]) {
+    crate::linked_aura_operation_v1::begin_batch(state);
     if chosen.len() > 1 && crate::creature_death_capture_v1::enabled() {
         event::commit_sacrifice_death_group_v1(state, chosen);
+        crate::linked_aura_operation_v1::end_batch(state);
         return;
     }
     for &id in chosen {
         event::log_sacrifice(state, id);
         event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
     }
+    crate::linked_aura_operation_v1::end_batch(state);
 }
 
 /// Zone-changes `id` to its owner's hand -- the actual payment half of a
@@ -8959,6 +8968,10 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    crate::linked_aura_operation_v1::advance(state)
+}
+
+pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision {
     // A closed Cerberus operation still owns historical authority. Validate it
     // before automatic step/cleanup work can mutate a restored malformed state.
     if crate::cerberus_capture_v1::validate_state(state).is_err() {
@@ -16765,6 +16778,13 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    crate::linked_aura_operation_v1::step(state, action)
+}
+
+pub(crate) fn step_without_linked_aura_v1(
+    state: &mut GameState,
+    action: Action,
+) -> Result<(), String> {
     // A restored continuation must be valid before any action can mutate
     // state, including when its separately saved discard slot was removed.
     effect::validate_pending_effect_choice(state)?;

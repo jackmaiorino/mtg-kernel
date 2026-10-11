@@ -34,7 +34,7 @@ pub enum LibraryPlacement {
 /// Which observers learn the identity of a card inserted into a library at
 /// a publicly determined position. Position shifts are always public and
 /// exact; this flag controls only whether the inserted identity is learned.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LibraryInsertVisibility {
     Hidden,
     Owner,
@@ -71,7 +71,7 @@ pub struct ActiveReplacement {
 
 // ---------------------------------------------------------------- proposed
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DamageProposed {
     pub source: ObjectId,
     pub target: Target,
@@ -84,7 +84,7 @@ pub struct DamageProposed {
     pub historical_source: Option<StackItemId>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ZoneChangeProposed {
     pub object: ObjectId,
     pub to_zone: Zone,
@@ -112,40 +112,40 @@ pub struct ZoneChangeProposed {
     pub touched_by: Vec<ReplacementId>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LifeLossProposed {
     pub player: PlayerId,
     pub amount: i32,
     pub touched_by: Vec<ReplacementId>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LifeGainProposed {
     pub player: PlayerId,
     pub amount: i32,
     pub touched_by: Vec<ReplacementId>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DrawProposed {
     pub player: PlayerId,
     pub touched_by: Vec<ReplacementId>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TapProposed {
     pub object: ObjectId,
     pub touched_by: Vec<ReplacementId>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManaAddProposed {
     pub player: PlayerId,
     pub colors: Vec<ManaColor>,
     pub touched_by: Vec<ReplacementId>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateTokenProposed {
     pub token_def: u16,
     pub controller: PlayerId,
@@ -160,14 +160,14 @@ pub struct CreateTokenProposed {
 /// a face the object's `CardDef::transform_face` defines; `commit` panics
 /// rather than guess at an undefined one, matching the zone-change path's
 /// own `battlefield_face_index` handling.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransformProposed {
     pub object: ObjectId,
     pub face_index: u8,
     pub touched_by: Vec<ReplacementId>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProposedEvent {
     Damage(DamageProposed),
     ZoneChange(ZoneChangeProposed),
@@ -858,6 +858,15 @@ pub enum CommittedEvent {
     BanishingAuraHostsCapturedV1 {
         choice: Box<crate::linked_aura_return_v1::HostChoiceV1>,
     },
+    BanishingAuraHostChosenV1 {
+        capture_history_index: u64,
+        host: crate::effect::EffectObjectBinding,
+        return_history_index: u64,
+    },
+    BanishingAuraOperationStartedV1 {
+        operation: Box<crate::linked_aura_operation_v1::OperationV1>,
+        original_sha256: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1262,6 +1271,18 @@ pub(crate) fn damage_color_mask(state: &GameState, damage: &DamageProposed) -> u
 /// is evaluated from the final damage amount and source immediately before
 /// that damage is committed.
 pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
+    if crate::linked_aura_operation_v1::needs_event_owner(state)
+        && crate::linked_aura_operation_v1::event(
+            state,
+            crate::linked_aura_operation_v1::OperationV1::Event(event.clone()),
+        )
+    {
+        return;
+    }
+    propose_without_linked_aura_v1(state, event);
+}
+
+pub(crate) fn propose_without_linked_aura_v1(state: &mut GameState, event: ProposedEvent) {
     if crate::effect::temporary_control_v1::authority::validate(state).is_err() {
         return;
     }
@@ -1277,6 +1298,18 @@ pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
 /// Applies the (possibly rewritten) proposal to `GameState` and appends the
 /// resulting `CommittedEvent` to the event log for this resolution.
 pub fn commit(state: &mut GameState, event: ProposedEvent) {
+    if crate::linked_aura_operation_v1::needs_event_owner(state)
+        && crate::linked_aura_operation_v1::event(
+            state,
+            crate::linked_aura_operation_v1::OperationV1::Commit(event.clone()),
+        )
+    {
+        return;
+    }
+    commit_without_linked_aura_v1(state, event);
+}
+
+pub(crate) fn commit_without_linked_aura_v1(state: &mut GameState, event: ProposedEvent) {
     commit_with_ability_lki(state, event, None, None);
 }
 
@@ -1796,6 +1829,18 @@ fn commit_with_ability_lki_and_entry_batch(
 /// / trigger collection exactly once after the whole batch (see
 /// `engine::deal_combat_damage`), not per event.
 pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent>) {
+    if crate::linked_aura_operation_v1::needs_event_owner(state)
+        && crate::linked_aura_operation_v1::event(
+            state,
+            crate::linked_aura_operation_v1::OperationV1::Batch(events.clone()),
+        )
+    {
+        return;
+    }
+    batch_without_linked_aura_v1(state, events);
+}
+
+pub(crate) fn batch_without_linked_aura_v1(state: &mut GameState, events: Vec<ProposedEvent>) {
     let mut authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
     let survivors: Vec<ProposedEvent> = events
         .into_iter()
@@ -1845,6 +1890,7 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
             .collect::<Vec<_>>()
             .into_iter()
     });
+    crate::linked_aura_operation_v1::begin_batch(state);
     if cfg!(feature = "limited-fdn-fixtures") {
         let ability_removals = survivors
             .iter()
@@ -1892,6 +1938,7 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
     for (_, player, amount) in lifelink_gains {
         commit(state, ProposedEvent::life_gain(player, amount));
     }
+    crate::linked_aura_operation_v1::end_batch(state);
 }
 
 /// The payment caller has already validated one complete sacrifice group.
@@ -1919,10 +1966,12 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
 /// One simultaneous SBA death group. Preserve the existing direct-commit
 /// semantics while freezing death observers before any member leaves.
 pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<ObjectId>) {
+    crate::linked_aura_operation_v1::begin_batch(state);
     if !crate::creature_death_capture_v1::enabled() {
         for id in dying {
             commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
         }
+        crate::linked_aura_operation_v1::end_batch(state);
         return;
     }
     let events = dying
@@ -1936,6 +1985,7 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
     for (event, captures) in events.into_iter().zip(captures) {
         commit_with_ability_lki(state, event, None, Some(captures));
     }
+    crate::linked_aura_operation_v1::end_batch(state);
 }
 
 /// Logs a `SpellCast` marker with no accompanying state mutation (casting

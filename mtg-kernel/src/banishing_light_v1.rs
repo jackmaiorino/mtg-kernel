@@ -432,10 +432,18 @@ pub(crate) fn is_authority(event: &CommittedEvent) -> bool {
             | CommittedEvent::BanishingLinkExpiredV1 { .. }
             | CommittedEvent::BanishingRecipientCeasedV1 { .. }
             | CommittedEvent::BanishingAuraHostsCapturedV1 { .. }
+            | CommittedEvent::BanishingAuraHostChosenV1 { .. }
+            | CommittedEvent::BanishingAuraOperationStartedV1 { .. }
     )
 }
 
 pub fn validate_state(state: &GameState) -> Result<(), String> {
+    if crate::linked_aura_operation_v1::locally_owned(state) {
+        return Ok(());
+    }
+    if crate::linked_aura_operation_v1::has_pending(state) {
+        return crate::linked_aura_operation_v1::validate(state);
+    }
     if state.engine.event_log.iter().any(is_authority) {
         return Err("Banishing authority is history-only".into());
     }
@@ -561,7 +569,7 @@ pub fn validate_state(state: &GameState) -> Result<(), String> {
                     CommittedEvent::BanishingRecipientCeasedV1 {record:original} if original==record)).count();
                 let active=state.engine.linked_exile_records.iter().filter(|active|**active==*record).count();
                 match expiry.as_slice() {
-                    [] if ceased==0 && active==1=>{},
+                    [] if ceased==0 && active==1 && source_present(state,record.source)=>{},
                     [] if ceased==1 && *recipient_was_token && active==0 && state.objects.try_get(record.exiled).is_some_and(|object|object.v4.is_token)
                         && !state.exile.contains(&record.exiled)=>{},
                     [(expired_at,departure,returned,reason)] if *expired_at>at && active==0 && ceased==0=> {
@@ -608,12 +616,32 @@ pub fn validate_state(state: &GameState) -> Result<(), String> {
             }
             CommittedEvent::BanishingAuraHostsCapturedV1 {choice} => {
                 validate_source(state, choice.link.source)?;
-                if !choice.original_candidates.is_empty()
-                    || state.engine.event_history[at+1..].iter().filter(|event| matches!(event,
+                if choice.original_candidates.is_empty() {
+                    if state.engine.event_history[at+1..].iter().filter(|event| matches!(event,
                         CommittedEvent::BanishingLinkExpiredV1 {
                             record, no_return_reason: Some(NoReturnV1::AuraNoLegalHost {capture_history_index}), ..
                         } if *record==choice.link && usize::try_from(*capture_history_index).ok()==Some(at))).count()!=1 {
-                    return Err("Banishing original no-host capture lost its unique terminal expiry".into())
+                        return Err("Banishing original no-host capture lost its unique terminal expiry".into())
+                    }
+                } else if state.engine.event_history[at+1..].iter().filter(|event| matches!(event,
+                    CommittedEvent::BanishingAuraHostChosenV1 {capture_history_index,..}
+                        if usize::try_from(*capture_history_index).ok()==Some(at))).count()!=1 {
+                    return Err("Banishing original Aura capture lost its unique owner answer".into())
+                }
+            },
+            CommittedEvent::BanishingAuraHostChosenV1 {capture_history_index,host,return_history_index} => {
+                let capture=usize::try_from(*capture_history_index).map_err(|_|"Aura capture exceeds usize")?;
+                let returned=usize::try_from(*return_history_index).map_err(|_|"Aura return exceeds usize")?;
+                let Some(CommittedEvent::BanishingAuraHostsCapturedV1 {choice})=state.engine.event_history.get(capture) else {
+                    return Err("Banishing Aura answer lost original owner menu".into())
+                };
+                if capture>=returned || returned>=at || !choice.original_candidates.contains(host)
+                    || !matches!(state.engine.event_history.get(returned),Some(CommittedEvent::ZoneChange {
+                        object,from:Zone::Exile,to:Zone::Battlefield,..}) if *object==choice.aura.object)
+                    || state.engine.event_history[at+1..].iter().filter(|event|matches!(event,
+                        CommittedEvent::BanishingLinkExpiredV1 {record,return_history_index:Some(original),no_return_reason:None,..}
+                            if *record==choice.link && *original==*return_history_index)).count()!=1 {
+                    return Err("Banishing Aura answer lost actual unique immediate return/expiry".into())
                 }
             },
             CommittedEvent::BanishingCollectedV1 {source} | CommittedEvent::BanishingNoTargetsV1 {source} => {
