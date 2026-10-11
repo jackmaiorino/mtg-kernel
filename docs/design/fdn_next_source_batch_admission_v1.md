@@ -82,3 +82,31 @@ preparation filename prefix18c5 does not override the exact source commit.
 Compatible independent55 results remain reusable; Self repairs and Sower's
 new public/Human successor are separate until composed and qualified. Accepted
 default188 and prospective unaccepted201 remain distinct.
+
+Native56 exact7bba completed101/101 with30 passing and5 failing among35
+actual selected cases. Each Squad tests:: selector omitted its two sibling
+legacy_tests:: cases, so the requested41 count was not achieved. Both all-test
+typechecks, strict Limited/Default lints and complete replay bytes passed.
+Searslicer1 and Sower8 passed; the remaining Human2 failures enable an unrelated
+Dragon red pump, and Squad3 failures concern fixture prompt/visibility/halt
+expectations. Final logs, manifest and complete outputs are cold mirrored.
+Only its exact owned post-terminal VCTIP helper was released; actualguard101
+and absent supervisor were observed before target reuse.
+
+Exact6c9e5a8d composes source-reviewed Selfd1d1f4b6 (real token ETB,
+no-target casting, readonly forged source/method/kind/inline checks and typed
+missing-sentinel refusal), Squad fixture2e6d4c6e and Heartfire82df4fc9's actual
+blue response. The latter preserves saved damage/restore checks without
+enabling the unrelated Dragon ability. Sower63a99d44 adds separate public and
+owning Human consumers, authenticated original Targeted history and restored
+coherent-retarget negatives. The composed before-pop hooks preserve Squad's
+private owner and Sower's validated receipt before removing the live item.
+Scoped source review is clear; native, full consumer and model gaps remain.
+
+Native57 exact6c9e5a8d requests81 affected cases and both all-test typechecks,
+strict Limited/Default lints and complete replay exports. Actual supported
+handle26acec7b1bbc476bab8f5d3b1c6c90c2/supervisor159208 is submitted. Squad
+filters now include the legacy siblings; Self filters explicitly include their
+four precise-meaning cases. Its source is verified in a clean real Git worktree,
+manifest is cold mirrored and no current result is claimed yet. Sentinel JSON
+is preparation only; it changes neither the frozen pool nor the live catalog.
