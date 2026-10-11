@@ -81,7 +81,11 @@ fn middle_learner_start(t: &ExpandedTrajectoryV1) -> usize {
         .expect("a learner decision start")
 }
 
-fn collected_base() -> (FrozenPlayPolicyV1, ExpandedSeatBehaviorV1, ExpandedTrajectoryV1) {
+fn collected_base() -> (
+    FrozenPlayPolicyV1,
+    ExpandedSeatBehaviorV1,
+    ExpandedTrajectoryV1,
+) {
     let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
     let learner = test_behavior(&policy, false);
     let base = collect_episode(&mut policy, &learner, None, &base_episode(2_026_101_017)).unwrap();
@@ -139,7 +143,10 @@ fn reset_restores_the_cut_and_records_only_the_suffix() {
     };
     assert_eq!(end.winner, base.terminal.winner);
     assert_eq!(end.policy_step_count, base.terminal.policy_step_count);
-    assert_eq!(end.physical_decision_count, base.terminal.physical_decision_count);
+    assert_eq!(
+        end.physical_decision_count,
+        base.terminal.physical_decision_count
+    );
 }
 
 #[test]
@@ -155,13 +162,18 @@ fn reset_prefix_never_enters_learner_groups() {
         .iter()
         .filter(|r| r.actor == t.episode.learner_seat && r.substep_index == 0)
         .count();
-    assert_eq!(groups.len(), starts, "one group per suffix learner decision");
+    assert_eq!(
+        groups.len(),
+        starts,
+        "one group per suffix learner decision"
+    );
     let reward = t.terminal.terminal_reward[t.episode.learner_seat as usize] as i8;
     for (r, ordinal, rows) in &groups {
         assert_eq!(*r, reward, "only the suffix's own terminal reward");
         assert_eq!(*ordinal, 0);
-        assert!(rows.iter().all(|(row, _)| row.step >= k as u64
-            && row.actor == t.episode.learner_seat));
+        assert!(rows
+            .iter()
+            .all(|(row, _)| row.step >= k as u64 && row.actor == t.episode.learner_seat));
     }
     // Perturbing what the guide carried is rejected or inert: its label
     // changes no group, and a changed prefix action fails the cut's

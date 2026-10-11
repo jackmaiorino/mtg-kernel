@@ -2215,8 +2215,7 @@ fn validate_episode_records_with_search_v1(
     // continue from the starting history's counts.
     let (step_offset, physical_offset) = episode.reset_offsets_v1();
     ensure(
-        terminal.policy_step_count == step_offset + decisions.len() as u64
-            && !decisions.is_empty(),
+        terminal.policy_step_count == step_offset + decisions.len() as u64 && !decisions.is_empty(),
         "trajectory step count differs",
     )?;
     let expected_rewards = match terminal.winner {

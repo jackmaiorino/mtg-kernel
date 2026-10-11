@@ -51,12 +51,7 @@ use std::time::Instant;
 pub(super) fn is_mode(mode: &str) -> bool {
     matches!(
         mode,
-        "s4a-corpus"
-            | "s4a-run"
-            | "s4a-diag"
-            | "s4a-bank"
-            | "s4a-bank-parity"
-            | "s4a-label-replay"
+        "s4a-corpus" | "s4a-run" | "s4a-diag" | "s4a-bank" | "s4a-bank-parity" | "s4a-label-replay"
     )
 }
 
@@ -767,11 +762,11 @@ fn parse_limits() -> Result<Limits, String> {
 /// `s4a-bank`: guide banks for the reset curriculum pilot (`bank.rs`).
 fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(), String> {
     let path = std::env::var("BANK_SPEC").map_err(|_| "BANK_SPEC is required")?;
-    let spec: bank::BankSpec = serde_json::from_slice(
-        &std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?,
-    )
-    .map_err(|e| format!("{path}: {e}"))?;
-    if cfg.decks != (0..RUNTIME_DECKS.len()).collect::<Vec<_>>() || spec.decks.len() != cfg.decks.len()
+    let spec: bank::BankSpec =
+        serde_json::from_slice(&std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?)
+            .map_err(|e| format!("{path}: {e}"))?;
+    if cfg.decks != (0..RUNTIME_DECKS.len()).collect::<Vec<_>>()
+        || spec.decks.len() != cfg.decks.len()
     {
         return Err("s4a-bank needs decks=all registered decks in runtime order".into());
     }

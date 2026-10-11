@@ -69,8 +69,16 @@ pub(super) fn label_job(job: &LabelJob) -> Result<Value, String> {
         if acting(&d) == focal && d.legal_action_count >= 2 {
             observe(Some(&mut suffix), &s, r.selected, focal, &defs);
         }
-        apply(&mut s, &d, r.selected, &mut meter, focal, Some(&mut suffix), &defs)
-            .map_err(|e| format!("{e:?}"))?;
+        apply(
+            &mut s,
+            &d,
+            r.selected,
+            &mut meter,
+            focal,
+            Some(&mut suffix),
+            &defs,
+        )
+        .map_err(|e| format!("{e:?}"))?;
     }
     let FastActorResponseV1::Terminal(t) = s.current_response() else {
         return Err("recorded actions end before the terminal".into());
@@ -83,9 +91,11 @@ pub(super) fn label_job(job: &LabelJob) -> Result<Value, String> {
         return Err("replayed winner differs from the record".into());
     }
     let win = winner == Some(job.focal);
-    Ok(json!({"kind":"label_replay","id":job.id,"focal":job.focal,"winner":winner,
+    Ok(
+        json!({"kind":"label_replay","id":job.id,"focal":job.focal,"winner":winner,
         "decisions":job.decisions.len(),"win":win,"labels":suffix.json(),
-        "combo_resolved":suffix.complete(),"combo_won":suffix.complete() && win}))
+        "combo_resolved":suffix.complete(),"combo_won":suffix.complete() && win}),
+    )
 }
 
 pub(super) fn run(cfg: &super::super::CensusConfigV1) -> Result<(), String> {
@@ -95,8 +105,7 @@ pub(super) fn run(cfg: &super::super::CensusConfigV1) -> Result<(), String> {
     let mut out = std::fs::File::create(&cfg.out).map_err(|e| e.to_string())?;
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
         let job: LabelJob = serde_json::from_str(line).map_err(|e| format!("{path}: {e}"))?;
-        let row = label_job(&job)
-            .unwrap_or_else(|e| json!({"kind":"error","id":job.id,"error":e}));
+        let row = label_job(&job).unwrap_or_else(|e| json!({"kind":"error","id":job.id,"error":e}));
         writeln!(out, "{row}").map_err(|e| e.to_string())?;
     }
     Ok(())

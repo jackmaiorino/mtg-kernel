@@ -182,12 +182,17 @@ fn plain_logged(
 fn walk(
     mut s: FastActorSessionV1,
     actions: &[u32],
-    mut visit: impl FnMut(&FastActorSessionV1, &crate::rl_session::FastActorDecisionV1, u32) -> Result<(), String>,
+    mut visit: impl FnMut(
+        &FastActorSessionV1,
+        &crate::rl_session::FastActorDecisionV1,
+        u32,
+    ) -> Result<(), String>,
 ) -> Result<FastActorSessionV1, String> {
     for &a in actions {
         let d = decision(&s).ok_or("replay reached a terminal early")?;
         visit(&s, &d, a)?;
-        s.step(d.episode_id, d.step, a).map_err(|e| format!("{e:?}"))?;
+        s.step(d.episode_id, d.step, a)
+            .map_err(|e| format!("{e:?}"))?;
     }
     Ok(s)
 }
@@ -208,9 +213,11 @@ fn guide_record(
         }
         if d.substep_index == 0 {
             let (obs, menu) = replay_key(s, *d)?;
-            starts.push(json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
+            starts.push(
+                json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
                 "k":d.legal_action_count,"obs_hash":obs,"menu_hash":menu,
-                "state_hash":format!("{:016x}", s.diagnostic_state_hash())}));
+                "state_hash":format!("{:016x}", s.diagnostic_state_hash())}),
+            );
         }
         if d.legal_action_count >= 2 {
             let sem = s
@@ -225,10 +232,12 @@ fn guide_record(
             if own_offered || dr_offered {
                 let (_, own_chosen, dr_chosen) =
                     classify(&sem[a as usize], s.game_state(), focal, &defs);
-                witnesses.push(json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
+                witnesses.push(
+                    json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
                     "substep":d.substep_index,"k":d.legal_action_count,
                     "spy_self_offered":own_offered,"dr_giant_offered":dr_offered,
-                    "spy_self_chosen":own_chosen,"dr_giant_chosen":dr_chosen}));
+                    "spy_self_chosen":own_chosen,"dr_giant_chosen":dr_chosen}),
+                );
             }
         }
         Ok(())
@@ -333,11 +342,7 @@ pub(super) fn search_guide(
     ))
 }
 
-fn source_row(
-    sh: &BankShared,
-    roles: &mut Roles,
-    src: &SourceSpec,
-) -> Result<Value, String> {
+fn source_row(sh: &BankShared, roles: &mut Roles, src: &SourceSpec) -> Result<Value, String> {
     let started = Instant::now();
     let spec = &sh.spec;
     let focal = PlayerId(src.seat);
@@ -421,8 +426,15 @@ fn source_row(
         model: spec.lineage.clone(),
         root: src.search_root.clone(),
     };
-    let (search, s_actions, s_final) =
-        search_guide(roles, sh, &anchor, focal, opp, &seeds, src.guide_policy_seeds)?;
+    let (search, s_actions, s_final) = search_guide(
+        roles,
+        sh,
+        &anchor,
+        focal,
+        opp,
+        &seeds,
+        src.guide_policy_seeds,
+    )?;
     let s_end = outcome(&s_final, focal).ok_or("S guide did not end")?;
     let (starts, witnesses) = guide_record(&anchor, focal, &s_actions)?;
     guides.insert(
@@ -517,9 +529,9 @@ pub(super) fn run_bank(
                     if done.contains(&src.id) {
                         continue;
                     }
-                    let row = source_row(sh, &mut roles, src).unwrap_or_else(|e| {
-                        json!({"kind":"error","id":src.id,"lineage":sh.spec.lineage,"error":e})
-                    });
+                    let row = source_row(sh, &mut roles, src).unwrap_or_else(
+                        |e| json!({"kind":"error","id":src.id,"lineage":sh.spec.lineage,"error":e}),
+                    );
                     write_line(sink, &row)?;
                     eprintln!(
                         "source {} done at {:.1}s",
