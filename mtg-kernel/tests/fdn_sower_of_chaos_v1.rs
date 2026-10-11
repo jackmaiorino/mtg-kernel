@@ -506,6 +506,16 @@ fn activation_during_real_madness_cleanup_priority_expires_before_the_player_fli
         }
         assert!(discarded);
         assert_eq!(state.objects.get(temper).zone, Zone::Exile);
+        assert!(state.engine.pending_triggers.iter().any(|trigger| {
+            trigger.is_madness_offer && trigger.source == temper && trigger.controller == actor
+        }));
+        // Discard queues the trigger. The real next advance publishes it
+        // before either player receives the Cleanup response priority.
+        priority(&mut state, actor);
+        assert_eq!(
+            (state.step, state.turn, state.active_player),
+            (Step::Cleanup, round, actor)
+        );
         assert!(state.stack.iter().any(|item| item.madness_offer));
         announce(&mut state, actor, source, target);
         let mut replay = restore(&state);
