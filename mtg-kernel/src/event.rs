@@ -607,6 +607,10 @@ pub enum CommittedEvent {
     BeginningPrecombatMainV1 {
         active_player: PlayerId,
     },
+    LeftBattlefieldCopyV1 {
+        source: crate::state::AbilitySourceContractV4,
+        face_index: u8,
+    },
 }
 
 /// Remembers the counters of a departing permanent whose own leave ability
@@ -1053,9 +1057,13 @@ fn commit_with_ability_lki(
             crate::standard_legends_v1::before_zone_change(state, z.object, z.to_zone);
             let from = state.objects.get(z.object).zone;
             crate::standard_cards_v1::before_departure(state, z.object);
-            #[cfg(feature = "standard-magezero-fixtures")]
-            if from == Zone::Battlefield {
-                crate::standard_cards_v1::end_aegis_copies_before_departure(state, z.object);
+            if from == Zone::Battlefield && crate::standard_cards_v1::active_aegis_copy(state,z.object) {
+                let marker = CommittedEvent::LeftBattlefieldCopyV1 {
+                    source: crate::state::AbilitySourceContractV4::capture(state,z.object),
+                    face_index: state.objects.get(z.object).v4.face_index,
+                };
+                state.engine.event_log.push(marker.clone());
+                state.engine.event_history.push(marker);
             }
             let controller_before = state.objects.get(z.object).controller;
             if from == Zone::Battlefield {
@@ -1101,6 +1109,10 @@ fn commit_with_ability_lki(
                     z.object,
                     crate::card_def::CardType::Creature,
                 );
+            #[cfg(feature = "standard-magezero-fixtures")]
+            if from == Zone::Battlefield {
+                crate::standard_cards_v1::end_aegis_copies_before_departure(state,z.object);
+            }
             commit_zone_change(
                 state,
                 z.object,

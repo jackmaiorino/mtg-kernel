@@ -31,8 +31,9 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
         EffectOp::CreatureChoiceV1(kind) | EffectOp::CreatureChoiceAnswerV1 { kind, .. } => {
             use crate::standard_creature_choices_v1::CreatureChoiceV1;
-            out.control(ControlF::Optional);
+            if !matches!(kind,CreatureChoiceV1::AegisCopy { .. }) { out.control(ControlF::Optional); }
             match kind {
+                CreatureChoiceV1::AegisCopy { .. } => { out.control(ControlF::ChooseObjects); out.effect(EffectAtom::new(EvF::Copy).obj(ObjF::Creature)); }
                 CreatureChoiceV1::GlissaCounters(remaining) => out.effect(
                     EffectAtom::new(EvF::RemoveCounter)
                         .obj(ObjF::Permanent)

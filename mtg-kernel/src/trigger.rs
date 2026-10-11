@@ -4316,17 +4316,31 @@ fn triggers_from_events(
                         && object.zone_change_count == entry.source.zone_change_count
                 })
     });
+    let mut new_triggers = state.legend_pending_v1.take().unwrap_or_default();
     if events.is_empty() {
         // Nothing can match an empty batch; only the use-ledger pruning
         // above is observable.
         uses.sort_by_key(|entry| (entry.source.object, entry.ability_index));
         state.trigger_uses_v1 = (!uses.is_empty()).then_some(uses);
-        return Vec::new();
+        return new_triggers;
     }
     let draws_this_turn_at = draws_this_turn_snapshot(events, state);
-    let mut new_triggers = state.legend_pending_v1.take().unwrap_or_default();
     let may_trigger = card_defs_with_event_triggers();
-    for (id, obj) in state.objects.iter() {
+    let mut copied_definitions = Vec::new();
+    for event in events {
+        if let CommittedEvent::LeftBattlefieldCopyV1 { source, .. } = event {
+            let key = (source.source,source.card_def);
+            if !copied_definitions.contains(&key) { copied_definitions.push(key); }
+        }
+    }
+    for (id, live_obj) in state.objects.iter() {
+        for definition in std::iter::once(live_obj.card_def).chain(copied_definitions.iter()
+            .filter_map(|(source,definition)| (*source == id && *definition != live_obj.card_def).then_some(*definition))) {
+        let snapshot;
+        let obj = if definition == live_obj.card_def { live_obj } else {
+            snapshot = crate::state::GameObject { card_def: definition, ..live_obj.clone() };
+            &snapshot
+        };
         // Most objects (lands, vanilla creatures, every library card of a
         // definition with no triggered ability) can never match; skip them
         // without touching their large `CardDef` entry.
@@ -4401,6 +4415,7 @@ fn triggers_from_events(
                 TriggerCondition::LeftBattlefieldToGraveyard
                     | TriggerCondition::LeftBattlefield
                     | TriggerCondition::DiesWithoutCounters
+                    | TriggerCondition::DiesIfWasCreature
                     | TriggerCondition::StandardV1(_)
             );
             // Enduring keeps a graveyard-incarnation binding for its return,
@@ -4431,6 +4446,11 @@ fn triggers_from_events(
                 continue;
             }
             for (i, ev) in events.iter().enumerate() {
+                let copied_departure = crate::standard_cards_v1::copied_departure_at(events,i,id);
+                let event_definition = if matches!(ev,CommittedEvent::ZoneChange { object, from: Zone::Battlefield, .. } if *object == id) {
+                    copied_departure.map_or(live_obj.card_def,|source| source.card_def)
+                } else { live_obj.card_def };
+                if definition != event_definition { continue; }
                 if let TriggerCondition::StandardV1(condition) = def.condition {
                     if !crate::standard_cards_v1::trigger_matches(condition, events, i, id, state) {
                         continue;
@@ -4573,7 +4593,7 @@ fn triggers_from_events(
                             else {
                                 continue;
                             };
-                            Some(AbilitySourceContractV4 {
+                            Some(copied_departure.unwrap_or(AbilitySourceContractV4 {
                                 source: id,
                                 card_def: obj.card_def,
                                 owner: obj.owner,
@@ -4581,7 +4601,7 @@ fn triggers_from_events(
                                 zone: *from,
                                 zone_change_count,
                                 attached_to: None,
-                            })
+                            }))
                         }
                         _ if obj.zone == Zone::Stack => None,
                         _ => {
@@ -4608,7 +4628,7 @@ fn triggers_from_events(
                 }
             }
         }
-        if obj.zone == Zone::Battlefield
+        if definition == live_obj.card_def && obj.zone == Zone::Battlefield
             && (crate::continuous_characteristics_v1::printed_abilities_active(state, id)
                 || obj.v4.face_down_v1.is_some_and(|face| face.disguised)
                     && crate::continuous_characteristics_v1::removal_timestamp(state, id).is_none())
@@ -4694,6 +4714,7 @@ fn triggers_from_events(
             }
         }
     }
+        }
 
     // Ward granted by another permanent (Coppercoat Vanguard) is the
     // warded creature's own ability, one trigger per grant.

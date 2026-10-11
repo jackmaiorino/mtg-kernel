@@ -944,6 +944,7 @@ pub(super) fn conflicts(
             Damage { source, target, .. } => {
                 s.raw(*source) || matches!(target,crate::state::Target::Object(id) if s.raw(*id))
             }
+            LeftBattlefieldCopyV1 { source, .. } => s.raw(source.source),
             ZoneChange { object, .. }
             | Tap { object }
             | CreateToken { object, .. }

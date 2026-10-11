@@ -5422,11 +5422,9 @@ fn validated_definition_owned_root_effect(
     }
     crate::standard_legends_v1::jodah::validate_effect(state, &root, pending.ctx.controller)?;
     if pending.resolving_item.kind == crate::state::StackItemKind::TriggeredAbility {
-        let card_def = state
-            .objects
-            .try_get(pending.resolving_item.source)
-            .ok_or("answered trigger frame lost its source object")?
-            .card_def;
+        let card_def = pending.resolving_item.v4.ability_source_contract.map(|source| source.card_def)
+            .or_else(|| state.objects.try_get(pending.resolving_item.source).map(|source| source.card_def))
+            .ok_or("answered trigger frame lost its source object")?;
         // A Saga's chapter abilities are definition-owned triggers too
         // (714.2b).
         let is_saga_chapter = crate::card_def::CARD_DEFS[card_def as usize]
@@ -11168,6 +11166,9 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
             }
             EffectOp::CreatureChoiceV1(kind) => {
                 let options = crate::standard_creature_choices_v1::options(kind, &continuation.ctx, state);
+                if let [EffectOp::CreatureChoiceAnswerV1 {answer,..}] = options.as_slice() {
+                    crate::standard_creature_choices_v1::answer(kind,*answer,&continuation.ctx,state)?;
+                }
                 if options.len() > 1 {
                     continuation.choice = Some(PendingEffectChoice::ChooseOption {player: continuation.ctx.controller, path, options, purpose: EffectOptionChoicePurpose::CreatureChoiceV1 {kind, expected_remaining_frames: continuation.frames.clone()}});
                     state.engine.pending_effect = Some(continuation);
