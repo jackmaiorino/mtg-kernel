@@ -253,7 +253,7 @@ fn archdruid_mana_counts_controlled_noncreature_elves_and_effective_subtypes() {
         let land = put(&mut state, player, "Forest", Zone::Battlefield);
         state.objects.get_mut(land).v4.effective_subtype_ids = vec![Subtype::Elf.stable_id()];
         let elf = put(&mut state, player, "Llanowar Elves", Zone::Battlefield);
-        state.objects.get_mut(elf).v4.effective_subtype_ids = vec![Subtype::Frog.stable_id()];
+        state.objects.get_mut(elf).v4.effective_subtype_ids = vec![Subtype::Goblin.stable_id()];
         let mut resumed = copy(&state);
         engine::step(&mut resumed, Action::ActivateManaAbility(source)).unwrap();
         assert_eq!(resumed.players[player.index()].mana_pool[4], 2);

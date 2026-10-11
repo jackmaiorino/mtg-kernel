@@ -36,3 +36,10 @@ power/Elf primitives, including effective-Haste admission and recursive bound
 trigger validation. The staged six-name admission is reviewed but unexecuted.
 It requires actual accepted v67 ancestry and exact registry equality before
 writing candidate IDs371-376, version68 or coverage177.
+
+Composed source check1 at6851e748 stopped during all-test type checking because
+the effective-subtype fixture used Frog, which is absent from the engine's
+subtype vocabulary. It now uses existing Goblin to exercise loss of Elf.
+No new primitive or gameplay result was reached. Guard1901f23e520f4bd490191245dd331a9d
+ended101 after removing only its verified idle compiler helper49580. Logs remain
+in E:/storage-records/fdn110/fdn110-six-creatures-source-native1.*.
