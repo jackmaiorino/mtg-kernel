@@ -13267,13 +13267,15 @@ pub(crate) fn validated_stack_item_target_spec(
         item.kind == StackItemKind::Spell
             && item.targets.len() >= minimum
             && maximum.is_none_or(|maximum| item.targets.len() <= maximum)
-            && item.targets.iter().enumerate().all(|(index, target)| !item.targets[..index].contains(target))
+            && item
+                .targets
+                .iter()
+                .enumerate()
+                .all(|(index, target)| !item.targets[..index].contains(target))
     } else {
         target_cardinality_is_complete(spec, item.targets.len())
     };
-    if !cardinality_complete
-        || item.v4.target_contracts.len() != item.targets.len()
-    {
+    if !cardinality_complete || item.v4.target_contracts.len() != item.targets.len() {
         return Err("stack target and contract cardinalities are malformed".to_string());
     }
     for (target_index, (&target, &contract)) in item

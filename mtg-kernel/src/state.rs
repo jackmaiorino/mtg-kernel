@@ -1222,7 +1222,17 @@ pub fn stack_target_contract_is_structurally_valid(
         }
     }
     let shape_is_valid = matches!(spec, TargetSpec::StandardV1(_))
-        || matches!((spec, target_index, contract), (TargetSpec::KickerControlledCreatures, _, StackTargetContractV4::Object { zone: Zone::Battlefield, .. }))
+        || matches!(
+            (spec, target_index, contract),
+            (
+                TargetSpec::KickerControlledCreatures,
+                _,
+                StackTargetContractV4::Object {
+                    zone: Zone::Battlefield,
+                    ..
+                }
+            )
+        )
         || matches!(
             (spec, target_index, contract),
             (

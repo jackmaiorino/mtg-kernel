@@ -39,6 +39,7 @@
   "java_file": "Mage.Sets/src/mage/cards/d/DivineResilience.java",
   "mage_reference_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
   "prepared_target_spec": "KickerControlledCreatures",
-  "prepared_target_spec_stable_id": 62,
-  "prepared_effect": "GrantKeywordToDeclaredTargetsUntilEndOfTurn(KickerControlledCreatures,Indestructible)"
+  "prepared_target_spec_stable_id": 63,
+  "prepared_effect": "GrantKeywordToDeclaredTargetsUntilEndOfTurn(KickerControlledCreatures,Indestructible)",
+  "current_composition_base": "9bc70a7f84a14670acbe38f87b723bfe30858e95"
 }
