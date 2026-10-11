@@ -3050,8 +3050,8 @@ mod tests {
     }
 }
 
+#[cfg(test)]
 #[cfg(all(
-    test,
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
