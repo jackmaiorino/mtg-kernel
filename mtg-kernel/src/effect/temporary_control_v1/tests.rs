@@ -332,6 +332,9 @@ fn repeated_cleanup_clears_ordinary_and_restricted_mana_for_both_players() {
     }
 }
 
+// Real attachment timestamps exist only in the Limited rules feature;
+// Standard enables that feature. Default preserves its timestamp-free state.
+#[cfg(feature = "limited-fdn-fixtures")]
 #[test]
 fn accepted_typed_aegis_copy_preserves_employment_target_and_refuses_foreign_or_stale_history() {
     use crate::state::{AbilitySourceContractV4, ObjectLinkV4};
