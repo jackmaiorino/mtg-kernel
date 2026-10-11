@@ -841,6 +841,10 @@ pub enum SpellCastRouteV4 {
         holder: PlayerId,
         permission_zone_change_count: u32,
     },
+    ExileFreePermission {
+        holder: PlayerId,
+        permission_zone_change_count: u32,
+    },
 }
 
 /// Incarnation-local cast provenance stored on the physical source object

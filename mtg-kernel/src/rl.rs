@@ -511,6 +511,8 @@ pub enum PlayPermissionExpiryV2 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ExilePlayPermissionPublicV2 {
+    #[serde(default, skip_serializing_if = "crate::engine::FreeCastV1::is_false")]
+    pub without_mana_cost: crate::engine::FreeCastV1,
     pub object: CardStableRefV1,
     pub holder: PlayerSeatV1,
     pub play_or_cast: PlayOrCastV2,
@@ -6624,6 +6626,7 @@ fn exile_play_permissions_public_v2(state: &GameState) -> Result<Vec<ExilePlayPe
             continue;
         }
         out.push(ExilePlayPermissionPublicV2 {
+            without_mana_cost: perm.without_mana_cost,
             object: card_ref(state, perm.object)?,
             holder: perm.holder.into(),
             play_or_cast: match perm.play_or_cast {

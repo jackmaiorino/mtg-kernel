@@ -795,3 +795,102 @@ fn shanna_payment_is_bounded_by_actual_life_gain_and_available_mana() {
         2
     );
 }
+
+#[test]
+fn djeru_exile_permission_casts_free_at_normal_timing() {
+    let mut state = ready_with_library(
+        Step::Main1,
+        &[
+            "Hajar, Loyal Bodyguard",
+            "Forest",
+            "Forest",
+            "Forest",
+            "Forest",
+            "Forest",
+            "Forest",
+            "Forest",
+            "Forest",
+        ],
+    );
+    let djeru = put(
+        &mut state,
+        PlayerId::P0,
+        "Djeru and Hazoret",
+        Zone::Battlefield,
+    );
+    for _ in 0..30 {
+        match next(&mut state) {
+            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+            Decision::DeclareAttackers { .. } => {
+                engine::step(&mut state, Action::DeclareAttackers(vec![djeru])).unwrap();
+                break;
+            }
+            other => panic!("unexpected preattack {other:?}"),
+        }
+    }
+    let Some(Decision::ChooseEffectTargets {
+        min_targets: 0,
+        max_targets: 1,
+        legal_targets,
+        ..
+    }) = settle(&mut state)
+    else {
+        panic!("missing Djeru selection")
+    };
+    assert_eq!(legal_targets.len(), 1);
+    let Target::Object(chosen) = legal_targets[0] else {
+        panic!()
+    };
+    engine::step(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(chosen)),
+    )
+    .unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(chosen).zone, Zone::Exile);
+    assert!(state
+        .engine
+        .exile_play_permissions
+        .iter()
+        .any(|p| p.object == chosen && p.without_mana_cost.0));
+    assert!(
+        matches!(next(&mut state),Decision::CastSpellOrPass{castable_spells,..} if !castable_spells.contains(&chosen))
+    );
+    let mut main = false;
+    for _ in 0..50 {
+        match next(&mut state) {
+            Decision::CastSpellOrPass {
+                player,
+                castable_spells,
+                ..
+            } => {
+                if state.step == Step::Main2 && player == PlayerId::P0 {
+                    assert!(castable_spells.contains(&chosen));
+                    main = true;
+                    break;
+                }
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            Decision::DeclareBlockers { .. } => {
+                engine::step(&mut state, Action::DeclareBlockers(vec![])).unwrap()
+            }
+            other => panic!("unexpected combat {other:?}"),
+        }
+    }
+    assert!(main);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
+    engine::step(&mut state, Action::CastSpell(chosen)).unwrap();
+    next(&mut state);
+    assert!(matches!(
+        state
+            .objects
+            .get(chosen)
+            .v4
+            .spell_cast_origin
+            .unwrap()
+            .route,
+        mtg_kernel::state::SpellCastRouteV4::ExileFreePermission { .. }
+    ));
+    settled(&mut state);
+    assert_eq!(state.objects.get(chosen).zone, Zone::Battlefield);
+}

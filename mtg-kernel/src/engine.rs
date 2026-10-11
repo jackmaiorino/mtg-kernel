@@ -565,11 +565,30 @@ pub enum PlayPermissionExpiry {
 /// - `expiry`: see `PlayPermissionExpiry`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PlayPermission {
+    #[serde(default, skip_serializing_if = "FreeCastV1::is_false")]
+    pub without_mana_cost: FreeCastV1,
     pub object: ObjectId,
     pub holder: PlayerId,
     pub zone_change_generation: u32,
     pub play_or_cast: PlayOrCast,
     pub expiry: PlayPermissionExpiry,
+}
+
+/// Transparent optional flag; an absent grant retains historical state hashes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct FreeCastV1(pub bool);
+impl FreeCastV1 {
+    pub fn is_false(&self) -> bool {
+        !self.0
+    }
+}
+impl std::hash::Hash for FreeCastV1 {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        if self.0 {
+            std::hash::Hash::hash(&"without-mana-cost/v1", h);
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -2002,6 +2021,10 @@ fn validate_physical_spell_cast_origin(
         SpellCastRouteV4::ExilePermission {
             holder,
             permission_zone_change_count,
+        }
+        | SpellCastRouteV4::ExileFreePermission {
+            holder,
+            permission_zone_change_count,
         } => {
             origin.origin_zone == Zone::Exile
                 && holder == item.controller
@@ -2022,6 +2045,11 @@ fn validate_physical_spell_cast_origin(
                             && permission.holder == holder
                             && permission.zone_change_generation == permission_zone_change_count
                             && permission.play_or_cast == PlayOrCast::Cast
+                            && permission.without_mana_cost.0
+                                == matches!(
+                                    origin.route,
+                                    SpellCastRouteV4::ExileFreePermission { .. }
+                                )
                     })
         }
         SpellCastRouteV4::Plotted { plotted_turn } => {
@@ -2328,6 +2356,10 @@ fn storm_source_contract_is_structurally_valid(
             origin.origin_zone == Zone::Hand && contract.owner == contract.controller
         }
         SpellCastRouteV4::ExilePermission {
+            holder,
+            permission_zone_change_count,
+        }
+        | SpellCastRouteV4::ExileFreePermission {
             holder,
             permission_zone_change_count,
         } => {
@@ -17875,9 +17907,16 @@ fn begin_cast_ex(
             let permission = active_permission_for(player, spell_id, state)
                 .expect("an ordinary Exile cast was offered through an exact play permission");
             debug_assert_eq!(permission.play_or_cast, PlayOrCast::Cast);
-            SpellCastRouteV4::ExilePermission {
-                holder: permission.holder,
-                permission_zone_change_count: permission.zone_change_generation,
+            if permission.without_mana_cost.0 {
+                SpellCastRouteV4::ExileFreePermission {
+                    holder: permission.holder,
+                    permission_zone_change_count: permission.zone_change_generation,
+                }
+            } else {
+                SpellCastRouteV4::ExilePermission {
+                    holder: permission.holder,
+                    permission_zone_change_count: permission.zone_change_generation,
+                }
             }
         }
         _ => unreachable!("begin_cast_ex only announces supported cast routes"),
@@ -24144,6 +24183,7 @@ mod tests {
         let bolt = put_in_hand(&mut success, PlayerId::P1, "Lightning Bolt");
         event::propose_and_commit(&mut success, ProposedEvent::zone_change(bolt, Zone::Exile));
         success.engine.exile_play_permissions.push(PlayPermission {
+            without_mana_cost: crate::engine::FreeCastV1::default(),
             object: bolt,
             holder: PlayerId::P0,
             zone_change_generation: success.objects.get(bolt).zone_change_count,
@@ -24203,6 +24243,7 @@ mod tests {
         let bolt = put_in_hand(&mut aborted, PlayerId::P1, "Lightning Bolt");
         event::propose_and_commit(&mut aborted, ProposedEvent::zone_change(bolt, Zone::Exile));
         aborted.engine.exile_play_permissions.push(PlayPermission {
+            without_mana_cost: crate::engine::FreeCastV1::default(),
             object: bolt,
             holder: PlayerId::P0,
             zone_change_generation: aborted.objects.get(bolt).zone_change_count,
@@ -24721,6 +24762,7 @@ mod tests {
             ProposedEvent::zone_change(robbery, Zone::Exile),
         );
         resolved.engine.exile_play_permissions.push(PlayPermission {
+            without_mana_cost: crate::engine::FreeCastV1::default(),
             object: robbery,
             holder: PlayerId::P0,
             zone_change_generation: resolved.objects.get(robbery).zone_change_count,
@@ -24815,6 +24857,7 @@ mod tests {
         let clue = put_in_hand(&mut state, PlayerId::P0, "Clue Token");
         event::propose_and_commit(&mut state, ProposedEvent::zone_change(clue, Zone::Exile));
         state.engine.exile_play_permissions.push(PlayPermission {
+            without_mana_cost: crate::engine::FreeCastV1::default(),
             object: clue,
             holder: PlayerId::P0,
             zone_change_generation: state.objects.get(clue).zone_change_count,

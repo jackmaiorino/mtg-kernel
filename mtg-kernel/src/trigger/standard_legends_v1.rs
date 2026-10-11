@@ -44,3 +44,26 @@ pub(super) const SHANNA: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::BeginningControllerEndStep,
     ..etb_trigger(shanna)
 }];
+
+fn djeru() -> EffectOp {
+    EffectOp::LookTopSelectV1 {
+        player: crate::effect::PlayerRef::Controller,
+        count: crate::effect::LibraryLookCount::Fixed(6),
+        rule: crate::effect::LibraryPickRule {
+            pick: 1,
+            choose_rest_order: false,
+            selection: Some(crate::effect::LibraryPickSelectionV1 {
+                filter: crate::effect::LibraryPickFilterV1::LegendaryCreature,
+                optional: true,
+                destination: crate::state::Zone::Exile,
+                reveal_selected: false,
+                without_mana_cost: crate::engine::FreeCastV1(true),
+            }),
+        },
+        pick_x: false,
+    }
+}
+pub(super) const DJERU: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Attacks,
+    ..etb_trigger(djeru)
+}];

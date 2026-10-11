@@ -1547,9 +1547,12 @@ pub enum LibraryPickFilterV1 {
     NoncreatureNonlandPermanentManaValueAtMost(u16),
     ArtifactOrCreatureManaValueAtMost(u16),
     AnySubtype([Subtype; 4]),
+    LegendaryCreature,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LibraryPickSelectionV1 {
+    #[serde(default, skip_serializing_if = "crate::engine::FreeCastV1::is_false")]
+    pub without_mana_cost: crate::engine::FreeCastV1,
     pub filter: LibraryPickFilterV1,
     pub optional: bool,
     pub destination: Zone,
@@ -13536,6 +13539,25 @@ fn resume_library_partition_frame(
                 })
                 .collect();
             event::propose_and_commit_batch(state, events);
+            if matches!(filter,LibraryPartitionFilter::Pick(rule) if rule.selection.is_some_and(|selection| selection.without_mana_cost.0))
+            {
+                for selected in &selected {
+                    let live = state.objects.get(selected.object);
+                    if live.zone == Zone::Exile {
+                        state
+                            .engine
+                            .exile_play_permissions
+                            .push(crate::engine::PlayPermission {
+                                object: selected.object,
+                                holder: player,
+                                zone_change_generation: live.zone_change_count,
+                                play_or_cast: crate::engine::PlayOrCast::Cast,
+                                expiry: crate::engine::PlayPermissionExpiry::EndOfTurn,
+                                without_mana_cost: crate::engine::FreeCastV1(true),
+                            });
+                    }
+                }
+            }
             if filter.reveals_selected() {
                 for binding in selected {
                     if state.objects.get(binding.object).zone == Zone::Hand {
@@ -14379,6 +14401,12 @@ fn library_partition_matching_prefix(
                 rule.selection
                     .map_or(true, |selection| match selection.filter {
                         LibraryPickFilterV1::Any => true,
+                        LibraryPickFilterV1::LegendaryCreature => {
+                            definition.has_type(CardType::Creature)
+                                && definition
+                                    .supertypes
+                                    .contains(&crate::card_def::Supertype::Legendary)
+                        }
                         LibraryPickFilterV1::NoncreatureNonlandPermanentManaValueAtMost(max) => {
                             !definition.has_type(CardType::Creature)
                                 && !definition.has_type(CardType::Land)
@@ -16055,6 +16083,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             let exiled = state.objects.get(object.object);
             if warped && exiled.zone == Zone::Exile {
                 let permission = crate::engine::PlayPermission {
+                    without_mana_cost: crate::engine::FreeCastV1::default(),
                     object: object.object,
                     holder: owner,
                     zone_change_generation: exiled.zone_change_count,
@@ -17520,6 +17549,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     .engine
                     .exile_play_permissions
                     .push(crate::engine::PlayPermission {
+                        without_mana_cost: crate::engine::FreeCastV1::default(),
                         object: top,
                         holder: ctx.controller,
                         // Snapshot *after* the exile move above, so this

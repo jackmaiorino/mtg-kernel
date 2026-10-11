@@ -1883,6 +1883,12 @@ impl FlatDecisionEncoderV2 {
             || observation.projection.poison_counters.is_some()
             || observation.projection.ninja_emblems.is_some()
             || observation.projection.poison_prevention.is_some()
+            || observation
+                .projection
+                .surface
+                .exile_play_permissions
+                .iter()
+                .any(|permission| permission.without_mana_cost.0)
             || observation.projection.restricted_mana.is_some()
             || observation
                 .projection
@@ -6586,6 +6592,7 @@ mod tests {
             });
         observation.projection.surface.exile_play_permissions = vec![
             ExilePlayPermissionPublicV2 {
+                without_mana_cost: crate::engine::FreeCastV1::default(),
                 object: exile_b.clone(),
                 holder: other,
                 play_or_cast: PlayOrCastV2::Cast,
@@ -6595,6 +6602,7 @@ mod tests {
                 },
             },
             ExilePlayPermissionPublicV2 {
+                without_mana_cost: crate::engine::FreeCastV1::default(),
                 object: exile_a.clone(),
                 holder: actor,
                 play_or_cast: PlayOrCastV2::Play,
@@ -6602,6 +6610,7 @@ mod tests {
                 expiry: PlayPermissionExpiryV2::EndOfTurn,
             },
             ExilePlayPermissionPublicV2 {
+                without_mana_cost: crate::engine::FreeCastV1::default(),
                 object: exile_a.clone(),
                 holder: actor,
                 play_or_cast: PlayOrCastV2::Play,
@@ -6611,6 +6620,7 @@ mod tests {
                 },
             },
             ExilePlayPermissionPublicV2 {
+                without_mana_cost: crate::engine::FreeCastV1::default(),
                 object: exile_a.clone(),
                 holder: other,
                 play_or_cast: PlayOrCastV2::Play,
@@ -6618,6 +6628,7 @@ mod tests {
                 expiry: PlayPermissionExpiryV2::EndOfTurn,
             },
             ExilePlayPermissionPublicV2 {
+                without_mana_cost: crate::engine::FreeCastV1::default(),
                 object: exile_a.clone(),
                 holder: actor,
                 play_or_cast: PlayOrCastV2::Cast,
@@ -6625,6 +6636,7 @@ mod tests {
                 expiry: PlayPermissionExpiryV2::EndOfTurn,
             },
             ExilePlayPermissionPublicV2 {
+                without_mana_cost: crate::engine::FreeCastV1::default(),
                 object: exile_a.clone(),
                 holder: actor,
                 play_or_cast: PlayOrCastV2::Play,

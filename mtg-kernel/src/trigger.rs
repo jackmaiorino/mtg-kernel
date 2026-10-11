@@ -3334,6 +3334,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         #[cfg(feature = "standard-magezero-fixtures")]
         "Lagrella, the Magpie" => &standard_legends_v1::LAGRELLA,
         "Shanna, Purifying Blade" => &standard_legends_v1::SHANNA,
+        "Djeru and Hazoret" => &standard_legends_v1::DJERU,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Ertai Resurrected" => &standard_legends_v1::ERTAI,
         #[cfg(feature = "standard-magezero-fixtures")]
