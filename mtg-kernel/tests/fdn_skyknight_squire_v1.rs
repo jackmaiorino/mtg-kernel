@@ -306,6 +306,7 @@ fn future_entries_use_current_controller_and_departed_sources_do_not_watch() {
 fn actual_witness_removes_future_capture_and_statics_but_preserves_queued_counter() {
     for player in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(player);
+        put(&mut state, player, "High Fae Trickster", Zone::Battlefield);
         let source = put(&mut state, player, "Skyknight Squire", Zone::Battlefield);
         state.objects.get_mut(source).counters.plus1_plus1 = 3;
         enter(&mut state, player, "Llanowar Elves");
