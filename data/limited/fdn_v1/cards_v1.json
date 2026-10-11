@@ -6658,6 +6658,39 @@
         "must_attack",
         "cannot_be_blocked_by_walls"
       ]
+    },
+    {
+      "name": "Ashroot Animist",
+      "mana_cost": "{2}{R}{G}",
+      "mana_value": 4,
+      "colors": [
+        "R",
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Lizard",
+        "Druid"
+      ],
+      "power": 4,
+      "toughness": 4,
+      "supertypes": [],
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/a/AshrootAnimist.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_ashroot_animist.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "trample",
+        "attack_trigger",
+        "source_power_lki"
+      ]
     }
   ]
 }

@@ -265,7 +265,6 @@ mod future_printed {
     }
 
     #[test]
-    #[ignore = "requires genuine root-owned Ashroot registration; source-only fixture"]
     fn actual_cast_attack_human_target_submit_retry_and_owning_restore() {
         use crate::human_bo3_v1::{
             HumanActionRequestV1, HumanAshrootProjectorV27, HumanAshrootSessionV27,
