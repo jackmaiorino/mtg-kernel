@@ -1579,6 +1579,126 @@ fn kellan_upgrade_resolving_after_blink_does_not_change_the_new_incarnation() {
 }
 
 #[test]
+fn gingerbrute_evasion_allows_only_hasty_blockers_and_food_costs_work() {
+    let mut state = ready(Step::Main1);
+    let ginger = put(&mut state, PlayerId::P0, "Gingerbrute", Zone::Battlefield);
+    let hasty = put(&mut state, PlayerId::P1, "Gingerbrute", Zone::Battlefield);
+    let ordinary = put(
+        &mut state,
+        PlayerId::P1,
+        "Novice Inspector",
+        Zone::Battlefield,
+    );
+    state.players[0].mana_pool = pool(&[], 1);
+    engine::step(&mut state, Action::ActivateAbility(ginger, 0)).unwrap();
+    settled(&mut state);
+    state.step = Step::DeclareAttackers;
+    assert!(matches!(
+        next(&mut state),
+        Decision::DeclareAttackers { .. }
+    ));
+    engine::step(&mut state, Action::DeclareAttackers(vec![ginger])).unwrap();
+    pass_until_blocks(&mut state);
+    let Decision::DeclareBlockers { legal_blockers, .. } = next(&mut state) else {
+        panic!("blockers");
+    };
+    let choices = &legal_blockers
+        .iter()
+        .find(|(id, _)| *id == ginger)
+        .unwrap()
+        .1;
+    assert!(choices.contains(&hasty));
+    assert!(!choices.contains(&ordinary));
+
+    let mut state = ready(Step::Main1);
+    let ginger = put(&mut state, PlayerId::P0, "Gingerbrute", Zone::Battlefield);
+    state.objects.get_mut(ginger).summoning_sick = true;
+    state.players[0].mana_pool = pool(&[], 2);
+    assert!(activatable(&mut state).contains(&(ginger, 1)));
+    engine::step(&mut state, Action::ActivateAbility(ginger, 1)).unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(ginger).zone, Zone::Graveyard);
+    assert_eq!(state.players[0].life, 23);
+}
+
+#[test]
+fn tough_cookie_makes_food_animates_only_own_noncreature_artifacts_and_expires() {
+    let mut state = ready(Step::Main1);
+    let cookie = put(&mut state, PlayerId::P0, "Tough Cookie", Zone::Hand);
+    move_to(&mut state, cookie, Zone::Battlefield);
+    settled(&mut state);
+    let food = battlefield_tokens(&state, PlayerId::P0, "Food Token")[0];
+    let opponent_food = put(&mut state, PlayerId::P1, "Food Token", Zone::Battlefield);
+    state.players[0].mana_pool = pool(&[(ManaColor::G, 1)], 2);
+    engine::step(&mut state, Action::ActivateAbility(cookie, 0)).unwrap();
+    let Decision::ChooseTargets { legal_targets, .. } = next(&mut state) else {
+        panic!("targets");
+    };
+    assert!(legal_targets.contains(&Target::Object(food)));
+    assert!(!legal_targets.contains(&Target::Object(cookie)));
+    assert!(!legal_targets.contains(&Target::Object(opponent_food)));
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(food))).unwrap();
+    next(&mut state);
+    // The animation does not require its source to survive.
+    move_to(&mut state, cookie, Zone::Graveyard);
+    settled(&mut state);
+    assert!(engine::object_has_type(
+        &state,
+        food,
+        mtg_kernel::card_def::CardType::Creature
+    ));
+    assert!(engine::object_has_type(
+        &state,
+        food,
+        mtg_kernel::card_def::CardType::Artifact
+    ));
+    assert_eq!(
+        (
+            engine::effective_power(&state, food),
+            engine::effective_toughness(&state, food)
+        ),
+        (4, 4)
+    );
+    assert!(engine::has_effective_subtype(&state, food, Subtype::Food));
+    state = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+    state.step = Step::End;
+    for _ in 0..20 {
+        if state.active_player == PlayerId::P1 {
+            break;
+        }
+        match next(&mut state) {
+            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    assert!(!engine::object_has_type(
+        &state,
+        food,
+        mtg_kernel::card_def::CardType::Creature
+    ));
+    assert!(state.objects.get(food).v4.creature_upgrade.is_none());
+}
+
+#[test]
+fn tough_cookie_does_not_animate_a_target_that_has_changed_controller() {
+    let mut state = ready(Step::Main1);
+    let cookie = put(&mut state, PlayerId::P0, "Tough Cookie", Zone::Battlefield);
+    let food = put(&mut state, PlayerId::P0, "Food Token", Zone::Battlefield);
+    state.players[0].mana_pool = pool(&[(ManaColor::G, 1)], 2);
+    engine::step(&mut state, Action::ActivateAbility(cookie, 0)).unwrap();
+    next(&mut state);
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(food))).unwrap();
+    next(&mut state);
+    state.objects.get_mut(food).controller = PlayerId::P1;
+    settled(&mut state);
+    assert!(!engine::object_has_type(
+        &state,
+        food,
+        mtg_kernel::card_def::CardType::Creature
+    ));
+}
+
+#[test]
 fn hired_claw_pings_when_lizards_attack() {
     let mut state = ready(Step::DeclareAttackers);
     put(&mut state, PlayerId::P0, "Hired Claw", Zone::Battlefield);

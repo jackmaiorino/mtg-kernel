@@ -1110,6 +1110,7 @@ pub fn stack_target_contract_is_structurally_valid(
                     | TargetSpec::UpToOneOtherControlledPermanent
                     | TargetSpec::OpponentControlledCreature
                     | TargetSpec::UpToOneTappedCreature
+                    | TargetSpec::ControlledNoncreatureArtifactPermanent
                     | TargetSpec::NoncreatureArtifactPermanent
                     | TargetSpec::Land
                     | TargetSpec::OpponentArtifactOrEnchantmentPermanent

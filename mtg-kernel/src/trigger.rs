@@ -3152,7 +3152,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Guttersnipe" => &GUTTERSNIPE_TRIGGERS,
         "Murmuring Mystic" => &MURMURING_MYSTIC_TRIGGERS,
         "Voldaren Epicure" => &VOLDAREN_EPICURE_TRIGGERS,
-        "Generous Ent" => &GENEROUS_ENT_TRIGGERS,
+        "Generous Ent" | "Tough Cookie" => &GENEROUS_ENT_TRIGGERS,
         "Gingerbread Cabin" => &GINGERBREAD_CABIN_TRIGGERS,
         "Writhing Chrysalis" => &WRITHING_CHRYSALIS_TRIGGERS,
         "Blood Fountain" => &BLOOD_FOUNTAIN_TRIGGERS,

@@ -968,6 +968,7 @@ pub enum TargetSpec {
     ArtifactCreatureEnchantmentOrPlaneswalker,
     AnotherAttackingCreature,
     UpToOneOtherCreature,
+    ControlledNoncreatureArtifactPermanent,
 }
 
 impl TargetSpec {
@@ -1043,6 +1044,7 @@ impl TargetSpec {
             TargetSpec::ArtifactCreatureEnchantmentOrPlaneswalker => 92,
             TargetSpec::AnotherAttackingCreature => 93,
             TargetSpec::UpToOneOtherCreature => 94,
+            TargetSpec::ControlledNoncreatureArtifactPermanent => 71,
         }
     }
 }
@@ -2498,6 +2500,7 @@ mod tests {
             (TargetSpec::UpToOneOtherControlledPermanent, 58),
             (TargetSpec::UpToTwoOtherControlledCreatures, 59),
             (TargetSpec::CounterDistribution, 70),
+            (TargetSpec::ControlledNoncreatureArtifactPermanent, 71),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);

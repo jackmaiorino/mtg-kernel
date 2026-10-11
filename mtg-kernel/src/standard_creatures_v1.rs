@@ -8,7 +8,10 @@ use crate::ids::ObjectId;
 use crate::state::{GameState, Zone};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CreatureUpgradeV1 {
+    pub temporary_creature: Option<(i16, i16, u64)>,
+    pub haste_blockers_only: bool,
     pub creature_types: Option<(Vec<u16>, u64)>,
     pub base_stats: Option<(i16, i16, u64)>,
     pub color: Option<(u8, u64)>,
@@ -24,6 +27,8 @@ pub enum CreatureEffectV1 {
     KellanRogue,
     SurgeUnblockable,
     SurgeBlue,
+    GingerEvasion,
+    ToughCookieAnimate,
 }
 
 fn upgrade(state: &GameState, id: ObjectId) -> Option<&CreatureUpgradeV1> {
@@ -35,7 +40,12 @@ fn upgrade(state: &GameState, id: ObjectId) -> Option<&CreatureUpgradeV1> {
 
 /// Layer 7b: compare effect timestamps, independently of ability removal.
 pub(crate) fn base_stats(state: &GameState, id: ObjectId) -> Option<(i32, i32)> {
-    let (power, toughness, timestamp) = upgrade(state, id)?.base_stats?;
+    let value = upgrade(state, id)?;
+    let (power, toughness, timestamp) = value
+        .base_stats
+        .into_iter()
+        .chain(value.temporary_creature)
+        .max_by_key(|entry| entry.2)?;
     if crate::continuous_characteristics_v1::creature_override(state, id)
         .is_some_and(|(_, other)| other > timestamp)
     {
@@ -138,7 +148,59 @@ pub(crate) fn activation_paid(state: &mut GameState, id: ObjectId, index: usize)
     }
 }
 
+pub(crate) fn cleanup(state: &mut GameState) {
+    for (_, object) in state.objects.iter_mut() {
+        if let Some(upgrade) = &mut object.v4.creature_upgrade {
+            upgrade.temporary_creature = None;
+            upgrade.haste_blockers_only = false;
+            if *upgrade == CreatureUpgradeV1::default() {
+                object.v4.creature_upgrade = None;
+            }
+        }
+    }
+}
+
+pub(crate) fn animated_creature(state: &GameState, id: ObjectId) -> bool {
+    upgrade(state, id)
+        .and_then(|value| value.temporary_creature)
+        .is_some_and(|(_, _, timestamp)| {
+            crate::continuous_characteristics_v1::creature_override(state, id)
+                .is_none_or(|(_, other)| timestamp > other)
+        })
+}
+
+pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: ObjectId) -> bool {
+    !upgrade(state, attacker).is_some_and(|value| value.haste_blockers_only)
+        || crate::engine::has_effective_keyword(state, blocker, Keywords::HASTE)
+}
+
 pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameState) {
+    if effect == CreatureEffectV1::ToughCookieAnimate {
+        let Some(crate::state::Target::Object(target)) = ctx.targets.first().copied() else {
+            return;
+        };
+        if !ctx.target_contracts.first().is_some_and(|&contract| {
+            crate::engine::target_contract_matches_live(state, ctx.targets[0], contract)
+        }) || !crate::engine::effect_target_is_legal(
+            state,
+            ctx.source,
+            ctx.controller,
+            crate::card_def::TargetSpec::ControlledNoncreatureArtifactPermanent,
+            &ctx.targets,
+            0,
+        ) {
+            return;
+        }
+        let timestamp = crate::engine::next_timestamp(state);
+        state
+            .objects
+            .get_mut(target)
+            .v4
+            .creature_upgrade
+            .get_or_insert_with(Default::default)
+            .temporary_creature = Some((4, 4, timestamp));
+        return;
+    }
     let Some(contract) = ctx.ability_source_contract else {
         return;
     };
@@ -166,6 +228,8 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
         .creature_upgrade
         .get_or_insert_with(Default::default);
     match effect {
+        CreatureEffectV1::ToughCookieAnimate => unreachable!("targeted animation handled above"),
+        CreatureEffectV1::GingerEvasion => value.haste_blockers_only = true,
         CreatureEffectV1::KellanDetective => {
             value.creature_types = Some((
                 vec![

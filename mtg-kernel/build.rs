@@ -4039,6 +4039,7 @@ fn keywords_for(card: &CardJson) -> String {
         keywords.push("Keywords::DEFENDER");
     }
     match card.name.as_str() {
+        "Gingerbrute" => keywords.push("Keywords::HASTE"),
         "Surge Engine" => keywords.push("Keywords::DEFENDER"),
         "Spyglass Siren" => keywords.push("Keywords::FLYING"),
         "Sheoldred, the Apocalypse" => keywords.push("Keywords::DEATHTOUCH"),
@@ -5461,6 +5462,55 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             },
         ],
         // MageZero Standard family G.
+        "Gingerbrute" => &[
+            ActivatedAbilityRecipe {
+                cost: &[AbilityCostRecipe::ManaCost("{1}")],
+                effect: AbilityEffectRecipe::CreatureUpgrade("GingerEvasion"),
+                activation_zone: "Battlefield",
+                sorcery_speed_only: false,
+                target_spec: "None",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+            ActivatedAbilityRecipe {
+                cost: &[
+                    AbilityCostRecipe::ManaCost("{2}"),
+                    AbilityCostRecipe::Tap,
+                    AbilityCostRecipe::SacrificeSelf,
+                ],
+                effect: AbilityEffectRecipe::GainLife(3),
+                activation_zone: "Battlefield",
+                sorcery_speed_only: false,
+                target_spec: "None",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+        ],
+        "Tough Cookie" => &[
+            ActivatedAbilityRecipe {
+                cost: &[AbilityCostRecipe::ManaCost("{2}{G}")],
+                effect: AbilityEffectRecipe::CreatureUpgrade("ToughCookieAnimate"),
+                activation_zone: "Battlefield",
+                sorcery_speed_only: false,
+                target_spec: "ControlledNoncreatureArtifactPermanent",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+            ActivatedAbilityRecipe {
+                cost: &[
+                    AbilityCostRecipe::ManaCost("{2}"),
+                    AbilityCostRecipe::Tap,
+                    AbilityCostRecipe::SacrificeSelf,
+                ],
+                effect: AbilityEffectRecipe::GainLife(3),
+                activation_zone: "Battlefield",
+                sorcery_speed_only: false,
+                target_spec: "None",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+        ],
+
         "Kellan, Planar Trailblazer" => &[
             ActivatedAbilityRecipe {
                 cost: &[AbilityCostRecipe::ManaCost("{1}{R}")],
@@ -6442,6 +6492,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Spitfire Lagac" => "controlled_land_enters:damage_opponent:1",
         "Dragon Trainer" => "etb:create_red_4_4_flying_dragon:1",
         "Resolute Reinforcements" => "etb:create_white_1_1_soldier:1",
+        "Tough Cookie" => "etb:create_food_token:1",
         "Kellan, Planar Trailblazer" => "granted_combat_damage_player:impulse:1:end_of_turn",
         "Spyglass Siren" => "etb:create_map_token:1",
         "Dark Confidant" => "beginning_controller_upkeep:reveal_top_to_hand:lose_life_equal_mana_value",

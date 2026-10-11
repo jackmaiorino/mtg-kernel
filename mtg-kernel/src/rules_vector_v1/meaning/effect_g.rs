@@ -38,6 +38,14 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                 Some(ObjF::ThisObject),
                 AggF::Characteristic,
             );
+            if matches!(effect, CreatureEffectV1::ToughCookieAnimate) {
+                out.effect(
+                    EffectAtom::new(EvF::StatChange)
+                        .player(RelF::You)
+                        .obj(ObjF::Typed(CardTypeF::Artifact))
+                        .duration(DurF::EndOfTurn),
+                );
+            }
             if matches!(
                 effect,
                 CreatureEffectV1::KellanRogue | CreatureEffectV1::SurgeBlue
@@ -54,6 +62,7 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                 CreatureEffectV1::SurgeUnblockable => {
                     Some(crate::card_def::Keywords::CANT_BE_BLOCKED)
                 }
+                CreatureEffectV1::GingerEvasion => Some(crate::card_def::Keywords::CANT_BE_BLOCKED),
                 _ => None,
             };
             if let Some(keyword) = keyword {

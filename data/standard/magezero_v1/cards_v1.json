@@ -6059,6 +6059,70 @@
       "name": "Monster Role Token",
       "is_token": true,
       "java_file": "Mage/src/main/java/mage/game/permanent/token/MonsterRoleToken.java"
+    },
+    {
+      "name": "Gingerbrute",
+      "engine_capability": "full",
+      "mana_cost": "{1}",
+      "mana_value": 1,
+      "colors": [],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Food",
+        "Golem"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "medium",
+      "mechanics": [
+        "haste",
+        "haste_blockers_only",
+        "food"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/Gingerbrute.java"
+    },
+    {
+      "name": "Tough Cookie",
+      "engine_capability": "full",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Food",
+        "Golem"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "medium",
+      "mechanics": [
+        "food_etb",
+        "artifact_animation",
+        "food"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/ToughCookie.java"
     }
   ]
 }

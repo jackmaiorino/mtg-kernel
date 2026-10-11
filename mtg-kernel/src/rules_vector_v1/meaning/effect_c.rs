@@ -57,6 +57,7 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
         | TargetSpec::EnchantmentPermanent
         | TargetSpec::CreatureOtherThanSource
         | TargetSpec::UpToOneTappedCreature
+        | TargetSpec::ControlledNoncreatureArtifactPermanent
         | TargetSpec::NoncreatureArtifactPermanent
         | TargetSpec::Land
         | TargetSpec::NonblackCreature

@@ -193,6 +193,12 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
         }
         // An artifact without the creature type. No negated-type facet
         // exists; the nearest class is "an artifact".
+        TargetSpec::ControlledNoncreatureArtifactPermanent => object(
+            out,
+            typed(CardType::Artifact),
+            Some(RelF::You),
+            ZoneF::Battlefield,
+        ),
         TargetSpec::NoncreatureArtifactPermanent => {
             object(out, typed(CardType::Artifact), None, ZoneF::Battlefield)
         }
@@ -419,6 +425,7 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
         TargetSpec::ArtifactSpellOnStack
         | TargetSpec::ArtifactPermanent
         | TargetSpec::ExactlyTwoArtifactPermanents
+        | TargetSpec::ControlledNoncreatureArtifactPermanent
         | TargetSpec::NoncreatureArtifactPermanent => {
             let _ = slot; // Every slot is an artifact.
             typed(CardType::Artifact)

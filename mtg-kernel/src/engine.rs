@@ -1639,6 +1639,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::OpponentControlledCreature
         | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. }
         | TargetSpec::UpToOneTappedCreature
+        | TargetSpec::ControlledNoncreatureArtifactPermanent
         | TargetSpec::NoncreatureArtifactPermanent
         | TargetSpec::Land
         | TargetSpec::OpponentArtifactOrEnchantmentPermanent
@@ -3270,6 +3271,14 @@ fn legal_targets_for_controller_from_source(
         }
         TargetSpec::Land => battlefield_objects(state)
             .filter(|&id| object_has_type(state, id, CardType::Land))
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::ControlledNoncreatureArtifactPermanent => battlefield_objects(state)
+            .filter(|&id| {
+                state.objects.get(id).controller == controller
+                    && object_has_type(state, id, CardType::Artifact)
+                    && !object_has_type(state, id, CardType::Creature)
+            })
             .map(Target::Object)
             .collect(),
         TargetSpec::NoncreatureArtifactPermanent => battlefield_objects(state)
@@ -7929,6 +7938,9 @@ fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
             if has_effective_keyword(state, attacker, Keywords::PROTECTION_FROM_MONOCOLORED)
                 && object_is_monocolored(state, id)
             {
+                return false;
+            }
+            if !crate::standard_creatures_v1::blocker_allowed(state, attacker, id) {
                 return false;
             }
             if attacker_flying
@@ -13130,6 +13142,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     obj.v4.animation_timestamp = None;
                 }
             }
+            crate::standard_creatures_v1::cleanup(state);
             state.engine.until_end_of_turn.clear();
             state.engine.active_replacements.retain(|replacement| {
                 !matches!(
@@ -13411,6 +13424,11 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
     #[cfg(feature = "standard-magezero-fixtures")]
     if card_type == CardType::Creature && crate::standard_keywords_v1::not_a_creature(state, id) {
         return false;
+    }
+    if crate::standard_creatures_v1::animated_creature(state, id)
+        && matches!(card_type, CardType::Creature | CardType::Artifact)
+    {
+        return true;
     }
     if crate::continuous_characteristics_v1::creature_override(state, id).is_some() {
         return card_type == CardType::Creature;
