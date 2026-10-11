@@ -29,6 +29,53 @@ fn plain_counter(player: RelF, obj: ObjF, amount: AmtF, out: &mut Collector) {
 
 pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
+        EffectOp::CreatureUpgrade(effect) => {
+            use crate::standard_creatures_v1::CreatureEffectV1;
+            out.control(ControlF::Conditional);
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::ThisObject),
+                AggF::Characteristic,
+            );
+            if matches!(
+                effect,
+                CreatureEffectV1::KellanRogue | CreatureEffectV1::SurgeBlue
+            ) {
+                out.effect(
+                    EffectAtom::new(EvF::StatChange)
+                        .player(RelF::You)
+                        .obj(ObjF::ThisObject)
+                        .duration(DurF::Permanent),
+                );
+            }
+            let keyword = match effect {
+                CreatureEffectV1::KellanRogue => Some(crate::card_def::Keywords::DOUBLE_STRIKE),
+                CreatureEffectV1::SurgeUnblockable => {
+                    Some(crate::card_def::Keywords::CANT_BE_BLOCKED)
+                }
+                _ => None,
+            };
+            if let Some(keyword) = keyword {
+                out.effect(
+                    EffectAtom::new(EvF::GrantKeyword)
+                        .player(RelF::You)
+                        .obj(ObjF::ThisObject)
+                        .duration(DurF::Permanent)
+                        .keyword(keyword_bits(keyword)[0]),
+                );
+            }
+            if matches!(effect, CreatureEffectV1::KellanDetective) {
+                super::effect_op(
+                    &EffectOp::ImpulseDraw {
+                        count: 1,
+                        duration: crate::effect::ImpulseDuration::EndOfTurn,
+                    },
+                    env,
+                    out,
+                );
+            }
+        }
         EffectOp::DistributePlusOneCounters { .. } => {
             plain_counter(
                 RelF::You,

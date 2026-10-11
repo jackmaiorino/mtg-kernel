@@ -60,6 +60,7 @@ impl Scan<'_> {
             // Other current leaf programs carry symbolic refs, not physical bindings.
             DealDamage { .. }
             | DistributePlusOneCounters { .. }
+            | CreatureUpgrade(_)
             | ReturnTargetPermanentToBattlefield { .. }
             | GainLife { .. }
             | LoseLife { .. }

@@ -5937,6 +5937,70 @@
         "sacrifice"
       ],
       "java_file": "Mage.Sets/src/mage/cards/i/InvokeDespair.java"
+    },
+    {
+      "name": "Kellan, Planar Trailblazer",
+      "engine_capability": "full",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Faerie",
+        "Scout"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "persistent_upgrade",
+        "combat_damage_impulse"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/k/KellanPlanarTrailblazer.java"
+    },
+    {
+      "name": "Surge Engine",
+      "engine_capability": "full",
+      "mana_cost": "{2}",
+      "mana_value": 2,
+      "colors": [],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Construct"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "defender",
+        "persistent_upgrade",
+        "once_per_incarnation_activation"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SurgeEngine.java"
     }
   ]
 }

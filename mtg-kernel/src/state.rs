@@ -266,6 +266,8 @@ pub struct ObjectStateV4 {
     /// Latest layer-7b base setting until cleanup, kept on this incarnation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temporary_base_pt_v1: Option<(i16, i16, u64)>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creature_upgrade: Option<crate::standard_creatures_v1::CreatureUpgradeV1>,
     /// True from this incarnation's battlefield entry until the next untap
     /// step. `entered_battlefield_turn` is a round number shared by both
     /// players' turns, so it cannot answer "entered this turn" (Mirrex).
@@ -328,6 +330,10 @@ impl Hash for ObjectStateV4 {
             "animation_timestamp/v1".hash(state);
             timestamp.hash(state);
         }
+        if let Some(upgrade) = &self.creature_upgrade {
+            "creature_upgrade/v1".hash(state);
+            upgrade.hash(state);
+        }
         if self.entered_battlefield_this_turn {
             "entered_battlefield_this_turn/v1".hash(state);
         }
@@ -389,6 +395,7 @@ impl ObjectStateV4 {
             enduring_enchantment_v1: false,
             animation_timestamp: None,
             temporary_base_pt_v1: None,
+            creature_upgrade: None,
             entered_battlefield_this_turn: false,
         }
     }

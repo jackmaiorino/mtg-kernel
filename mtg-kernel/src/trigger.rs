@@ -3239,6 +3239,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Enduring Curiosity" => &ENDURING_CURIOSITY_TRIGGERS,
         "Enduring Innocence" => &ENDURING_INNOCENCE_TRIGGERS,
         "Monk Token" => &MONASTERY_SWIFTSPEAR_TRIGGERS,
+        "Kellan, Planar Trailblazer" => &KELLAN_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Spyglass Siren" => &standard_family_g_v1::SPYGLASS_SIREN_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
@@ -4179,10 +4180,12 @@ fn triggers_from_events(
             // but its death ability and controller come from the battlefield.
             let uses_death_lki =
                 uses_leave_lki || def.condition == TriggerCondition::DiesIfWasCreature;
-            if !uses_leave_lki
-                && (obj.zone != def.home_zone
-                    || !crate::continuous_characteristics_v1::printed_abilities_active(state, id))
-            {
+            let ability_active = if card.name == "Kellan, Planar Trailblazer" {
+                crate::standard_creatures_v1::combat_impulse_active(state, id)
+            } else {
+                crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+            };
+            if !uses_leave_lki && (obj.zone != def.home_zone || !ability_active) {
                 continue;
             }
             // A `TriggeredAbilityDef` names one printed face's ability text
@@ -5701,3 +5704,15 @@ mod tests {
         assert_eq!(ordered, vec![b, a]);
     }
 }
+
+fn kellan_impulse_effect() -> EffectOp {
+    EffectOp::ImpulseDraw {
+        count: 1,
+        duration: crate::effect::ImpulseDuration::EndOfTurn,
+    }
+}
+/// This definition is active only while Kellan retains its granted ability.
+const KELLAN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::DealsCombatDamageToPlayer,
+    ..etb_trigger(kellan_impulse_effect)
+}];

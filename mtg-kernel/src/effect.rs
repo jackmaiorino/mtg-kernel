@@ -1421,6 +1421,7 @@ pub enum EffectOp {
         power: i32,
         toughness: i32,
     },
+    CreatureUpgrade(crate::standard_creatures_v1::CreatureEffectV1),
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -15607,6 +15608,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 state.objects.get_mut(object).tapped = false;
                 crate::standard_cards_v1::release_untapped_locks(state);
             }
+        }
+        EffectOp::CreatureUpgrade(effect) => {
+            crate::standard_creatures_v1::execute(*effect, ctx, state)
         }
         EffectOp::AnimateSource => {
             let Some(contract) = ctx.ability_source_contract else {

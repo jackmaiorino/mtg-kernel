@@ -3982,6 +3982,7 @@ mod tests {
             ability_uses_this_turn: Vec::new(),
             skip_next_untap: false,
             goaded_by: Vec::new(),
+            creature_upgrade: None,
             characteristics: CardCharacteristicsV2 {
                 base_pt_until_end_of_turn: None,
                 type_flags: CardTypeFlagsV2 {

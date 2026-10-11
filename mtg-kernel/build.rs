@@ -3164,6 +3164,7 @@ enum AbilityEffectRecipe {
     /// The source becomes its `CardDef::animation` creature (Mishra's
     /// Foundry and the Restless lands).
     AnimateSource,
+    CreatureUpgrade(&'static str),
     /// Target(0) gets a fixed +power/+toughness until end of turn.
     PumpTargetUntilEndOfTurn {
         power: i8,
@@ -4033,6 +4034,7 @@ fn keywords_for(card: &CardJson) -> String {
         keywords.push("Keywords::DEFENDER");
     }
     match card.name.as_str() {
+        "Surge Engine" => keywords.push("Keywords::DEFENDER"),
         "Spyglass Siren" => keywords.push("Keywords::FLYING"),
         "Sheoldred, the Apocalypse" => keywords.push("Keywords::DEATHTOUCH"),
         "Masked Meower" | "Clockwork Percussionist" => keywords.push("Keywords::HASTE"),
@@ -5453,6 +5455,56 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             },
         ],
         // MageZero Standard family G.
+        "Kellan, Planar Trailblazer" => &[
+            ActivatedAbilityRecipe {
+                cost: &[AbilityCostRecipe::ManaCost("{1}{R}")],
+                effect: AbilityEffectRecipe::CreatureUpgrade("KellanDetective"),
+                activation_zone: "Battlefield",
+                sorcery_speed_only: false,
+                target_spec: "None",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+            ActivatedAbilityRecipe {
+                cost: &[AbilityCostRecipe::ManaCost("{2}{R}")],
+                effect: AbilityEffectRecipe::CreatureUpgrade("KellanRogue"),
+                activation_zone: "Battlefield",
+                sorcery_speed_only: false,
+                target_spec: "None",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+        ],
+        "Surge Engine" => &[
+            ActivatedAbilityRecipe {
+                cost: &[AbilityCostRecipe::ManaCost("{U}")],
+                effect: AbilityEffectRecipe::CreatureUpgrade("SurgeUnblockable"),
+                activation_zone: "Battlefield",
+                sorcery_speed_only: false,
+                target_spec: "None",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+            ActivatedAbilityRecipe {
+                cost: &[AbilityCostRecipe::ManaCost("{2}{U}")],
+                effect: AbilityEffectRecipe::CreatureUpgrade("SurgeBlue"),
+                activation_zone: "Battlefield",
+                sorcery_speed_only: false,
+                target_spec: "None",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+            ActivatedAbilityRecipe {
+                cost: &[AbilityCostRecipe::ManaCost("{4}{U}{U}")],
+                effect: AbilityEffectRecipe::DrawCards(3),
+                activation_zone: "Battlefield",
+                sorcery_speed_only: false,
+                target_spec: "None",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+        ],
+
         "Hired Claw" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::ManaCost("{1}{R}")],
             effect: AbilityEffectRecipe::PutPlusOneCounterOnSource,
@@ -5714,6 +5766,7 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::EachPlayerControllingNamedPermanentDrawsCard(name) => {
             format!("each_player_controlling_named_permanent_draws_card:{name}")
         }
+        AbilityEffectRecipe::CreatureUpgrade(kind) => format!("creature_upgrade:{kind}"),
         AbilityEffectRecipe::AnimateSource => "animate_source".to_string(),
         AbilityEffectRecipe::PumpTargetUntilEndOfTurn { power, toughness } => {
             format!("pump_target_until_end_of_turn:{power}:{toughness}")
@@ -5930,6 +5983,9 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
                     })
                     .collect::<String>()
             )
+        }
+        AbilityEffectRecipe::CreatureUpgrade(kind) => {
+            format!("ability_effect_creature_upgrade_{kind}")
         }
         AbilityEffectRecipe::AnimateSource => "ability_effect_animate_source".to_string(),
         AbilityEffectRecipe::PumpTargetUntilEndOfTurn { power, toughness } => format!(
@@ -6379,6 +6435,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Spitfire Lagac" => "controlled_land_enters:damage_opponent:1",
         "Dragon Trainer" => "etb:create_red_4_4_flying_dragon:1",
         "Resolute Reinforcements" => "etb:create_white_1_1_soldier:1",
+        "Kellan, Planar Trailblazer" => "granted_combat_damage_player:impulse:1:end_of_turn",
         "Spyglass Siren" => "etb:create_map_token:1",
         "Dark Confidant" => "beginning_controller_upkeep:reveal_top_to_hand:lose_life_equal_mana_value",
         "Sheoldred, the Apocalypse" => "controller_draws:gain_life:2;opponent_draws:lose_life:2",
@@ -7263,6 +7320,9 @@ fn codegen(cards: &[CardJson]) -> String {
                     "    EffectOp::EachPlayerControllingDefinitionDrawsCard {{ card_def: named }}"
                 )
                 .unwrap();
+            }
+            AbilityEffectRecipe::CreatureUpgrade(kind) => {
+                writeln!(out, "    EffectOp::CreatureUpgrade(crate::standard_creatures_v1::CreatureEffectV1::{kind})").unwrap();
             }
             AbilityEffectRecipe::AnimateSource => {
                 writeln!(out, "    EffectOp::AnimateSource").unwrap();

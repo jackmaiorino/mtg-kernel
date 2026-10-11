@@ -7570,7 +7570,8 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
                 if transformed {
                     break;
                 }
-                if ability.activation_zone != zone
+                if !crate::standard_creatures_v1::activation_allowed(state, id, i)
+                    || ability.activation_zone != zone
                     || !activated_ability_face_active(state, id, ability)
                     || !crate::standard_cards_v1::activation_allowed(state, id, def, i)
                     || (ability.is_loyalty_ability()
@@ -10597,6 +10598,13 @@ pub(crate) fn validate_pending_activation(
     )
     .ok_or_else(|| "pending activation ability index changed".to_string())?;
     let ability = &ability;
+    if !crate::standard_creatures_v1::activation_allowed(
+        state,
+        pending.source,
+        pending.ability_index as usize,
+    ) {
+        return Err("activation condition is not met".to_string());
+    }
     if ability.target_spec != pending.target_spec {
         return Err("pending activation target specification changed".to_string());
     }
@@ -13222,6 +13230,9 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
 /// Effective W/U/B/R/G/C mask already materialized on the object's current
 /// incarnation. Missing objects fail closed as colorless.
 pub fn object_color_mask(state: &GameState, id: ObjectId) -> u8 {
+    if let Some(color) = crate::standard_creatures_v1::color(state, id) {
+        return color;
+    }
     if let Some((characteristics, _)) =
         crate::continuous_characteristics_v1::creature_override(state, id)
     {
@@ -13469,7 +13480,13 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     {
         return true;
     }
-    if printed_active && def.keywords_for_face(obj.v4.face_index).has(kw) {
+    if crate::standard_creatures_v1::keyword_granted(state, id, kw) {
+        return true;
+    }
+    if printed_active
+        && def.keywords_for_face(obj.v4.face_index).has(kw)
+        && !crate::standard_creatures_v1::printed_keyword_removed(state, id, kw)
+    {
         return true;
     }
     #[cfg(feature = "standard-magezero-fixtures")]
@@ -13898,17 +13915,24 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
         return Vec::new();
     };
     let override_effect = crate::continuous_characteristics_v1::creature_override(state, id);
-    let mut subtype_ids = override_effect.map_or_else(
-        || object.v4.effective_subtype_ids.clone(),
-        |(characteristics, _)| vec![characteristics.subtype.stable_id()],
-    );
+    let upgrade = crate::standard_creatures_v1::creature_types(state, id);
+    let replacement_timestamp = upgrade
+        .as_ref()
+        .map(|(_, timestamp)| *timestamp)
+        .or_else(|| override_effect.map(|(_, timestamp)| timestamp));
+    let mut subtype_ids = upgrade.map(|(types, _)| types).unwrap_or_else(|| {
+        override_effect.map_or_else(
+            || object.v4.effective_subtype_ids.clone(),
+            |(characteristics, _)| vec![characteristics.subtype.stable_id()],
+        )
+    });
     if let Some((animation, _)) = crate::continuous_characteristics_v1::animation(state, id) {
         subtype_ids.extend(animation.subtypes.iter().map(|subtype| subtype.stable_id()));
     }
     subtype_ids.extend(
         attached_equipment_profiles(state, id)
             .filter(|(equipment_id, _)| {
-                override_effect.is_none_or(|(_, timestamp)| {
+                replacement_timestamp.is_none_or(|timestamp| {
                     state
                         .objects
                         .get(*equipment_id)
@@ -13934,44 +13958,7 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
 }
 
 pub fn has_effective_subtype(state: &GameState, id: ObjectId, subtype: card_def::Subtype) -> bool {
-    let Some(object) = state.objects.try_get(id) else {
-        return false;
-    };
-    #[cfg(feature = "standard-magezero-fixtures")]
-    if (subtype.same_subtype_as(card_def::Subtype::Phyrexian)
-        && crate::standard_cards_v1::is_phyrexian(state, id))
-        || (subtype.same_subtype_as(card_def::Subtype::Equipment)
-            && crate::standard_cards_v1::is_everflame(state, id))
-    {
-        return true;
-    }
-    let override_effect = crate::continuous_characteristics_v1::creature_override(state, id);
-    let base_has_subtype = override_effect.map_or_else(
-        || subtype.is_in_subtype_ids(&object.v4.effective_subtype_ids),
-        |(characteristics, _)| characteristics.subtype.same_subtype_as(subtype),
-    );
-    base_has_subtype
-        || crate::continuous_characteristics_v1::animation(state, id).is_some_and(
-            |(animation, _)| {
-                animation
-                    .subtypes
-                    .iter()
-                    .any(|&added| added.same_subtype_as(subtype))
-            },
-        )
-        || attached_equipment_profiles(state, id).any(|(equipment_id, equipment)| {
-            override_effect.is_none_or(|(_, timestamp)| {
-                state
-                    .objects
-                    .get(equipment_id)
-                    .v4
-                    .layer_timestamp
-                    .unwrap_or(0)
-                    > timestamp
-            }) && equipment
-                .add_subtype
-                .is_some_and(|added| added.same_subtype_as(subtype))
-        })
+    subtype.is_in_subtype_ids(&effective_subtype_ids(state, id))
 }
 
 fn participates_in_wave(state: &GameState, id: ObjectId, first_strike_wave: bool) -> bool {
@@ -17670,6 +17657,11 @@ fn push_paid_activation(
     // `resolved_stack_activated_ability`'s frozen/LKI path instead of
     // re-deriving from live equipment state, so a response that destroys
     // the Equipment or this creature can't halt the ability's resolution.
+    crate::standard_creatures_v1::activation_paid(
+        state,
+        pending.source,
+        pending.ability_index as usize,
+    );
     let host_card_def = state.objects.get(pending.source).card_def;
     let printed_len = card_def::CARD_DEFS[host_card_def as usize]
         .activated_abilities

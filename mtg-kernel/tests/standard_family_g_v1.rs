@@ -1396,6 +1396,188 @@ fn activatable(state: &mut GameState) -> Vec<(ObjectId, u8)> {
     }
 }
 
+fn combat_hit(state: &mut GameState, source: ObjectId) {
+    let mut damage = ProposedEvent::damage(source, Target::Player(PlayerId::P1), 1);
+    if let ProposedEvent::Damage(ref mut damage) = damage {
+        damage.is_combat = true;
+    }
+    event::propose_and_commit(state, damage);
+    let incarnation = state.objects.get(source).zone_change_count;
+    event::log_combat_damage_to_player(state, source, incarnation, PlayerId::P1, 1);
+    let pending = trigger::collect_and_process(state);
+    state.engine.pending_triggers.extend(pending);
+}
+
+#[test]
+fn kellan_upgrades_replace_types_keep_the_impulse_trigger_and_reset_on_zone_change() {
+    let mut state = ready(Step::Main1);
+    let kellan = put(
+        &mut state,
+        PlayerId::P0,
+        "Kellan, Planar Trailblazer",
+        Zone::Battlefield,
+    );
+    combat_hit(&mut state, kellan);
+    assert!(state.engine.pending_triggers.is_empty());
+    // The conditional ability can be activated before its prerequisite is met.
+    state.players[0].mana_pool = pool(&[(ManaColor::R, 1)], 2);
+    engine::step(&mut state, Action::ActivateAbility(kellan, 1)).unwrap();
+    settled(&mut state);
+    assert!(engine::has_effective_subtype(
+        &state,
+        kellan,
+        Subtype::Scout
+    ));
+    assert_eq!(engine::effective_power(&state, kellan), 2);
+
+    state.players[0].mana_pool = pool(&[(ManaColor::R, 1)], 1);
+    engine::step(&mut state, Action::ActivateAbility(kellan, 0)).unwrap();
+    settled(&mut state);
+    assert!(!engine::has_effective_subtype(
+        &state,
+        kellan,
+        Subtype::Scout
+    ));
+    assert!(engine::has_effective_subtype(
+        &state,
+        kellan,
+        Subtype::Detective
+    ));
+    assert!(engine::has_effective_subtype(
+        &state,
+        kellan,
+        Subtype::Faerie
+    ));
+    state.players[0].mana_pool = pool(&[(ManaColor::R, 1)], 2);
+    engine::step(&mut state, Action::ActivateAbility(kellan, 1)).unwrap();
+    settled(&mut state);
+    assert!(!engine::has_effective_subtype(
+        &state,
+        kellan,
+        Subtype::Detective
+    ));
+    assert!(engine::has_effective_subtype(
+        &state,
+        kellan,
+        Subtype::Rogue
+    ));
+    assert_eq!(
+        (
+            engine::effective_power(&state, kellan),
+            engine::effective_toughness(&state, kellan)
+        ),
+        (3, 2)
+    );
+    assert!(engine::has_effective_keyword(
+        &state,
+        kellan,
+        Keywords::DOUBLE_STRIKE
+    ));
+    let top = state.players[0].library[0];
+    combat_hit(&mut state, kellan);
+    assert_eq!(state.engine.pending_triggers.len(), 1);
+    settled(&mut state);
+    assert_eq!(state.objects.get(top).zone, Zone::Exile);
+    assert_eq!(state.engine.exile_play_permissions.len(), 1);
+    state = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+    state.step = Step::End;
+    for _ in 0..20 {
+        if state.active_player == PlayerId::P1 {
+            break;
+        }
+        match next(&mut state) {
+            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    assert!(state.engine.exile_play_permissions.is_empty());
+    assert!(engine::has_effective_keyword(
+        &state,
+        kellan,
+        Keywords::DOUBLE_STRIKE
+    ));
+    move_to(&mut state, kellan, Zone::Hand);
+    move_to(&mut state, kellan, Zone::Battlefield);
+    assert!(state.objects.get(kellan).v4.creature_upgrade.is_none());
+    assert!(engine::has_effective_subtype(
+        &state,
+        kellan,
+        Subtype::Scout
+    ));
+}
+
+#[test]
+fn surge_engine_conditions_and_once_limit_apply_at_activation_even_when_countered() {
+    let mut state = ready(Step::Main1);
+    let surge = put(&mut state, PlayerId::P0, "Surge Engine", Zone::Battlefield);
+    state.players[0].mana_pool = pool(&[(ManaColor::U, 6)], 20);
+    let choices = activatable(&mut state);
+    assert!(choices.contains(&(surge, 0)));
+    assert!(!choices.contains(&(surge, 1)));
+    assert!(!choices.contains(&(surge, 2)));
+    engine::step(&mut state, Action::ActivateAbility(surge, 0)).unwrap();
+    settled(&mut state);
+    assert!(!engine::has_effective_keyword(
+        &state,
+        surge,
+        Keywords::DEFENDER
+    ));
+    assert!(engine::has_effective_keyword(
+        &state,
+        surge,
+        Keywords::CANT_BE_BLOCKED
+    ));
+    engine::step(&mut state, Action::ActivateAbility(surge, 1)).unwrap();
+    settled(&mut state);
+    assert_eq!(engine::object_color_mask(&state, surge), 2);
+    assert_eq!(
+        (
+            engine::effective_power(&state, surge),
+            engine::effective_toughness(&state, surge)
+        ),
+        (5, 4)
+    );
+    assert!(activatable(&mut state).contains(&(surge, 2)));
+    engine::step(&mut state, Action::ActivateAbility(surge, 2)).unwrap();
+    next(&mut state);
+    // Countering the ability does not refund the once-only activation.
+    state.stack.clear();
+    state.priority_player = PlayerId::P0;
+    assert!(!activatable(&mut state).contains(&(surge, 2)));
+    assert!(engine::step(&mut state, Action::ActivateAbility(surge, 2)).is_err());
+    move_to(&mut state, surge, Zone::Hand);
+    move_to(&mut state, surge, Zone::Battlefield);
+    assert!(state.objects.get(surge).v4.creature_upgrade.is_none());
+    assert!(engine::has_effective_keyword(
+        &state,
+        surge,
+        Keywords::DEFENDER
+    ));
+}
+
+#[test]
+fn kellan_upgrade_resolving_after_blink_does_not_change_the_new_incarnation() {
+    let mut state = ready(Step::Main1);
+    let kellan = put(
+        &mut state,
+        PlayerId::P0,
+        "Kellan, Planar Trailblazer",
+        Zone::Battlefield,
+    );
+    state.players[0].mana_pool = pool(&[(ManaColor::R, 1)], 1);
+    engine::step(&mut state, Action::ActivateAbility(kellan, 0)).unwrap();
+    next(&mut state);
+    move_to(&mut state, kellan, Zone::Hand);
+    move_to(&mut state, kellan, Zone::Battlefield);
+    settled(&mut state);
+    assert!(state.objects.get(kellan).v4.creature_upgrade.is_none());
+    assert!(engine::has_effective_subtype(
+        &state,
+        kellan,
+        Subtype::Scout
+    ));
+}
+
 #[test]
 fn hired_claw_pings_when_lizards_attack() {
     let mut state = ready(Step::DeclareAttackers);

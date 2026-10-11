@@ -103,6 +103,13 @@ pub(crate) fn base_power_toughness(state: &GameState, id: ObjectId) -> Option<(i
     }
     if object.zone == Zone::Battlefield {
         settings.extend(object.v4.temporary_base_pt_v1);
+        settings.extend(
+            object
+                .v4
+                .creature_upgrade
+                .as_ref()
+                .and_then(|upgrade| upgrade.base_stats),
+        );
     }
     settings
         .into_iter()

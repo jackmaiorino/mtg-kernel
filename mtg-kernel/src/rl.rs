@@ -327,6 +327,8 @@ pub struct CardPublicV2 {
     pub ability_uses_this_turn: Vec<AbilityUsePublicV4>,
     pub skip_next_untap: bool,
     pub goaded_by: Vec<GoadPublicV4>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creature_upgrade: Option<crate::standard_creatures_v1::CreatureUpgradeV1>,
     pub characteristics: CardCharacteristicsV2,
 }
 
@@ -5608,6 +5610,7 @@ fn public_card_v2(
                 expires_at_turn: entry.expires_at_turn,
             })
             .collect(),
+        creature_upgrade: object.v4.creature_upgrade.clone(),
         characteristics: card_characteristics_v2(state, id),
     })
 }
