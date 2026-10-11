@@ -1784,7 +1784,7 @@ mod windows_publisher_tests {
     use crate::native_training_store_run_v2::NativeRunCatalogProfileV1;
     use crate::native_training_store_run_v2::{
         decode_train_run_v2, live_catalog_profile_v1, test_fixture_bytes_historical_v1,
-        test_fixture_bytes_v2,
+        test_fixture_bytes_v2, test_fixture_bytes_with_scheduler_timeout_v2,
     };
     use crate::native_training_store_segment_manifest_v2::build_genesis_segment_manifest_v2;
     use std::collections::BTreeMap;
@@ -1837,7 +1837,7 @@ mod windows_publisher_tests {
                 .unwrap(),
             broker_batch_target: usize::try_from(run.record().topology.broker_batch_target)
                 .unwrap(),
-            scheduler_timeout: Duration::from_secs(30),
+            scheduler_timeout: Duration::from_millis(run.record().topology.scheduler_timeout_ms),
             measure_broker_service_time: false,
             value_coefficient_bits: 0.5_f32.to_bits(),
             learning_rate_bits: 0.001_f32.to_bits(),
@@ -3435,7 +3435,10 @@ mod windows_publisher_tests {
     fn missing_parent_immutable_blocks_publication_without_mutation() {
         let store = TestStoreV2::with_skeleton("missing-parent-immutable");
         let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
-        let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        // Publisher integrity is the assertion; rollout preparation must not
+        // race a short wall-clock deadline on a contended correctness host.
+        let run =
+            decode_train_run_v2(&test_fixture_bytes_with_scheduler_timeout_v2(600_000)).unwrap();
         let mut executor = fresh_executor_v2(&run);
         let genesis = genesis_authorities_v2(&run, &executor);
         let _ = publish_genesis_v2(&root, &run, &genesis).unwrap();
@@ -3505,7 +3508,8 @@ mod windows_publisher_tests {
     fn every_fault_boundary_returns_no_receipt_and_retry_resumes_exactly() {
         let store = TestStoreV2::with_skeleton("fault-matrix");
         let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
-        let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        let run =
+            decode_train_run_v2(&test_fixture_bytes_with_scheduler_timeout_v2(600_000)).unwrap();
         let mut executor = fresh_executor_v2(&run);
         let genesis = genesis_authorities_v2(&run, &executor);
         let _ = publish_genesis_v2(&root, &run, &genesis).unwrap();

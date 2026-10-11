@@ -4836,6 +4836,11 @@ pub(crate) fn test_fixture_bytes_v2() -> Vec<u8> {
     tests::fixture_bytes()
 }
 
+#[cfg(all(test, windows))]
+pub(crate) fn test_fixture_bytes_with_scheduler_timeout_v2(timeout_ms: u64) -> Vec<u8> {
+    tests::fixture_bytes_with_scheduler_timeout(timeout_ms)
+}
+
 /// The pre-FDN PAUPER_META_W1 profile remains readable, but an FDN build
 /// must reject it at mutation boundaries before touching the store.
 #[cfg(all(test, feature = "limited-fdn-fixtures"))]
@@ -6532,6 +6537,14 @@ mod tests {
 
     pub(super) fn fixture_bytes() -> Vec<u8> {
         to_canonical_json_bytes_v1(&fixture_record(), CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[cfg(windows)]
+    pub(super) fn fixture_bytes_with_scheduler_timeout(timeout_ms: u64) -> Vec<u8> {
+        let mut record = fixture_record();
+        record.topology.scheduler_timeout_ms = timeout_ms;
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
     }
 
     // ------------------------------------------------------------------
