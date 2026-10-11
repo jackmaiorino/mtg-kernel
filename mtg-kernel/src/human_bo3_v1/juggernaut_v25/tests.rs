@@ -152,7 +152,6 @@ fn registered_owning_restore_foreign_owner_generation_and_old_future_requests_re
     not(feature = "standard-magezero-fixtures")
 ))]
 #[test]
-#[ignore = "requires genuine root-owned Juggernaut registration; source-only fixture"]
 fn actual_juggernaut_combat_scan_public_frozen_refusal_submit_and_stale_facts_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = basic(actor, "Lightning Bolt");

@@ -6629,6 +6629,35 @@
       "mechanics": [
         "extra_turn"
       ]
+    },
+    {
+      "name": "Juggernaut",
+      "mana_cost": "{4}",
+      "mana_value": 4,
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Juggernaut"
+      ],
+      "power": 5,
+      "toughness": 3,
+      "colors": [],
+      "supertypes": [],
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/j/Juggernaut.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_juggernaut.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "must_attack",
+        "cannot_be_blocked_by_walls"
+      ]
     }
   ]
 }
