@@ -2630,6 +2630,7 @@ fn target_key(t: &Target) -> String {
     match t {
         Target::Player(p) => format!("P{}", p.index()),
         Target::Object(id) => format!("O{}", id.0),
+        Target::StackItem(id) => format!("S{}", id.0),
     }
 }
 
