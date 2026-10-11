@@ -776,7 +776,7 @@
     },
     {
       "name": "Quirion Beastcaller",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{1}{G}",
       "mana_value": 2,
       "colors": [
@@ -5057,6 +5057,189 @@
         "token"
       ],
       "java_file": "generated:pilot"
+    },
+    {
+      "name": "Resolute Reinforcements",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flash",
+        "etb_token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/ResoluteReinforcements.java"
+    },
+    {
+      "name": "Soldier Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/SoldierToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Spyglass Siren",
+      "engine_capability": "full",
+      "mana_cost": "{U}",
+      "mana_value": 1,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Siren",
+        "Pirate"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UB.dck",
+        "Standard16-UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "medium",
+      "mechanics": [
+        "flying",
+        "etb_token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SpyglassSiren.java"
+    },
+    {
+      "name": "Sheoldred, the Apocalypse",
+      "engine_capability": "full",
+      "mana_cost": "{2}{B}{B}",
+      "mana_value": 4,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Phyrexian",
+        "Praetor"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 4,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GB.dck",
+        "Standard16-RB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "medium",
+      "mechanics": [
+        "deathtouch",
+        "draw_life_triggers"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SheoldredTheApocalypse.java"
+    },
+    {
+      "name": "Dark Confidant",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Wizard"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "medium",
+      "mechanics": [
+        "upkeep_reveal_to_hand_lose_life"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DarkConfidant.java"
+    },
+    {
+      "name": "Regal Bunnicorn",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Rabbit",
+        "Unicorn"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 0,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "medium",
+      "mechanics": [
+        "characteristic_defining_power_toughness"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RegalBunnicorn.java"
     }
   ]
 }

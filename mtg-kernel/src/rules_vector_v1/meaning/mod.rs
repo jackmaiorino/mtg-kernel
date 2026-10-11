@@ -209,7 +209,8 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::DestroyAllCreatures
         | EffectOp::SearchLibraryCardsToDestination { .. }
         | EffectOp::CreateTokensDynamic { .. } => effect_f::effect_op(op, env, out),
-        EffectOp::BindEntrantOutgrowsSourceThen { .. }
+        EffectOp::DistributePlusOneCounters { .. }
+        | EffectOp::BindEntrantOutgrowsSourceThen { .. }
         | EffectOp::IfEntrantOutgrowsSourceThen { .. }
         | EffectOp::BindOilCounterToTriggerSource
         | EffectOp::PutOilCounterOnBoundObject { .. }

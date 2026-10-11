@@ -320,6 +320,9 @@ pub enum Subtype {
     Chandra,
     Vehicle,
     Pilot,
+    /// MageZero Standard creature completion; prior identities are unchanged.
+    Siren,
+    Praetor,
 }
 
 impl Subtype {
@@ -481,6 +484,10 @@ impl Subtype {
         Subtype::God,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Gnome,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Siren,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Praetor,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -649,6 +656,8 @@ impl Subtype {
                 | Subtype::Sheep
                 | Subtype::AssemblyWorker
                 | Subtype::Mite
+                | Subtype::Siren
+                | Subtype::Praetor
         )
     }
 }
@@ -855,6 +864,8 @@ pub enum TargetSpec {
     /// module. Stable id 60 follows the ids 42-59 that the FDN and other
     /// Standard batches claim.
     StandardV1(crate::standard_cards_v1::StandardTargetV1),
+    /// Any number of controlled creatures, with placement-time allocations.
+    CounterDistribution,
 }
 
 impl TargetSpec {
@@ -924,6 +935,7 @@ impl TargetSpec {
             TargetSpec::UpToOneOtherControlledPermanent => 58,
             TargetSpec::UpToTwoOtherControlledCreatures => 59,
             TargetSpec::StandardV1(_) => 60,
+            TargetSpec::CounterDistribution => 70,
         }
     }
 }
@@ -2376,6 +2388,7 @@ mod tests {
             (TargetSpec::PermanentCardInOwnGraveyard, 57),
             (TargetSpec::UpToOneOtherControlledPermanent, 58),
             (TargetSpec::UpToTwoOtherControlledCreatures, 59),
+            (TargetSpec::CounterDistribution, 70),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);

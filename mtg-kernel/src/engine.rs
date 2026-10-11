@@ -65,6 +65,8 @@ use std::hash::Hash;
 #[path = "spell_costs_v1.rs"]
 #[allow(dead_code)]
 mod spell_costs_v1;
+#[path = "counter_distribution_v1.rs"]
+mod counter_distribution_v1;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EngineState {
@@ -1562,7 +1564,7 @@ fn step_grants_priority(step: Step) -> bool {
 
 pub(crate) fn target_count(spec: TargetSpec) -> u8 {
     match spec {
-        TargetSpec::None => 0,
+        TargetSpec::None | TargetSpec::CounterDistribution => 0,
         TargetSpec::AnyTarget
         | TargetSpec::AnyPlayer
         | TargetSpec::AnySpellOnStack
@@ -1642,7 +1644,8 @@ fn target_min_count(spec: TargetSpec) -> u8 {
 }
 
 fn target_cardinality_is_complete(spec: TargetSpec, count: usize) -> bool {
-    count >= usize::from(target_min_count(spec)) && count <= usize::from(target_count(spec))
+    spec == TargetSpec::CounterDistribution
+        || (count >= usize::from(target_min_count(spec)) && count <= usize::from(target_count(spec)))
 }
 
 fn pending_cast_targeting_is_complete(pending: &PendingCast, spec: TargetSpec) -> bool {
@@ -1663,7 +1666,7 @@ fn is_color(state: &GameState, id: ObjectId, color: mana::ManaColor) -> bool {
         .contains(&color)
 }
 
-fn target_contract_matches_live(
+pub(crate) fn target_contract_matches_live(
     state: &GameState,
     target: Target,
     contract: StackTargetContractV4,
@@ -2777,6 +2780,11 @@ fn legal_targets_for_controller_from_source(
 ) -> Vec<Target> {
     let mut targets = match spec {
         TargetSpec::None => Vec::new(),
+        TargetSpec::CounterDistribution => battlefield_objects(state)
+            .filter(|&id| state.objects.get(id).controller == controller
+                && object_has_type(state, id, CardType::Creature)
+                && !targets_chosen.contains(&Target::Object(id)))
+            .map(Target::Object).collect(),
         TargetSpec::UpToOneOtherControlledPermanent
         | TargetSpec::UpToTwoOtherControlledCreatures => battlefield_objects(state)
             .filter(|&id| {
@@ -3407,7 +3415,7 @@ fn target_prefix_can_complete_for_controller_and_source(
     state: &GameState,
 ) -> bool {
     let max = target_count(spec) as usize;
-    if targets_chosen.len() > max {
+    if spec != TargetSpec::CounterDistribution && targets_chosen.len() > max {
         return false;
     }
     let mut validated_prefix = Vec::with_capacity(targets_chosen.len());
@@ -10830,6 +10838,9 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
                 source: pending.source,
             });
         }
+        if let Some(decision) = counter_distribution_v1::decision(state, &pending) {
+            return Some(decision);
+        }
         if let Some(modes) = pending_trigger_modes(state, &pending) {
             return Some(Decision::ChooseTriggerMode {
                 player: pending.controller,
@@ -10930,6 +10941,7 @@ fn validate_pending_trigger(state: &GameState, pending: &PendingTrigger) -> Resu
         return Err("pending trigger has not completed placement ordering".to_string());
     }
     validate_pending_trigger_identity(state, pending)?;
+    counter_distribution_v1::validate(pending, state, false)?;
     if pending.is_madness_offer {
         if pending.target_spec != TargetSpec::None
             || !pending.targets.is_empty()
@@ -10954,7 +10966,7 @@ fn validate_pending_trigger(state: &GameState, pending: &PendingTrigger) -> Resu
     if pending.target_spec != expected {
         return Err("pending trigger target specification changed".to_string());
     }
-    if pending.targets.len() > usize::from(target_count(expected))
+    if (expected != TargetSpec::CounterDistribution && pending.targets.len() > usize::from(target_count(expected)))
         || !target_contracts_are_structurally_valid(
             state,
             &pending.targets,
@@ -11086,6 +11098,7 @@ fn validate_pending_trigger_for_stack(
     pending: &PendingTrigger,
 ) -> Result<(), String> {
     validate_pending_trigger_identity(state, pending)?;
+    counter_distribution_v1::validate(pending, state, true)?;
     if pending_trigger_modes(state, pending).is_some() {
         return Err("triggered ability has not selected its placement-time mode".into());
     }
@@ -11749,6 +11762,16 @@ pub(crate) fn validated_stack_item_target_spec(
     };
     if item.v4.target_spec != Some(spec) {
         return Err("stack target specification does not match its definition".to_string());
+    }
+    if let Some(EffectOp::DistributePlusOneCounters { total, allocations, finalized }) = &item.inline_effect {
+        let source = item.v4.ability_source_contract.ok_or("counter distribution lost source")?;
+        let original = state.counter_lki_for(source.source, source.zone_change_count)
+            .map_or(0, |counters| counters.plus1_plus1.max(0) as u32);
+        if !*finalized || *total != original || allocations.len() != item.targets.len()
+            || allocations.contains(&0)
+            || (!allocations.is_empty() && allocations.iter().map(|&x| u64::from(x)).sum::<u64>() != u64::from(*total)) {
+            return Err("stack counter distribution allocation is malformed".into());
+        }
     }
     if !target_cardinality_is_complete(spec, item.targets.len())
         || item.v4.target_contracts.len() != item.targets.len()
@@ -13150,6 +13173,12 @@ pub fn effective_base_toughness(state: &GameState, id: ObjectId) -> Option<i32> 
     crate::continuous_characteristics_v1::creature_override(state, id)
         .map(|(characteristics, _)| i32::from(characteristics.toughness))
         .or_else(|| {
+            #[cfg(feature = "standard-magezero-fixtures")]
+            { crate::standard_statics_v1::characteristic_defining_toughness(state, id) }
+            #[cfg(not(feature = "standard-magezero-fixtures"))]
+            { None }
+        })
+        .or_else(|| {
             crate::continuous_characteristics_v1::animation(state, id)
                 .map(|(animation, _)| i32::from(animation.toughness))
         })
@@ -14505,6 +14534,9 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
         }
     }
     if let Some(pending_trigger) = state.engine.pending_triggers.first() {
+        if pending_trigger.placement_ordered && counter_distribution_v1::waiting(pending_trigger) {
+            return counter_distribution_v1::answer(state, &action);
+        }
         let group = state
             .engine
             .pending_triggers

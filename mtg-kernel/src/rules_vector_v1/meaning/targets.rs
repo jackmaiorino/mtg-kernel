@@ -25,6 +25,11 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
             // Vocabulary has no exact-source-incarnation exclusion facet.
             out.atoms.push(Atom::Opaque);
         }
+        TargetSpec::CounterDistribution => {
+            object(out, creature(), Some(RelF::You), ZoneF::Battlefield);
+            out.target(TargetAtom::MultipleTargets);
+            out.target(TargetAtom::UpTo);
+        }
         TargetSpec::UpToTwoOtherControlledCreatures => {
             object(out, creature(), Some(RelF::You), ZoneF::Battlefield);
             out.target(TargetAtom::MultipleTargets);
@@ -434,6 +439,7 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
             ObjF::NonlandPermanent
         }
         TargetSpec::UpToTwoOtherControlledCreatures
+        | TargetSpec::CounterDistribution
         | TargetSpec::Creature
         | TargetSpec::NonlegendaryCreature
         | TargetSpec::ControlledCreature

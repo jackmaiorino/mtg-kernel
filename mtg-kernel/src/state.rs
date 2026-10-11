@@ -1045,6 +1045,13 @@ pub fn stack_target_contract_is_structurally_valid(
         || matches!(
             (spec, target_index, contract),
             (
+                TargetSpec::CounterDistribution,
+                _,
+                StackTargetContractV4::Object {
+                    zone: Zone::Battlefield,
+                    ..
+                }
+            ) | (
                 TargetSpec::AnyPlayer
                     | TargetSpec::AnyTarget
                     | TargetSpec::PlayerThenTheirCreature
@@ -2680,7 +2687,8 @@ impl GameState {
         }
         let start = len - count;
         let mut staged = self.clone();
-        staged.players[owner.index()].library = self.players[owner.index()].library[start..].to_vec();
+        staged.players[owner.index()].library =
+            self.players[owner.index()].library[start..].to_vec();
         staged.shuffle_library(owner)?;
         self.players[owner.index()].library[start..]
             .copy_from_slice(&staged.players[owner.index()].library);

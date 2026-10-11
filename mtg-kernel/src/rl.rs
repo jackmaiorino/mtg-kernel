@@ -384,6 +384,8 @@ pub struct StackItemPublicV2 {
     pub face_index: u8,
     pub x_value: u16,
     pub paid_cost_refs: Vec<CardStableRefV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counter_distribution: Option<CounterDistributionPublicV1>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -685,6 +687,21 @@ pub struct PendingTriggerSemanticV2 {
     pub controller: PlayerSeatV1,
     pub trigger_kind: PendingTriggerKindV2,
     pub kicked: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counter_distribution: Option<CounterDistributionPublicV1>,
+}
+
+/// Public announcement facts. These counters are allocated before priority.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CounterDistributionPublicV1 {
+    pub total: u32,
+    pub targets: Vec<TargetRefV1>,
+    pub amounts: Vec<u32>,
+}
+
+fn public_counter_distribution(effect: Option<&crate::effect::EffectOp>, targets: Vec<TargetRefV1>) -> Option<CounterDistributionPublicV1> {
+    let crate::effect::EffectOp::DistributePlusOneCounters { total, allocations, .. } = effect? else { return None; };
+    Some(CounterDistributionPublicV1 { total: *total, targets, amounts: allocations.clone() })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -6530,6 +6547,8 @@ fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<Engin
                         PendingTriggerKindV2::TriggeredAbility
                     },
                     kicked: p.kicked,
+                    counter_distribution: public_counter_distribution(Some(&p.effect),
+                        p.targets.iter().copied().map(|target| target_ref(state, target)).collect::<Result<Vec<_>>>()?),
                 })
             })
             .collect::<Result<Vec<_>>>()?,
@@ -7271,6 +7290,7 @@ fn stack_item_public_v2(
         face_index: item.v4.face_index,
         x_value: item.v4.x_value,
         paid_cost_refs: paid_cost_card_refs(&item.v4.paid_cost_refs, acting_player),
+        counter_distribution: public_counter_distribution(item.inline_effect.as_ref(), stack_target_refs(state, item)?),
     })
 }
 

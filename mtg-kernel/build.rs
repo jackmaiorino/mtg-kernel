@@ -3986,6 +3986,8 @@ fn keywords_for(card: &CardJson) -> String {
         keywords.push("Keywords::DEFENDER");
     }
     match card.name.as_str() {
+        "Spyglass Siren" => keywords.push("Keywords::FLYING"),
+        "Sheoldred, the Apocalypse" => keywords.push("Keywords::DEATHTOUCH"),
         "Masked Meower" | "Clockwork Percussionist" => keywords.push("Keywords::HASTE"),
         "Balmor, Battlemage Captain"
         | "Mocking Sprite"
@@ -6320,6 +6322,9 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Spitfire Lagac" => "controlled_land_enters:damage_opponent:1",
         "Dragon Trainer" => "etb:create_red_4_4_flying_dragon:1",
         "Resolute Reinforcements" => "etb:create_white_1_1_soldier:1",
+        "Spyglass Siren" => "etb:create_map_token:1",
+        "Dark Confidant" => "beginning_controller_upkeep:reveal_top_to_hand:lose_life_equal_mana_value",
+        "Sheoldred, the Apocalypse" => "controller_draws:gain_life:2;opponent_draws:lose_life:2",
         "Elfsworn Giant" => "controlled_land_enters:create_elf_warrior:1",
         "Eager Trufflesnout" => "source_combat_damage_to_player:create_food:1",
         "Rite of the Dragoncaller" => "cast_instant_or_sorcery:create_red_5_5_flying_dragon:1",
@@ -6447,7 +6452,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         }
         "Razorkin Needlehead" => "opponent_draws:damage_that_player:1",
         "Quirion Beastcaller" => {
-            "cast_creature_spell:plus_one_counter_on_source:1;dies:distribute_source_plus_one_counters_among_controlled_creatures"
+            "cast_creature_spell:plus_one_counter_on_source:1;dies:announce_source_plus_one_counter_distribution_among_any_number_target_controlled_creatures"
         }
         "Ascendant Packleader" => "cast_spell_mv_at_least_4:plus_one_counter_on_source:1",
         "Sharp-Eyed Rookie" => {
@@ -6483,6 +6488,7 @@ fn standard_static_recipe_for(name: &str) -> &'static str {
         "Evolving Adaptive" => "enters_with_oil_counter:1;self_boost_per_oil_counter:1:1",
         "Coppercoat Vanguard" => "other_controlled_humans:boost:1:0;ward_generic:1",
         "Adeline, Resplendent Cathar" => "cda_power:controlled_creatures",
+        "Regal Bunnicorn" => "cda_power_toughness:controlled_nonland_permanents",
         "Bloodletter of Aclazotz" => "opponent_life_loss_doubled_during_controller_turn",
         "Thalia, Guardian of Thraben" => "noncreature_spells_cost_generic_more:1",
         "Hired Claw" => "activation_0_only_if_opponent_lost_life_this_turn",
@@ -9927,6 +9933,8 @@ fn subtype_variant(t: &str) -> &'static str {
         "Mouse" => "Subtype::Mouse",
         "Werewolf" => "Subtype::Werewolf",
         "Rabbit" => "Subtype::Rabbit",
+        "Siren" => "Subtype::Siren",
+        "Praetor" => "Subtype::Praetor",
         "Avatar" => "Subtype::Avatar",
         "Glimmer" => "Subtype::Glimmer",
         "Sheep" => "Subtype::Sheep",

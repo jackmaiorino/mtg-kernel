@@ -1395,6 +1395,13 @@ pub enum EffectOp {
     /// A MageZero Standard card leaf (`standard_cards_v1`). Appended so every
     /// earlier variant keeps its serialized and hashed shape.
     StandardV1(crate::standard_cards_v1::StandardOpV1),
+    /// Target list and positive allocations are finalized during trigger
+    /// placement. A target that becomes illegal loses only its allocation.
+    DistributePlusOneCounters {
+        total: u32,
+        allocations: Vec<u32>,
+        finalized: bool,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -12627,7 +12634,8 @@ fn resume_library_partition_frame(
             if random_bottom && ordered_rest.len() > 1 {
                 let mut projected = state.clone();
                 projected.apply_scry_result(player, &expected_prefix, &[], &bottom)?;
-                projected.randomize_library_bottom_v1(player, ordered_rest.len())
+                projected
+                    .randomize_library_bottom_v1(player, ordered_rest.len())
                     .map_err(|error| error.to_string())?;
                 *state = projected;
             } else {
@@ -14400,6 +14408,54 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ));
             }
         }
+        EffectOp::DistributePlusOneCounters {
+            total,
+            allocations,
+            finalized,
+        } => {
+            if !*finalized
+                || allocations.len() != ctx.targets.len()
+                || (!allocations.is_empty()
+                    && allocations.iter().map(|n| u64::from(*n)).sum::<u64>() != u64::from(*total))
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
+            for (index, &amount) in allocations.iter().enumerate() {
+                let Target::Object(object) = ctx.targets[index] else {
+                    continue;
+                };
+                if !ctx.target_contracts.get(index).is_some_and(|&contract| {
+                    crate::engine::target_contract_matches_live(state, ctx.targets[index], contract)
+                }) || !crate::engine::effect_target_is_legal(
+                    state,
+                    ctx.source,
+                    ctx.controller,
+                    crate::card_def::TargetSpec::CounterDistribution,
+                    &ctx.targets,
+                    index,
+                ) {
+                    continue;
+                }
+                if event::add_plus_one_counters(
+                    state,
+                    object,
+                    ctx.controller,
+                    i32::try_from(amount).unwrap_or(i32::MAX),
+                )
+                .is_err()
+                {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                }
+            }
+        }
         EffectOp::GainLife { player, amount } => {
             let player = ctx.resolve_player(*player, state);
             event::propose_and_commit(state, event::ProposedEvent::life_gain(player, *amount));
@@ -15037,15 +15093,26 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         } => {
             let stats = |binding: &EffectObjectBinding| {
                 #[cfg(feature = "standard-magezero-fixtures")]
-                { crate::standard_statics_v1::current_or_last_creature_stats(state, *binding) }
+                {
+                    crate::standard_statics_v1::current_or_last_creature_stats(state, *binding)
+                }
                 #[cfg(not(feature = "standard-magezero-fixtures"))]
-                { (validate_effect_object_binding(state, *binding).is_ok()
-                    && binding.expected_zone == Zone::Battlefield).then(|| (
-                        crate::engine::effective_power(state, binding.object),
-                        crate::engine::effective_toughness(state, binding.object))) }
+                {
+                    (validate_effect_object_binding(state, *binding).is_ok()
+                        && binding.expected_zone == Zone::Battlefield)
+                        .then(|| {
+                            (
+                                crate::engine::effective_power(state, binding.object),
+                                crate::engine::effective_toughness(state, binding.object),
+                            )
+                        })
+                }
             };
-            if let (Some((entrant_power, entrant_toughness)), Some((source_power, source_toughness)))
-                = (stats(entrant), stats(source)) {
+            if let (
+                Some((entrant_power, entrant_toughness)),
+                Some((source_power, source_toughness)),
+            ) = (stats(entrant), stats(source))
+            {
                 if entrant_power > source_power || entrant_toughness > source_toughness {
                     execute(then, ctx, state);
                 }

@@ -3238,6 +3238,12 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Enduring Innocence" => &ENDURING_INNOCENCE_TRIGGERS,
         "Monk Token" => &MONASTERY_SWIFTSPEAR_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
+        "Spyglass Siren" => &standard_family_g_v1::SPYGLASS_SIREN_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Dark Confidant" => &standard_family_g_v1::DARK_CONFIDANT_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Sheoldred, the Apocalypse" => &standard_family_g_v1::SHEOLDRED_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
         "Novice Inspector" => &standard_family_g_v1::NOVICE_INSPECTOR_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Sentinel of the Nameless City" => {
@@ -3349,6 +3355,9 @@ fn standard_trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetS
                 TargetSpec::None
             })
         }
+        "Quirion Beastcaller" => Some(if matches!(effect, EffectOp::DistributePlusOneCounters { .. }) {
+            TargetSpec::CounterDistribution
+        } else { TargetSpec::None }),
         "Graveyard Trespasser" => Some(match effect {
             EffectOp::ExileGraveyardTargetsDrainPerCreature { max_targets: 1 } => {
                 TargetSpec::UpToOneCardInGraveyards

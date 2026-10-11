@@ -120,7 +120,11 @@ fn adaptive_oil_counter_effect() -> EffectOp {
 /// so it is built by `quirion_beastcaller_dies_effect` when the trigger is
 /// created.
 fn empty_distribution_effect() -> EffectOp {
-    EffectOp::Sequence(Vec::new())
+    EffectOp::DistributePlusOneCounters {
+        total: 0,
+        allocations: Vec::new(),
+        finalized: true,
+    }
 }
 
 /// Quirion Beastcaller: "Whenever you cast a creature spell, put a +1/+1
@@ -138,72 +142,29 @@ pub(super) const QUIRION_BEASTCALLER_TRIGGERS: [TriggeredAbilityDef; 2] = [
     },
 ];
 
-/// Quirion Beastcaller's dies program: X counters read from the dying
-/// incarnation's last-known counters, each one a choice among the creatures
-/// `controller` controls as the trigger is created. Deviation: the printed
-/// ability targets and divides as it goes on the stack; here the creatures
-/// are fixed at trigger time and each counter is placed during resolution,
-/// so a creature that has left by then simply receives nothing.
+/// Freeze X from the departing incarnation. Allocation is announced during
+/// trigger placement before opponents get priority.
 pub(super) fn quirion_beastcaller_dies_effect(
     state: &GameState,
     source: ObjectId,
-    controller: PlayerId,
+    _controller: PlayerId,
 ) -> EffectOp {
-    let counters = state
+    let total = state
         .objects
         .get(source)
         .zone_change_count
         .checked_sub(1)
         .and_then(|departed| state.counter_lki_for(source, departed))
-        .map_or(0, |counters| counters.plus1_plus1.max(0));
-    let options: Vec<EffectOp> = state.players[controller.index()]
-        .battlefield
-        .iter()
-        .copied()
-        .filter(|&creature| crate::engine::object_has_type(state, creature, CardType::Creature))
-        .map(|creature| EffectOp::PutPlusOnePlusOneCounterOnBoundObject {
-            object: EffectObjectBinding {
-                object: creature,
-                expected_zone: Zone::Battlefield,
-                expected_zone_change_count: state.objects.get(creature).zone_change_count,
-            },
-        })
-        .collect();
-    if options.is_empty() {
-        return empty_distribution_effect();
+        .map_or(0, |counters| counters.plus1_plus1.max(0) as u32);
+    EffectOp::DistributePlusOneCounters {
+        total,
+        allocations: Vec::new(),
+        finalized: total == 0,
     }
-    let step = EffectOp::Choice {
-        controller: PlayerRef::Controller,
-        options,
-    };
-    EffectOp::Sequence(vec![step; counters as usize])
 }
 
-/// Whether `effect` has the shape `quirion_beastcaller_dies_effect` builds:
-/// identical counter placements among distinct battlefield incarnations.
 pub(super) fn is_quirion_beastcaller_dies_effect(effect: &EffectOp) -> bool {
-    let EffectOp::Sequence(steps) = effect else {
-        return false;
-    };
-    let Some(first) = steps.first() else {
-        return true;
-    };
-    let EffectOp::Choice {
-        controller: PlayerRef::Controller,
-        options,
-    } = first
-    else {
-        return false;
-    };
-    !options.is_empty()
-        && steps.iter().all(|step| step == first)
-        && options.iter().enumerate().all(|(index, option)| {
-            matches!(
-                option,
-                EffectOp::PutPlusOnePlusOneCounterOnBoundObject { object }
-                    if object.expected_zone == Zone::Battlefield
-            ) && !options[..index].contains(option)
-        })
+    matches!(effect, EffectOp::DistributePlusOneCounters { .. })
 }
 
 fn that_player_loses_half_life_effect() -> EffectOp {
@@ -348,3 +309,40 @@ pub(super) fn hullbreaker_horror_effect() -> EffectOp {
             .collect(),
     }
 }
+
+/// Flying and a Map on entry.
+pub(super) const SPYGLASS_SIREN_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(create_map_effect)];
+
+fn reveal_top_lose_life() -> EffectOp {
+    EffectOp::RevealTopCardToHandLoseLifeEqualToManaValue
+}
+pub(super) const DARK_CONFIDANT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningOfUpkeep {
+        controller_only: true,
+    },
+    ..etb_trigger(reveal_top_lose_life)
+}];
+
+fn gain_two_life() -> EffectOp {
+    EffectOp::GainLife {
+        player: PlayerRef::Controller,
+        amount: 2,
+    }
+}
+fn opponent_loses_two_life() -> EffectOp {
+    EffectOp::LoseLife {
+        player: PlayerRef::Opponent,
+        amount: 2,
+    }
+}
+pub(super) const SHEOLDRED_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::ControllerDraws,
+        ..etb_trigger(gain_two_life)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::OpponentDraws,
+        ..etb_trigger(opponent_loses_two_life)
+    },
+];

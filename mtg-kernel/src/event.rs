@@ -612,15 +612,8 @@ fn record_counter_lki(state: &mut GameState, object: ObjectId) {
         return;
     }
     let mut entries = state.counter_lki_v1.take().unwrap_or_default();
-    entries.retain(|entry| {
-        state
-            .objects
-            .try_get(entry.source.object)
-            .is_some_and(|candidate| {
-                candidate.zone_change_count == entry.source.zone_change_count + 1
-                    && entry.source.object != object
-            })
-    });
+    entries.retain(|entry| entry.source.object != object
+        || entry.source.zone_change_count != live.zone_change_count);
     if live.counters.any() {
         entries.push(crate::state::CounterLkiV1 {
             source: crate::state::ObjectLinkV4 {

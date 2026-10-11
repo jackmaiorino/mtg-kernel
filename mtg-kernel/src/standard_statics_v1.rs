@@ -148,6 +148,11 @@ pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> 
     }
     let controller = object.controller;
     let count = match definition.name {
+        "Regal Bunnicorn" => state.players[controller.index()]
+            .battlefield
+            .iter()
+            .filter(|&&permanent| !crate::engine::object_has_type(state, permanent, CardType::Land))
+            .count(),
         // "Adeline's power is equal to the number of creatures you control."
         "Adeline, Resplendent Cathar" => state.players[controller.index()]
             .battlefield
@@ -171,6 +176,15 @@ pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> 
         _ => return None,
     };
     Some(i32::try_from(count).unwrap_or(i32::MAX))
+}
+
+pub(crate) fn characteristic_defining_toughness(state: &GameState, id: ObjectId) -> Option<i32> {
+    let object = state.objects.try_get(id)?;
+    if CARD_DEFS.get(object.card_def as usize)?.name == "Regal Bunnicorn" {
+        characteristic_defining_power(state, id)
+    } else {
+        None
+    }
 }
 
 /// Life `player` actually loses when they would lose `amount` (from damage,
@@ -262,7 +276,10 @@ fn restriction_active(
 /// A "for as long as" duration ends permanently the first time its
 /// condition becomes false, even if control returns later (CR 611.2b).
 pub(crate) fn expire_attack_block_restrictions(state: &mut GameState) {
-    let mut restrictions = state.attack_block_restrictions_v1.take().unwrap_or_default();
+    let mut restrictions = state
+        .attack_block_restrictions_v1
+        .take()
+        .unwrap_or_default();
     restrictions.retain(|restriction| restriction_active(state, restriction));
     state.attack_block_restrictions_v1 = (!restrictions.is_empty()).then_some(restrictions);
 }
@@ -294,14 +311,20 @@ pub(crate) fn current_or_last_creature_stats(
         object.zone == Zone::Battlefield
             && object.zone_change_count == binding.expected_zone_change_count
     }) {
-        return Some((crate::engine::effective_power(state, binding.object),
-            crate::engine::effective_toughness(state, binding.object)));
+        return Some((
+            crate::engine::effective_power(state, binding.object),
+            crate::engine::effective_toughness(state, binding.object),
+        ));
     }
-    state.creature_stats_lki_v1.as_ref()?.iter().find_map(|entry| {
-        (entry.source.object == binding.object
-            && entry.source.zone_change_count == binding.expected_zone_change_count)
-            .then_some((entry.power, entry.toughness))
-    })
+    state
+        .creature_stats_lki_v1
+        .as_ref()?
+        .iter()
+        .find_map(|entry| {
+            (entry.source.object == binding.object
+                && entry.source.zone_change_count == binding.expected_zone_change_count)
+                .then_some((entry.power, entry.toughness))
+        })
 }
 
 /// Whether a recorded restriction stops `id` from attacking or blocking.
@@ -348,6 +371,8 @@ pub(crate) enum StandardStaticV1 {
     GrantsWardToOtherHumans,
     /// Power equals the number of creatures its controller controls.
     PowerEqualsControlledCreatures,
+    /// Power and toughness equal controlled nonland permanents.
+    PowerToughnessEqualsControlledNonlandPermanents,
     /// Power equals the number of instant and sorcery cards in its
     /// controller's graveyard.
     PowerEqualsGraveyardInstantsAndSorceries,
@@ -382,6 +407,7 @@ pub(crate) fn rules_vector_statics(name: &str) -> &'static [StandardStaticV1] {
         ],
         "Coppercoat Vanguard" => &[StandardStaticV1::GrantsWardToOtherHumans],
         "Adeline, Resplendent Cathar" => &[StandardStaticV1::PowerEqualsControlledCreatures],
+        "Regal Bunnicorn" => &[StandardStaticV1::PowerToughnessEqualsControlledNonlandPermanents],
         "Haughty Djinn" => &[
             StandardStaticV1::PowerEqualsGraveyardInstantsAndSorceries,
             StandardStaticV1::YourInstantsAndSorceriesCostOneLess,

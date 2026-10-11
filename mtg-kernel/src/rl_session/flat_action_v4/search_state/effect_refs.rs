@@ -59,6 +59,7 @@ impl Scan<'_> {
             StandardV1(op) => op.bound_objects().iter().any(|chosen| self.b(chosen)),
             // Other current leaf programs carry symbolic refs, not physical bindings.
             DealDamage { .. }
+            | DistributePlusOneCounters { .. }
             | ReturnTargetPermanentToBattlefield { .. }
             | GainLife { .. }
             | LoseLife { .. }
