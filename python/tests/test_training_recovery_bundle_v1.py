@@ -1,9 +1,11 @@
 import hashlib
+import gc
 import importlib.util
 import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -59,7 +61,7 @@ class RecoveryBundleTests(unittest.TestCase):
         self.assertEqual(receipt["file_count"], 4)
         self.assertEqual(receipt["bundle"]["bytes"], self.destination.stat().st_size)
         self.assertEqual(receipt["bundle"]["sha256"], hashlib.sha256(self.destination.read_bytes()).hexdigest())
-        self.assertEqual(set(receipt["timing"]), {"inventory_seconds", "stream_seconds", "fsync_seconds",
+        self.assertEqual(set(receipt["timing"]), {"inventory_seconds", "stream_seconds", "source_verify_seconds", "fsync_seconds",
                                                  "publish_seconds", "verify_seconds"})
         with zipfile.ZipFile(self.destination) as archive:
             self.assertEqual(len(archive.infolist()), len(self.files) + 1)
@@ -143,6 +145,30 @@ class RecoveryBundleTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "source mutated during read"):
                 self.create()
         self.assertFalse(self.destination.exists())
+
+    def test_after_stream_same_size_rewrite_with_restored_mtime_refuses_publication(self):
+        source = self.files[0]
+        original_metadata = source.stat()
+        original_info = BUNDLE._zip_info
+        def mutate(name):
+            if name == BUNDLE.MANIFEST:
+                source.write_bytes(b'{"case":2}\n')
+                os.utime(source, ns=(original_metadata.st_atime_ns, original_metadata.st_mtime_ns))
+            return original_info(name)
+        with patch.object(BUNDLE, "_zip_info", side_effect=mutate):
+            with self.assertRaisesRegex(ValueError, "source (SHA changed|mutated) before publication"):
+                self.create(expected_inventory=self.expected)
+        self.assertFalse(self.destination.exists())
+        self.assertTrue(self.destination.with_name(self.destination.name + ".partial").exists())
+
+    def test_failure_cleanup_has_no_unraisable_closed_output_flush(self):
+        errors = []
+        with patch.object(sys, "unraisablehook", side_effect=errors.append):
+            with patch.object(BUNDLE.os, "fsync", side_effect=OSError("fsync failed")):
+                with self.assertRaises(OSError):
+                    self.create()
+            gc.collect()
+        self.assertEqual(errors, [])
 
     def test_hard_link_sources_refuse(self):
         link = self.source / "hard-link"

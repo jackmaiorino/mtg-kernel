@@ -56,8 +56,19 @@ def _regular(path: Path):
 
 
 def _fingerprint(metadata):
+    # Windows Python 3.13 path stat exposes compatibility creation time in
+    # st_ctime, while fstat exposes change time. Birth time is consistent across
+    # both APIs. Full source SHA is independently rechecked before publication.
+    timestamp = (getattr(metadata, "st_birthtime_ns", metadata.st_ctime_ns)
+                 if os.name == "nt" else metadata.st_ctime_ns)
     return (metadata.st_dev, metadata.st_ino, metadata.st_size,
-            metadata.st_mtime_ns, metadata.st_ctime_ns, metadata.st_nlink)
+            metadata.st_mtime_ns, timestamp, metadata.st_nlink)
+
+
+def _handle_fingerprint(metadata):
+    # Compare change time only within the same handle API, where its meaning is
+    # stable. This also detects a during-read rewrite with restored mtime.
+    return _fingerprint(metadata) + (metadata.st_ctime_ns,)
 
 
 def _relative(value: str) -> str:
@@ -177,10 +188,11 @@ def create_bundle(source_root: Path | str, sources: Iterable[Path | str],
     """Stream each selected source once, publish, and independently verify.
 
     ``sources`` must contain every payload file, without duplicate paths. Source
-    bytes are hashed while streaming and file identity/metadata is checked both
-    around each read and after the entire inventory. Optional expected_inventory
-    adds caller-supplied SHA pins. Failures retain the .partial ZIP or published
-    archive and raise; no success receipt is returned.
+    bytes are hashed while streaming, then independently rehashed before ZIP
+    publication, including same-size mutations with restored modification time.
+    File identity/metadata is checked around each read. Optional
+    expected_inventory adds caller-supplied SHA pins. Failures retain the
+    .partial ZIP or published archive and raise; no success receipt is returned.
     """
     began = time.monotonic()
     root = _safe_path(source_root)
@@ -213,8 +225,7 @@ def create_bundle(source_root: Path | str, sources: Iterable[Path | str],
     timing = {"inventory_seconds": time.monotonic() - began}
     phase = time.monotonic()
     inventory = []
-    with temporary.open("xb") as output:
-        writer = _SequentialWriter(output)
+    with temporary.open("xb") as output, _SequentialWriter(output) as writer:
         with zipfile.ZipFile(writer, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
             for index, (relative, source, identity) in enumerate(jobs):
                 _require(_fingerprint(_regular(source)) == identity, "source mutated before read")
@@ -222,14 +233,16 @@ def create_bundle(source_root: Path | str, sources: Iterable[Path | str],
                 descriptor = os.open(source, os.O_RDONLY | getattr(os, "O_BINARY", 0)
                                      | getattr(os, "O_NOFOLLOW", 0))
                 with os.fdopen(descriptor, "rb") as original:
-                    _require(_fingerprint(os.fstat(original.fileno())) == identity,
+                    opened = os.fstat(original.fileno())
+                    handle_identity = _handle_fingerprint(opened)
+                    _require(_fingerprint(opened) == identity,
                              "source replaced during open")
                     with archive.open(_zip_info("payload/" + relative), "w", force_zip64=True) as member:
                         while block := original.read(CHUNK):
                             member.write(block)
                             digest.update(block)
                             size += len(block)
-                    _require(_fingerprint(os.fstat(original.fileno())) == identity
+                    _require(_handle_fingerprint(os.fstat(original.fileno())) == handle_identity
                              and _fingerprint(_regular(source)) == identity and size == identity[2],
                              "source mutated during read")
                 record = {"relative_path": relative, "bytes": size, "sha256": digest.hexdigest()}
@@ -239,15 +252,31 @@ def create_bundle(source_root: Path | str, sources: Iterable[Path | str],
             manifest = {"schema": SCHEMA, "files": inventory}
             archive.writestr(_zip_info(MANIFEST), json.dumps(manifest, sort_keys=True,
                              separators=(",", ":"), ensure_ascii=True).encode("utf-8"))
+        timing["stream_seconds"] = time.monotonic() - phase
+        phase = time.monotonic()
+        for (_, source, identity), record in zip(jobs, inventory):
+            _require(_fingerprint(_regular(source)) == identity, "source mutated before publication")
+            descriptor = os.open(source, os.O_RDONLY | getattr(os, "O_BINARY", 0)
+                                 | getattr(os, "O_NOFOLLOW", 0))
+            with os.fdopen(descriptor, "rb") as original:
+                opened = os.fstat(original.fileno())
+                _require(_fingerprint(opened) == identity, "source replaced before publication")
+                handle_identity = _handle_fingerprint(opened)
+                digest = hashlib.file_digest(original, "sha256").hexdigest()
+                _require(_handle_fingerprint(os.fstat(original.fileno())) == handle_identity
+                         and _fingerprint(_regular(source)) == identity,
+                         "source mutated during final verification")
+                _require(digest == record["sha256"], "source SHA changed before publication")
+        # Catch ordinary mutations to earlier members while the final source
+        # pass was reading later members. No payload is silently reselected.
         for _, source, identity in jobs:
             _require(_fingerprint(_regular(source)) == identity, "source mutated before publication")
-        timing["stream_seconds"] = time.monotonic() - phase
+        timing["source_verify_seconds"] = time.monotonic() - phase
         phase = time.monotonic()
         output.flush()
         os.fsync(output.fileno())
         timing["fsync_seconds"] = time.monotonic() - phase
         archive_sha, archive_bytes = writer.digest.hexdigest(), writer.position
-        writer.close()
     phase = time.monotonic()
     _publish(temporary, destination)
     timing["publish_seconds"] = time.monotonic() - phase
