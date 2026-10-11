@@ -547,12 +547,3 @@ pub(super) fn run_bank(
         Ok(())
     })
 }
-
-#[cfg(test)]
-pub(super) fn source_row_for_test(
-    sh: &BankShared,
-    roles: &mut Roles,
-    src: &SourceSpec,
-) -> Result<Value, String> {
-    source_row(sh, roles, src)
-}

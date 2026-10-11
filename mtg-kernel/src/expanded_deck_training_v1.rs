@@ -827,10 +827,7 @@ impl ExpandedEpisodeV1 {
     /// search pin and the opt-in opponent kinds. Conflicting opponent fields
     /// fail closed before collection. That collector builds its own games,
     /// so it refuses runtime rules and reset starts.
-    #[cfg_attr(
-        not(any(test, feature = "experimental-burn-net8-packed-cuda-v1")),
-        allow(dead_code, reason = "used by the public-feature collector build")
-    )]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     fn configurations_for_public_collector_v1(&self) -> Result<[DeckConfigurationV1; 2], String> {
         ensure(
             self.runtime_rules.is_none() && self.reset.is_none(),
