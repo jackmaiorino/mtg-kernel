@@ -20,13 +20,14 @@ Four prepared native groups cover real declarations for either seat,
 identical predecessor projections after combat cleanup with differing Raid
 history, snapshot restoration, stale-turn refusal, hidden hand/library
 identity invariance, explicit V9 round trip and V8 shape refusal. They
-remain uncompiled/unrun. Formatting and diff checks do not qualify them.
+have passed the Limited all-test typecheck, but remain unrun. Formatting
+and diff checks do not qualify gameplay.
 Engine history/declaration lifecycle has its separate inherited primitives.
 
 This is artifact transport preparation. A separately pinned actor-relative
 tensor successor, authenticated scorer binding, Human successor and actual
 cross-consumer cases remain required before Raid registration/admission.
 V9 does not admit an existing model, runtime, training lane or evaluation.
-The three-card candidate's actual v70 catalog hash/profile also remains
-uninstalled. Reuse inherited evidence, qualify the new source through the
+The three-card candidate's actual v70 identity2a7fae6a5d9cc7a5 is generated;
+its local profile changes remain unqualified. Reuse inherited evidence, qualify the new source through the
 supported launcher when capacity returns, and preserve failed receipts.
