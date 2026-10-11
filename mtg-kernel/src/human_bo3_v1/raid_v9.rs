@@ -119,6 +119,12 @@ impl HumanDecisionProjectorV9 {
                 known_library_cards: state.known_library_cards,
                 known_hand_cards: state.known_hand_cards,
                 policy_context: state.policy_context,
+                known_face_down_cards: state.known_face_down_cards,
+                poison_counters: state.poison_counters,
+                poison_prevention: state.poison_prevention,
+                creatures_attacked_this_turn: state.creatures_attacked_this_turn,
+                ninja_emblems: state.ninja_emblems,
+                restricted_mana: state.restricted_mana,
                 extensions: HumanExtensionsV9 {
                     predecessor: state.extensions,
                     own_attacked_this_turn: flags[actor],

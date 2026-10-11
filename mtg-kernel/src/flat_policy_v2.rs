@@ -5811,7 +5811,7 @@ impl FlatDecisionEncoderV2 {
             {
                 return Err(FlatDecisionErrorV2::InconsistentReference);
             }
-            let wanted = Self::private_key(&trait_row.source, actor, 0);
+            let wanted = self.private_key(&trait_row.source, actor, 0);
             let mut model_object_indices = self
                 .object_keys
                 .iter()
