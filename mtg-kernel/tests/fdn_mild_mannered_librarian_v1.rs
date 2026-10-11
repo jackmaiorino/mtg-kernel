@@ -585,6 +585,28 @@ fn actual_unresolved_paid_activation_cannot_manufacture_completion_without_an_op
         assert_eq!(forged.objects.get(source).counters.plus1_plus1, 0);
         assert_eq!(forged.players[actor.index()].hand.len(), hand);
         refuse_paid_restore(&forged);
+        // A coherent mutable operation/completion pair still cannot replace
+        // the original independently committed exact counter-removal journal.
+        let mut forged = restore(&state);
+        forged
+            .stack
+            .retain(|item| item.v4.stack_item_id != original.v4.stack_item_id);
+        let operation_history_index = u64::try_from(forged.engine.event_history.len()).unwrap();
+        forged.engine.event_history.push(
+            mtg_kernel::event::CommittedEvent::LibrarianActivationOperationV1 {
+                item: Box::new(original.clone()),
+                operation: mtg_kernel::librarian_activation_v1::OperationV1::Countered {
+                    removal_history_index: 0,
+                },
+            },
+        );
+        forged.engine.event_history.push(
+            mtg_kernel::event::CommittedEvent::LibrarianActivationFinishedV1 {
+                stack_item_id: original.v4.stack_item_id,
+                operation_history_index,
+            },
+        );
+        refuse_paid_restore(&forged);
         finish(&mut state);
         assert_eq!(state.objects.get(source).counters.plus1_plus1, 2);
         assert_eq!(state.players[actor.index()].hand.len(), hand + 1);

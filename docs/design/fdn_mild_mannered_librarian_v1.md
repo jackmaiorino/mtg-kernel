@@ -140,3 +140,17 @@ mark, one completion and ordinary absent-ID second counter behavior. The early
 test module declaration is moved unchanged to the production file end. All
 fifteen original/new prepared groups remain unrun; only pinned formatting and
 diff checks have been performed for this repair.
+
+The follow-up coherent Countered/Finished-pair finding additionally binds counter
+closure to its independently committed actual removal. The exact-ID counter
+primitive acquires a private owner only from the unique authenticated live row,
+removes that row, and emits its full original removal occurrence before the
+operation. Countered references that exact occurrence; completion requires one
+ordered removal with an identical original item. Live and resolved rows permit
+no counter-removal occurrence. Absent-ID, protected and unrelated old counter
+paths emit none. The both-seat printed negative now forges the coherent operation
+and completion together while preserving original removal journals, and the real
+counter primitive fixture rejects erased or coherently rewritten removal rows
+read-only. The original independent operation/removal journal is trusted engine
+provenance; replacing that entire original authority is not cryptographic snapshot
+integrity and remains outside the claim.

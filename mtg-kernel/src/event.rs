@@ -820,6 +820,9 @@ pub enum CommittedEvent {
         item: Box<crate::state::StackItem>,
         operation: crate::librarian_activation_v1::OperationV1,
     },
+    LibrarianActivationCounterRemovalV1 {
+        item: Box<crate::state::StackItem>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

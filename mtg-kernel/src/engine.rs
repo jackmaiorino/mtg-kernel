@@ -13800,6 +13800,8 @@ pub(crate) fn counter_stack_item_by_id(
     } else {
         None
     };
+    let librarian_counter_owner =
+        crate::librarian_activation_v1::acquire_counter_owner(state, &item)?;
     state.stack.remove(position);
     effect::frenzied_goblin_resolution_v1::complete_unstarted(
         state,
@@ -13809,7 +13811,7 @@ pub(crate) fn counter_stack_item_by_id(
     crate::source_power_activation_v1::finish(state, &item);
     crate::authority_of_the_consuls_v1::record_countered(state, &item);
     crate::cerberus_capture_v1::record_countered(state, &item);
-    crate::librarian_activation_v1::record_countered(state, &item);
+    crate::librarian_activation_v1::record_countered(state, &item, librarian_counter_owner)?;
     crate::librarian_activation_v1::finish(state, &item);
     crate::authority_of_the_consuls_v1::finish(state, &item);
     crate::cerberus_capture_v1::finish(state, &item);

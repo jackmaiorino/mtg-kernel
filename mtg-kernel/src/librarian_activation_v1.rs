@@ -12,7 +12,9 @@ pub enum OperationV1 {
         draw_history_index: u64,
         counter_history_index: Option<u64>,
     },
-    Countered,
+    Countered {
+        removal_history_index: u64,
+    },
 }
 
 fn definition_owns(item: &StackItem) -> bool {
@@ -70,16 +72,65 @@ pub(crate) fn record_paid(state: &mut GameState, id: StackItemId) {
     }
 }
 
-pub(crate) fn record_countered(state: &mut GameState, item: &StackItem) {
-    if definition_owns(item) {
-        state
-            .engine
-            .event_history
-            .push(CommittedEvent::LibrarianActivationOperationV1 {
-                item: Box::new(item.clone()),
-                operation: OperationV1::Countered,
-            });
+/// Private pre-removal ownership. External snapshots cannot construct this
+/// token; only the authenticated exact live counter primitive acquires it.
+pub(crate) struct CounterRemovalOwnerV1 {
+    item: StackItem,
+}
+pub(crate) fn acquire_counter_owner(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<CounterRemovalOwnerV1>, String> {
+    if !definition_owns(item) {
+        return Ok(None);
     }
+    validate_item(state, item)?;
+    let live: Vec<_> = state
+        .stack
+        .iter()
+        .filter(|live| live.v4.stack_item_id == item.v4.stack_item_id)
+        .collect();
+    if live.as_slice() != [item] {
+        return Err("Librarian counter lost exact live ownership".into());
+    }
+    Ok(Some(CounterRemovalOwnerV1 { item: item.clone() }))
+}
+
+pub(crate) fn record_countered(
+    state: &mut GameState,
+    item: &StackItem,
+    owner: Option<CounterRemovalOwnerV1>,
+) -> Result<(), String> {
+    if !definition_owns(item) {
+        return Ok(());
+    }
+    let owner = owner.ok_or("Librarian counter lost private pre-removal ownership")?;
+    if owner.item != *item
+        || state
+            .stack
+            .iter()
+            .any(|live| live.v4.stack_item_id == item.v4.stack_item_id)
+    {
+        return Err("Librarian counter did not remove its exact owned row".into());
+    }
+    let removal_history_index = u64::try_from(state.engine.event_history.len())
+        .map_err(|_| "removal occurrence exceeds u64")?;
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::LibrarianActivationCounterRemovalV1 {
+            item: Box::new(owner.item),
+        });
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::LibrarianActivationOperationV1 {
+            item: Box::new(item.clone()),
+            operation: OperationV1::Countered {
+                removal_history_index,
+            },
+        });
+    Ok(())
 }
 
 /// Called only after the exact atomic printed program executes. The ordinary
@@ -235,6 +286,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             CommittedEvent::LibrarianActivationCommittedV1 { .. }
                 | CommittedEvent::LibrarianActivationFinishedV1 { .. }
                 | CommittedEvent::LibrarianActivationOperationV1 { .. }
+                | CommittedEvent::LibrarianActivationCounterRemovalV1 { .. }
         )
     }) {
         return Err("Librarian paid authority entered transient trigger log".into());
@@ -284,8 +336,22 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 _ => None,
             })
             .collect();
+        let removals: Vec<_> = state
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .filter_map(|(at, event)| match event {
+                CommittedEvent::LibrarianActivationCounterRemovalV1 { item: original }
+                    if original.v4.stack_item_id == item.v4.stack_item_id =>
+                {
+                    Some((at, original.as_ref()))
+                }
+                _ => None,
+            })
+            .collect();
         match (finishes.as_slice(), live.as_slice(), operations.as_slice()) {
-            ([], [live], []) if **live == **item => {}
+            ([], [live], []) if **live == **item && removals.is_empty() => {}
             ([finished], [], [(operation_index, original, operation)])
                 if index < *operation_index
                     && *operation_index < *finished
@@ -300,6 +366,30 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 };
                 if usize::try_from(*operation_history_index).ok() != Some(*operation_index) {
                     return Err("Librarian completion redirected its original operation".into());
+                }
+                match operation {
+                    OperationV1::Countered {
+                        removal_history_index,
+                    } => {
+                        let [(removed_at, removed)] = removals.as_slice() else {
+                            return Err(
+                                "Librarian counter lost its independent actual removal".into()
+                            );
+                        };
+                        if *removed != item.as_ref()
+                            || *removed_at <= index
+                            || *removed_at >= *operation_index
+                            || usize::try_from(*removal_history_index).ok() != Some(*removed_at)
+                        {
+                            return Err("Librarian counter redirected its original removal".into());
+                        }
+                    }
+                    OperationV1::Resolved { .. } if !removals.is_empty() => {
+                        return Err(
+                            "Librarian resolution unexpectedly carries counter removal".into()
+                        );
+                    }
+                    OperationV1::Resolved { .. } => {}
                 }
                 if let OperationV1::Resolved {
                     draw_history_index,
@@ -353,7 +443,8 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         CommittedEvent::LibrarianActivationFinishedV1 { stack_item_id, .. } => {
             !ids.contains(stack_item_id)
         }
-        CommittedEvent::LibrarianActivationOperationV1 { item, .. } => {
+        CommittedEvent::LibrarianActivationOperationV1 { item, .. }
+        | CommittedEvent::LibrarianActivationCounterRemovalV1 { item } => {
             !ids.contains(&item.v4.stack_item_id)
         }
         _ => false,
@@ -444,6 +535,37 @@ mod tests {
             let restored: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
             validate_state(&restored).unwrap();
+            for alteration in 0..2 {
+                let mut forged = restored.clone();
+                if alteration == 0 {
+                    forged.engine.event_history.retain(|event| {
+                        !matches!(
+                            event,
+                            CommittedEvent::LibrarianActivationCounterRemovalV1 { .. }
+                        )
+                    });
+                } else {
+                    let removal = forged
+                        .engine
+                        .event_history
+                        .iter_mut()
+                        .find(|event| {
+                            matches!(
+                                event,
+                                CommittedEvent::LibrarianActivationCounterRemovalV1 { .. }
+                            )
+                        })
+                        .unwrap();
+                    let CommittedEvent::LibrarianActivationCounterRemovalV1 { item } = removal
+                    else {
+                        unreachable!()
+                    };
+                    item.controller = actor.opponent();
+                }
+                let bytes = serde_json::to_vec(&forged).unwrap();
+                assert!(crate::engine::step(&mut forged, crate::engine::Action::Pass).is_err());
+                assert_eq!(serde_json::to_vec(&forged).unwrap(), bytes);
+            }
         }
     }
 }
