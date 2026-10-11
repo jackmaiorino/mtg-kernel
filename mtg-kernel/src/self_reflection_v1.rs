@@ -110,7 +110,23 @@ pub(crate) fn validate_live_stack(state: &GameState) -> Result<(), String> {
         return Ok(());
     }
     for item in &state.stack {
-        if owns_spell(state, item) {
+        // Kind and inline-effect compatibility are mutable fields to validate,
+        // not gates which may hide a physically definition-owned spell.
+        let owned = |card_def: u16| {
+            CARD_DEFS.get(usize::from(card_def)).is_some_and(|def| {
+                def.name == "Self-Reflection"
+                    && (def.spell_effect)() == Some(EffectOp::CreateControlledCreatureTargetCopyV1)
+            })
+        };
+        if state
+            .objects
+            .try_get(item.source)
+            .is_some_and(|source| owned(source.card_def))
+            || item
+                .v4
+                .source_contract
+                .is_some_and(|source| owned(source.card_def))
+        {
             crate::engine::validated_stack_item_target_spec(item, state)?;
         }
     }
