@@ -7644,7 +7644,7 @@ fn rng_below(rng: &mut SplitMix64, n: usize) -> usize {
     (rng.next_u64() % n as u64) as usize
 }
 
-fn stable_hash_json<T: Serialize>(value: &T) -> Result<u64> {
+pub(crate) fn stable_hash_json<T: Serialize>(value: &T) -> Result<u64> {
     let mut writer = Fnv1a64Writer::new();
     serde_json::to_writer(&mut writer, value)?;
     Ok(writer.finish())
