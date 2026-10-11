@@ -18,6 +18,7 @@ pub enum LegendEffectV1 {
     ReturnBoundPermanent(EffectObjectBinding),
     LagrellaExileTargets,
     CountersOnReturnedPermanent(EffectObjectBinding),
+    ShannaPayAndDraw,
 }
 
 pub(crate) fn has_printed_ability(state: &GameState, object: ObjectId, name: &str) -> bool {
@@ -65,6 +66,12 @@ fn binding(state: &GameState, object: ObjectId) -> EffectObjectBinding {
 
 pub(crate) fn execute(op: LegendEffectV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        LegendEffectV1::ShannaPayAndDraw => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
         LegendEffectV1::ProtectTargetFromDeath => {
             let Some(Target::Object(target)) = ctx.targets.first().copied() else {
                 return;

@@ -40,6 +40,7 @@ use crate::state::{
 };
 use serde::{Deserialize, Serialize};
 pub(crate) mod library_choice_search_v2;
+mod standard_payment_v1;
 pub mod standard_selection_v1;
 pub use standard_selection_v1::{
     ObjectSelectionActionV1, ObjectSelectionFilterV1, ObjectSelectionRuleV1,
@@ -1938,6 +1939,11 @@ pub enum EffectFrame {
         choice: DiscardDrawChoice,
         selected: Vec<EffectObjectBinding>,
     },
+    PayGenericDrawV1 {
+        amount: u16,
+        path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -2456,6 +2462,9 @@ pub enum EffectOptionChoicePurpose {
     /// (`StandardOpV1::ChooseTwoManaInAnyCombination`).
     StandardManaCombinationV1 {
         player: PlayerId,
+    },
+    PayGenericDrawV1 {
+        maximum: u16,
         canonical_path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
     },
@@ -2792,6 +2801,9 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         // Whether the decision is needed depends on the revealed cards, but
         // the program must enter the resumable interpreter so a 2+ card
         // graveyard batch can yield its owner's ordering choice.
+        EffectOp::StandardLegendV1(
+            crate::standard_legends_v1::LegendEffectV1::ShannaPayAndDraw,
+        ) => true,
         EffectOp::RevealTopAndPartitionByType { .. } => true,
         EffectOp::RevealUntilCardTypeAndMill { .. } => true,
         EffectOp::MillCards { count, .. } => *count > 1,
@@ -2918,6 +2930,16 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
                 ));
             };
             match purpose {
+                EffectOptionChoicePurpose::PayGenericDrawV1 {
+                    expected_remaining_frames,
+                    ..
+                } => {
+                    continuation.frames.push(EffectFrame::PayGenericDrawV1 {
+                        amount: option_index,
+                        path,
+                        expected_remaining_frames,
+                    });
+                }
                 EffectOptionChoicePurpose::Generic => {
                     path.push(option_index);
                     continuation
@@ -8775,6 +8797,22 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
             purpose,
             path,
         } => match purpose {
+            EffectOptionChoicePurpose::PayGenericDrawV1 {
+                maximum,
+                canonical_path,
+                expected_remaining_frames,
+            } => {
+                standard_payment_v1::validate_choice(
+                    state,
+                    pending,
+                    *player,
+                    path,
+                    options,
+                    *maximum,
+                    canonical_path,
+                    expected_remaining_frames,
+                )?;
+            }
             EffectOptionChoicePurpose::Generic => {
                 for option in options {
                     validate_resumable_program(option)?;
@@ -10289,6 +10327,19 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     state
                         .commit_library_shuffle(player, shuffle_token)
                         .map_err(|error| error.to_string())?;
+                }
+                EffectFrame::PayGenericDrawV1 {
+                    amount,
+                    path,
+                    expected_remaining_frames,
+                } => {
+                    standard_payment_v1::pay_and_draw(
+                        state,
+                        &continuation,
+                        amount,
+                        &path,
+                        &expected_remaining_frames,
+                    )?;
                 }
                 EffectFrame::ApplySelectedObjectsV1 {
                     rule,
@@ -12023,6 +12074,13 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         expected_remaining_frames,
                     },
                 });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::StandardLegendV1(
+                crate::standard_legends_v1::LegendEffectV1::ShannaPayAndDraw,
+            ) => {
+                standard_payment_v1::begin(state, &mut continuation, path)?;
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
             }

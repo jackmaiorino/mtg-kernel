@@ -3031,7 +3031,6 @@ impl Special {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AbilityCostRecipe {
-    PayLife(u8),
     Mana {
         colored: Option<&'static str>,
         generic: u8,
@@ -3198,7 +3197,7 @@ enum AbilityEffectRecipe {
     /// A hand-written runtime program, named by its `crate::` path. Used for
     /// card-specific abilities whose shape no structured recipe covers; the
     /// path is part of the card-database token.
-    Program(&'static str),
+    StandardProgram(&'static str),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3404,11 +3403,7 @@ fn special_for(name: &str) -> Special {
         "Bind the Monster" | "Witness Protection" | "Twinblade Blessing" | "Blanchwood Armor" => {
             Special::BindTheMonster
         }
-        "Zoetic Glyph" => program(
-            "ArtifactPermanent",
-            "PutSourceOntoBattlefieldAttachedToTarget(Target0)",
-            "EffectOp::PutSourceOntoBattlefieldAttachedToTarget { target: ObjectRef::Target(0) }",
-        ),
+        "Zoetic Glyph" => Special::Program { target:"ArtifactPermanent",recipe:"PutSourceOntoBattlefieldAttachedToTarget(Target0)",effect:"EffectOp::PutSourceOntoBattlefieldAttachedToTarget { target: ObjectRef::Target(0) }",mode2:None },
         "Snap" => Special::Snap,
         "Flaring Pain" => Special::DamageCannotBePreventedThisTurn,
         "Prismatic Strands" => Special::PrismaticStrands,
@@ -5744,7 +5739,6 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
             format!("CostComponent::DiscardCards({count})")
         }
         AbilityCostRecipe::DiscardSelf => "CostComponent::DiscardSelf".to_string(),
-        AbilityCostRecipe::PayLife(n) => format!("CostComponent::PayLife({n})"),
         AbilityCostRecipe::SacrificeSelf => "CostComponent::SacrificeSelf".to_string(),
         AbilityCostRecipe::SacrificeOtherControlledCreatures(count) => {
             format!("CostComponent::SacrificeOtherControlledCreatures({count})")
@@ -5803,7 +5797,6 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::Tap => "tap".to_string(),
         AbilityCostRecipe::DiscardCards(count) => format!("discard_cards:{count}"),
         AbilityCostRecipe::DiscardSelf => "discard_self".to_string(),
-        AbilityCostRecipe::PayLife(n) => format!("pay_life:{n}"),
         AbilityCostRecipe::SacrificeSelf => "sacrifice_self".to_string(),
         AbilityCostRecipe::SacrificeOtherControlledCreatures(count) => {
             format!("sacrifice_other_controlled_creatures:{count}")
@@ -5972,7 +5965,7 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
             "pump_target_and_grant_keyword_until_end_of_turn:{power}:{toughness}:{}",
             keyword.to_ascii_lowercase()
         ),
-        AbilityEffectRecipe::Program(path) => format!("program:{path}"),
+        AbilityEffectRecipe::StandardProgram(path) => format!("program:{path}"),
     }
 }
 
@@ -6211,7 +6204,7 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
             signed_fn_token(toughness),
             keyword.to_ascii_lowercase()
         ),
-        AbilityEffectRecipe::Program(path) => format!(
+        AbilityEffectRecipe::StandardProgram(path) => format!(
             "ability_effect_program_{}",
             path.trim_start_matches("crate::").replace("::", "_")
         ),
@@ -7609,7 +7602,7 @@ fn codegen(cards: &[CardJson]) -> String {
                 writeln!(out, "        EffectOp::GrantKeywordTargetUntilEndOfTurn {{ object: ObjectRef::Target(0), keyword: Keywords::{keyword} }},").unwrap();
                 writeln!(out, "    ])").unwrap();
             }
-            AbilityEffectRecipe::Program(path) => {
+            AbilityEffectRecipe::StandardProgram(path) => {
                 writeln!(out, "    {path}()").unwrap();
             }
         }

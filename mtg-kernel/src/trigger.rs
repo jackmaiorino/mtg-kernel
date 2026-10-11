@@ -3333,6 +3333,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Sheoldred, the Apocalypse" => &standard_family_g_v1::SHEOLDRED_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Lagrella, the Magpie" => &standard_legends_v1::LAGRELLA,
+        "Shanna, Purifying Blade" => &standard_legends_v1::SHANNA,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Ertai Resurrected" => &standard_legends_v1::ERTAI,
         #[cfg(feature = "standard-magezero-fixtures")]

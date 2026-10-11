@@ -270,6 +270,10 @@ impl Scan<'_> {
             WardPayment {
                 choice, selected, ..
             } => self.bs(&choice.candidates) || self.bs(selected) || self.fs(&choice.remaining),
+            PayGenericDrawV1 {
+                expected_remaining_frames,
+                ..
+            } => self.fs(expected_remaining_frames),
             ApplySelectedObjectsV1 {
                 original_candidates,
                 selected,
@@ -668,6 +672,10 @@ impl Scan<'_> {
                 options.iter().any(|o| self.op(o)) || {
                     use EffectOptionChoicePurpose::*;
                     match purpose {
+                        PayGenericDrawV1 {
+                            expected_remaining_frames,
+                            ..
+                        } => self.fs(expected_remaining_frames),
                         Generic => false,
                         OwnerLibraryTopOrBottom {
                             object,

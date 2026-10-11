@@ -12,7 +12,7 @@ use AbilityCostRecipe::{
     SacrificeSelf, Tap,
 };
 use AbilityEffectRecipe::AttachSourceToTarget;
-use AbilityEffectRecipe::{DrawCards, Program};
+use AbilityEffectRecipe::{DrawCards, StandardProgram as Program};
 
 /// A planeswalker loyalty ability: sorcery-speed, from the battlefield.
 const fn loyalty(

@@ -754,3 +754,44 @@ fn lagrella_returns_both_players_creatures_and_counters_only_its_controllers() {
     assert_eq!(state.objects.get(ours).counters.plus1_plus1, 2);
     assert_eq!(state.objects.get(theirs).counters.plus1_plus1, 0);
 }
+
+#[test]
+fn shanna_payment_is_bounded_by_actual_life_gain_and_available_mana() {
+    let mut state = ready(Step::Main2);
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Shanna, Purifying Blade",
+        Zone::Battlefield,
+    );
+    for _ in 0..3 {
+        put(&mut state, PlayerId::P0, "Forest", Zone::Battlefield);
+    }
+    event::propose_and_commit(&mut state, ProposedEvent::life_gain(PlayerId::P0, 4));
+    event::propose_and_commit(&mut state, ProposedEvent::life_loss(PlayerId::P0, 8));
+    let before = state.players[0].hand.len();
+    let mut chose = false;
+    for _ in 0..30 {
+        match next(&mut state) {
+            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+            Decision::ChooseEffectOption { option_count, .. } => {
+                assert_eq!(option_count, 4);
+                engine::step(&mut state, Action::ChooseEffectOption(2)).unwrap();
+                chose = true;
+                break;
+            }
+            other => panic!("unexpected Shanna decision: {other:?}"),
+        }
+    }
+    assert!(chose);
+    settled(&mut state);
+    assert_eq!(state.players[0].hand.len(), before + 2);
+    assert_eq!(
+        state.players[0]
+            .battlefield
+            .iter()
+            .filter(|&&id| state.objects.get(id).tapped)
+            .count(),
+        2
+    );
+}

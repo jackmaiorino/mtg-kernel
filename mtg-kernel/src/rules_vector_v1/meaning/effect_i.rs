@@ -11,6 +11,14 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         EffectOp::StandardLegendV1(op) => {
             use crate::standard_legends_v1::LegendEffectV1;
             match op {
+                LegendEffectV1::ShannaPayAndDraw => {
+                    out.control(ControlF::ChooseObjects);
+                    out.effect(
+                        EffectAtom::moving(Some(ZoneF::Library), ZoneF::Hand)
+                            .player(RelF::You)
+                            .obj(ObjF::AnyCard),
+                    );
+                }
                 LegendEffectV1::ProtectTargetFromDeath => out.effect(
                     EffectAtom::moving(Some(ZoneF::Graveyard), ZoneF::Battlefield)
                         .obj(ObjF::Permanent)

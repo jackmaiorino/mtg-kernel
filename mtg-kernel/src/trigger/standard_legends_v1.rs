@@ -36,3 +36,11 @@ fn lagrella() -> EffectOp {
     EffectOp::StandardLegendV1(LegendEffectV1::LagrellaExileTargets)
 }
 pub(super) const LAGRELLA: [TriggeredAbilityDef; 1] = [etb_trigger(lagrella)];
+
+fn shanna() -> EffectOp {
+    EffectOp::StandardLegendV1(LegendEffectV1::ShannaPayAndDraw)
+}
+pub(super) const SHANNA: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningControllerEndStep,
+    ..etb_trigger(shanna)
+}];
