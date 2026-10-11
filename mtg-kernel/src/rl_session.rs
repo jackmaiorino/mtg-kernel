@@ -4337,7 +4337,8 @@ fn flat_validate_expected_decision_v1(
         || session.state.trigger_uses_v1.is_some()
         || session.state.engine.active_replacements.iter().any(|replacement| {
             matches!(replacement.kind,
-                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. })
+                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. }
+                | crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. })
         })
     {
         return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);

@@ -178,6 +178,7 @@ impl Scan<'_> {
             | LookTopMayKeepOneRestGraveyard { .. }
             | TakeExtraTurnAfterThisOneV1
             | CreateControlledCreatureTargetCopyV1
+            | FieryAnnihilation
             | DoubleTargetPowerUntilEndOfTurn { .. }
             | DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
             | CreateTokensForOtherControlledCreaturesNamed { .. }
@@ -1053,6 +1054,16 @@ pub(super) fn conflicts(
             | StromkirkCounterRemovedV2 { .. }
             | StromkirkOperationV2 { .. }
             | StromkirkCompletedV2 { .. } => true,
+            ExileIfDiesReplacementInstalledV1 { replacement } => {
+                s.raw(replacement.source)
+                    || match replacement.kind {
+                        crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 {
+                            target: crate::state::StackTargetContractV4::Object { object, .. },
+                            ..
+                        } => s.raw(object),
+                        _ => false,
+                    }
+            }
             Damage { source, target, .. } => {
                 s.raw(*source) || matches!(target,crate::state::Target::Object(id) if s.raw(*id))
             }

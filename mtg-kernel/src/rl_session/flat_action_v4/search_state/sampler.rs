@@ -146,6 +146,24 @@ fn conflicts(
     {
         return true;
     }
+    // New committed authority must not be relabeled by hidden pool resampling,
+    // including after Cleanup removed the active shield. Predecessor histories
+    // contain no such event and retain their original sampling behavior.
+    if e.event_history.iter().any(|event| match event {
+        crate::event::CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement } => {
+            pool.contains(&replacement.source)
+                || match replacement.kind {
+                    crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 {
+                        target: crate::state::StackTargetContractV4::Object { object, .. },
+                        ..
+                    } => pool.contains(&object),
+                    _ => false,
+                }
+        }
+        _ => false,
+    }) {
+        return true;
+    }
     // Conservative exclusions for unversioned references. Do not pin or redraw.
     if e.active_replacements.iter().any(|r| {
         pool.contains(&r.source)
@@ -154,6 +172,10 @@ fn conflicts(
                     target: crate::state::Target::Object(id),
                     ..
                 } => pool.contains(&id),
+                crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 {
+                    target: crate::state::StackTargetContractV4::Object { object, .. },
+                    ..
+                } => pool.contains(&object),
                 _ => false,
             }
     }) {
@@ -515,6 +537,40 @@ mod tests {
             state.stack.clear();
             state.engine.pending_triggers.clear();
             assert!(!conflicts(&state, &[source], None));
+        }
+    }
+    #[test]
+    fn fiery_historical_installation_receipt_refuses_hidden_resampling_readonly_after_cleanup() {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = super::super::tests::state(player);
+            let source = state.players[player.index()].library[0];
+            let target = state.players[player.opponent().index()].library[0];
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(target, Zone::Battlefield),
+            );
+            let source_contract = AbilitySourceContractV4::capture(&state, source);
+            let target_contract = crate::state::StackTargetContractV4::capture(
+                &state,
+                crate::state::Target::Object(target),
+            );
+            crate::event::install_exile_if_dies(&mut state, source_contract, target_contract);
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(target, Zone::Library),
+            );
+            // The historical receipt survives Cleanup. No active or event-log
+            // reference is needed to forbid rewriting its physical identities.
+            state.engine.active_replacements.clear();
+            state.engine.event_log.clear();
+            assert!(conflicts(&state, &[source], None));
+            assert!(conflicts(&state, &[target], None));
+            let before = serde_json::to_vec(&state).unwrap();
+            assert_eq!(
+                redeterminize(&mut state, player, 17),
+                Err(Error::HiddenStateContract)
+            );
+            assert_eq!(serde_json::to_vec(&state).unwrap(), before);
         }
     }
 }

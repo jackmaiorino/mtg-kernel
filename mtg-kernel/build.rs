@@ -3473,6 +3473,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
             "CreateControlledCreatureTargetCopyV1(Target0,currentController,exactPhysicalIncarnation,currentCopiableDefinitionAndFace,tokenOwnerController=spellController,ordinaryETB,noHasteOrDelayedSacrifice)",
             "EffectOp::CreateControlledCreatureTargetCopyV1",
         ),
+        "Fiery Annihilation" => program(
+            "CreatureThenUpToOneAttachedEquipment",
+            "FieryAnnihilation(5Damage,CreatureMandatory,AttachedEquipmentOptionalTarget,IndependentExactIncarnationRecheck,EquipmentExile,CommittedThisTurnExactCreatureDeathExileReplacement)",
+            "EffectOp::FieryAnnihilation",
+        ),
         "Run Away Together" => program(
             "TwoCreaturesWithDifferentControllers",
             "ReturnTwoDifferentControllerCreaturesToOwnersHands(exactlyTwo,distinctObjects,currentDifferentControllers,exactIncarnations,simultaneousLegalitySnapshot,batchOwnerHandMove,partialLegalTargets)",
@@ -3848,6 +3853,9 @@ fn program_target_spec_src(target: &str) -> &'static str {
         "NonartifactCreature" => "TargetSpec::NonartifactCreature",
         "CreatureToughnessAtLeastFour" => "TargetSpec::CreatureToughnessAtLeastFour",
         "AttackingCreature" => "TargetSpec::AttackingCreature",
+        "CreatureThenUpToOneAttachedEquipment" => {
+            "TargetSpec::CreatureThenUpToOneAttachedEquipment"
+        }
         "TwoCreaturesWithDifferentControllers" => {
             "TargetSpec::TwoCreaturesWithDifferentControllers"
         }

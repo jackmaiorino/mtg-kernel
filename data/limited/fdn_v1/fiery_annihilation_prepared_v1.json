@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "admission": "unregistered",
+  "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "java_file": "Mage.Sets/src/mage/cards/f/FieryAnnihilation.java",
+  "name": "Fiery Annihilation",
+  "mana_cost": "{2}{R}",
+  "mana_value": 3,
+  "colors": [
+    "R"
+  ],
+  "types": [
+    "Instant"
+  ],
+  "subtypes": [],
+  "supertypes": [],
+  "power": null,
+  "toughness": null,
+  "rules": [
+    "Fiery Annihilation deals 5 damage to target creature.",
+    "Exile up to one target Equipment attached to that creature.",
+    "If that creature would die this turn, exile it instead."
+  ]
+}

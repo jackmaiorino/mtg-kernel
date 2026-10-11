@@ -270,6 +270,15 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
             );
             out.target(TargetAtom::MultipleTargets);
         }
+        TargetSpec::CreatureThenUpToOneAttachedEquipment => {
+            object(out, creature(), None, ZoneF::Battlefield);
+            object(out, typed(CardType::Artifact), None, ZoneF::Battlefield);
+            out.target(TargetAtom::MultipleTargets);
+            out.target(TargetAtom::UpTo);
+            // Mandatory first slot, optional attached Equipment subtype and
+            // exact attachment dependency have no frozen target vocabulary.
+            out.atoms.push(Atom::Opaque);
+        }
         TargetSpec::TwoCreaturesWithDifferentControllers => {
             object(out, creature(), None, ZoneF::Battlefield);
             out.target(TargetAtom::MultipleTargets);
@@ -560,6 +569,10 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
             let _ = slot; // Every slot is a creature.
             creature()
         }
+        TargetSpec::CreatureThenUpToOneAttachedEquipment => match slot {
+            0 => creature(),
+            _ => typed(CardType::Artifact),
+        },
         TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker => match slot {
             0 => creature(),
             1..=u8::MAX => ObjF::Permanent,

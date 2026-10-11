@@ -1647,6 +1647,8 @@ pub enum EffectOp {
     GarrukDrawFromCaptureV1 {
         capture_history_index: u64,
     },
+    /// Printed Fiery Annihilation, with independent legality and a committed death shield.
+    FieryAnnihilation,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -18614,6 +18616,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 install_temporary_boost(state, object, 0, 0, *keyword);
             }
         }
+        EffectOp::FieryAnnihilation => crate::fiery_annihilation_v1::execute(ctx, state),
         EffectOp::PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness {
             target_index,
         } => {

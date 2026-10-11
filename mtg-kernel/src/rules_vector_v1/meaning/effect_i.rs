@@ -8,6 +8,24 @@ use super::*;
 pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     let _ = env;
     match op {
+        EffectOp::FieryAnnihilation => {
+            out.effect(
+                EffectAtom::new(EvF::Damage)
+                    .obj(env.target_obj(0))
+                    .amount(AmtF::Fixed(5)),
+            );
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Battlefield), ZoneF::Exile).obj(env.target_obj(1)),
+            );
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Battlefield), ZoneF::Exile)
+                    .obj(env.target_obj(0))
+                    .duration(DurF::EndOfTurn),
+            );
+            // No frozen facet correlates independently legal optional attached
+            // Equipment with the exact creature's death replacement authority.
+            out.atoms.push(Atom::Opaque);
+        }
         EffectOp::StandardLegendV1(op) => {
             use crate::standard_legends_v1::LegendEffectV1;
             match op {

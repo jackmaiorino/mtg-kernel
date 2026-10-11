@@ -1323,6 +1323,7 @@ pub fn stack_target_contract_is_structurally_valid(
             ) | (
                 TargetSpec::TwoCreaturesWithDifferentControllers
                     | TargetSpec::UpToTwoCreatures
+                    | TargetSpec::CreatureThenUpToOneAttachedEquipment
                     | TargetSpec::UpToTwoOtherCreaturesDifferentControllers
                     | TargetSpec::UpToTwoOtherControlledCreatures
                     | TargetSpec::ExactlyTwoArtifactPermanents

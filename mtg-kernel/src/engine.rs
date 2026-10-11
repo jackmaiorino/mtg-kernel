@@ -1812,6 +1812,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         TargetSpec::PlayerThenTheirCreature
         | TargetSpec::UpToTwoOtherCreaturesDifferentControllers
         | TargetSpec::TwoCreaturesWithDifferentControllers
+        | TargetSpec::CreatureThenUpToOneAttachedEquipment
         | TargetSpec::UpToTwoOtherControlledCreatures
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
@@ -1826,6 +1827,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
 
 fn target_min_count(spec: TargetSpec) -> u8 {
     match spec {
+        TargetSpec::CreatureThenUpToOneAttachedEquipment => 1,
         TargetSpec::UpToOneOtherCreature
         | TargetSpec::UpToTwoOtherCreaturesDifferentControllers
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
@@ -3344,6 +3346,31 @@ fn legal_targets_for_controller_from_source(
             .filter(|id| !targets_chosen.contains(&Target::Object(*id)))
             .map(Target::Object)
             .collect(),
+        TargetSpec::CreatureThenUpToOneAttachedEquipment => match targets_chosen {
+            [] => battlefield_objects(state)
+                .filter(|&id| object_has_type(state, id, CardType::Creature))
+                .map(Target::Object)
+                .collect(),
+            [Target::Object(creature)] => {
+                let generation = state
+                    .objects
+                    .try_get(*creature)
+                    .filter(|live| live.zone == Zone::Battlefield)
+                    .map(|live| live.zone_change_count);
+                battlefield_objects(state)
+                    .filter(|&id| {
+                        id != *creature
+                            && generation.is_some_and(|generation| {
+                                crate::fiery_annihilation_v1::attached_equipment(
+                                    state, id, *creature, generation,
+                                )
+                            })
+                    })
+                    .map(Target::Object)
+                    .collect()
+            }
+            _ => Vec::new(),
+        },
         TargetSpec::TwoCreaturesWithDifferentControllers => battlefield_objects(state)
             .filter(|&id| object_has_type(state, id, CardType::Creature))
             .filter(|&id| {
@@ -9069,6 +9096,11 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    if let Err(source) = event::validate_exile_if_dies_replacements(state) {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
     // Refuse lost captured Raid owners before refresh, legend, SBA or automatic work.
     if crate::raid_entry_v1::validate_state(state).is_err() {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
@@ -9143,6 +9175,9 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
     loop {
         #[cfg(feature = "standard-magezero-fixtures")]
         crate::standard_statics_v1::expire_attack_block_restrictions(state);
+        if let Err(source) = event::validate_exile_if_dies_replacements(state) {
+            state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
+        }
         if let Err(source) = state.validate_attachment_relations() {
             state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
         }
@@ -13824,6 +13859,17 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
     let Some(spec) = validated_stack_item_target_spec(item, state)? else {
         return Ok(true);
     };
+    if spec == TargetSpec::CreatureThenUpToOneAttachedEquipment {
+        return Ok(crate::fiery_annihilation_v1::target_legalities(
+            state,
+            item.source,
+            item.controller,
+            &item.targets,
+            &item.v4.target_contracts,
+        )
+        .into_iter()
+        .any(|legal| legal));
+    }
     if spec == TargetSpec::TwoCreaturesWithDifferentControllers {
         return Ok(different_controller_creature_targets_are_legal(
             state,
@@ -15354,6 +15400,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     replacement.kind,
                     event::ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { .. }
                     | event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. }
+                    | event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. }
                 )
             });
             let p = state.active_player;
@@ -17271,6 +17318,8 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    event::validate_exile_if_dies_replacements(state)
+        .map_err(|source| format!("invalid exile-if-dies replacement authority for {source:?}"))?;
     crate::linked_aura_operation_v1::step(state, action)
 }
 
@@ -17278,6 +17327,8 @@ pub(crate) fn step_without_linked_aura_v1(
     state: &mut GameState,
     action: Action,
 ) -> Result<(), String> {
+    event::validate_exile_if_dies_replacements(state)
+        .map_err(|source| format!("invalid exile-if-dies replacement authority for {source:?}"))?;
     // A restored continuation must be valid before any action can mutate
     // state, including when its separately saved discard slot was removed.
     effect::validate_pending_effect_choice(state)?;

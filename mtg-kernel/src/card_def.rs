@@ -1059,6 +1059,8 @@ pub enum TargetSpec {
     /// Zero to two distinct nontoken cards from one physical graveyard.
     /// Stable id 66 is reserved for this unregistered FDN successor.
     UpToTwoCardsInSingleGraveyard,
+    /// Fiery Annihilation: mandatory creature, optional attached Equipment.
+    CreatureThenUpToOneAttachedEquipment,
 }
 
 impl TargetSpec {
@@ -1151,6 +1153,7 @@ impl TargetSpec {
             TargetSpec::KickerControlledCreatures => 63,
             TargetSpec::CardInGraveyards => 65,
             TargetSpec::UpToTwoCardsInSingleGraveyard => 66,
+            TargetSpec::CreatureThenUpToOneAttachedEquipment => 64,
         }
     }
 }
@@ -2750,6 +2753,7 @@ mod tests {
             (TargetSpec::AttackingCreature, 61),
             (TargetSpec::TwoCreaturesWithDifferentControllers, 62),
             (TargetSpec::KickerControlledCreatures, 63),
+            (TargetSpec::CreatureThenUpToOneAttachedEquipment, 64),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);

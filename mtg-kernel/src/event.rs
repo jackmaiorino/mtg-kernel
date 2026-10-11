@@ -60,6 +60,13 @@ pub enum ReplacementEffectKind {
         turn: u32,
         active_player: PlayerId,
     },
+    /// Appended resolved effect; source departure does not end its duration.
+    ExileIfDiesUntilEndOfTurnV1 {
+        target: crate::state::StackTargetContractV4,
+        source: crate::state::AbilitySourceContractV4,
+        turn: u32,
+        active_player: PlayerId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1072,6 +1079,10 @@ pub enum CommittedEvent {
         removal_history_index: u64,
         draw_history_index: Option<u64>,
     },
+    /// Exact resolved Fiery death-shield installation.
+    ExileIfDiesReplacementInstalledV1 {
+        replacement: ActiveReplacement,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1185,6 +1196,13 @@ pub fn apply_replacements(
     state: &mut GameState,
     mut proposed: ProposedEvent,
 ) -> Option<ProposedEvent> {
+    if let Err(source) = validate_exile_if_dies_replacements(state) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        ));
+        return None;
+    }
     if let ProposedEvent::Damage(damage) = &proposed {
         if let Some(id) = damage.historical_source {
             if crate::source_power_activation_v1::damage_source(state, damage.source, id).is_err() {
@@ -1289,6 +1307,13 @@ fn replacement_applies(
     state: &GameState,
 ) -> bool {
     match (&repl.kind, proposed) {
+        (ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { target, turn, active_player, .. }, ProposedEvent::ZoneChange(change)) => {
+            *turn == state.turn && *active_player == state.active_player
+                && change.to_zone == Zone::Graveyard
+                && crate::fiery_annihilation_v1::original_battlefield_target(state, Target::Object(change.object), *target)
+                && state.engine.event_history.iter().any(|event| matches!(event,
+                    CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement } if replacement == repl))
+        }
         (
             ReplacementEffectKind::PreventNextDamage { target, remaining },
             ProposedEvent::Damage(d),
@@ -1335,6 +1360,13 @@ fn replacement_apply(
     state: &mut GameState,
 ) -> Option<ProposedEvent> {
     match (&repl.kind, proposed) {
+        (
+            ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. },
+            ProposedEvent::ZoneChange(mut change),
+        ) => {
+            change.to_zone = Zone::Exile;
+            Some(ProposedEvent::ZoneChange(change))
+        }
         (
             ReplacementEffectKind::PreventNextDamage { remaining, .. },
             ProposedEvent::Damage(mut d),
@@ -1439,6 +1471,92 @@ pub(crate) fn install_combat_damage_prevention(
             active_player: state.active_player,
         },
     });
+}
+
+pub(crate) fn install_exile_if_dies(
+    state: &mut GameState,
+    source: crate::state::AbilitySourceContractV4,
+    target: crate::state::StackTargetContractV4,
+) {
+    let Some(id) = state.engine.next_replacement_id.checked_add(1) else {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source.source,
+        ));
+        return;
+    };
+    let replacement = ActiveReplacement {
+        id,
+        source: source.source,
+        kind: ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 {
+            target,
+            source,
+            turn: state.turn,
+            active_player: state.active_player,
+        },
+    };
+    let marker = CommittedEvent::ExileIfDiesReplacementInstalledV1 {
+        replacement: replacement.clone(),
+    };
+    state.engine.next_replacement_id = id;
+    state.engine.event_log.push(marker.clone());
+    state.engine.event_history.push(marker);
+    state.engine.active_replacements.push(replacement);
+}
+
+pub(crate) fn validate_exile_if_dies_replacements(state: &GameState) -> Result<(), ObjectId> {
+    for replacement in &state.engine.active_replacements {
+        let ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 {
+            target,
+            source,
+            turn,
+            active_player,
+        } = &replacement.kind
+        else {
+            continue;
+        };
+        let target_valid = match *target {
+            crate::state::StackTargetContractV4::Object {
+                object,
+                card_def,
+                owner,
+                zone: Zone::Battlefield,
+                zone_change_count,
+                ..
+            } => state.objects.try_get(object).is_some_and(|live| {
+                live.card_def == card_def
+                    && live.owner == owner
+                    && live.zone_change_count >= zone_change_count
+            }),
+            _ => false,
+        };
+        let source_valid = source.source == replacement.source
+            && state.objects.try_get(source.source).is_some_and(|live| {
+                live.card_def == source.card_def
+                    && live.owner == source.owner
+                    && live.zone_change_count >= source.zone_change_count
+            });
+        let receipt = state.engine.event_history.iter().filter(|event| matches!(event,
+            CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement: captured } if captured == replacement)).count();
+        if !target_valid
+            || !source_valid
+            || receipt != 1
+            || replacement.id == 0
+            || replacement.id > state.engine.next_replacement_id
+            || state
+                .engine
+                .active_replacements
+                .iter()
+                .filter(|other| other.id == replacement.id)
+                .count()
+                != 1
+            || *turn != state.turn
+            || *active_player != state.active_player
+        {
+            return Err(replacement.source);
+        }
+    }
+    Ok(())
 }
 
 fn lifelink_gain_for(state: &GameState, event: &ProposedEvent) -> Option<(PlayerId, i32)> {
