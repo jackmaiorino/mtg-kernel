@@ -11,7 +11,7 @@ import sys
 import time
 
 ROOT = Path('D:/training-io-speedups-20261010')
-REPO = Path('C:/Users/Jack/.codex/worktrees/training-throughput-audit-20261009/mtg-kernel')
+REPO = Path('C:/Users/Jack/.codex/worktrees/training-io-candidate-20261010/mtg-kernel')
 BASELINE = 'b3bd1c1c0d7b5b6766359a3901549de768bcc175'
 CONFIG = Path('D:/training-speedups-20261009/desktop/source-config.json')
 PYTHON = Path('D:/mtg-kernel-uv-python-019f63a2/cpython-3.13.14-windows-x86_64-none/python.exe')
