@@ -516,9 +516,9 @@ pub(super) fn label_ooze_v11(
     {
         let (card_id, index) = granted_ability
             .as_ref()
-            .map(|(donor, local)| (donor.card_db_id, *local))
-            .unwrap_or((source.card_db_id, *ability_index));
-        if crate::rules_meaning_ooze_v1::root_meaning(card_id, u32::from(index)).is_ok() {
+            .map(|(donor, local)| (donor.card_db_id, u32::from(*local)))
+            .unwrap_or((source.card_db_id, u32::from(*ability_index)));
+        if crate::rules_meaning_ooze_v1::root_meaning(card_id, index).is_ok() {
             if actor(action) != Some(human) || source.zone != Zone::Battlefield {
                 return Err(Error::UnsupportedPrompt);
             }
