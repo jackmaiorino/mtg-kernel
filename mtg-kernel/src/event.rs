@@ -630,6 +630,12 @@ pub enum CommittedEvent {
     ControlledCreatureDeathCaptureCollectedV1 {
         capture_history_index: u64,
     },
+    /// Immutable controller LKI for an exact Run Away Together target. This
+    /// engine-only receipt never enters event_log or creates a trigger.
+    DifferentControllerTargetDepartureV1 {
+        target: crate::state::StackTargetContractV4,
+        controller_before: PlayerId,
+    },
     /// Independent actual-entry authority for the unregistered shared-graveyard ETB.
     SingleGraveyardEntryV1 {
         source_contract: crate::state::AbilitySourceContractV4,
@@ -1186,6 +1192,9 @@ fn commit_with_ability_lki(
             let _ = &mut z;
             crate::standard_legends_v1::before_zone_change(state, z.object, z.to_zone);
             let from = state.objects.get(z.object).zone;
+            if from == Zone::Battlefield && z.to_zone != Zone::Battlefield {
+                crate::engine::record_different_controller_target_departure(state, z.object);
+            }
             crate::standard_cards_v1::before_departure(state, z.object);
             if from == Zone::Battlefield
                 && crate::standard_cards_v1::active_aegis_copy(state, z.object)

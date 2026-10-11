@@ -1031,6 +1031,7 @@ pub(super) fn conflicts(
             MonarchTrigger { binding } => s.raw(binding.source.source),
             ControlledCreatureDeathCaptureCollectedV1 { .. }
             | SquadRallierResolutionBoundaryV1 { .. }
+            | DifferentControllerTargetDepartureV1 { .. }
             | LifeLoss { .. }
             | LifeGain { .. }
             | LifeGainTurnBeganV1 { .. }

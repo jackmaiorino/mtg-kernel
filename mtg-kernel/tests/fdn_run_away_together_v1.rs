@@ -382,7 +382,7 @@ fn run_away_controller_change_making_pair_same_controller_fizzles_both_without_o
 }
 
 #[test]
-fn run_away_stale_reentered_target_does_not_constrain_original_survivor_and_both_departed_fizzle() {
+fn run_away_original_departure_lki_ignores_reentered_controller_and_both_departed_fizzle() {
     for caster in [PlayerId::P0, PlayerId::P1] {
         for reverse in [false, true] {
             for departed_index in 0..2 {
@@ -430,6 +430,139 @@ fn run_away_stale_reentered_target_does_not_constrain_original_survivor_and_both
                 .iter()
                 .all(|&target| state.objects.get(target).zone == Zone::Exile));
             assert_eq!(state.objects.get(spell).zone, Zone::Graveyard);
+        }
+    }
+}
+
+#[test]
+fn run_away_departure_lki_rechecks_controller_changes_before_and_after_departure() {
+    for caster in [PlayerId::P0, PlayerId::P1] {
+        for reverse in [false, true] {
+            for departed_index in 0..2 {
+                for change_before in [false, true] {
+                    for change_after in [false, true] {
+                        for reenter in [false, true] {
+                            let (mut state, targets) = pair(caster, true);
+                            let spell = announce(&mut state, caster, targets, reverse);
+                            let departed = targets[departed_index];
+                            let survivor = targets[1 - departed_index];
+                            let survivor_controller = state.objects.get(survivor).controller;
+                            if change_before {
+                                transfer(&mut state, departed, survivor_controller);
+                            }
+                            let departure_controller = state.objects.get(departed).controller;
+                            let original_contract = state
+                                .stack
+                                .iter()
+                                .find(|item| item.source == spell)
+                                .unwrap()
+                                .v4
+                                .target_contracts
+                                .iter()
+                                .copied()
+                                .find(|contract| contract.target() == Target::Object(departed))
+                                .unwrap();
+                            event::propose_and_commit(
+                                &mut state,
+                                ProposedEvent::zone_change(departed, Zone::Hand),
+                            );
+                            assert_eq!(state.engine.event_history.iter().filter(|event| {
+                                matches!(event, event::CommittedEvent::DifferentControllerTargetDepartureV1 {
+                                    target, controller_before
+                                } if *target == original_contract && *controller_before == departure_controller)
+                            }).count(), 1);
+                            assert!(!state.engine.event_log.iter().any(|event| {
+                                matches!(event, event::CommittedEvent::DifferentControllerTargetDepartureV1 { .. })
+                            }));
+                            if change_after {
+                                transfer(&mut state, survivor, survivor_controller.opponent());
+                            }
+                            let expected_survivor =
+                                if departure_controller == state.objects.get(survivor).controller {
+                                    Zone::Battlefield
+                                } else {
+                                    Zone::Hand
+                                };
+                            if reenter {
+                                // Several later incarnations must never replace
+                                // the original target's absolute departure LKI.
+                                for _ in 0..2 {
+                                    event::propose_and_commit(
+                                        &mut state,
+                                        ProposedEvent::zone_change_to_battlefield_under_controller(
+                                            departed,
+                                            departure_controller.opponent(),
+                                        ),
+                                    );
+                                    event::propose_and_commit(
+                                        &mut state,
+                                        ProposedEvent::zone_change(departed, Zone::Hand),
+                                    );
+                                }
+                                event::propose_and_commit(
+                                    &mut state,
+                                    ProposedEvent::zone_change_to_battlefield_under_controller(
+                                        departed,
+                                        departure_controller.opponent(),
+                                    ),
+                                );
+                            }
+                            let departed_zone = state.objects.get(departed).zone;
+                            let generation = state.objects.get(departed).zone_change_count;
+                            let mut restored = copy(&state);
+                            for current in [&mut state, &mut restored] {
+                                settle(current);
+                                assert_eq!(current.objects.get(survivor).zone, expected_survivor);
+                                assert_eq!(current.objects.get(departed).zone, departed_zone);
+                                assert_eq!(
+                                    current.objects.get(departed).zone_change_count,
+                                    generation
+                                );
+                                assert_eq!(current.objects.get(spell).zone, Zone::Graveyard);
+                            }
+                            assert_eq!(
+                                state.diagnostic_state_hash(),
+                                restored.diagnostic_state_hash()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn run_away_shared_departure_retains_distinct_announced_contracts_once() {
+    for caster in [PlayerId::P0, PlayerId::P1] {
+        for swap_controllers in [false, true] {
+            let (mut state, targets) = pair(caster, true);
+            announce(&mut state, caster, targets, false);
+            if swap_controllers {
+                transfer(&mut state, targets[0], caster.opponent());
+                transfer(&mut state, targets[1], caster);
+            }
+            announce(&mut state, caster, targets, true);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(targets[0], Zone::Hand),
+            );
+            assert_eq!(state.engine.event_history.iter().filter(|event| {
+                matches!(event, event::CommittedEvent::DifferentControllerTargetDepartureV1 {
+                    target, ..
+                } if target.target() == Target::Object(targets[0]))
+            }).count(), if swap_controllers { 2 } else { 1 });
+            let mut restored = copy(&state);
+            for current in [&mut state, &mut restored] {
+                settle(current);
+                assert!(targets
+                    .iter()
+                    .all(|&target| current.objects.get(target).zone == Zone::Hand));
+            }
+            assert_eq!(
+                state.diagnostic_state_hash(),
+                restored.diagnostic_state_hash()
+            );
         }
     }
 }
