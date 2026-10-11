@@ -1,20 +1,12 @@
 # MageZero Standard family D: new set keywords v1
 
-Third batch of the MageZero Standard catalog (`kernel_carddb_standard/v4`),
-covering mechanic family D of
-`docs/reports/standard_magezero_inventory_v1.md`.
-Every card's printed behavior was read from its XMage card file (path in the
-registry entry). All new behavior is gated on the `standard-magezero-fixtures`
-feature, so the Pauper and FDN Limited identities are unchanged.
-
-The batch adds 18 Full cards and 11 Partial definitions. Across the tracked
-pool, 52 nonbasic cards are Full, 19 are Partial and 154 are missing. No
-complete MageZero deck resolves yet. Partial cards are refused by full-deck
-admission; their current behavior remains available for development.
-
-The fixed v4 identity is `0xd62111f185e47a13`, after these capability
-corrections. The original head's `0x58c7c4e68b6ef277` identified the
-definitions before them.
+Family D of the MageZero Standard v7 completion candidate covers the set keywords
+used by the unchanged deck pool. Printed behavior follows each card's XMage source
+(path in its registry entry) and official rules where needed. The completion includes
+all family D cards and Full admission flags; combined native/runtime verification is
+pending in `docs/reports/standard_completion_v1.md`. The original v4 batch identities
+are historical, and the v7 hash must be frozen from the integration build. Pauper and
+FDN registry files and catalog identities remain separate.
 
 ## Cards
 
@@ -32,7 +24,7 @@ definitions before them.
 | Chrome Host Seedshark | Mono-U | Incubate, Incubator token transform |
 | Brutal Cathar / Moonrage Brute | Mono-W | Daybound, nightbound, ward—pay 3 life |
 | Knight-Errant of Eos | Mono-W | Convoke, look-at-top choice |
-| Flourishing Bloom-Kin | Mono-G | +1/+1 per Forest (disguise omitted, below) |
+| Flourishing Bloom-Kin | Mono-G | +1/+1 per Forest, disguise and face-up Forest choices |
 | Monastery Swiftspear, Heartfire Hero, Slickshot Show-Off | two-color | Prowess, valiant, plot |
 | Sanguine Evangelist, Darkstar Augur | two-color | Battle cry, offspring, upkeep reveal |
 | Ruin-Lurker Bat | two-color | Descend end-step scry |
@@ -68,9 +60,9 @@ Mouse offspring tokens, Incubator, Bat, Monk, White Insect and Spirit.
   each turn begins. Daybound permanents follow it at the state check and
   enter transformed at night. `TriggeredAbilityDef::face_index` lets a
   transform back face carry its own triggers.
-- **Convoke** is the card's alternative cost, so the existing cast-mode choice
-  decides whether to convoke. The number of creatures tapped rides onto the
-  permanent.
+- **Convoke** asks for the creature subset and each tapped creature's mana
+  contribution while paying the spell. The number tapped rides onto the
+  permanent for Knight-Errant's subsequent card selection.
 - **Unearth** is a graveyard activation. The returned creature gains haste,
   its end-step trigger exiles it, and a leave-the-battlefield replacement
   exiles it instead of any other zone (including state-based deaths).
@@ -81,8 +73,8 @@ Mouse offspring tokens, Incubator, Bat, Monk, White Insect and Spirit.
   its controller's end steps.
 - **Enduring** creatures have a death trigger that returns their exact
   graveyard incarnation as a noncreature enchantment under its owner's control.
-- **Casualty** shares Bargain's sacrifice-one optional cost path. A casualty
-  cast puts a copy with the same targets on the stack.
+- **Casualty** shares Bargain's sacrifice-one optional cost path. Its copy
+  trigger creates a spell copy with independently chosen legal targets.
 - **Spree** is modeled as one printed mode per mode set (Phantom Interference:
   Spirit, counter, both). Each mode adds its `+{N}` surcharge to the cast cost,
   and only affordable mode sets are offered.
@@ -134,14 +126,13 @@ Existing observations and hashes omit these fields when no face-down cards
 exist. Free casting uses the shared parent-resolution continuation and the
 ordinary target, mode, additional-cost, and tax pipeline.
 
-This source checkpoint has passed formatting and diff checks. Its new tests
-and compilation await the combined guarded build; capability promotions are
-owned by that integration after observed results, not by this document.
+Full flags enable completion-candidate admission. Compilation and the combined
+behavior tests remain pending; source and inventory checks do not replace them.
 
 ## Tests
 
 `mtg-kernel/tests/standard_family_d_v1.rs` covers implemented behavior,
-capability refusals, all three Spree mode payments, two pending Incubator
+candidate admission, all three Spree mode payments, two pending Incubator
 activations, battle cry across zone changes, Seedshark with an Omen spell,
 and a stolen Enduring creature's death trigger and owner return. Casualty's
 transformed-Incubator regression exercises effective creature eligibility

@@ -1235,7 +1235,7 @@
     },
     {
       "name": "Burnout Bashtronaut",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{R}",
       "mana_value": 1,
       "colors": [
@@ -1457,7 +1457,7 @@
     },
     {
       "name": "Axebane Ferox",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{2}{G}{G}",
       "mana_value": 4,
       "colors": [
@@ -1488,7 +1488,7 @@
     },
     {
       "name": "Hopeful Initiate",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{W}",
       "mana_value": 1,
       "colors": [
@@ -1580,7 +1580,7 @@
     },
     {
       "name": "Brutal Cathar",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{2}{W}",
       "mana_value": 3,
       "colors": [
@@ -1616,7 +1616,7 @@
     },
     {
       "name": "Knight-Errant of Eos",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{4}{W}",
       "mana_value": 5,
       "colors": [
@@ -2124,7 +2124,7 @@
     },
     {
       "name": "Graveyard Trespasser",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{2}{B}",
       "mana_value": 3,
       "colors": [
@@ -2159,7 +2159,7 @@
     },
     {
       "name": "Overlord of the Mistmoors",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{5}{W}{W}",
       "mana_value": 7,
       "colors": [
@@ -2221,7 +2221,7 @@
     },
     {
       "name": "Enduring Curiosity",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{2}{U}{U}",
       "mana_value": 4,
       "colors": [
@@ -2254,7 +2254,7 @@
     },
     {
       "name": "Enduring Innocence",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{1}{W}{W}",
       "mana_value": 3,
       "colors": [
@@ -2288,7 +2288,7 @@
     },
     {
       "name": "Make Disappear",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{1}{U}",
       "mana_value": 2,
       "colors": [
@@ -2374,7 +2374,7 @@
     },
     {
       "name": "Flourishing Bloom-Kin",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{1}{G}",
       "mana_value": 2,
       "colors": [
@@ -4952,7 +4952,7 @@
     },
     {
       "name": "Reckoner Bankbuster",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{2}",
       "mana_value": 2,
       "colors": [],
@@ -4979,7 +4979,7 @@
     },
     {
       "name": "Subterranean Schooner",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{1}{U}",
       "mana_value": 2,
       "colors": [
@@ -5008,7 +5008,7 @@
     },
     {
       "name": "Spring-Loaded Sawblades",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{1}{W}",
       "mana_value": 2,
       "colors": [
@@ -5035,7 +5035,7 @@
     },
     {
       "name": "Pilot Token",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -5056,7 +5056,8 @@
       "mechanics": [
         "token"
       ],
-      "java_file": "generated:pilot"
+      "java_file": "generated:pilot",
+      "is_token": true
     },
     {
       "name": "Resolute Reinforcements",
@@ -6384,7 +6385,9 @@
       "toughness": null,
       "is_land": false,
       "produces_mana": [],
-      "decks": [],
+      "decks": [
+        "Standard16-UW.dck"
+      ],
       "sideboard_only": false,
       "complexity": "complex",
       "mechanics": [
@@ -6410,7 +6413,9 @@
       "toughness": null,
       "is_land": false,
       "produces_mana": [],
-      "decks": [],
+      "decks": [
+        "Standard16-UW.dck"
+      ],
       "sideboard_only": false,
       "complexity": "complex",
       "mechanics": [
@@ -6436,7 +6441,9 @@
       "produces_mana": [
         "C"
       ],
-      "decks": [],
+      "decks": [
+        "Standard16-BW.dck"
+      ],
       "sideboard_only": false,
       "complexity": "complex",
       "mechanics": [
@@ -6462,7 +6469,9 @@
       "produces_mana": [
         "C"
       ],
-      "decks": [],
+      "decks": [
+        "Standard16-UW.dck"
+      ],
       "sideboard_only": false,
       "complexity": "complex",
       "mechanics": [
@@ -6488,7 +6497,9 @@
       "produces_mana": [
         "C"
       ],
-      "decks": [],
+      "decks": [
+        "Standard16-BW.dck"
+      ],
       "sideboard_only": false,
       "complexity": "complex",
       "mechanics": [
@@ -6515,7 +6526,9 @@
       "produces_mana": [
         "G"
       ],
-      "decks": [],
+      "decks": [
+        "Standard16-UG.dck"
+      ],
       "sideboard_only": false,
       "complexity": "complex",
       "mechanics": [
@@ -6542,7 +6555,9 @@
       "produces_mana": [
         "B"
       ],
-      "decks": [],
+      "decks": [
+        "Standard16-RB.dck"
+      ],
       "sideboard_only": false,
       "complexity": "complex",
       "mechanics": [
@@ -6569,7 +6584,10 @@
       "produces_mana": [
         "R"
       ],
-      "decks": [],
+      "decks": [
+        "Standard16-RB.dck",
+        "Standard16-RW.dck"
+      ],
       "sideboard_only": false,
       "complexity": "complex",
       "mechanics": [
@@ -6594,7 +6612,11 @@
       "produces_mana": [
         "C"
       ],
-      "decks": [],
+      "decks": [
+        "Standard16-GB.dck",
+        "Standard16-GW.dck",
+        "Standard16-UB.dck"
+      ],
       "sideboard_only": false,
       "complexity": "complex",
       "mechanics": [
@@ -6620,7 +6642,9 @@
       "toughness": null,
       "is_land": false,
       "produces_mana": [],
-      "decks": [],
+      "decks": [
+        "Standard16-GB.dck"
+      ],
       "sideboard_only": false,
       "complexity": "complex",
       "mechanics": [
@@ -6630,7 +6654,7 @@
     },
     {
       "name": "Tear Asunder",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{1}{G}",
       "mana_value": 2,
       "colors": [
@@ -6645,7 +6669,9 @@
       "toughness": null,
       "is_land": false,
       "produces_mana": [],
-      "decks": [],
+      "decks": [
+        "Standard16-GB.dck"
+      ],
       "sideboard_only": false,
       "complexity": "complex",
       "mechanics": [
@@ -6670,7 +6696,9 @@
       "toughness": null,
       "is_land": false,
       "produces_mana": [],
-      "decks": [],
+      "decks": [
+        "Standard16-RG.dck"
+      ],
       "sideboard_only": false,
       "complexity": "complex",
       "mechanics": [
@@ -6761,7 +6789,7 @@
     },
     {
       "name": "Gix's Command",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{3}{B}{B}",
       "mana_value": 5,
       "colors": [
@@ -6780,8 +6808,8 @@
         "modal_spell"
       ],
       "decks": [
-        "Standard16-UB",
-        "Standard16-GB"
+        "Standard16-GB.dck",
+        "Standard16-UB.dck"
       ],
       "java_file": "Mage.Sets/src/mage/cards/g/GixsCommand.java"
     },
@@ -6874,7 +6902,7 @@
     },
     {
       "name": "Kaito, Bane of Nightmares",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{2}{U}{B}",
       "mana_value": 4,
       "colors": [
@@ -6900,7 +6928,9 @@
         "loyalty",
         "emblem"
       ],
-      "decks": [],
+      "decks": [
+        "Standard16-UB.dck"
+      ],
       "java_file": "Mage.Sets/src/mage/cards/k/KaitoBaneOfNightmares.java"
     },
     {
@@ -6944,7 +6974,7 @@
       "name": "Face-down card"
     },
     {
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{2}{U}",
       "mana_value": 3,
       "colors": [
@@ -6975,7 +7005,7 @@
       "java_file": "Mage.Sets/src/mage/cards/z/ZoeticGlyph.java"
     },
     {
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{1}{W}",
       "mana_value": 2,
       "colors": [
@@ -7165,7 +7195,7 @@
     },
     {
       "name": "Jodah, the Unifier",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{W}{U}{B}{R}{G}",
       "mana_value": 5,
       "colors": [
@@ -7200,7 +7230,7 @@
     },
     {
       "name": "Katilda, Dawnhart Prime",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{G}{W}",
       "mana_value": 2,
       "colors": [
@@ -7232,7 +7262,7 @@
     },
     {
       "name": "Lagrella, the Magpie",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{G}{W}{U}",
       "mana_value": 3,
       "colors": [
@@ -7265,7 +7295,7 @@
     },
     {
       "name": "Shanna, Purifying Blade",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{G}{W}{U}",
       "mana_value": 3,
       "colors": [
@@ -7298,7 +7328,7 @@
     },
     {
       "name": "Melira, the Living Cure",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{G}{W}",
       "mana_value": 2,
       "colors": [
@@ -7330,7 +7360,7 @@
     },
     {
       "name": "Gwenna, Eyes of Gaea",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{2}{G}",
       "mana_value": 3,
       "colors": [
@@ -7426,7 +7456,7 @@
     },
     {
       "name": "Djeru and Hazoret",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{2}{R}{R}{W}",
       "mana_value": 5,
       "colors": [
@@ -7458,7 +7488,7 @@
     },
     {
       "name": "Ertai Resurrected",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{2}{U}{B}",
       "mana_value": 4,
       "colors": [
@@ -7491,7 +7521,7 @@
     },
     {
       "name": "Skrelv, Defector Mite",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{W}",
       "mana_value": 1,
       "colors": [
@@ -7523,7 +7553,7 @@
     },
     {
       "name": "Etali, Primal Conqueror",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{5}{R}{R}",
       "mana_value": 7,
       "colors": [
@@ -7557,7 +7587,7 @@
       "java_file": "Mage.Sets/src/mage/cards/e/EtaliPrimalConqueror.java"
     },
     {
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{2}{R}",
       "mana_value": 3,
       "colors": [
@@ -7614,8 +7644,7 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Standard16-UB.dck",
-        "Standard16-UG.dck"
+        "Standard16-UB.dck"
       ],
       "sideboard_only": false,
       "complexity": "high",
@@ -7628,7 +7657,7 @@
     },
     {
       "name": "Thousand Moons Smithy",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{2}{W}{W}",
       "mana_value": 4,
       "colors": [

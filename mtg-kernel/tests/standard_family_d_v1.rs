@@ -163,7 +163,7 @@ fn family_d_cards_are_fully_supported() {
 }
 
 #[test]
-fn incomplete_keyword_cards_remain_partial() {
+fn completed_keyword_cards_are_admitted() {
     for name in [
         "Enduring Curiosity",
         "Enduring Innocence",
@@ -179,16 +179,16 @@ fn incomplete_keyword_cards_remain_partial() {
         let id = card_id_by_name(name).expect(name);
         assert_eq!(
             CARD_DEFS[id as usize].capability,
-            CardCapability::Partial,
+            CardCapability::Full,
             "{name}"
         );
     }
 }
 
 #[test]
-fn flourishing_bloom_kin_capability_awaits_combined_validation() {
+fn flourishing_bloom_kin_is_admitted() {
     let id = card_id_by_name("Flourishing Bloom-Kin").expect("Flourishing Bloom-Kin");
-    assert_eq!(CARD_DEFS[id as usize].capability, CardCapability::Partial);
+    assert_eq!(CARD_DEFS[id as usize].capability, CardCapability::Full);
 }
 
 #[test]

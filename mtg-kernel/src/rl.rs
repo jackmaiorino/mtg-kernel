@@ -316,27 +316,6 @@ pub struct CardCharacteristicsV2 {
     pub effective_keywords: KeywordFlagsV2,
 }
 
-// Preserve the historical byte stream when effective identity is absent.
-impl std::hash::Hash for CardCharacteristicsV2 {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.legend_return_sources.hash(state);
-        self.legend_rules.hash(state);
-        self.base_pt_until_end_of_turn.hash(state);
-        self.type_flags.hash(state);
-        self.base_power.hash(state);
-        self.base_toughness.hash(state);
-        self.effective_power.hash(state);
-        self.effective_toughness.hash(state);
-        self.effective_color_mask.hash(state);
-        self.effective_subtype_ids.hash(state);
-        self.effective_keywords.hash(state);
-        if let Some(identity) = &self.effective_identity {
-            "effective_identity_v1".hash(state);
-            identity.hash(state);
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AbilityUsePublicV4 {
     pub ability_kind: crate::state::AbilityKindV4,

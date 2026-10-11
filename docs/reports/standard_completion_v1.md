@@ -28,14 +28,36 @@ dropping them. A separate Standard policy training task is outside this scope.
 
 Source review found and repaired missing Phyrexian payment alternatives,
 Blue Sun's Twilight target admission without taxes/reductions, Djeru's free-cast
-timing, and unlocked Room characteristics. Aegis/Cauldron final repairs and the
-catalog admission reconciliation remain in progress. Capability flags are
+timing, and unlocked Room characteristics. The final Aegis repair remains in progress. Catalog admission now includes all
+225 nonbasic deck cards. Capability flags are
 implementation candidates until the affected checks and public sessions pass.
 
 The new public-session acceptance test resolves all sixteen decks, preserves
 the 62-card blue fixture and empty sideboards, plays eight fixed paired-deck
 games to natural terminals, and repeats them with identical transcript hashes.
 This is rules/harness verification, not a playing-strength experiment.
+
+## Candidate admission and remaining acceptance
+
+The v7 candidate contains all 225 nonbasic deck cards, with 253 definitions appended to
+the frozen Pauper prefix. All extension entries have Full flags to enable acceptance
+checks, including its 32 token or masked-face definitions. Python checks admit all 16
+decks and bind their original SHA-256 values; Mono-U remains 62 cards and sideboards
+remain empty. Standard appended IDs are fixed by an explicit Rust list. Registry deck
+membership metadata matches the unchanged fixture files.
+
+The source work spans lands/restricted mana/poison; removal, draw and modal selection;
+set keywords and free casting; creature triggers/statics and last-known information;
+planeswalkers, Rooms, Vehicles, craft, copying and transforming cards; and the five-color
+legends. Generic observations represent the added public state and decision boundaries.
+
+**Runtime verification is pending.** The integration lead still owns the combined
+compile, affected executable tests, final Aegis/Cauldron and observation repairs,
+terminal public-session/replay execution, source review and delivery. The v7 expected
+catalog hash is deliberately unset until a native build reports it; its catalog test
+fails until that observed value is frozen. Full flags and Python admission alone are
+not a verified support result. No training, benchmark campaign, paid compute or
+playing-strength claim is part of this assignment.
 
 ## Verification and resources
 

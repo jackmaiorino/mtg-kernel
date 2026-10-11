@@ -46,6 +46,10 @@ impl Hash for CardCharacteristicsV2 {
             "CardCharacteristicsV2/base_pt_until_end_of_turn/v1".hash(state);
             value.hash(state);
         }
+        if let Some(value) = &self.effective_identity {
+            "CardCharacteristicsV2/effective_identity/v1".hash(state);
+            value.hash(state);
+        }
     }
 }
 

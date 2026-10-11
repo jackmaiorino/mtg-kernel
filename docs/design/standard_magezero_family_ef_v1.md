@@ -5,7 +5,10 @@ Add the MageZero Standard catalog's non-creature permanent frameworks
 (family F) behind the `standard-magezero-fixtures` feature. Card behavior
 follows each card's XMage source. Every program is selected by printed
 card name through `build_standard_v1.rs` and `src/standard_cards_v1.rs`,
-so the Pauper and FDN catalogs keep their identities and hashes.
+so the Pauper and FDN catalogs keep their separate identities. The v7 completion
+candidate sets Full flags to enable all-deck acceptance checks. Native compilation,
+behavior tests and terminal public-session/replay verification remain pending in
+`docs/reports/standard_completion_v1.md`.
 
 ## Planeswalkers and attacks
 
@@ -57,7 +60,11 @@ activator keeps priority. Each unlock commits `RoomDoorUnlockedV1`, which
 "when you unlock this door" abilities trigger on, including the unlock on
 entry. Abilities printed on a locked door do not function. A Room put onto
 the battlefield without being cast has both doors locked. Door state lives
-in `GameState::standard_v1` per exact incarnation.
+in `GameState::standard_v1` per exact incarnation. Effective names, colors and mana
+value use the unlocked doors on the battlefield and the selected door on the stack;
+both halves contribute elsewhere. A fully locked Room has no name and mana value
+zero. Temple of Power separately uses its back face's empty supertype list and retains
+Ojer's front-face mana value. Generic observations include this effective identity.
 
 ## Exile until this leaves, Auras and Equipment
 
@@ -68,8 +75,8 @@ Their targets use `TargetSpec::StandardV1`, a one-object filter owned by
 the Standard module (opponent's nonland permanent with mana value at most
 2, opponent's nonland permanent, opponent's artifact or creature, artifact
 you control, and later an instant or sorcery card in your graveyard); its
-stable id 55 follows the ids 42 to 54 that the FDN and other Standard
-batches claim. Sheltered by Ghosts ("enchant creature you control") and Hardlight
+stable id 60 follows the ids reserved by the FDN and other Standard
+batches. Sheltered by Ghosts ("enchant creature you control") and Hardlight
 Containment ("enchant artifact you control") enter attached to their
 target; their enchant restriction, control included, is checked as a
 state-based action (704.5m). Sheltered by Ghosts' +1/+0 and lifelink use
@@ -228,83 +235,39 @@ equal `two_mana_combinations`). Her +1 exiles the top five cards and gives
 each castable instant or sorcery among them a cast permission until the end
 of her controller's next turn; when more than one was exiled they form a
 group, and casting one marks the group spent so the others stop being
-offered. Her -X is one loyalty ability per X from 1 to 20, each dealing X to
-each of up to two targets (`StandardTargetV1::UpToTwoAnyTargets`, chosen
-through the variable-count activation selection), so X=0 and X above 20
-are not offered. The copy trigger fires on the first instant or sorcery
-its controller casts each turn (`trigger_limit_per_turn`). It copies the
-spell onto the stack and, when the copy has exactly one target and
-another legal one exists, asks for a new target
-(`StandardCopyTargetV1`, which also accepts players); keeping the current
-target is one of the options. A copy of a spell with more than one target
-keeps its targets. The trigger's program is filled in from the cast event,
+offered. Her -X uses an explicit variable-loyalty payment, including zero and every payable
+value, and deals X to each of up to two chosen targets. The copy trigger fires on the first instant or sorcery
+its controller casts each turn (`trigger_limit_per_turn`). It copies the spell onto the stack and offers independent legal target changes through
+the shared copy continuation, retaining the original targets when the controller
+chooses to keep them. The trigger's program is filled in from the cast event,
 so root validation also accepts it through `template_matches`.
 
-## Assimilation Aegis
+## Assimilation Aegis and Agatha's Soul Cauldron
 
-Assimilation Aegis reuses the exile-until-this-leaves triggers with the
-appended `StandardTargetV1::UpToOneCreature` (one target, none required).
-Triggered abilities with "up to" targets can now stop early:
-`Action::FinishEffectSelection` answers the trigger's `ChooseTargets` once
-its minimum is met and puts it on the stack with the targets chosen so far.
-Its copy effect (707.2) is applied before each state-based action pass
-(`standard_cards_v1::refresh_aegis_copies`): when the Aegis is attached to
-a creature and a creature card is exiled with it, that creature takes the
-card's definition, name, front face, colors, subtypes and ward until the
-Aegis stops being attached to it; the creature's counters, damage,
-attachments, tapped and sick status stay. The values it had are saved in
-`GameState::standard_v1` and restored when the copy ends, and a creature
-leaving the battlefield stops being a copy first, so it reaches its new
-zone as its own card. As in XMage, the copied card is locked in when the
-copy starts. The linked-exile record now reads the exiled card's
-definition after the move, so a copy exiled until something leaves comes
-back as its own card. Abilities the creature put on the stack keep the
-definition they were created with (113.7a): the Standard state lists
-every definition each incarnation had through a copy, and ability source
-contracts accept any of them.
+Aegis links its optional exile to the exact Equipment incarnation. Its attach-triggered
+copy must retain the copied card's abilities and last-known characteristics for any
+ability that has already triggered or entered the stack, while ending when attachment
+ends. Cauldron links exiled creature cards to its exact source, grants their applicable
+activated and mana abilities to eligible controlled creatures, and permits any color
+of mana for controlled creature activations. Granted abilities must retain their
+origin's costs, timing and activation conditions.
 
-## Agatha's Soul Cauldron
+The integration's final Aegis/Cauldron repairs and their focused tests are still under
+review. Full admission flags allow those acceptance checks to run and do not certify
+these interactions before the combined runtime verification finishes.
 
-The Cauldron's tap ability targets a card in any graveyard (the appended
-`StandardTargetV1::CardInAGraveyard`) and exiles it with the Cauldron
-incarnation through `ObjectStateV4::exiled_by`; a creature card exiled
-this way triggers `StandardTriggerV1::CreatureCardExiledWithThis`, which
-puts a +1/+1 counter on target creature its controller controls.
-Creatures the Cauldron's controller controls with +1/+1 counters have the
-front-face battlefield activated abilities of those exiled creature cards.
-A granted ability is offered as an ordinary `(source, ability_index)` past
-the host's printed abilities and the Equipment-granted slot, at
-`printed + 1 + card * 8 + ability`, so the card's own ability index
-survives onto the stack; `push_paid_activation` freezes the exiled card as
-the ability's `granted_by`, and resolution reads the ability from that
-card. "Spend mana as though it were mana of any color" turns the colored
-and hybrid symbols of a controlled creature's activation cost into generic
-mana while its controller has a Cauldron (`spend_as_any_color`); colorless
-mana pays them too.
+## Completion repairs and remaining verification
 
-## Known limits
+Room identity and Temple's nonlegendary face, effective back-face sacrifice eligibility,
+ninjutsu attack targets, distinct attacking-creature counts, loyalty/lore/poison counter
+doubling, Reflection's frozen creating source, and public charge/net counters have source
+repairs. Chandra uses variable X and shared copy retargeting. Graveyard cards reset to
+the front face, so collect-evidence eligibility reads their current graveyard identity.
 
-The stack and battlefield use the Room card's combined mana value and
-name rather than the unlocked halves'. Sacrifice bindings, Bargain and
-collect evidence fail closed on a back face. The legend rule counts
-Temple of Power as legendary. Ninjutsu attackers attack the player. The
-attack count adds each declaration, so a creature attacking in two combats
-in one turn counts twice. Innkeeper's Talent does not double loyalty,
-lore or poison counters; no other card in its deck puts them.
-Reflection of Kiki-Jiki's delayed sacrifice trigger uses the token as its
-source rather than Reflection (603.7d), so it reads as the token's
-ability.
-Craft's material decision reuses `CostKind::ExileFromGraveyard` even when
-the candidate is a battlefield artifact, and net counters live in the
-Standard state rather than `Counters`, so observations do not show them.
-Assimilation Aegis's copy starts during the next state-based action pass
-rather than from a triggered ability on the stack, and a copied
-creature's leaves-the-battlefield abilities are its own card's rather than
-the copied card's.
-Agatha's Soul Cauldron does not grant mana abilities or more than eight
-abilities per exiled card, and an activation cost with Phyrexian symbols
-keeps its colors. Name-keyed Standard activation restrictions apply to a
-creature's own abilities only.
+The remaining integration audit includes Craft's public material-choice labels,
+Aegis/Cauldron semantics and granted activation conditions, all new observation fields,
+and terminal deterministic public-session execution. The current acceptance status is
+recorded in `docs/reports/standard_completion_v1.md`; this design is not a runtime pass.
 
 ## Catalog identity
 

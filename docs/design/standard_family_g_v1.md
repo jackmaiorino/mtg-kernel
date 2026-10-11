@@ -1,22 +1,19 @@
 # MageZero Standard family G v1: trigger and static creatures
 
-Family G of the MageZero Standard inventory
-(`docs/reports/standard_magezero_inventory_v1.md`) covers creatures with
-triggered and static abilities. This batch builds the 21 cards from that family
-that the five mono-color decks need. Kellan, Planar Trailblazer stays with the
-FDN threads and is copied in once FDN merges it. The non-mono family G cards are
-left for a later batch.
+Family G of the MageZero Standard inventory covers creatures with triggered and
+static abilities. The v7 completion candidate includes all 48 listed family G cards,
+including shared FDN creatures and the two-color additions. The registry entries are
+Full admission candidates; combined native/runtime verification remains pending in
+`docs/reports/standard_completion_v1.md`.
 
-Every definition appends to `data/standard/magezero_v1/cards_v1.json`. The
-behavior tables in `build.rs` (keywords, `trigger_recipe_for`,
-`standard_static_recipe_for`, activated recipes) name each card, so the Standard
-catalog identity covers them. The batch moves the Standard catalog to
-`kernel_carddb_standard/v3` (`0xc6139dbdd2f0db62`); Assassin and Mercenary join
-`Subtype::OUTLAW_TYPES` for Shoot the Sheriff. Pauper and FDN canon never include the Standard
-static field. New engine state and rules are cfg-gated to
-`standard-magezero-fixtures` wherever a default build would otherwise change. The
-trigger tables live in `mtg-kernel/src/trigger/standard_family_g_v1.rs` and the
-statics in `mtg-kernel/src/standard_statics_v1.rs`.
+Definitions keep their append order in `data/standard/magezero_v1/cards_v1.json`.
+The behavior tables in `build.rs`, triggers in `src/trigger/standard_family_g_v1.rs`,
+statics in `src/standard_statics_v1.rs`, and choices/upgrades in
+`src/standard_creatures_v1.rs` and `src/standard_creature_choices_v1.rs` implement the
+cards. Pauper and FDN catalogs retain their separate identities. Assassin and Mercenary
+remain part of `Subtype::OUTLAW_TYPES` for Shoot the Sheriff.
+
+The original mono-color batch uses these recipes:
 
 | Card | Behavior | Engine recipe |
 | --- | --- | --- |
@@ -71,44 +68,30 @@ Human Token (1/1 white Human) is appended for Adeline.
   path in Standard. Bloodletter modifies the life lost, while affordability
   uses the printed payment amount (CR 119.4 and 118.11). Other catalogs retain
   their existing Phyrexian payment event history.
-- Normal, Adventure, Omen and Bestow casts have a static cost adjustment.
-  Complete total-cost ordering and alternative-cost coverage remain unfinished;
-  Thalia and Haughty Djinn are therefore Partial.
+- Static spell-cost adjustments apply to total costs, including alternative
+  routes, additional costs and resolving free casts. Free casting waives only
+  the base mana cost; Thalia's tax and applicable reductions remain relevant.
 
 - The rules-vector extractor maps the new effect ops in a new slice,
   `rules_vector_v1/meaning/effect_g.rs`, and the new trigger conditions, cost
   component and target specs in the existing tables.
 
-## Remaining limitations and admission
+## Completion changes and admission
 
-This batch adds 14 Full and seven Partial deck-card definitions, plus Human
-Token. The tracked catalog has 34 Full nonbasic cards and eight Partial cards
-(including the earlier Memory Deluge). Both Rust and Python full-deck admission
-refuse every Partial card. Existing behavior tests exercise development support;
-they do not certify these incomplete definitions as Full.
-
-- Quirion Beastcaller is Partial. Its dies trigger uses untargeted per-counter
-  choices at resolution. Printed targets and allocation must be announced when
-  the trigger enters the stack, with target legality enforced at resolution.
-- Extraction Specialist is Partial. Its restriction currently resumes if its
-  controller loses and regains the same Specialist. The printed duration ends
-  permanently when that player first stops controlling it (CR 611.2b).
-- Sharp-Eyed Rookie and Evolving Adaptive are Partial. Resolution currently
-  requires the entrant still to be on the battlefield; a departed entrant needs
-  last-known power and toughness for the intervening-if check.
-- Thalia and Haughty Djinn are Partial. Alternative, flashback, escape, madness
-  and plotted costs lack the adjustment. Intrinsic reductions are applied before
-  the tax, and kicker is added after the reduction. The shared Pauper prefix
-  makes these omissions reachable even without changing the Standard decks.
-- Recruitment Officer and Memory Deluge are Partial because bottomed cards keep
-  looked-at order instead of the printed random order. Recruitment Officer's
-  printed power/toughness is 2/1.
-- Ward granted by Coppercoat Vanguard is not shown in observation features.
-  Stack validation accepts a ward {1} trigger from any Human creature
-  definition, because the grant may have ended by the time the trigger is
-  checked.
-- Target spec stable ids 50 and 51 follow FDN (42 to 46) and Standard family C
-  (47 to 49).
+- Quirion Beastcaller binds targeted recipients and allocations when its death
+  trigger is placed, then validates those targets during resolution.
+- Extraction Specialist's restriction ends permanently when its source leaves
+  or its controller first loses control of that source incarnation.
+- Sharp-Eyed Rookie and Evolving Adaptive use frozen creature characteristics
+  when the entrant has departed before their intervening-if recheck.
+- Recruitment Officer and Memory Deluge randomly order the remainder with the
+  deterministic game RNG after the controller chooses the cards to keep.
+- Ward grants and the added persistent restrictions have public observation
+  support. The new choices use the generic decision projection; frozen policy
+  encoders refuse representations they cannot encode completely.
+- The additional creatures and Adventures have focused behavior tests in the
+  same family suite. Full flags permit those integration acceptance checks;
+  they are not runtime verification receipts.
 
 Rules sources: [Comprehensive Rules](https://media.wizards.com/2026/downloads/MagicCompRules%2020260925.txt),
 [Dominaria United release notes](https://magic.wizards.com/en/news/feature/dominaria-united-release-notes-2022-08-26).
@@ -120,4 +103,5 @@ definition's characteristics and trigger count. Behavior tests and life-payment
 regressions cover stale sources, declined choices, empty candidate sets, counters
 and LKI, uncounterable spells, priority-window casting with flash, and printed
 affordability when Bloodletter modifies a Phyrexian payment. CI runs this suite
-and the catalog suite, including the fixed identity and Partial admission checks.
+and the catalog suite, including the observed v7 identity and all-deck admission checks.
+Combined executable verification is pending.
