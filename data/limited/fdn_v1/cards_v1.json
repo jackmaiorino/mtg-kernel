@@ -6304,6 +6304,128 @@
       "mechanics": [
         "incarnation_bound_cannot_block_until_cleanup"
       ]
+    },
+    {
+      "name": "Frenzied Goblin",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Goblin",
+        "Berserker"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/f/FrenziedGoblin.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_frenzied_goblin.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "name": "Slumbering Cerberus",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dog"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/s/SlumberingCerberus.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_slumbering_cerberus.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "name": "Wildwood Scourge",
+      "mana_cost": "{X}{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Hydra"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 0,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/w/WildwoodScourge.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_wildwood_scourge.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "is_token": true,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [],
+      "name": "Face-down creature"
+    },
+    {
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "is_token": true,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [],
+      "name": "Face-down card"
     }
   ]
 }

@@ -303,6 +303,19 @@ class LimitedDeckTest(unittest.TestCase):
         frozen_names = json.loads((FIXTURES / "booster_pool_v1.json").read_text(encoding="utf-8"))["cards"]
         self.assertNotIn("Nameless Creature Copy Token", [card["name"] for card in frozen_names])
 
+    def test_later_source_batch_and_observer_sentinels_preserve_previous_ids(self) -> None:
+        for slug, name, ident in [("frenzied_goblin", "Frenzied Goblin", 404),
+                                  ("slumbering_cerberus", "Slumbering Cerberus", 405),
+                                  ("wildwood_scourge", "Wildwood Scourge", 406)]:
+            deck = limited.parse_dck((FIXTURES / f"FDN_reference_{slug}.dck").read_text(encoding="utf-8"))
+            self.assertEqual(limited.resolve_mainboard(deck, self.registry)[:4], [ident] * 4)
+            self.assertEqual(self.registry[name].card_id, ident)
+        for name, ident in [("Face-down creature", 407), ("Face-down card", 408)]:
+            self.assertEqual(self.registry[name].card_id, ident)
+            with self.assertRaisesRegex(ValueError, "token"):
+                limited.resolve_mainboard(limited.parse_dck("39 Plains\n1 " + name), self.registry)
+        self.assertEqual(self.registry["Sower of Chaos"].card_id, 403)
+
     def test_unknown_partial_no_effect_and_token_are_all_rejected(self) -> None:
         registry = limited.registry_from_json({"version": 2, "cards": [
             {"name": "Supported", "engine_capability": "full"},
@@ -355,7 +368,7 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("FDN_top_*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
-        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 201)
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 204)
         self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
                              for card in report["cards"]), 0)
 
