@@ -3707,6 +3707,7 @@ fn effect_recipe_for(card: &CardJson) -> String {
                 "Anthem of Champions" => ";static=boost_live_controlled_creatures:1:1:layer7c:printed_source_abilities",
                 "Mocking Sprite" | "Archmage of Runes" => ";static=controller_instant_or_sorcery_spells_cost_generic_less:1:total_cost_after_additional_and_x_before_one_floor:printed_source_abilities",
                 "Empyrean Eagle" => ";static=boost_other_live_controlled_creatures_with_effective_flying:1:1:layer7c:printed_source_abilities",
+                "High Fae Trickster" => ";static=controller_casts_nonland_spells_as_though_flash:while_live_battlefield_printed_abilities:does_not_grant_keyword_or_activate_or_play_lands",
                 "Billowing Shriekmass" => ";static=controller_graveyard_cards_at_least:7:boost_source:2:1:layer7c:printed_source_abilities",
                 "Dreadwing Scavenger" => ";static=controller_graveyard_cards_at_least:7:boost_source:1:1:layer7c:deathtouch:printed_source_abilities",
                 _ => "",
@@ -3935,6 +3936,7 @@ fn keywords_for(card: &CardJson) -> String {
         "Masked Meower" | "Clockwork Percussionist" => keywords.push("Keywords::HASTE"),
         "Balmor, Battlemage Captain"
         | "Mocking Sprite"
+        | "High Fae Trickster"
         | "Firespitter Whelp"
         | "Sneaky Snacker"
         | "Healer's Hawk"
@@ -3987,7 +3989,7 @@ fn keywords_for(card: &CardJson) -> String {
         "Resolute Reinforcements" | "Twinblade Blessing" | "Ambush Wolf" => {
             keywords.push("Keywords::FLASH")
         }
-        "Mischievous Pup" => keywords.push("Keywords::FLASH"),
+        "Mischievous Pup" | "High Fae Trickster" => keywords.push("Keywords::FLASH"),
         "Elfsworn Giant" => keywords.push("Keywords::REACH"),
         "Eager Trufflesnout" => keywords.push("Keywords::TRAMPLE"),
         _ => {}

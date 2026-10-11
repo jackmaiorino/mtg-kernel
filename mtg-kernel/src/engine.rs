@@ -6018,6 +6018,25 @@ fn spell_types_have_instant(types: &[CardType]) -> bool {
     types.contains(&CardType::Instant)
 }
 
+pub(crate) fn static_controller_casts_with_flash_for_v1(name: &str) -> bool {
+    cfg!(feature = "limited-fdn-fixtures") && name == "High Fae Trickster"
+}
+
+fn controller_can_cast_with_flash_v1(player: PlayerId, state: &GameState) -> bool {
+    state.objects.iter().any(|(source, object)| {
+        object.zone == Zone::Battlefield
+            && object.controller == player
+            && object.v4.face_index == 0
+            && card_def::CARD_DEFS
+                .get(object.card_def as usize)
+                .is_some_and(|definition| {
+                    definition.is_executable()
+                        && static_controller_casts_with_flash_for_v1(definition.name)
+                })
+            && crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+    })
+}
+
 fn cast_form_timing_ok(
     types: &[CardType],
     keywords: Keywords,
@@ -6026,6 +6045,7 @@ fn cast_form_timing_ok(
 ) -> bool {
     spell_types_have_instant(types)
         || keywords.has(Keywords::FLASH)
+        || (!types.contains(&CardType::Land) && controller_can_cast_with_flash_v1(player, state))
         || sorcery_speed_timing_ok(player, state)
 }
 
@@ -6037,6 +6057,8 @@ fn pending_cast_form_timing_ok(
 ) -> bool {
     spell_types_have_instant(types)
         || keywords.has(Keywords::FLASH)
+        || (!types.contains(&CardType::Land)
+            && controller_can_cast_with_flash_v1(pending.controller, state))
         || (pending.controller == state.active_player
             && pending.controller == state.priority_player
             && matches!(state.step, Step::Main1 | Step::Main2)
