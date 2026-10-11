@@ -2699,6 +2699,12 @@ pub struct ExecCtx {
     /// this absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ability_source_contract: Option<AbilitySourceContractV4>,
+    /// Frozen origin of a borrowed activation, including the actual donor.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::cauldron_grants_v1::CauldronGrantRecordV1::is_empty"
+    )]
+    pub cauldron_grant: crate::cauldron_grants_v1::CauldronGrantRecordV1,
     /// True iff the spell/ability this resolution belongs to was kicked
     /// (`card_def::CardDef::kicker_cost`) -- carried on `state::StackItem::
     /// kicked` and copied in here by `engine::resolve_top_of_stack`, and
@@ -2798,6 +2804,7 @@ impl std::hash::Hash for ExecCtx {
             std::hash::Hash::hash(&0x6f70_7469_6f6e_616c_u64, state);
             std::hash::Hash::hash(&kind, state);
         }
+        std::hash::Hash::hash(&self.cauldron_grant, state);
     }
 }
 
@@ -7326,6 +7333,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
         || pending.ctx.hidden_ability_source != pending.resolving_item.v4.hidden_ability_source
         || pending.ctx.kicked != pending.resolving_item.kicked
         || pending.ctx.ability_source_contract != pending.resolving_item.v4.ability_source_contract
+        || pending.ctx.cauldron_grant != pending.resolving_item.v4.cauldron_grant
         || pending.ctx.optional_additional_cost_paid
             != pending.resolving_item.v4.optional_additional_cost_paid
     {
@@ -12761,6 +12769,7 @@ fn validate_resumable_discard_details(
 impl ExecCtx {
     pub fn no_targets(source: ObjectId, controller: PlayerId) -> ExecCtx {
         ExecCtx {
+            cauldron_grant: Default::default(),
             stack_item_id: None,
             source,
             controller,
@@ -19631,6 +19640,7 @@ mod tests {
     fn deal_damage_to_target_player_reduces_life() {
         let mut state = two_card_libraries();
         let ctx = ExecCtx {
+            cauldron_grant: Default::default(),
             stack_item_id: None,
             source: ObjectId(0),
             controller: PlayerId::P0,
@@ -19661,6 +19671,7 @@ mod tests {
         let creature = state.draw_card(PlayerId::P1).unwrap();
         state.move_hand_to_battlefield(PlayerId::P1, creature);
         let ctx = ExecCtx {
+            cauldron_grant: Default::default(),
             stack_item_id: None,
             source: ObjectId(0),
             controller: PlayerId::P0,

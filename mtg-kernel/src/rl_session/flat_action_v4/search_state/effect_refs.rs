@@ -828,6 +828,11 @@ fn continuation_conflicts(
             .ability_source_contract
             .as_ref()
             .is_some_and(|a| s.a(a))
+        || p.ctx
+            .cauldron_grant
+            .0
+            .as_ref()
+            .is_some_and(|grant| s.a(&grant.host) || s.a(&grant.donor))
     {
         return true;
     }

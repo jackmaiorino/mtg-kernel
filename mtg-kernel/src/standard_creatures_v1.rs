@@ -26,6 +26,9 @@ pub struct CreatureUpgradeV1 {
     /// The activation that granted combat impulse, retained when a copy ends.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub combat_impulse_source: Option<crate::state::AbilitySourceContractV4>,
+    /// The exiled card supplying that activation when it was borrowed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub combat_impulse_donor: Option<crate::state::AbilitySourceContractV4>,
 }
 
 impl std::hash::Hash for CreatureUpgradeV1 {
@@ -46,6 +49,10 @@ impl std::hash::Hash for CreatureUpgradeV1 {
         if let Some(source) = self.combat_impulse_source {
             "combat_impulse_source_v1".hash(state);
             source.hash(state);
+        }
+        if let Some(donor) = self.combat_impulse_donor {
+            "combat_impulse_donor_v1".hash(state);
+            donor.hash(state);
         }
     }
 }
@@ -350,14 +357,19 @@ pub(crate) fn combat_impulse_grant(
     id: ObjectId,
 ) -> Option<crate::state::AbilitySourceContractV4> {
     let object = state.objects.try_get(id)?;
-    let source = upgrade(state, id)?.combat_impulse_source?;
+    let upgrade = upgrade(state, id)?;
+    let source = upgrade.combat_impulse_source?;
+    let grant = upgrade.combat_impulse_donor.unwrap_or(source);
     (object.zone == Zone::Battlefield
         && source.source == id
         && source.zone == Zone::Battlefield
         && source.zone_change_count == object.zone_change_count
-        && grants_combat_impulse(source.card_def)
+        && upgrade
+            .combat_impulse_donor
+            .is_none_or(|donor| donor.zone == Zone::Exile)
+        && grants_combat_impulse(grant.card_def)
         && combat_impulse_active(state, id))
-    .then_some(source)
+    .then_some(grant)
 }
 
 pub(crate) fn activation_allowed(state: &GameState, id: ObjectId, index: usize) -> bool {
@@ -867,6 +879,7 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
             ));
             value.combat_impulse = Some(timestamp);
             value.combat_impulse_source = Some(contract);
+            value.combat_impulse_donor = ctx.cauldron_grant.0.map(|grant| grant.donor);
         }
         CreatureEffectV1::KellanRogue => {
             value.creature_types = Some((

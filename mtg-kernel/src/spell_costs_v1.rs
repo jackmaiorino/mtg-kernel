@@ -481,6 +481,7 @@ pub(super) fn selected_spell_mana_costs_v1(
     Some(selected)
 }
 
+// Keep selected form, payment and source inputs explicit at this shared quote boundary.
 pub(super) fn selected_spell_mana_costs_for_source_v1(
     source: ObjectId,
     definition: &card_def::CardDef,

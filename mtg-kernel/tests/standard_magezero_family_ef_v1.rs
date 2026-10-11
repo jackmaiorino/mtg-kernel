@@ -3161,6 +3161,86 @@ fn a_pilot_without_abilities_cannot_supply_the_extra_crew_power() {
 }
 
 #[test]
+fn etali_captures_each_casts_triggers_but_defers_placement_and_sbas() {
+    // An Etali entering without a cast and an Etali following one prior cast
+    // exercise both duplicate-trigger and missed-trigger failure modes.
+    for prior_casts in [0, 1] {
+        let mut state = game();
+        let cutter = put(&mut state, P0, "Cori-Steel Cutter", Zone::Battlefield);
+        let jodah = put(&mut state, P0, "Jodah, the Unifier", Zone::Battlefield);
+        let reliquary = put(&mut state, P0, "Dusk Rose Reliquary", Zone::Hand);
+        let elves = put(&mut state, P1, "Llanowar Elves", Zone::Hand);
+        for card in [reliquary, elves] {
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(card, Zone::Library));
+        }
+        let etali = put(&mut state, P0, "Etali, Primal Conqueror", Zone::Battlefield);
+        state.players[0].spells_cast_this_turn = prior_casts;
+        // Jodah currently gives Etali +2/+2. Sacrificing Jodah for the first
+        // free cast makes this damage lethal, but SBAs must wait for Etali's
+        // entire ability, including its second casting instruction, to finish.
+        assert_eq!(engine::effective_toughness(&state, etali), 9);
+        state.objects.get_mut(etali).damage = 7;
+        for _ in 0..30 {
+            match next(&mut state) {
+                Decision::ChooseEffectTargets {
+                    source,
+                    ref legal_targets,
+                    ..
+                } => {
+                    assert_eq!(source, etali);
+                    assert!(legal_targets.contains(&Target::Object(reliquary)));
+                    assert!(legal_targets.contains(&Target::Object(elves)));
+                    break;
+                }
+                Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+                other => panic!("Etali first free cast: {other:?}"),
+            }
+        }
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(reliquary)),
+        );
+        assert!(
+            matches!(next(&mut state), Decision::ChooseCostTargets { ref candidates, .. }
+            if candidates.contains(&jodah))
+        );
+        act(&mut state, Action::ChooseCostTarget(jodah));
+        assert!(
+            matches!(next(&mut state), Decision::ChooseEffectTargets { source, ref legal_targets, .. }
+            if source == etali && legal_targets == &[Target::Object(elves)])
+        );
+        assert_eq!(state.players[0].spells_cast_this_turn, prior_casts + 1);
+        assert_eq!(state.objects.get(jodah).zone, Zone::Graveyard);
+        assert_eq!(engine::effective_toughness(&state, etali), 7);
+        assert_eq!(state.objects.get(etali).zone, Zone::Battlefield);
+        assert!(state.stack.iter().any(|item| item.source == etali));
+        assert!(!state.stack.iter().any(|item| item.source == cutter));
+        assert!(state.engine.pending_triggers.is_empty());
+        state = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(elves)),
+        );
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        assert_eq!(state.players[0].spells_cast_this_turn, prior_casts + 2);
+        assert_eq!(state.objects.get(etali).zone, Zone::Graveyard);
+        assert!(state.engine.pending_effect.is_none());
+        assert!(!state.stack.iter().any(|item| item.source == etali));
+        assert_eq!(
+            state
+                .stack
+                .iter()
+                .filter(|item| item.source == cutter)
+                .count(),
+            1
+        );
+        assert_eq!(state.stack.last().unwrap().source, cutter);
+        assert_eq!(state.objects.get(reliquary).zone, Zone::Stack);
+        assert_eq!(state.objects.get(elves).zone, Zone::Stack);
+    }
+}
+
+#[test]
 fn etali_free_casts_opponents_spell_then_transforms_and_poison_uses_damage_lki() {
     let mut state = game();
     let foreign = put(&mut state, P1, "Llanowar Elves", Zone::Hand);
@@ -3662,4 +3742,137 @@ fn aegis_leaving_before_its_etb_resolves_does_not_exile_the_target() {
     );
     resolve_stack(&mut state);
     assert_eq!(state.objects.get(elves).zone, Zone::Battlefield);
+}
+
+#[test]
+fn aegis_copied_activations_freeze_the_printed_ability_before_sacrificing_the_host() {
+    // Cover both immediate payment and payment resumed after choosing a discard.
+    for (name, index) in [("Gingerbrute", 1), ("Masked Meower", 0)] {
+        let mut state = game();
+        let donor = put(&mut state, P1, name, Zone::Battlefield);
+        let donor_definition = state.objects.get(donor).card_def;
+        let host = put(&mut state, P0, "Tolarian Terror", Zone::Battlefield);
+        let host_definition = state.objects.get(host).card_def;
+        let aegis = cast_aegis(&mut state, &[Target::Object(donor)]);
+        equip_aegis(&mut state, aegis, host);
+        let source_generation = state.objects.get(host).zone_change_count;
+        let pitch = put(&mut state, P0, "Forest", Zone::Hand);
+        let before_life = state.players[0].life;
+        let before_library = state.players[0].library.len();
+        state.players[0].mana_pool[ManaColor::U.pool_index()] = 2;
+        act(&mut state, Action::ActivateAbility(host, index));
+        if name == "Masked Meower" {
+            assert!(matches!(next(&mut state), Decision::Discard { .. }));
+            act(&mut state, Action::Discard(vec![pitch]));
+        }
+        next(&mut state);
+        assert_eq!(state.objects.get(host).zone, Zone::Graveyard);
+        assert_eq!(state.objects.get(host).card_def, host_definition);
+        let ability = state.stack.last().unwrap();
+        assert_eq!(ability.v4.activated_ability_index, Some(index));
+        let source = ability.v4.ability_source_contract.unwrap();
+        assert_eq!(source.card_def, donor_definition);
+        assert_eq!(source.zone_change_count, source_generation);
+        let mut restored: GameState =
+            serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+        resolve_stack(&mut state);
+        resolve_stack(&mut restored);
+        assert_eq!(state, restored);
+        if name == "Gingerbrute" {
+            assert_eq!(state.players[0].life, before_life + 3);
+        } else {
+            assert_eq!(state.objects.get(pitch).zone, Zone::Graveyard);
+            assert_eq!(state.players[0].library.len(), before_library - 1);
+        }
+    }
+}
+
+#[test]
+fn cauldron_borrowed_kellan_upgrade_retains_the_donor_after_all_sources_leave() {
+    for host_leaves in [false, true] {
+        let mut state = game();
+        let cauldron = put(&mut state, P0, "Agatha's Soul Cauldron", Zone::Battlefield);
+        let host = put(&mut state, P0, "Gwenna, Eyes of Gaea", Zone::Battlefield);
+        let host_definition = state.objects.get(host).card_def;
+        let donor = to_graveyard(&mut state, P0, "Kellan, Planar Trailblazer");
+        act(&mut state, Action::ActivateAbility(cauldron, 0));
+        drive(&mut state, &[Target::Object(donor), Target::Object(host)]);
+        let borrowed_index = (CARD_DEFS[usize::from(host_definition)]
+            .activated_abilities
+            .len()
+            + 1) as u8;
+        state.players[0].mana_pool[ManaColor::R.pool_index()] = 2;
+        act(&mut state, Action::ActivateAbility(host, borrowed_index));
+        next(&mut state);
+        let grant = state.stack.last().unwrap().v4.cauldron_grant.0.unwrap();
+        assert_eq!(grant.donor.source, donor);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(cauldron, Zone::Graveyard),
+        );
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(donor, Zone::Graveyard),
+        );
+        state = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+        resolve_stack(&mut state);
+        let upgrade = state
+            .objects
+            .get(host)
+            .v4
+            .creature_upgrade
+            .as_ref()
+            .unwrap();
+        assert_eq!(upgrade.combat_impulse_source, Some(grant.host));
+        assert_eq!(upgrade.combat_impulse_donor, Some(grant.donor));
+        let generation = state.objects.get(host).zone_change_count;
+        event::log_combat_damage_to_player(&mut state, host, generation, P1, 1);
+        let pending = mtg_kernel::trigger::collect_and_process(&mut state);
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].granted_by, Some(grant.donor));
+        assert_eq!(pending[0].source_contract.unwrap().source, host);
+        state.engine.pending_triggers.extend(pending);
+        state = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+        for change_host in [false, true] {
+            let mut altered = state.clone();
+            if change_host {
+                altered.engine.pending_triggers[0]
+                    .source_contract
+                    .as_mut()
+                    .unwrap()
+                    .zone_change_count += 1;
+            } else {
+                altered.engine.pending_triggers[0]
+                    .granted_by
+                    .as_mut()
+                    .unwrap()
+                    .card_def = host_definition;
+            }
+            assert!(matches!(
+                engine::advance_until_decision(&mut altered),
+                Decision::Halted { .. }
+            ));
+        }
+        let top = state.players[0].library[0];
+        if host_leaves {
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(host, Zone::Hand));
+        }
+        next(&mut state);
+        assert_eq!(state.stack.last().unwrap().v4.granted_by, Some(grant.donor));
+        let mut restored: GameState =
+            serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+        resolve_stack(&mut state);
+        resolve_stack(&mut restored);
+        assert_eq!(state, restored);
+        assert_eq!(state.objects.get(top).zone, Zone::Exile);
+        if host_leaves {
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(host, Zone::Battlefield),
+            );
+            let generation = state.objects.get(host).zone_change_count;
+            event::log_combat_damage_to_player(&mut state, host, generation, P1, 1);
+            assert!(mtg_kernel::trigger::collect_and_process(&mut state).is_empty());
+        }
+    }
 }

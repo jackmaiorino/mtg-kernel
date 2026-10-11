@@ -35,6 +35,18 @@ pub struct HumanVisibleStateV1 {
     pub known_hand_cards: [Vec<HumanPrivateCardV1>; 2],
     pub extensions: HumanExtensionsV1,
     pub policy_context: HumanPolicyContextV1,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub known_face_down_cards: Vec<HumanFaceDownKnowledgeV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub poison_counters: Option<[u16; 2]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub poison_prevention: Option<[bool; 2]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub creatures_attacked_this_turn: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ninja_emblems: Option<[u16; 2]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub restricted_mana: Option<[Vec<HumanRestrictedManaV1>; 2]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -50,6 +62,7 @@ pub struct HumanCardRefV1 {
 // in labels. Canonical action references cannot silently invent visible rows.
 pub(super) struct Handles {
     rows: Vec<(CardStableRefV1, HumanCardRefV1)>,
+    current_battlefield: Vec<CardStableRefV1>,
     effect_timestamps: Vec<u64>,
     departed_stack_targets: Vec<u64>,
 }
@@ -64,10 +77,58 @@ impl Handles {
             .filter(|effect| effect.duration != EffectDurationV2::WhileAttached)
             .map(|effect| effect.timestamp)
             .collect();
+        for card in observation
+            .projection
+            .surface
+            .battlefield
+            .iter()
+            .flatten()
+            .chain(observation.projection.surface.graveyards.iter().flatten())
+            .chain(observation.projection.surface.exile.iter())
+        {
+            if let Some(upgrade) = &card.creature_upgrade {
+                effect_timestamps.extend(
+                    upgrade
+                        .temporary_creature
+                        .map(|(_, _, timestamp)| timestamp),
+                );
+                effect_timestamps
+                    .extend(upgrade.suppressed_by.iter().map(|effect| effect.timestamp));
+                effect_timestamps.extend(
+                    upgrade
+                        .creature_types
+                        .as_ref()
+                        .map(|(_, timestamp)| *timestamp),
+                );
+                effect_timestamps.extend(upgrade.base_stats.map(|(_, _, timestamp)| timestamp));
+                effect_timestamps.extend(upgrade.color.map(|(_, timestamp)| timestamp));
+                effect_timestamps.extend(
+                    upgrade
+                        .keyword_grants
+                        .iter()
+                        .map(|(_, timestamp)| *timestamp),
+                );
+                effect_timestamps.extend(
+                    upgrade
+                        .keyword_losses
+                        .iter()
+                        .map(|(_, timestamp)| *timestamp),
+                );
+                effect_timestamps.extend(upgrade.combat_impulse);
+            }
+        }
         effect_timestamps.sort_unstable();
         effect_timestamps.dedup();
         let mut handles = Self {
             rows: Vec::new(),
+            current_battlefield: observation
+                .projection
+                .surface
+                .battlefield
+                .iter()
+                .flatten()
+                .map(|card| card.stable.clone())
+                .collect(),
             effect_timestamps,
             departed_stack_targets: Vec::new(),
         };
@@ -171,6 +232,24 @@ impl Handles {
         Ok(visible)
     }
 
+    fn current_link(&self, link: crate::state::ObjectLinkV4) -> Option<HumanCardRefV1> {
+        self.rows
+            .iter()
+            .find(|(key, _)| {
+                key.arena_id == link.object.0
+                    && key.zone_change_count == link.zone_change_count
+                    && key.zone == Zone::Battlefield
+                    && self.current_battlefield.contains(key)
+            })
+            .map(|(_, visible)| visible.clone())
+    }
+
+    fn timestamp_order(&self, timestamp: u64) -> Result<usize, Error> {
+        self.effect_timestamps
+            .binary_search(&timestamp)
+            .map_err(|_| Error::InvalidVisibleReference)
+    }
+
     fn canonicalize(&mut self, state: &HumanVisibleStateV1) -> Result<(), Error> {
         // This JSON is produced solely from the explicit safe DTO above.
         // It is used internally to order safe fields, never to sanitize an
@@ -212,6 +291,11 @@ impl Handles {
         for values in permissions.values_mut() {
             values.sort();
         }
+        let knowledge: BTreeMap<_, _> = state
+            .known_face_down_cards
+            .iter()
+            .map(|card| (card.object.handle.clone(), card.name.clone()))
+            .collect();
         let mut keyed = Vec::with_capacity(self.rows.len());
         for (reference, visible) in self.rows.drain(..) {
             let mut visible_roles = roles.remove(&visible.handle).unwrap_or_default();
@@ -220,6 +304,7 @@ impl Handles {
                 without_handles(&visible)?,
                 attributes.remove(&visible.handle),
                 permissions.remove(&visible.handle).unwrap_or_default(),
+                knowledge.get(&visible.handle),
                 visible_roles,
             );
             keyed.push((
@@ -262,6 +347,24 @@ fn interchangeable_effect_targets(state: &HumanVisibleStateV1, left: &str, right
     {
         if (is_pair(&card.stable) && !card.attachments.is_empty())
             || card.attachments.iter().any(&is_pair)
+            || card
+                .characteristics
+                .legend_return_sources
+                .as_ref()
+                .is_some_and(|sources| sources.iter().any(&is_pair))
+            || card.creature_upgrade.as_ref().is_some_and(|upgrade| {
+                upgrade
+                    .suppressed_by
+                    .iter()
+                    .any(|effect| effect.source.as_ref().is_some_and(&is_pair))
+                    || upgrade
+                        .combat_impulse_source
+                        .as_ref()
+                        .is_some_and(|source| {
+                            is_pair(&source.source)
+                                || source.attached_to.as_ref().is_some_and(&is_pair)
+                        })
+            })
         {
             return false;
         }
@@ -338,10 +441,14 @@ fn collect_roles(
                     || location.starts_with("public.exile.")
                     || location.starts_with("own_hand.")
                     || location.starts_with("known_hand_cards.")
+                    || location.starts_with("known_face_down_cards.")
                     || location.starts_with("extensions.decision_local_library.cards.");
                 let unordered_graph = location.starts_with("public.object_relations.")
                     || location.starts_with("public.continuous_effects.")
-                    || location.contains(".attachments.");
+                    || location.contains(".attachments.")
+                    || location.contains(".legend_return_sources.")
+                    || location.contains(".creature_upgrade.suppressed_by.")
+                    || location.contains(".combat_impulse_source.");
                 let unary_permission = location.starts_with("public.exile_play_permissions.");
                 if unordered_graph {
                     graph.insert(handle.to_owned());
@@ -406,6 +513,12 @@ fn project_state(
             .projection
             .policy_surface_context
             .project(handles)?,
+        known_face_down_cards: observation.known_face_down_cards.project(handles)?,
+        poison_counters: observation.projection.poison_counters,
+        poison_prevention: observation.projection.poison_prevention,
+        creatures_attacked_this_turn: observation.projection.creatures_attacked_this_turn,
+        ninja_emblems: observation.projection.ninja_emblems,
+        restricted_mana: observation.projection.restricted_mana.project(handles)?,
     };
     for cards in &mut state.public.battlefield {
         sort_visible(cards);
@@ -425,6 +538,12 @@ fn project_state(
     }
     sort_visible(&mut state.public.exile);
     sort_visible(&mut state.own_hand);
+    sort_visible(&mut state.known_face_down_cards);
+    if let Some(pools) = &mut state.restricted_mana {
+        for pool in pools {
+            sort_visible(pool);
+        }
+    }
     for cards in &mut state.known_hand_cards {
         sort_visible(cards);
     }
@@ -497,7 +616,12 @@ leaf!(
     Zone,
     ManaColor,
     CountersV1,
-    CardCharacteristicsV2,
+    CardTypeFlagsV2,
+    KeywordFlagsV2,
+    EffectiveIdentityV1,
+    crate::standard_legends_v1::LegendCharacteristicsV1,
+    crate::card_def::ManaSpendRestrictionDef,
+    crate::engine::FreeCastV1,
     AbilityUsePublicV4,
     GoadPublicV4,
     PlayerStatusV1,
@@ -563,9 +687,9 @@ impl Project for CardStableRefV1 {
 // Explicit field lists make additions to privileged source records opt-in.
 // The macro changes only reference-bearing types, never their game meaning.
 macro_rules! record {
-    ($output:ident, $input:ty, {$($field:ident: $ty:ty),* $(,)?}) => {
+    ($output:ident, $input:ty, {$($(#[$attr:meta])* $field:ident: $ty:ty),* $(,)?}) => {
         #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-        pub struct $output { $(pub $field: $ty),* }
+        pub struct $output { $($(#[$attr])* pub $field: $ty),* }
         impl Project for $input {
             type Output = $output;
             fn project(&self, handles: &mut Handles) -> Result<Self::Output, Error> {
@@ -574,6 +698,9 @@ macro_rules! record {
         }
     };
 }
+
+mod standard;
+pub use standard::*;
 
 record!(HumanPrivateCardV1, CardPrivateV1, { stable: HumanCardRefV1 });
 record!(HumanKnownLibraryCardV1, KnownLibraryCardV4, { position: u32, card: HumanPrivateCardV1 });
@@ -594,7 +721,9 @@ pub struct HumanPublicCardV1 {
     pub ability_uses_this_turn: Vec<AbilityUsePublicV4>,
     pub skip_next_untap: bool,
     pub goaded_by: Vec<GoadPublicV4>,
-    pub characteristics: CardCharacteristicsV2,
+    pub characteristics: HumanCardCharacteristicsV1,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub creature_upgrade: Option<HumanCreatureUpgradeV1>,
 }
 impl Project for CardPublicV2 {
     type Output = HumanPublicCardV1;
@@ -618,7 +747,8 @@ impl Project for CardPublicV2 {
             ability_uses_this_turn: self.ability_uses_this_turn.clone(),
             skip_next_untap: self.skip_next_untap,
             goaded_by: self.goaded_by.clone(),
-            characteristics: self.characteristics.clone(),
+            characteristics: self.characteristics.project(handles)?,
+            creature_upgrade: self.creature_upgrade.project(handles)?,
         })
     }
 }
@@ -676,6 +806,12 @@ record!(HumanStackItemV1, StackItemPublicV2, {
     is_copy: bool, is_flashback: bool, mode_chosen: u8, madness_offer: bool,
     kicked: bool, cast_method: Option<CastMethodV4>, face_index: u8, x_value: u16,
     paid_cost_refs: Vec<HumanCardRefV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    counter_distribution: Option<HumanCounterDistributionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    counter_transfer: Option<HumanCounterTransferV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    granted_ability: Option<(HumanCardRefV1, u16)>,
 });
 record!(HumanCombatV1, CombatStatePublicV2, {
     attackers_declared: bool, blockers_declared: bool,
@@ -791,6 +927,8 @@ impl Project for ObjectRelationPublicV4 {
 record!(HumanExilePermissionV1, ExilePlayPermissionPublicV2, {
     object: HumanCardRefV1, holder: PlayerSeatV1,
     play_or_cast: PlayOrCastV2, expiry: PlayPermissionExpiryV2,
+    #[serde(skip_serializing_if = "crate::engine::FreeCastV1::is_false")]
+    without_mana_cost: crate::engine::FreeCastV1,
 });
 
 record!(HumanPendingCastV1, PendingCastSemanticV2, {
@@ -803,6 +941,12 @@ record!(HumanPendingActivationV1, PendingActivationSemanticV2, {
     source: Option<HumanCardRefV1>, controller: PlayerSeatV1, ability_index: u8,
     chosen_targets: Vec<HumanTargetV1>, cost_discard_paid: Option<Vec<HumanCardRefV1>>,
     object_cost_chosen: Vec<HumanCardRefV1>,
+    #[serde(skip_serializing_if = "crate::engine::bool_is_false")]
+    crew_finished: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    loyalty_x: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    granted_ability: Option<(HumanCardRefV1, u16)>,
 });
 record!(HumanPendingDiscardV1, PendingDiscardSemanticV2, {
     player: PlayerSeatV1, count: u32, resume_stage: DiscardResumeSemanticV2,
@@ -828,6 +972,8 @@ pub enum HumanEffectChoiceV1 {
     Options {
         player: PlayerSeatV1,
         option_count: u16,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        creature_options: Option<Vec<String>>,
     },
     Targets {
         player: PlayerSeatV1,
@@ -861,10 +1007,14 @@ impl Project for PendingEffectChoiceSemanticV4 {
             Self::Options {
                 player,
                 option_count,
+                creature_options,
                 ..
             } => HumanEffectChoiceV1::Options {
                 player: *player,
                 option_count: *option_count,
+                creature_options: creature_options
+                    .as_ref()
+                    .map(|options| options.iter().map(|option| option.label()).collect()),
             },
             Self::Targets {
                 player,
@@ -922,6 +1072,10 @@ record!(HumanPendingEffectV1, PendingEffectSemanticV4, {
 });
 record!(HumanPendingTriggerV1, PendingTriggerSemanticV2, {
     source: Option<HumanCardRefV1>, controller: PlayerSeatV1, trigger_kind: PendingTriggerKindV2, kicked: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    counter_distribution: Option<HumanCounterDistributionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    counter_transfer: Option<HumanCounterTransferV1>,
 });
 record!(HumanEngineContextV1, EngineContextV2, {
     current_stage: EngineDecisionStageV2,
@@ -930,6 +1084,18 @@ record!(HumanEngineContextV1, EngineContextV2, {
     pending_optional_cost_sacrifice: Option<HumanPendingOptionalSacrificeV1>,
     pending_spell_copy: Option<HumanPendingSpellCopyV1>, pending_effect: Option<HumanPendingEffectV1>,
     pending_triggers: Vec<HumanPendingTriggerV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pending_legend_rule: Option<Vec<HumanLegendGroupV1>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    planeswalkers: Option<Vec<HumanPlaneswalkerV1>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    combat_damage_prevention: Option<Vec<HumanCombatPreventionV1>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wide_plus_one_counters: Option<Vec<HumanWidePlusOneCountersV1>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wide_marked_damage: Option<Vec<HumanWideMarkedDamageV1>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trigger_uses: Option<Vec<HumanTriggerUseV1>>,
 });
 record!(HumanPrivateBlockersV1, PrivateBlockersContextV2, {
     current_attacker: Option<HumanCardRefV1>, accumulated: Vec<(HumanCardRefV1, HumanCardRefV1)>,
@@ -1162,6 +1328,7 @@ mod stack_target_tests {
     fn handles() -> Handles {
         Handles {
             rows: Vec::new(),
+            current_battlefield: Vec::new(),
             effect_timestamps: Vec::new(),
             departed_stack_targets: Vec::new(),
         }

@@ -1236,6 +1236,7 @@ fn semantic_category(semantic: &ActionSemanticV1) -> &'static str {
         ActionSemanticV1::CastSpell { .. } => "cast_spell",
         ActionSemanticV1::ActivateManaAbility { .. } => "activate_mana_ability",
         ActionSemanticV1::ActivateAbility { .. } => "activate_ability",
+        ActionSemanticV1::TurnFaceUp { .. } => "turn_face_up",
         ActionSemanticV1::PlotSpell { .. } => "plot_spell",
         ActionSemanticV1::ChooseTarget { .. } => "choose_target",
         ActionSemanticV1::ChooseCostTarget { .. } => "choose_cost_target",

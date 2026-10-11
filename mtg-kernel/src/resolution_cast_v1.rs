@@ -301,6 +301,12 @@ pub(crate) fn stage(
     }
     let parent = continuation.resolving_item.v4.stack_item_id;
     let parent_index = state.stack.len();
+    // Capture the parent's preceding events before a child cast can change
+    // their trigger conditions. Placement still waits for the whole parent.
+    let captures = trigger::capture_triggers_without_sba(state);
+    if state.engine.halted.is_some() {
+        return Err("resolution play could not capture preceding triggers".into());
+    }
     let kicked_source = state.engine.pending_kicked_source.take();
     let context = state
         .standard_v1
@@ -327,6 +333,7 @@ pub(crate) fn stage(
     context
         .deferred_triggers
         .append(&mut state.engine.pending_triggers);
+    context.deferred_triggers.extend(captures);
     state.priority_player = controller;
     if land {
         let def = &card_def::CARD_DEFS[state.objects.get(card.object).card_def as usize];
@@ -366,11 +373,11 @@ pub(super) fn finish_child(state: &mut GameState) -> bool {
         return false;
     };
     context.permission = None;
+    let captures = trigger::capture_triggers_without_sba(state);
     let triggers = std::mem::take(&mut state.engine.pending_triggers);
-    context_mut(state)
-        .unwrap()
-        .deferred_triggers
-        .extend(triggers);
+    let context = context_mut(state).unwrap();
+    context.deferred_triggers.extend(triggers);
+    context.deferred_triggers.extend(captures);
     state.engine.pending_effect = Some(*parent);
     true
 }
@@ -378,11 +385,11 @@ pub(super) fn defer_triggers(state: &mut GameState) -> bool {
     if !active(state) {
         return false;
     }
+    let captures = trigger::capture_triggers_without_sba(state);
     let triggers = std::mem::take(&mut state.engine.pending_triggers);
-    context_mut(state)
-        .unwrap()
-        .deferred_triggers
-        .extend(triggers);
+    let context = context_mut(state).unwrap();
+    context.deferred_triggers.extend(triggers);
+    context.deferred_triggers.extend(captures);
     true
 }
 pub(super) fn finish_parent(state: &mut GameState, parent: StackItemId) {
