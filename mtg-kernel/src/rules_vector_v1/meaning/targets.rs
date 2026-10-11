@@ -62,6 +62,12 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
             out.target(TargetAtom::MultipleTargets);
         }
         // Any spell stack item (abilities excluded by `StackItemKind::Spell`).
+        TargetSpec::StackObject | TargetSpec::StackAbility => {
+            object(out, ObjF::AnyCard, None, ZoneF::Stack)
+        }
+        TargetSpec::AnotherCreatureOrPlaneswalker => {
+            object(out, ObjF::Permanent, None, ZoneF::Battlefield);
+        }
         TargetSpec::AnySpellOnStack => object(out, ObjF::Spell, None, ZoneF::Stack),
         TargetSpec::InstantSpellOnStack => {
             object(out, typed(CardType::Instant), None, ZoneF::Stack)
@@ -378,6 +384,9 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
     match spec {
         TargetSpec::CardInOwnGraveyardWithAnySubtype(_) => ObjF::AnyCard,
         TargetSpec::OpponentArtifactEnchantmentOrNonbasicLand => ObjF::Permanent,
+        TargetSpec::StackObject
+        | TargetSpec::StackAbility
+        | TargetSpec::AnotherCreatureOrPlaneswalker => ObjF::AnyCard,
         TargetSpec::LegendaryCreature => creature(),
         // No targets are chosen, so the engine's `resolve_object` would
         // panic on any `Target(slot)`; no well-formed program refers to one.

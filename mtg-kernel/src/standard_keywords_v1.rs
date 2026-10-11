@@ -154,6 +154,11 @@ pub(crate) fn max_speed_keywords(state: &GameState, id: ObjectId) -> Keywords {
 pub(crate) fn targets_commit_crime(state: &GameState, item: &StackItem) -> bool {
     let controller = item.controller;
     item.targets.iter().any(|target| match *target {
+        Target::StackItem(id) => state
+            .stack
+            .iter()
+            .find(|item| item.v4.stack_item_id == id)
+            .is_some_and(|item| item.controller != controller),
         Target::Player(player) => player != controller,
         Target::Object(id) => {
             let object = state.objects.get(id);

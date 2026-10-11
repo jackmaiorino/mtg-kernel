@@ -844,6 +844,9 @@ where
             core.remaining = *remaining;
             push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
             match target {
+                TargetRefV1::StackItem { .. } => {
+                    return Err(FlatActionDecisionSliceErrorV1::InvalidActionRange)
+                }
                 TargetRefV1::Player { player } => {
                     core.target_kind = 1;
                     core.target_player = flat_relative_seat_v1(*player, expected_actor)? + 1;
@@ -937,6 +940,9 @@ where
             core.max_targets = *max_targets;
             push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
             match target {
+                TargetRefV1::StackItem { .. } => {
+                    return Err(FlatActionDecisionSliceErrorV1::InvalidActionRange)
+                }
                 TargetRefV1::Player { player } => {
                     core.target_kind = 1;
                     core.target_player = flat_relative_seat_v1(*player, expected_actor)? + 1;

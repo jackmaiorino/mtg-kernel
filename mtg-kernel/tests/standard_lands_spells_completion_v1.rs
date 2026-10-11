@@ -531,3 +531,80 @@ fn halana_samples_source_power_on_resolution_and_uses_departure_lki() {
         Keywords::HASTE
     ));
 }
+
+#[test]
+fn ertai_can_choose_one_of_two_abilities_from_the_same_departed_source() {
+    let mut state = ready(Step::Main1);
+    let source = put(
+        &mut state,
+        PlayerId::P0,
+        "Burnout Bashtronaut",
+        Zone::Battlefield,
+    );
+    state.players[0].mana_pool = pool(&[], 4);
+    next(&mut state);
+    engine::step(&mut state, Action::ActivateAbility(source, 0)).unwrap();
+    next(&mut state);
+    engine::step(&mut state, Action::ActivateAbility(source, 0)).unwrap();
+    let targets = engine::legal_targets_for(TargetSpec::StackAbility, &[], &state);
+    assert_eq!(targets.len(), 2);
+    assert_ne!(targets[0], targets[1]);
+    let Target::StackItem(selected) = targets[0] else {
+        panic!("ability lacks exact stack identity")
+    };
+    let other = state.stack[1].v4.stack_item_id;
+    move_to(&mut state, source, Zone::Graveyard);
+    let ertai = put(&mut state, PlayerId::P0, "Ertai Resurrected", Zone::Hand);
+    state.players[0].mana_pool = pool(&[(ManaColor::U, 1), (ManaColor::B, 1)], 2);
+    cast(&mut state, ertai, &[]);
+    let Some(Decision::ChooseTriggerMode { legal_modes, .. }) = settle(&mut state) else {
+        panic!("missing Ertai modes")
+    };
+    assert!(legal_modes.contains(&0));
+    assert!(legal_modes.contains(&2));
+    engine::step(&mut state, Action::ChooseTriggerMode(0)).unwrap();
+    assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
+    engine::step(
+        &mut state,
+        Action::ChooseTarget(Target::StackItem(selected)),
+    )
+    .unwrap();
+    // Public target identity retains the original source incarnation, never
+    // substitutes the now-graveyard card as an ability target.
+    let observation = mtg_kernel::rl::observe_policy_v6(
+        &state,
+        &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+        PlayerId::P0,
+        0,
+        0,
+        0,
+        1,
+    )
+    .unwrap();
+    assert!(serde_json::to_string(&observation)
+        .unwrap()
+        .contains("stack_item"));
+    let before = state.players[0].hand.len();
+    for _ in 0..20 {
+        let decision = next(&mut state);
+        if !state
+            .stack
+            .iter()
+            .any(|item| item.v4.stack_item_id == selected)
+        {
+            break;
+        }
+        assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
+        engine::step(&mut state, Action::Pass).unwrap();
+    }
+    assert!(!state
+        .stack
+        .iter()
+        .any(|item| item.v4.stack_item_id == selected));
+    assert!(state
+        .stack
+        .iter()
+        .any(|item| item.v4.stack_item_id == other));
+    assert_eq!(state.players[0].hand.len(), before + 1);
+    assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
+}

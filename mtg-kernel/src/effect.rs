@@ -12420,7 +12420,9 @@ impl ExecCtx {
             ObjectRef::ThisSource => self.source,
             ObjectRef::Target(i) => match self.targets[i as usize] {
                 Target::Object(id) => id,
-                Target::Player(_) => panic!("effect expected an object target at index {i}"),
+                Target::Player(_) | Target::StackItem(_) => {
+                    panic!("effect expected an object target at index {i}")
+                }
             },
         }
     }
@@ -12436,6 +12438,14 @@ impl ExecCtx {
 
     pub(crate) fn target_incarnation_matches(&self, index: usize, state: &GameState) -> bool {
         match (self.targets.get(index), self.target_contracts.get(index)) {
+            (
+                Some(Target::StackItem(id)),
+                Some(contract @ StackTargetContractV4::StackItem { stack_item_id, .. }),
+            ) => {
+                id == stack_item_id
+                    && state.stack.iter().any(|item| item.v4.stack_item_id == *id)
+                    && StackTargetContractV4::capture(state, Target::StackItem(*id)) == *contract
+            }
             (Some(Target::Player(player)), Some(StackTargetContractV4::Player(bound))) => {
                 player == bound
             }
@@ -12465,7 +12475,9 @@ impl ExecCtx {
             PlayerRef::Controller => self.controller,
             PlayerRef::Target(i) => match self.targets[i as usize] {
                 Target::Player(p) => p,
-                Target::Object(_) => panic!("effect expected a player target at index {i}"),
+                Target::Object(_) | Target::StackItem(_) => {
+                    panic!("effect expected a player target at index {i}")
+                }
             },
             PlayerRef::ObjectController(oref) => {
                 state.objects.get(self.resolve_object(oref)).controller
@@ -16919,7 +16931,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 .iter()
                 .filter_map(|target| match target {
                     Target::Player(player) => Some(*player),
-                    Target::Object(_) => None,
+                    Target::Object(_) | Target::StackItem(_) => None,
                 })
                 .collect::<Vec<_>>();
             players.sort_unstable();
@@ -17096,7 +17108,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 PumpControllerScope::Opponents => ctx.controller.opponent(),
                 PumpControllerScope::TargetPlayer(index) => match ctx.targets[*index as usize] {
                     Target::Player(player) => player,
-                    Target::Object(_) => panic!(
+                    Target::Object(_) | Target::StackItem(_) => panic!(
                         "PumpAllUntilEndOfTurn's TargetPlayer scope expected a player target"
                     ),
                 },
@@ -17124,7 +17136,8 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         }
         EffectOp::DealDamageToControllerOfTarget { target, amount } => {
             let controller = match ctx.target_contracts[*target as usize] {
-                StackTargetContractV4::Object { controller, .. } => controller,
+                StackTargetContractV4::Object { controller, .. }
+                | StackTargetContractV4::StackItem { controller, .. } => controller,
                 StackTargetContractV4::Player(_) => {
                     panic!("DealDamageToControllerOfTarget expects an object target contract")
                 }
@@ -17286,6 +17299,14 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             let decider = match target {
                 Target::Player(p) => p,
                 Target::Object(id) => state.objects.get(id).controller,
+                Target::StackItem(id) => {
+                    state
+                        .stack
+                        .iter()
+                        .find(|item| item.v4.stack_item_id == id)
+                        .expect("live affected stack item")
+                        .controller
+                }
             };
             state.engine.pending_spell_copy = Some(crate::engine::PendingSpellCopy {
                 resolving_stack_item: ctx

@@ -11,6 +11,27 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         EffectOp::StandardLegendV1(op) => {
             use crate::standard_legends_v1::LegendEffectV1;
             match op {
+                LegendEffectV1::CounterStackTargetAndDraw => {
+                    out.effect(
+                        EffectAtom::moving(Some(ZoneF::Stack), ZoneF::Graveyard).obj(ObjF::AnyCard),
+                    );
+                    out.effect(
+                        EffectAtom::moving(Some(ZoneF::Library), ZoneF::Hand)
+                            .player(RelF::ObjectController)
+                            .obj(ObjF::AnyCard),
+                    );
+                }
+                LegendEffectV1::DestroyTargetAndDraw => {
+                    out.effect(
+                        EffectAtom::moving(Some(ZoneF::Battlefield), ZoneF::Graveyard)
+                            .obj(ObjF::Permanent),
+                    );
+                    out.effect(
+                        EffectAtom::moving(Some(ZoneF::Library), ZoneF::Hand)
+                            .player(RelF::ObjectController)
+                            .obj(ObjF::AnyCard),
+                    );
+                }
                 LegendEffectV1::CountersOnControlledCreatures
                 | LegendEffectV1::SourcePowerCountersAndHaste => out.effect(
                     EffectAtom::new(EvF::PlaceCounter).obj(ObjF::Typed(CardTypeF::Creature)),

@@ -1091,6 +1091,10 @@ pub fn unselected_trigger_modes(
     effect: &EffectOp,
 ) -> Option<Vec<(TargetSpec, EffectOp)>> {
     let card = crate::card_def::CARD_DEFS.get(card_def as usize)?;
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if card.name == "Ertai Resurrected" && *effect == standard_legends_v1::ertai_effect() {
+        return Some(standard_legends_v1::ertai_modes());
+    }
     if card.name == "Apothecary Stomper" && *effect == apothecary_stomper_effect() {
         return Some(apothecary_stomper_modes());
     }
@@ -3304,6 +3308,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         #[cfg(feature = "standard-magezero-fixtures")]
         "Sheoldred, the Apocalypse" => &standard_family_g_v1::SHEOLDRED_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
+        "Ertai Resurrected" => &standard_legends_v1::ERTAI,
+        #[cfg(feature = "standard-magezero-fixtures")]
         "Halana and Alena, Partners" => &standard_legends_v1::HALANA,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Restless Bivouac" => &standard_lands_v2::BIVOUAC,
@@ -3615,6 +3621,14 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
     {
         return true;
     }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if card.name == "Ertai Resurrected"
+        && standard_legends_v1::ertai_modes()
+            .iter()
+            .any(|(_, branch)| branch == effect)
+    {
+        return true;
+    }
     if triggers_for(card_def)
         .iter()
         .any(|trigger| source_bound_trigger_program_matches(&(trigger.effect)(), effect))
@@ -3683,6 +3697,15 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
     let card = crate::card_def::CARD_DEFS.get(card_def as usize)?;
     if card.name == "Essence Channeler" {
         return Some(if matches!(effect, EffectOp::CreatureUpgrade(crate::standard_creatures_v1::CreatureEffectV1::EssenceTransferCounters)) { TargetSpec::ControlledCreature } else { TargetSpec::None });
+    }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if card.name == "Ertai Resurrected" {
+        return Some(
+            standard_legends_v1::ertai_modes()
+                .iter()
+                .find(|(_, branch)| branch == effect)
+                .map_or(TargetSpec::None, |(spec, _)| *spec),
+        );
     }
     if card.name == "Apothecary Stomper" {
         return Some(

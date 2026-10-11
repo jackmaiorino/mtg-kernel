@@ -1400,6 +1400,9 @@ fn target_parts(
     actor: PlayerSeatV1,
 ) -> (FlatTargetKindV2, FlatRelativePlayerV2) {
     match target {
+        TargetRefV1::StackItem { .. } => {
+            unreachable!("fixed policy rejects stack item targets before encoding")
+        }
         TargetRefV1::Player { player } => {
             (FlatTargetKindV2::Player, relative_player(*player, actor))
         }
@@ -2007,6 +2010,11 @@ impl FlatDecisionEncoderV2 {
                 },
             )
             .transpose()?;
+        if engine.pending_spell_copy.as_ref().is_some_and(|pending| {
+            matches!(pending.inherited_target, TargetRefV1::StackItem { .. })
+        }) {
+            return Err(FlatDecisionErrorV2::ObservationContract);
+        }
         let pending_spell_copy = engine.pending_spell_copy.as_ref().map(|pending| {
             let (inherited_target_kind, inherited_target_player) =
                 target_parts(&pending.inherited_target, actor);
@@ -2796,6 +2804,7 @@ impl FlatDecisionEncoderV2 {
     ) -> Result<(), FlatDecisionErrorV2> {
         let target_object = match target {
             TargetRefV1::Object { object } => Some(self.resolve_reference(object, actor)?),
+            TargetRefV1::StackItem { .. } => return Err(FlatDecisionErrorV2::ObservationContract),
             TargetRefV1::Player { .. } => None,
         };
         let context_object = self.context_object_index(
@@ -2943,6 +2952,9 @@ impl FlatDecisionEncoderV2 {
                     } else {
                         self.resolve_historical_stack_target(object, actor)?
                     }),
+                    TargetRefV1::StackItem { .. } => {
+                        return Err(FlatDecisionErrorV2::ObservationContract)
+                    }
                     TargetRefV1::Player { .. } => None,
                 };
                 self.push_relation(
@@ -6059,6 +6071,12 @@ mod tests {
 
     fn flip_target_seats(target: &mut TargetRefV1) {
         match target {
+            TargetRefV1::StackItem {
+                source, controller, ..
+            } => {
+                flip_stable_seats(source);
+                *controller = opponent(*controller);
+            }
             TargetRefV1::Player { player } => *player = opponent(*player),
             TargetRefV1::Object { object } => flip_stable_seats(object),
         }

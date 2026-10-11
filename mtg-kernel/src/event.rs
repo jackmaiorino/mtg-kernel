@@ -990,6 +990,7 @@ fn commit_with_ability_lki(
                         obj.v4.deathtouch_damage |= source_has_deathtouch;
                     }
                 }
+                Target::StackItem(_) => return,
                 Target::Player(p) => {
                     let lost = d.amount;
                     #[cfg(feature = "standard-magezero-fixtures")]

@@ -1613,6 +1613,9 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         TargetSpec::AnyTarget
         | TargetSpec::AnyPlayer
         | TargetSpec::AnySpellOnStack
+        | TargetSpec::StackObject
+        | TargetSpec::StackAbility
+        | TargetSpec::AnotherCreatureOrPlaneswalker
         | TargetSpec::InstantSpellOnStack
         | TargetSpec::BlueSpellOnStack
         | TargetSpec::RedSpellOnStack
@@ -1732,6 +1735,13 @@ pub(crate) fn target_contract_matches_live(
         return false;
     }
     match contract {
+        StackTargetContractV4::StackItem { stack_item_id, .. } => {
+            state
+                .stack
+                .iter()
+                .any(|item| item.v4.stack_item_id == stack_item_id)
+                && StackTargetContractV4::capture(state, target) == contract
+        }
         StackTargetContractV4::Player(_) => true,
         StackTargetContractV4::Object {
             object,
@@ -1766,6 +1776,9 @@ fn target_contracts_are_structurally_valid(
                     return false;
                 }
                 match contract {
+                    StackTargetContractV4::StackItem { .. } => {
+                        target_contract_matches_live(state, target, contract)
+                    }
                     StackTargetContractV4::Player(_) => true,
                     StackTargetContractV4::Object {
                         object,
@@ -2942,6 +2955,46 @@ fn legal_targets_for_controller_from_source(
             } else {
                 Vec::new()
             }
+        }
+        TargetSpec::StackObject
+        | TargetSpec::StackAbility
+        | TargetSpec::AnotherCreatureOrPlaneswalker => {
+            let mut targets: Vec<_> = state
+                .stack
+                .iter()
+                .filter(|item| {
+                    matches!(
+                        item.kind,
+                        StackItemKind::Spell
+                            | StackItemKind::ActivatedAbility
+                            | StackItemKind::TriggeredAbility
+                    ) && (spec != TargetSpec::StackAbility || item.kind != StackItemKind::Spell)
+                        && item.v4.stack_item_id != StackItemId::default()
+                        && !state.engine.pending_cast.as_ref().is_some_and(|cast| {
+                            item.kind == StackItemKind::Spell && item.source == cast.spell
+                        })
+                })
+                .map(|item| Target::StackItem(item.v4.stack_item_id))
+                .collect();
+            if spec == TargetSpec::AnotherCreatureOrPlaneswalker {
+                targets.clear();
+                targets.extend(
+                    state
+                        .objects
+                        .iter()
+                        .filter(|(id, live)| {
+                            live.zone == Zone::Battlefield
+                                && !source.is_some_and(|source| {
+                                    source.object == *id
+                                        && source.zone_change_count == live.zone_change_count
+                                })
+                                && (object_has_type(state, *id, CardType::Creature)
+                                    || object_has_type(state, *id, CardType::Planeswalker))
+                        })
+                        .map(|(id, _)| Target::Object(id)),
+                );
+            }
+            targets
         }
         TargetSpec::AnySpellOnStack => {
             let announcing = state.engine.pending_cast.as_ref().map(|p| p.spell);
@@ -16899,6 +16952,7 @@ pub(crate) fn validate_pending_spell_copy(
         return Err("the copied spell's affected object changed incarnation".to_string());
     }
     let expected_player = match pending.inherited_target {
+        Target::StackItem(_) => return Err("spell-copy effect cannot name a stack item".into()),
         Target::Player(player) => player,
         Target::Object(object) => {
             state

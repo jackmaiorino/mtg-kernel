@@ -272,6 +272,17 @@ fn target(target: &TargetRefV1, handles: &Handles, human: PlayerSeatV1) -> Resul
         }
         .into()),
         TargetRefV1::Object { object } => handles.name(object),
+        TargetRefV1::StackItem {
+            source,
+            kind,
+            stack_item_id,
+            ..
+        } => Ok(format!(
+            "{:?} of {} (stack {})",
+            kind,
+            crate::card_def::CARD_DEFS[source.card_db_id as usize].name,
+            stack_item_id
+        )),
     }
 }
 

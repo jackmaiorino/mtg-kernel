@@ -11,6 +11,8 @@ pub enum LegendEffectV1 {
     CountersOnControlledCreatures,
     ProtectControlledLegendaryCreatures,
     SourcePowerCountersAndHaste,
+    CounterStackTargetAndDraw,
+    DestroyTargetAndDraw,
 }
 
 pub(crate) fn has_printed_ability(state: &GameState, object: ObjectId, name: &str) -> bool {
@@ -58,6 +60,44 @@ fn binding(state: &GameState, object: ObjectId) -> EffectObjectBinding {
 
 pub(crate) fn execute(op: LegendEffectV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        LegendEffectV1::CounterStackTargetAndDraw => {
+            let Some(crate::state::StackTargetContractV4::StackItem {
+                stack_item_id,
+                controller,
+                ..
+            }) = ctx.target_contracts.first().copied()
+            else {
+                return;
+            };
+            if !ctx.target_incarnation_matches(0, state) {
+                return;
+            }
+            if let Err(_) = crate::engine::counter_stack_item_by_id(state, stack_item_id) {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
+            crate::event::propose_and_commit(state, crate::event::ProposedEvent::draw(controller));
+        }
+        LegendEffectV1::DestroyTargetAndDraw => {
+            let Some(Target::Object(target)) = ctx.targets.first().copied() else {
+                return;
+            };
+            if !ctx.target_incarnation_matches(0, state) {
+                return;
+            }
+            let controller = state.objects.get(target).controller;
+            crate::effect::execute(
+                &EffectOp::DestroyObject {
+                    object: crate::effect::ObjectRef::Target(0),
+                },
+                ctx,
+                state,
+            );
+            crate::event::propose_and_commit(state, crate::event::ProposedEvent::draw(controller));
+        }
         LegendEffectV1::CountersOnControlledCreatures => {
             let creatures: Vec<_> = state.players[ctx.controller.index()]
                 .battlefield

@@ -977,6 +977,9 @@ pub enum TargetSpec {
     OpponentArtifactEnchantmentOrNonbasicLand,
     LegendaryCreature,
     CreatureWithStunCounter,
+    StackObject,
+    StackAbility,
+    AnotherCreatureOrPlaneswalker,
 }
 
 impl TargetSpec {
@@ -1057,6 +1060,9 @@ impl TargetSpec {
             TargetSpec::OpponentArtifactEnchantmentOrNonbasicLand => 96,
             TargetSpec::LegendaryCreature => 97,
             TargetSpec::CreatureWithStunCounter => 72,
+            TargetSpec::StackObject => 98,
+            TargetSpec::StackAbility => 99,
+            TargetSpec::AnotherCreatureOrPlaneswalker => 100,
         }
     }
 }

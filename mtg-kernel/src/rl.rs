@@ -335,8 +335,18 @@ pub struct CardPublicV2 {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "target_kind", rename_all = "snake_case")]
 pub enum TargetRefV1 {
-    Player { player: PlayerSeatV1 },
-    Object { object: CardStableRefV1 },
+    Player {
+        player: PlayerSeatV1,
+    },
+    Object {
+        object: CardStableRefV1,
+    },
+    StackItem {
+        stack_item_id: u64,
+        source: CardStableRefV1,
+        controller: PlayerSeatV1,
+        kind: StackItemKindV2,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -5509,12 +5519,58 @@ fn paid_cost_card_refs(refs: &[PaidCostRefV4], acting_player: PlayerId) -> Vec<C
         .collect()
 }
 
+pub(crate) fn stack_item_target_ref_from_contract(
+    contract: crate::state::StackTargetContractV4,
+) -> Result<TargetRefV1> {
+    let crate::state::StackTargetContractV4::StackItem {
+        stack_item_id,
+        source,
+        card_def,
+        owner,
+        controller,
+        source_zone,
+        source_zone_change_count,
+        kind,
+    } = contract
+    else {
+        return Err(RlContractError(
+            "expected a stack-item target contract".into(),
+        ));
+    };
+    Ok(TargetRefV1::StackItem {
+        stack_item_id: stack_item_id.0,
+        controller: controller.into(),
+        kind: kind.into(),
+        source: CardStableRefV1 {
+            arena_id: source.0,
+            card_db_id: card_def,
+            owner: owner.into(),
+            controller: controller.into(),
+            zone: source_zone,
+            zone_change_count: source_zone_change_count,
+        },
+    })
+}
+pub(crate) fn stack_item_target_ref(
+    state: &GameState,
+    id: crate::ids::StackItemId,
+) -> Result<TargetRefV1> {
+    if !state.stack.iter().any(|item| item.v4.stack_item_id == id) {
+        return Err(RlContractError("stack target no longer exists".into()));
+    }
+    stack_item_target_ref_from_contract(crate::state::StackTargetContractV4::capture(
+        state,
+        Target::StackItem(id),
+    ))
+}
+
 fn target_ref_visible(
     state: &GameState,
     target: Target,
     acting_player: PlayerId,
 ) -> Result<Option<TargetRefV1>> {
     match target {
+        Target::StackItem(id) => Ok(Some(stack_item_target_ref(state, id)?)),
         Target::Player(player) => Ok(Some(TargetRefV1::Player {
             player: player.into(),
         })),
@@ -5547,6 +5603,9 @@ fn effect_target_ref_visible(
     target: Target,
     acting_player: PlayerId,
 ) -> Result<TargetRefV1> {
+    if let Target::StackItem(id) = target {
+        return stack_item_target_ref(state, id);
+    }
     let Target::Object(object_id) = target else {
         let Target::Player(player) = target else {
             unreachable!("Target has only player and object variants")
@@ -7547,6 +7606,9 @@ fn stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<TargetRe
                 ));
             }
             Ok(match contract {
+                contract @ crate::state::StackTargetContractV4::StackItem { .. } => {
+                    stack_item_target_ref_from_contract(contract)?
+                }
                 crate::state::StackTargetContractV4::Player(player) => TargetRefV1::Player {
                     player: player.into(),
                 },
@@ -7593,6 +7655,7 @@ fn stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<TargetRe
 
 fn target_ref(state: &GameState, target: Target) -> Result<TargetRefV1> {
     match target {
+        Target::StackItem(id) => stack_item_target_ref(state, id),
         Target::Player(player) => Ok(TargetRefV1::Player {
             player: player.into(),
         }),

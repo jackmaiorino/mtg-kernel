@@ -734,6 +734,7 @@ fn fold_event_history_v1(
                         i64::from(*amount);
                 }
                 match target {
+                    Target::StackItem(_) => {}
                     Target::Player(player) => {
                         resource_curve.damage_taken_total[seat_index_from_player_id_v1(*player)] +=
                             i64::from(*amount);

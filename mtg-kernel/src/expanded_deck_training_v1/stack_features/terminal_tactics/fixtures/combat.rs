@@ -133,6 +133,9 @@ pub(super) fn run(command: Command) -> Result<Value, String> {
                 for (i, a) in actions.iter().enumerate() {
                     if let ActionSemanticV1::ChooseTarget { target, .. } = a {
                         match target {
+                            crate::rl::TargetRefV1::StackItem { .. } => {
+                                panic!("fixture does not support stack ability targets")
+                            }
                             crate::rl::TargetRefV1::Player { player } => {
                                 if *player == d.acting_player {
                                     fatal = Some(i)

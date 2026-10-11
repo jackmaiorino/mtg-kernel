@@ -740,6 +740,8 @@ pub enum Step {
 pub enum Target {
     Object(ObjectId),
     Player(PlayerId),
+    /// An exact spell or ability stack incarnation, distinct from its source.
+    StackItem(StackItemId),
 }
 
 /// Publicly distinguishable origin of a stack item. This is stamped by the
@@ -1021,11 +1023,58 @@ pub enum StackTargetContractV4 {
         #[serde(default)]
         spell_copy_origin: Option<SpellCopyOriginV4>,
     },
+    StackItem {
+        stack_item_id: StackItemId,
+        source: ObjectId,
+        card_def: u16,
+        owner: PlayerId,
+        controller: PlayerId,
+        source_zone: Zone,
+        source_zone_change_count: u32,
+        kind: StackItemKind,
+    },
 }
 
 impl StackTargetContractV4 {
     pub fn capture(state: &GameState, target: Target) -> StackTargetContractV4 {
         match target {
+            Target::StackItem(stack_item_id) => {
+                let item = state
+                    .stack
+                    .iter()
+                    .find(|item| item.v4.stack_item_id == stack_item_id)
+                    .expect("captured stack target exists");
+                let (card_def, owner, source_zone, source_zone_change_count) =
+                    if let Some(source) = item.v4.ability_source_contract {
+                        (
+                            source.card_def,
+                            source.owner,
+                            source.zone,
+                            source.zone_change_count,
+                        )
+                    } else {
+                        let source = item
+                            .v4
+                            .source_contract
+                            .expect("spell stack target has provenance");
+                        (
+                            source.card_def,
+                            source.owner,
+                            Zone::Stack,
+                            source.zone_change_count,
+                        )
+                    };
+                StackTargetContractV4::StackItem {
+                    stack_item_id,
+                    source: item.source,
+                    card_def,
+                    owner,
+                    controller: item.controller,
+                    source_zone,
+                    source_zone_change_count,
+                    kind: item.kind,
+                }
+            }
             Target::Player(player) => StackTargetContractV4::Player(player),
             Target::Object(object) => {
                 let live = state.objects.get(object);
@@ -1044,6 +1093,9 @@ impl StackTargetContractV4 {
 
     pub const fn target(self) -> Target {
         match self {
+            StackTargetContractV4::StackItem { stack_item_id, .. } => {
+                Target::StackItem(stack_item_id)
+            }
             StackTargetContractV4::Player(player) => Target::Player(player),
             StackTargetContractV4::Object { object, .. } => Target::Object(object),
         }
@@ -1066,6 +1118,37 @@ pub fn stack_target_contract_is_structurally_valid(
     if contract.target() != target {
         return false;
     }
+    if let StackTargetContractV4::StackItem {
+        stack_item_id,
+        source,
+        card_def,
+        owner,
+        source_zone_change_count,
+        kind,
+        ..
+    } = contract
+    {
+        let allowed = matches!(spec, TargetSpec::StackObject)
+            || (spec == TargetSpec::StackAbility
+                && matches!(
+                    kind,
+                    StackItemKind::ActivatedAbility | StackItemKind::TriggeredAbility
+                ));
+        return allowed
+            && target_index == 0
+            && stack_item_id.0 > 0
+            && stack_item_id.0 <= state.engine.next_stack_item_id
+            && state.objects.try_get(source).is_some_and(|live| {
+                live.card_def == card_def
+                    && live.owner == owner
+                    && live.zone_change_count >= source_zone_change_count
+            })
+            && state
+                .stack
+                .iter()
+                .find(|item| item.v4.stack_item_id == stack_item_id)
+                .is_none_or(|_| StackTargetContractV4::capture(state, target) == contract);
+    }
     if let TargetSpec::StandardV1(filter) = spec {
         if target_index >= usize::from(filter.counts().0) {
             return false;
@@ -1074,6 +1157,7 @@ pub fn stack_target_contract_is_structurally_valid(
             StackTargetContractV4::Object { zone, .. } => {
                 *zone == crate::standard_cards_v1::target_zone(filter)
             }
+            StackTargetContractV4::StackItem { .. } => false,
             StackTargetContractV4::Player(_) => matches!(
                 filter,
                 crate::standard_cards_v1::StandardTargetV1::UpToTwoAnyTargets
@@ -1136,6 +1220,7 @@ pub fn stack_target_contract_is_structurally_valid(
                     | TargetSpec::OpponentArtifactOrEnchantmentPermanent
                     | TargetSpec::ArtifactOrEnchantmentPermanent
                     | TargetSpec::AttackingOrBlockingCreature
+                    | TargetSpec::AnotherCreatureOrPlaneswalker
                     | TargetSpec::CreatureOrPlaneswalker
                     | TargetSpec::ArtifactEnchantmentOrFlyingCreature
                     | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour
