@@ -2799,6 +2799,16 @@ fn disguise_turns_face_up_as_special_action_and_chooses_both_forest_destinations
     assert!(
         matches!(next(&mut state),Decision::CastSpellOrPass{activatable_abilities,..} if activatable_abilities.contains(&(bloom,255)))
     );
+    let mut policy_state = state.clone();
+    let mut surface = mtg_kernel::policy_surface_v5::PolicySurfaceV5::new();
+    let decision = surface.next_decision(&mut policy_state).unwrap();
+    let choices =
+        mtg_kernel::rl::policy_legal_action_candidates_v5(&decision, &surface, &policy_state)
+            .unwrap();
+    assert!(choices.iter().any(|choice| matches!(
+        choice.record.semantic,
+        mtg_kernel::rl::ActionSemanticV1::TurnFaceUp { .. }
+    )));
     engine::step(&mut state, Action::ActivateAbility(bloom, 255)).unwrap();
     assert!(state.objects.get(bloom).v4.face_down_v1.is_none());
     assert_eq!(state.priority_player, PlayerId::P0);

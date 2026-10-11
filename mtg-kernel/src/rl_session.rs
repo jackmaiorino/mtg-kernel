@@ -815,6 +815,12 @@ where
                 push_ref(FlatActionRefRoleV1::Candidate, 0, 0, cost_target)?;
             }
         }
+        ActionSemanticV1::TurnFaceUp { actor, source } => {
+            check_actor(*actor)?;
+            core.kind = FlatActionKindV1::ActivateAbility;
+            core.ability_index = 255;
+            push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+        }
         ActionSemanticV1::ActivateAbility {
             actor,
             source,
@@ -1741,6 +1747,15 @@ fn flat_validate_current_decision_relations_v1(
                     )?;
                 }
             }
+            ActionSemanticV1::TurnFaceUp { source, .. } => {
+                flat_validate_controller_zone_v1(
+                    state,
+                    current.actor,
+                    source,
+                    current.actor,
+                    Zone::Battlefield,
+                )?;
+            }
             ActionSemanticV1::ActivateAbility {
                 source,
                 ability_index,
@@ -2136,6 +2151,16 @@ fn flat_validate_origin_decision_v1(
             }
             for (object, expected_ability_index) in activatable_abilities {
                 let candidate = &candidates[cursor];
+                if *expected_ability_index == 255 {
+                    if !matches!((&candidate.semantic,&candidate.policy_action),
+                        (ActionSemanticV1::TurnFaceUp{actor,source},PolicyActionV5::Surface(SurfaceAction::Action(Action::ActivateAbility(action,255))))
+                        if actor_matches(*actor,*player)&&flat_ref_matches_object_v1(source,*object)&&action==object)
+                    {
+                        return Err(invalid());
+                    }
+                    cursor += 1;
+                    continue;
+                }
                 if !matches!(
                     (&candidate.semantic, &candidate.policy_action),
                     (
@@ -2710,6 +2735,10 @@ fn flat_validate_semantic_policy_pair_v1(
                 && expected_choice == actual_choice
                 && ObjectId(expected_cost_target.arena_id) == *actual_cost_target
         }
+        (
+            ActionSemanticV1::TurnFaceUp { source, .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ActivateAbility(actual, 255))),
+        ) => ObjectId(source.arena_id) == *actual,
         (
             ActionSemanticV1::ActivateAbility {
                 source,

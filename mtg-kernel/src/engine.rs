@@ -8166,7 +8166,12 @@ pub(crate) fn required_goaded_attackers(state: &GameState, eligible: &[ObjectId]
 /// flying/reach).
 pub(crate) fn minimum_blockers_required(state: &GameState, attacker: ObjectId) -> usize {
     let attacker_obj = state.objects.get(attacker);
-    let definition_minimum = card_def::CARD_DEFS[attacker_obj.card_def as usize].minimum_blockers;
+    let definition_minimum =
+        if crate::continuous_characteristics_v1::printed_abilities_active(state, attacker) {
+            card_def::CARD_DEFS[attacker_obj.card_def as usize].minimum_blockers
+        } else {
+            1
+        };
     let keyword_minimum = if has_effective_keyword(state, attacker, Keywords::MENACE) {
         2
     } else {

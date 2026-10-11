@@ -1237,6 +1237,12 @@ pub enum ActionSemanticV1 {
         attacker: CardStableRefV1,
         target: TargetRefV1,
     },
+    /// Turn a disguised permanent face up. The wire action uses the
+    /// reserved index 255; unlike activation, this is a special action.
+    TurnFaceUp {
+        actor: PlayerSeatV1,
+        source: CardStableRefV1,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2901,10 +2907,17 @@ fn core_surface_action_candidates_v1(
                 for &(id, ability_index) in activatable_abilities {
                     push_action(
                         &mut out,
-                        ActionSemanticV1::ActivateAbility {
-                            actor,
-                            source: card_ref(state, id)?,
-                            ability_index,
+                        if ability_index == 255 {
+                            ActionSemanticV1::TurnFaceUp {
+                                actor,
+                                source: card_ref(state, id)?,
+                            }
+                        } else {
+                            ActionSemanticV1::ActivateAbility {
+                                actor,
+                                source: card_ref(state, id)?,
+                                ability_index,
+                            }
                         },
                         SurfaceAction::Action(Action::ActivateAbility(id, ability_index)),
                     )?;

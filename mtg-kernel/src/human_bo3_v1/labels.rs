@@ -315,6 +315,7 @@ fn actor(action: &A) -> Option<PlayerSeatV1> {
         | A::CastSpell { actor, .. }
         | A::ActivateManaAbility { actor, .. }
         | A::ActivateAbility { actor, .. }
+        | A::TurnFaceUp { actor, .. }
         | A::PlotSpell { actor, .. }
         | A::ChooseTarget { actor, .. }
         | A::ChooseCostTarget { actor, .. }
@@ -365,6 +366,7 @@ pub(super) fn label(
             format!("Play {} as your land for the turn", handles.name(source)?)
         }
         A::CastSpell { source, .. } => format!("Begin casting {}", handles.name(source)?),
+        A::TurnFaceUp { source, .. } => format!("Turn {} face up", handles.name(source)?),
         A::ActivateAbility {
             source,
             ability_index,

@@ -115,7 +115,8 @@ face-down spell and permanent have the public 2/2 colorless creature profile
 and ward 2. The controller pays 4G to turn it face up as a special action,
 then its trigger offers zero through two Forests, choosing the first for the
 battlefield tapped and the second for hand. Index 255 in the existing
-ActivateAbility action envelope is reserved for this special action; it
+ActivateAbility action envelope is reserved for this special action, with
+a distinct public TurnFaceUp semantic and human label; it
 creates no activated ability, permits ordinary priority timing, and retains
 priority. Losing the face-up disguise ability prevents paying that cost.
 

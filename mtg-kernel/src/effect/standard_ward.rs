@@ -147,7 +147,7 @@ pub(super) fn stage(
         continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
             player: payer,
             path,
-            default: false,
+            default: Some(false),
             purpose: EffectBooleanChoicePurpose::WardLife { choice },
         });
     } else {
@@ -195,10 +195,7 @@ pub(super) fn resolve_payment(
             );
         }
         EffectOp::CounterUnlessDiscardsCard { .. } if canonical.len() == 1 => {
-            event::propose_and_commit(
-                state,
-                event::ProposedEvent::zone_change(canonical[0].object, Zone::Graveyard),
-            );
+            crate::engine::commit_discarded_card(state, canonical[0].object);
         }
         EffectOp::CounterUnlessCollectsEvidence {
             minimum_mana_value, ..
