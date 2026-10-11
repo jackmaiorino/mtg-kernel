@@ -620,6 +620,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Nessian Hornbeetle",
     "Needletooth Pack",
     "Hare Apparent",
+    "Rabbit Token",
     "Micromancer",
     "Skyship Buccaneer",
     "Arbiter of Woe",
@@ -831,6 +832,11 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
         "fdn_raid_v1.rs",
         "Goblin Boarders",
         "read via entry_counter_count_for: conditional declaration history and permanent counter/stat change (exact Raid predicate opaque)",
+    ),
+    (
+        "effect.rs",
+        "Micromancer",
+        "definition-owned exact spell search continuation authentication",
     ),
     (
         "engine.rs",
