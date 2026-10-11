@@ -4709,7 +4709,10 @@ fn triggers_from_events(
                                 from,
                                 controller_before,
                                 ..
-                            } if *object == id && uses_leave_lki => {
+                            } if *object == id
+                                && uses_leave_lki
+                                && def.condition != TriggerCondition::DiesIfWasCreature =>
+                            {
                                 let Some(zone_change_count) = obj.zone_change_count.checked_sub(1)
                                 else {
                                     continue;

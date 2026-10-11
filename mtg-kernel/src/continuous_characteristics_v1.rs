@@ -138,6 +138,11 @@ pub(crate) fn base_power_toughness(state: &GameState, id: ObjectId) -> Option<(i
             }
         }
     }
+    // Aura animation applies its base stats in layer 7b as well as making
+    // its artifact host a creature in layer 4.
+    if let Some((animation, timestamp)) = animation(state, id) {
+        settings.push((animation.power, animation.toughness, timestamp));
+    }
     if object.zone == Zone::Battlefield {
         settings.extend(object.v4.temporary_base_pt_v1);
         settings.extend(

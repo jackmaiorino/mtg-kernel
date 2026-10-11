@@ -379,7 +379,10 @@ pub(super) fn activated_ability_face_for(name: &str, index: usize) -> Option<u8>
     match name {
         "Spring-Loaded Sawblades" => Some(u8::from(index != 0)),
         "Braided Net" => Some(u8::from(index == 2)),
-        "Etali, Primal Conqueror" | "Polukranos Reborn" | "Clay-Fired Bricks" => Some(0),
+        "Etali, Primal Conqueror"
+        | "Polukranos Reborn"
+        | "Clay-Fired Bricks"
+        | "Incubator Token" => Some(0),
         "Ojer Axonil, Deepest Might" | "Fable of the Mirror-Breaker" => Some(1),
         _ => None,
     }

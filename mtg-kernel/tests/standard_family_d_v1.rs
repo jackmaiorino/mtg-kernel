@@ -2510,6 +2510,8 @@ fn moonrage_brute_ward_permits_the_legal_lethal_life_payment() {
     let mut state = ready();
     state.day_night_v1 = Some(mtg_kernel::state::DayNightV1::Night);
     let cathar = put(&mut state, PlayerId::P1, "Brutal Cathar", Zone::Battlefield);
+    mtg_kernel::trigger::sba_fixed_point(&mut state);
+    assert_eq!(state.objects.get(cathar).v4.face_index, 1);
     next(&mut state);
     state.players[0].life = 3;
     let spell = put(&mut state, PlayerId::P0, "Burst Lightning", Zone::Hand);
@@ -2579,8 +2581,10 @@ fn cathar_returns_every_linked_card_immediately_when_it_leaves() {
     engine::step(&mut state, Action::ChooseTarget(Target::Object(first))).unwrap();
     settled(&mut state);
     state.day_night_v1 = Some(mtg_kernel::state::DayNightV1::Night);
+    mtg_kernel::trigger::sba_fixed_point(&mut state);
     next(&mut state);
     state.day_night_v1 = Some(mtg_kernel::state::DayNightV1::Day);
+    mtg_kernel::trigger::sba_fixed_point(&mut state);
     assert!(matches!(
         settle(&mut state),
         Some(Decision::ChooseTargets { .. })
@@ -2588,6 +2592,10 @@ fn cathar_returns_every_linked_card_immediately_when_it_leaves() {
     engine::step(&mut state, Action::ChooseTarget(Target::Object(second))).unwrap();
     settled(&mut state);
     assert_eq!(state.engine.linked_exile_records.len(), 2);
+    let surface = mtg_kernel::surface_v2::HarnessSurfaceV2::new();
+    for viewer in [PlayerId::P0, PlayerId::P1] {
+        mtg_kernel::rl::observe_v2(&state, &surface, viewer, 0).unwrap();
+    }
     mtg_kernel::event::propose_and_commit(
         &mut state,
         mtg_kernel::event::ProposedEvent::zone_change(cathar, Zone::Hand),
@@ -2607,6 +2615,7 @@ fn speed_increase_waits_on_the_stack_and_survives_its_original_source() {
         "Burnout Bashtronaut",
         Zone::Battlefield,
     );
+    mtg_kernel::trigger::sba_fixed_point(&mut state);
     next(&mut state);
     assert_eq!(speed(&state, PlayerId::P0), 1);
     mtg_kernel::event::propose_and_commit(
@@ -2750,6 +2759,10 @@ fn disguised_bloom(state: &mut GameState) -> ObjectId {
     let bloom = put(state, PlayerId::P0, "Flourishing Bloom-Kin", Zone::Hand);
     add_mana(state, PlayerId::P0, &[], 3);
     cast(state, bloom, &[]);
+    if let Decision::ChooseCastMode { options, .. } = next(state) {
+        assert!(options.contains(&engine::CastMode::Alternative));
+        engine::step(state, Action::ChooseCastMode(engine::CastMode::Alternative)).unwrap();
+    }
     settled(state);
     assert!(state.objects.get(bloom).v4.face_down_v1.is_some());
     assert_eq!(power_toughness(state, bloom), (2, 2));
@@ -2966,12 +2979,7 @@ fn cage_hideaway_is_private_and_can_play_a_land_after_the_counter_creates_coven(
         "Monastery Swiftspear",
         Zone::Battlefield,
     );
-    put(
-        &mut state,
-        PlayerId::P0,
-        "Sanguine Evangelist",
-        Zone::Battlefield,
-    );
+    put(&mut state, PlayerId::P0, "Nova Hellkite", Zone::Battlefield);
     add_mana(&mut state, PlayerId::P0, &[], 1);
     engine::step(&mut state, Action::ActivateAbility(cage, 0)).unwrap();
     assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
