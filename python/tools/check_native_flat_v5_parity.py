@@ -57,7 +57,9 @@ def main() -> None:
                "feature_contract_digest": features.feature_contract_fingerprint(),
                "feature_encoding_digest": features.encoding_contract_fingerprint(),
                "python": sys.version, "torch": torch.__version__,
-               "scope": "Registered state and explicitly named typed tensor-boundary encoding parity; no life producer, Sire gameplay or model/training admission."}
+               "actual_sire_case_names": sorted(name for name in names if name.startswith("actual_sire_")),
+               "synthetic_boundary_case_names": sorted(name for name in names if name.startswith("typed_boundary_")),
+               "scope": "Thirteen-tensor encoding parity for the named inputs. Actual Sire and synthetic boundary cases are separately labeled. Producer authenticity requires the pinned Rust qualification; no model/training admission or gameplay coverage beyond the supplied cases."}
     with args.receipt.open("x", encoding="utf-8") as handle:
         handle.write(json.dumps(receipt, sort_keys=True, indent=2) + "\n")
     print(json.dumps(receipt, sort_keys=True))
