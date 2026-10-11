@@ -202,7 +202,7 @@ mod printed {
             actor,
         );
         state.step = Step::Main1;
-        put(&mut state, actor, hidden, Zone::Hand);
+        put(&mut state, actor.opponent(), hidden, Zone::Hand);
         if reverse {
             put(&mut state, actor, "Mountain", Zone::Battlefield);
         }
