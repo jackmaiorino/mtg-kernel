@@ -4,7 +4,18 @@ use crate::event::CommittedEvent;
 use crate::state::{AbilitySourceContractV4, GameObject, Step};
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum InstallationOriginV1 {
+    PrintedSpell {
+        stack_item_id: StackItemId,
+        resolution_history_index: usize,
+    },
+    RegisteredPrimitive,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InstallationV1 {
     pub source: AbilitySourceContractV4,
     pub target: StackTargetContractV4,
@@ -13,8 +24,36 @@ pub struct InstallationV1 {
     pub timestamp: u64,
     pub turn: u32,
     pub active_player: PlayerId,
-    pub stack_item_id: Option<StackItemId>,
-    pub resolution_history_index: Option<usize>,
+    pub origin: InstallationOriginV1,
+}
+
+/// Existing direct opcode fixtures use genuine registered non-control sources
+/// from hand. This cannot stand in for a resolving printed control spell, even
+/// after its physical source departs or its independent resolution row is lost.
+fn registered_primitive_source(state: &GameState, source: AbilitySourceContractV4) -> bool {
+    source.zone == Zone::Hand
+        && source.attached_to.is_none()
+        && crate::card_def::CARD_DEFS
+            .get(usize::from(source.card_def))
+            .is_some_and(|def| {
+                def.is_executable()
+                    && def.name != "Involuntary Employment"
+                    && !(def.spell_effect)().as_ref().is_some_and(contains_control)
+            })
+        && state
+            .objects
+            .try_get(source.source)
+            .is_some_and(|physical| {
+                physical.owner == source.owner
+                    && physical.zone_change_count >= source.zone_change_count
+                    && (physical.card_def == source.card_def
+                        || crate::standard_cards_v1::had_card_def(
+                            state,
+                            source.source,
+                            source.zone_change_count,
+                            source.card_def,
+                        ))
+            })
 }
 
 impl InstallationV1 {
@@ -133,6 +172,24 @@ pub(super) fn install(state: &mut GameState, ctx: &ExecCtx, object: ObjectId, ti
     }
     let mut source = AbilitySourceContractV4::capture(state, ctx.source);
     source.controller = ctx.controller;
+    let origin = match (ctx.stack_item_id, resolution_history_index) {
+        (Some(stack_item_id), Some(resolution_history_index)) => {
+            InstallationOriginV1::PrintedSpell {
+                stack_item_id,
+                resolution_history_index,
+            }
+        }
+        (None, None) if registered_primitive_source(state, source) => {
+            InstallationOriginV1::RegisteredPrimitive
+        }
+        _ => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+            return;
+        }
+    };
     let capture = InstallationV1 {
         source,
         target: StackTargetContractV4::capture(state, Target::Object(object)),
@@ -141,8 +198,7 @@ pub(super) fn install(state: &mut GameState, ctx: &ExecCtx, object: ObjectId, ti
         timestamp,
         turn: state.turn,
         active_player: state.active_player,
-        stack_item_id: ctx.stack_item_id,
-        resolution_history_index,
+        origin,
     };
     state
         .engine
@@ -296,9 +352,13 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 {
                     return Err(invalid());
                 }
-                match (capture.stack_item_id, capture.resolution_history_index) {
-                    (None, None) => {}
-                    (Some(id), Some(before)) if before < index => {
+                match capture.origin {
+                    InstallationOriginV1::RegisteredPrimitive
+                        if registered_primitive_source(state, capture.source) => {}
+                    InstallationOriginV1::PrintedSpell {
+                        stack_item_id: id,
+                        resolution_history_index: before,
+                    } if before < index => {
                         let Some(CommittedEvent::TemporaryControlResolutionV1 {
                             item,
                             recipient_snapshot,
@@ -400,7 +460,11 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         if installs
             .iter()
             .filter(|(_, capture)| {
-                capture.resolution_history_index == Some(index) && capture.stack_item_id == Some(id)
+                capture.origin
+                    == InstallationOriginV1::PrintedSpell {
+                        resolution_history_index: index,
+                        stack_item_id: id,
+                    }
             })
             .count()
             != 1

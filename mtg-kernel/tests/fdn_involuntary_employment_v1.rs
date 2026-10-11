@@ -204,7 +204,7 @@ fn actual_printed_control_installation_and_cleanup_journal_restores_and_refuses_
             1
         );
         assert_eq!(state.objects.get(target).controller, actor);
-        for alteration in 0..5 {
+        for alteration in 0..7 {
             let mut forged = replay(&state);
             match alteration {
                 0 => forged.engine.until_end_of_turn.retain(|row| {
@@ -264,6 +264,32 @@ fn actual_printed_control_installation_and_cleanup_journal_restores_and_refuses_
                             *controller = actor.opponent();
                         }
                     }
+                }
+                5 | 6 => {
+                    forged.engine.event_history.retain(|event| {
+                        !matches!(event, CommittedEvent::TemporaryControlResolutionV1 { .. })
+                    });
+                    let CommittedEvent::TemporaryControlInstalledV1 { installation } = forged
+                        .engine
+                        .event_history
+                        .iter_mut()
+                        .find(|event| {
+                            matches!(event, CommittedEvent::TemporaryControlInstalledV1 { .. })
+                        })
+                        .unwrap()
+                    else {
+                        unreachable!()
+                    };
+                    // Reconstruct the closed origin through the actual public
+                    // committed-event serialization, not a definition injection.
+                    let mut value = serde_json::to_value(&**installation).unwrap();
+                    value["origin"] = serde_json::json!("RegisteredPrimitive");
+                    if alteration == 6 {
+                        value["source"]["zone"] = serde_json::to_value(Zone::Hand).unwrap();
+                    }
+                    **installation = serde_json::from_value(value).unwrap();
+                    assert!(forged.engine.event_history.iter().any(|event| matches!(event,
+                        CommittedEvent::Targeted { targeting_stack_item, .. } if *targeting_stack_item == stack_item.v4.stack_item_id)));
                 }
                 _ => unreachable!(),
             }
