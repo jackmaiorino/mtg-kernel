@@ -1825,6 +1825,8 @@ fn decision_texts(
     p1_name: &str,
 ) -> Option<(&'static str, Vec<String>)> {
     match decision {
+        SurfaceDecision::Decision(Decision::ChooseVariableCastTargets { .. })
+        | SurfaceDecision::Decision(Decision::ChooseVariableCastKicker { .. }) => None,
         SurfaceDecision::Decision(Decision::CastSpellOrPass {
             land_drops,
             castable_spells,
@@ -2007,6 +2009,10 @@ fn apply_by_indices(
         .first()
         .ok_or("apply_by_indices:no-chosen-indices")?;
     match decision {
+        SurfaceDecision::Decision(Decision::ChooseVariableCastTargets { .. })
+        | SurfaceDecision::Decision(Decision::ChooseVariableCastKicker { .. }) => {
+            Err("apply_by_indices:unsupported-variable-cast-protocol".to_string())
+        }
         SurfaceDecision::Decision(Decision::CastSpellOrPass {
             land_drops,
             castable_spells,
