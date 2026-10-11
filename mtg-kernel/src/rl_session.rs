@@ -295,7 +295,7 @@ pub(crate) use v3_spell_target_adapter_v1::{
 mod flat_action_v4;
 mod flat_action_v5;
 pub(crate) mod heartfire_history_v1;
-mod heartfire_v12;
+pub(crate) mod heartfire_v12;
 mod raid_v9;
 mod soul_shackled_zombie_v13;
 pub mod variable_cast_v1;
@@ -4422,6 +4422,7 @@ enum FlatActionContractModeV1 {
     V5,
     HeartfireHistoryV1,
     SowerV14,
+    HeartfireV12,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -7249,6 +7250,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:human_v8:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::HeartfireV12 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = heartfire_v12::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:heartfire_v12:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));
