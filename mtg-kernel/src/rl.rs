@@ -2135,6 +2135,21 @@ pub(crate) fn policy_observation_extensions_v6(
     )
 }
 
+/// Common extension storage used by the explicit Human V8 session path.
+/// This carries normalization authority, not a V6 observation or scorer
+/// identity. Life-payment fields remain in the complete typed V8 input.
+pub(crate) fn policy_observation_extensions_common_for_human_v8(
+    state: &GameState,
+    acting_player: PlayerId,
+) -> Result<PolicyObservationExtensionsV6> {
+    policy_observation_extensions_common_v6(
+        state,
+        acting_player,
+        ObservationTextModeV2::FlatForbiddenElided,
+        true,
+    )
+}
+
 fn policy_observation_extensions_with_text_v6(
     state: &GameState,
     acting_player: PlayerId,

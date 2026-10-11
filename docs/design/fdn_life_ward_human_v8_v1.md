@@ -1,9 +1,12 @@
 # Live human life Ward decisions
 
 Issue110 source design, based on 9aad32230f7178899ef298fb07ed9951af2b1610.
-Read-only source review confirms the boundaries below. Implementation,
-native qualification and all actual Sire gameplay remain pending. This is
-an in-process human adapter, with no model, BO3 runner or evaluation claim.
+Read-only source review confirms the boundaries below. The explicit session
+mode, life-aware installation, private input and complete binding are now
+implemented in source, with three registered backend test groups unrun.
+Safe human DTOs, labels, submission and retry handling, native qualification
+and actual Sire gameplay remain pending. This is an in-process human adapter,
+with no model, BO3 runner or evaluation claim.
 
 The current Human V1/V4 paths request V6. Session installation also obtains
 V6 extensions before candidate normalization, so replacing only the human

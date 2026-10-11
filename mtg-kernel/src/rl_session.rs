@@ -38,6 +38,9 @@ use std::fmt;
 
 pub mod census_future_v2;
 pub(crate) mod human_opening_v1;
+// Source preparation: the safe Human V8 DTO/projector is a separate next step.
+#[allow(dead_code)]
+pub(crate) mod human_v8;
 
 pub const RL_SESSION_SCHEMA_VERSION: u32 = 5;
 pub const RL_SESSION_PROTOCOL_VERSION: u32 = 5;
@@ -4352,6 +4355,7 @@ enum FlatActionContractModeV1 {
     V1,
     V2,
     V3,
+    HumanV8,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -7169,6 +7173,21 @@ impl FastActorSessionV1 {
                 self.flat_action_cache_spare_v2 = None;
                 let cache_result = flat_action_v3::prepare_and_build_v3(self, &mut current);
                 flat_install_action_cache_build_result_v2(&mut current, cache_result);
+            }
+            FlatActionContractModeV1::HumanV8 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = human_v8::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:human_v8:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
             }
         }
         self.current = Some(current);
