@@ -3770,9 +3770,15 @@ fn standard_program_for(name: &str) -> Option<Special> {
             "LookTopPickToHandBottomRest(Controller,Fixed(4),pick=1,rest=Chosen)",
             "EffectOp::LookTopPickToHandBottomRest { player: PlayerRef::Controller, count: crate::effect::LibraryLookCount::Fixed(4), pick: 1, choose_rest_order: true }",
         ),
+        // Mill three, then make a mandatory non-targeted own-graveyard choice.
+        // Flashback {5}{U}{U} is modeled in `flashback_for`.
+        "Inspiration from Beyond" => program(
+            "None",
+            "Sequence(MillCards(Controller,3),SelectObjectsV1(Controller,Graveyard,InstantOrSorcery,1,1,Hand))",
+            "EffectOp::Sequence(vec![EffectOp::MillCards { player: PlayerRef::Controller, count: 3 }, EffectOp::SelectObjectsV1 { rule:crate::effect::ObjectSelectionRuleV1 { player:PlayerRef::Controller, zone:Zone::Graveyard, any_player:false, filter:crate::effect::ObjectSelectionFilterV1::InstantOrSorcery, min:1, max:1, action:crate::effect::ObjectSelectionActionV1::MoveTo(Zone::Hand) } }])",
+        ),
         // Look at the top X cards of your library, where X is the amount of
-        // mana spent to cast this spell. Put two of them into your hand and
-        // the rest on the bottom of your library in a random order.
+        // mana spent to cast this spell. Put two into hand, rest randomly below.
         // Flashback {5}{U}{U} is modeled in `flashback_for`.
         "Memory Deluge" => program(
             "None",
@@ -4626,7 +4632,7 @@ fn flashback_for(name: &str) -> String {
                 pips.join(", ")
             )
         }
-        "Memory Deluge" => {
+        "Memory Deluge" | "Inspiration from Beyond" => {
             let (pips, generic, x_count) = parse_cost("{5}{U}{U}");
             format!(
                 "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})] }})",
