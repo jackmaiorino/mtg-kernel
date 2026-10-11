@@ -597,11 +597,11 @@ fn standard_registry_appends_to_the_pauper_prefix_without_fdn() {
 
 #[test]
 fn standard_catalog_identity_is_frozen() {
-    // Observed from the pinned native build's generated Standard v7 catalog.
-    const EXPECTED_STANDARD_V7: u64 = 0x020d_7a9c_4c45_b4e2;
+    // Observed from the pinned native build, including the shared Aura fixture.
+    const EXPECTED_STANDARD_COMPLETION: u64 = 0xd237_d074_94e5_3952;
     assert_eq!(
-        KERNEL_CARDDB_HASH, EXPECTED_STANDARD_V7,
-        "Standard v7 catalog identity changed: {KERNEL_CARDDB_HASH:#018x}"
+        KERNEL_CARDDB_HASH, EXPECTED_STANDARD_COMPLETION,
+        "Standard completion catalog identity changed: {KERNEL_CARDDB_HASH:#018x}"
     );
 }
 
