@@ -770,6 +770,14 @@ pub enum CommittedEvent {
     },
     FrenziedGoblinExpiredV1 {
         capture: Box<crate::effect::FrenziedGoblinRestrictionV1>,
+        cleanup_history_index: u32,
+    },
+    FrenziedGoblinCleanupV1 {
+        history_index: u32,
+        turn: u32,
+        ending_player: PlayerId,
+        step: crate::state::Step,
+        captures: Vec<crate::effect::FrenziedGoblinRestrictionV1>,
     },
 }
 

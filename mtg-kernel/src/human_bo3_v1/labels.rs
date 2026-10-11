@@ -554,6 +554,83 @@ pub(super) fn label_ooze_v11(
 }
 
 /// Definition-owned Sower opt-in. No predecessor entry point calls this.
+pub(super) fn label_frenzied_v15(
+    action: &A,
+    observation: &crate::frenzied_public_v1::FrenziedObservationV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    if let A::ChooseEffectBoolean {
+        actor,
+        source,
+        value,
+    } = action
+    {
+        let rows: Vec<_> = observation
+            .resolutions
+            .iter()
+            .filter(|row| row.phase == "optional_red_payment")
+            .collect();
+        if let [row] = rows.as_slice() {
+            let pending = observation
+                .projection
+                .surface
+                .engine_context
+                .pending_effect
+                .as_ref()
+                .ok_or(Error::UnsupportedPrompt)?;
+            let Some(PendingEffectChoiceSemanticV4::Boolean {
+                player, purpose, ..
+            }) = &pending.choice
+            else {
+                return Err(Error::UnsupportedPrompt);
+            };
+            if *actor != human
+                || row.captured_payer != human
+                || *player != human
+                || *purpose != BooleanChoicePurposeV4::PayCost
+                || source.arena_id != row.source_at_attack.arena_id
+                || pending.controller != human
+                || row.live_stack_index.is_none()
+                || observation.extensions.pending_ward_life_payment.is_some()
+                || observation.extensions.pending_ward_payment.is_some()
+            {
+                return Err(Error::UnsupportedPrompt);
+            }
+            let selector = crate::rules_meaning_frenzied_goblin_v1::live_selector()
+                .map_err(|_| Error::UnsupportedPrompt)?;
+            crate::rules_meaning_frenzied_goblin_v1::meaning(
+                &selector,
+                row.source_at_attack.card_db_id,
+                0,
+            )
+            .map_err(|_| Error::UnsupportedPrompt)?;
+            return Ok(format!(
+                "{} {{R}} for {}: {}",
+                if *value { "Pay" } else { "Decline to pay" },
+                handles.name(&row.source_at_attack)?,
+                if *value {
+                    format!(
+                        "{} cannot block until the next cleanup",
+                        handles.name(&row.target_at_placement)?
+                    )
+                } else {
+                    "do not install a restriction".into()
+                }
+            ));
+        }
+    }
+    let parts = super::life_ward_v8::ProjectionPartsV8 {
+        projection: &observation.projection,
+        own_hand: &observation.own_hand,
+        known_library_cards: &observation.known_library_cards,
+        known_hand_cards: &observation.known_hand_cards,
+        known_face_down_cards: &observation.known_face_down_cards,
+        extensions: &observation.extensions,
+    };
+    label_parts_v8(action, &parts, handles, human)
+}
+
 pub(super) fn label_sower_v14(
     action: &A,
     observation: &super::life_ward_v8::ProjectionPartsV8<'_>,

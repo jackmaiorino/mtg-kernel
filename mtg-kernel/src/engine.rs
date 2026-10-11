@@ -14759,7 +14759,13 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             crate::standard_creatures_v1::cleanup(state);
             crate::sower_restriction_capture_v1::expire(state);
             crate::effect::temporary_control_v1::expire_at_cleanup(state);
-            effect::frenzied_goblin_resolution_v1::expire(state);
+            if effect::frenzied_goblin_resolution_v1::expire(state).is_err() {
+                state.engine.halted = Some((
+                    UnsupportedMechanic::InvalidEffectContinuation,
+                    ObjectId::default(),
+                ));
+                return;
+            }
             state.engine.until_end_of_turn.clear();
             state.engine.active_replacements.retain(|replacement| {
                 !matches!(

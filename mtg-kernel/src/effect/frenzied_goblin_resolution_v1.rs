@@ -515,6 +515,8 @@ pub struct FrenziedGoblinPublicationRecordV1 {
     pub declaration_history_index: u32,
     pub targeting_history_index: u32,
     pub item: Box<StackItem>,
+    pub target_at_placement: crate::rl::CardStableRefV1,
+    pub target_snapshot: String,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FrenziedGoblinOutcomeV1 {
@@ -550,6 +552,9 @@ fn published_at(
         return Err("Frenzied publication absent".into());
     };
     let item = &publication.item;
+    let target_snapshot: crate::state::GameObject =
+        serde_json::from_str(&publication.target_snapshot)
+            .map_err(|_| "Frenzied placement snapshot corrupt")?;
     let source = item
         .v4
         .ability_source_contract
@@ -580,6 +585,13 @@ fn published_at(
         || item.madness_offer
         || item.kicked
         || target != object
+        || publication.target_at_placement.arena_id != target.0
+        || target_snapshot.zone != Zone::Battlefield
+        || target_snapshot.zone_change_count != *zone_change_count
+        || crate::sower_restriction_capture_v1::masked_ref(*target, &target_snapshot)
+            .map_err(|error| error.to_string())?
+            != publication.target_at_placement
+        || !matches!(item.v4.target_contracts.as_slice(), [StackTargetContractV4::Object { owner, .. }] if *owner == target_snapshot.owner)
         || publication.declaration_history_index >= index
         || publication.targeting_history_index >= index
         || !matches!(state.engine.event_history.get(publication.declaration_history_index as usize),
@@ -646,6 +658,14 @@ pub(crate) fn publish(state: &mut GameState) -> Result<(), String> {
         .ok_or("Frenzied target occurrence absent")?;
     let index = u32::try_from(state.engine.event_history.len())
         .map_err(|_| "Frenzied history exceeds u32")?;
+    let [Target::Object(target)] = item.targets.as_slice() else {
+        return Err("Frenzied placement target absent".into());
+    };
+    let target_at_placement =
+        crate::sower_restriction_capture_v1::masked_ref(*target, state.objects.get(*target))
+            .map_err(|error| error.to_string())?;
+    let target_snapshot =
+        serde_json::to_string(state.objects.get(*target)).map_err(|error| error.to_string())?;
     let live = state.stack.last_mut().unwrap();
     if !live.v4.frenzied_goblin_publication_v1.is_empty() {
         return Err("Frenzied trigger republished".into());
@@ -657,6 +677,8 @@ pub(crate) fn publish(state: &mut GameState) -> Result<(), String> {
             .map_err(|_| "declaration exceeds u32")?,
         targeting_history_index: u32::try_from(targeting).map_err(|_| "targeting exceeds u32")?,
         item: Box::new(live.clone()),
+        target_at_placement,
+        target_snapshot,
     };
     state
         .engine
@@ -816,30 +838,36 @@ fn marker_matches(
         if object_id.0 == capture.recipient.arena_id && *object_zone_change_count == capture.recipient.zone_change_count
             && *timestamp == capture.timestamp)
 }
-pub(crate) fn expire(state: &mut GameState) {
-    let captures: Vec<_> = state
+pub(crate) fn expire(state: &mut GameState) -> Result<(), String> {
+    let captures: Vec<_> = active(state)?.into_iter().cloned().collect();
+    if captures.is_empty() {
+        return Ok(());
+    }
+    if state.step != crate::state::Step::Cleanup {
+        return Err("Frenzied expiry requires actual Cleanup entry".into());
+    }
+    let index = u32::try_from(state.engine.event_history.len())
+        .map_err(|_| "Frenzied history exceeds u32")?;
+    state
         .engine
         .event_history
-        .iter()
-        .filter_map(|event| match event {
-            CommittedEvent::FrenziedGoblinInstalledV1 { capture }
-                if state
-                    .engine
-                    .until_end_of_turn
-                    .iter()
-                    .any(|effect| marker_matches(effect, capture)) =>
-            {
-                Some(capture.clone())
-            }
-            _ => None,
-        })
-        .collect();
+        .push(CommittedEvent::FrenziedGoblinCleanupV1 {
+            history_index: index,
+            turn: state.turn,
+            ending_player: state.active_player,
+            step: state.step,
+            captures: captures.clone(),
+        });
     for capture in captures {
         state
             .engine
             .event_history
-            .push(CommittedEvent::FrenziedGoblinExpiredV1 { capture });
+            .push(CommittedEvent::FrenziedGoblinExpiredV1 {
+                capture: Box::new(capture),
+                cleanup_history_index: index,
+            });
     }
+    Ok(())
 }
 pub(crate) fn active(state: &GameState) -> Result<Vec<&FrenziedGoblinRestrictionV1>, String> {
     let mut installs: Vec<&FrenziedGoblinRestrictionV1> = Vec::new();
@@ -884,7 +912,60 @@ pub(crate) fn active(state: &GameState) -> Result<Vec<&FrenziedGoblinRestriction
                 }
                 installs.push(capture);
             }
-            CommittedEvent::FrenziedGoblinExpiredV1 { capture } => {
+            CommittedEvent::FrenziedGoblinCleanupV1 {
+                history_index,
+                step,
+                captures,
+                ..
+            } => {
+                let remaining: Vec<_> = installs
+                    .iter()
+                    .copied()
+                    .filter(|capture| !expired.contains(capture))
+                    .collect();
+                if *history_index as usize != index
+                    || *step != crate::state::Step::Cleanup
+                    || captures.is_empty()
+                    || captures.iter().collect::<Vec<_>>() != remaining
+                {
+                    return Err(
+                        "Frenzied Cleanup batch lost its complete active installations".into(),
+                    );
+                }
+                for (offset, capture) in captures.iter().enumerate() {
+                    if !matches!(state.engine.event_history.get(index+1+offset),
+                        Some(CommittedEvent::FrenziedGoblinExpiredV1 {capture:expired,cleanup_history_index})
+                        if expired.as_ref()==capture && *cleanup_history_index==*history_index)
+                    {
+                        return Err("Frenzied Cleanup batch lost an ordered expiry".into());
+                    }
+                }
+            }
+            CommittedEvent::FrenziedGoblinExpiredV1 {
+                capture,
+                cleanup_history_index,
+            } => {
+                let Some(CommittedEvent::FrenziedGoblinCleanupV1 {
+                    history_index,
+                    step,
+                    captures,
+                    ..
+                }) = state
+                    .engine
+                    .event_history
+                    .get(*cleanup_history_index as usize)
+                else {
+                    return Err("Frenzied expiry lacks independent Cleanup authority".into());
+                };
+                if *history_index != *cleanup_history_index
+                    || *step != crate::state::Step::Cleanup
+                    || captures
+                        .iter()
+                        .position(|row| row == capture.as_ref())
+                        .is_none_or(|offset| index != *cleanup_history_index as usize + 1 + offset)
+                {
+                    return Err("Frenzied expiry changed its genuine Cleanup occurrence".into());
+                }
                 if !installs.contains(&capture.as_ref()) || expired.contains(&capture.as_ref()) {
                     return Err("Frenzied expiry lost exact installation".into());
                 }
@@ -935,6 +1016,7 @@ fn validate_publications_with_owner(
                 | CommittedEvent::FrenziedGoblinInstalledV1 { .. }
                 | CommittedEvent::FrenziedGoblinExpiredV1 { .. }
                 | CommittedEvent::FrenziedGoblinRemovalV1 { .. }
+                | CommittedEvent::FrenziedGoblinCleanupV1 { .. }
         )
     }) {
         return Err("Frenzied journal replayed into dispatch log".into());
@@ -1063,6 +1145,12 @@ fn validate_publications_with_owner(
                 return Err("Frenzied closed resolution revived or changed operation".into());
             }
         } else {
+            for item in &live {
+                publication_for(state, item)?;
+            }
+            if let Some(removed) = owner.filter(|owner| owner.expected.v4.stack_item_id == id) {
+                publication_for(state, &removed.expected)?;
+            }
             let removed = owner.is_some_and(|owner| owner.expected.v4.stack_item_id == id);
             if live.len() + usize::from(removed) != 1
                 || last.is_some_and(|receipt| receipt.pending.is_none())
@@ -1161,7 +1249,7 @@ mod tests {
             let hash = state.state_hash();
             validate(&state).unwrap();
             publish(&mut state).unwrap();
-            expire(&mut state);
+            expire(&mut state).unwrap();
             assert_eq!(serde_json::to_vec(&state).unwrap(), before);
             assert_eq!(state.state_hash(), hash);
             let mut expected = std::collections::hash_map::DefaultHasher::new();

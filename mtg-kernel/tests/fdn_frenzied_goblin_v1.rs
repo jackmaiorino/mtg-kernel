@@ -379,6 +379,13 @@ fn real_attack_targets_before_optional_payment_pay_decline_and_unpayable() {
                 engine::step(&mut state, Action::DeclareBlockers(vec![])).unwrap();
                 cleanup(&mut state, actor);
                 assert!(!restricted(&state, recipient));
+                assert!(state.engine.event_history.iter().any(|event|matches!(event,
+                    mtg_kernel::event::CommittedEvent::FrenziedGoblinCleanupV1 {step:Step::Cleanup,ending_player,..}
+                        if *ending_player==actor)));
+                assert_eq!(
+                    serde_json::to_vec(&restore(&state)).unwrap(),
+                    serde_json::to_vec(&state).unwrap()
+                );
             }
         }
     }
@@ -750,7 +757,9 @@ fn published_payment_and_installed_authority_forgeries_refuse_readonly_after_res
                         .ctx
                         .controller = actor.opponent()
                 }
-                7 => corrupt.stack.pop().map(|_| ()).unwrap(),
+                7 => {
+                    corrupt.stack.pop().unwrap();
+                }
                 _ => {
                     let event = corrupt
                         .engine
@@ -774,7 +783,7 @@ fn published_payment_and_installed_authority_forgeries_refuse_readonly_after_res
         engine::step(&mut state, Action::ChooseEffectBoolean(true)).unwrap();
         finish(&mut state);
         assert!(restricted(&state, recipient));
-        for case in 0..6 {
+        for case in 0..7 {
             let mut corrupt = restore(&state);
             match case {
                 0 => corrupt.engine.event_history.retain(|event| {
@@ -805,13 +814,38 @@ fn published_payment_and_installed_authority_forgeries_refuse_readonly_after_res
                         }
                     }
                 }
-                _ => {
+                5 => {
                     for event in &mut corrupt.engine.event_history {
                         if let CommittedEvent::FrenziedGoblinCompletedV1 { outcome, .. } = event {
                             *outcome = mtg_kernel::effect::FrenziedGoblinOutcomeV1::Countered;
                         }
                     }
                 }
+                _ => {}
+            }
+            if case == 6 {
+                let capture = corrupt
+                    .engine
+                    .event_history
+                    .iter()
+                    .find_map(|event| match event {
+                        CommittedEvent::FrenziedGoblinInstalledV1 { capture } => {
+                            Some(capture.clone())
+                        }
+                        _ => None,
+                    })
+                    .unwrap();
+                corrupt.engine.until_end_of_turn.retain(|effect| {
+                    !matches!(effect, UntilEndOfTurnEffect::ResolvedObjectCantBlock { .. })
+                });
+                corrupt
+                    .engine
+                    .event_history
+                    .push(CommittedEvent::FrenziedGoblinExpiredV1 {
+                        capture,
+                        cleanup_history_index: u32::MAX,
+                    });
+                corrupt = restore(&corrupt);
             }
             let before = serde_json::to_vec(&corrupt).unwrap();
             assert!(

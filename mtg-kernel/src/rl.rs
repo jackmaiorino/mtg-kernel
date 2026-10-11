@@ -2467,6 +2467,32 @@ pub(crate) fn wildwood_observation_storage_v1(
     )
 }
 
+pub(crate) fn frenzied_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::frenzied_public_v1::validate_projection_authority(state)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_common(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
+        true,
+    )
+}
+
 fn build_policy_observation_storage_common(
     request: PolicyObservationBuildV5<'_>,
     accept_life_ward: bool,

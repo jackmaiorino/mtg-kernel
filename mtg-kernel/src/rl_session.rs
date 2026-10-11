@@ -37,6 +37,7 @@ use sha2::{Digest, Sha256};
 use std::fmt;
 
 pub mod census_future_v2;
+pub(crate) mod frenzied_v15;
 pub(crate) mod human_opening_v1;
 pub(crate) mod human_v8;
 pub(crate) mod sower_v14;
@@ -4425,6 +4426,7 @@ enum FlatActionContractModeV1 {
     SowerV14,
     HeartfireV12,
     WildwoodV16,
+    FrenziedV15,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -7297,6 +7299,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:wildwood_v16:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::FrenziedV15 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = frenzied_v15::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:frenzied_v15:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));
