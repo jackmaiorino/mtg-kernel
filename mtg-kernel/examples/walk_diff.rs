@@ -1732,10 +1732,7 @@ fn render_activated_ability_text(state: &GameState, id: ObjectId, ability_idx: u
             | card_def::CostComponent::Crew(_)
             | card_def::CostComponent::RemoveChargeCounterFromSelf
             | card_def::CostComponent::ExileCraftArtifactMaterial
-            | card_def::CostComponent::RemoveNetCounterFromSelf
-            | card_def::CostComponent::LoyaltyX
-            | card_def::CostComponent::Crew(_)
-            | card_def::CostComponent::RemoveChargeCounterFromSelf) => {
+            | card_def::CostComponent::RemoveNetCounterFromSelf) => {
                 panic!("walk_diff has no Mage-pinned renderer for activated cost {unsupported:?}")
             }
         }
