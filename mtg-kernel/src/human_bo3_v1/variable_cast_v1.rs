@@ -357,15 +357,25 @@ impl HumanVariableCastSessionV1 {
         })
     }
 
-    pub fn restore(snapshot: HumanVariableCastSnapshotV1) -> Result<Self, Error> {
-        Ok(Self {
-            session: VariableCastSessionV1::restore(snapshot.backend)
-                .map_err(|_| Error::ExecutionFailed)?,
-            human: snapshot.human,
-            prompt_seq: snapshot.prompt_seq,
-            pending: None,
-            accepted: None,
-        })
+    /// Preserve this owner's prompt high-water when restoring older state.
+    /// The next prompt therefore cannot collide with a future prompt already
+    /// issued before rollback, even when its action index is still legal.
+    pub fn restore(&mut self, snapshot: HumanVariableCastSnapshotV1) -> Result<(), Error> {
+        if snapshot.human != self.human {
+            return Err(Error::InvalidVisibleReference);
+        }
+        let mut next = self.clone();
+        next.prompt_seq = next.prompt_seq.max(snapshot.prompt_seq);
+        next.prompt_seq
+            .checked_add(1)
+            .ok_or(Error::PromptSequenceExhausted)?;
+        next.session
+            .restore(snapshot.backend)
+            .map_err(|_| Error::ExecutionFailed)?;
+        next.pending = None;
+        next.accepted = None;
+        *self = next;
+        Ok(())
     }
     pub fn new(session: VariableCastSessionV1, human: PlayerSeatV1) -> Self {
         Self {
@@ -568,14 +578,26 @@ mod tests {
             let mut session = ordinary(actor, false, "Snap");
             let before = session.current().unwrap();
             let old = request(&before, "Play Forest");
-            let mut restored =
-                HumanVariableCastSessionV1::restore(session.save().unwrap()).unwrap();
-            let fresh = restored.current().unwrap();
+            let snapshot = session.save().unwrap();
+            session.submit(old.clone()).unwrap();
+            let future = session.current().unwrap();
+            let future_request = request(&future, "Pass priority");
+            assert!(future.prompt_seq > before.prompt_seq);
+            session.restore(snapshot).unwrap();
+            let fresh = session.current().unwrap();
             assert_eq!(fresh.state, before.state);
             assert_eq!(fresh.actions, before.actions);
-            assert_ne!(fresh.prompt_seq, before.prompt_seq);
-            assert_eq!(restored.submit(old), Err(Error::StaleDecision));
-            assert_eq!(restored.current().unwrap(), fresh);
+            assert!(fresh.prompt_seq > future.prompt_seq);
+            // The old future request still names a legal ordinal. Its prompt
+            // must refuse because rollback restored a different decision.
+            assert_eq!(
+                future_request.action_index,
+                request(&fresh, "Pass priority").action_index
+            );
+            assert_eq!(session.submit(future_request), Err(Error::StaleDecision));
+            assert_eq!(session.current().unwrap(), fresh);
+            assert_eq!(session.submit(old), Err(Error::StaleDecision));
+            assert_eq!(session.current().unwrap(), fresh);
         }
     }
 
@@ -652,7 +674,8 @@ mod tests {
                 assert_eq!(*selected_count, u64::try_from(total).unwrap());
                 assert_eq!(selected_targets.len(), total);
                 assert_eq!((*minimum, *maximum, *can_finish), (0, None, true));
-                session = HumanVariableCastSessionV1::restore(session.save().unwrap()).unwrap();
+                let snapshot = session.save().unwrap();
+                session.restore(snapshot).unwrap();
                 let restored = session.current().unwrap();
                 assert_eq!(restored.state, finished.state);
                 assert_eq!(restored.actions, finished.actions);

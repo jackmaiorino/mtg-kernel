@@ -265,17 +265,25 @@ impl VariableCastSessionV1 {
         })
     }
 
-    pub fn restore(snapshot: VariableCastSnapshotV1) -> Result<Self> {
-        let mut session = snapshot.session;
-        session.current()?;
-        session.revision = session
+    /// Restore into this owner so a rollback never reuses a previously issued
+    /// revision. Snapshots cannot transfer an episode into another owner.
+    pub fn restore(&mut self, snapshot: VariableCastSnapshotV1) -> Result<()> {
+        self.validate_authority()?;
+        let mut restored = snapshot.session;
+        restored.current()?;
+        if restored.episode != self.episode {
+            return Err(VariableCastSessionErrorV1::InvalidAuthority);
+        }
+        restored.revision = self
             .revision
+            .max(restored.revision)
             .checked_add(1)
             .ok_or(VariableCastSessionErrorV1::CounterExhausted)?;
-        session.last = None;
-        session.authority = session.authority_digest()?;
-        session.current()?;
-        Ok(session)
+        restored.last = None;
+        restored.authority = restored.authority_digest()?;
+        restored.current()?;
+        *self = restored;
+        Ok(())
     }
 }
 
@@ -386,6 +394,7 @@ mod tests {
                 )
             });
             let saved = session.save().unwrap();
+            let repeated = saved.clone();
             let receipt = session.submit(chosen.clone()).unwrap();
             let after = session.current().unwrap();
             assert_eq!(session.submit(chosen.clone()).unwrap(), receipt);
@@ -397,13 +406,25 @@ mod tests {
                 Err(VariableCastSessionErrorV1::ConflictingRetry)
             );
             assert_eq!(session.current().unwrap(), after);
-            let mut restored = VariableCastSessionV1::restore(saved).unwrap();
+            let mut restored = session.clone();
+            restored.restore(saved).unwrap();
             assert_eq!(restored.current().unwrap().observation, before.observation);
             assert_ne!(restored.current().unwrap().binding, before.binding);
             assert_eq!(
                 restored.submit(chosen),
                 Err(VariableCastSessionErrorV1::StaleDecision)
             );
+            let first_restore = restored.current().unwrap();
+            let obsolete = request(&restored, |_| true);
+            restored.restore(repeated).unwrap();
+            let second_restore = restored.current().unwrap();
+            assert_eq!(second_restore.observation, first_restore.observation);
+            assert!(second_restore.binding.revision > first_restore.binding.revision);
+            assert_eq!(
+                restored.submit(obsolete),
+                Err(VariableCastSessionErrorV1::StaleDecision)
+            );
+            assert_eq!(restored.current().unwrap(), second_restore);
         }
     }
 
@@ -421,7 +442,7 @@ mod tests {
         let mut snapshot = ordinary(PlayerId::P1).save().unwrap();
         snapshot.session.state.step = Step::Main2;
         assert!(matches!(
-            VariableCastSessionV1::restore(snapshot),
+            ordinary(PlayerId::P1).restore(snapshot),
             Err(VariableCastSessionErrorV1::InvalidAuthority)
         ));
     }
@@ -503,7 +524,8 @@ mod tests {
                     assert_eq!(captures.len(), selected);
                     assert_eq!((minimum, maximum, can_finish), (0, None, true));
                     if selected == 120 {
-                        session = VariableCastSessionV1::restore(session.save().unwrap()).unwrap();
+                        let snapshot = session.save().unwrap();
+                        session.restore(snapshot).unwrap();
                     }
                     let pick = request(&session, |semantic| {
                         matches!(semantic, A::ChooseVariableCastTarget { .. })
@@ -523,7 +545,8 @@ mod tests {
                 assert_eq!(*selected_count, u64::try_from(total).unwrap());
                 assert_eq!(selected.len(), total);
                 assert_eq!(*maximum, None);
-                session = VariableCastSessionV1::restore(session.save().unwrap()).unwrap();
+                let snapshot = session.save().unwrap();
+                session.restore(snapshot).unwrap();
                 let finish = request(&session, |semantic| {
                     matches!(semantic, A::FinishVariableCastTargets { .. })
                 });
