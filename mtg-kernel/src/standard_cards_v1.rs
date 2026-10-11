@@ -534,6 +534,9 @@ pub enum StandardOpV1 {
         player: PlayerId,
         amount: u16,
     },
+    /// Definition-owned sacrifice ability using committed departing source P/T.
+    /// Appended to preserve all predecessor operation discriminants.
+    SourceLastPowerDamageV1,
 }
 
 impl StandardOpV1 {
@@ -671,6 +674,9 @@ fn transform_resolving_source(ctx: &ExecCtx, state: &mut GameState) {
 
 pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        StandardOpV1::SourceLastPowerDamageV1 => {
+            crate::source_power_activation_v1::execute(ctx, state);
+        }
         StandardOpV1::SacrificeBoundAtEndStep { object } => {
             if state.objects.try_get(object.object).is_some_and(|live| {
                 live.zone == Zone::Battlefield
@@ -1729,9 +1735,14 @@ pub(crate) fn replace_damage(state: &GameState, damage: &mut DamageProposed) {
     let Some(source) = state.objects.try_get(damage.source) else {
         return;
     };
-    let controller = source.controller;
+    let controller = damage.historical_source.map_or(source.controller, |id| {
+        crate::source_power_activation_v1::damage_source(state, damage.source, id)
+            .expect("validated historical source")
+            .source
+            .controller
+    });
     if damaged != controller.opponent()
-        || crate::engine::object_color_mask(state, damage.source)
+        || crate::event::damage_color_mask(state, damage)
             & crate::card_def::mana_colors_mask(&[ManaColor::R])
             == 0
     {
@@ -1780,6 +1791,30 @@ pub(crate) fn after_damage(state: &mut GameState, source: ObjectId, amount: i32,
         *totals = [0, 0];
     }
     let total = &mut totals[controller.index()];
+    *total = total.saturating_add(amount.unsigned_abs());
+}
+
+#[cfg(feature = "standard-magezero-fixtures")]
+pub(crate) fn after_historical_damage(
+    state: &mut GameState,
+    facts: crate::event::HistoricalDamageSourceV1,
+    amount: i32,
+    is_combat: bool,
+) {
+    if is_combat
+        || amount <= 0
+        || facts.color_mask & crate::card_def::mana_color_mask(ManaColor::R) == 0
+    {
+        return;
+    }
+    let turn = state.turn;
+    let standard = state.standard_v1.get_or_insert_with(Default::default);
+    let (recorded_turn, totals) = standard.red_noncombat_damage.get_or_insert((turn, [0, 0]));
+    if *recorded_turn != turn {
+        *recorded_turn = turn;
+        *totals = [0, 0];
+    }
+    let total = &mut totals[facts.source.controller.index()];
     *total = total.saturating_add(amount.unsigned_abs());
 }
 

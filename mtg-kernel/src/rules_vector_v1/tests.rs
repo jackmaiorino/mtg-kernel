@@ -801,6 +801,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Meteor Golem",
     "Mischievous Mystic",
     "Monastery Swiftspear",
+    "Heartfire Immolator",
     "Monk Token",
     "Moon-Circuit Hacker",
     "Mossborn Hydra",

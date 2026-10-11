@@ -75,6 +75,10 @@ pub struct DamageProposed {
     pub amount: i32,
     pub touched_by: Vec<ReplacementId>,
     pub is_combat: bool,
+    /// Ephemeral authority for the new definition-owned historical damage
+    /// path. Ordinary proposals leave this absent; committed Damage bytes
+    /// and hashes remain unchanged.
+    pub historical_source: Option<StackItemId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -179,6 +183,7 @@ impl ProposedEvent {
             amount,
             touched_by: Vec::new(),
             is_combat: false,
+            historical_source: None,
         })
     }
     pub fn zone_change(object: ObjectId, to_zone: Zone) -> ProposedEvent {
@@ -611,6 +616,29 @@ pub enum CommittedEvent {
         source: crate::state::AbilitySourceContractV4,
         face_index: u8,
     },
+    /// History-only authority for a definition-owned source-power activation.
+    /// Appended to preserve old event discriminants and absent-state bytes.
+    SourcePowerActivationCommittedV1 {
+        item: Box<crate::state::StackItem>,
+        power: i32,
+        toughness: i32,
+        damage_source: HistoricalDamageSourceV1,
+    },
+    SourceDamageBeforeLeavingV1 {
+        damage_source: HistoricalDamageSourceV1,
+    },
+    SourcePowerActivationFinishedV1 {
+        stack_item_id: StackItemId,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct HistoricalDamageSourceV1 {
+    pub source: crate::state::AbilitySourceContractV4,
+    pub color_mask: u8,
+    pub lifelink: bool,
+    pub deathtouch: bool,
+    pub werewolf: bool,
 }
 
 /// Remembers the counters of a departing permanent whose own leave ability
@@ -714,6 +742,17 @@ pub fn apply_replacements(
     state: &mut GameState,
     mut proposed: ProposedEvent,
 ) -> Option<ProposedEvent> {
+    if let ProposedEvent::Damage(damage) = &proposed {
+        if let Some(id) = damage.historical_source {
+            if crate::source_power_activation_v1::damage_source(state, damage.source, id).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    damage.source,
+                ));
+                return None;
+            }
+        }
+    }
     if let ProposedEvent::ZoneChange(change) = &mut proposed {
         if change.to_zone == Zone::Graveyard
             && state.objects.try_get(change.object).is_some_and(|o| {
@@ -739,7 +778,24 @@ pub fn apply_replacements(
     }
     if let ProposedEvent::Damage(damage) = &proposed {
         if !damage_cannot_be_prevented
-            && crate::engine::damage_is_prevented_by_protection(state, damage.source, damage.target)
+            && damage.historical_source.map_or_else(
+                || {
+                    crate::engine::damage_is_prevented_by_protection(
+                        state,
+                        damage.source,
+                        damage.target,
+                    )
+                },
+                |id| match damage.target {
+                    Target::Object(target) => crate::source_power_activation_v1::protected(
+                        state,
+                        crate::source_power_activation_v1::damage_source(state, damage.source, id)
+                            .expect("validated historical source"),
+                        target,
+                    ),
+                    _ => false,
+                },
+            )
         {
             return None;
         }
@@ -818,9 +874,7 @@ fn replacement_applies(
         ) => {
             *turn == state.turn
                 && *active_player == state.active_player
-                && crate::engine::object_color_mask(state, d.source)
-                    & crate::card_def::mana_color_mask(*color)
-                    != 0
+                && damage_color_mask(state, d) & crate::card_def::mana_color_mask(*color) != 0
         }
         _ => false,
     }
@@ -948,9 +1002,28 @@ fn lifelink_gain_for(state: &GameState, event: &ProposedEvent) -> Option<(Player
     if damage.amount <= 0 {
         return None;
     }
+    if let Some(id) = damage.historical_source {
+        let facts =
+            crate::source_power_activation_v1::damage_source(state, damage.source, id).ok()?;
+        return facts
+            .lifelink
+            .then_some((facts.source.controller, damage.amount));
+    }
     let source = state.objects.try_get(damage.source)?;
     crate::engine::has_effective_keyword(state, damage.source, crate::card_def::Keywords::LIFELINK)
         .then_some((source.controller, damage.amount))
+}
+
+/// Convenience: replace/prevent then commit if anything survived. Lifelink
+pub(crate) fn damage_color_mask(state: &GameState, damage: &DamageProposed) -> u8 {
+    damage.historical_source.map_or_else(
+        || crate::engine::object_color_mask(state, damage.source),
+        |id| {
+            crate::source_power_activation_v1::damage_source(state, damage.source, id)
+                .expect("validated historical source")
+                .color_mask
+        },
+    )
 }
 
 /// Convenience: replace/prevent then commit if anything survived. Lifelink
@@ -994,11 +1067,20 @@ fn commit_with_ability_lki(
     let committed = match event {
         ProposedEvent::Damage(d) => {
             let source_has_deathtouch = d.amount > 0
-                && state.objects.try_get(d.source).is_some()
-                && crate::engine::has_effective_keyword(
-                    state,
-                    d.source,
-                    crate::card_def::Keywords::DEATHTOUCH,
+                && d.historical_source.map_or_else(
+                    || {
+                        state.objects.try_get(d.source).is_some()
+                            && crate::engine::has_effective_keyword(
+                                state,
+                                d.source,
+                                crate::card_def::Keywords::DEATHTOUCH,
+                            )
+                    },
+                    |id| {
+                        crate::source_power_activation_v1::damage_source(state, d.source, id)
+                            .expect("validated historical source")
+                            .deathtouch
+                    },
                 );
             match d.target {
                 Target::Object(id) => {
@@ -1043,7 +1125,18 @@ fn commit_with_ability_lki(
                 }
             }
             #[cfg(feature = "standard-magezero-fixtures")]
-            crate::standard_cards_v1::after_damage(state, d.source, d.amount, d.is_combat);
+            if let Some(id) = d.historical_source {
+                let facts = crate::source_power_activation_v1::damage_source(state, d.source, id)
+                    .expect("validated historical source");
+                crate::standard_cards_v1::after_historical_damage(
+                    state,
+                    facts,
+                    d.amount,
+                    d.is_combat,
+                );
+            } else {
+                crate::standard_cards_v1::after_damage(state, d.source, d.amount, d.is_combat);
+            }
             CommittedEvent::Damage {
                 source: d.source,
                 target: d.target,
@@ -1089,6 +1182,9 @@ fn commit_with_ability_lki(
             if from == Zone::Battlefield {
                 record_counter_lki(state, z.object);
                 crate::standard_statics_v1::record_creature_stats_lki(state, z.object);
+            }
+            if from == Zone::Battlefield {
+                crate::source_power_activation_v1::before_departure(state, z.object);
             }
             #[cfg(feature = "standard-magezero-fixtures")]
             crate::standard_keywords_v1::before_zone_change(state, z.object, z.to_zone);
@@ -2188,6 +2284,7 @@ mod tests {
                 target,
                 amount,
                 is_combat: true,
+                historical_source: None,
                 touched_by: Vec::new(),
             })
         };

@@ -3419,7 +3419,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Chrome Host Seedshark" => &CHROME_HOST_SEEDSHARK_TRIGGERS,
         "Brutal Cathar" => &BRUTAL_CATHAR_TRIGGERS,
         "Knight-Errant of Eos" => &KNIGHT_ERRANT_OF_EOS_TRIGGERS,
-        "Monastery Swiftspear" => &MONASTERY_SWIFTSPEAR_TRIGGERS,
+        "Monastery Swiftspear" | "Heartfire Immolator" => &MONASTERY_SWIFTSPEAR_TRIGGERS,
         "Heartfire Hero" => &HEARTFIRE_HERO_TRIGGERS,
         "Slickshot Show-Off" => &SLICKSHOT_SHOW_OFF_TRIGGERS,
         "Sanguine Evangelist" => &SANGUINE_EVANGELIST_TRIGGERS,

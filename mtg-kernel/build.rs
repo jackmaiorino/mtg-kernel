@@ -5274,6 +5274,21 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
+        "Heartfire Immolator" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana { colored: Some("R"), generic: 0 },
+                AbilityCostRecipe::SacrificeSelf,
+            ],
+            effect: AbilityEffectRecipe::Program {
+                name: "source_last_power_damage_v1",
+                effect: "EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1)",
+            },
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "CreatureOrPlaneswalker",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Tinder Wall" => &[ActivatedAbilityRecipe {
             cost: &[
                 AbilityCostRecipe::Mana {
@@ -6866,7 +6881,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Aloe Alchemist" => "becomes_plotted:target_creature:pump:3:2:trample",
         "Hopeful Initiate" => "training",
         "Chrome Host Seedshark" => "cast_noncreature_spell:incubate_spell_mana_value",
-        "Monastery Swiftspear" => "prowess",
+        "Monastery Swiftspear" | "Heartfire Immolator" => "prowess",
         "Heartfire Hero" => "valiant:plus_one_counter_on_source;dies:damage_opponent_equal_to_last_power",
         "Slickshot Show-Off" => "cast_noncreature_spell:pump_source:2:0",
         "Sanguine Evangelist" => "battle_cry;etb:create_bat_token;dies:create_bat_token",
