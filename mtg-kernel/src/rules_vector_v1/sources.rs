@@ -484,6 +484,7 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         restricted_mana_abilities,
         animation,
         activated_ability_generic_reductions,
+        combat_static_rules,
         // Cast bookkeeping for a program's `ManaSpentToCast` count, which
         // the program's own facets already carry.
         records_mana_spent: _,
@@ -842,6 +843,13 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 }
             }
         });
+    }
+    if *combat_static_rules != crate::card_def::CombatStaticRulesDef::NONE {
+        walk.rec(
+            "combat_static_rules",
+            Value::String(format!("{combat_static_rules:?}")),
+        );
+        walk.opaque.push("printed combat requirement and blocked-subtype restriction require their precise successor");
     }
     if let Some(rule) = enters_tapped_unless_controller {
         walk.rec(

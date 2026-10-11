@@ -7068,6 +7068,13 @@ fn standard_static_recipe_for(name: &str) -> &'static str {
     }
 }
 
+fn combat_static_rules_for(name: &str) -> &'static str {
+    match name {
+        "Juggernaut" => "CombatStaticRulesDef { must_attack_each_combat: true, cant_be_blocked_by_subtype: Some(Subtype::Wall) }",
+        _ => "CombatStaticRulesDef::NONE",
+    }
+}
+
 fn intrinsic_basic_mana_color(card: &CardJson) -> Option<&'static str> {
     let is_basic_land = card.is_land
         && card.types.iter().any(|card_type| card_type == "Land")
@@ -10072,6 +10079,12 @@ fn codegen(cards: &[CardJson]) -> String {
             standard.activated_ability_generic_reductions
         )
         .unwrap();
+        writeln!(
+            out,
+            "        combat_static_rules: {},",
+            combat_static_rules_for(&c.name)
+        )
+        .unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -10179,6 +10192,10 @@ fn codegen(cards: &[CardJson]) -> String {
             canon.push_str(&format!(";starting_loyalty={loyalty}"));
         }
         let entry_counters = enters_with_plus_one_counters_for(&c.name);
+        let combat_rules = combat_static_rules_for(&c.name);
+        if combat_rules != "CombatStaticRulesDef::NONE" {
+            canon.push_str(&format!(";combat_static_rules={combat_rules}"));
+        }
         if entry_counters != "None" {
             canon.push_str(&format!(";entry_counters={entry_counters}"));
         }

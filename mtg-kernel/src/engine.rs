@@ -8799,7 +8799,7 @@ fn land_drop_candidates(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
     out
 }
 
-fn can_attack(state: &GameState, id: ObjectId) -> bool {
+pub(crate) fn can_attack(state: &GameState, id: ObjectId) -> bool {
     let obj = state.objects.get(id);
     let def = &card_def::CARD_DEFS[obj.card_def as usize];
     #[cfg(feature = "standard-magezero-fixtures")]
@@ -8842,6 +8842,20 @@ pub(crate) fn required_goaded_attackers(state: &GameState, eligible: &[ObjectId]
                 .goaded_by
                 .iter()
                 .any(|goad| goad_is_active(state, goad))
+        })
+        .collect()
+}
+
+/// Attack requirements include printed statics without adding goad's rules.
+pub(crate) fn required_attackers(state: &GameState, eligible: &[ObjectId]) -> Vec<ObjectId> {
+    let goaded = required_goaded_attackers(state, eligible);
+    eligible
+        .iter()
+        .copied()
+        .filter(|id| {
+            goaded.contains(id)
+                || (state.objects.get(*id).controller == state.active_player
+                    && crate::combat_static_rules_v1::active(state, *id).must_attack_each_combat)
         })
         .collect()
 }
@@ -8912,6 +8926,12 @@ fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
             }
             let def = &card_def::CARD_DEFS[obj.card_def as usize];
             if !def.is_executable() || !object_has_type(state, id, CardType::Creature) {
+                return false;
+            }
+            if crate::combat_static_rules_v1::active(state, attacker)
+                .cant_be_blocked_by_subtype
+                .is_some_and(|subtype| has_effective_subtype(state, id, subtype))
+            {
                 return false;
             }
             if crate::sower_of_chaos_v1::cant_block(state, id)
@@ -18849,6 +18869,12 @@ pub(crate) fn validate_declare_attackers(
     let required = required_goaded_attackers(state, &eligible);
     if !required.iter().all(|attacker| attackers.contains(attacker)) {
         return Err("one or more goaded creatures able to attack was omitted".to_string());
+    }
+    if !required_attackers(state, &eligible)
+        .iter()
+        .all(|attacker| attackers.contains(attacker))
+    {
+        return Err("one or more creatures required to attack this combat was omitted".to_string());
     }
     let mut dedup = attackers.to_vec();
     dedup.sort_unstable();

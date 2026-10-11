@@ -45,6 +45,7 @@ pub mod extra_turn_v23;
 pub(crate) mod frenzied_v15;
 pub(crate) mod human_opening_v1;
 pub(crate) mod human_v8;
+pub(crate) mod juggernaut_v25;
 pub(crate) mod librarian_v20;
 pub(crate) mod sower_v14;
 pub(crate) mod wildwood_v16;
@@ -4321,7 +4322,9 @@ fn flat_validate_expected_decision_v1(
     }
     // The frozen flat formats cannot represent these extended mechanics or
     // numeric ranges. Refuse before publishing any incomplete buffers.
-    if session.state.objects.iter().any(|(_, object)| {
+    if (crate::combat_static_rules_v1::requires_successor(&session.state)
+        && session.flat_action_contract_mode != FlatActionContractModeV1::JuggernautV25)
+        || session.state.objects.iter().any(|(_, object)| {
         i16::try_from(object.counters.plus1_plus1).is_err()
             || u16::try_from(object.damage).is_err()
     }) || session.state.planeswalkers_v1.is_some()
@@ -4440,6 +4443,7 @@ enum FlatActionContractModeV1 {
     LibrarianV20,
     RaidEntryV21,
     ExtraTurnV23,
+    JuggernautV25,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -7449,6 +7453,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:extra_turn_v23:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::JuggernautV25 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = juggernaut_v25::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:juggernaut_v25:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));

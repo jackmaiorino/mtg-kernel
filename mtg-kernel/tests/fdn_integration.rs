@@ -191,3 +191,6 @@ mod fdn_gutless_plunderer_v1;
 mod fdn_mild_mannered_librarian_v1;
 #[path = "fdn/fdn_wildwood_scourge_v1.rs"]
 mod fdn_wildwood_scourge_v1;
+
+#[path = "fdn/fdn_juggernaut_v1.rs"]
+mod fdn_juggernaut_v1;

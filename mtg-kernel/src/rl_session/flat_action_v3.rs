@@ -267,8 +267,7 @@ pub(super) fn normalize_candidates(
             attacker,
             include: false,
             ..
-        } => crate::engine::required_goaded_attackers(state, &[ObjectId(attacker.arena_id)])
-            .is_empty(),
+        } => crate::engine::required_attackers(state, &[ObjectId(attacker.arena_id)]).is_empty(),
         _ => true,
     });
     if let PolicyDecisionV5::BlockerInclusion {

@@ -1,0 +1,31 @@
+{
+  "name": "Juggernaut",
+  "status": "unregistered source preparation; native and printed games unrun",
+  "printing": {
+    "set": "FDN",
+    "collector_number": "255",
+    "scryfall_id": "f4468fff-cd6f-428c-b7a0-ff89f5bbea2e",
+    "oracle_id": "4ac9116f-36bc-4d71-b696-d6ee064e1d58"
+  },
+  "mana_cost": "{4}",
+  "mana_value": 4,
+  "types": [
+    "Artifact",
+    "Creature"
+  ],
+  "subtypes": [
+    "Juggernaut"
+  ],
+  "power": 5,
+  "toughness": 3,
+  "rules": [
+    "Juggernaut attacks each combat if able.",
+    "Juggernaut cannot be blocked by Walls."
+  ],
+  "primary_reference": {
+    "repository": "mage",
+    "commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+    "path": "Mage.Sets/src/mage/cards/j/Juggernaut.java"
+  },
+  "catalog_or_model_admitted": false
+}
