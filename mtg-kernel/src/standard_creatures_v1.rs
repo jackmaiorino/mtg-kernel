@@ -38,6 +38,7 @@ pub enum CreatureEffectV1 {
     MosswoodGraveyardAdventure,
     FloodpitsTapStun,
     FloodpitsShuffle,
+    EssenceTransferCounters,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -83,6 +84,99 @@ pub(crate) fn begin_turn(state: &mut GameState) {
             }
         }
     }
+}
+
+/// Counter families stored outside the ordinary counter structure.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CounterExtrasV1 {
+    pub lifelink: i16,
+    pub time: u8,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CounterTransferV1 {
+    pub counters: crate::state::Counters,
+    pub extras: CounterExtrasV1,
+}
+
+pub(crate) fn counter_transfer_snapshot(
+    state: &GameState,
+    source: crate::state::AbilitySourceContractV4,
+) -> CounterTransferV1 {
+    state
+        .counter_lki_v1
+        .as_ref()
+        .and_then(|entries| {
+            entries.iter().find(|entry| {
+                entry.source.object == source.source
+                    && entry.source.zone_change_count == source.zone_change_count
+            })
+        })
+        .map(|entry| CounterTransferV1 {
+            counters: entry.counters,
+            extras: entry.extras.unwrap_or_default(),
+        })
+        .unwrap_or_default()
+}
+
+fn apply_counter_transfer(
+    state: &mut GameState,
+    target: ObjectId,
+    player: crate::ids::PlayerId,
+    snapshot: CounterTransferV1,
+) -> Option<()> {
+    // Work on a caller-owned projection so every family commits atomically.
+    let counters = snapshot.counters;
+    let scale = |amount: i32| {
+        #[cfg(feature = "standard-magezero-fixtures")]
+        {
+            crate::standard_cards_v1::scale_counters(
+                state,
+                state.objects.get(target).controller,
+                amount,
+            )
+        }
+        #[cfg(not(feature = "standard-magezero-fixtures"))]
+        {
+            amount
+        }
+    };
+    let placed_i16 = |amount: i16| i16::try_from(scale(i32::from(amount))).ok();
+    let live = state.objects.get(target);
+    let minus_one = live
+        .counters
+        .minus1_minus1
+        .checked_add(placed_i16(counters.minus1_minus1)?)?;
+    let minus_toughness = live
+        .counters
+        .minus0_minus1
+        .checked_add(placed_i16(counters.minus0_minus1)?)?;
+    let stun = live.counters.stun.checked_add(placed_i16(counters.stun)?)?;
+    let lore = live.counters.lore.checked_add(placed_i16(counters.lore)?)?;
+    let oil = live.counters.oil.checked_add(placed_i16(counters.oil)?)?;
+    let lifelink = live
+        .v4
+        .lifelink_keyword_counters
+        .checked_add(placed_i16(snapshot.extras.lifelink)?)?;
+    let time = live
+        .v4
+        .time_counters_v1
+        .checked_add(u8::try_from(scale(i32::from(snapshot.extras.time))).ok()?)?;
+    crate::event::add_plus_one_counters(state, target, player, counters.plus1_plus1).ok()?;
+    let keyword_timestamp =
+        (snapshot.extras.lifelink > 0).then(|| crate::engine::next_timestamp(state));
+    let live = state.objects.get_mut(target);
+    live.counters.minus1_minus1 = minus_one;
+    live.counters.minus0_minus1 = minus_toughness;
+    live.counters.stun = stun;
+    live.counters.lore = lore;
+    live.counters.oil = oil;
+    live.v4.lifelink_keyword_counters = lifelink;
+    live.v4.time_counters_v1 = time;
+    if keyword_timestamp.is_some() {
+        live.v4.lifelink_counter_timestamp = keyword_timestamp;
+    }
+    Some(())
 }
 
 fn upgrade(state: &GameState, id: ObjectId) -> Option<&CreatureUpgradeV1> {
@@ -238,6 +332,37 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
 }
 
 pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameState) {
+    if effect == CreatureEffectV1::EssenceTransferCounters {
+        let Some(crate::state::Target::Object(target)) = ctx.targets.first().copied() else {
+            return;
+        };
+        let Some(source) = ctx.ability_source_contract else {
+            return;
+        };
+        if !ctx.target_contracts.first().is_some_and(|&contract| {
+            crate::engine::target_contract_matches_live(state, ctx.targets[0], contract)
+        }) || !crate::engine::effect_target_is_legal_from_ability_source(
+            state,
+            source,
+            ctx.controller,
+            crate::card_def::TargetSpec::ControlledCreature,
+            &ctx.targets,
+            0,
+        ) {
+            return;
+        }
+        let snapshot = counter_transfer_snapshot(state, source);
+        let mut staged = state.clone();
+        if apply_counter_transfer(&mut staged, target, ctx.controller, snapshot).is_none() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+            return;
+        }
+        *state = staged;
+        return;
+    }
     if matches!(
         effect,
         CreatureEffectV1::FloodpitsTapStun | CreatureEffectV1::FloodpitsShuffle
@@ -267,8 +392,25 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
         }
         if effect == CreatureEffectV1::FloodpitsTapStun {
             crate::event::propose_and_commit(state, crate::event::ProposedEvent::tap(target));
-            state.objects.get_mut(target).counters.stun =
-                state.objects.get(target).counters.stun.saturating_add(1);
+            #[cfg(feature = "standard-magezero-fixtures")]
+            let count = crate::standard_cards_v1::scale_counters(
+                state,
+                state.objects.get(target).controller,
+                1,
+            );
+            #[cfg(not(feature = "standard-magezero-fixtures"))]
+            let count = 1;
+            let count = i16::try_from(count)
+                .ok()
+                .and_then(|count| state.objects.get(target).counters.stun.checked_add(count));
+            let Some(count) = count else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            state.objects.get_mut(target).counters.stun = count;
             return;
         }
         let mut objects = vec![target];
@@ -490,6 +632,7 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
         .creature_upgrade
         .get_or_insert_with(Default::default);
     match effect {
+        CreatureEffectV1::EssenceTransferCounters => unreachable!("counter transfer handled above"),
         CreatureEffectV1::FloodpitsTapStun | CreatureEffectV1::FloodpitsShuffle => {
             unreachable!("targeted effect handled above")
         }

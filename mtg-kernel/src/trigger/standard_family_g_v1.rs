@@ -450,3 +450,19 @@ fn floodpits_tap_stun_effect() -> EffectOp {
 }
 pub(super) const FLOODPITS_DROWNER_TRIGGERS: [TriggeredAbilityDef; 1] =
     [etb_trigger(floodpits_tap_stun_effect)];
+
+fn essence_transfer_counters_effect() -> EffectOp {
+    EffectOp::CreatureUpgrade(
+        crate::standard_creatures_v1::CreatureEffectV1::EssenceTransferCounters,
+    )
+}
+pub(super) const ESSENCE_CHANNELER_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::ControllerGainsLife,
+        ..etb_trigger(counter_on_source_effect)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::LeftBattlefieldToGraveyard,
+        ..etb_trigger(essence_transfer_counters_effect)
+    },
+];

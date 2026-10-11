@@ -607,8 +607,7 @@ pub enum CommittedEvent {
 }
 
 /// Remembers the counters of a departing permanent whose own leave ability
-/// reads them. Entries for incarnations that have since moved again are
-/// dropped, so the list only holds objects still where they went.
+/// reads them. Each exact departing incarnation remains available to its triggers.
 #[cfg(feature = "standard-magezero-fixtures")]
 fn record_counter_lki(state: &mut GameState, object: ObjectId) {
     let live = state.objects.get(object);
@@ -616,16 +615,20 @@ fn record_counter_lki(state: &mut GameState, object: ObjectId) {
         return;
     }
     let mut entries = state.counter_lki_v1.take().unwrap_or_default();
-    entries.retain(|entry| {
-        entry.source.object != object || entry.source.zone_change_count != live.zone_change_count
-    });
-    if live.counters.any() {
+    entries.retain(|entry| entry.source.object != object
+        || entry.source.zone_change_count != live.zone_change_count);
+    let extras = crate::standard_creatures_v1::CounterExtrasV1 {
+        lifelink: live.v4.lifelink_keyword_counters,
+        time: live.v4.time_counters_v1,
+    };
+    if live.counters.any() || extras != Default::default() {
         entries.push(crate::state::CounterLkiV1 {
             source: crate::state::ObjectLinkV4 {
                 object,
                 zone_change_count: live.zone_change_count,
             },
             counters: live.counters,
+            extras: (extras != Default::default()).then_some(extras),
         });
     }
     state.counter_lki_v1 = (!entries.is_empty()).then_some(entries);

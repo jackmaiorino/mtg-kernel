@@ -3272,6 +3272,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Monk Token" => &MONASTERY_SWIFTSPEAR_TRIGGERS,
         "Kellan, Planar Trailblazer" => &KELLAN_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
+        "Essence Channeler" => &standard_family_g_v1::ESSENCE_CHANNELER_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
         "Floodpits Drowner" => &standard_family_g_v1::FLOODPITS_DROWNER_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Questing Druid" => &standard_family_g_v1::QUESTING_DRUID_TRIGGERS,
@@ -3672,6 +3674,9 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
         return Some(TargetSpec::None);
     }
     let card = crate::card_def::CARD_DEFS.get(card_def as usize)?;
+    if card.name == "Essence Channeler" {
+        return Some(if matches!(effect, EffectOp::CreatureUpgrade(crate::standard_creatures_v1::CreatureEffectV1::EssenceTransferCounters)) { TargetSpec::ControlledCreature } else { TargetSpec::None });
+    }
     if card.name == "Apothecary Stomper" {
         return Some(
             apothecary_stomper_modes()

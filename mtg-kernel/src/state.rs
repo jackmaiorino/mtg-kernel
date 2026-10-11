@@ -1782,10 +1782,22 @@ pub struct AttackBlockRestrictionV1 {
 }
 
 /// The counters one exact battlefield incarnation had as it left.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CounterLkiV1 {
     pub source: ObjectLinkV4,
     pub counters: Counters,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extras: Option<crate::standard_creatures_v1::CounterExtrasV1>,
+}
+impl Hash for CounterLkiV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.source.hash(state);
+        self.counters.hash(state);
+        if let Some(extras) = self.extras {
+            "counter-lki-extras/v1".hash(state);
+            extras.hash(state);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

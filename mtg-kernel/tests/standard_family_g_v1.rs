@@ -3188,3 +3188,81 @@ fn floodpits_illegal_target_counters_whole_ability_but_missing_source_does_not()
         );
     }
 }
+
+#[test]
+fn essence_channeler_life_loss_keywords_reset_and_life_gain_counts_events() {
+    let mut state = ready(Step::Main1);
+    let essence = put(
+        &mut state,
+        PlayerId::P0,
+        "Essence Channeler",
+        Zone::Battlefield,
+    );
+    assert!(!engine::has_effective_keyword(
+        &state,
+        essence,
+        Keywords::FLYING
+    ));
+    event::propose_and_commit(&mut state, ProposedEvent::life_loss(PlayerId::P0, 1));
+    assert!(engine::has_effective_keyword(
+        &state,
+        essence,
+        Keywords::FLYING
+    ));
+    assert!(engine::has_effective_keyword(
+        &state,
+        essence,
+        Keywords::VIGILANCE
+    ));
+    event::propose_and_commit(&mut state, ProposedEvent::life_gain(PlayerId::P0, 5));
+    let triggers = trigger::collect_and_process(&mut state);
+    state.engine.pending_triggers.extend(triggers);
+    settled(&mut state);
+    assert_eq!(state.objects.get(essence).counters.plus1_plus1, 1);
+    finish_current_turn(&mut state);
+    assert!(!engine::has_effective_keyword(
+        &state,
+        essence,
+        Keywords::FLYING
+    ));
+}
+
+#[test]
+fn essence_transfers_all_counter_families_from_departed_incarnation() {
+    let mut state = ready(Step::Main1);
+    let essence = put(
+        &mut state,
+        PlayerId::P0,
+        "Essence Channeler",
+        Zone::Battlefield,
+    );
+    let recipient = put(
+        &mut state,
+        PlayerId::P0,
+        "Troll of Khazad-dum",
+        Zone::Battlefield,
+    );
+    {
+        let source = state.objects.get_mut(essence);
+        source.counters.plus1_plus1 = 3;
+        source.counters.stun = 2;
+        source.counters.oil = 4;
+        source.counters.lore = 1;
+        source.v4.lifelink_keyword_counters = 1;
+        source.v4.time_counters_v1 = 2;
+    }
+    move_to(&mut state, essence, Zone::Graveyard);
+    assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(recipient))).unwrap();
+    next(&mut state);
+    move_to(&mut state, essence, Zone::Exile);
+    state = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+    settled(&mut state);
+    let recipient = state.objects.get(recipient);
+    assert_eq!(recipient.counters.plus1_plus1, 3);
+    assert_eq!(recipient.counters.stun, 2);
+    assert_eq!(recipient.counters.oil, 4);
+    assert_eq!(recipient.counters.lore, 1);
+    assert_eq!(recipient.v4.lifelink_keyword_counters, 1);
+    assert_eq!(recipient.v4.time_counters_v1, 2);
+}

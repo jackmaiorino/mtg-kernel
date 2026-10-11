@@ -7097,6 +7097,38 @@
         "shuffle_creatures"
       ],
       "java_file": "Mage.Sets/src/mage/cards/f/FloodpitsDrowner.java"
+    },
+    {
+      "name": "Essence Channeler",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bat",
+        "Cleric"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-BW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "medium",
+      "mechanics": [
+        "conditional_flying_vigilance",
+        "life_gain_counter",
+        "dies_transfer_counters"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/EssenceChanneler.java"
     }
   ]
 }
