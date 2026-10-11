@@ -5249,6 +5249,66 @@
       "oracle_id": "540693f3-985c-4a4a-945c-c957c5aad395",
       "complexity": "moderate",
       "mechanics": []
+    },
+    {
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Faerie",
+        "Rogue"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "name": "Mocking Sprite",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_instant_sorcery_reducers.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/m/MockingSprite.java",
+      "scryfall_id": "f6792f63-b651-497d-8aa5-cddf4cedeca8",
+      "oracle_id": "013ca531-1ff7-4efc-a280-4bc3ab574072",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{3}{U}{U}",
+      "mana_value": 5,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Giant",
+        "Wizard"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 6,
+      "name": "Archmage of Runes",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_instant_sorcery_reducers.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/a/ArchmageOfRunes.java",
+      "scryfall_id": "334b5018-2da9-49f1-9d09-83d312ecfb02",
+      "oracle_id": "28045b32-4c1a-40e5-a15d-524d0f8fe6ec",
+      "complexity": "moderate",
+      "mechanics": []
     }
   ]
 }

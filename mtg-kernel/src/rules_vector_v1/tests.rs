@@ -613,6 +613,7 @@ fn power_toughness_changes_keep_their_sign() {
 /// or `event_time_trigger_programs`; token names are reached through
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
+    "Archmage of Runes",
     "Arbiter of Woe",
     "Armasaur Guide",
     "Mischievous Pup",
@@ -818,6 +819,16 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    (
+        "engine.rs",
+        "Mocking Sprite",
+        "read via engine::static_instant_sorcery_reduction_for_v1",
+    ),
+    (
+        "engine.rs",
+        "Archmage of Runes",
+        "read via engine::static_instant_sorcery_reduction_for_v1",
+    ),
     (
         "engine.rs",
         "Dreadwing Scavenger",

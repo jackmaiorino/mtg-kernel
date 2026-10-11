@@ -213,6 +213,31 @@ pub struct PaymentPlan {
     pub surplus: [u8; 6],
 }
 
+/// Parallel source alternatives may refer to the same physical permanent:
+/// one can convoke or activate its mana ability, but cannot do both.
+struct SpellSourceChoicesV1 {
+    aliases: Vec<ObjectId>,
+    convoke: Vec<bool>,
+    require_convoke: bool,
+}
+
+fn set_spell_source_used_v1(
+    used: &mut [bool],
+    index: usize,
+    value: bool,
+    choices: Option<&SpellSourceChoicesV1>,
+) {
+    if let Some(choices) = choices {
+        for (other, alias) in choices.aliases.iter().enumerate() {
+            if *alias == choices.aliases[index] {
+                used[other] = value;
+            }
+        }
+    } else {
+        used[index] = value;
+    }
+}
+
 /// Rule 119.4: a player may pay life only if their life total is at least
 /// the amount paid, and paying zero life is always allowed. The naive
 /// `life_paid <= life` comparison wrongly rejected every zero-life payment
@@ -303,35 +328,190 @@ pub fn can_pay_combined_spell(
     state: &GameState,
     creature_spell: bool,
 ) -> Option<PaymentPlan> {
-    let sources = gather_sources_for_spell(player, state, creature_spell);
-    let pool = state.players[player.index()].mana_pool;
+    can_pay_combined_spell_with_generic_modifiers_v1(
+        costs,
+        x_value,
+        player,
+        state,
+        creature_spell,
+        0,
+        0,
+    )
+}
+
+/// Determine a spell's complete mana payment after total-cost increases and
+/// reductions (CR 601.2f). Callers supply every selected base/additional mana
+/// cost together. X contributes before the final generic floor, while colored,
+/// hybrid and Phyrexian pips retain their ordinary payment requirements.
+/// This does not apply spell modifiers to activation or resolution payments.
+pub(crate) fn can_pay_combined_spell_with_generic_modifiers_v1(
+    costs: &[&Cost],
+    x_value: u8,
+    player: PlayerId,
+    state: &GameState,
+    creature_spell: bool,
+    generic_increase: u32,
+    generic_reduction: u32,
+) -> Option<PaymentPlan> {
     let combined_pips: Vec<Pip> = costs.iter().flat_map(|c| c.pips.iter().copied()).collect();
     let generic: u32 = costs.iter().map(|c| c.generic as u32).sum();
     let x_count: u32 = costs.iter().map(|c| c.x_count as u32).sum();
+    plan_spell_mana_total_v1(
+        &combined_pips,
+        (generic + x_count * u32::from(x_value))
+            .saturating_add(generic_increase)
+            .saturating_sub(generic_reduction),
+        player,
+        state,
+        creature_spell,
+        &[],
+        0,
+    )
+}
+
+/// Solve an already determined spell mana total. Alternate mana payments
+/// remove requirements before this call; reserved tap-cost objects cannot
+/// also produce mana, and all additional life costs share one life budget.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn plan_spell_mana_total_v1(
+    pips: &[Pip],
+    generic: u32,
+    player: PlayerId,
+    state: &GameState,
+    creature_spell: bool,
+    excluded: &[ObjectId],
+    additional_life: u32,
+) -> Option<PaymentPlan> {
+    let life = i64::from(state.players[player.index()].life);
+    if additional_life != 0 && i64::from(additional_life) > life {
+        return None;
+    }
+    let mana_life_budget = (life - i64::from(additional_life)).max(0);
+    let sources = gather_sources_for_spell(player, state, creature_spell)
+        .into_iter()
+        .filter(|source| !excluded.contains(&source.id))
+        .collect::<Vec<_>>();
+    let pool = state.players[player.index()].mana_pool;
 
     let mut plan = PaymentPlan::default();
     let mut pool_remaining = pool;
     let mut used = vec![false; sources.len()];
-    if !solve_pips(
-        &combined_pips,
+    if !solve_pips_with_life_budget_v1(
+        pips,
         0,
         &sources,
         &mut used,
         &mut pool_remaining,
         &mut plan,
+        mana_life_budget,
+        Some(generic),
+        None,
     ) {
         return None;
     }
-    if !pay_generic(
-        generic + x_count * u32::from(x_value),
+    let total_life = i64::from(plan.life_paid) + i64::from(additional_life);
+    (total_life == 0 || total_life <= i64::from(state.players[player.index()].life)).then_some(plan)
+}
+
+/// Solve a determined spell total with Convoke and ordinary mana together.
+/// Planning does not tap creatures or produce mana. The returned tap lists
+/// distinguish Convoke payment from mana-ability activation.
+/// The existing Alternative-cast interface requires at least one convoker.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn plan_spell_mana_total_with_convoke_v1(
+    pips: &[Pip],
+    generic: u32,
+    player: PlayerId,
+    state: &GameState,
+    creature_spell: bool,
+    excluded: &[ObjectId],
+    additional_life: u32,
+) -> Option<(PaymentPlan, Vec<ObjectId>)> {
+    let life = i64::from(state.players[player.index()].life);
+    if additional_life != 0 && i64::from(additional_life) > life {
+        return None;
+    }
+    let mut creatures = state.players[player.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|id| {
+            let object = state.objects.get(*id);
+            object.controller == player
+                && object.zone == crate::state::Zone::Battlefield
+                && !object.tapped
+                && !excluded.contains(id)
+                && crate::engine::object_has_type(state, *id, crate::card_def::CardType::Creature)
+        })
+        .collect::<Vec<_>>();
+    creatures.sort_by_key(|id| !state.objects.get(*id).summoning_sick);
+    let mut sources = Vec::new();
+    let mut source_choices = SpellSourceChoicesV1 {
+        aliases: Vec::new(),
+        convoke: Vec::new(),
+        require_convoke: true,
+    };
+    for creature in creatures {
+        let colors = crate::engine::object_color_mask(state, creature);
+        // Colorless is not a creature color. A colorless creature can pay
+        // generic via Convoke, but cannot pay a {C} pip.
+        let choices = [
+            ManaColor::W,
+            ManaColor::U,
+            ManaColor::B,
+            ManaColor::R,
+            ManaColor::G,
+        ]
+        .into_iter()
+        .filter(|color| colors & crate::card_def::mana_color_mask(*color) != 0)
+        .collect();
+        sources.push(ManaSource {
+            id: ObjectId(u32::try_from(sources.len()).ok()?),
+            choices,
+            yield_per_tap: 1,
+        });
+        source_choices.aliases.push(creature);
+        source_choices.convoke.push(true);
+    }
+    for mut source in gather_sources_for_spell(player, state, creature_spell) {
+        if excluded.contains(&source.id) {
+            continue;
+        }
+        source_choices.aliases.push(source.id);
+        source_choices.convoke.push(false);
+        // These local indices are planner tokens only. Restore physical IDs
+        // before returning a PaymentPlan to the engine.
+        source.id = ObjectId(u32::try_from(sources.len()).ok()?);
+        sources.push(source);
+    }
+    let mut plan = PaymentPlan::default();
+    let mut pool = state.players[player.index()].mana_pool;
+    let mut used = vec![false; sources.len()];
+    if !solve_pips_with_life_budget_v1(
+        pips,
+        0,
         &sources,
         &mut used,
-        &mut pool_remaining,
+        &mut pool,
         &mut plan,
+        (life - i64::from(additional_life)).max(0),
+        Some(generic),
+        Some(&source_choices),
     ) {
         return None;
     }
-    life_payment_affordable(plan.life_paid, state.players[player.index()].life).then_some(plan)
+    let mut convoked = Vec::new();
+    plan.taps.retain_mut(|(id, _)| {
+        let index = id.0 as usize;
+        *id = source_choices.aliases[index];
+        if source_choices.convoke[index] {
+            convoked.push(*id);
+            false
+        } else {
+            true
+        }
+    });
+    Some((plan, convoked))
 }
 
 /// Delve (702.65a): "For each generic mana in this spell's total cost, you
@@ -554,8 +734,45 @@ fn solve_pips(
     pool_remaining: &mut [u8; 6],
     plan: &mut PaymentPlan,
 ) -> bool {
+    solve_pips_with_life_budget_v1(
+        pips,
+        idx,
+        sources,
+        used,
+        pool_remaining,
+        plan,
+        i64::MAX,
+        None,
+        None,
+    )
+}
+
+/// A selected spell's remaining life budget participates in pip backtracking,
+/// so rejecting a Phyrexian life branch can still find a legal mana allocation.
+#[allow(clippy::too_many_arguments)]
+fn solve_pips_with_life_budget_v1(
+    pips: &[Pip],
+    idx: usize,
+    sources: &[ManaSource],
+    used: &mut [bool],
+    pool_remaining: &mut [u8; 6],
+    plan: &mut PaymentPlan,
+    max_life_payment: i64,
+    generic_needed: Option<u32>,
+    source_choices: Option<&SpellSourceChoicesV1>,
+) -> bool {
     let Some(pip) = pips.get(idx) else {
-        return true;
+        let Some(generic) = generic_needed else {
+            return true;
+        };
+        return finish_spell_generic_payment_v1(
+            generic,
+            sources,
+            used,
+            pool_remaining,
+            plan,
+            source_choices,
+        );
     };
 
     let candidate_colors: Vec<ManaColor> = match *pip {
@@ -564,14 +781,24 @@ fn solve_pips(
         Pip::Phyrexian(c) => vec![c],
     };
 
-    // Prefer paying from the floating pool: it never needs backtracking,
-    // since spending it doesn't remove a source with other uses.
+    // Prefer floating mana, but backtrack if Phyrexian life payment must
+    // preserve that mana for the spell's generic requirement.
     for &c in &candidate_colors {
         let pi = c.pool_index();
         if pool_remaining[pi] > 0 {
             pool_remaining[pi] -= 1;
             plan.pool_used[pi] += 1;
-            if solve_pips(pips, idx + 1, sources, used, pool_remaining, plan) {
+            if solve_pips_with_life_budget_v1(
+                pips,
+                idx + 1,
+                sources,
+                used,
+                pool_remaining,
+                plan,
+                max_life_payment,
+                generic_needed,
+                source_choices,
+            ) {
                 return true;
             }
             pool_remaining[pi] += 1;
@@ -599,24 +826,44 @@ fn solve_pips(
             // bit-identical to its pre-yield form for the whole pool.
             let extra = sources[i].yield_per_tap.saturating_sub(1);
             let pi = c.pool_index();
-            used[i] = true;
+            set_spell_source_used_v1(used, i, true, source_choices);
             plan.taps.push((sources[i].id, c));
             pool_remaining[pi] += extra;
             plan.surplus[pi] += extra;
-            if solve_pips(pips, idx + 1, sources, used, pool_remaining, plan) {
+            if solve_pips_with_life_budget_v1(
+                pips,
+                idx + 1,
+                sources,
+                used,
+                pool_remaining,
+                plan,
+                max_life_payment,
+                generic_needed,
+                source_choices,
+            ) {
                 return true;
             }
             plan.surplus[pi] -= extra;
             pool_remaining[pi] -= extra;
             plan.taps.pop();
-            used[i] = false;
+            set_spell_source_used_v1(used, i, false, source_choices);
         }
     }
 
     // Phyrexian pips may also be paid with 2 life instead of mana.
-    if let Pip::Phyrexian(_) = pip {
+    if matches!(pip, Pip::Phyrexian(_)) && i64::from(plan.life_paid) + 2 <= max_life_payment {
         plan.life_paid += 2;
-        if solve_pips(pips, idx + 1, sources, used, pool_remaining, plan) {
+        if solve_pips_with_life_budget_v1(
+            pips,
+            idx + 1,
+            sources,
+            used,
+            pool_remaining,
+            plan,
+            max_life_payment,
+            generic_needed,
+            source_choices,
+        ) {
             return true;
         }
         plan.life_paid -= 2;
@@ -625,12 +872,84 @@ fn solve_pips(
     false
 }
 
+/// A failed terminal branch leaves pip-search state untouched. When a Convoke
+/// alternative has not used a creature for a pip, try each unused creature
+/// for one generic before paying the rest. Trying each alias matters when a
+/// different creature must retain its multi-yield mana ability.
+fn finish_spell_generic_payment_v1(
+    generic: u32,
+    sources: &[ManaSource],
+    used: &mut [bool],
+    pool: &mut [u8; 6],
+    plan: &mut PaymentPlan,
+    choices: Option<&SpellSourceChoicesV1>,
+) -> bool {
+    let requires_creature = choices.is_some_and(|choices| {
+        choices.require_convoke
+            && !plan
+                .taps
+                .iter()
+                .any(|(id, _)| choices.convoke[id.0 as usize])
+    });
+    if requires_creature && generic == 0 {
+        return false;
+    }
+    let candidates = if requires_creature { sources.len() } else { 1 };
+    for index in 0..candidates {
+        if requires_creature && (used[index] || !choices.unwrap().convoke[index]) {
+            continue;
+        }
+        let mut candidate_plan = plan.clone();
+        let mut candidate_pool = *pool;
+        let mut candidate_used = used.to_vec();
+        let remaining = if requires_creature {
+            set_spell_source_used_v1(&mut candidate_used, index, true, choices);
+            candidate_plan.taps.push((
+                sources[index].id,
+                sources[index]
+                    .choices
+                    .first()
+                    .copied()
+                    .unwrap_or(ManaColor::C),
+            ));
+            generic - 1
+        } else {
+            generic
+        };
+        if pay_generic_with_source_choices_v1(
+            remaining,
+            sources,
+            &mut candidate_used,
+            &mut candidate_pool,
+            &mut candidate_plan,
+            choices,
+        ) {
+            *plan = candidate_plan;
+            *pool = candidate_pool;
+            used.copy_from_slice(&candidate_used);
+            return true;
+        }
+    }
+    false
+}
+
 fn pay_generic(
+    needed: u32,
+    sources: &[ManaSource],
+    used: &mut [bool],
+    pool_remaining: &mut [u8; 6],
+    plan: &mut PaymentPlan,
+) -> bool {
+    pay_generic_with_source_choices_v1(needed, sources, used, pool_remaining, plan, None)
+}
+
+fn pay_generic_with_source_choices_v1(
     mut needed: u32,
     sources: &[ManaSource],
     used: &mut [bool],
     pool_remaining: &mut [u8; 6],
     plan: &mut PaymentPlan,
+    source_choices: Option<&SpellSourceChoicesV1>,
 ) -> bool {
     for color in GENERIC_POOL_PAYMENT_ORDER {
         let pi = color.pool_index();
@@ -641,15 +960,27 @@ fn pay_generic(
             needed -= 1;
         }
     }
-    for i in 0..sources.len() {
+    let order = source_choices.map(|_| {
+        let mut order = (0..sources.len()).collect::<Vec<_>>();
+        // With colored pips already solved, the largest yield for an alias
+        // dominates its one-unit Convoke alternative for generic payment.
+        order.sort_by_key(|&index| std::cmp::Reverse(sources[index].yield_per_tap));
+        order
+    });
+    for i in (0..sources.len()).map(|index| order.as_ref().map_or(index, |order| order[index])) {
         if needed == 0 {
             break;
         }
         if used[i] {
             continue;
         }
-        if let Some(&c) = sources[i].choices.first() {
-            used[i] = true;
+        let color = sources[i].choices.first().copied().or_else(|| {
+            source_choices
+                .filter(|choices| choices.convoke[i])
+                .map(|_| ManaColor::C)
+        });
+        if let Some(c) = color {
+            set_spell_source_used_v1(used, i, true, source_choices);
             plan.taps.push((sources[i].id, c));
             // Generic mana is colorless in requirement, not in production:
             // one tap of a multi-yield source pays up to `yield` of the
@@ -855,6 +1186,434 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(solve(&cost, 2, [0; 6], &sources).is_some());
         assert!(solve(&cost, 3, [0; 6], &sources).is_none());
+    }
+
+    #[test]
+    fn spell_total_generic_modifiers_include_kicker_and_x_before_one_floor() {
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        let mut state = GameState::new_from_libraries(&[forest], &[forest], |_| "Forest".into(), 1);
+        let base = Cost {
+            pips: &[Pip::Colored(ManaColor::U)],
+            generic: 0,
+            x_count: 2,
+        };
+        let kicker = Cost {
+            pips: &[Pip::Colored(ManaColor::R)],
+            generic: 4,
+            x_count: 0,
+        };
+        for (x, increase, reduction, needed) in
+            [(0, 0, 1, 3), (2, 0, 1, 7), (2, 3, 5, 6), (0, 2, 9, 0)]
+        {
+            state.players[0].mana_pool = [0, 1, 0, 1, 0, needed];
+            let payment = can_pay_combined_spell_with_generic_modifiers_v1(
+                &[&base, &kicker],
+                x,
+                PlayerId::P0,
+                &state,
+                false,
+                increase,
+                reduction,
+            )
+            .expect("complete selected cost should be exactly payable");
+            assert_eq!(payment.pool_used, state.players[0].mana_pool);
+            if needed > 0 {
+                state.players[0].mana_pool[5] -= 1;
+                assert!(can_pay_combined_spell_with_generic_modifiers_v1(
+                    &[&base, &kicker],
+                    x,
+                    PlayerId::P0,
+                    &state,
+                    false,
+                    increase,
+                    reduction,
+                )
+                .is_none());
+            }
+            // Generic reduction cannot replace either colored requirement.
+            state.players[0].mana_pool = [0, 0, 0, 1, 0, 255];
+            assert!(can_pay_combined_spell_with_generic_modifiers_v1(
+                &[&base, &kicker],
+                x,
+                PlayerId::P0,
+                &state,
+                false,
+                increase,
+                reduction,
+            )
+            .is_none());
+        }
+    }
+
+    #[test]
+    fn spell_total_generic_modifiers_do_not_truncate_large_combined_costs() {
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        let mut state = GameState::new_from_libraries(&[forest], &[forest], |_| "Forest".into(), 2);
+        state.players[0].mana_pool[5] = 254;
+        let cost = Cost {
+            pips: &[],
+            generic: 255,
+            x_count: 0,
+        };
+        let payment = can_pay_combined_spell_with_generic_modifiers_v1(
+            &[&cost, &cost],
+            0,
+            PlayerId::P0,
+            &state,
+            false,
+            0,
+            256,
+        )
+        .expect("510 minus256 generic needs254");
+        assert_eq!(payment.pool_used[5], 254);
+        assert!(can_pay_combined_spell_with_generic_modifiers_v1(
+            &[&cost, &cost],
+            0,
+            PlayerId::P0,
+            &state,
+            false,
+            0,
+            255,
+        )
+        .is_none());
+    }
+
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    fn ready_convoke_elf() -> (GameState, ObjectId) {
+        let elf = crate::card_def::card_id_by_name("Llanowar Elves").unwrap();
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        let mut state = GameState::new_from_libraries(&[elf], &[forest], |_| "card".into(), 946);
+        let object = state.draw_card(PlayerId::P0).unwrap();
+        assert!(state.move_hand_to_battlefield(PlayerId::P0, object));
+        (state, object)
+    }
+
+    #[test]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    fn convoke_can_pay_one_of_several_colored_pips_with_a_summoning_sick_creature() {
+        let (mut state, elf) = ready_convoke_elf();
+        assert!(state.objects.get(elf).summoning_sick);
+        state.players[0].mana_pool[4] = 1;
+        let pips = [Pip::Colored(ManaColor::G), Pip::Colored(ManaColor::G)];
+        let (plan, convoked) =
+            plan_spell_mana_total_with_convoke_v1(&pips, 0, PlayerId::P0, &state, false, &[], 0)
+                .unwrap();
+        assert_eq!(convoked, vec![elf]);
+        assert!(plan.taps.is_empty());
+        assert_eq!(plan.pool_used[4], 1);
+        assert!(!state.objects.get(elf).tapped);
+        assert_eq!(state.players[0].mana_pool[4], 1);
+    }
+
+    #[test]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    fn convoke_uses_live_witness_colors_and_ignores_a_stale_attachment() {
+        let (mut state, elf) = ready_convoke_elf();
+        let witness = crate::card_def::card_id_by_name("Witness Protection").unwrap();
+        let mut aura = state.objects.get(elf).clone();
+        aura.card_def = witness;
+        aura.name = "Witness Protection".into();
+        aura.v4 = crate::state::ObjectStateV4::from_card_def(witness);
+        aura.v4.attached_to = Some(crate::state::ObjectLinkV4 {
+            object: elf,
+            zone_change_count: state.objects.get(elf).zone_change_count,
+        });
+        let aura = state.objects.push(aura);
+        state.players[0].battlefield.push(aura);
+        state.objects.get_mut(elf).attachments.push(aura);
+        let white = [Pip::Colored(ManaColor::W)];
+        assert_eq!(
+            state.objects.get(elf).v4.effective_color_mask,
+            crate::card_def::mana_color_mask(ManaColor::G)
+        );
+        assert!(
+            crate::engine::object_color_mask(&state, elf)
+                & crate::card_def::mana_color_mask(ManaColor::W)
+                != 0
+        );
+        let (plan, convoked) =
+            plan_spell_mana_total_with_convoke_v1(&white, 0, PlayerId::P0, &state, false, &[], 0)
+                .unwrap();
+        assert_eq!(convoked, vec![elf]);
+        assert!(plan.taps.is_empty());
+        state.objects.get_mut(elf).zone_change_count += 1;
+        assert!(plan_spell_mana_total_with_convoke_v1(
+            &white,
+            0,
+            PlayerId::P0,
+            &state,
+            false,
+            &[],
+            0
+        )
+        .is_none());
+    }
+
+    #[test]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    fn convoke_cannot_tap_one_creature_for_both_mana_and_another_requirement() {
+        let (mut state, elf) = ready_convoke_elf();
+        state.objects.get_mut(elf).summoning_sick = false;
+        assert!(gather_sources(PlayerId::P0, &state)
+            .iter()
+            .any(|source| source.id == elf));
+        let pips = [Pip::Colored(ManaColor::G)];
+        assert!(plan_spell_mana_total_with_convoke_v1(
+            &pips,
+            1,
+            PlayerId::P0,
+            &state,
+            false,
+            &[],
+            0
+        )
+        .is_none());
+        state.players[0].mana_pool[5] = 1;
+        let (plan, convoked) =
+            plan_spell_mana_total_with_convoke_v1(&pips, 1, PlayerId::P0, &state, false, &[], 0)
+                .unwrap();
+        assert_eq!(convoked, vec![elf]);
+        assert!(plan.taps.is_empty());
+        assert_eq!(plan.pool_used[5], 1);
+        assert!(plan_spell_mana_total_with_convoke_v1(
+            &pips,
+            1,
+            PlayerId::P0,
+            &state,
+            false,
+            &[elf],
+            0
+        )
+        .is_none());
+    }
+
+    #[test]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    fn colorless_creature_convokes_generic_but_cannot_pay_a_colorless_pip() {
+        let (mut state, elf) = ready_convoke_elf();
+        state.objects.get_mut(elf).v4.effective_color_mask = 0;
+        let (plan, convoked) =
+            plan_spell_mana_total_with_convoke_v1(&[], 1, PlayerId::P0, &state, false, &[], 0)
+                .unwrap();
+        assert_eq!(convoked, vec![elf]);
+        assert!(plan.taps.is_empty());
+        assert_eq!(plan.pool_used, [0; 6]);
+        for color in [ManaColor::C, ManaColor::G] {
+            assert!(plan_spell_mana_total_with_convoke_v1(
+                &[Pip::Colored(color)],
+                0,
+                PlayerId::P0,
+                &state,
+                false,
+                &[],
+                0
+            )
+            .is_none());
+        }
+    }
+
+    #[test]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    fn convoke_alternative_uses_a_creature_even_when_floating_mana_covers_cost() {
+        let (mut state, elf) = ready_convoke_elf();
+        state.players[0].mana_pool = [0, 0, 0, 0, 1, 1];
+        for (pips, generic) in [(&[Pip::Colored(ManaColor::G)][..], 0), (&[][..], 1)] {
+            let (plan, convoked) = plan_spell_mana_total_with_convoke_v1(
+                pips,
+                generic,
+                PlayerId::P0,
+                &state,
+                false,
+                &[],
+                0,
+            )
+            .unwrap();
+            assert_eq!(convoked, vec![elf]);
+            assert_eq!(plan.pool_used, [0; 6]);
+            assert!(plan.taps.is_empty());
+            assert!(plan_spell_mana_total_with_convoke_v1(
+                pips,
+                generic,
+                PlayerId::P0,
+                &state,
+                false,
+                &[elf],
+                0
+            )
+            .is_none());
+        }
+        assert!(
+            plan_spell_mana_total_with_convoke_v1(&[], 0, PlayerId::P0, &state, false, &[], 0)
+                .is_none()
+        );
+        assert!(!state.objects.get(elf).tapped);
+        assert_eq!(state.players[0].mana_pool, [0, 0, 0, 0, 1, 1]);
+    }
+
+    #[test]
+    fn required_convoke_backtracks_to_keep_another_creatures_multi_yield_mana() {
+        let mut mana_source = src(2, &[ManaColor::G]);
+        mana_source.yield_per_tap = 3;
+        let sources = [src(0, &[ManaColor::G]), src(1, &[]), mana_source];
+        let alternatives = SpellSourceChoicesV1 {
+            aliases: vec![ObjectId(50), ObjectId(51), ObjectId(50)],
+            convoke: vec![true, true, false],
+            require_convoke: true,
+        };
+        let mut plan = PaymentPlan::default();
+        let mut pool = [0; 6];
+        let mut used = [false; 3];
+        assert!(solve_pips_with_life_budget_v1(
+            &[],
+            0,
+            &sources,
+            &mut used,
+            &mut pool,
+            &mut plan,
+            20,
+            Some(4),
+            Some(&alternatives)
+        ));
+        assert_eq!(
+            plan.taps,
+            vec![(ObjectId(1), ManaColor::C), (ObjectId(2), ManaColor::G)]
+        );
+        assert_eq!(used, [true; 3]);
+        assert_eq!(plan.surplus, [0; 6]);
+    }
+
+    #[test]
+    fn convoke_alias_generic_payment_uses_a_multi_yield_mana_alternative() {
+        let mut mana_source = src(1, &[ManaColor::G]);
+        mana_source.yield_per_tap = 3;
+        let sources = [src(0, &[ManaColor::G]), mana_source];
+        let alternatives = SpellSourceChoicesV1 {
+            aliases: vec![ObjectId(50), ObjectId(50)],
+            convoke: vec![true, false],
+            require_convoke: false,
+        };
+        let mut plan = PaymentPlan::default();
+        let mut pool = [0; 6];
+        let mut used = [false; 2];
+        assert!(solve_pips_with_life_budget_v1(
+            &[],
+            0,
+            &sources,
+            &mut used,
+            &mut pool,
+            &mut plan,
+            20,
+            Some(3),
+            Some(&alternatives)
+        ));
+        assert_eq!(plan.taps, vec![(ObjectId(1), ManaColor::G)]);
+        assert_eq!(used, [true; 2]);
+        assert_eq!(plan.surplus, [0; 6]);
+        let mut plan = PaymentPlan::default();
+        let mut used = [false; 2];
+        assert!(!solve_pips_with_life_budget_v1(
+            &[],
+            0,
+            &sources,
+            &mut used,
+            &mut pool,
+            &mut plan,
+            20,
+            Some(4),
+            Some(&alternatives)
+        ));
+        assert_eq!(used, [false; 2]);
+        assert_eq!(plan, PaymentPlan::default());
+    }
+
+    #[test]
+    fn spell_total_backtracks_to_life_when_floating_red_must_pay_generic() {
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        let mut state = GameState::new_from_libraries(&[forest], &[forest], |_| "Forest".into(), 5);
+        state.players[0].life = 2;
+        state.players[0].mana_pool[3] = 1;
+        let pips = [Pip::Phyrexian(ManaColor::R)];
+        let plan = plan_spell_mana_total_v1(&pips, 1, PlayerId::P0, &state, false, &[], 0)
+            .expect("Two life pays the pip and floating R pays the generic tax");
+        assert_eq!(plan.life_paid, 2);
+        assert_eq!(plan.pool_used[3], 1);
+        assert!(plan_spell_mana_total_v1(&pips, 1, PlayerId::P0, &state, false, &[], 1).is_none());
+        state.players[0].life = 3;
+        assert!(plan_spell_mana_total_v1(&pips, 1, PlayerId::P0, &state, false, &[], 1).is_some());
+        assert_eq!(state.players[0].mana_pool[3], 1, "planning never pays mana");
+        assert_eq!(state.players[0].life, 3, "planning never pays life");
+    }
+
+    #[test]
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
+    fn spell_life_budget_backtracks_from_phyrexian_life_to_dual_source_mana() {
+        let aquifer = crate::card_def::card_id_by_name("Contaminated Aquifer").unwrap();
+        let swamp = crate::card_def::card_id_by_name("Swamp").unwrap();
+        let mut state =
+            GameState::new_from_libraries(&[aquifer, swamp], &[swamp], |_| "land".into(), 4);
+        let first = state.draw_card(PlayerId::P0).unwrap();
+        let second = state.draw_card(PlayerId::P0).unwrap();
+        state.move_hand_to_battlefield(PlayerId::P0, first);
+        state.move_hand_to_battlefield(PlayerId::P0, second);
+        let (aquifer, swamp) = if state.objects.get(first).card_def == aquifer {
+            (first, second)
+        } else {
+            (second, first)
+        };
+        state.objects.get_mut(aquifer).tapped = false;
+        state.players[0].battlefield = vec![aquifer, swamp];
+        state.players[0].life = 2;
+        let pips = [Pip::Colored(ManaColor::B), Pip::Phyrexian(ManaColor::U)];
+        let plan = plan_spell_mana_total_v1(&pips, 0, PlayerId::P0, &state, false, &[], 1)
+            .expect("Swamp pays B, Aquifer pays U, and one life pays the additional cost");
+        assert_eq!(plan.life_paid, 0);
+        assert_eq!(
+            plan.taps,
+            vec![(swamp, ManaColor::B), (aquifer, ManaColor::U)]
+        );
+    }
+
+    #[test]
+    fn spell_total_plan_reserves_tap_sources_and_combines_life_requirements() {
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        let mut state = GameState::new_from_libraries(&[forest], &[forest], |_| "Forest".into(), 3);
+        let land = state.draw_card(PlayerId::P0).unwrap();
+        state.move_hand_to_battlefield(PlayerId::P0, land);
+        let green = [Pip::Colored(ManaColor::G)];
+        assert!(plan_spell_mana_total_v1(&green, 0, PlayerId::P0, &state, false, &[], 0).is_some());
+        assert!(
+            plan_spell_mana_total_v1(&green, 0, PlayerId::P0, &state, false, &[land], 0).is_none()
+        );
+
+        let phyrexian = [Pip::Phyrexian(ManaColor::B)];
+        state.players[0].life = 5;
+        let plan =
+            plan_spell_mana_total_v1(&phyrexian, 0, PlayerId::P0, &state, false, &[], 3).unwrap();
+        assert_eq!(plan.life_paid, 2);
+        assert!(
+            plan_spell_mana_total_v1(&phyrexian, 0, PlayerId::P0, &state, false, &[], 4).is_none()
+        );
+        state.players[0].life = -1;
+        assert!(plan_spell_mana_total_v1(&[], 0, PlayerId::P0, &state, false, &[], 0).is_some());
+        assert!(plan_spell_mana_total_v1(&[], 0, PlayerId::P0, &state, false, &[], 1).is_none());
     }
 
     #[test]

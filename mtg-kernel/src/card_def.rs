@@ -2202,11 +2202,11 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 368 (prepared mechanic families).
+        // batches append through id 370 (instant/sorcery cost reducers).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                369
+                371
             } else {
                 192
             }
@@ -2328,8 +2328,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v66_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0xe8e2_bba9_d907_1e80;
+    fn card_db_hash_v67_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x1b1e_46eb_fc30_edb7;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

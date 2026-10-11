@@ -1047,6 +1047,24 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         });
     }
 
+    if let Some(reduction) = crate::engine::static_instant_sorcery_reduction_for_v1(name) {
+        walk.rec(
+            "static_instant_sorcery_generic_reduction",
+            json!({"generic": reduction}),
+        );
+        walk.ability(CtxF::Static, |out| {
+            for card_type in [CardTypeF::Instant, CardTypeF::Sorcery] {
+                out.effect(
+                    EffectAtom::new(EvF::CostChange)
+                        .player(RelF::You)
+                        .obj(ObjF::Typed(card_type))
+                        .amount(AmtF::fixed(-i64::from(reduction)))
+                        .duration(DurF::WhileOnBattlefield),
+                );
+            }
+        });
+    }
+
     if let Some(boost) = crate::engine::static_controlled_creature_boost_for_v1(name) {
         let keyword = match boost.filter {
             crate::engine::StaticControlledCreatureFilterV1::All => None,
