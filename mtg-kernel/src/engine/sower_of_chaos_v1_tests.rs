@@ -174,14 +174,56 @@ fn cleanup_and_real_repeated_cleanup_boundaries_clear_only_new_records_without_l
 }
 
 #[test]
-fn prepared_devil_preserves_accepted_subtype_prefix_and_delays_choice_admission() {
+fn registered_scout_devil_choice_and_replacement_preserve_accepted_subtype_prefix() {
     use crate::card_def::Subtype;
     assert_eq!(Subtype::Orc.stable_id(), 146);
     assert_eq!(Subtype::Juggernaut.stable_id(), 147);
     assert_eq!(Subtype::Minotaur.stable_id(), 148);
     assert_eq!(Subtype::Ooze.stable_id(), 149);
     assert_eq!(Subtype::Devil.stable_id(), 150);
-    assert!(Subtype::Devil.is_creature_type());
-    assert!(!Subtype::ALL.contains(&Subtype::Devil));
-    assert!(!Subtype::CREATURE_TYPES.contains(&Subtype::Devil));
+    for ty in [Subtype::Scout, Subtype::Devil] {
+        assert!(ty.is_creature_type());
+        assert_eq!(
+            Subtype::CREATURE_TYPES.iter().filter(|&&x| x == ty).count(),
+            1
+        );
+    }
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state();
+        let changeling = put(&mut state, actor, "Webweaver Changeling", Zone::Battlefield);
+        for ty in [Subtype::Scout, Subtype::Devil] {
+            assert!(state
+                .objects
+                .get(changeling)
+                .v4
+                .effective_subtype_ids
+                .contains(&ty.stable_id()));
+            assert!(has_effective_subtype(&state, changeling, ty));
+        }
+        let scout = put(&mut state, actor, "Squad Rallier", Zone::Battlefield);
+        let mut ctx = ExecCtx::no_targets(scout, actor);
+        ctx.ability_source_contract = Some(AbilitySourceContractV4::capture(&state, scout));
+        // Existing typed upgrade primitive, not a printed producer on Squad.
+        crate::standard_creatures_v1::execute(
+            crate::standard_creatures_v1::CreatureEffectV1::KellanDetective,
+            &ctx,
+            &mut state,
+        );
+        assert!(!has_effective_subtype(&state, scout, Subtype::Scout));
+        assert!(has_effective_subtype(&state, scout, Subtype::Detective));
+        let devil = put(&mut state, actor, "Sower of Chaos", Zone::Battlefield);
+        assert!(has_effective_subtype(&state, devil, Subtype::Devil));
+        // Typed replacement-layer primitive isolates removal of the newly admitted type.
+        state.objects.get_mut(devil).v4.creature_upgrade =
+            Some(crate::standard_creatures_v1::CreatureUpgradeV1 {
+                creature_types: Some((vec![Subtype::Human.stable_id()], 1)),
+                ..Default::default()
+            });
+        assert!(!has_effective_subtype(&state, devil, Subtype::Devil));
+        assert!(has_effective_subtype(&state, devil, Subtype::Human));
+        let restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert!(!has_effective_subtype(&restored, scout, Subtype::Scout));
+        assert!(!has_effective_subtype(&restored, devil, Subtype::Devil));
+    }
 }

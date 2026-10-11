@@ -616,6 +616,16 @@ impl Subtype {
             not(feature = "standard-magezero-fixtures")
         ))]
         Subtype::Ooze,
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        Subtype::Scout,
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        Subtype::Devil,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -2532,7 +2542,8 @@ mod tests {
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     fn creature_type_choice_ids_preserve_pauper_and_foundations_profiles() {
         // Preserve the ordered lists from ddff546a, with Elder appended to
-        // Foundations by v68 and Ooze149 by this candidate. These also define the changeling subtype
+        // Foundations by v68, Ooze149, then Scout and Devil in this candidate.
+        // These also define the changeling subtype
         // projection and creature-type choice surface in these profiles.
         let expected: &[u16] = &[
             0, 2, 3, 5, 6, 7, 8, 9, 10, 11, 13, 14, 18, 19, 20, 21, 22, 24, 25, 26, 27, 29, 30, 31,
@@ -2545,6 +2556,7 @@ mod tests {
                 79, 80, 81, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99,
                 100, 101, 102, 103, 104, 119, 124, 125, 126, 127, 109, 149,
             ]);
+            expected.extend_from_slice(&[Subtype::Scout.stable_id(), Subtype::Devil.stable_id()]);
         }
         assert_eq!(
             Subtype::CREATURE_TYPES
