@@ -1546,6 +1546,9 @@ pub enum EffectOp {
         targeting_stack_item: StackItemId,
         life: u8,
     },
+    /// Exile up to two targets from one graveyard; if a creature card was
+    /// actually exiled, each opponent loses 2 and the captured controller gains 2.
+    ExileSingleGraveyardTargetsThenDrainTwoV1,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -7691,6 +7694,7 @@ fn validate_standard_choose_permanent_origin(
 }
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
+    crate::soul_shackled_zombie_v1::validate_state(state)?;
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(());
     };
@@ -16499,6 +16503,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     ctx.source,
                 ));
             }
+        }
+        EffectOp::ExileSingleGraveyardTargetsThenDrainTwoV1 => {
+            crate::soul_shackled_zombie_v1::execute(state, ctx);
         }
         EffectOp::ExileGraveyardTargetsDrainPerCreature { max_targets } => {
             let mut creatures = 0;

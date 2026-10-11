@@ -271,6 +271,11 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::ExileGraveyardTargetsDrainPerCreature { .. }
         | EffectOp::RemoveTimeCounterFromSource
         | EffectOp::ReturnSourceAsEnduringEnchantment => effect_h::effect_op(op, env, out),
+        EffectOp::ExileSingleGraveyardTargetsThenDrainTwoV1 => {
+            // The frozen vocabulary cannot bind successful creature exile
+            // to this once-only drain. A rooted successor is required.
+            out.atoms.push(Atom::Opaque);
+        }
         EffectOp::StandardLegendV1(_)
         | EffectOp::AnimateSource
         | EffectOp::AnimateSourcePermanentlyV1

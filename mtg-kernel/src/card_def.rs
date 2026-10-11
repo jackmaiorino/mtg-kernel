@@ -1021,6 +1021,9 @@ pub enum TargetSpec {
     AnotherArtifactOrCreature,
     UpToTwoOtherCreaturesDifferentControllers,
     ArtifactOrEnchantmentThenPlayer,
+    /// Zero to two distinct nontoken cards from one physical graveyard.
+    /// Stable id 66 is reserved for this unregistered FDN successor.
+    UpToTwoCardsInSingleGraveyard,
 }
 
 impl TargetSpec {
@@ -1108,6 +1111,7 @@ impl TargetSpec {
             TargetSpec::AnotherArtifactOrCreature => 101,
             TargetSpec::UpToTwoOtherCreaturesDifferentControllers => 102,
             TargetSpec::ArtifactOrEnchantmentThenPlayer => 74,
+            TargetSpec::UpToTwoCardsInSingleGraveyard => 66,
         }
     }
 }

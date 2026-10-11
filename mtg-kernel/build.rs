@@ -6787,6 +6787,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Rune-Scarred Demon" => "etb:search_library_any_card_to_hand_unrevealed",
         "Elvish Regrower" => "etb:return_target_own_graveyard_permanent_card_to_hand",
         "Vampire Soulcaller" => "etb:return_target_own_graveyard_creature_card_to_hand;static:cant_block:printed_source_abilities",
+        "Soul-Shackled Zombie" => "etb:exile_up_to_two_targets_from_single_graveyard:if_creature_actually_exiled_each_opponent_loses_two_controller_gains_two",
         "Ambush Wolf" => "etb:exile_up_to_one_target_graveyard_card",
         "Affectionate Indrik" => "etb:target_opponent_creature:may_fight_bound_source:current_powers:simultaneous_noncombat_damage",
         "Tatyova, Benthic Druid" => "controlled_land_enters:gain_life:1:then_draw:1",

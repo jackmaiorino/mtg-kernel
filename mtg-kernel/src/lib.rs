@@ -51,6 +51,7 @@ pub mod legend_rule_v1;
 pub mod native_search_collection_v3;
 pub mod native_search_trajectory_v3;
 pub mod planeswalker_v1;
+mod soul_shackled_zombie_v1;
 pub mod standard_cards_v1;
 pub mod standard_creature_choices_v1;
 pub mod standard_creatures_v1;

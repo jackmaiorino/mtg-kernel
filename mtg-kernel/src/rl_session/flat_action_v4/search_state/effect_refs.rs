@@ -215,6 +215,7 @@ impl Scan<'_> {
             | CounterTargetSpellThenCreateTokens { .. }
             | BoostPlayerCreaturesUntilEndOfTurn { .. }
             | ExileGraveyardTargetsDrainPerCreature { .. }
+            | ExileSingleGraveyardTargetsThenDrainTwoV1
             | RemoveTimeCounterFromSource
             | ReturnSourceAsEnduringEnchantment
             | SearchLibraryCardsToDestination { .. }
@@ -981,6 +982,9 @@ pub(super) fn conflicts(
             Damage { source, target, .. } => {
                 s.raw(*source) || matches!(target,crate::state::Target::Object(id) if s.raw(*id))
             }
+            SingleGraveyardEntryV1 {
+                source_contract, ..
+            } => s.a(*source_contract),
             LeftBattlefieldCopyV1 { source, .. } => s.raw(source.source),
             ZoneChange { object, .. }
             | Tap { object }
