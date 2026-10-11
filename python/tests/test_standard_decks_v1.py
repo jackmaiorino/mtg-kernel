@@ -357,6 +357,15 @@ class StandardDeckTest(unittest.TestCase):
                 self.assertTrue(row["decks"] or row.get("is_token", False))
                 actual_decks = {name + ".dck" for name, deck in self.decks.items()
                                 if any(entry.name == row["name"] for entry in deck.mainboard)}
+                if row["name"] == "Witness Protection":
+                    # Shared FDN rules fixture exercises Kaito's layer ordering;
+                    # it is not a member of any MageZero training deck.
+                    fdn = limited.load_json(
+                        (REPO_ROOT / "data/limited/fdn_v1/cards_v1.json").read_bytes())
+                    self.assertEqual(row, next(card for card in fdn["cards"]
+                                               if card["name"] == row["name"]))
+                    self.assertEqual(actual_decks, set())
+                    continue
                 self.assertEqual(set(row["decks"]), actual_decks)
 
     def test_inventory_has_all_225_nonbasic_cards_and_no_gaps(self) -> None:

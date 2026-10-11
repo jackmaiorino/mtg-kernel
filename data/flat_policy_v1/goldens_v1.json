@@ -318,9 +318,9 @@
       "this_turn": 1
     }
   },
-  "inventory_sha256": "74cd0e2b42866b09276da7dba414bbdfd53246e6f49a44e621d0df1df771f65e",
+  "inventory_sha256": "1a2d03ddb64f176a10c838c43d5acfea6c7b17f3d9de4a972ce00a1563bd2c96",
   "mapping_sha256": "bf0347ab442bd1c81cade03899b0c1af93d9bc26468b1e8139dbfc562fa4c4b6",
-  "payload_sha256": "658e24910198bc4246e160c74cdd1826cf5326d40570b9059d8ff8637129924b",
+  "payload_sha256": "0f1f065ac98b597031bb70b585d80f5c214f4b7d022871490dc8ee9424475ea0",
   "producer_parent_commit": "3de6d2c450d4d32f120f70034324bfc72e1e3339",
   "runtime_fixture_cases": [
     {

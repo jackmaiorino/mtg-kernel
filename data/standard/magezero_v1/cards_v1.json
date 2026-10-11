@@ -7840,7 +7840,9 @@
       "toughness": null,
       "is_land": false,
       "produces_mana": [],
-      "decks": [],
+      "decks": [
+        "FDN_top_04956_UG.dck"
+      ],
       "sideboard_only": false,
       "complexity": "moderate",
       "mechanics": [
