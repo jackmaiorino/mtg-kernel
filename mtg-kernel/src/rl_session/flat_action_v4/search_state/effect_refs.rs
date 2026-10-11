@@ -942,6 +942,19 @@ pub(super) fn conflicts(
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    // This sampler has no qualified migration for the independently retained
+    // payment, removal and completion ownership of a Librarian activation.
+    if state.engine.event_history.iter().any(|event| {
+        matches!(
+            event,
+            crate::event::CommittedEvent::LibrarianActivationCommittedV1 { .. }
+                | crate::event::CommittedEvent::LibrarianActivationCounterRemovalV1 { .. }
+                | crate::event::CommittedEvent::LibrarianActivationOperationV1 { .. }
+                | crate::event::CommittedEvent::LibrarianActivationFinishedV1 { .. }
+        )
+    }) {
+        return true;
+    }
     let s = Scan { state, pool };
     if let Some(crate::engine::PendingDiscard {
         resume: crate::engine::DiscardResume::FinishEffectContinuation { original_hand, .. },
@@ -1071,6 +1084,10 @@ pub(super) fn conflicts(
             }
             InitiativeTrigger { binding } => s.raw(binding.source.source),
             MonarchTrigger { binding } => s.raw(binding.source.source),
+            LibrarianActivationCommittedV1 { .. }
+            | LibrarianActivationCounterRemovalV1 { .. }
+            | LibrarianActivationOperationV1 { .. }
+            | LibrarianActivationFinishedV1 { .. } => true,
             ControlledCreatureDeathCaptureCollectedV1 { .. }
             | AuthorityEntryCollectedV1 { .. }
             | AuthorityEntryCompletedV1 { .. }

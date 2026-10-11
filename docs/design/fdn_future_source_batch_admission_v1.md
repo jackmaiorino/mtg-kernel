@@ -24,3 +24,9 @@ successful PR229 qualification and integration. Crystal remains unregistered
 until its remaining damage-producer support is complete. Temporal/Bloom source
 work is separate. No experiment, paid compute, formal measurement, learned
 strength, full-pool or model-runtime admission is claimed.
+
+Source inspection found four Librarian journal variants missing from the
+exhaustive search reference visitor. Explicit conflict arms repair that compile
+gap; independently retained Librarian payment/removal/operation/completion
+history also refuses this unqualified sampler. Older states with no such history
+retain the previous path. Native compilation and refusal execution are pending.
