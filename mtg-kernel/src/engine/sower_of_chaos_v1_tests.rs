@@ -134,6 +134,23 @@ fn cleanup_and_real_repeated_cleanup_boundaries_clear_only_new_records_without_l
         assert_eq!(serde_json::to_vec(&old).unwrap(), absent);
         sower_of_chaos_v1::install(&mut state, &ctx, 0);
         assert!(sower_of_chaos_v1::cant_block(&state, target));
+        // Surplus-pool boundary operands, not a printed restricted-mana producer.
+        for player in &mut state.players {
+            player.mana_pool = [1, 2, 3, 4, 5, 6];
+            player
+                .restricted_mana_pool
+                .0
+                .push(crate::mana::RestrictedManaUnitV1 {
+                    color: crate::mana::ManaColor::R,
+                    restriction:
+                        crate::card_def::ManaSpendRestrictionDef::CreatureSpellOrCreatureAbility,
+                    source: crate::state::ObjectLinkV4 {
+                        object: ctx.source,
+                        zone_change_count: 0,
+                    },
+                    source_card_def: state.objects.get(ctx.source).card_def,
+                });
+        }
         let mut replay: GameState =
             serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
         advance_step(&mut state);
@@ -141,6 +158,10 @@ fn cleanup_and_real_repeated_cleanup_boundaries_clear_only_new_records_without_l
         assert_eq!(state.step, Step::Cleanup);
         assert_eq!(state.active_player, actor);
         assert!(state.engine.until_end_of_turn.is_empty());
+        for player in &state.players {
+            assert_eq!(player.mana_pool, [0; 6]);
+            assert!(player.restricted_mana_pool.is_empty());
+        }
         assert!(!sower_of_chaos_v1::cant_block(&state, target));
         advance_step(&mut state);
         advance_step(&mut replay);

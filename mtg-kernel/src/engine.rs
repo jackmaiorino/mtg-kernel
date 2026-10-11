@@ -13788,6 +13788,10 @@ fn advance_step(state: &mut GameState) {
             .iter()
             .any(|effect| matches!(effect, UntilEndOfTurnEffect::ResolvedObjectCantBlock { .. }))
     {
+        for player in &mut state.players {
+            player.mana_pool = [0; 6];
+            player.restricted_mana_pool.0.clear();
+        }
         run_step_entry_action(state, Step::Cleanup);
         reset_priority(state);
         return;

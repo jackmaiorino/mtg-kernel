@@ -43,7 +43,9 @@ real activations before this leaf, with no definition-validation fixture bypass.
 An activation can resolve during real Cleanup priority. A narrowly selected
 repeat of the existing cleanup entry action runs before the active-player flip
 while a new cant-block marker remains, so a restriction installed after the
-first cleanup expires in that turn's repeated cleanup. The old no-marker path
+first cleanup expires in that turn's repeated cleanup. Both players' ordinary
+and restricted floating mana are cleared before the repeated cleanup entry,
+matching the existing ordinary step-transition boundary. The old no-marker path
 keeps its original behavior. This is not a global repair of unrelated legacy
 effects installed during Cleanup.
 
