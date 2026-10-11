@@ -12446,7 +12446,11 @@ fn validate_pending_trigger(state: &GameState, pending: &PendingTrigger) -> Resu
     }
     let mut prefix = Vec::new();
     for &target in &pending.targets {
-        let legal = if matches!(
+        let legal = if crate::frenzied_goblin_v1::is_owned(
+            pending
+                .source_contract
+                .map_or(source.card_def, |c| c.card_def),
+        ) || matches!(
             expected,
             TargetSpec::UpToTwoCardsInSingleGraveyard
                 | TargetSpec::UpToOneOtherCreature
@@ -12977,6 +12981,7 @@ fn triggered_stack_item_expected_target_spec(
         return Err("attached-source trigger lost its host LKI".to_string());
     }
     validate_bound_trigger_source_objects(inline_effect, item.source, ability_source_contract)?;
+    crate::frenzied_goblin_v1::validate_source(state, source_card_def, ability_source_contract)?;
     #[cfg(feature = "standard-magezero-fixtures")]
     if matches!(
         inline_effect,

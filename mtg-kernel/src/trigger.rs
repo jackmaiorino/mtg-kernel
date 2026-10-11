@@ -1604,6 +1604,20 @@ const COURAGEOUS_GOBLIN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
     ..etb_trigger(courageous_goblin_effect)
 }];
 
+pub(crate) fn frenzied_goblin_effect() -> EffectOp {
+    EffectOp::MayPayManaThen {
+        player: PlayerRef::Controller,
+        colored: vec![crate::mana::ManaColor::R],
+        generic: 0,
+        then: Box::new(EffectOp::PreventTargetBlockingUntilEndOfTurn { target_index: 0 }),
+    }
+}
+
+const FRENZIED_GOBLIN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Attacks,
+    ..etb_trigger(frenzied_goblin_effect)
+}];
+
 fn blood_fountain_effect() -> EffectOp {
     let blood = crate::card_def::card_id_by_name("Blood Token").expect("Blood Token in CARD_DEFS");
     EffectOp::CreateToken {
@@ -3419,6 +3433,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Searslicer Goblin" => &SEARSLICER_GOBLIN_TRIGGERS,
         "Ruby, Daring Tracker" => &RUBY_DARING_TRACKER_TRIGGERS,
         "Courageous Goblin" => &COURAGEOUS_GOBLIN_TRIGGERS,
+        "Frenzied Goblin" => &FRENZIED_GOBLIN_TRIGGERS,
         "Webweaver Changeling" => &WEBWEAVER_CHANGELING_TRIGGERS,
         "Glint Hawk" => &GLINT_HAWK_TRIGGERS,
         "Gatecreeper Vine" => &GATECREEPER_VINE_TRIGGERS,
@@ -3626,7 +3641,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         "Battlesong Berserker" => TargetSpec::ControlledCreature,
         "Meteor Golem" => TargetSpec::OpponentNonlandPermanent,
         "Reclamation Sage" => TargetSpec::ArtifactOrEnchantmentPermanent,
-        "Saiba Cryptomancer" | "Aloe Alchemist" => TargetSpec::Creature,
+        "Saiba Cryptomancer" | "Aloe Alchemist" | "Frenzied Goblin" => TargetSpec::Creature,
         "Spellstutter Sprite" => TargetSpec::SpellManaValueAtMostControlledSubtypes {
             first: Subtype::Faerie,
             second: Some(Subtype::FaerieAllCaps),

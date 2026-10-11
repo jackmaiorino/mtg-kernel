@@ -499,6 +499,7 @@ pub mod xmage_observed_inference_v1;
 
 pub const KERNEL_VERSION: &str = "0.0.4-spike";
 
+mod frenzied_goblin_v1;
 pub mod public_cost_features_v1;
 pub(crate) mod public_stack_features_v1;
 pub mod rules_meaning_crystal_barricade_v1;

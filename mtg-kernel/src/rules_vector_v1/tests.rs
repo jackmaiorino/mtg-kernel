@@ -650,6 +650,7 @@ fn power_toughness_changes_keep_their_sign() {
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Slumbering Cerberus",
+    "Frenzied Goblin",
     "Vengeful Bloodwitch",
     "Soul-Shackled Zombie",
     "Archmage of Runes",

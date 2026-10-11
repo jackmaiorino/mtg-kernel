@@ -7798,6 +7798,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
         }
     }
     validate_exact_spell_search_continuation(state, pending)?;
+    crate::frenzied_goblin_v1::validate_continuation(state, pending)?;
     validate_answered_choice_guard(state, pending)?;
     if definition_has_nonterminal_discard(state, pending) {
         let discard = state
