@@ -5746,6 +5746,19 @@ fn normal_cast_reduction_count(
         card_def::DynamicCountDef::ControllerDrawsThisTurn => {
             state.players[player.index()].draws_this_turn
         }
+        card_def::DynamicCountDef::ControllerCreatureTotalPower => {
+            let total: i64 = state
+                .objects
+                .iter()
+                .filter(|(id, object)| {
+                    object.zone == Zone::Battlefield
+                        && object.controller == player
+                        && object_has_type(state, *id, CardType::Creature)
+                })
+                .map(|(id, _)| i64::from(effective_power(state, id)))
+                .sum();
+            total.clamp(0, i64::from(u32::MAX)) as u32
+        }
         card_def::DynamicCountDef::ControllerHasCreatureWithAndWithoutSubtype(subtype) => {
             let mut has_subtype = false;
             let mut lacks_subtype = false;
@@ -6659,6 +6672,30 @@ fn available_mana_abilities(player: PlayerId, state: &GameState) -> Vec<ObjectId
         .collect()
 }
 
+fn rich_mana_ability_amount(
+    amount: ManaAbilityAmountDef,
+    player: PlayerId,
+    state: &GameState,
+) -> Result<u8, String> {
+    match amount {
+        ManaAbilityAmountDef::Fixed(amount) => Ok(amount),
+        ManaAbilityAmountDef::ControlledCreaturesWithKeyword(keyword) => state.players
+            [player.index()]
+        .battlefield
+        .iter()
+        .filter(|&&candidate| {
+            object_has_type(state, candidate, CardType::Creature)
+                && has_effective_keyword(state, candidate, keyword)
+        })
+        .count()
+        .try_into()
+        .map_err(|_| "mana ability amount exceeds u8".to_string()),
+        ManaAbilityAmountDef::Dynamic(value) => evaluate_dynamic_value(state, value, player)
+            .try_into()
+            .map_err(|_| "mana ability amount exceeds u8".to_string()),
+    }
+}
+
 fn rich_mana_ability_is_payable(
     player: PlayerId,
     source: ObjectId,
@@ -6767,6 +6804,17 @@ pub(crate) fn available_mana_ability_choices_into(
     };
     if primary_payable {
         for &color in primary.as_slice() {
+            if let Some(rich) = def.mana_ability_def {
+                let Ok(amount) = rich_mana_ability_amount(rich.amount, player, state) else {
+                    continue;
+                };
+                if state.players[player.index()].mana_pool[color.pool_index()]
+                    .checked_add(amount)
+                    .is_none()
+                {
+                    continue;
+                }
+            }
             out.push(color);
         }
     }
@@ -6957,23 +7005,20 @@ fn activate_mana_ability_for(
             })
             .transpose()?;
 
-        let amount = match rich.amount {
-            ManaAbilityAmountDef::Fixed(amount) => amount,
-            ManaAbilityAmountDef::ControlledCreaturesWithKeyword(keyword) => state.players
-                [player.index()]
-            .battlefield
-            .iter()
-            .filter(|&&candidate| {
-                object_has_type(state, candidate, CardType::Creature)
-                    && has_effective_keyword(state, candidate, keyword)
+        let amount = rich_mana_ability_amount(rich.amount, player, state)?;
+
+        // Refuse an unrepresentable result before tapping, sacrificing, paying
+        // or recording an activation. Rich dynamic sources can produce more
+        // than the legacy conditional-yield ceiling of eight.
+        let color_index = choice.pool_index();
+        let final_pool = i32::from(state.players[player.index()].mana_pool[color_index])
+            + mana_plan.as_ref().map_or(0, |plan| {
+                i32::from(plan.surplus[color_index]) - i32::from(plan.pool_used[color_index])
             })
-            .count()
-            .try_into()
-            .map_err(|_| "mana ability amount exceeds u8".to_string())?,
-            ManaAbilityAmountDef::Dynamic(value) => evaluate_dynamic_value(state, value, player)
-                .try_into()
-                .map_err(|_| "mana ability amount exceeds u8".to_string())?,
-        };
+            + i32::from(amount);
+        if !(0..=i32::from(u8::MAX)).contains(&final_pool) {
+            return Err("mana ability result exceeds the pool capacity".to_string());
+        }
 
         if let Some(plan) = &mana_plan {
             pay_plan(state, player, plan);
@@ -12279,7 +12324,7 @@ pub(crate) fn static_controlled_subtype_boost_for(
     name: &str,
 ) -> Option<StaticControlledSubtypeBoostDef> {
     match name {
-        "Dwynen, Gilt-Leaf Daen" => Some(StaticControlledSubtypeBoostDef {
+        "Dwynen, Gilt-Leaf Daen" | "Elvish Archdruid" => Some(StaticControlledSubtypeBoostDef {
             subtype: card_def::Subtype::Elf,
             exclude_source: true,
             power: 1,
@@ -17002,6 +17047,36 @@ mod tests {
             assert_eq!(
                 normal_cast_reduction_count(present, player, &[], &restored),
                 1
+            );
+        }
+    }
+
+    #[test]
+    fn creature_power_cost_count_sums_signed_live_effective_power() {
+        use card_def::DynamicCountDef;
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = empty_game();
+            let first = put_on_battlefield(&mut state, player, "Llanowar Elves");
+            let second = put_on_battlefield(&mut state, player, "Llanowar Elves");
+            let foreign = put_on_battlefield(&mut state, player.opponent(), "Llanowar Elves");
+            put_in_hand(&mut state, player, "Llanowar Elves");
+            let land = put_on_battlefield(&mut state, player, "Forest");
+            state.objects.get_mut(land).counters.plus1_plus1 = 100;
+            let count = DynamicCountDef::ControllerCreatureTotalPower;
+            assert_eq!(normal_cast_reduction_count(count, player, &[], &state), 2);
+            state.objects.get_mut(first).counters.plus1_plus1 = 4;
+            state.objects.get_mut(second).counters.minus1_minus1 = 3;
+            assert_eq!(normal_cast_reduction_count(count, player, &[], &state), 3);
+            state.objects.get_mut(foreign).controller = player;
+            assert_eq!(normal_cast_reduction_count(count, player, &[], &state), 4);
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(first, Zone::Exile));
+            assert_eq!(normal_cast_reduction_count(count, player, &[], &state), 0);
+            state.objects.get_mut(second).counters.minus1_minus1 = 0;
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(
+                normal_cast_reduction_count(count, player, &[], &restored),
+                2
             );
         }
     }

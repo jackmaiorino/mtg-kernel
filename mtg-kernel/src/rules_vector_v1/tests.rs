@@ -866,6 +866,11 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
     ),
     (
         "engine.rs",
+        "Elvish Archdruid",
+        "read via engine::static_controlled_subtype_boost_for",
+    ),
+    (
+        "engine.rs",
         "Goblin Tomb Raider",
         "read via engine::static_self_boost_for (condition opaque)",
     ),

@@ -308,6 +308,8 @@ pub enum Subtype {
     Construct,
     /// Appended for unregistered Mischievous Pup, preserving existing ids.
     Dog,
+    /// Appended for Ghalta; existing observation subtype ids remain fixed.
+    Elder,
 }
 
 impl Subtype {
@@ -431,6 +433,8 @@ impl Subtype {
         Subtype::Construct,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Dog,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Elder,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Scout,
         #[cfg(feature = "standard-magezero-fixtures")]
@@ -632,6 +636,7 @@ impl Subtype {
                 | Subtype::Sheep
                 | Subtype::AssemblyWorker
                 | Subtype::Mite
+                | Subtype::Elder
         )
     }
 }
@@ -1524,6 +1529,9 @@ pub enum DynamicCountDef {
     ControllerBattlefieldSubtype(Subtype),
     /// One iff a currently controlled permanent has the effective named subtype.
     ControllerHasPermanentSubtype(Subtype),
+    /// Nonnegative total effective power of the caster's live creatures.
+    /// Negative powers contribute before the aggregate is floored at zero.
+    ControllerCreatureTotalPower,
 }
 
 /// Reduces only the generic portion of a spell's mana cost, flooring at

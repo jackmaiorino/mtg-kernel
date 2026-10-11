@@ -3703,7 +3703,7 @@ fn effect_recipe_for(card: &CardJson) -> String {
                 "None".to_string()
             };
             let static_bonus = match card.name.as_str() {
-                "Dwynen, Gilt-Leaf Daen" => ";static=boost_other_controlled_elf_creatures:1:1",
+                "Dwynen, Gilt-Leaf Daen" | "Elvish Archdruid" => ";static=boost_other_controlled_elf_creatures:1:1",
                 "Anthem of Champions" => ";static=boost_live_controlled_creatures:1:1:layer7c:printed_source_abilities",
                 "Mocking Sprite" | "Archmage of Runes" => ";static=controller_instant_or_sorcery_spells_cost_generic_less:1:total_cost_after_additional_and_x_before_one_floor:printed_source_abilities",
                 "Empyrean Eagle" => ";static=boost_other_live_controlled_creatures_with_effective_flying:1:1:layer7c:printed_source_abilities",
@@ -3972,7 +3972,7 @@ fn keywords_for(card: &CardJson) -> String {
         | "Webweaver Changeling"
         | "Dwynen, Gilt-Leaf Daen" => keywords.push("Keywords::REACH"),
         "Spinewoods Paladin" | "Avenging Hunter" | "Beast-Kin Ranger" | "Mossborn Hydra"
-        | "Koma, World-Eater" => keywords.push("Keywords::TRAMPLE"),
+        | "Koma, World-Eater" | "Ghalta, Primal Hunger" => keywords.push("Keywords::TRAMPLE"),
         "Outlaw Medic"
         | "Sacred Cat"
         | "Sacred Cat Embalmed Token"
@@ -4273,6 +4273,7 @@ fn mana_ability_def_for(name: &str) -> &'static str {
         "Lotus Petal" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::SacrificeSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
         "Overgrown Battlement" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::ControlledCreaturesWithKeyword(Keywords::DEFENDER), controller_damage: 0, max_activations_per_turn: None })",
         "Priest of Titania" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Dynamic(DynamicValueDef::BattlefieldPermanentsWithSubtype(Subtype::Elf)), controller_damage: 0, max_activations_per_turn: None })",
+        "Elvish Archdruid" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Dynamic(DynamicValueDef::ControlledPermanentsWithSubtype(Subtype::Elf)), controller_damage: 0, max_activations_per_turn: None })",
         "Saruli Caretaker" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
         "Tinder Wall" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::SacrificeSelf, amount: ManaAbilityAmountDef::Fixed(2), controller_damage: 0, max_activations_per_turn: None })",
         "Wall of Roots" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: Some(1) })",
@@ -6060,6 +6061,9 @@ fn cost_src(mana_cost: &str) -> String {
 
 fn generic_cost_reduction_for(name: &str) -> &'static str {
     match name {
+        "Ghalta, Primal Hunger" => {
+            "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerCreatureTotalPower })"
+        }
         "Arcane Epiphany" => {
             "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerHasPermanentSubtype(Subtype::Wizard) })"
         }
@@ -9789,6 +9793,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Turtle" => "Subtype::Turtle",
         "Gremlin" => "Subtype::Gremlin",
         "Dinosaur" => "Subtype::Dinosaur",
+        "Elder" => "Subtype::Elder",
         "Warlock" => "Subtype::Warlock",
         "Insect" => "Subtype::Insect",
         "Archer" => "Subtype::Archer",
