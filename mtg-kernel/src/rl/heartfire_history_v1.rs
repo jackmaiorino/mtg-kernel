@@ -234,7 +234,7 @@ fn build_history_parts(
         exile: public_cards_v2(state, &state.exile, text_mode)?,
         stack: stack_public_history(state, acting_player)?,
         combat: combat_public_v2(state, acting_player)?,
-        continuous_effects: continuous_effects_common_v2(state, acting_player, false)?,
+        continuous_effects: continuous_effects_common_v2(state, acting_player, false, false)?,
         object_relations: object_relations_public_v4(state, acting_player)?,
         exile_play_permissions: exile_play_permissions_public_v2(state)?,
         engine_context: engine_context_v2(state, acting_player)?,
