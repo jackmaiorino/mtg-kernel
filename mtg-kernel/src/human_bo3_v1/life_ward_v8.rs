@@ -73,8 +73,30 @@ pub struct HumanExtensionsV8 {
     pub ward_life_card_traits: Vec<HumanWardLifeCardTraitV8>,
 }
 
+pub(super) struct ProjectionPartsV8<'a> {
+    pub projection: &'a crate::rl::PublicObservationProjectionV5,
+    pub own_hand: &'a [crate::rl::CardPrivateV1],
+    pub known_library_cards: &'a [Vec<crate::rl::KnownLibraryCardV4>; 2],
+    pub known_hand_cards: &'a [Vec<crate::rl::CardPrivateV1>; 2],
+    pub known_face_down_cards: &'a [crate::rl::FaceDownCardKnowledgeV1],
+    pub extensions: &'a crate::policy_observation_v8::PolicyObservationExtensionsV8,
+}
+
+impl<'a> From<&'a ObservationV8> for ProjectionPartsV8<'a> {
+    fn from(observation: &'a ObservationV8) -> Self {
+        Self {
+            projection: &observation.projection,
+            own_hand: &observation.own_hand,
+            known_library_cards: &observation.known_library_cards,
+            known_hand_cards: &observation.known_hand_cards,
+            known_face_down_cards: &observation.known_face_down_cards,
+            extensions: &observation.extensions,
+        }
+    }
+}
+
 fn stack_ref(
-    observation: &ObservationV8,
+    observation: &ProjectionPartsV8<'_>,
     index: u32,
     handles: &Handles,
 ) -> Result<HumanStackRefV8, Error> {
@@ -94,7 +116,7 @@ fn stack_ref(
 }
 
 fn payment(
-    observation: &ObservationV8,
+    observation: &ProjectionPartsV8<'_>,
     source: &CardStableRefV1,
     fee: &WardLifePaymentV8,
     handles: &Handles,
@@ -118,6 +140,13 @@ fn payment(
 
 fn project_state(
     observation: &ObservationV8,
+    handles: &mut Handles,
+) -> Result<HumanVisibleStateV8, Error> {
+    project_state_parts(&ProjectionPartsV8::from(observation), handles)
+}
+
+pub(super) fn project_state_parts(
+    observation: &ProjectionPartsV8<'_>,
     handles: &mut Handles,
 ) -> Result<HumanVisibleStateV8, Error> {
     // Select unchanged common facts into their safe DTO directly. This never

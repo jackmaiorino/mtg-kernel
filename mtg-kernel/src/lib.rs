@@ -101,6 +101,8 @@ pub mod policy_observation_v6;
 pub mod policy_observation_v7;
 pub mod policy_observation_v8;
 pub mod policy_observation_v9;
+pub mod policy_observation_variable_cast_v1;
+pub mod rl_variable_cast_v1;
 pub mod unclamped_softmax_sampler_v1;
 // Calibration-only harness for the kernel-native search opponent: every
 // function in this module either is, or exists only to call,

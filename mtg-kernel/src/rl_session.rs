@@ -294,6 +294,7 @@ pub(crate) use v3_spell_target_adapter_v1::{
 mod flat_action_v4;
 mod flat_action_v5;
 mod raid_v9;
+pub mod variable_cast_v1;
 #[cfg(test)]
 pub(crate) use flat_action_v3::{
     avenging_hunter_hidden_source_with_stack_historical_rows_state_v1,

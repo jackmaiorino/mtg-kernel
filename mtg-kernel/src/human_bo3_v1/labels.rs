@@ -49,9 +49,9 @@ impl<'a> LabelInput<'a> {
         }
     }
 
-    fn from_v8(observation: &'a crate::policy_observation_v8::ObservationV8) -> Self {
+    fn from_parts_v8(observation: &super::life_ward_v8::ProjectionPartsV8<'a>) -> Self {
         Self {
-            projection: &observation.projection,
+            projection: observation.projection,
             pending_chosen_creature_cost: observation
                 .extensions
                 .pending_chosen_creature_cost
@@ -415,6 +415,20 @@ pub(super) fn label_v8(
     handles: &Handles,
     human: PlayerSeatV1,
 ) -> Result<String, Error> {
+    label_parts_v8(
+        action,
+        &super::life_ward_v8::ProjectionPartsV8::from(observation),
+        handles,
+        human,
+    )
+}
+
+pub(super) fn label_parts_v8(
+    action: &A,
+    observation: &super::life_ward_v8::ProjectionPartsV8<'_>,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
     if let Some(payment) = &observation.extensions.pending_ward_life_payment {
         let A::ChooseEffectBoolean {
             actor,
@@ -469,7 +483,12 @@ pub(super) fn label_v8(
             },
         ));
     }
-    label_common(action, &LabelInput::from_v8(observation), handles, human)
+    label_common(
+        action,
+        &LabelInput::from_parts_v8(observation),
+        handles,
+        human,
+    )
 }
 
 fn label_common(

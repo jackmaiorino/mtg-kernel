@@ -2260,6 +2260,102 @@ fn build_policy_observation_common_v6(
     accept_life_ward: bool,
 ) -> Result<ObservationV6> {
     crate::engine::validate_legacy_variable_cast_targets(request.state).map_err(RlContractError)?;
+    Ok(build_policy_observation_storage_v6(request, accept_life_ward)?.into_legacy())
+}
+
+/// Shared storage has no schema or commitment identity. Only the existing
+/// gated entry point above may turn this into a predecessor observation.
+pub(crate) struct PolicyObservationStorageV6 {
+    pub kernel_version: String,
+    pub surface_version: u32,
+    pub policy_surface_version: u32,
+    pub card_db_hash: u64,
+    pub acting_player: PlayerSeatV1,
+    pub step_index: u64,
+    pub physical_decision_id: u64,
+    pub substep_index: u32,
+    pub substep_count: u32,
+    pub projection: PublicObservationProjectionV5,
+    pub own_hand: Vec<CardPrivateV1>,
+    pub known_library_cards: [Vec<KnownLibraryCardV4>; 2],
+    pub known_hand_cards: [Vec<CardPrivateV1>; 2],
+    pub extensions: crate::policy_observation_v6::PolicyObservationExtensionsV6,
+}
+
+impl From<ObservationV6> for PolicyObservationStorageV6 {
+    fn from(base: ObservationV6) -> Self {
+        Self {
+            kernel_version: base.kernel_version,
+            surface_version: base.surface_version,
+            policy_surface_version: base.policy_surface_version,
+            card_db_hash: base.card_db_hash,
+            acting_player: base.acting_player,
+            step_index: base.step_index,
+            physical_decision_id: base.physical_decision_id,
+            substep_index: base.substep_index,
+            substep_count: base.substep_count,
+            projection: base.projection,
+            own_hand: base.own_hand,
+            known_library_cards: base.known_library_cards,
+            known_hand_cards: base.known_hand_cards,
+            extensions: base.extensions,
+        }
+    }
+}
+
+impl PolicyObservationStorageV6 {
+    fn into_legacy(self) -> ObservationV6 {
+        ObservationV6 {
+            schema_version: OBSERVATION_SCHEMA_VERSION_V6,
+            kernel_version: self.kernel_version,
+            surface_version: self.surface_version,
+            policy_surface_version: self.policy_surface_version,
+            card_db_hash: self.card_db_hash,
+            acting_player: self.acting_player,
+            step_index: self.step_index,
+            physical_decision_id: self.physical_decision_id,
+            substep_index: self.substep_index,
+            substep_count: self.substep_count,
+            projection: self.projection,
+            own_hand: self.own_hand,
+            known_library_cards: self.known_library_cards,
+            known_hand_cards: self.known_hand_cards,
+            extensions: self.extensions,
+            visible_projection_hash: 0,
+        }
+    }
+}
+
+pub(crate) fn variable_cast_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    if let Some(pending) = &state.engine.pending_cast {
+        crate::engine::validate_pending_cast(state, pending).map_err(RlContractError)?;
+    }
+    build_policy_observation_storage_v6(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
+    )
+}
+
+fn build_policy_observation_storage_v6(
+    request: PolicyObservationBuildV5<'_>,
+    accept_life_ward: bool,
+) -> Result<PolicyObservationStorageV6> {
     let PolicyObservationBuildV5 {
         state,
         surface,
@@ -2310,8 +2406,7 @@ fn build_policy_observation_common_v6(
         ordered.sort_by_key(|(index, _)| *index);
         *legal_targets = ordered.into_iter().map(|(_, target)| target).collect();
     }
-    Ok(ObservationV6 {
-        schema_version: OBSERVATION_SCHEMA_VERSION_V6,
+    Ok(PolicyObservationStorageV6 {
         kernel_version: base.kernel_version,
         surface_version: base.surface_version,
         policy_surface_version: POLICY_SURFACE_VERSION,
@@ -2344,7 +2439,6 @@ fn build_policy_observation_common_v6(
         known_hand_cards: base.known_hand_cards,
         known_face_down_cards: base.known_face_down_cards,
         extensions,
-        visible_projection_hash: 0,
     })
 }
 
@@ -5623,7 +5717,7 @@ fn known_face_down_cards_v1(
         .collect()
 }
 
-fn card_ref(state: &GameState, id: ObjectId) -> Result<CardStableRefV1> {
+pub(crate) fn card_ref(state: &GameState, id: ObjectId) -> Result<CardStableRefV1> {
     let object = state
         .objects
         .try_get(id)
