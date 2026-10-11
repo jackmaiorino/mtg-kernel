@@ -294,6 +294,11 @@ fn mana_ability_facts(def: &ManaAbilityDef, out: &mut Collector) {
             AmtF::Dynamic
         }
         ManaAbilityAmountDef::Dynamic(value) => reads::dynamic_value(value, out),
+        ManaAbilityAmountDef::EachControlledPermanentColor => {
+            // The frozen vocabulary cannot express a simultaneous color set.
+            out.atoms.push(Atom::Opaque);
+            AmtF::Dynamic
+        }
     };
     out.effect(
         EffectAtom::new(EvF::AddMana)
@@ -760,6 +765,10 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         }
     }
     if let Some(rich) = mana_ability_def {
+        if rich.amount == ManaAbilityAmountDef::EachControlledPermanentColor {
+            walk.opaque
+                .push("one mana of each effective controlled permanent color");
+        }
         walk.rec("mana_ability_def", Value::String(format!("{rich:?}")));
         walk.ability(CtxF::Mana, |out| mana_ability_facts(rich, out));
     }

@@ -1618,6 +1618,9 @@ pub enum ManaAbilityAmountDef {
     /// Evaluate one shared board-dependent value at activation resolution.
     /// Appended for Priest of Titania without renumbering existing variants.
     Dynamic(DynamicValueDef),
+    /// One unit of every W/U/B/R/G color among controlled permanents.
+    /// The primary action color identifies the ability, not one chosen output.
+    EachControlledPermanentColor,
 }
 
 /// A reusable integer derived from current game state. All consumers sample

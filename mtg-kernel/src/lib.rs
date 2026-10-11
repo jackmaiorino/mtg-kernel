@@ -546,8 +546,11 @@ pub fn run_experimental_burn_net8_cuda_train_v1() -> Result<(), Box<dyn std::err
     experimental_burn_net8_packed_v1::run_cuda_training_v1()
 }
 
+pub(crate) mod bloom_tender_mana_v1;
+pub mod bloom_tender_public_v1;
 pub mod cauldron_grants_v1;
 mod crystal_barricade_v1;
+pub mod rules_meaning_bloom_tender_v1;
 pub mod rules_meaning_cerberus_v1;
 pub mod rules_meaning_employment_v1;
 

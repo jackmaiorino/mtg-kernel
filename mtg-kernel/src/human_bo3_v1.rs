@@ -8,11 +8,13 @@
 mod heartfire_history_v1;
 mod heartfire_v12;
 pub use heartfire_history_v1::*;
+mod bloom_tender_v24;
 mod employment_v18;
 mod labels;
 mod librarian_v20;
 pub use librarian_v20::*;
 mod life_ward_v8;
+pub use bloom_tender_v24::*;
 mod ooze_v11;
 pub use employment_v18::*;
 mod sower_v14;
