@@ -310,7 +310,7 @@ jobs:
       - name: Validate MageZero Standard catalog
         if: matrix.group == 'limited'
         run: |
-          python python/tools/run_rust_lib_filters.py --features standard-magezero-fixtures card_def:: cauldron_grants_v1:: rl::legacy_hash_v1:: human_bo3_v1::visible::standard:: resolution_cast_v1:: frozen_encoder_rejects_creature_upgrades_in_every_public_zone channel_payment_preserves_printed_ability_discount counter_removal_payment_accepts_repeated_creature crew_payment_reserves_its_contributors engine::spell_costs_v1::tests::prepared_ event::tests::heartfire_death_respects_the_pre_zone_change_ability_snapshot
+          python python/tools/run_rust_lib_filters.py --features standard-magezero-fixtures card_def:: cauldron_grants_v1:: rl::legacy_hash_v1:: human_bo3_v1::visible::standard:: resolution_cast_v1:: engine::standard_spell_copy::tests:: frozen_encoder_rejects_creature_upgrades_in_every_public_zone channel_payment_preserves_printed_ability_discount counter_removal_payment_accepts_repeated_creature crew_payment_reserves_its_contributors engine::spell_costs_v1::tests::prepared_ event::tests::heartfire_death_respects_the_pre_zone_change_ability_snapshot
           cargo test --release --locked --no-fail-fast -p mtg-kernel --features standard-magezero-fixtures --test standard_cast_forms_completion_v1 --test standard_characteristics_completion_v1 --test standard_copy_hideaway_v1 --test standard_family_d_v1 --test standard_family_g_v1 --test standard_jodah_v1 --test standard_lands_spells_completion_v1 --test standard_lands_v1 --test standard_magezero_catalog_v1 --test standard_magezero_family_ef_v1 --test standard_sessions_completion_v1
 
       - name: Run Rust release tests
