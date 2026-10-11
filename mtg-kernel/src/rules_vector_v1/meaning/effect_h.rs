@@ -48,6 +48,11 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
             ward_target,
             targeting_stack_item,
             life,
+        }
+        | EffectOp::CounterUnlessPaysLifeWithChoice {
+            ward_target,
+            targeting_stack_item,
+            life,
         } => {
             // runtime-only: as `CounterUnlessCollectsEvidence`.
             let _ = ward_target; // engine-internal stack target contract

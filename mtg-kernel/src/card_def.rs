@@ -1556,6 +1556,8 @@ pub enum WardCostDef {
     /// Ward—Discard a card, printed on both faces (MageZero Standard,
     /// Graveyard Trespasser).
     DiscardCard,
+    /// Ward on the front face requiring a chosen life payment.
+    PayLife(u8),
 }
 
 /// Alternate battlefield characteristics for a transforming permanent's
@@ -2493,7 +2495,7 @@ mod tests {
                 WardCostDef::CollectEvidence(amount) => {
                     assert_ne!(amount, 0, "{} has Ward 0", def.name)
                 }
-                WardCostDef::BackFacePayLife(amount) => {
+                WardCostDef::BackFacePayLife(amount) | WardCostDef::PayLife(amount) => {
                     assert_ne!(amount, 0, "{} has Ward 0", def.name)
                 }
                 WardCostDef::DiscardCard => {}

@@ -4392,6 +4392,13 @@ fn triggers_from_events(
                                     life,
                                 }
                             }
+                            crate::card_def::WardCostDef::PayLife(life) => {
+                                EffectOp::CounterUnlessPaysLifeWithChoice {
+                                    ward_target,
+                                    targeting_stack_item: *targeting_stack_item,
+                                    life,
+                                }
+                            }
                         },
                         is_madness_offer: false,
                         kicked: false,

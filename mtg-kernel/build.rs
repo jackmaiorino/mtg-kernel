@@ -3999,6 +3999,16 @@ fn keywords_for(card: &CardJson) -> String {
             keywords.push("Keywords::FLYING");
             keywords.push("Keywords::FLASH");
         }
+        "Sire of Seven Deaths" => {
+            keywords.extend([
+                "Keywords::FIRST_STRIKE",
+                "Keywords::VIGILANCE",
+                "Keywords::MENACE",
+                "Keywords::TRAMPLE",
+                "Keywords::REACH",
+                "Keywords::LIFELINK",
+            ]);
+        }
         "Elfsworn Giant" => keywords.push("Keywords::REACH"),
         "Eager Trufflesnout" => keywords.push("Keywords::TRAMPLE"),
         _ => {}
@@ -6114,6 +6124,7 @@ fn ward_cost_for(name: &str) -> &'static str {
         "Koma, World-Eater" => "Some(WardCostDef::Generic(4))",
         "Axebane Ferox" => "Some(WardCostDef::CollectEvidence(4))",
         "Brutal Cathar" => "Some(WardCostDef::BackFacePayLife(3))",
+        "Sire of Seven Deaths" => "Some(WardCostDef::PayLife(7))",
         "Graveyard Trespasser" => "Some(WardCostDef::DiscardCard)",
         _ => "None",
     }

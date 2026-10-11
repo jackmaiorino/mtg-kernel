@@ -11052,6 +11052,15 @@ fn triggered_stack_item_expected_target_spec(
                     targeting_stack_item,
                     crate::card_def::WardCostDef::BackFacePayLife(*life),
                 )),
+                EffectOp::CounterUnlessPaysLifeWithChoice {
+                    ward_target,
+                    targeting_stack_item,
+                    life,
+                } => Some((
+                    ward_target,
+                    targeting_stack_item,
+                    crate::card_def::WardCostDef::PayLife(*life),
+                )),
                 EffectOp::CounterUnlessDiscardsCard {
                     ward_target,
                     targeting_stack_item,

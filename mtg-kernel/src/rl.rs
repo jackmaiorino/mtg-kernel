@@ -2096,6 +2096,21 @@ fn policy_observation_extensions_with_text_v6(
     acting_player: PlayerId,
     text_mode: ObservationTextModeV2,
 ) -> Result<PolicyObservationExtensionsV6> {
+    let pending = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .map(|pending| &pending.resolving_item);
+    if state.stack.iter().chain(pending).any(|item| {
+        matches!(
+            item.inline_effect.as_ref(),
+            Some(crate::effect::EffectOp::CounterUnlessPaysLifeWithChoice { .. })
+        )
+    }) {
+        return Err(RlContractError(
+            "life-payment Ward requires its typed observation successor".into(),
+        ));
+    }
     let pending_cast_object_cost = if let Some(pending) = &state.engine.pending_cast {
         engine::validate_pending_cast(state, pending).map_err(RlContractError)?;
         if pending.source_contract.cast_method == CastMethodV4::Escape {
@@ -6770,6 +6785,9 @@ fn pending_effect_semantic_v4(
                             BooleanChoicePurposeV4::Shuffle
                         }
                         crate::effect::EffectBooleanChoicePurpose::CounterUnlessPaysGeneric {
+                            ..
+                        }
+                        | crate::effect::EffectBooleanChoicePurpose::CounterUnlessPaysLife {
                             ..
                         }
                         | crate::effect::EffectBooleanChoicePurpose::CounterTargetUnlessPaysGeneric {

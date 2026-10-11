@@ -73,6 +73,8 @@ pub enum PrintedF {
     ChoosesColorAsEnters,
     ManaAbilityAddsChosenColor,
     Delve,
+    /// Ward requiring a life payment on the printed front face.
+    WardPayLife(u8),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
@@ -541,6 +543,9 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 printed.push(PrintedF::WardBackFacePayLife(bucket(i64::from(*n))))
             }
             crate::card_def::WardCostDef::DiscardCard => printed.push(PrintedF::WardDiscardCard),
+            crate::card_def::WardCostDef::PayLife(n) => {
+                printed.push(PrintedF::WardPayLife(bucket(i64::from(*n))))
+            }
         }
     }
     if *minimum_blockers > 1 {

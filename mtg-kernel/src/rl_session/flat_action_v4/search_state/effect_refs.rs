@@ -90,6 +90,7 @@ impl Scan<'_> {
             | DestroyObject { .. }
             | DestroyObjectThenCreateTokens { .. }
             | CounterUnlessPaysGeneric { .. }
+            | CounterUnlessPaysLifeWithChoice { .. }
             | CounterUnlessCollectsEvidence { .. }
             | CounterUnlessPaysLife { .. }
             | CounterUnlessDiscardsCard { .. }
@@ -258,6 +259,7 @@ impl Scan<'_> {
                 ..
             } => self.bs(original_library) || selected.as_ref().is_some_and(|b| self.b(b)),
             ResolveCounterUnlessPaysGeneric { .. }
+            | ResolveCounterUnlessPaysLife { .. }
             | ResolveCounterTargetUnlessPaysGeneric { .. } => false, // target contracts cannot bind live hidden objects
             LookTopSelectByTypeToHandBottomRest {
                 original_prefix,
@@ -575,6 +577,7 @@ impl Scan<'_> {
                 match purpose {
                     ShuffleLibrary { .. }
                     | CounterUnlessPaysGeneric { .. }
+                    | CounterUnlessPaysLife { .. }
                     | CounterTargetUnlessPaysGeneric { .. } => false,
                     PayManaThen { then, .. } => self.op(then),
                     SearchLibraryToBattlefieldTapped {
@@ -665,6 +668,7 @@ pub(super) fn conflicts(
             let guard_conflicts = match g {
                 OwnerLibrarySecondOrBottom { frame }
                 | CounterUnlessPaysGeneric { frame }
+                | CounterUnlessPaysLife { frame }
                 | CounterTargetUnlessPaysGeneric { frame }
                 | ExileOneFromGraveyard { frame }
                 | SurveilLibraryOne { frame }
