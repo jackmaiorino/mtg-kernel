@@ -6476,6 +6476,96 @@
       "sideboard_only": false,
       "complexity": "moderate",
       "mechanics": []
+    },
+    {
+      "name": "Mild-Mannered Librarian",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/m/MildManneredLibrarian.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_mild_mannered_librarian.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "once_per_incarnation_werewolf_counters_draw"
+      ]
+    },
+    {
+      "name": "Gorehorn Raider",
+      "mana_cost": "{4}{R}",
+      "mana_value": 5,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Minotaur",
+        "Pirate"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/g/GorehornRaider.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_gorehorn_raider.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "raid"
+      ]
+    },
+    {
+      "name": "Gutless Plunderer",
+      "mana_cost": "{2}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Skeleton",
+        "Pirate"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/g/GutlessPlunderer.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_gutless_plunderer.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "deathtouch",
+        "raid"
+      ]
     }
   ]
 }

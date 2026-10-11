@@ -2592,12 +2592,12 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 403 (Sower of Chaos after Squad, neutral copy, Self and Searslicer,
-        // Run Away Together, Raid, Skyknight and Sire).
+        // batches append through id 413 (Gutless Plunderer after Gorehorn Raider
+        // and Mild-Mannered Librarian; all earlier definitions retain their ids).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                411
+                414
             } else {
                 192
             }

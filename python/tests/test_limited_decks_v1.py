@@ -198,7 +198,8 @@ class LimitedDeckTest(unittest.TestCase):
         for name, card_id in [("Skyship Buccaneer", 390), ("Goblin Boarders", 391)]:
             self.assertEqual(self.registry[name].card_id, card_id)
             self.assertEqual(resolved.count(card_id), 4)
-        self.assertNotIn("Gorehorn Raider", self.registry)
+        self.assertEqual(self.registry["Gorehorn Raider"].card_id, 412)
+        self.assertNotIn(412, resolved)
         self.assertNotIn("Strongbox Raider", self.registry)
 
     def test_original_decks_are_40_cards_and_fully_resolve(self) -> None:
@@ -325,6 +326,16 @@ class LimitedDeckTest(unittest.TestCase):
         self.assertEqual(self.registry["Wildwood Scourge"].card_id, 406)
         self.assertEqual(self.registry["Face-down card"].card_id, 408)
 
+    def test_future_librarian_and_raid_candidates_append_after_employment(self) -> None:
+        for slug, name, ident in [("mild_mannered_librarian", "Mild-Mannered Librarian", 411),
+                                  ("gorehorn_raider", "Gorehorn Raider", 412),
+                                  ("gutless_plunderer", "Gutless Plunderer", 413)]:
+            deck = limited.parse_dck((FIXTURES / f"FDN_reference_{slug}.dck").read_text(encoding="utf-8"))
+            self.assertEqual(limited.resolve_mainboard(deck, self.registry)[:4], [ident] * 4)
+            self.assertEqual(len(limited.resolve_mainboard(deck, self.registry)), 40)
+            self.assertEqual(self.registry[name].card_id, ident)
+        self.assertEqual(self.registry["Involuntary Employment"].card_id, 410)
+
     def test_unknown_partial_no_effect_and_token_are_all_rejected(self) -> None:
         registry = limited.registry_from_json({"version": 2, "cards": [
             {"name": "Supported", "engine_capability": "full"},
@@ -377,7 +388,7 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("FDN_top_*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
-        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 206)
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 209)
         self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
                              for card in report["cards"]), 0)
 
