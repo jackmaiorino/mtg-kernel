@@ -47,3 +47,11 @@ Existing full NativeRun, public/Human, stale-store and catalog groups remain.
 These added current-head CI cases must pass before delivery; Native33 does
 not claim a pass for additional current-main target-meaning or Standard
 recipient cases that it did not execute.
+
+PR224 integrated at default825a24b919ed586db7e5c144f87e3194513abd26 on
+October11,13:53UTC. All23 exact-head9c43 checks passed; actual default tree
+9b2b8756eb38cdd8177ffe95b967716330b1844f equals the reviewed source tree.
+All60 affected Python cases pass in the actual default checkout (35 decks,
+18 V8,7 V9). Its frozen pool reports188 Full,1 Partial,97 Missing. The
+current v73 candidate merges that prerequisite with no runtime file delta;
+its own new CI cases and exact-head delivery still remain pending.
