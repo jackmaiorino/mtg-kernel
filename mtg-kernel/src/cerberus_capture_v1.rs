@@ -597,8 +597,27 @@ fn validate_operation(state: &GameState, index: usize) -> Result<(), String> {
         after_stun,
     } = kind
     {
+        // The positive observer capture proves this exact incarnation was
+        // on the battlefield. Its first subsequent battlefield departure is
+        // therefore the independent occurrence that can make it unavailable;
+        // a later return cannot restore that captured incarnation.
+        let departed = state.engine.event_history[usize::try_from(*capture_history_index)
+            .map_err(|_| "capture index overflow")?
+            + 1..index]
+            .iter()
+            .any(|event| {
+                matches!(event,
+                    CommittedEvent::ZoneChange { object, from: Zone::Battlefield, to, .. }
+                    if *object == source.source && *to != Zone::Battlefield)
+            });
         let expected = match (*morbid, *before_tapped, *before_stun) {
-            (_, None, None) => (None, None),
+            (_, None, None) if departed => (None, None),
+            (_, None, None) => {
+                return Err("Cerberus absent operation lacks a committed source departure".into())
+            }
+            (_, Some(_), Some(_)) if departed => {
+                return Err("Cerberus operation followed a departed source incarnation".into())
+            }
             (false, Some(tapped), Some(stun)) => (Some(tapped), Some(stun)),
             (true, Some(false), Some(stun)) => (Some(false), Some(stun)),
             (true, Some(true), Some(stun)) if stun > 0 => (Some(true), Some(stun - 1)),

@@ -294,3 +294,73 @@ fn genuine_waiting_ordered_trigger_owners_survive_restore_and_cannot_be_dropped(
         );
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn completed_live_source_cannot_be_rewritten_to_absent_before_or_after_later_departure() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for stun in [0, 1] {
+            let (mut state, source) = actual_trigger(actor);
+            state.objects.get_mut(source).counters.stun = stun;
+            resolve_actual(&mut state);
+            assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+            assert_eq!(state.objects.get(source).tapped, stun > 0);
+            assert_eq!(state.objects.get(source).counters.stun, 0);
+            for depart_after_operation in [false, true] {
+                let mut corrupt = restored(&state);
+                if depart_after_operation {
+                    crate::event::propose_and_commit(
+                        &mut corrupt,
+                        crate::event::ProposedEvent::zone_change(source, Zone::Hand),
+                    );
+                    validate_state(&corrupt).unwrap();
+                }
+                let kind = corrupt
+                    .engine
+                    .event_history
+                    .iter_mut()
+                    .find_map(|event| match event {
+                        CommittedEvent::CerberusOperationV1 { kind, .. } => Some(kind),
+                        _ => None,
+                    })
+                    .unwrap();
+                let CerberusOperationKindV1::Resolved {
+                    before_tapped,
+                    before_stun,
+                    after_tapped,
+                    after_stun,
+                    ..
+                } = kind
+                else {
+                    panic!("actual resolved operation");
+                };
+                *before_tapped = None;
+                *before_stun = None;
+                *after_tapped = None;
+                *after_stun = None;
+                let mut corrupt = restored(&corrupt);
+                let before = serde_json::to_vec(&corrupt).unwrap();
+                assert!(validate_state(&corrupt).is_err());
+                assert!(engine::step(&mut corrupt, Action::Pass).is_err());
+                assert_eq!(serde_json::to_vec(&corrupt).unwrap(), before);
+                assert!(matches!(
+                    engine::advance_until_decision(&mut corrupt),
+                    Decision::Halted { .. }
+                ));
+                assert_eq!(
+                    corrupt.engine.halted,
+                    Some((
+                        engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        source,
+                    ))
+                );
+                // The fail-closed halt is the only permitted boundary mutation.
+                corrupt.engine.halted = None;
+                assert_eq!(serde_json::to_vec(&corrupt).unwrap(), before);
+            }
+        }
+    }
+}

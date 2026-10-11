@@ -8959,6 +8959,24 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    // A closed Cerberus operation still owns historical authority. Validate it
+    // before automatic step/cleanup work can mutate a restored malformed state.
+    if crate::cerberus_capture_v1::validate_state(state).is_err() {
+        let source = state
+            .engine
+            .event_history
+            .iter()
+            .find_map(|event| match event {
+                CommittedEvent::CerberusCaptureV1 { capture } => Some(capture.source.source),
+                _ => None,
+            })
+            .unwrap_or(ObjectId(0));
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
+        return Decision::Halted {
+            mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        };
+    }
     refresh_face_down_lookers(state);
     loop {
         #[cfg(feature = "standard-magezero-fixtures")]
