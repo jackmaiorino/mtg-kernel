@@ -32,6 +32,7 @@ fn accepted_default_actual_attack_hash_baseline_both_seats() {
         let (expected_diagnostic, expected_core) = match actor {
             PlayerId::P0 => (0x47fb83da9cd811df, 0xcbc2eaf4943736a8),
             PlayerId::P1 => (0x021b8dd6a3fb2f43, 0x24100b6d3bdf8d9a),
+            _ => unreachable!("the fixture iterates only the two supported player seats"),
         };
         assert_eq!(diagnostic, expected_diagnostic);
         assert_eq!(session.diagnostic_state_hash(), expected_diagnostic);
