@@ -1246,6 +1246,9 @@ pub(crate) struct Captured {
 #[derive(Default)]
 pub(crate) struct Capture {
     pub(crate) keys: HashSet<Key>,
+    /// Also capture every node created at this physical depth or shallower
+    /// (0: none), for the visible history above captured nodes.
+    pub(crate) all_up_to: u32,
     /// Simulations whose opponent decisions keep private state snapshots.
     pub(crate) snapshot_sims: HashSet<u64>,
     pub(crate) sim: u64,
@@ -1282,7 +1285,7 @@ impl Capture {
         path: &[(Key, usize)],
     ) -> Result<(), PlayErr> {
         self.pending_created.push(key);
-        if !self.keys.contains(&key) {
+        if !self.keys.contains(&key) && depth > self.all_up_to {
             return Ok(());
         }
         let (raw_obs, raw_menu) = raw_decision(s, d)?;

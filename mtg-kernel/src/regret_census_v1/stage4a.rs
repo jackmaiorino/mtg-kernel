@@ -26,6 +26,7 @@ mod bank;
 mod bank_trace;
 mod branch;
 mod diag;
+mod identity;
 mod labels;
 mod play;
 mod refresh;
@@ -949,9 +950,48 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
                     })
                     .collect::<Result<_, String>>()?,
             },
+            ..branch::RunOpts::default()
         };
+        // BRANCH_PROBE: lines "KEY_A KEY_B SIM_A" (captured siblings and A's
+        // creating simulation, whose opponent decisions keep private
+        // snapshots for the paired engine probe).
+        let mut opts = opts;
+        opts.capture_up_to = match std::env::var("BRANCH_CAPTURE_UP_TO") {
+            Ok(v) => v
+                .parse()
+                .map_err(|_| "BRANCH_CAPTURE_UP_TO must be a depth")?,
+            Err(_) => 0,
+        };
+        if let Ok(path) = std::env::var("BRANCH_PROBE") {
+            let parse_key = |l: &str| -> Result<[u8; 32], String> {
+                let mut k = [0u8; 32];
+                if l.len() != 64 {
+                    return Err(format!("bad key {l}"));
+                }
+                for (i, b) in k.iter_mut().enumerate() {
+                    *b = u8::from_str_radix(&l[2 * i..2 * i + 2], 16)
+                        .map_err(|_| format!("bad key {l}"))?;
+                }
+                Ok(k)
+            };
+            for line in std::fs::read_to_string(&path)
+                .map_err(|e| format!("{path}: {e}"))?
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+            {
+                let f: Vec<&str> = line.split_whitespace().collect();
+                let [ka, kb, sim] = f[..] else {
+                    return Err(format!("{path}: bad line {line}"));
+                };
+                opts.probe_pairs.push((parse_key(ka)?, parse_key(kb)?));
+                opts.snapshot_sims
+                    .push(sim.parse().map_err(|_| format!("bad sim {sim}"))?);
+            }
+        }
         let dump_path = std::env::var("BRANCH_DUMP").ok();
-        if (opts.groups > 0 || !opts.capture_keys.is_empty()) && dump_path.is_none() {
+        if (opts.groups > 0 || !opts.capture_keys.is_empty() || opts.capture_up_to > 0)
+            && dump_path.is_none()
+        {
             return Err("BRANCH_DUMP is required with BRANCH_GROUPS or BRANCH_CAPTURE_KEYS".into());
         }
         let first = cfg.first_game as usize;

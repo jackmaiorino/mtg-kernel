@@ -585,7 +585,18 @@ pub(super) struct RunOpts {
     pub(super) groups: usize,
     /// Capture raw views for these node keys.
     pub(super) capture_keys: Vec<Key>,
+    /// Capture every node at this physical depth or shallower (0: none).
+    pub(super) capture_up_to: u32,
+    /// Simulations whose opponent decisions keep private snapshots.
+    pub(super) snapshot_sims: Vec<u64>,
+    /// Captured sibling pairs to probe (`identity.rs`).
+    pub(super) probe_pairs: Vec<(Key, Key)>,
 }
+
+/// Shared limits of all paired engine probes in one run (collab
+/// LANES/search-identity-audit-plan-20261011 TARGETS.json).
+pub(super) const PROBE_PAIRS: u32 = 32;
+pub(super) const PROBE_TRANSITIONS: u32 = 512;
 
 fn key_hex(k: &Key) -> String {
     k.iter().map(|b| format!("{b:02x}")).collect()
@@ -701,6 +712,8 @@ pub(super) fn root_arm(
     let t0 = Instant::now();
     let mut records = Vec::new();
     let mut cap = Capture::new(opts.capture_keys.iter().copied().collect());
+    cap.snapshot_sims = opts.snapshot_sims.iter().copied().collect();
+    cap.all_up_to = opts.capture_up_to;
     let (sel, tree) =
         roles.select_e_capturing(&ctx, None, retain, Some(&mut records), Some(&mut cap));
     let selection_wall = t0.elapsed().as_secs_f64();
@@ -716,7 +729,28 @@ pub(super) fn root_arm(
         sel.attempted,
     );
     let mut dump = group_dump(&tree, &cap.created, opts.groups);
+    let captured = cap.committed.len();
     dump.extend(capture_dump(&tree, &cap));
+    let mut budget = super::identity::Budget {
+        pairs: PROBE_PAIRS,
+        transitions: PROBE_TRANSITIONS,
+    };
+    let share = PROBE_PAIRS / (opts.probe_pairs.len().max(1) as u32);
+    for (a, b) in &opts.probe_pairs {
+        // An equal share of the shared limits per pair.
+        let mut own = super::identity::Budget {
+            pairs: share.min(budget.pairs),
+            transitions: (2 * share).min(budget.transitions),
+        };
+        let given = (own.pairs, own.transitions);
+        let r = super::identity::probe_pair(&roles, opp, focal, &cap, a, b, &mut own);
+        budget.pairs -= given.0 - own.pairs;
+        budget.transitions -= given.1 - own.transitions;
+        dump.push(json!({"kind":"probe","a":key_hex(a),"b":key_hex(b),
+            "result":r.unwrap_or_else(|e| json!({"error":e}))}));
+    }
+    // Private snapshots never leave the process.
+    drop(cap);
     let report_wall = t1.elapsed().as_secs_f64();
     // Frozen evaluation on 16 fresh lawful worlds.
     let eval_seeds = RootSeeds {
@@ -752,7 +786,8 @@ pub(super) fn root_arm(
         "tree_hash":tree_hash,"expected_b1_tree":spec.expected_b1_tree,
         "b1_parity":(retain == 1).then(|| tree_hash == spec.expected_b1_tree),
         "tree":report,"simulations":sims,"evaluated":opts.evaluate,"evaluation":worlds,
-        "dump":{"groups":opts.groups,"capture_keys":opts.capture_keys.len(),"captured":cap.committed.len()},
+        "dump":{"groups":opts.groups,"capture_keys":opts.capture_keys.len(),"captured":captured,
+            "probe_pairs":opts.probe_pairs.len(),"probe_pairs_left":budget.pairs,"probe_transitions_left":budget.transitions},
         "timing":{"note":"elapsed wall seconds, not CPU; process CPU is in the launcher ledger",
             "reconstruct_wall_seconds":reconstruct,"selection_wall_seconds":selection_wall,
             "report_wall_seconds":report_wall,"evaluation_wall_seconds":eval_wall,
@@ -811,8 +846,20 @@ mod tests {
         let (_, d8, _) = select(8, 20_000);
         let (a, b) = (b1[0], d8[0]);
         assert_eq!(
-            (a.outcome, a.transitions, a.policy_calls, a.expansion, a.depth_limit),
-            (b.outcome, b.transitions, b.policy_calls, b.expansion, b.depth_limit)
+            (
+                a.outcome,
+                a.transitions,
+                a.policy_calls,
+                a.expansion,
+                a.depth_limit
+            ),
+            (
+                b.outcome,
+                b.transitions,
+                b.policy_calls,
+                b.expansion,
+                b.depth_limit
+            )
         );
     }
 
