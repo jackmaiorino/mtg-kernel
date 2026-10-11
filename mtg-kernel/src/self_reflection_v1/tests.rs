@@ -73,6 +73,46 @@ fn controlled_copy_uses_current_values_and_new_token_owner_without_copying_incid
     }
 }
 #[test]
+fn anonymous_copy_values_contain_no_hidden_identity_before_any_entry_event() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, first, _) = fixture(actor);
+        let second = put(&mut state, actor, "Tolarian Terror", Zone::Battlefield);
+        for object in [first, second] {
+            // Genuine registered hidden-object primitive. This does not claim
+            // a printed FDN face-down producer or register the new spell.
+            state.objects.get_mut(object).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
+                disguised: true,
+                lookers: 1 << actor.index(),
+                hidden_by: None,
+                hidden_by_source: None,
+            });
+        }
+        let before = serde_json::to_vec(&state).unwrap();
+        assert_ne!(
+            state.objects.get(first).card_def,
+            state.objects.get(second).card_def
+        );
+        assert_eq!(
+            copiable_values(&state, first),
+            CopyTokenValuesV1::AnonymousFaceDown
+        );
+        assert_eq!(
+            copiable_values(&state, first),
+            copiable_values(&state, second)
+        );
+        assert_eq!(
+            format!("{:?}", copiable_values(&state, first)),
+            "AnonymousFaceDown"
+        );
+        assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+        for name in ["Llanowar Elves", "Tolarian Terror", "Counterspell"] {
+            assert!(!anonymous_blueprint_is_exact(
+                card_id_by_name(name).unwrap()
+            ));
+        }
+    }
+}
+#[test]
 fn exact_target_departure_reentry_control_change_and_monocolored_protection_refuse_before_copy() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for failure in 0..4 {

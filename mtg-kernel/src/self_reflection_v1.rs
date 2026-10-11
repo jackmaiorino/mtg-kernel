@@ -3,6 +3,95 @@ use crate::card_def::{CardType, TargetSpec, CARD_DEFS};
 use crate::effect::{EffectOp, ExecCtx};
 use crate::state::{GameState, StackItem, StackItemKind, StackTargetContractV4, Target};
 
+/// Copy-layer values are fixed before proposing entry. The anonymous case
+/// deliberately carries neither a physical identity nor its hidden definition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CopyTokenValuesV1 {
+    AnonymousFaceDown,
+    Definition { card_def: u16, face_index: u8 },
+}
+fn copiable_values(state: &GameState, object: crate::ids::ObjectId) -> CopyTokenValuesV1 {
+    let live = state.objects.get(object);
+    if live.v4.face_down_v1.is_some() {
+        CopyTokenValuesV1::AnonymousFaceDown
+    } else {
+        CopyTokenValuesV1::Definition {
+            card_def: live.card_def,
+            face_index: live.v4.face_index,
+        }
+    }
+}
+
+pub(crate) const ANONYMOUS_BLUEPRINT: &str = "Nameless Creature Copy Token";
+fn anonymous_blueprint_is_exact(card_def: u16) -> bool {
+    let def = &CARD_DEFS[card_def as usize];
+    def.name == ANONYMOUS_BLUEPRINT
+        && def.object_name.is_empty()
+        && def.has_full_support()
+        && def.is_token
+        && def.types == [CardType::Creature]
+        && def.subtypes.is_empty()
+        && def.supertypes.is_empty()
+        && def.colors.is_empty()
+        && def.cost.generic == 0
+        && def.cost.pips.is_empty()
+        && def.cost.x_count == 0
+        && def.mana_value == 0
+        && def.power == Some(2)
+        && def.toughness == Some(2)
+        && def.keywords == crate::card_def::Keywords::NONE
+        && def.target_spec == TargetSpec::None
+        && (def.spell_effect)().is_none()
+        && (def.mana_ability)().is_none()
+        && crate::trigger::triggers_for(card_def).is_empty()
+        && !def.is_land
+        && !def.changeling
+        && !def.enters_battlefield_tapped
+        && !def.spell_cannot_be_countered
+        && !def.records_mana_spent
+        && !def.mana_ability_includes_chosen_color
+        && !def.delve
+        && !def.cant_be_blocked_by_monarchs_creatures
+        && def.minimum_blockers == 1
+        && def.produces_mana.is_empty()
+        && def.mana_ability_choices.is_empty()
+        && def.activated_abilities.is_empty()
+        && def.additional_modes.is_empty()
+        && def.additional_mana_abilities.is_empty()
+        && def.additional_mana_ability_conditions.is_empty()
+        && def.restricted_mana_abilities.is_empty()
+        && def.activated_ability_generic_reductions.is_empty()
+        && def.generic_cost_reduction.is_none()
+        && def.ward_cost.is_none()
+        && def.equipment.is_none()
+        && def.starting_loyalty.is_none()
+        && def.enters_with_plus_one_counters.is_none()
+        && def.controlled_counter_keyword.is_none()
+        && def.alt_cost.is_none()
+        && def.kicker_cost.is_none()
+        && def.additional_cost.is_none()
+        && def.flashback.is_none()
+        && def.plot_cost.is_none()
+        && def.madness_cost.is_none()
+        && def.mode2.is_none()
+        && def.mode3.is_none()
+        && def.kicked_target_spec.is_none()
+        && def.escape.is_none()
+        && def.mana_ability_def.is_none()
+        && def.omen.is_none()
+        && def.as_enters_choose_color_other_than.is_none()
+        && def.enters_battlefield_tapped_unless.is_none()
+        && def.attachment.is_none()
+        && def.transform_face.is_none()
+        && def.saga.is_none()
+        && def.optional_additional_cost.is_none()
+        && def.bestow.is_none()
+        && def.adventure.is_none()
+        && def.conditional_tap_yield.is_none()
+        && def.enters_tapped_unless_controller.is_none()
+        && def.animation.is_none()
+}
+
 pub(crate) fn owns_spell(state: &GameState, item: &StackItem) -> bool {
     item.kind == StackItemKind::Spell
         && item.inline_effect.is_none()
@@ -66,7 +155,24 @@ pub(crate) fn execute(state: &mut GameState, ctx: &ExecCtx) {
     {
         return;
     }
-    crate::standard_cards_v1::create_token_copy(state, *object, ctx.controller);
+    match copiable_values(state, *object) {
+        CopyTokenValuesV1::AnonymousFaceDown => {
+            let blueprint = crate::card_def::card_id_by_name(ANONYMOUS_BLUEPRINT).expect(
+                "Self-Reflection admission requires its anonymous internal token blueprint",
+            );
+            assert!(anonymous_blueprint_is_exact(blueprint));
+            // Initialization, replacements and ETB observers see only the
+            // neutral definition. This token enters face up; no hidden card
+            // identity or face-up permission is copied into its object state.
+            crate::event::propose_and_commit(
+                state,
+                crate::event::ProposedEvent::create_token(blueprint, ctx.controller),
+            );
+        }
+        CopyTokenValuesV1::Definition { .. } => {
+            crate::standard_cards_v1::create_token_copy(state, *object, ctx.controller);
+        }
+    }
 }
 
 #[cfg(test)]

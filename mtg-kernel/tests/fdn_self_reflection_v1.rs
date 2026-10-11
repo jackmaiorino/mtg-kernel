@@ -100,6 +100,106 @@ fn finalize(state: &mut GameState, target: ObjectId) {
     engine::step(state, Action::ChooseTarget(Target::Object(target))).unwrap();
     assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
 }
+#[test]
+fn actual_copy_of_hidden_creature_uses_neutral_pre_entry_definition_and_public_name_both_seats() {
+    let neutral = card_id_by_name("Nameless Creature Copy Token")
+        .expect("future internal blueprint admission with actual Self-Reflection");
+    let def = &CARD_DEFS[neutral as usize];
+    assert!(def.object_name.is_empty());
+    assert_eq!(def.types, [mtg_kernel::card_def::CardType::Creature]);
+    assert!(def.subtypes.is_empty() && def.supertypes.is_empty() && def.colors.is_empty());
+    assert!(def.cost.pips.is_empty());
+    assert_eq!(
+        (def.cost.generic, def.cost.x_count, def.mana_value),
+        (0, 0, 0)
+    );
+    assert_eq!((def.power, def.toughness), (Some(2), Some(2)));
+    assert!(def.keywords == Keywords::NONE && def.activated_abilities.is_empty());
+    assert!(mtg_kernel::trigger::triggers_for(neutral).is_empty());
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for hidden_name in ["Healer of the Glade", "Llanowar Elves"] {
+            let mut state = ready(actor);
+            let target = put(&mut state, actor, hidden_name, Zone::Hand);
+            // Accepted hidden-object primitive stand-in: FDN has no admitted
+            // printed face-down producer. Set characteristics before real entry
+            // observation and copy casting; do not claim the producer's text.
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(target, Zone::Battlefield),
+            );
+            state.objects.get_mut(target).v4.face_down_v1 = Some(mtg_kernel::state::FaceDownV1 {
+                disguised: true,
+                lookers: 1 << actor.index(),
+                hidden_by: None,
+                hidden_by_source: None,
+            });
+            settle(&mut state);
+            let life_before = [state.players[0].life, state.players[1].life];
+            let source = begin(&mut state, actor, false);
+            finalize(&mut state, target);
+            let start = state.engine.event_history.len();
+            let mut restored = restore(&state);
+            for current in [&mut state, &mut restored] {
+                settle(current);
+                let entries: Vec<_> = current.engine.event_history[start..]
+                    .iter()
+                    .filter_map(|event| {
+                        if let mtg_kernel::event::CommittedEvent::CreateToken {
+                            object,
+                            token_def,
+                            controller,
+                        } = event
+                        {
+                            Some((*object, *token_def, *controller))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                assert_eq!(entries.len(), 1);
+                let (token, entry_def, controller) = entries[0];
+                assert_eq!(
+                    (entry_def, controller),
+                    (neutral, actor),
+                    "actual ETB sees neutral definition"
+                );
+                let live = current.objects.get(token);
+                assert_eq!(live.card_def, neutral);
+                assert_ne!(live.card_def, current.objects.get(target).card_def);
+                assert!(live.name.is_empty() && live.v4.face_down_v1.is_none());
+                assert!(live.v4.is_token && live.summoning_sick);
+                assert_eq!((live.owner, live.controller), (actor, actor));
+                assert_eq!(live.v4.ward_generic, 0);
+                assert_eq!(engine::effective_name(current, token), "");
+                assert_eq!(engine::effective_power(current, token), 2);
+                assert_eq!(engine::effective_toughness(current, token), 2);
+                assert_eq!(
+                    [current.players[0].life, current.players[1].life],
+                    life_before,
+                    "hidden printed Healer ETB must not be copied"
+                );
+                assert_eq!(current.objects.get(source).zone, Zone::Graveyard);
+                for viewer in [actor, actor.opponent()] {
+                    let observation = mtg_kernel::rl::observe_v1(current, viewer, 0).unwrap();
+                    let public = observation.projection.battlefield[actor.index()]
+                        .iter()
+                        .find(|card| card.stable.arena_id == token.0)
+                        .unwrap();
+                    assert_eq!(public.stable.card_db_id, neutral);
+                    assert!(public.card_name.is_empty());
+                    let dto = serde_json::to_string(public).unwrap();
+                    assert!(
+                        !dto.contains(hidden_name) && !dto.contains("Nameless Creature Copy Token")
+                    );
+                }
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&restored).unwrap()
+            );
+        }
+    }
+}
 fn transfer(state: &mut GameState, object: ObjectId, controller: PlayerId) {
     let former = state.objects.get(object).controller;
     state.players[former.index()]

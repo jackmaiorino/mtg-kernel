@@ -4408,6 +4408,7 @@ fn additional_mana_abilities_for(name: &str) -> String {
 
 fn object_name_for(name: &str) -> &str {
     match name {
+        "Nameless Creature Copy Token" => "",
         "Monster Role Token" => "Monster",
         "Sacred Cat Embalmed Token" => "Sacred Cat",
         "Homunculus Horde Token" => "Homunculus Horde",

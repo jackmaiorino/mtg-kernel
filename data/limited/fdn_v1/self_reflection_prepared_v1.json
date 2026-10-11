@@ -12,6 +12,7 @@
   "target": "ControlledCreature",
   "effect": "CreateControlledCreatureTargetCopyV1",
   "flashback": "{3}{U}",
+  "internal_runtime_dependency": "self_reflection_internal_token_prepared_v1.json; neutral blueprint unregistered, no ID",
   "registration": "absent",
   "qualification": "native and printed gameplay unrun",
   "disposition": "documentation only, not registry input; precise copy meaning and public/Human/model admission remain separate"
