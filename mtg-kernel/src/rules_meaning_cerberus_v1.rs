@@ -1,6 +1,6 @@
 //! Selected printed rules; separate from public, Human and model admission.
 use crate::card_def::{CardType, Keywords, Subtype, CARD_DEFS};
-use crate::effect::{EffectCond, EffectOp};
+use crate::effect::{EffectCond, EffectOp, ObjectRef};
 use crate::mana::{Cost, ManaColor, Pip};
 use crate::state::Zone;
 use crate::trigger::TriggerCondition;
@@ -128,7 +128,11 @@ pub fn meaning(selector: &SelectorV1, card_id: u16, root: RootV1) -> Result<Mean
         || def.subtypes != [Subtype::Dog]
         || (def.power, def.toughness) != (Some(4), Some(2))
         || def.keywords != Keywords::NONE
-        || (def.spell_effect)().is_some()
+        || (def.spell_effect)()
+            != Some(EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            })
         || !def.activated_abilities.is_empty()
         || triggers.len() != 1
         || triggers[0].condition != TriggerCondition::BeginningAnyEndStepIfCreatureDied
