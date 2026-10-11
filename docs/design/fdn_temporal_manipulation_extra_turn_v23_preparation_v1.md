@@ -1,6 +1,6 @@
 # Temporal Manipulation and ExtraTurn V23 source preparation
 
-This is unregistered source preparation at issue #110. Temporal Manipulation has no catalog ID, profile, native qualification, model or sampler admission in this branch. The external frozen 286-name input and 24-deck input are unchanged. Native compilation and all prepared games are unrun.
+This is unregistered source preparation at issue #110. Temporal Manipulation has no catalog ID, profile, native qualification, model or sampler admission in this branch. The external frozen 286-name input and 24 external token dependencies are unchanged. Native compilation and all prepared games are unrun.
 
 Printed authority is XMage `a5c90fe180021e70e2a644ade00eeab07f857a40`, `Mage.Sets/src/mage/cards/t/TemporalManipulation.java`: {3}{U}{U}, sorcery, “Take an extra turn after this one.” Its `AddExtraTurnControllerEffect` schedules the captured controller; `Mage/src/main/java/mage/game/turn/TurnMods.java::useNextExtraTurn` consumes the newest extra turn first. This is CR 500.7 order. There are no targets or flashback text. Ordinary accepted casting permissions and cost reducers still use the existing cast/payment validator.
 
