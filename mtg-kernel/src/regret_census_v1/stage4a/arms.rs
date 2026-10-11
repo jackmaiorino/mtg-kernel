@@ -687,7 +687,10 @@ impl Roles {
         mut capture: Option<&mut Capture>,
         diag: &mut SearchDiag,
     ) -> Result<(Vec<(Key, usize)>, Vec<(Key, Node)>, End), PlayErr> {
-        if ctx.key_mode != KeyMode::Legacy && (retain > 1 || capture.is_some()) {
+        let capturing = capture
+            .as_deref()
+            .is_some_and(|c| !c.keys.is_empty() || c.all_up_to > 0 || !c.snapshot_sims.is_empty());
+        if ctx.key_mode != KeyMode::Legacy && (retain > 1 || capturing) {
             return Err(PlayErr::Fault(
                 "depth retention and capture use legacy keys only".into(),
             ));
