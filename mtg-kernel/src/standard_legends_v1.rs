@@ -84,9 +84,12 @@ pub(crate) fn execute(op: LegendEffectV1, ctx: &ExecCtx, state: &mut GameState) 
             }) {
                 crate::event::add_plus_one_counters(state, ctx.source, ctx.controller, 1)
                     .expect("live Gwenna");
-                crate::event::propose_and_commit(
+                crate::effect::execute(
+                    &EffectOp::UntapObject {
+                        object: crate::effect::ObjectRef::ThisSource,
+                    },
+                    ctx,
                     state,
-                    crate::event::ProposedEvent::untap(ctx.source),
                 );
             }
         }

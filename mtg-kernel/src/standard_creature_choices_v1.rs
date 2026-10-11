@@ -2,7 +2,7 @@
 use crate::card_def::TargetSpec;
 use crate::effect::{EffectOp, ExecCtx, ObjectRef, PlayerRef};
 use crate::mana::ManaColor;
-use crate::state::{GameState, Target, Zone};
+use crate::state::{GameState, Target};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

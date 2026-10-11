@@ -1,6 +1,6 @@
 //! Resumable legend choices within one simultaneous state-based-action pass.
 
-use crate::card_def::{self, AttachmentDef, CardType, Keywords, Supertype};
+use crate::card_def::{self, CardType, Keywords, Supertype};
 use crate::engine::{self, Decision};
 use crate::event::{self, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};

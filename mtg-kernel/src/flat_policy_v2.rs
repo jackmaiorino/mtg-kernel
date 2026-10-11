@@ -1888,8 +1888,19 @@ impl FlatDecisionEncoderV2 {
                 .surface
                 .exile_play_permissions
                 .iter()
-                .any(|permission| permission.without_mana_cost.0)
+                .any(|permission| {
+                    permission.without_mana_cost.0
+                        || matches!(
+                            permission.expiry,
+                            PlayPermissionExpiryV2::UntilHoldersNextEndStep
+                        )
+                })
             || observation.projection.restricted_mana.is_some()
+            || observation.projection.surface.stack.iter().any(|item| {
+                item.granted_ability.is_some()
+                    || item.counter_distribution.is_some()
+                    || item.counter_transfer.is_some()
+            })
             || observation
                 .projection
                 .surface

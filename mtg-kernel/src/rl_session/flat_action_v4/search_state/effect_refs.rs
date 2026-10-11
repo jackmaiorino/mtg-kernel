@@ -836,8 +836,10 @@ fn continuation_conflicts(
         let guard_conflicts = match g {
             StandardSelection { frame } => s.f(frame),
             CreatureChoiceV1 {
-                remaining_frames, ..
-            } => s.fs(remaining_frames),
+                kind,
+                remaining_frames,
+                ..
+            } => s.creature_choice(kind) || s.fs(remaining_frames),
             OwnerLibrarySecondOrBottom { frame }
             | CounterUnlessPaysGeneric { frame }
             | CounterTargetUnlessPaysGeneric { frame }
@@ -961,6 +963,7 @@ pub(super) fn conflicts(
             | Tap { object }
             | CreateToken { object, .. }
             | Sacrificed { object, .. }
+            | TurnedFaceUp { object, .. }
             | Transformed { object, .. } => s.raw(*object),
             PlusOneCountersAdded { object, .. }
             | PrintedAbilitiesRemovedBeforeZoneChange { object, .. }

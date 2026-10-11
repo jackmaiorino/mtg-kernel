@@ -2688,7 +2688,6 @@ fn controlled_classes_at(state: &GameState, player: PlayerId, name: &str, level:
 /// permanent or player, put twice that many of each of those kinds of
 /// counters on that permanent or player instead." Each such Class doubles
 /// again (616.1).
-#[cfg(feature = "standard-magezero-fixtures")]
 pub(crate) fn scale_counters(state: &GameState, player: PlayerId, count: i32) -> i32 {
     if count <= 0 {
         return count;
@@ -3458,6 +3457,7 @@ fn exile_top_five_may_cast_one(state: &mut GameState, player: PlayerId) {
             .exile_play_permissions
             .push(crate::engine::PlayPermission {
                 object: top,
+                without_mana_cost: Default::default(),
                 holder: player,
                 zone_change_generation: zone_change_count,
                 play_or_cast: crate::engine::PlayOrCast::Cast,

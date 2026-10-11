@@ -2470,6 +2470,8 @@ pub enum EffectOptionChoicePurpose {
     /// (`StandardOpV1::ChooseTwoManaInAnyCombination`).
     StandardManaCombinationV1 {
         player: PlayerId,
+        canonical_path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
     },
     PayGenericDrawV1 {
         maximum: u16,
@@ -7116,7 +7118,7 @@ fn standard_copy_target_candidate(state: &GameState, target: Target) -> EffectTa
                     expected_zone_change_count: live.zone_change_count,
                 })
             }
-            Target::Player(_) => None,
+            Target::Player(_) | Target::StackItem(_) => None,
         },
     }
 }
@@ -17879,7 +17881,6 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             if until_leaves && !source_is_live {
                 return;
             }
-            let target_card_def = state.objects.get(object).card_def;
             let target_owner = state.objects.get(object).owner;
             event::propose_and_commit(
                 state,

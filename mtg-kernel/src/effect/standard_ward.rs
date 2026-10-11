@@ -185,7 +185,7 @@ pub(super) fn resolve_payment(
         if !selected.is_empty() {
             return Err("declined Ward payment contains cards".into());
         }
-        return crate::engine::counter_stack_item_by_id(state, id);
+        return crate::engine::counter_stack_item_by_id(state, id).map(|_| ());
     }
     match *choice.root {
         EffectOp::CounterUnlessPaysLife { life, .. } if selected.is_empty() => {

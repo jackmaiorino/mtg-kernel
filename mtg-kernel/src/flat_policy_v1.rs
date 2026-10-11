@@ -1700,8 +1700,19 @@ impl FlatDecisionEncoderV1 {
                 .surface
                 .exile_play_permissions
                 .iter()
-                .any(|permission| permission.without_mana_cost.0)
+                .any(|permission| {
+                    permission.without_mana_cost.0
+                        || matches!(
+                            permission.expiry,
+                            PlayPermissionExpiryV2::UntilHoldersNextEndStep
+                        )
+                })
             || observation.projection.restricted_mana.is_some()
+            || observation.projection.surface.stack.iter().any(|item| {
+                item.granted_ability.is_some()
+                    || item.counter_distribution.is_some()
+                    || item.counter_transfer.is_some()
+            })
             || observation
                 .projection
                 .surface
@@ -2508,6 +2519,7 @@ impl FlatDecisionEncoderV1 {
     ) -> FlatPermissionRelationDataV1 {
         let (expiry, holder_turn_started) = match permission.expiry {
             PlayPermissionExpiryV2::EndOfTurn => (0, false),
+            PlayPermissionExpiryV2::UntilHoldersNextEndStep => (2, false),
             PlayPermissionExpiryV2::UntilHoldersNextTurn {
                 holder_turn_started,
             } => (1, holder_turn_started),
