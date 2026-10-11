@@ -3384,6 +3384,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         mode2: None,
     };
     Some(match name {
+        "Stroke of Midnight" => program(
+            "NonlandPermanent",
+            "DestroyObjectThenCreateTokens(Target0,currentTargetController,captureBeforeDestruction,HumanToken,1,createEvenIfIndestructible,exactIncarnation)",
+            "EffectOp::DestroyObjectThenCreateTokens { object: ObjectRef::Target(0), token_def: crate::card_def::card_id_by_name(\"Human Token\").expect(\"Human Token in CARD_DEFS\"), count: 1 }",
+        ),
         "Rise of the Dark Realms" => program(
             "None",
             "ReturnAllGraveyardCreaturesUnderController(allGraveyards,cardsOnly,simultaneous,retainOwners)",
@@ -3661,6 +3666,7 @@ fn program_target_spec_src(target: &str) -> &'static str {
         "TargetOpponent" => "TargetSpec::TargetOpponent",
         "Creature" => "TargetSpec::Creature",
         "ControlledCreature" => "TargetSpec::ControlledCreature",
+        "NonlandPermanent" => "TargetSpec::NonlandPermanent",
         "ArtifactPermanent" => "TargetSpec::ArtifactPermanent",
         "CreatureOrPlaneswalker" => "TargetSpec::CreatureOrPlaneswalker",
         "ArtifactEnchantmentOrFlyingCreature" => "TargetSpec::ArtifactEnchantmentOrFlyingCreature",
