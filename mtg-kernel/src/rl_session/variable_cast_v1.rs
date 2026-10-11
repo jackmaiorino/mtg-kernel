@@ -558,6 +558,26 @@ mod tests {
             let expected = request(&original, |semantic| {
                 matches!(semantic, A::FinishVariableCastTargets { .. })
             });
+            let (_, _, origin) = original.rebuild().unwrap();
+            let mut private_first = original.state.clone();
+            let mut private_second = original.state.clone();
+            put(&mut private_first, actor, "Snap", Zone::Hand);
+            put(&mut private_second, actor, "Lightning Bolt", Zone::Hand);
+            let observer_view = |state| {
+                observe_policy_variable_cast_v1(
+                    state,
+                    &original.surface,
+                    actor.opponent(),
+                    &origin,
+                    original.step,
+                    original.physical_decision,
+                )
+                .unwrap()
+            };
+            let first = observer_view(&private_first);
+            assert!(first.variable_cast.is_none());
+            assert!(first.known_hand_cards[actor.index()].is_empty());
+            assert_eq!(first, observer_view(&private_second));
             for mutation in 0..6 {
                 let mut session = original.clone();
                 let pending = session.state.engine.pending_cast.as_mut().unwrap();
