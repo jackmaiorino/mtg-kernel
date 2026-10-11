@@ -4368,6 +4368,8 @@ fn has_activated_mana_ability(card: &CardJson) -> bool {
 /// additional rich definition, leaving its free colorless ability primary.
 fn primary_mana_ability_colors(card: &CardJson) -> Vec<&str> {
     match card.name.as_str() {
+        // One action identifies the whole simultaneous bundle, not a color choice.
+        "Bloom Tender" => vec!["G"],
         "Citadel Gate" => vec!["W"],
         "Sea Gate" => vec!["U"],
         "Heap Gate" => vec!["C"],
@@ -4506,6 +4508,7 @@ fn conditional_tap_yield_program_for(name: &str) -> Option<&'static str> {
 /// source fragment is included in the card-database identity below.
 fn mana_ability_def_for(name: &str) -> &'static str {
     match name {
+        "Bloom Tender" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::EachControlledPermanentColor, controller_damage: 0, max_activations_per_turn: None })",
         "Elves of Deep Shadow" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 1, max_activations_per_turn: None })",
         "Lotus Petal" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::SacrificeSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
         "Overgrown Battlement" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::ControlledCreaturesWithKeyword(Keywords::DEFENDER), controller_damage: 0, max_activations_per_turn: None })",

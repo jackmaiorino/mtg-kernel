@@ -37,6 +37,7 @@ use sha2::{Digest, Sha256};
 use std::fmt;
 
 pub(crate) mod authority_v17;
+mod bloom_tender_v24;
 pub mod census_future_v2;
 pub(crate) mod cerberus_v19;
 pub(crate) mod employment_v18;

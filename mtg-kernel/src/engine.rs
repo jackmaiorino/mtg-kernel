@@ -8062,6 +8062,9 @@ fn rich_mana_ability_amount(
         ManaAbilityAmountDef::Dynamic(value) => evaluate_dynamic_value(state, value, player)
             .try_into()
             .map_err(|_| "mana ability amount exceeds u8".to_string()),
+        ManaAbilityAmountDef::EachControlledPermanentColor => {
+            Err("multi-color mana must use its bundle path".into())
+        }
     }
 }
 
@@ -8162,6 +8165,15 @@ pub(crate) fn available_mana_ability_choices_into(
     let Some(def) = card_def::CARD_DEFS.get(object.card_def as usize) else {
         return;
     };
+    if def
+        .mana_ability_def
+        .is_some_and(|ability| ability.amount == ManaAbilityAmountDef::EachControlledPermanentColor)
+        && !crate::standard_legends_v1::katilda_mana_colors(state, source).is_empty()
+    {
+        // The old source/color action cannot distinguish overlapping printed
+        // and granted mana abilities. Do not substitute the granted one.
+        return;
+    }
     if !(object.tapped || creature_summoning_sick(state, source, def)) {
         for color in crate::standard_legends_v1::katilda_mana_colors(state, source) {
             out.push(color);
@@ -8184,14 +8196,24 @@ pub(crate) fn available_mana_ability_choices_into(
     if primary_payable {
         for &color in primary.as_slice() {
             if let Some(rich) = def.mana_ability_def {
-                let Ok(amount) = rich_mana_ability_amount(rich.amount, player, state) else {
-                    continue;
-                };
-                if state.players[player.index()].mana_pool[color.pool_index()]
-                    .checked_add(amount)
-                    .is_none()
-                {
-                    continue;
+                if rich.amount == ManaAbilityAmountDef::EachControlledPermanentColor {
+                    if rich.cost != ManaAbilityCostDef::TapSelf
+                        || rich.controller_damage != 0
+                        || rich.max_activations_per_turn.is_some()
+                        || !crate::bloom_tender_mana_v1::fits(state, player)
+                    {
+                        continue;
+                    }
+                } else {
+                    let Ok(amount) = rich_mana_ability_amount(rich.amount, player, state) else {
+                        continue;
+                    };
+                    if state.players[player.index()].mana_pool[color.pool_index()]
+                        .checked_add(amount)
+                        .is_none()
+                    {
+                        continue;
+                    }
                 }
             }
             if !out.contains(color) {
@@ -8483,7 +8505,27 @@ fn activate_mana_ability_for(
             })
             .transpose()?;
 
-        let amount = rich_mana_ability_amount(rich.amount, player, state)?;
+        let bundle = if rich.amount == ManaAbilityAmountDef::EachControlledPermanentColor {
+            if additional.is_some()
+                || rich.cost != ManaAbilityCostDef::TapSelf
+                || rich.controller_damage != 0
+                || rich.max_activations_per_turn.is_some()
+            {
+                return Err("multi-color mana requires its pure primary tap recipe".into());
+            }
+            let colors = crate::bloom_tender_mana_v1::colors(state, player);
+            if !crate::bloom_tender_mana_v1::fits(state, player) {
+                return Err("mana bundle exceeds the pool capacity".into());
+            }
+            Some(colors)
+        } else {
+            None
+        };
+        let amount = if bundle.is_some() {
+            0
+        } else {
+            rich_mana_ability_amount(rich.amount, player, state)?
+        };
 
         // Refuse an unrepresentable result before tapping, sacrificing, paying
         // or recording an activation. Rich dynamic sources can produce more
@@ -8532,7 +8574,11 @@ fn activate_mana_ability_for(
             }
             ManaAbilityCostDef::None => {}
         }
-        if amount > 0 {
+        if let Some(colors) = bundle {
+            if !colors.is_empty() {
+                event::propose_and_commit(state, ProposedEvent::mana_add(player, colors));
+            }
+        } else if amount > 0 {
             event::propose_and_commit(
                 state,
                 ProposedEvent::mana_add(player, vec![choice; usize::from(amount)]),
