@@ -23,9 +23,11 @@
 
 mod arms;
 mod bank;
+mod bank_trace;
 mod diag;
 mod labels;
 mod play;
+mod refresh;
 mod replay_labels;
 mod seeds;
 mod tree;
@@ -51,7 +53,14 @@ use std::time::Instant;
 pub(super) fn is_mode(mode: &str) -> bool {
     matches!(
         mode,
-        "s4a-corpus" | "s4a-run" | "s4a-diag" | "s4a-bank" | "s4a-bank-parity" | "s4a-label-replay"
+        "s4a-corpus"
+            | "s4a-run"
+            | "s4a-diag"
+            | "s4a-bank"
+            | "s4a-bank-parity"
+            | "s4a-label-replay"
+            | "s4a-bank-trace"
+            | "s4a-refresh"
     )
 }
 
@@ -891,6 +900,73 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         prior: world::DeckPrior::new(&cfg.decks),
         limits: parse_limits()?,
     };
+    if cfg.mode == "s4a-refresh" {
+        sh.spec.validate()?;
+        let binding = bank::bank_binding(policy, &sh)?;
+        // Cases: REFRESH_CASES lists source ids; this process plays cases
+        // [first_game, first_game + games). REFRESH_PARITY=1 plays the
+        // 512,000-at-anchor parity arm instead of R and S128.
+        let path = std::env::var("REFRESH_CASES").map_err(|_| "REFRESH_CASES is required")?;
+        let ids: Vec<String> = std::fs::read_to_string(&path)
+            .map_err(|e| format!("{path}: {e}"))?
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_owned)
+            .collect();
+        let parity = std::env::var("REFRESH_PARITY").is_ok_and(|v| v == "1");
+        let first = cfg.first_game as usize;
+        let end = (first + cfg.games as usize).min(ids.len());
+        let mut out = String::new();
+        for id in &ids[first..end] {
+            let src = sh
+                .spec
+                .sources
+                .iter()
+                .find(|s| &s.id == id)
+                .ok_or_else(|| format!("unknown case {id}"))?;
+            // A worker thread with a large stack, as the bank's workers run
+            // (the main thread's default stack overflowed here).
+            let row = std::thread::scope(|scope| {
+                std::thread::Builder::new()
+                    .stack_size(256 << 20)
+                    .spawn_scoped(scope, || {
+                        refresh::source_arms(&sh, policy, src, parity, &binding)
+                    })
+                    .map_err(|e| e.to_string())?
+                    .join()
+                    .map_err(|_| "refresh worker panicked".to_owned())?
+            })
+            .unwrap_or_else(|e| json!({"kind":"error","id":id,"error":e}));
+            out.push_str(&format!(
+                "{row}
+"
+            ));
+        }
+        return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
+    }
+    if cfg.mode == "s4a-bank-trace" {
+        sh.spec.validate()?;
+        let binding = bank::bank_binding(policy, &sh)?;
+        let id = std::env::var("BANK_TRACE_ID").map_err(|_| "BANK_TRACE_ID is required")?;
+        let src = sh
+            .spec
+            .sources
+            .iter()
+            .find(|s| s.id == id)
+            .ok_or("unknown BANK_TRACE_ID")?
+            .clone();
+        let mut roles = bank::bank_roles(policy, &sh.opponents)?;
+        let row = bank_trace::trace_source(&sh, &mut roles, &src, &binding)?;
+        return std::fs::write(
+            &cfg.out,
+            format!(
+                "{row}
+"
+            ),
+        )
+        .map_err(|e| e.to_string());
+    }
     bank::run_bank(cfg, policy, sh)
 }
 
@@ -935,7 +1011,7 @@ fn run_bank_parity(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<
 
 pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(), String> {
     match cfg.mode.as_str() {
-        "s4a-bank" => return run_bank_mode(cfg, policy),
+        "s4a-bank" | "s4a-bank-trace" | "s4a-refresh" => return run_bank_mode(cfg, policy),
         "s4a-bank-parity" => return run_bank_parity(cfg, policy),
         "s4a-label-replay" => return replay_labels::run(cfg),
         _ => {}

@@ -40,6 +40,7 @@ import nine_deck_baseline_v1 as ndb
 
 SCHEMA = "nine-deck-baseline-v1/exposure-block"
 ROW_SCHEMA = "nine-deck-baseline-v1/episode-row"
+INPUT_SCHEMA = "nine-deck-baseline-v1/validated-exposure-inputs"
 SPY, CAWGATES = 4, 7
 SEVEN = (0, 1, 2, 3, 5, 6, 8)
 MAX_DISCARD_RATE = 0.05
@@ -57,6 +58,32 @@ def read_bytes_pinned(pin: dict) -> bytes:
 
 def read_json_pinned(pin: dict):
     return json.loads(read_bytes_pinned(pin))
+
+
+def exposure_projection(trajectory: dict) -> dict:
+    """Keep precisely the trajectory fields consumed by episode_row.
+
+    Called only after the complete trajectory bytes have been SHA-validated
+    and parsed. These are derived inputs, never a substitute for a source pin.
+    """
+    result = {key: trajectory[key] for key in ("episode", "terminal") if key in trajectory}
+    if "decisions" in trajectory:
+        result["decisions"] = [{key: row[key] for key in ("actor", "physical_decision_id") if key in row}
+                               for row in trajectory["decisions"]]
+    if "seat_behaviors" in trajectory:
+        result["seat_behaviors"] = trajectory["seat_behaviors"]
+    return result
+
+
+def read_projected_trajectory(pin: dict, cached: dict) -> dict:
+    """Revalidate source bytes on every use, including same-stat replacement."""
+    if cached["source"] != pin:
+        raise ValueError("exposure projection source pin differs")
+    with Path(pin["path"]).open("rb") as stream:
+        actual = hashlib.file_digest(stream, "sha256").hexdigest()
+    if actual != pin["sha256"]:
+        raise ValueError(f"pinned file changed: {pin['path']}")
+    return cached["trajectory"]
 
 
 def derived_retry_seed(episode_id: str, original_seed: int, retry_index: int) -> int:
@@ -121,7 +148,8 @@ def episode_row(trajectory: dict, pin: dict, scheduled: dict, ledgered: list[dic
             "trajectory_sha256": pin["sha256"]}
 
 
-def collect(run: str, block: int, native: Path, decks_path: Path, out: Path) -> dict:
+def collect(run: str, block: int, native: Path, decks_path: Path, out: Path,
+            exposure_inputs: dict | None = None) -> dict:
     native = Path(native)
     decks = ndb.load_decks(decks_path)
     manifest = json.loads((native / "run.json").read_bytes())
@@ -133,6 +161,14 @@ def collect(run: str, block: int, native: Path, decks_path: Path, out: Path) -> 
     completion = json.loads((native / "completion.json").read_bytes())
     if not completion["complete"] or completion["completed_iterations"] != ndb.UPDATES_PER_BLOCK:
         raise ValueError("block is not complete")
+    projections = None
+    if exposure_inputs is not None:
+        # The caller supplies the immutable pin from the dispatch report. A
+        # path discovered on disk, an unpinned file or a stat cache is insufficient.
+        cached = read_json_pinned(exposure_inputs)
+        if cached["schema"] != INPUT_SCHEMA or len(cached["iterations"]) != len(completion["iterations"]):
+            raise ValueError("exposure projection coverage differs")
+        projections = cached["iterations"]
     keep = set(retained_updates(run, block))
     rows, ledger_rows, updates = [], [], []
     for iteration, item in enumerate(completion["iterations"]):
@@ -151,12 +187,15 @@ def collect(run: str, block: int, native: Path, decks_path: Path, out: Path) -> 
         scheduled = config["iterations"][iteration]["episodes"]
         if len(collection["trajectories"]) != len(scheduled):
             raise ValueError(f"iteration {iteration} trajectory count differs from schedule")
+        if projections is not None and len(projections[iteration]) != len(scheduled):
+            raise ValueError(f"iteration {iteration} exposure projection coverage differs")
         substeps = 0
         for slot, pin in enumerate(collection["trajectories"]):
             entries = sorted(by_slot.get(slot, []), key=lambda entry: entry["attempt"])
             if [entry["attempt"] for entry in entries] != list(range(1, len(entries) + 1)):
                 raise ValueError(f"ledger attempts of slot {iteration}/{slot} are not contiguous")
-            trajectory = json.loads(read_bytes_pinned(pin))
+            trajectory = (read_json_pinned(pin) if projections is None else
+                          read_projected_trajectory(pin, projections[iteration][slot]))
             row = episode_row(trajectory, pin, scheduled[slot]["episode"], entries, run, block, iteration, slot,
                               scheduled[slot]["opponent"])
             if row["terminal_classification"] != "natural":

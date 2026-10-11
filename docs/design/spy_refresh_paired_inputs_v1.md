@@ -1,0 +1,11 @@
+# Refresh paired-input delivery repair
+
+The refresh and trace modes now reuse the existing bank-spec validation and actual policy/input binding. New rows retain the source seed, starting player, deck/opponent metadata, rules, selection rule, limits, complete source-action hash/counts and the selected anchor's index, physical decision, menu, observation and state hashes. These witnesses do not affect policy choices or search allocation.
+
+Analysis requires one explicit `--binding LINEAGE=SHA256` per lineage from the owner's frozen qualification manifest for the actual current inputs. The existing bank binding includes the compiled build, so a current binding cannot be compared with an older stopped-bank binding. Do not infer an expected binding from candidate rows. The older bank remains the authority for the paired source and anchor witnesses; new rows must match those fields exactly. Missing witnesses are an input refusal.
+
+Duplicate, unknown and error rows refuse analysis. Mismatched paired identities, invalid or nonnatural guides, changed allocation, inconsistent transition ledgers and unequal R/S128 anchor searches are reported as invalid pairs and cannot advance. Missing cases remain incomplete. The analysis never replaces an earlier failed row with a later successful row.
+
+The completed historical pilot at fc12a5c0 and its stopped banks, rows, PLAN, MANIFEST, REPORT and qualification receipts remain unchanged. They are historical evidence, not execution of this repaired serializer or validation under its stronger input requirements. This change grants no new pilot, bank reconstruction, scoring, training or paid execution. Any new runtime qualification follows the owner's existing authority and guarded resource admission.
+
+Delivery validation: six pure Python checks exercise authentic complete input, missing cases, invalid/error replacement attempts, unknown IDs, missing expected bindings, source/anchor/checkpoint identity mismatches, numeric type mismatches, nonnatural outcomes, altered budgets and unequal shared anchor searches. Pinned Rust formatting and diff checks pass. Current-head Rust execution remains pending; the two native fixture tests are ignored by ordinary test runs and require an actual qualification receipt before being called passed.
