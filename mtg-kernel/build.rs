@@ -3980,7 +3980,9 @@ fn keywords_for(card: &CardJson) -> String {
         | "Felidar Savior"
         | "Sun-Blessed Healer" => keywords.push("Keywords::LIFELINK"),
         "Guardian of the Guildpact" => keywords.push("Keywords::PROTECTION_FROM_MONOCOLORED"),
-        "Brazen Scourge" | "Fanatical Firebrand" => keywords.push("Keywords::HASTE"),
+        "Brazen Scourge" | "Fanatical Firebrand" | "Ruby, Daring Tracker" => {
+            keywords.push("Keywords::HASTE")
+        }
         "Samurai Token" | "Apothecary Stomper" | "Armasaur Guide" => {
             keywords.push("Keywords::VIGILANCE")
         }
@@ -3988,7 +3990,7 @@ fn keywords_for(card: &CardJson) -> String {
         "Resolute Reinforcements" | "Twinblade Blessing" | "Ambush Wolf" => {
             keywords.push("Keywords::FLASH")
         }
-        "Mischievous Pup" => keywords.push("Keywords::FLASH"),
+        "Mischievous Pup" | "Brineborn Cutthroat" => keywords.push("Keywords::FLASH"),
         "High Fae Trickster" => {
             keywords.push("Keywords::FLYING");
             keywords.push("Keywords::FLASH");
@@ -6179,6 +6181,9 @@ fn delve_for(name: &str) -> bool {
 /// event, target, and effect part of the generated card database identity.
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Brineborn Cutthroat" => "controller_cast_spell_during_opponent_turn:plus_one_counter_on_bound_source:1",
+        "Ruby, Daring Tracker" => "source_attacks_while_controller_has_effective_power_at_least:4:bound_source_pump_until_end_of_turn:2:2",
+        "Courageous Goblin" => "source_attacks_while_controller_has_effective_power_at_least:4:bound_source_pump_until_end_of_turn:1:0:menace_on_exact_trigger_source",
         "Wardens of the Cycle" => "controller_end_step:intervening_if_creature_died_this_turn:mode_at_placement:gain_controller_life:2|draw_controller:1_then_lose_controller_life:1:recheck_morbid_in_each_branch:untargeted",
         "Archmage of Runes" => "cast_instant_or_sorcery:draw_controller:1",
         "Billowing Shriekmass" => "etb:mill_controller_library:3:private_ordering_exact_incarnations",

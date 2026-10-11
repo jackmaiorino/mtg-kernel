@@ -614,6 +614,9 @@ fn power_toughness_changes_keep_their_sign() {
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Archmage of Runes",
+    "Ruby, Daring Tracker",
+    "Courageous Goblin",
+    "Brineborn Cutthroat",
     "Arbiter of Woe",
     "Armasaur Guide",
     "Mischievous Pup",

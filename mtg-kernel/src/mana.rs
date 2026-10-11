@@ -618,6 +618,7 @@ pub fn gather_sources_for_spell(
         // activation cost.
         if crate::engine::object_has_type(state, id, crate::card_def::CardType::Creature)
             && obj.summoning_sick
+            && !crate::engine::has_effective_keyword(state, id, crate::card_def::Keywords::HASTE)
         {
             continue;
         }

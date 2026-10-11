@@ -6718,11 +6718,15 @@ fn rich_mana_ability_is_payable(
     match rich.cost {
         ManaAbilityCostDef::TapSelf | ManaAbilityCostDef::TapAndSacrificeSelf => {
             !(object.tapped
-                || object_has_type(state, source, CardType::Creature) && object.summoning_sick)
+                || (object_has_type(state, source, CardType::Creature)
+                    && object.summoning_sick
+                    && !has_effective_keyword(state, source, Keywords::HASTE)))
         }
         ManaAbilityCostDef::TapSelfPayLife(life) => {
             !(object.tapped
-                || object_has_type(state, source, CardType::Creature) && object.summoning_sick)
+                || (object_has_type(state, source, CardType::Creature)
+                    && object.summoning_sick
+                    && !has_effective_keyword(state, source, Keywords::HASTE)))
                 && mana::life_payment_affordable(
                     i32::from(life),
                     state.players[player.index()].life,
@@ -6736,7 +6740,9 @@ fn rich_mana_ability_is_payable(
             // cheap checks: the flat-encode zero-allocation contract counts
             // on the short-circuit (tests/flat_action_allocation.rs).
             !(object.tapped
-                || object_has_type(state, source, CardType::Creature) && object.summoning_sick
+                || (object_has_type(state, source, CardType::Creature)
+                    && object.summoning_sick
+                    && !has_effective_keyword(state, source, Keywords::HASTE))
                 || mana_ability_cost_targets(player, source, state).is_empty())
         }
     }
@@ -6800,7 +6806,9 @@ pub(crate) fn available_mana_ability_choices_into(
         rich_mana_ability_is_payable(player, source, 0, rich, None, state)
     } else {
         !(object.tapped
-            || object_has_type(state, source, CardType::Creature) && object.summoning_sick)
+            || (object_has_type(state, source, CardType::Creature)
+                && object.summoning_sick
+                && !has_effective_keyword(state, source, Keywords::HASTE)))
     };
     if primary_payable {
         for &color in primary.as_slice() {
@@ -10878,6 +10886,41 @@ fn validate_madness_offer_stack_item(state: &GameState, item: &StackItem) -> Res
     Ok(())
 }
 
+fn validate_bound_trigger_source_objects(
+    effect: &EffectOp,
+    source: ObjectId,
+    source_contract: Option<AbilitySourceContractV4>,
+) -> Result<(), String> {
+    match effect {
+        EffectOp::Sequence(steps) => {
+            for step in steps {
+                validate_bound_trigger_source_objects(step, source, source_contract)?;
+            }
+        }
+        EffectOp::Conditional { then, else_, .. } => {
+            validate_bound_trigger_source_objects(then, source, source_contract)?;
+            validate_bound_trigger_source_objects(else_, source, source_contract)?;
+        }
+        EffectOp::PutPlusOnePlusOneCounterOnBoundObject { object }
+        | EffectOp::BoostBoundObjectUntilEndOfTurn { object, .. }
+        | EffectOp::WarpExileBoundObject { object }
+        | EffectOp::DoublePlusOneCountersOnBoundObject { object }
+        | EffectOp::PutOilCounterOnBoundObject { object } => {
+            let Some(contract) = source_contract else {
+                return Err("bound-source trigger lost its historical source contract".to_string());
+            };
+            if object.object != source
+                || object.expected_zone != contract.zone
+                || object.expected_zone_change_count != contract.zone_change_count
+            {
+                return Err("bound-source trigger changed its exact source binding".to_string());
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn triggered_stack_item_expected_target_spec(
     item: &StackItem,
     state: &GameState,
@@ -10922,20 +10965,7 @@ fn triggered_stack_item_expected_target_spec(
     {
         return Err("attached-source trigger lost its host LKI".to_string());
     }
-    if let EffectOp::PutPlusOnePlusOneCounterOnBoundObject { object }
-    | EffectOp::BoostBoundObjectUntilEndOfTurn { object, .. }
-    | EffectOp::WarpExileBoundObject { object } = inline_effect
-    {
-        let Some(source_contract) = ability_source_contract else {
-            return Err("bound-source trigger lost its historical source contract".to_string());
-        };
-        if object.object != item.source
-            || object.expected_zone != source_contract.zone
-            || object.expected_zone_change_count != source_contract.zone_change_count
-        {
-            return Err("bound-source trigger changed its exact source binding".to_string());
-        }
-    }
+    validate_bound_trigger_source_objects(inline_effect, item.source, ability_source_contract)?;
     if let EffectOp::ResolveInitiativeTrigger { binding } = inline_effect {
         let Some(source_contract) = ability_source_contract else {
             return Err("Initiative trigger lost its historical designation source".to_string());
@@ -16920,6 +16950,77 @@ mod attachment_lki_tests;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn nested_source_bound_trigger_objects_reject_redirected_zone_and_generation_bindings() {
+        let elf = crate::card_def::card_id_by_name("Llanowar Elves").unwrap();
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state =
+                GameState::new_from_libraries(&[elf; 4], &[elf; 4], |_| "elf".into(), 1112);
+            let source = state.players[player.index()].library[0];
+            let other = state.players[player.opponent().index()].library[0];
+            for object in [source, other] {
+                crate::event::propose_and_commit(
+                    &mut state,
+                    crate::event::ProposedEvent::zone_change(object, Zone::Battlefield),
+                );
+            }
+            let contract = AbilitySourceContractV4::capture(&state, source);
+            let binding = crate::effect::EffectObjectBinding {
+                object: source,
+                expected_zone: contract.zone,
+                expected_zone_change_count: contract.zone_change_count,
+            };
+            for conditional in [false, true] {
+                let wrap = |object| {
+                    let leaf = EffectOp::BoostBoundObjectUntilEndOfTurn {
+                        object,
+                        power: 1,
+                        toughness: 0,
+                    };
+                    let nested = if conditional {
+                        EffectOp::Conditional {
+                            cond: crate::effect::EffectCond::SourceStillInTriggerZone,
+                            then: Box::new(leaf),
+                            else_: Box::new(EffectOp::Sequence(vec![])),
+                        }
+                    } else {
+                        leaf
+                    };
+                    EffectOp::Sequence(vec![nested])
+                };
+                assert!(validate_bound_trigger_source_objects(
+                    &wrap(binding),
+                    source,
+                    Some(contract)
+                )
+                .is_ok());
+                for forged in [
+                    crate::effect::EffectObjectBinding {
+                        object: other,
+                        ..binding
+                    },
+                    crate::effect::EffectObjectBinding {
+                        expected_zone: Zone::Graveyard,
+                        ..binding
+                    },
+                    crate::effect::EffectObjectBinding {
+                        expected_zone_change_count: binding.expected_zone_change_count + 1,
+                        ..binding
+                    },
+                ] {
+                    assert!(validate_bound_trigger_source_objects(
+                        &wrap(forged),
+                        source,
+                        Some(contract)
+                    )
+                    .is_err());
+                }
+                assert!(
+                    validate_bound_trigger_source_objects(&wrap(binding), source, None).is_err()
+                );
+            }
+        }
+    }
     use super::*;
     use crate::card_def::card_id_by_name;
     use crate::effect::PlayerRef;
