@@ -778,6 +778,7 @@ pub(super) fn root_arm(
     retain: usize,
     binding: &str,
     opts: &RunOpts,
+    budget: &mut super::identity::Budget,
 ) -> Result<(Value, Vec<Value>), String> {
     let started = Instant::now();
     let src = sh
@@ -831,10 +832,6 @@ pub(super) fn root_arm(
     let mut dump = group_dump(&tree, &cap.created, opts.groups);
     let captured = cap.committed.len();
     dump.extend(capture_dump(&tree, &cap));
-    let mut budget = super::identity::Budget {
-        pairs: PROBE_PAIRS,
-        transitions: PROBE_TRANSITIONS,
-    };
     let share = PROBE_PAIRS / (opts.probe_pairs.len().max(1) as u32);
     for (a, b) in &opts.probe_pairs {
         // An equal share of the shared limits per pair.

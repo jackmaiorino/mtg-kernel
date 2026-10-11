@@ -998,12 +998,24 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         let first = cfg.first_game as usize;
         let end = (first + cfg.games as usize).min(specs.len());
         let (mut out, mut dump) = (String::new(), String::new());
+        let mut probe_budget = identity::Budget {
+            pairs: branch::PROBE_PAIRS,
+            transitions: branch::PROBE_TRANSITIONS,
+        };
         for spec in &specs[first..end] {
             let r = std::thread::scope(|scope| {
                 std::thread::Builder::new()
                     .stack_size(256 << 20)
                     .spawn_scoped(scope, || {
-                        branch::root_arm(&sh, policy, spec, retain, &binding, &opts)
+                        branch::root_arm(
+                            &sh,
+                            policy,
+                            spec,
+                            retain,
+                            &binding,
+                            &opts,
+                            &mut probe_budget,
+                        )
                     })
                     .map_err(|e| e.to_string())?
                     .join()
