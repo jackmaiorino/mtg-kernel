@@ -401,6 +401,117 @@ fn independent_entry_observers_reject_coherent_beneficiary_and_source_rewrites_b
 }
 
 #[test]
+fn simultaneous_observer_and_opposing_creature_entry_uses_pre_entry_static_and_post_entry_trigger()
+{
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for observer_first in [false, true] {
+            for existing_observer in [false, true] {
+                let mut state = ready(actor);
+                if existing_observer {
+                    cast(&mut state, actor, "Authority of the Consuls", ManaColor::W);
+                    settle(&mut state);
+                }
+                let authority = put(&mut state, actor, "Authority of the Consuls", Zone::Hand);
+                let entrant = put(&mut state, actor.opponent(), "Llanowar Elves", Zone::Hand);
+                let observer_entry = ProposedEvent::zone_change(authority, Zone::Battlefield);
+                let creature_entry = ProposedEvent::zone_change(entrant, Zone::Battlefield);
+                event::propose_and_commit_batch(
+                    &mut state,
+                    if observer_first {
+                        vec![observer_entry, creature_entry]
+                    } else {
+                        vec![creature_entry, observer_entry]
+                    },
+                );
+                assert_eq!(state.objects.get(entrant).tapped, existing_observer);
+                let captures = state
+                    .engine
+                    .event_log
+                    .iter()
+                    .filter(|event| {
+                        matches!(event,
+                    CommittedEvent::AuthorityEntryCaptureV1 { capture }
+                    if capture.entrant.object == entrant)
+                    })
+                    .count();
+                assert_eq!(captures, if existing_observer { 2 } else { 1 });
+                let mut replay = restored(&state);
+                for current in [&mut state, &mut replay] {
+                    settle(current);
+                    assert_eq!(
+                        current.players[actor.index()].life,
+                        if existing_observer { 22 } else { 21 }
+                    );
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&replay).unwrap()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn collected_dispatch_deletion_and_resolved_item_replay_refuse_readonly_after_restore() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        cast(&mut state, actor, "Authority of the Consuls", ManaColor::W);
+        settle(&mut state);
+        put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        until_gain(&mut state);
+        let saved_item = state.stack.last().unwrap().clone();
+        let mut omitted = restored(&state);
+        omitted.stack.pop();
+        readonly_pass(&mut omitted);
+        let mut repeated = restored(&omitted);
+        readonly_pass(&mut repeated);
+        settle(&mut state);
+        assert_eq!(state.players[actor.index()].life, 21);
+        assert_eq!(
+            state
+                .engine
+                .event_history
+                .iter()
+                .filter(|event| matches!(event, CommittedEvent::AuthorityEntryCompletedV1 { .. }))
+                .count(),
+            1
+        );
+        for corruption in 0..3 {
+            let mut forged = restored(&state);
+            match corruption {
+                0 => forged.stack.push(saved_item.clone()),
+                1 => forged.engine.event_history.retain(|event| {
+                    !matches!(event, CommittedEvent::AuthorityEntryCompletedV1 { .. })
+                }),
+                _ => {
+                    let closed = forged
+                        .engine
+                        .event_history
+                        .iter()
+                        .find(|event| {
+                            matches!(event, CommittedEvent::AuthorityEntryCompletedV1 { .. })
+                        })
+                        .unwrap()
+                        .clone();
+                    forged.engine.event_history.push(closed);
+                }
+            }
+            readonly_pass(&mut forged);
+            for _ in 0..2 {
+                forged = restored(&forged);
+                readonly_pass(&mut forged);
+            }
+        }
+    }
+}
+
+#[test]
 fn actual_two_entry_batch_retains_distinct_occurrences_and_restored_trigger_order() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
@@ -437,6 +548,11 @@ fn actual_two_entry_batch_retains_distinct_occurrences_and_restored_trigger_orde
         );
         transfer(&mut state, authority, actor.opponent());
         transfer(&mut state, first, actor);
+        let mut omitted = restored(&state);
+        omitted.engine.pending_triggers.remove(0);
+        readonly_pass(&mut omitted);
+        let mut repeated_omission = restored(&omitted);
+        readonly_pass(&mut repeated_omission);
         let mut forged = restored(&state);
         let pending = forged.engine.pending_triggers.first_mut().unwrap();
         let EffectOp::AuthorityEntryGainLifeV1 {

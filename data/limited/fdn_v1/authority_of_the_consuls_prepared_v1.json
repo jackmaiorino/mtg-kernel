@@ -12,8 +12,8 @@
   "text": "Creatures your opponents control enter the battlefield tapped. Whenever a creature enters the battlefield under an opponent's control, you gain 1 life.",
   "target": "None",
   "spell_effect": "None; enchantment enters through the ordinary permanent spell path",
-  "static": "active printed ability; actual opponent-controlled creature entry is tapped; ZoneChange and CreateToken",
-  "trigger": "OpponentCreatureEntersV1; independent history-only entry observer contracts bind complete once-only dispatch captures; bound untargeted gain1 to the original captured controller",
+  "static": "active printed ability; actual opponent-controlled creature entry is tapped; ZoneChange and CreateToken; simultaneous batches use pre-entry active observers",
+  "trigger": "OpponentCreatureEntersV1; independent history-only entry observer contracts bind complete once-only dispatch captures; bound untargeted gain1 to the original captured controller; simultaneous batches capture post-entry observers; mandatory dispatch owner until actual resolution/counter completion",
   "registration": "absent; documentation only, not generator input",
   "qualification": "native, actual future registration, printed gameplay and successor consumer/model qualification unrun",
   "remaining": "exact static and captured-entry RulesMeaning/public/Human successors; old full policy projection deliberately refuses; no card/profile ID or hash assigned"

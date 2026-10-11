@@ -13726,6 +13726,7 @@ pub(crate) fn counter_stack_item_by_id(
     };
     state.stack.remove(position);
     crate::source_power_activation_v1::finish(state, &item);
+    crate::authority_of_the_consuls_v1::finish(state, &item);
     if let Some(departure) = departure {
         apply_spell_departure(state, departure)?;
     }
@@ -14005,6 +14006,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
         crate::source_power_activation_v1::finish(state, &item);
+        crate::authority_of_the_consuls_v1::finish(state, &item);
         return ResolutionProgress::Complete;
     }
 
@@ -14025,6 +14027,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         let progress = execute_resolving_program(state, &item, &ctx, &effect, squad_owner.as_ref());
         if progress == ResolutionProgress::Complete {
             crate::source_power_activation_v1::finish(state, &item);
+            crate::authority_of_the_consuls_v1::finish(state, &item);
             keep_ability_on_stack_until_discarded(state, &item);
         }
         return progress;

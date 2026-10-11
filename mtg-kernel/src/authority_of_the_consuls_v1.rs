@@ -47,6 +47,45 @@ fn active(state: &GameState, source: ObjectId) -> bool {
         && crate::continuous_characteristics_v1::printed_abilities_active(state, source)
 }
 
+/// Transient ownership for one genuine simultaneous event batch. Static
+/// replacement observers exist before entry; ETB observers exist after it.
+pub(crate) struct EntryBatchV1 {
+    pub(crate) observers: Vec<AbilitySourceContractV4>,
+    entries: Vec<usize>,
+}
+impl EntryBatchV1 {
+    pub(crate) fn capture(state: &GameState) -> Option<Self> {
+        enabled().then(|| Self {
+            observers: state
+                .objects
+                .iter()
+                .filter(|(source, _)| active(state, *source))
+                .map(|(source, _)| AbilitySourceContractV4::capture(state, source))
+                .collect(),
+            entries: Vec::new(),
+        })
+    }
+    pub(crate) fn record(&mut self, index: usize) {
+        self.entries.push(index);
+    }
+    pub(crate) fn finish(self, state: &mut GameState) {
+        for index in self.entries {
+            record_entry(state, index);
+        }
+    }
+}
+pub(crate) fn enters_tapped_from_observers(
+    state: &GameState,
+    object: ObjectId,
+    controller: PlayerId,
+    observers: &[AbilitySourceContractV4],
+) -> bool {
+    crate::engine::object_has_type(state, object, CardType::Creature)
+        && observers
+            .iter()
+            .any(|source| source.controller != controller)
+}
+
 /// Shared by actual ZoneChange and CreateToken entry, before ETB publication.
 pub(crate) fn enters_tapped(state: &GameState, object: ObjectId, controller: PlayerId) -> bool {
     enabled()
@@ -81,10 +120,8 @@ pub(crate) fn record_entry(state: &mut GameState, entry_history_index: usize) {
     let sources: Vec<_> = state
         .objects
         .iter()
-        .filter_map(|(source, live)| {
-            (live.controller != entrant_controller && active(state, source))
-                .then(|| AbilitySourceContractV4::capture(state, source))
-        })
+        .filter(|(source, live)| live.controller != entrant_controller && active(state, *source))
+        .map(|(source, _)| AbilitySourceContractV4::capture(state, source))
         .collect();
     if sources.is_empty() {
         return;
@@ -265,7 +302,42 @@ pub(crate) fn validate_source(
     if source != Some(capture.source) || state.engine.event_history.iter().filter(|event| {
         matches!(event, CommittedEvent::AuthorityEntryCollectedV1 { capture_history_index } if *capture_history_index == index)
     }).count() != 1 { return Err("opponent entry trigger changed its captured source or collection".into()); }
+    if state.engine.event_history.iter().any(|event| matches!(event,
+        CommittedEvent::AuthorityEntryCompletedV1 { capture_history_index, .. } if *capture_history_index == index)) {
+        return Err("completed opponent entry trigger was replayed".into());
+    }
     Ok(())
+}
+
+/// Called only at actual engine resolution/counter completion after removal.
+pub(crate) fn finish(state: &mut GameState, item: &crate::state::StackItem) {
+    let Some(
+        effect @ EffectOp::AuthorityEntryGainLifeV1 {
+            capture_history_index,
+        },
+    ) = item.inline_effect.as_ref()
+    else {
+        return;
+    };
+    if state.engine.halted.is_some() {
+        return;
+    }
+    if validate_source(state, effect, item.v4.ability_source_contract).is_err()
+        || item.v4.stack_item_id == crate::ids::StackItemId::default()
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            item.source,
+        ));
+        return;
+    }
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::AuthorityEntryCompletedV1 {
+            capture_history_index: *capture_history_index,
+            stack_item_id: item.v4.stack_item_id,
+        });
 }
 
 pub(crate) fn resolve(state: &mut GameState, ctx: &ExecCtx, capture_history_index: u64) {
@@ -360,6 +432,61 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         {
             return Err("opponent entry capture collection is missing or repeated".into());
         }
+        let completed = state
+            .engine
+            .event_history
+            .iter()
+            .filter(|event| {
+                matches!(event,
+            CommittedEvent::AuthorityEntryCompletedV1 { capture_history_index, .. }
+            if *capture_history_index == capture.history_index)
+            })
+            .count();
+        let pending = state
+            .engine
+            .pending_triggers
+            .iter()
+            .filter(|pending| {
+                matches!(pending.effect,
+            EffectOp::AuthorityEntryGainLifeV1 { capture_history_index }
+            if capture_history_index == capture.history_index)
+            })
+            .count();
+        let live = state
+            .stack
+            .iter()
+            .filter(|item| {
+                matches!(item.inline_effect,
+            Some(EffectOp::AuthorityEntryGainLifeV1 { capture_history_index })
+            if capture_history_index == capture.history_index)
+            })
+            .count();
+        if completed > 1
+            || (collected == 0 && (completed != 0 || pending + live != 0))
+            || (collected == 1 && pending + live != usize::from(completed == 0))
+        {
+            return Err("opponent entry trigger lost or replayed its dispatch ownership".into());
+        }
+    }
+    for event in &state.engine.event_history {
+        if let CommittedEvent::AuthorityEntryCompletedV1 {
+            capture_history_index,
+            stack_item_id,
+        } = event
+        {
+            capture_at(state, *capture_history_index)?;
+            if *stack_item_id == crate::ids::StackItemId::default() {
+                return Err("opponent entry completion lost its stack incarnation".into());
+            }
+        }
+    }
+    if state
+        .engine
+        .event_log
+        .iter()
+        .any(|event| matches!(event, CommittedEvent::AuthorityEntryCompletedV1 { .. }))
+    {
+        return Err("opponent entry completion was inserted into dispatch log".into());
     }
     for pending in &state.engine.pending_triggers {
         if let EffectOp::AuthorityEntryGainLifeV1 {

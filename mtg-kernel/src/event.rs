@@ -687,6 +687,10 @@ pub enum CommittedEvent {
         entrant_controller: PlayerId,
         sources: Vec<crate::state::AbilitySourceContractV4>,
     },
+    AuthorityEntryCompletedV1 {
+        capture_history_index: u64,
+        stack_item_id: crate::ids::StackItemId,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1112,6 +1116,22 @@ fn commit_with_ability_lki(
     abilities_removed_before: Option<bool>,
     frozen_death_captures: Option<Vec<CommittedEvent>>,
 ) {
+    commit_with_ability_lki_and_entry_batch(
+        state,
+        event,
+        abilities_removed_before,
+        frozen_death_captures,
+        None,
+    );
+}
+
+fn commit_with_ability_lki_and_entry_batch(
+    state: &mut GameState,
+    event: ProposedEvent,
+    abilities_removed_before: Option<bool>,
+    frozen_death_captures: Option<Vec<CommittedEvent>>,
+    mut authority_batch: Option<&mut crate::authority_of_the_consuls_v1::EntryBatchV1>,
+) {
     let mut event = event;
     if let ProposedEvent::ZoneChange(change) = &mut event {
         if change.to_zone == Zone::Graveyard
@@ -1298,6 +1318,9 @@ fn commit_with_ability_lki(
                 z.force_battlefield_tapped,
                 z.battlefield_face_index,
                 z.battlefield_controller,
+                authority_batch
+                    .as_ref()
+                    .map(|batch| batch.observers.as_slice()),
             );
             #[cfg(feature = "limited-fdn-fixtures")]
             if creature_died && state.objects.get(z.object).zone == Zone::Graveyard {
@@ -1408,7 +1431,23 @@ fn commit_with_ability_lki(
             }
             state.players[t.controller.index()].battlefield.push(object);
             let enters_tapped = permanent_enters_battlefield_tapped(state, object, t.controller)
-                || crate::authority_of_the_consuls_v1::enters_tapped(state, object, t.controller);
+                || authority_batch.as_ref().map_or_else(
+                    || {
+                        crate::authority_of_the_consuls_v1::enters_tapped(
+                            state,
+                            object,
+                            t.controller,
+                        )
+                    },
+                    |batch| {
+                        crate::authority_of_the_consuls_v1::enters_tapped_from_observers(
+                            state,
+                            object,
+                            t.controller,
+                            &batch.observers,
+                        )
+                    },
+                );
             state.objects.get_mut(object).tapped = enters_tapped;
             initialize_entry_counters(state, object, false);
             CommittedEvent::CreateToken {
@@ -1528,7 +1567,11 @@ fn commit_with_ability_lki(
     if let Some(source) = single_graveyard_entry {
         crate::soul_shackled_zombie_v1::record_entry(state, source);
     }
-    crate::authority_of_the_consuls_v1::record_entry(state, entry_history_index);
+    if let Some(batch) = authority_batch.as_mut() {
+        batch.record(entry_history_index);
+    } else {
+        crate::authority_of_the_consuls_v1::record_entry(state, entry_history_index);
+    }
     if let Some(object) = left_battlefield {
         crate::standard_legends_v1::return_lagrella_exiles(
             state,
@@ -1566,6 +1609,7 @@ fn commit_with_ability_lki(
 /// / trigger collection exactly once after the whole batch (see
 /// `engine::deal_combat_damage`), not per event.
 pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent>) {
+    let mut authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
     let survivors: Vec<ProposedEvent> = events
         .into_iter()
         .filter_map(|e| apply_replacements(state, e))
@@ -1631,15 +1675,31 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
             let captures = death_captures
                 .as_mut()
                 .map(|captures| captures.next().expect("one capture per batch member"));
-            commit_with_ability_lki(state, event, Some(removed), captures);
+            commit_with_ability_lki_and_entry_batch(
+                state,
+                event,
+                Some(removed),
+                captures,
+                authority_batch.as_mut(),
+            );
         }
     } else {
         for event in survivors {
             let captures = death_captures
                 .as_mut()
                 .map(|captures| captures.next().expect("one capture per batch member"));
-            commit_with_ability_lki(state, event, None, captures);
+            commit_with_ability_lki_and_entry_batch(
+                state,
+                event,
+                None,
+                captures,
+                authority_batch.as_mut(),
+            );
         }
+    }
+
+    if let Some(batch) = authority_batch {
+        batch.finish(state);
     }
 
     for (_, player, amount) in lifelink_gains {
@@ -1941,6 +2001,7 @@ fn commit_zone_change(
     force_battlefield_tapped: bool,
     battlefield_face_index: Option<u8>,
     battlefield_controller: Option<PlayerId>,
+    authority_observers: Option<&[crate::state::AbilitySourceContractV4]>,
 ) {
     #[cfg(feature = "standard-magezero-fixtures")]
     let battlefield_face_index = battlefield_face_index.or_else(|| {
@@ -2090,7 +2151,14 @@ fn commit_zone_change(
         // and initialized battlefield characteristics, preserving the earlier
         // legacy entry checks and their order.
         let controller = state.objects.get(id).controller;
-        if crate::authority_of_the_consuls_v1::enters_tapped(state, id, controller) {
+        if authority_observers.map_or_else(
+            || crate::authority_of_the_consuls_v1::enters_tapped(state, id, controller),
+            |observers| {
+                crate::authority_of_the_consuls_v1::enters_tapped_from_observers(
+                    state, id, controller, observers,
+                )
+            },
+        ) {
             state.objects.get_mut(id).tapped = true;
         }
         if cfg!(feature = "limited-fdn-fixtures") {

@@ -19,6 +19,8 @@ fn unrelated_registered_entries_and_real_token_copy_preserve_absent_authority_st
             event,
             CommittedEvent::AuthorityEntryCaptureV1 { .. }
                 | CommittedEvent::AuthorityEntryCollectedV1 { .. }
+                | CommittedEvent::AuthorityEntryObserversV1 { .. }
+                | CommittedEvent::AuthorityEntryCompletedV1 { .. }
         )));
         assert!(!requires_successor(&state));
         let before = serde_json::to_vec(&state).unwrap();
@@ -63,6 +65,64 @@ mod printed {
             }
         }
         panic!("entry did not settle");
+    }
+    #[test]
+    fn actual_simultaneous_token_entry_and_accepted_ability_counter_close_exact_dispatch() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for observer_first in [false, true] {
+                let mut state = ready_state();
+                state.active_player = actor;
+                state.priority_player = actor;
+                let observer = crate::card_def::card_id_by_name("Authority of the Consuls")
+                    .expect("future actual registration");
+                let elf = crate::card_def::card_id_by_name("Llanowar Elves").unwrap();
+                let observer_entry = ProposedEvent::create_token(observer, actor);
+                let creature_entry = ProposedEvent::create_token(elf, actor.opponent());
+                event::propose_and_commit_batch(
+                    &mut state,
+                    if observer_first {
+                        vec![observer_entry, creature_entry]
+                    } else {
+                        vec![creature_entry, observer_entry]
+                    },
+                );
+                let entrant = state
+                    .engine
+                    .event_history
+                    .iter()
+                    .find_map(|event| match event {
+                        CommittedEvent::CreateToken {
+                            object, token_def, ..
+                        } if *token_def == elf => Some(*object),
+                        _ => None,
+                    })
+                    .unwrap();
+                assert!(!state.objects.get(entrant).tapped);
+                assert!(state.objects.get(entrant).v4.is_token);
+                assert!(matches!(
+                    engine::advance_until_decision(&mut state),
+                    Decision::CastSpellOrPass { .. }
+                ));
+                let item = state.stack.last().unwrap().clone();
+                assert!(matches!(
+                    item.inline_effect,
+                    Some(EffectOp::AuthorityEntryGainLifeV1 { .. })
+                ));
+                // Genuine accepted core counter primitive. This does not claim
+                // a printed FDN card that counters triggered abilities.
+                engine::counter_stack_item_by_id(&mut state, item.v4.stack_item_id).unwrap();
+                validate_state(&state).unwrap();
+                assert_eq!(state.players[actor.index()].life, 20);
+                assert!(state.stack.is_empty());
+                let mut replay: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                validate_state(&replay).unwrap();
+                replay.stack.push(item);
+                let before = serde_json::to_vec(&replay).unwrap();
+                assert!(engine::step(&mut replay, Action::Pass).is_err());
+                assert_eq!(serde_json::to_vec(&replay).unwrap(), before);
+            }
+        }
     }
     #[test]
     fn future_actual_token_entry_captured_observer_survives_control_departure_restore_and_log_forgery(
