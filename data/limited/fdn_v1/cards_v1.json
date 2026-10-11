@@ -6036,6 +6036,35 @@
         "controlled_creature_death_capture",
         "targeted_opponent_drain"
       ]
+    },
+    {
+      "name": "Divine Resilience",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/d/DivineResilience.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_divine_resilience.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "kicker",
+        "variable_controlled_creature_targets",
+        "indestructible_until_cleanup"
+      ]
     }
   ]
 }
