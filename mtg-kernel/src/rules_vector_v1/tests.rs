@@ -54,6 +54,67 @@ fn nine_deck_cards() -> BTreeSet<u16> {
     ids
 }
 
+// The frozen V1 extractor deliberately refuses variable cast targets. These
+// audits still inspect every supported current record, without claiming that
+// the complete current catalog has a publishable V1 table.
+fn supported_v1_card_ids() -> Vec<u16> {
+    let excluded: Vec<u16> = CARD_DEFS
+        .iter()
+        .enumerate()
+        .filter(|(_, def)| {
+            def.target_spec == TargetSpec::KickerControlledCreatures
+                || def.kicked_target_spec == Some(TargetSpec::KickerControlledCreatures)
+        })
+        .map(|(id, _)| id as u16)
+        .collect();
+    if !excluded.is_empty() {
+        assert_eq!(excluded, vec![card_id("Divine Resilience")]);
+        assert!(matches!(
+            (CARD_DEFS[usize::from(excluded[0])].spell_effect)(),
+            Some(EffectOp::GrantKeywordToDeclaredTargetsUntilEndOfTurn { .. })
+        ));
+    }
+    (0..CARD_DEFS.len() as u16)
+        .filter(|id| !excluded.contains(id))
+        .collect()
+}
+
+fn supported_records_for_audit() -> RulesTableV1 {
+    let ids = supported_v1_card_ids();
+    if ids.len() == CARD_DEFS.len() {
+        return build_table();
+    }
+    let cards = ids
+        .into_iter()
+        .map(|id| {
+            let rules = card_rules(id);
+            CardRowV1 {
+                id,
+                features: vectorize::card_feature_counts(id),
+                record_sha256: sha256_hex(&serde_json::to_vec(&rules.record).unwrap()),
+            }
+        })
+        .collect();
+    RulesTableV1 {
+        schema: RULES_VECTOR_SCHEMA_V1,
+        build: "test-supported-v1-records",
+        extractor_sha256: extractor_sha256(),
+        kernel_carddb_hash: format!("{:#018x}", crate::card_def::KERNEL_CARDDB_HASH),
+        vocabulary: vectorize::pauper_vocabulary(),
+        cards,
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[should_panic(expected = "variable cast target effects require a RulesMeaning successor")]
+fn complete_current_catalog_still_refuses_frozen_v1_publication() {
+    build_table();
+}
+
 // 1. Determinism.
 
 #[test]
@@ -126,17 +187,20 @@ fn equipment_noncreature_spell_trigger_matches_the_ordinary_trigger_class() {
 
 #[test]
 fn table_is_deterministic() {
-    let a = build_table();
-    let b = build_table();
+    let a = supported_records_for_audit();
+    let b = supported_records_for_audit();
     assert_eq!(a.canonical_bytes(), b.canonical_bytes());
-    assert_eq!(a.cards.len(), CARD_DEFS.len());
+    assert_eq!(
+        a.cards.iter().map(|row| row.id).collect::<Vec<_>>(),
+        supported_v1_card_ids()
+    );
 }
 
 // 2. Coverage: every non-empty program source yields facts in its group.
 
 #[test]
 fn every_program_source_emits_facts() {
-    for id in 0..CARD_DEFS.len() as u16 {
+    for id in supported_v1_card_ids() {
         let def = &CARD_DEFS[usize::from(id)];
         let rules = card_rules(id);
         assert!(!rules.printed.is_empty(), "{}: no printed facts", def.name);
@@ -186,8 +250,12 @@ fn functional_reprints_collapse() {
 
 #[test]
 fn no_lossy_collisions_in_the_nine_decks() {
-    let table = build_table();
-    let collisions = lossy_collisions(&table, &nine_deck_cards());
+    let table = supported_records_for_audit();
+    let ids = nine_deck_cards();
+    assert!(ids
+        .iter()
+        .all(|id| table.cards.iter().any(|row| row.id == *id)));
+    let collisions = lossy_collisions(&table, &ids);
     let named: Vec<Vec<&str>> = collisions
         .iter()
         .map(|ids| {
@@ -486,9 +554,20 @@ fn spy_shares_the_targeted_mill_part_with_thought_scour() {
 
 #[test]
 fn lightning_bolt_is_not_a_near_neighbour_of_spy() {
-    let table = build_table();
+    let table = supported_records_for_audit();
     let vocab = &table.vocabulary;
-    let vec_of = |id: u16| vectorize::dense_vector(&table.cards[usize::from(id)].features, vocab).0;
+    let vec_of = |id: u16| {
+        vectorize::dense_vector(
+            &table
+                .cards
+                .iter()
+                .find(|row| row.id == id)
+                .unwrap()
+                .features,
+            vocab,
+        )
+        .0
+    };
     let spy = vec_of(card_id("Balustrade Spy"));
     let mut sims: Vec<(f64, u16)> = (0..PAUPER_REGISTRY_LEN_V1 as u16)
         .filter(|&id| id != card_id("Balustrade Spy"))
@@ -649,6 +728,8 @@ fn power_toughness_changes_keep_their_sign() {
 /// or `event_time_trigger_programs`; token names are reached through
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
+    "Searslicer Goblin",
+    "Goblin Token",
     "Slumbering Cerberus",
     "Frenzied Goblin",
     "Wildwood Scourge",
@@ -874,6 +955,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    ("engine.rs", "Self-Reflection", "spell copy-source selection; represented by its typed copy root and selected successor"),
     (
         "fdn_raid_v1.rs",
         "Goblin Boarders",
