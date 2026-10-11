@@ -2431,7 +2431,15 @@ fn build_policy_observation_storage_v6(
     request: PolicyObservationBuildV5<'_>,
     accept_life_ward: bool,
 ) -> Result<PolicyObservationStorageV6> {
-    build_policy_observation_storage_common(request, accept_life_ward, false, false, false, false)
+    build_policy_observation_storage_common(
+        request,
+        accept_life_ward,
+        false,
+        false,
+        false,
+        false,
+        false,
+    )
 }
 
 pub(crate) fn sower_observation_storage_v1(
@@ -2457,6 +2465,7 @@ pub(crate) fn sower_observation_storage_v1(
         },
         true,
         true,
+        false,
         false,
         false,
         false,
@@ -2489,6 +2498,7 @@ pub(crate) fn employment_observation_storage_v1(
         false,
         true,
         false,
+        false,
     )
 }
 
@@ -2516,6 +2526,7 @@ pub(crate) fn wildwood_observation_storage_v1(
         true,
         false,
         true,
+        false,
         false,
         false,
     )
@@ -2547,6 +2558,7 @@ pub(crate) fn cerberus_observation_storage_v1(
         false,
         false,
         true,
+        false,
     )
 }
 
@@ -2576,6 +2588,7 @@ pub(crate) fn authority_observation_storage_v1(
         false,
         false,
         false,
+        true,
     )
 }
 
@@ -2605,6 +2618,7 @@ pub(crate) fn frenzied_observation_storage_v1(
         false,
         false,
         false,
+        false,
     )
 }
 
@@ -2615,7 +2629,13 @@ fn build_policy_observation_storage_common(
     accept_wildwood: bool,
     accept_temporary_control: bool,
     accept_cerberus: bool,
+    accept_authority: bool,
 ) -> Result<PolicyObservationStorageV6> {
+    if !accept_authority && crate::authority_of_the_consuls_v1::requires_successor(request.state) {
+        return Err(RlContractError(
+            "Authority requires its selected public/Human successor".into(),
+        ));
+    }
     if !accept_cerberus && crate::cerberus_capture_v1::requires_successor(request.state) {
         return Err(RlContractError(
             "Cerberus requires its selected public/Human successor".into(),

@@ -286,6 +286,35 @@ mod printed {
     }
 
     #[test]
+    fn genuine_authority_entry_refuses_foreign_successor_storage_without_mutation_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (state, _, _) = actual_entry(actor, false, "Lightning Bolt");
+            let surface = crate::policy_surface_v5::PolicySurfaceV5::new_for_session();
+            let before = serde_json::to_vec(&state).unwrap();
+            for storage in [
+                crate::rl::sower_observation_storage_v1,
+                crate::rl::frenzied_observation_storage_v1,
+                crate::rl::wildwood_observation_storage_v1,
+                crate::rl::employment_observation_storage_v1,
+                crate::rl::cerberus_observation_storage_v1,
+            ] {
+                assert!(storage(&state, &surface, actor, 0, 0, (0, 1)).is_err());
+                assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+            }
+            assert!(crate::rl::authority_observation_storage_v1(
+                &state,
+                &surface,
+                actor,
+                0,
+                0,
+                (0, 1),
+            )
+            .is_ok());
+            assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+        }
+    }
+
+    #[test]
     fn actual_entry_original_beneficiary_source_control_departure_hidden_entrant_and_closed_gain() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let (mut state, source, entrant) = actual_entry(actor, false, "Lightning Bolt");
