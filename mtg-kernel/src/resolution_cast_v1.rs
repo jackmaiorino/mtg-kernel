@@ -128,7 +128,15 @@ pub(super) fn form_allowed_for(
             });
     let def = &card_def::CARD_DEFS[o.card_def as usize];
     let value = match method {
-        CastMethodV4::Normal => def.mana_value,
+        CastMethodV4::Normal => {
+            crate::standard_cards_v1::room_cast_mana_value(def, method).unwrap_or(def.mana_value)
+        }
+        CastMethodV4::Alternative => {
+            let Some(value) = crate::standard_cards_v1::room_cast_mana_value(def, method) else {
+                return false;
+            };
+            value
+        }
         CastMethodV4::Omen => {
             let cost = if let Some(a) = supported_adventure(def) {
                 a.cost
@@ -154,6 +162,16 @@ pub(super) fn form_completable(
     kicked: bool,
 ) -> bool {
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    let room = crate::standard_cards_v1::room_cast_mana_value(def, CastMethodV4::Normal).is_some();
+    if room && pending.cast_mode.is_none() {
+        return [CastMode::Normal, CastMode::Alternative]
+            .into_iter()
+            .any(|mode| {
+                let mut selected = pending.clone();
+                selected.cast_mode = Some(mode);
+                form_completable(state, &selected, form, kicked)
+            });
+    }
     let (method, types, keywords) =
         if form == 1 && (supported_adventure(def).is_some() || supported_omen(def).is_some()) {
             let types = supported_adventure(def)
@@ -163,6 +181,8 @@ pub(super) fn form_completable(
             (CastMethodV4::Omen, types, Keywords::NONE)
         } else if form == 1 && supported_bestow(def).is_some() {
             return false;
+        } else if room && pending.cast_mode == Some(CastMode::Alternative) {
+            (CastMethodV4::Alternative, def.types, def.keywords)
         } else {
             (CastMethodV4::Normal, def.types, def.keywords)
         };
@@ -608,5 +628,97 @@ mod tests {
             bind(&state, raid),
             Some(0)
         ));
+    }
+
+    #[test]
+    fn discover_cast_limit_checks_the_selected_room_door() {
+        // Discover searches using the card's combined value (8). Its cast
+        // instruction independently constrains the selected spell's value.
+        for (limit, expected) in [
+            (Some(2), vec![]),
+            (Some(3), vec![CastMode::Normal]),
+            (Some(4), vec![CastMode::Normal]),
+            (Some(5), vec![CastMode::Normal, CastMode::Alternative]),
+            (None, vec![CastMode::Normal, CastMode::Alternative]),
+        ] {
+            let mut state = ready();
+            state.step = Step::DeclareBlockers;
+            let room = put(&mut state, "Unholy Annex // Ritual Chamber", Zone::Exile);
+            let card = bind(&state, room);
+            assert_eq!(object_mana_value(&state, room), 8);
+            assert_eq!(
+                can_cast_exiled_without_mana(&state, PlayerId::P0, card, limit),
+                !expected.is_empty()
+            );
+            state
+                .standard_v1
+                .get_or_insert_with(Default::default)
+                .resolution_play = Some(ResolutionPlayV1 {
+                parent: StackItemId(0),
+                parent_index: 0,
+                suspended: None,
+                permission: Some(ResolutionPermissionV1 {
+                    card,
+                    controller: PlayerId::P0,
+                    maximum_mana_value: limit,
+                    land: false,
+                }),
+                deferred_triggers: Vec::new(),
+                kicked_source: None,
+            });
+            begin_cast_ex(&mut state, PlayerId::P0, room, Some(CastMethodV4::Normal));
+            let pending = state.engine.pending_cast.as_ref().unwrap();
+            let def = &card_def::CARD_DEFS[state.objects.get(room).card_def as usize];
+            assert_eq!(pending.cast_mode, None);
+            assert_eq!(pending.x_value, Some(0));
+            assert_eq!(payable_cast_modes(def, pending, &state), expected);
+            for (mode, method) in [
+                (CastMode::Normal, CastMethodV4::Normal),
+                (CastMode::Alternative, CastMethodV4::Alternative),
+            ] {
+                let mut selected = pending.clone();
+                selected.cast_mode = Some(mode);
+                assert_eq!(
+                    form_completable(&state, &selected, 0, false),
+                    expected.contains(&mode)
+                );
+                assert!(pending_cast_quote_v1(def, &selected, method, false, 1, &state).is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn persistent_free_permission_allows_either_room_door_at_normal_timing() {
+        let mut state = ready();
+        let room = put(&mut state, "Unholy Annex // Ritual Chamber", Zone::Exile);
+        grant(&mut state, room);
+        state.step = Step::DeclareBlockers;
+        assert!(!is_castable_now(
+            PlayerId::P0,
+            room,
+            CastMethodV4::Normal,
+            &state
+        ));
+        state.step = Step::Main2;
+        assert!(is_castable_now(
+            PlayerId::P0,
+            room,
+            CastMethodV4::Normal,
+            &state
+        ));
+        begin_cast_ex(&mut state, PlayerId::P0, room, Some(CastMethodV4::Normal));
+        assert!(matches!(advance_until_decision(&mut state),
+            Decision::ChooseCastMode { ref options, .. }
+                if options == &[CastMode::Normal, CastMode::Alternative]));
+        step(&mut state, Action::ChooseCastMode(CastMode::Alternative)).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        let item = state.stack.last().unwrap();
+        assert_eq!(item.v4.cast_method, Some(CastMethodV4::Alternative));
+        assert_eq!(object_mana_value(&state, room), 5);
+        validate_spell_stack_source(&state, item).unwrap();
+        assert_eq!(state.players[0].mana_pool, [0; 6]);
     }
 }

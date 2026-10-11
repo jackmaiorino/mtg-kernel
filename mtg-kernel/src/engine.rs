@@ -2064,7 +2064,9 @@ fn validate_physical_spell_cast_origin(
                 && permission_zone_change_count == origin.origin_zone_change_count
                 && (!matches!(origin.route, SpellCastRouteV4::ExileFreePermission { .. })
                     || (item.v4.x_value == 0
-                        && matches!(cast_method, CastMethodV4::Normal | CastMethodV4::Omen)))
+                        && (matches!(cast_method, CastMethodV4::Normal | CastMethodV4::Omen)
+                            || crate::standard_cards_v1::room_cast_mana_value(def, cast_method)
+                                .is_some())))
                 && matches!(
                     cast_method,
                     CastMethodV4::Normal
@@ -10181,8 +10183,10 @@ pub(crate) fn validate_pending_cast(
     } else {
         Some(0)
     };
-    let has_cast_mode_choice =
-        def.alt_cost.is_some() && !resolution_cast_v1::free_cast(state, pending.spell);
+    let has_cast_mode_choice = def.alt_cost.is_some()
+        && (!resolution_cast_v1::free_cast(state, pending.spell)
+            || crate::standard_cards_v1::room_cast_mana_value(def, CastMethodV4::Alternative)
+                .is_some());
     let seeded_cast_mode = if method == CastMethodV4::Normal && has_cast_mode_choice {
         None
     } else {
@@ -18155,12 +18159,16 @@ fn begin_cast_ex(
     };
     let without_mana_cost = resolution_permission.is_some()
         || resolution_cast_v1::free_cast_for(state, spell_id, player);
-    let cast_mode =
-        if without_mana_cost || cast_method != CastMethodV4::Normal || def.alt_cost.is_none() {
-            Some(CastMode::Normal)
-        } else {
-            None
-        };
+    let free_room_door_choice = without_mana_cost
+        && crate::standard_cards_v1::room_cast_mana_value(def, CastMethodV4::Alternative).is_some();
+    let cast_mode = if (without_mana_cost && !free_room_door_choice)
+        || cast_method != CastMethodV4::Normal
+        || def.alt_cost.is_none()
+    {
+        Some(CastMode::Normal)
+    } else {
+        None
+    };
     let additional_cost_discarded = if def.additional_cost.is_none() {
         Some(vec![])
     } else {

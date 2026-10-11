@@ -195,6 +195,61 @@ fn room_casts_have_only_the_selected_door_identity_on_stack_and_battlefield() {
 }
 
 #[test]
+fn etali_can_cast_either_room_door_free_during_combat_and_resume_after_restore() {
+    for (mode, name, mana_value) in [
+        (CastMode::Normal, "Unholy Annex", 3),
+        (CastMode::Alternative, "Ritual Chamber", 5),
+    ] {
+        let mut state = game();
+        state.step = Step::DeclareBlockers;
+        let room = put(&mut state, P1, ROOM, Zone::Library);
+        put(&mut state, P0, "Etali, Primal Conqueror", Zone::Battlefield);
+        let mut chose_card = false;
+        let mut chose_door = false;
+        for _ in 0..30 {
+            match next(&mut state) {
+                Decision::ChooseEffectTargets { legal_targets, .. } => {
+                    assert!(!chose_card);
+                    assert!(legal_targets.contains(&Target::Object(room)));
+                    act(&mut state, Action::ChooseEffectTarget(Target::Object(room)));
+                    chose_card = true;
+                }
+                Decision::ChooseCastMode { spell, options, .. } => {
+                    assert_eq!(spell, room);
+                    assert_eq!(options, [CastMode::Normal, CastMode::Alternative]);
+                    let mut restored: GameState =
+                        serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+                    act(&mut state, Action::ChooseCastMode(mode));
+                    act(&mut restored, Action::ChooseCastMode(mode));
+                    assert_eq!(next(&mut state), next(&mut restored));
+                    assert_eq!(state, restored);
+                    assert_eq!(state.objects.get(room).zone, Zone::Stack);
+                    assert_eq!(engine::effective_names(&state, room), [name]);
+                    assert_eq!(engine::object_mana_value(&state, room), mana_value);
+                    assert!(state.engine.pending_effect.is_none());
+                    chose_door = true;
+                    break;
+                }
+                Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+                Decision::OrderTriggers { pending, .. } => act(
+                    &mut state,
+                    Action::OrderTriggers((0..pending.len()).collect()),
+                ),
+                other => panic!("Etali Room cast: {other:?}"),
+            }
+        }
+        assert!(chose_card && chose_door);
+        settle(&mut state);
+        assert_eq!(state.objects.get(room).zone, Zone::Battlefield);
+        assert_eq!(state.objects.get(room).owner, P1);
+        assert_eq!(state.objects.get(room).controller, P0);
+        assert_eq!(engine::effective_names(&state, room), [name]);
+        assert_eq!(engine::object_mana_value(&state, room), mana_value);
+        assert_eq!(state.players[0].mana_pool, [0; 6]);
+    }
+}
+
+#[test]
 fn portable_hole_uses_room_current_mana_value() {
     let mut state = game();
     let locked = put(&mut state, P1, ROOM, Zone::Battlefield);

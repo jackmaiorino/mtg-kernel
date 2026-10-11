@@ -1930,6 +1930,22 @@ pub(crate) fn minimum_x(def: &CardDef, targets: &[Target], state: &GameState) ->
 
 const ROOM: &str = "Unholy Annex // Ritual Chamber";
 
+/// Room doors share the cast-mode machinery, but choosing the right door is
+/// a choice of spell characteristics, not an alternative payment cost.
+pub(crate) fn room_cast_mana_value(
+    def: &CardDef,
+    method: crate::state::CastMethodV4,
+) -> Option<u16> {
+    if def.name != ROOM {
+        return None;
+    }
+    match method {
+        crate::state::CastMethodV4::Normal => Some(3),
+        crate::state::CastMethodV4::Alternative => Some(5),
+        _ => None,
+    }
+}
+
 /// CR709.5 and the DSK release notes: only unlocked doors contribute their
 /// names, costs and colors on the battlefield. Elsewhere both halves apply,
 /// except on the stack, where only the chosen half applies.
