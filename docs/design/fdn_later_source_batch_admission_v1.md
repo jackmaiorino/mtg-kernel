@@ -84,3 +84,14 @@ BelowNormal cores. It requests actual411 generation and Limited/Standard
 all-test typechecks only. The helper and bundle hashes match the prepared
 manifest; the actual checkout is clean. No runtime, lint, profile or new
 accepted coverage claim follows from this compile preflight.
+
+Native61 completes101/101 with both all-test compiles failed and zero runtime
+cases. Actual411/hashd907cd576aa6015c generator output is retained at SHA256
+dbe8a27e2c958e1be0f3fb26b3d4168e8b0792f5654c82b381ed1a4c66dfb1f8. Authority
+meaning used an incorrect MoveObject field and nonserializable Supertype;
+root3d292d70 uses actual to_zone and scoped stable string encoding. The appended
+v79 profile derives only from the actual artifact. All older literals/readers
+remain, with historical v78 and stale publish/resume guards. Runtime deck SHA
+is unchanged. Native runtime and current consumers/model remain unqualified.
+Final failed artifacts are cold mirrored. Exact owned helper145508 release,
+guard101 and absent supervisor145856 were observed before any target reuse.

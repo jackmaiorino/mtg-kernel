@@ -2760,8 +2760,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v78_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x45fd_ca1d_d861_b679;
+    fn card_db_hash_v79_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0xd907_cd57_6aa6_015c;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
