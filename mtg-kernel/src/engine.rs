@@ -14249,6 +14249,24 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
 /// obviously-combat-shaped divergence. See `Decision::DeclareAttackers`'s
 /// doc and the replay comparator's handling of an empty `eligible`.
 fn advance_step(state: &mut GameState) {
+    // 514.3a: priority during cleanup is followed by another cleanup step.
+    // The new control producer can resolve during that priority window, so its
+    // fresh duration must expire before the active player changes. Preserve the
+    // historical path when no resolved temporary control record remains.
+    if state.step == Step::Cleanup
+        && state.engine.until_end_of_turn.iter().any(|effect| {
+            matches!(
+                effect,
+                UntilEndOfTurnEffect::ResolvedObjectControlEffect { .. }
+            )
+        })
+    {
+        state.players[0].mana_pool = [0; 6];
+        state.players[1].mana_pool = [0; 6];
+        run_step_entry_action(state, Step::Cleanup);
+        reset_priority(state);
+        return;
+    }
     if state.step == Step::CombatDamage && crate::combat_damage_v1::needs_normal_wave(state) {
         state.players[0].mana_pool = [0; 6];
         state.players[0].restricted_mana_pool.0.clear();

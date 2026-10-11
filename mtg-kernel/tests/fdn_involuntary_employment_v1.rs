@@ -91,6 +91,15 @@ fn announce(
     target: ObjectId,
 ) -> ObjectId {
     let spell = put(state, actor, "Involuntary Employment", Zone::Hand);
+    announce_existing(surface, state, actor, target, spell)
+}
+fn announce_existing(
+    surface: &mut HarnessSurfaceV2,
+    state: &mut GameState,
+    actor: PlayerId,
+    target: ObjectId,
+    spell: ObjectId,
+) -> ObjectId {
     state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 2;
     state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 3;
     assert!(
@@ -133,10 +142,12 @@ fn resolve(surface: &mut HarnessSurfaceV2, state: &mut GameState) {
 }
 fn cleanup(surface: &mut HarnessSurfaceV2, state: &mut GameState) {
     state.step = Step::End;
-    let turn = state.turn;
+    let ending_player = state.active_player;
     for _ in 0..40 {
         let decision = next(surface, state);
-        if state.turn != turn {
+        if state.active_player != ending_player {
+            assert_eq!(state.active_player, ending_player.opponent());
+            assert!(state.engine.until_end_of_turn.is_empty());
             return;
         }
         match decision {
@@ -144,7 +155,7 @@ fn cleanup(surface: &mut HarnessSurfaceV2, state: &mut GameState) {
             other => panic!("unexpected cleanup decision {other:?}"),
         }
     }
-    panic!("turn failed to finish");
+    panic!("ending player failed to finish cleanup");
 }
 fn treasures(state: &GameState, controller: PlayerId) -> usize {
     state.players[controller.index()]
@@ -413,5 +424,141 @@ fn cleanup_binding_does_not_follow_stolen_creature_after_owner_zone_change() {
             target,
             Keywords::HASTE
         ));
+    }
+}
+
+#[test]
+fn employment_cast_during_real_madness_cleanup_priority_expires_before_turn_changes() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let anchor = state.players[actor.index()].hand[0];
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(anchor, Zone::Graveyard),
+        );
+        put(&mut state, actor, "High Fae Trickster", Zone::Battlefield);
+        let target = put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let spell = put(&mut state, actor, "Involuntary Employment", Zone::Hand);
+        let temper = put(&mut state, actor, "Fiery Temper", Zone::Hand);
+        for _ in 0..7 {
+            event::propose_and_commit(&mut state, ProposedEvent::draw(actor));
+        }
+        assert_eq!(state.players[actor.index()].hand.len(), 9);
+        let forest = *state.players[actor.index()].hand.last().unwrap();
+        assert_eq!(state.objects.get(forest).name, "Forest");
+        state.step = Step::End;
+        let ending_round = state.turn;
+        let mut surface = surface();
+        let mut discarded = false;
+        for _ in 0..20 {
+            match next(&mut surface, &mut state) {
+                Decision::CastSpellOrPass { .. } => apply(&mut surface, &mut state, Action::Pass),
+                Decision::Discard {
+                    player,
+                    count,
+                    choices,
+                } => {
+                    assert_eq!((player, count), (actor, 2));
+                    assert_eq!(state.step, Step::Cleanup);
+                    assert!(choices.contains(&temper) && choices.contains(&forest));
+                    apply(
+                        &mut surface,
+                        &mut state,
+                        Action::Discard(vec![temper, forest]),
+                    );
+                    discarded = true;
+                    break;
+                }
+                other => panic!("unexpected pre-cleanup decision {other:?}"),
+            }
+        }
+        assert!(discarded);
+        assert_eq!(state.objects.get(temper).zone, Zone::Exile);
+        assert!(state.stack.iter().any(|item| item.madness_offer));
+        assert_eq!(state.players[actor.index()].hand.len(), 7);
+        announce_existing(&mut surface, &mut state, actor, target, spell);
+        let mut restored = replay(&state);
+        for branch in [&mut state, &mut restored] {
+            let mut branch_surface = self::surface();
+            let mut resolved = false;
+            for _ in 0..20 {
+                let decision = next(&mut branch_surface, branch);
+                if branch.objects.get(spell).zone == Zone::Graveyard {
+                    resolved = true;
+                    break;
+                }
+                assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
+                apply(&mut branch_surface, branch, Action::Pass);
+            }
+            assert!(resolved);
+            assert_eq!(
+                (branch.active_player, branch.turn, branch.step),
+                (actor, ending_round, Step::Cleanup)
+            );
+            assert_eq!(branch.objects.get(target).controller, actor);
+            assert!(engine::has_effective_keyword(
+                branch,
+                target,
+                Keywords::HASTE
+            ));
+            assert_eq!(treasures(branch, actor), 1);
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+        let mut restored = replay(&state);
+        for branch in [&mut state, &mut restored] {
+            let mut branch_surface = self::surface();
+            let mut declined = false;
+            for _ in 0..20 {
+                match next(&mut branch_surface, branch) {
+                    Decision::CastSpellOrPass { .. } => {
+                        apply(&mut branch_surface, branch, Action::Pass)
+                    }
+                    Decision::ChooseMadnessCast { player, card } => {
+                        assert_eq!((player, card), (actor, temper));
+                        apply(
+                            &mut branch_surface,
+                            branch,
+                            Action::ChooseMadnessCast(false),
+                        );
+                        declined = true;
+                        break;
+                    }
+                    other => panic!("unexpected cleanup Madness decision {other:?}"),
+                }
+            }
+            assert!(declined);
+            let mut ended = false;
+            for _ in 0..20 {
+                let decision = next(&mut branch_surface, branch);
+                if branch.active_player != actor {
+                    ended = true;
+                    break;
+                }
+                assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
+                apply(&mut branch_surface, branch, Action::Pass);
+            }
+            assert!(ended);
+            assert_eq!(branch.active_player, actor.opponent());
+            assert_eq!(branch.objects.get(target).controller, actor.opponent());
+            assert!(!engine::has_effective_keyword(
+                branch,
+                target,
+                Keywords::HASTE
+            ));
+            assert!(branch.engine.until_end_of_turn.is_empty());
+            assert_eq!(treasures(branch, actor), 1);
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
     }
 }
