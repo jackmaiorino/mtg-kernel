@@ -15201,53 +15201,55 @@ fn library_partition_matching_prefix(
             .ok_or_else(|| "library-partition card definition is missing".to_string())?;
         let selectable = match filter {
             LibraryPartitionFilter::ByType(card_type) => definition.has_type(card_type),
-            LibraryPartitionFilter::Pick(rule) => {
-                rule.selection
-                    .is_none_or(|selection| match selection.filter {
-                        LibraryPickFilterV1::Any => true,
-                        LibraryPickFilterV1::CreaturePowerAtMost(max) => {
-                            if object.v4.face_index != 0 || object.v4.face_down_v1.is_some() {
-                                return Err("library power selection requires the card's public front face".into());
+            LibraryPartitionFilter::Pick(rule) => match rule.selection {
+                None => true,
+                Some(selection) => match selection.filter {
+                    LibraryPickFilterV1::Any => true,
+                    LibraryPickFilterV1::CreaturePowerAtMost(max) => {
+                        if object.v4.face_index != 0 || object.v4.face_down_v1.is_some() {
+                            return Err(
+                                "library power selection requires the card's public front face"
+                                    .into(),
+                            );
+                        }
+                        if definition.has_type(CardType::Creature) {
+                            if crate::engine::effective_base_power(state, binding.object).is_none()
+                            {
+                                return Err("library creature power has no accepted characteristic authority".into());
                             }
-                            if definition.has_type(CardType::Creature) {
-                                if crate::engine::effective_base_power(state, binding.object).is_none() {
-                                    return Err("library creature power has no accepted characteristic authority".into());
-                                }
-                                crate::engine::effective_power(state, binding.object) <= max
-                            } else {
-                                false
-                            }
+                            crate::engine::effective_power(state, binding.object) <= max
+                        } else {
+                            false
                         }
-                        LibraryPickFilterV1::LegendaryCreature => {
-                            definition.has_type(CardType::Creature)
-                                && definition
-                                    .supertypes
-                                    .contains(&crate::card_def::Supertype::Legendary)
-                        }
-                        LibraryPickFilterV1::NoncreatureNonlandPermanentManaValueAtMost(max) => {
-                            !definition.has_type(CardType::Creature)
-                                && !definition.has_type(CardType::Land)
-                                && [
-                                    CardType::Artifact,
-                                    CardType::Enchantment,
-                                    CardType::Planeswalker,
-                                ]
-                                .iter()
-                                .any(|&t| definition.has_type(t))
-                                && definition.mana_value <= max
-                        }
-                        LibraryPickFilterV1::ArtifactOrCreatureManaValueAtMost(max) => {
-                            (definition.has_type(CardType::Artifact)
-                                || definition.has_type(CardType::Creature))
-                                && definition.mana_value <= max
-                        }
-                        LibraryPickFilterV1::AnySubtype(subtypes) => {
-                            subtypes.iter().any(|subtype| {
-                                subtype.is_in_subtype_ids(&object.v4.effective_subtype_ids)
-                            })
-                        }
-                    })
-            }
+                    }
+                    LibraryPickFilterV1::LegendaryCreature => {
+                        definition.has_type(CardType::Creature)
+                            && definition
+                                .supertypes
+                                .contains(&crate::card_def::Supertype::Legendary)
+                    }
+                    LibraryPickFilterV1::NoncreatureNonlandPermanentManaValueAtMost(max) => {
+                        !definition.has_type(CardType::Creature)
+                            && !definition.has_type(CardType::Land)
+                            && [
+                                CardType::Artifact,
+                                CardType::Enchantment,
+                                CardType::Planeswalker,
+                            ]
+                            .iter()
+                            .any(|&t| definition.has_type(t))
+                            && definition.mana_value <= max
+                    }
+                    LibraryPickFilterV1::ArtifactOrCreatureManaValueAtMost(max) => {
+                        (definition.has_type(CardType::Artifact)
+                            || definition.has_type(CardType::Creature))
+                            && definition.mana_value <= max
+                    }
+                    LibraryPickFilterV1::AnySubtype(subtypes) => subtypes
+                        .iter()
+                        .any(|subtype| subtype.is_in_subtype_ids(&object.v4.effective_subtype_ids)),
+                },
+            },
         };
         if selectable {
             matching.push(binding);

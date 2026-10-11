@@ -1,6 +1,7 @@
 //! Committed ownership of the bounded look-four optional-reveal random-bottom lifecycle.
 //! Predecessor programs emit no receipts and retain their existing behavior.
 use super::*;
+use crate::card_def::CARD_DEFS;
 use crate::event::CommittedEvent;
 use crate::state::AbilitySourceContractV4;
 
