@@ -2364,6 +2364,28 @@ fn validate_equipment_granted_trigger_contract(
     Ok(())
 }
 
+fn validate_creature_upgrade_trigger_contract(
+    state: &GameState,
+    host: AbilitySourceContractV4,
+    grant: AbilitySourceContractV4,
+    controller: PlayerId,
+    effect: &EffectOp,
+) -> Result<(), String> {
+    validate_historical_ability_source_contract(state, host)?;
+    validate_historical_ability_source_contract(state, grant)?;
+    if host.source != grant.source
+        || host.zone_change_count != grant.zone_change_count
+        || host.zone != Zone::Battlefield
+        || grant.zone != Zone::Battlefield
+        || host.controller != controller
+        || !crate::standard_creatures_v1::grants_combat_impulse(grant.card_def)
+        || *effect != trigger::kellan_impulse_effect()
+    {
+        return Err("creature-granted trigger changed its historical grant provenance".into());
+    }
+    Ok(())
+}
+
 /// Whether a definition has Storm (702.40). The pool's only storm card is
 /// keyed here; `rules_vector_v1` reads this instead of the card's name.
 pub(crate) fn has_storm(definition: &card_def::CardDef) -> bool {
@@ -12408,7 +12430,17 @@ fn triggered_stack_item_expected_target_spec(
     if !source_def.is_executable() {
         return Err("triggered stack item source definition is not executable".to_string());
     }
-    let equipment_granted_trigger = match (ability_source_contract, item.v4.granted_by) {
+    let granted_trigger = match (ability_source_contract, item.v4.granted_by) {
+        (Some(host), Some(grant)) if host.source == grant.source => {
+            validate_creature_upgrade_trigger_contract(
+                state,
+                host,
+                grant,
+                item.controller,
+                inline_effect,
+            )?;
+            true
+        }
         (Some(host), Some(equipment)) => {
             validate_equipment_granted_trigger_contract(
                 state,
@@ -12419,9 +12451,7 @@ fn triggered_stack_item_expected_target_spec(
             )?;
             true
         }
-        (None, Some(_)) => {
-            return Err("attachment-granted trigger lost its host contract".to_string())
-        }
+        (None, Some(_)) => return Err("granted trigger lost its host contract".to_string()),
         (_, None) => false,
     };
     let definition_target_spec = trigger::target_spec_for_trigger(source_card_def, inline_effect);
@@ -12433,7 +12463,10 @@ fn triggered_stack_item_expected_target_spec(
     if let Some(kind) = expected_optional_cost {
         validate_optional_additional_paid_refs(kind, item.controller, &item.v4.paid_cost_refs)?;
     }
-    let definition_trigger = item.v4.granted_by.is_none() && definition_target_spec.is_some();
+    let definition_trigger = item.v4.granted_by.is_none()
+        && definition_target_spec.is_some()
+        && !(crate::standard_creatures_v1::grants_combat_impulse(source_card_def)
+            && *inline_effect == trigger::kellan_impulse_effect());
     let ward_trigger = if item.v4.granted_by.is_none() {
         if let Some(source_contract) = ability_source_contract {
             let ward = match inline_effect {
@@ -12521,7 +12554,7 @@ fn triggered_stack_item_expected_target_spec(
     } else {
         false
     };
-    if !definition_trigger && !ward_trigger && !equipment_granted_trigger {
+    if !definition_trigger && !ward_trigger && !granted_trigger {
         return Err("triggered stack item effect is not definition-owned".to_string());
     }
     let spec = definition_target_spec.unwrap_or(TargetSpec::None);

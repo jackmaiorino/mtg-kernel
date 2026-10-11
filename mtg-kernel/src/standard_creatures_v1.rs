@@ -7,7 +7,7 @@ use crate::effect::ExecCtx;
 use crate::ids::ObjectId;
 use crate::state::{GameState, Zone};
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CreatureUpgradeV1 {
     pub finality: u16,
@@ -23,6 +23,32 @@ pub struct CreatureUpgradeV1 {
     pub combat_impulse: Option<u64>,
     pub once_activated: Vec<u16>,
     pub wurmlet_resolved_turn: Option<(u32, crate::ids::PlayerId)>,
+    /// The activation that granted combat impulse, retained when a copy ends.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub combat_impulse_source: Option<crate::state::AbilitySourceContractV4>,
+}
+
+impl std::hash::Hash for CreatureUpgradeV1 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        use std::hash::Hash;
+        self.finality.hash(state);
+        self.temporary_creature.hash(state);
+        self.suppressed_by.hash(state);
+        self.graveyard_adventure.hash(state);
+        self.haste_blockers_only.hash(state);
+        self.creature_types.hash(state);
+        self.base_stats.hash(state);
+        self.color.hash(state);
+        self.keyword_grants.hash(state);
+        self.keyword_losses.hash(state);
+        self.combat_impulse.hash(state);
+        self.once_activated.hash(state);
+        self.wurmlet_resolved_turn.hash(state);
+        if let Some(source) = self.combat_impulse_source {
+            "combat_impulse_source_v1".hash(state);
+            source.hash(state);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -297,6 +323,42 @@ pub(crate) fn combat_impulse_active(state: &GameState, id: ObjectId) -> bool {
         .is_some_and(|timestamp| {
             crate::continuous_characteristics_v1::grant_survives(state, id, timestamp)
         })
+}
+
+pub(crate) fn grants_combat_impulse(card_def: u16) -> bool {
+    static TABLE: std::sync::OnceLock<Box<[bool]>> = std::sync::OnceLock::new();
+    TABLE
+        .get_or_init(|| {
+            crate::card_def::CARD_DEFS
+                .iter()
+                .map(|def| {
+                    def.activated_abilities.iter().any(|ability| {
+                        (ability.effect)()
+                            == crate::effect::EffectOp::CreatureUpgrade(
+                                CreatureEffectV1::KellanDetective,
+                            )
+                    })
+                })
+                .collect()
+        })
+        .get(usize::from(card_def))
+        .copied()
+        .unwrap_or(false)
+}
+
+pub(crate) fn combat_impulse_grant(
+    state: &GameState,
+    id: ObjectId,
+) -> Option<crate::state::AbilitySourceContractV4> {
+    let object = state.objects.try_get(id)?;
+    let source = upgrade(state, id)?.combat_impulse_source?;
+    (object.zone == Zone::Battlefield
+        && source.source == id
+        && source.zone == Zone::Battlefield
+        && source.zone_change_count == object.zone_change_count
+        && grants_combat_impulse(source.card_def)
+        && combat_impulse_active(state, id))
+    .then_some(source)
 }
 
 pub(crate) fn activation_allowed(state: &GameState, id: ObjectId, index: usize) -> bool {
@@ -805,6 +867,7 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
                 timestamp,
             ));
             value.combat_impulse = Some(timestamp);
+            value.combat_impulse_source = Some(contract);
         }
         CreatureEffectV1::KellanRogue => {
             value.creature_types = Some((

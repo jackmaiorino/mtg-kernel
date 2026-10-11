@@ -3896,7 +3896,8 @@ pub struct PendingTrigger {
     /// across later zone changes of the same physical card.
     #[serde(default)]
     pub source_contract: Option<AbilitySourceContractV4>,
-    /// Exact Equipment incarnation that granted this trigger to `source`.
+    /// Exact source incarnation that granted this trigger, either attached
+    /// Equipment or the host's own earlier upgrading activation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub granted_by: Option<AbilitySourceContractV4>,
     /// Exact cast-scoped optional additional cost inherited by this ETB.
@@ -4339,6 +4340,36 @@ fn triggers_from_events(
         }
     }
     for (id, live_obj) in state.objects.iter() {
+        // Resolution-granted abilities belong to the host incarnation, even
+        // after it stops copying the definition that supplied the activation.
+        if let Some(grant) = crate::standard_creatures_v1::combat_impulse_grant(state, id) {
+            for (index, event) in events.iter().enumerate() {
+                if trigger_matches(
+                    TriggerCondition::DealsCombatDamageToPlayer,
+                    event,
+                    id,
+                    live_obj.controller,
+                    state,
+                    draws_this_turn_at[index],
+                ) {
+                    new_triggers.push(PendingTrigger {
+                        controller: live_obj.controller,
+                        source: id,
+                        source_contract: Some(AbilitySourceContractV4::capture(state, id)),
+                        granted_by: Some(grant),
+                        effect: kellan_impulse_effect(),
+                        is_madness_offer: false,
+                        kicked: false,
+                        target_spec: TargetSpec::None,
+                        targets: Vec::new(),
+                        target_contracts: Vec::new(),
+                        placement_ordered: false,
+                        optional_additional_cost_paid: None,
+                        paid_cost_refs: Vec::new(),
+                    });
+                }
+            }
+        }
         for definition in
             std::iter::once(live_obj.card_def).chain(copied_definitions.iter().filter_map(
                 |(source, definition)| {
@@ -4417,6 +4448,13 @@ fn triggers_from_events(
                 }
             }
             for (ability_index, def) in triggers_for(obj.card_def).iter().enumerate() {
+                // Kept in the definition table for mechanical description;
+                // its runtime producer is the persisted grant above.
+                if crate::standard_creatures_v1::grants_combat_impulse(obj.card_def)
+                    && (def.effect)() == kellan_impulse_effect()
+                {
+                    continue;
+                }
                 // These abilities were captured at the actual life-gain commit,
                 // before later operations can change battlefield membership.
                 if matches!(
@@ -4437,11 +4475,8 @@ fn triggers_from_events(
                 // but its death ability and controller come from the battlefield.
                 let uses_death_lki =
                     uses_leave_lki || def.condition == TriggerCondition::DiesIfWasCreature;
-                let ability_active = if card.name == "Kellan, Planar Trailblazer" {
-                    crate::standard_creatures_v1::combat_impulse_active(state, id)
-                } else {
-                    crate::continuous_characteristics_v1::printed_abilities_active(state, id)
-                };
+                let ability_active =
+                    crate::continuous_characteristics_v1::printed_abilities_active(state, id);
                 if !uses_leave_lki && (obj.zone != def.home_zone || !ability_active) {
                     continue;
                 }
@@ -6079,7 +6114,7 @@ mod tests {
     }
 }
 
-fn kellan_impulse_effect() -> EffectOp {
+pub(crate) fn kellan_impulse_effect() -> EffectOp {
     EffectOp::ImpulseDraw {
         count: 1,
         duration: crate::effect::ImpulseDuration::EndOfTurn,

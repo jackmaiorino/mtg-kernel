@@ -2791,6 +2791,113 @@ fn assimilation_aegis_may_exile_nothing_and_then_copies_nothing() {
 }
 
 #[test]
+fn kellan_granted_trigger_survives_aegis_reversion_and_source_departure_with_frozen_proof() {
+    for depart_after_trigger in [false, true] {
+        let mut state = game();
+        let kellan = put(
+            &mut state,
+            P1,
+            "Kellan, Planar Trailblazer",
+            Zone::Battlefield,
+        );
+        let host = put(&mut state, P0, "Tolarian Terror", Zone::Battlefield);
+        let host_definition = state.objects.get(host).card_def;
+        let aegis = cast_aegis(&mut state, &[Target::Object(kellan)]);
+        equip_aegis(&mut state, aegis, host);
+        state.players[0].mana_pool[ManaColor::R.pool_index()] = 2;
+        act(&mut state, Action::ActivateAbility(host, 0));
+        resolve_stack(&mut state);
+        assert!(state
+            .objects
+            .get(host)
+            .v4
+            .creature_upgrade
+            .as_ref()
+            .unwrap()
+            .combat_impulse
+            .is_some());
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(aegis, Zone::Graveyard),
+        );
+        resolve_stack(&mut state);
+        assert_eq!(state.objects.get(host).card_def, host_definition);
+
+        let generation = state.objects.get(host).zone_change_count;
+        event::log_combat_damage_to_player(&mut state, host, generation, P1, 1);
+        let pending = mtg_kernel::trigger::collect_and_process(&mut state);
+        assert_eq!(
+            pending.len(),
+            1,
+            "the persisted grant must trigger exactly once"
+        );
+        assert_eq!(
+            pending[0].source_contract.unwrap().card_def,
+            host_definition
+        );
+        let grant = pending[0].granted_by.unwrap();
+        assert_eq!(grant.source, host);
+        assert_eq!(grant.zone_change_count, generation);
+        assert_eq!(
+            CARD_DEFS[usize::from(grant.card_def)].name,
+            "Kellan, Planar Trailblazer"
+        );
+        state.engine.pending_triggers.extend(pending);
+        state = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+
+        for wrong_definition in [false, true] {
+            let mut altered = state.clone();
+            if wrong_definition {
+                altered.engine.pending_triggers[0]
+                    .granted_by
+                    .as_mut()
+                    .unwrap()
+                    .card_def = host_definition;
+            } else {
+                altered.engine.pending_triggers[0].granted_by = None;
+            }
+            assert!(matches!(
+                engine::advance_until_decision(&mut altered),
+                Decision::Halted { .. }
+            ));
+        }
+        let top = state.players[0].library[0];
+        if depart_after_trigger {
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(host, Zone::Hand));
+            assert!(state.objects.get(host).v4.creature_upgrade.is_none());
+        }
+        next(&mut state);
+        let item = state.stack.last().unwrap();
+        assert_eq!(item.source, host);
+        assert_eq!(item.v4.granted_by, Some(grant));
+        let mut restored: GameState =
+            serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+        resolve_stack(&mut state);
+        resolve_stack(&mut restored);
+        assert_eq!(state, restored);
+        assert_eq!(state.objects.get(top).zone, Zone::Exile);
+        assert_eq!(
+            state
+                .engine
+                .exile_play_permissions
+                .iter()
+                .filter(|p| p.object == top && p.holder == P0)
+                .count(),
+            1
+        );
+        if depart_after_trigger {
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(host, Zone::Battlefield),
+            );
+            let generation = state.objects.get(host).zone_change_count;
+            event::log_combat_damage_to_player(&mut state, host, generation, P1, 1);
+            assert!(mtg_kernel::trigger::collect_and_process(&mut state).is_empty());
+        }
+    }
+}
+
+#[test]
 fn an_aegis_copy_that_dies_reaches_the_graveyard_as_its_own_card() {
     let mut state = game();
     let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
