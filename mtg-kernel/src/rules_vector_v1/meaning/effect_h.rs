@@ -333,8 +333,25 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                     .amount(AmtF::Dynamic)
                     .duration(DurF::Permanent),
             );
-            if let Some(incubator) = crate::card_def::card_id_by_name("Incubator Token") {
-                out.created_tokens.push(incubator);
+            // Token identity follows printed type data, never a card-name label.
+            // If a future profile has multiple matches, keep that identity opaque.
+            let mut tokens = crate::card_def::CARD_DEFS
+                .iter()
+                .enumerate()
+                .filter(|(_, definition)| {
+                    definition.is_token
+                        && definition.has_type(CardType::Artifact)
+                        && definition
+                            .subtypes
+                            .contains(&crate::card_def::Subtype::Incubator)
+                })
+                .map(|(id, _)| id as u16);
+            if let Some(token) = tokens.next() {
+                if tokens.next().is_none() {
+                    out.created_tokens.push(token);
+                } else {
+                    out.atoms.push(Atom::Opaque);
+                }
             }
         }
         EffectOp::Incubate { amount } => {

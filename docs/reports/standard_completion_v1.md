@@ -64,3 +64,8 @@ Source reviews repaired historical-source, payment, privacy and continuation
 findings. Delivery, required CI, maintainer review and default-branch acceptance
 are recorded on [PR #218](https://github.com/jackmaiorino/mtg-kernel/pull/218) and
 [issue #217](https://github.com/jackmaiorino/mtg-kernel/issues/217).
+# Integration with accepted FDN v69
+
+The delivery integration includes main `a957c358db9326cb3eacff819d6bcea38678aeb3` and preserves its accepted FDN enum prefixes, definitions, profile identity and launcher fixes. The Standard library filters follow the accepted instant/sorcery filter with distinct continuation fingerprint tags 8, 9 and 10. A focused regression fixes the accepted tag 7 and rejects cross-filter fingerprint collisions. Rules-vector source binding now includes the already dispatched `effect_h.rs` and `effect_i.rs` modules, so future extractor outputs identify those meanings. Existing frozen outputs, qualification inputs and receipts remain unchanged.
+
+Both generated policy-contract checks, Rust formatting and diff checks pass locally. All 49 affected FDN, Standard deck and frozen-feature refusal Python tests pass using the existing dependency environment. The existing 349/80/69 source qualification remains retained; current-head hosted native checks, including Standard sessions and the collision regression, are required before integration acceptance. No additional experiment or owner job restart was launched.
