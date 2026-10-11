@@ -51,6 +51,7 @@ pub struct HumanCardRefV1 {
 pub(super) struct Handles {
     rows: Vec<(CardStableRefV1, HumanCardRefV1)>,
     effect_timestamps: Vec<u64>,
+    departed_stack_targets: Vec<u64>,
 }
 
 impl Handles {
@@ -68,6 +69,7 @@ impl Handles {
         let mut handles = Self {
             rows: Vec::new(),
             effect_timestamps,
+            departed_stack_targets: Vec::new(),
         };
         // Register the complete visible zone inventory before attachments,
         // including forward references to a later battlefield row.
@@ -136,6 +138,21 @@ impl Handles {
     pub(super) fn name(&self, reference: &CardStableRefV1) -> Result<String, Error> {
         let card = self.get(reference)?;
         Ok(format!("{} [{}]", card.name, card.handle))
+    }
+
+    pub(super) fn stack_target_label(
+        &self,
+        stack_item_id: u64,
+        stack_index: Option<u32>,
+    ) -> Result<String, Error> {
+        if let Some(index) = stack_index {
+            return Ok(format!("stack item #{}", u64::from(index) + 1));
+        }
+        self.departed_stack_targets
+            .iter()
+            .position(|id| *id == stack_item_id)
+            .map(|index| format!("departed stack item #{}", index + 1))
+            .ok_or(Error::InvalidVisibleReference)
     }
 
     fn attachment(&self, arena_id: u32) -> Result<HumanCardRefV1, Error> {
@@ -609,8 +626,19 @@ impl Project for CardPublicV2 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "target_kind", rename_all = "snake_case")]
 pub enum HumanTargetV1 {
-    Player { player: PlayerSeatV1 },
-    Object { object: HumanCardRefV1 },
+    Player {
+        player: PlayerSeatV1,
+    },
+    Object {
+        object: HumanCardRefV1,
+    },
+    StackItem {
+        stack_handle: String,
+        stack_index: Option<u32>,
+        source: HumanCardRefV1,
+        controller: PlayerSeatV1,
+        kind: StackItemKindV2,
+    },
 }
 impl Project for TargetRefV1 {
     type Output = HumanTargetV1;
@@ -620,6 +648,25 @@ impl Project for TargetRefV1 {
             Self::Object { object } => HumanTargetV1::Object {
                 object: object.project(handles)?,
             },
+            Self::StackItem {
+                stack_item_id,
+                stack_index,
+                source,
+                controller,
+                kind,
+            } => {
+                if stack_index.is_none() && !handles.departed_stack_targets.contains(stack_item_id)
+                {
+                    handles.departed_stack_targets.push(*stack_item_id);
+                }
+                HumanTargetV1::StackItem {
+                    stack_handle: handles.stack_target_label(*stack_item_id, *stack_index)?,
+                    stack_index: *stack_index,
+                    source: source.project(handles)?,
+                    controller: *controller,
+                    kind: *kind,
+                }
+            }
         })
     }
 }
@@ -1106,4 +1153,101 @@ fn projection_diagnostic_error(
         }
     }
     error
+}
+
+#[cfg(test)]
+mod stack_target_tests {
+    use super::*;
+
+    fn handles() -> Handles {
+        Handles {
+            rows: Vec::new(),
+            effect_timestamps: Vec::new(),
+            departed_stack_targets: Vec::new(),
+        }
+    }
+
+    fn source() -> CardStableRefV1 {
+        CardStableRefV1 {
+            arena_id: 4312,
+            card_db_id: crate::card_def::card_id_by_name("Island").unwrap(),
+            owner: PlayerSeatV1::P0,
+            controller: PlayerSeatV1::P0,
+            zone: Zone::Battlefield,
+            zone_change_count: 19,
+        }
+    }
+
+    #[test]
+    fn stack_targets_use_public_rows_and_ignore_internal_id_renumbering() {
+        let mut results = Vec::new();
+        for offset in [0, 80000] {
+            let mut handles = handles();
+            let mut projected = Vec::new();
+            for index in 0..2 {
+                let target = TargetRefV1::StackItem {
+                    stack_item_id: 9999 + offset + u64::from(index),
+                    stack_index: Some(index),
+                    source: source(),
+                    controller: PlayerSeatV1::P0,
+                    kind: StackItemKindV2::ActivatedAbility,
+                };
+                projected.push(target.project(&mut handles).unwrap());
+            }
+            assert_ne!(projected[0], projected[1]);
+            let json = serde_json::to_string(&projected).unwrap();
+            for hidden in ["stack_item_id", "arena_id", "zone_change_count"] {
+                assert!(!json.contains(hidden));
+            }
+            results.push(json);
+        }
+        assert_eq!(results[0], results[1]);
+    }
+
+    #[test]
+    fn departed_stack_targets_keep_distinct_local_references() {
+        let mut handles = handles();
+        let target = |stack_item_id| TargetRefV1::StackItem {
+            stack_item_id,
+            stack_index: None,
+            source: source(),
+            controller: PlayerSeatV1::P0,
+            kind: StackItemKindV2::TriggeredAbility,
+        };
+        let first = target(10001).project(&mut handles).unwrap();
+        let second = target(10002).project(&mut handles).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(first, target(10001).project(&mut handles).unwrap());
+        assert_eq!(
+            handles.stack_target_label(10001, None).unwrap(),
+            "departed stack item #1"
+        );
+    }
+
+    #[test]
+    fn old_target_variants_keep_their_json_shape() {
+        let mut handles = handles();
+        let player = TargetRefV1::Player {
+            player: PlayerSeatV1::P0,
+        }
+        .project(&mut handles)
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(player).unwrap(),
+            serde_json::json!({
+                "target_kind": "player", "player": PlayerSeatV1::P0
+            })
+        );
+        let object = TargetRefV1::Object { object: source() }
+            .project(&mut handles)
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(object).unwrap(),
+            serde_json::json!({
+                "target_kind": "object",
+                "object": { "handle": "c1", "name": "Island", "owner": PlayerSeatV1::P0,
+                    "controller": PlayerSeatV1::P0, "zone": Zone::Battlefield }
+            })
+        );
+    }
 }

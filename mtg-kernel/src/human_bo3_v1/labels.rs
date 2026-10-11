@@ -277,12 +277,13 @@ fn target(target: &TargetRefV1, handles: &Handles, human: PlayerSeatV1) -> Resul
             source,
             kind,
             stack_item_id,
+            stack_index,
             ..
         } => Ok(format!(
-            "{:?} of {} (stack {})",
+            "{:?} of {} ({})",
             kind,
-            crate::card_def::CARD_DEFS[source.card_db_id as usize].name,
-            stack_item_id
+            handles.name(source)?,
+            handles.stack_target_label(*stack_item_id, *stack_index)?
         )),
     }
 }

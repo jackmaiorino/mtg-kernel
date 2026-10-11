@@ -362,6 +362,9 @@ pub enum TargetRefV1 {
     },
     StackItem {
         stack_item_id: u64,
+        /// Current public stack row, absent once the targeted item departed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stack_index: Option<u32>,
         source: CardStableRefV1,
         controller: PlayerSeatV1,
         kind: StackItemKindV2,
@@ -5655,6 +5658,7 @@ fn paid_cost_card_refs(refs: &[PaidCostRefV4], acting_player: PlayerId) -> Vec<C
 }
 
 pub(crate) fn stack_item_target_ref_from_contract(
+    state: &GameState,
     contract: crate::state::StackTargetContractV4,
 ) -> Result<TargetRefV1> {
     let crate::state::StackTargetContractV4::StackItem {
@@ -5674,6 +5678,11 @@ pub(crate) fn stack_item_target_ref_from_contract(
     };
     Ok(TargetRefV1::StackItem {
         stack_item_id: stack_item_id.0,
+        stack_index: state
+            .stack
+            .iter()
+            .position(|item| item.v4.stack_item_id == stack_item_id)
+            .map(|index| index as u32),
         controller: controller.into(),
         kind: kind.into(),
         source: CardStableRefV1 {
@@ -5693,10 +5702,10 @@ pub(crate) fn stack_item_target_ref(
     if !state.stack.iter().any(|item| item.v4.stack_item_id == id) {
         return Err(RlContractError("stack target no longer exists".into()));
     }
-    stack_item_target_ref_from_contract(crate::state::StackTargetContractV4::capture(
+    stack_item_target_ref_from_contract(
         state,
-        Target::StackItem(id),
-    ))
+        crate::state::StackTargetContractV4::capture(state, Target::StackItem(id)),
+    )
 }
 
 fn target_ref_visible(
@@ -7880,7 +7889,7 @@ fn stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<TargetRe
             }
             Ok(match contract {
                 contract @ crate::state::StackTargetContractV4::StackItem { .. } => {
-                    stack_item_target_ref_from_contract(contract)?
+                    stack_item_target_ref_from_contract(state, contract)?
                 }
                 crate::state::StackTargetContractV4::Player(player) => TargetRefV1::Player {
                     player: player.into(),
