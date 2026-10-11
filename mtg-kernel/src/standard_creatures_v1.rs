@@ -670,7 +670,7 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
         }
         for object in objects {
             if effect == CreatureEffectV1::VirtueCountersUntap {
-                state.objects.get_mut(object.object).tapped = false;
+                crate::engine::attempt_untap(state, object.object);
             } else {
                 crate::effect::install_temporary_boost(state, object, 0, 0, Keywords::TRAMPLE);
             }

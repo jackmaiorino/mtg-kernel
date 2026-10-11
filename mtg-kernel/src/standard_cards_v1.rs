@@ -874,8 +874,7 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 && source_incarnation_live(ctx, state)
                 && state.objects.get(ctx.source).v4.face_index == 0
             {
-                state.objects.get_mut(ctx.source).tapped = false;
-                release_untapped_locks(state);
+                crate::engine::attempt_untap(state, ctx.source);
                 transform_resolving_source(ctx, state);
             }
         }

@@ -2413,6 +2413,20 @@ fn braided_net_taps_and_locks_abilities_until_the_permanent_untaps() {
     state.players[0].mana_pool[ManaColor::B.pool_index()] = 2;
     assert!(!activatable(&mut state).contains(&(convocation, 0)));
 
+    // Replacing an effect's untap attempt removes one stun counter but does
+    // not end Net's lock. The following natural untap ends it normally.
+    state.objects.get_mut(convocation).counters.stun = 1;
+    mtg_kernel::effect::execute(
+        &mtg_kernel::effect::EffectOp::UntapObject {
+            object: mtg_kernel::effect::ObjectRef::ThisSource,
+        },
+        &mtg_kernel::effect::ExecCtx::no_targets(convocation, P0),
+        &mut state,
+    );
+    assert!(state.objects.get(convocation).tapped);
+    assert_eq!(state.objects.get(convocation).counters.stun, 0);
+    assert!(!activatable(&mut state).contains(&(convocation, 0)));
+
     // The lock ends when it untaps, and a later tap does not renew it.
     to_main_of(&mut state, P1);
     to_main_of(&mut state, P0);

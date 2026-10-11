@@ -949,18 +949,61 @@ fn gwenna_mixed_mana_resolves_immediately_and_obeys_both_spending_categories() {
 
 #[test]
 fn gwenna_untaps_and_grows_when_a_five_power_creature_spell_is_cast() {
+    for (tapped, stun, expected_tapped, expected_stun) in [
+        (true, 0, false, 0),
+        (true, 2, true, 1),
+        (false, 2, false, 2),
+    ] {
+        let mut state = ready(Step::Main1);
+        let gwenna = put(
+            &mut state,
+            PlayerId::P0,
+            "Gwenna, Eyes of Gaea",
+            Zone::Battlefield,
+        );
+        state.objects.get_mut(gwenna).tapped = tapped;
+        state.objects.get_mut(gwenna).counters.stun = stun;
+        let spell = put(&mut state, PlayerId::P0, "Djeru and Hazoret", Zone::Hand);
+        state.players[0].mana_pool = pool(&[(ManaColor::W, 1), (ManaColor::R, 2)], 2);
+        cast(&mut state, spell, &[]);
+        settled(&mut state);
+        let live = state.objects.get(gwenna);
+        assert_eq!(live.tapped, expected_tapped);
+        assert_eq!(live.counters.stun, expected_stun);
+        assert_eq!(live.counters.plus1_plus1, 1);
+    }
+}
+
+#[test]
+fn selected_land_untaps_apply_stun_independently() {
     let mut state = ready(Step::Main1);
-    let gwenna = put(
+    let creature = put(&mut state, PlayerId::P1, "Cenote Scout", Zone::Battlefield);
+    let stunned = put(&mut state, PlayerId::P0, "Island", Zone::Battlefield);
+    let ordinary = put(&mut state, PlayerId::P1, "Forest", Zone::Battlefield);
+    state.objects.get_mut(stunned).tapped = true;
+    state.objects.get_mut(stunned).counters.stun = 2;
+    state.objects.get_mut(ordinary).tapped = true;
+    let snap = put(&mut state, PlayerId::P0, "Snap", Zone::Hand);
+    state.players[0].mana_pool = pool(&[(ManaColor::U, 1)], 1);
+    cast(&mut state, snap, &[Target::Object(creature)]);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectTargets { .. })
+    ));
+    state = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+    engine::step(
         &mut state,
-        PlayerId::P0,
-        "Gwenna, Eyes of Gaea",
-        Zone::Battlefield,
-    );
-    state.objects.get_mut(gwenna).tapped = true;
-    let spell = put(&mut state, PlayerId::P0, "Djeru and Hazoret", Zone::Hand);
-    state.players[0].mana_pool = pool(&[(ManaColor::W, 1), (ManaColor::R, 2)], 2);
-    cast(&mut state, spell, &[]);
+        Action::ChooseEffectTarget(Target::Object(stunned)),
+    )
+    .unwrap();
+    next(&mut state);
+    engine::step(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(ordinary)),
+    )
+    .unwrap();
     settled(&mut state);
-    assert!(!state.objects.get(gwenna).tapped);
-    assert_eq!(state.objects.get(gwenna).counters.plus1_plus1, 1);
+    assert!(state.objects.get(stunned).tapped);
+    assert_eq!(state.objects.get(stunned).counters.stun, 1);
+    assert!(!state.objects.get(ordinary).tapped);
 }

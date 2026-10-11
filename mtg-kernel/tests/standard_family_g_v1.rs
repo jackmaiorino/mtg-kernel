@@ -2907,6 +2907,11 @@ fn virtue_adventure_and_end_step_counter_then_untap_current_creatures() {
     cast_form(&mut state, virtue, 0);
     assert_eq!(state.objects.get(virtue).zone, Zone::Battlefield);
     state.objects.get_mut(knight).tapped = true;
+    let stunned = put(&mut state, PlayerId::P0, "Cenote Scout", Zone::Battlefield);
+    state.objects.get_mut(stunned).tapped = true;
+    state.objects.get_mut(stunned).counters.stun = 2;
+    let awake = put(&mut state, PlayerId::P0, "Cenote Scout", Zone::Battlefield);
+    state.objects.get_mut(awake).counters.stun = 2;
     let land = put(&mut state, PlayerId::P0, "Forest", Zone::Battlefield);
     state.objects.get_mut(land).tapped = true;
     let theirs = put(&mut state, PlayerId::P1, "Cenote Scout", Zone::Battlefield);
@@ -2918,6 +2923,12 @@ fn virtue_adventure_and_end_step_counter_then_untap_current_creatures() {
     settled(&mut state);
     assert_eq!(state.objects.get(knight).counters.plus1_plus1, 1);
     assert!(!state.objects.get(knight).tapped);
+    assert_eq!(state.objects.get(stunned).counters.plus1_plus1, 1);
+    assert!(state.objects.get(stunned).tapped);
+    assert_eq!(state.objects.get(stunned).counters.stun, 1);
+    assert_eq!(state.objects.get(awake).counters.plus1_plus1, 1);
+    assert!(!state.objects.get(awake).tapped);
+    assert_eq!(state.objects.get(awake).counters.stun, 2);
     assert!(state.objects.get(land).tapped);
     assert!(state.objects.get(theirs).tapped);
     assert_eq!(state.objects.get(virtue).counters.plus1_plus1, 0);

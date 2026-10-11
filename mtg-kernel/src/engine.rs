@@ -13507,6 +13507,24 @@ fn advance_step(state: &mut GameState) {
     reset_priority(state);
 }
 
+/// Attempts to untap a permanent, applying the stun-counter replacement.
+/// Step-only restrictions must be checked before calling this: effects can
+/// untap a permanent even when it would not untap during its untap step.
+/// Returns true only when the permanent actually became untapped.
+pub(crate) fn attempt_untap(state: &mut GameState, object: ObjectId) -> bool {
+    let live = state.objects.get_mut(object);
+    if live.zone != Zone::Battlefield || !live.tapped {
+        return false;
+    }
+    if live.counters.stun > 0 {
+        live.counters.stun -= 1;
+        return false;
+    }
+    live.tapped = false;
+    crate::standard_cards_v1::release_untapped_locks(state);
+    true
+}
+
 fn attachment_prevents_untap(state: &GameState, host: ObjectId) -> bool {
     let host_object = state.objects.get(host);
     host_object.attachments.iter().copied().any(|attachment| {
@@ -13558,17 +13576,12 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 .collect::<Vec<_>>();
             for id in permanents {
                 let prevented_by_attachment = attachment_prevents_untap(state, id);
-                let obj = state.objects.get_mut(id);
-                if obj.v4.skip_next_untap {
-                    obj.v4.skip_next_untap = false;
+                if state.objects.get(id).v4.skip_next_untap {
+                    state.objects.get_mut(id).v4.skip_next_untap = false;
                 } else if !prevented_by_attachment {
-                    if obj.tapped && obj.counters.stun > 0 {
-                        obj.counters.stun -= 1;
-                    } else {
-                        obj.tapped = false;
-                    }
+                    attempt_untap(state, id);
                 }
-                obj.summoning_sick = false;
+                state.objects.get_mut(id).summoning_sick = false;
             }
             crate::standard_cards_v1::release_untapped_locks(state);
             state.players[0].draws_this_turn = 0;
@@ -20536,6 +20549,28 @@ mod tests {
         state.objects.get_mut(creature).tapped = false;
         run_step_entry_action(&mut state, Step::Untap);
         assert_eq!(state.objects.get(creature).counters.stun, 1);
+
+        let aura = put_on_battlefield(&mut state, PlayerId::P1, "Bind the Monster");
+        state.attach_object_exact(aura, 0, creature, 0).unwrap();
+        state.objects.get_mut(creature).tapped = true;
+        run_step_entry_action(&mut state, Step::Untap);
+        assert!(state.objects.get(creature).tapped);
+        assert_eq!(state.objects.get(creature).counters.stun, 1);
+
+        // Both restrictions apply only to the untap step. A resolving effect
+        // still attempts to untap, without consuming the next-step marker.
+        state.objects.get_mut(creature).v4.skip_next_untap = true;
+        let ctx = crate::effect::ExecCtx::no_targets(creature, PlayerId::P0);
+        let untap = crate::effect::EffectOp::UntapObject {
+            object: crate::effect::ObjectRef::ThisSource,
+        };
+        crate::effect::execute(&untap, &ctx, &mut state);
+        assert!(state.objects.get(creature).tapped);
+        assert_eq!(state.objects.get(creature).counters.stun, 0);
+        assert!(state.objects.get(creature).v4.skip_next_untap);
+        crate::effect::execute(&untap, &ctx, &mut state);
+        assert!(!state.objects.get(creature).tapped);
+        assert!(state.objects.get(creature).v4.skip_next_untap);
     }
 
     #[test]

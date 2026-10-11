@@ -10500,9 +10500,8 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                             );
                         }
                         seen.push(binding.object);
-                        state.objects.get_mut(binding.object).tapped = false;
+                        crate::engine::attempt_untap(state, binding.object);
                     }
-                    crate::standard_cards_v1::release_untapped_locks(state);
                 }
                 EffectFrame::LinkedExileChosenHandCard {
                     player,
@@ -16765,10 +16764,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         }
         EffectOp::UntapObject { object } => {
             let object = ctx.resolve_object(*object);
-            if state.objects.get(object).zone == Zone::Battlefield {
-                state.objects.get_mut(object).tapped = false;
-                crate::standard_cards_v1::release_untapped_locks(state);
-            }
+            crate::engine::attempt_untap(state, object);
         }
         EffectOp::CreatureUpgrade(effect) => {
             crate::standard_creatures_v1::execute(*effect, ctx, state)
