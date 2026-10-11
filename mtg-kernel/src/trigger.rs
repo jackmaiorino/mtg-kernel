@@ -4196,6 +4196,7 @@ fn triggers_from_events(
     }
     let draws_this_turn_at = draws_this_turn_snapshot(events, state);
     let mut new_triggers = Vec::new();
+    let mut death_capture_authorities = Vec::new();
     let mut death_captures_seen = std::collections::BTreeSet::new();
     for (index, event) in events.iter().enumerate() {
         if let CommittedEvent::ControlledCreatureDeathCaptureV1 {
@@ -4220,7 +4221,10 @@ fn triggers_from_events(
             }
         }
         match crate::creature_death_capture_v1::pending(state, events, index) {
-            Ok(Some(pending)) => new_triggers.push(pending),
+            Ok(Some((pending, history_index))) => {
+                new_triggers.push(pending);
+                death_capture_authorities.push(history_index);
+            }
             Ok(None) => {}
             Err(source) => {
                 state.engine.halted = Some((
@@ -4230,6 +4234,15 @@ fn triggers_from_events(
                 return Vec::new();
             }
         }
+    }
+    // Consume only after every new capture in this batch validates. Refusal
+    // leaves committed history intact, and a replay cannot collect again.
+    for history_index in death_capture_authorities {
+        state.engine.event_history.push(
+            CommittedEvent::ControlledCreatureDeathCaptureCollectedV1 {
+                capture_history_index: u64::try_from(history_index).expect("bounded event history"),
+            },
+        );
     }
     let may_trigger = card_defs_with_event_triggers();
     for (id, obj) in state.objects.iter() {

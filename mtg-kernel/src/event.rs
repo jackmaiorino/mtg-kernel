@@ -582,6 +582,12 @@ pub enum CommittedEvent {
         died: crate::state::ObjectLinkV4,
         controller_before: PlayerId,
     },
+    /// Single-use collection receipt for a committed observer capture. The
+    /// index names immutable event_history authority, not a mutable log entry.
+    /// This engine-only event never enters event_log or creates a trigger.
+    ControlledCreatureDeathCaptureCollectedV1 {
+        capture_history_index: u64,
+    },
 }
 
 /// Remembers the counters of a departing permanent whose own leave ability

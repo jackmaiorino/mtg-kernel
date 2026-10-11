@@ -69,13 +69,14 @@ pub(crate) fn capture(state: &GameState, event: &ProposedEvent) -> Vec<Committed
         .collect()
 }
 
-/// A capture is authoritative only beside its committed death event. Source
-/// departure or control changes afterward do not change the captured controller.
+/// A capture is authoritative only beside its committed death in both the
+/// mutable collection log and independent committed history. One history index
+/// is consumed once. Later source changes do not change the captured controller.
 pub(crate) fn pending(
     state: &GameState,
     events: &[CommittedEvent],
     index: usize,
-) -> Result<Option<PendingTrigger>, crate::ids::ObjectId> {
+) -> Result<Option<(PendingTrigger, usize)>, crate::ids::ObjectId> {
     let CommittedEvent::ControlledCreatureDeathCaptureV1 {
         source,
         ability_index,
@@ -98,6 +99,34 @@ pub(crate) fn pending(
             CommittedEvent::ControlledCreatureDeathCaptureV1 { .. }
         )
     });
+    // A coherent mutable-log forgery cannot invent a precommit observer.
+    // Match the full frozen source/controller/deceased/ability tuple against
+    // committed authority and its exact death occurrence before using it.
+    let mut authorities = state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .filter(|(_, event)| *event == &events[index]);
+    let (history_index, _) = authorities.next().ok_or_else(invalid)?;
+    let history_death = state.engine.event_history[..history_index]
+        .iter()
+        .rev()
+        .find(|event| {
+            !matches!(
+                event,
+                CommittedEvent::ControlledCreatureDeathCaptureV1 { .. }
+            )
+        });
+    if authorities.next().is_some()
+        || history_death != death
+        || state.engine.event_history.iter().any(|event| {
+            matches!(event, CommittedEvent::ControlledCreatureDeathCaptureCollectedV1 { capture_history_index }
+                if u64::try_from(history_index).ok() == Some(*capture_history_index))
+        })
+    {
+        return Err(invalid());
+    }
     if !definition.is_executable()
         || ability.condition != TriggerCondition::ThisOrControlledCreatureDies
         || source.zone != Zone::Battlefield
@@ -128,21 +157,24 @@ pub(crate) fn pending(
     let effect = (ability.effect)();
     let target_spec =
         crate::trigger::target_spec_for_trigger(source.card_def, &effect).ok_or_else(invalid)?;
-    Ok(Some(PendingTrigger {
-        controller: source.controller,
-        source: source.source,
-        effect,
-        is_madness_offer: false,
-        kicked: false,
-        target_spec,
-        targets: Vec::new(),
-        target_contracts: Vec::new(),
-        placement_ordered: false,
-        source_contract: Some(*source),
-        granted_by: None,
-        optional_additional_cost_paid: None,
-        paid_cost_refs: Vec::new(),
-    }))
+    Ok(Some((
+        PendingTrigger {
+            controller: source.controller,
+            source: source.source,
+            effect,
+            is_madness_offer: false,
+            kicked: false,
+            target_spec,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
+            source_contract: Some(*source),
+            granted_by: None,
+            optional_additional_cost_paid: None,
+            paid_cost_refs: Vec::new(),
+        },
+        history_index,
+    )))
 }
 
 /// A definition-owned new death program, not a predecessor or an arbitrary

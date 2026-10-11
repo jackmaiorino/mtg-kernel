@@ -49,3 +49,5 @@ disposable clone and removes that restriction when the new ownership ends.
 Predecessor payment and sampling paths are unchanged. These checks are unrun;
 admission still requires native gameplay, catalog/profile consumers and pinned
 Mage parity. Prepared source establishes no full-support or strength result.
+
+Mutable capture markers require an exact match to independent committed event_history authority and the same adjacent actual death occurrence. Each successful collection appends an engine-only `ControlledCreatureDeathCaptureCollectedV1` receipt naming the immutable capture history index. A batch writes no receipts until all captures validate. Already consumed authority cannot replay, including after snapshot restore. Coherent opposing-controller forgery and whole-death-log replay negatives preserve committed history and existing pending authority on refusal. This adds one successor engine event consumer case, emitted only for the new admitted observer family, and no legacy state field or vocabulary change.

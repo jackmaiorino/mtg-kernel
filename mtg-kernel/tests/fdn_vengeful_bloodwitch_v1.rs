@@ -529,3 +529,117 @@ fn removed_printed_ability_is_frozen_before_its_aura_leaves_the_death_batch() {
         }
     }
 }
+
+#[test]
+fn coherent_opposing_bloodwitch_capture_forgery_has_no_committed_authority_both_seats() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(player);
+        put(&mut state, player, "Vengeful Bloodwitch", Zone::Battlefield);
+        let opposing = put(
+            &mut state,
+            player.opponent(),
+            "Vengeful Bloodwitch",
+            Zone::Battlefield,
+        );
+        let deceased = put(&mut state, player, "Llanowar Elves", Zone::Battlefield);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(deceased, Zone::Graveyard),
+        );
+        let mut forged = state
+            .engine
+            .event_log
+            .iter()
+            .find(|event| {
+                matches!(
+                    event,
+                    CommittedEvent::ControlledCreatureDeathCaptureV1 { .. }
+                )
+            })
+            .unwrap()
+            .clone();
+        let CommittedEvent::ControlledCreatureDeathCaptureV1 {
+            source,
+            controller_before,
+            ..
+        } = &mut forged
+        else {
+            unreachable!()
+        };
+        *source = mtg_kernel::state::AbilitySourceContractV4::capture(&state, opposing);
+        // Every other source field is the real opposing incarnation. The forged
+        // controller is coherent with the real death and formerly passed liveness.
+        source.controller = player;
+        *controller_before = player;
+        state.engine.event_log.push(forged);
+        let mut restored = copy(&state);
+        for current in [&mut state, &mut restored] {
+            let committed = serde_json::to_vec(&current.engine.event_history).unwrap();
+            assert!(trigger::collect_and_process(current).is_empty());
+            assert!(current.engine.halted.is_some());
+            assert!(current.engine.pending_triggers.is_empty());
+            assert!(current.stack.is_empty());
+            assert_eq!(
+                serde_json::to_vec(&current.engine.event_history).unwrap(),
+                committed
+            );
+            assert_eq!((current.players[0].life, current.players[1].life), (20, 20));
+        }
+        assert_eq!(
+            state.diagnostic_state_hash(),
+            restored.diagnostic_state_hash()
+        );
+    }
+}
+
+#[test]
+fn committed_bloodwitch_death_capture_is_consumed_once_and_replay_preserves_history_both_seats() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(player);
+        let source = put(&mut state, player, "Vengeful Bloodwitch", Zone::Battlefield);
+        let deceased = put(&mut state, player, "Llanowar Elves", Zone::Battlefield);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(deceased, Zone::Graveyard),
+        );
+        let original_log = state.engine.event_log.clone();
+        let original_history = state.engine.event_history.clone();
+        let pending = trigger::collect_and_process(&mut state);
+        assert!(state.engine.halted.is_none());
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].source, source);
+        assert_eq!(pending[0].controller, player);
+        assert_eq!(
+            &state.engine.event_history[..original_history.len()],
+            original_history.as_slice()
+        );
+        assert_eq!(state.engine.event_history.len(), original_history.len() + 1);
+        assert!(matches!(
+            state.engine.event_history.last(),
+            Some(CommittedEvent::ControlledCreatureDeathCaptureCollectedV1 { .. })
+        ));
+        state.engine.pending_triggers.extend(pending);
+        let mut restored = copy(&state);
+        for current in [&mut state, &mut restored] {
+            current.engine.event_log = original_log.clone();
+            let committed = serde_json::to_vec(&current.engine.event_history).unwrap();
+            let existing_pending = serde_json::to_vec(&current.engine.pending_triggers).unwrap();
+            assert!(trigger::collect_and_process(current).is_empty());
+            assert!(current.engine.halted.is_some());
+            assert_eq!(
+                serde_json::to_vec(&current.engine.event_history).unwrap(),
+                committed
+            );
+            assert_eq!(
+                serde_json::to_vec(&current.engine.pending_triggers).unwrap(),
+                existing_pending
+            );
+            assert!(current.stack.is_empty());
+            assert_eq!((current.players[0].life, current.players[1].life), (20, 20));
+        }
+        assert_eq!(
+            state.diagnostic_state_hash(),
+            restored.diagnostic_state_hash()
+        );
+    }
+}
