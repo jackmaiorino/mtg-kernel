@@ -9153,7 +9153,7 @@ fn codegen(cards: &[CardJson]) -> String {
 
     for card in cards {
         if let Special::DivineResiliencePrepared = special_for(&card.name) {
-            writeln!(out, "fn spell_effect_divine_resilience_variable_v1() -> EffectOp {{ EffectOp::GrantKeywordToDeclaredTargetsUntilEndOfTurn {{ target_spec: TargetSpec::KickerControlledCreatures, keyword: Keywords::INDESTRUCTIBLE }} }}").unwrap();
+            writeln!(out, "fn spell_effect_divine_resilience_variable_v1() -> Option<EffectOp> {{ Some(EffectOp::GrantKeywordToDeclaredTargetsUntilEndOfTurn {{ target_spec: TargetSpec::KickerControlledCreatures, keyword: Keywords::INDESTRUCTIBLE }}) }}").unwrap();
         }
         if let Special::Program { effect, mode2, .. } = special_for(&card.name) {
             let suffix = program_function_suffix(&card.name);
