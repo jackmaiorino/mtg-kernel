@@ -65,6 +65,126 @@ def counter(path):
         return 0
 
 
+class SlotMutexDeletionTests(unittest.TestCase):
+    def test_transient_windows_denial_waits_for_atomic_acquisition(self):
+        denied = PermissionError("transient directory acquisition denial")
+        denied.winerror = 5
+        with tempfile.TemporaryDirectory() as temp, \
+                patch.object(slots, "slots_dir", return_value=Path(temp)):
+            mutex = slots.Mutex()
+            mkdir = Path.mkdir
+            attempts = []
+
+            def acquire(path, *args, **kwargs):
+                if path == mutex.path:
+                    attempts.append(path)
+                    self.assertFalse((path / "owner.json").exists())
+                    if len(attempts) < 3:
+                        raise denied
+                return mkdir(path, *args, **kwargs)
+
+            with patch.object(slots, "os", wraps=os) as platform, \
+                    patch.object(slots, "self_identity", return_value=(os.getpid(), "creation")), \
+                    patch.object(Path, "mkdir", acquire), \
+                    patch.object(slots.time, "sleep") as sleep:
+                platform.name = "nt"
+                with mutex:
+                    self.assertEqual(len(attempts), 3)
+                    owner = slots.read_json(mutex.path / "owner.json")
+                    self.assertEqual(owner["pid"], os.getpid())
+                self.assertEqual(sleep.call_count, 2)
+            self.assertFalse(mutex.path.exists())
+
+    def test_live_holder_excludes_a_second_holder_until_release(self):
+        import threading
+        acquired, release, done = (threading.Event() for _ in range(3))
+        failures = []
+        with tempfile.TemporaryDirectory() as temp, \
+                patch.object(slots, "slots_dir", return_value=Path(temp)), \
+                patch.object(slots, "MUTEX_TIMEOUT_SECONDS", 2):
+            old = slots.Mutex().__enter__()
+            thread = None
+            try:
+                def contender():
+                    try:
+                        with slots.Mutex():
+                            acquired.set()
+                            release.wait(2)
+                    except BaseException as error:
+                        failures.append(error)
+                    finally:
+                        done.set()
+
+                thread = threading.Thread(target=contender, daemon=True)
+                thread.start()
+                self.assertFalse(acquired.wait(0.1), "a live holder must exclude the contender")
+                self.assertFalse(done.is_set(), f"contender failed rather than waited: {failures}")
+                old.__exit__()
+                old = None
+                self.assertTrue(acquired.wait(2), f"contender did not acquire after deletion: {failures}")
+            finally:
+                if old is not None:
+                    old.__exit__()
+                release.set()
+                if thread is not None:
+                    thread.join(3)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(failures, [])
+
+    def test_persistent_windows_denial_expires_without_writing_an_owner(self):
+        denied = PermissionError("persistent permission denial")
+        denied.winerror = 5
+        mutex = object.__new__(slots.Mutex)
+        mutex.path = MagicMock()
+        mutex.path.mkdir.side_effect = denied
+        with patch.object(slots, "os") as platform, \
+                patch.object(slots, "self_identity", return_value=(123, "creation")), \
+                patch.object(slots, "MUTEX_TIMEOUT_SECONDS", 0.01), \
+                patch.object(slots.time, "monotonic", side_effect=[0, 0.02]), \
+                patch.object(slots, "write_json") as write:
+            platform.name = "nt"
+            with self.assertRaises(PermissionError) as failure:
+                mutex.__enter__()
+            self.assertIs(failure.exception, denied)
+            write.assert_not_called()
+
+    def test_stale_directory_rename_denial_cannot_spin_past_deadline(self):
+        mutex = object.__new__(slots.Mutex)
+        mutex.path = MagicMock()
+        mutex.path.mkdir.side_effect = FileExistsError("stale directory")
+        with patch.object(slots, "os") as platform, \
+                patch.object(slots, "self_identity", return_value=(123, "creation")), \
+                patch.object(slots, "MUTEX_TIMEOUT_SECONDS", 0.01), \
+                patch.object(mutex, "_stale", return_value=True), \
+                patch.object(slots.time, "monotonic", side_effect=[0, 0, 0.02]), \
+                patch.object(slots.time, "sleep"), \
+                patch.object(slots, "write_json") as write:
+            platform.name = "nt"
+            platform.rename.side_effect = PermissionError("stale rename denied")
+            with self.assertRaises(TimeoutError):
+                mutex.__enter__()
+            platform.rename.assert_called_once()
+            write.assert_not_called()
+
+    def test_other_permission_errors_do_not_retry_or_write_an_owner(self):
+        for platform_name, winerror in [("posix", 5), ("nt", 87)]:
+            with self.subTest(platform=platform_name, winerror=winerror):
+                denied = PermissionError("different refusal")
+                denied.winerror = winerror
+                mutex = object.__new__(slots.Mutex)
+                mutex.path = MagicMock()
+                mutex.path.mkdir.side_effect = denied
+                with patch.object(slots, "os") as platform, \
+                        patch.object(slots, "self_identity", return_value=(123, "creation")), \
+                        patch.object(slots, "write_json") as write, \
+                        patch.object(slots.time, "sleep") as sleep:
+                    platform.name = platform_name
+                    with self.assertRaises(PermissionError):
+                        mutex.__enter__()
+                    write.assert_not_called()
+                    sleep.assert_not_called()
+
+
 class SuspensionHandshakeTests(unittest.TestCase):
     def test_failed_windows_suspend_never_acknowledges_vacated_cores(self):
         tree = object.__new__(slots.Tree)

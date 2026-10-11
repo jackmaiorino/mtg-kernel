@@ -155,6 +155,9 @@ impl Scan<'_> {
             | DestroyPermanentsSharingTargetNameV1 { .. }
             | CreateTokensWithHasteUntilEndOfTurnV1 { .. }
             | PumpTargetUntilEndOfTurnDynamic { .. }
+            | DoubleTargetPowerUntilEndOfTurn { .. }
+            | DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
+            | CreateTokensForOtherControlledCreaturesNamed { .. }
             | LookTopSelectByTypeToHandBottomRest { .. }
             | LookTopPickToHandBottomRest { .. }
             | DrawCardsDynamic { .. }

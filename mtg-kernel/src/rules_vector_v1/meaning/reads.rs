@@ -250,6 +250,17 @@ pub(crate) fn effect_cond(cond: &EffectCond, env: &Env, out: &mut Collector) {
                 AggF::Characteristic,
             );
         }
+        EffectCond::ControlsOtherIncarnationCreaturePowerAtLeast(minimum) => {
+            let _ = minimum;
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Typed(CardTypeF::Creature)),
+                AggF::Characteristic,
+            );
+            // The vocabulary lacks a power threshold and source incarnation.
+            out.atoms.push(Atom::Opaque);
+        }
         EffectCond::TargetManaValueAtMost(slot, maximum) => {
             // Reads the targeted object's printed mana value before it moves.
             // Vocabulary gap: `Characteristic` carries no threshold.
@@ -546,6 +557,12 @@ pub(crate) fn library_card_filter(filter: LibraryCardFilter, out: &mut Collector
             // The frozen vocabulary lacks an exact mana-value read predicate.
             out.atoms.push(Atom::Opaque);
             ObjF::Typed(CardTypeF::Artifact)
+        }
+        LibraryCardFilter::InstantOrSorceryManaValue(value) => {
+            let _ = value;
+            // The vocabulary lacks a disjunction of types and exact mana value.
+            out.atoms.push(Atom::Opaque);
+            ObjF::AnyCard
         }
     }
 }

@@ -2287,9 +2287,23 @@ fn repurposing_bay_trades_an_artifact_for_one_with_one_more_mana_value() {
                 assert_eq!(player, P0);
                 assert_eq!(legal_targets, vec![Target::Object(wellspring)]);
                 searched = true;
-                act(
-                    &mut state,
-                    Action::ChooseEffectTarget(Target::Object(wellspring)),
+                let mut restored: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                assert!(matches!(
+                    next(&mut restored),
+                    Decision::ChooseEffectTargets { player: P0, legal_targets, .. }
+                        if legal_targets == vec![Target::Object(wellspring)]
+                ));
+                for current in [&mut state, &mut restored] {
+                    act(
+                        current,
+                        Action::ChooseEffectTarget(Target::Object(wellspring)),
+                    );
+                    resolve_stack(current);
+                }
+                assert_eq!(
+                    serde_json::to_value(&state).unwrap(),
+                    serde_json::to_value(&restored).unwrap()
                 );
             }
             Decision::CastSpellOrPass { .. } if state.stack.is_empty() => break,
