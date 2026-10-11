@@ -437,7 +437,7 @@ mod tests {
         state
     }
     fn put(state: &mut GameState, name: &str, zone: Zone) -> ObjectId {
-        let def = card_def::card_id_by_name(name).unwrap();
+        let def = card_def::card_id_by_name(name).unwrap_or_else(|| panic!("missing fixture {name}"));
         let object = state.objects.push(crate::state::GameObject {
             card_def: def,
             name: card_def::CARD_DEFS[def as usize].object_name.into(),
@@ -589,10 +589,10 @@ mod tests {
     fn resolution_preflight_requires_mandatory_targets_sacrifices_and_discards() {
         let mut state = ready();
         state.step = Step::DeclareBlockers;
-        let fatal = put(&mut state, "Fatal Push", Zone::Exile);
-        let fling = put(&mut state, "Fling", Zone::Exile);
-        let thrill = put(&mut state, "Thrill of Possibility", Zone::Exile);
-        for source in [fatal, fling, thrill] {
+        let removal = put(&mut state, "Shoot the Sheriff", Zone::Exile);
+        let sacrifice = put(&mut state, "Reckoner's Bargain", Zone::Exile);
+        let discard = put(&mut state, "Grab the Prize", Zone::Exile);
+        for source in [removal, sacrifice, discard] {
             assert!(!can_cast_exiled_without_mana(
                 &state,
                 PlayerId::P0,
@@ -602,7 +602,7 @@ mod tests {
         }
         put(&mut state, "Llanowar Elves", Zone::Battlefield);
         put(&mut state, "Forest", Zone::Hand);
-        for source in [fatal, fling, thrill] {
+        for source in [removal, sacrifice, discard] {
             assert!(can_cast_exiled_without_mana(
                 &state,
                 PlayerId::P0,
@@ -615,24 +615,32 @@ mod tests {
     #[test]
     fn resolution_preflight_requires_spree_surcharges_and_respects_discover_spell_value() {
         let mut state = ready();
-        let raid = put(&mut state, "Requisition Raid", Zone::Exile);
+        let spree = put(&mut state, "Phantom Interference", Zone::Exile);
         assert!(!can_cast_exiled_without_mana(
             &state,
             PlayerId::P0,
-            bind(&state, raid),
+            bind(&state, spree),
             None
         ));
-        state.players[0].mana_pool[5] = 1;
+        // With no spell to counter, only the +{3} Spirit mode is legal.
+        state.players[0].mana_pool[5] = 2;
+        assert!(!can_cast_exiled_without_mana(
+            &state,
+            PlayerId::P0,
+            bind(&state, spree),
+            None
+        ));
+        state.players[0].mana_pool[5] = 3;
         assert!(can_cast_exiled_without_mana(
             &state,
             PlayerId::P0,
-            bind(&state, raid),
+            bind(&state, spree),
             Some(1)
         ));
         assert!(!can_cast_exiled_without_mana(
             &state,
             PlayerId::P0,
-            bind(&state, raid),
+            bind(&state, spree),
             Some(0)
         ));
     }
