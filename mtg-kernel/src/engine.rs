@@ -13876,6 +13876,9 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    if targets_legal {
+        crate::sower_restriction_capture_v1::begin_resolution(state);
+    }
     let item = state
         .stack
         .pop()
@@ -14512,6 +14515,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 }
             }
             crate::standard_creatures_v1::cleanup(state);
+            crate::sower_restriction_capture_v1::expire(state);
             state.engine.until_end_of_turn.clear();
             state.engine.active_replacements.retain(|replacement| {
                 !matches!(

@@ -1931,6 +1931,17 @@ fn build_observation_v2(
     step_index: u64,
     text_mode: ObservationTextModeV2,
 ) -> Result<ObservationV2> {
+    build_observation_common_v2(state, surface, acting_player, step_index, text_mode, false)
+}
+
+fn build_observation_common_v2(
+    state: &GameState,
+    surface: &crate::surface_v2::HarnessSurfaceV2,
+    acting_player: PlayerId,
+    step_index: u64,
+    text_mode: ObservationTextModeV2,
+    accept_cant_block: bool,
+) -> Result<ObservationV2> {
     let projection = PublicObservationProjectionV2 {
         turn: state.turn,
         phase: state.step.into(),
@@ -1959,7 +1970,7 @@ fn build_observation_v2(
         exile: public_cards_v2(state, &state.exile, text_mode)?,
         stack: stack_public_v2(state, acting_player)?,
         combat: combat_public_v2(state, acting_player)?,
-        continuous_effects: continuous_effects_public_v2(state, acting_player)?,
+        continuous_effects: continuous_effects_common_v2(state, acting_player, accept_cant_block)?,
         object_relations: object_relations_public_v4(state, acting_player)?,
         exile_play_permissions: exile_play_permissions_public_v2(state)?,
         engine_context: engine_context_v2(state, acting_player)?,
@@ -2198,12 +2209,30 @@ fn build_policy_observation_parts(
     step_index: u64,
     text_mode: ObservationTextModeV2,
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
-    let base = build_observation_v2(
+    build_policy_observation_parts_common(
+        state,
+        surface,
+        acting_player,
+        step_index,
+        text_mode,
+        false,
+    )
+}
+fn build_policy_observation_parts_common(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    acting_player: PlayerId,
+    step_index: u64,
+    text_mode: ObservationTextModeV2,
+    accept_cant_block: bool,
+) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
+    let base = build_observation_common_v2(
         state,
         surface.harness_surface(),
         acting_player,
         step_index,
         text_mode,
+        accept_cant_block,
     )?;
     let context = policy_surface_context_v5(
         state,
@@ -2366,6 +2395,40 @@ fn build_policy_observation_storage_v6(
     request: PolicyObservationBuildV5<'_>,
     accept_life_ward: bool,
 ) -> Result<PolicyObservationStorageV6> {
+    build_policy_observation_storage_common(request, accept_life_ward, false)
+}
+
+pub(crate) fn sower_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::sower_restriction_capture_v1::active(state)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_common(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
+        true,
+    )
+}
+
+fn build_policy_observation_storage_common(
+    request: PolicyObservationBuildV5<'_>,
+    accept_life_ward: bool,
+    accept_cant_block: bool,
+) -> Result<PolicyObservationStorageV6> {
     let PolicyObservationBuildV5 {
         state,
         surface,
@@ -2383,8 +2446,14 @@ fn build_policy_observation_storage_v6(
     }
     let extensions =
         policy_observation_extensions_common_v6(state, acting_player, text_mode, accept_life_ward)?;
-    let (mut base, policy_surface_context) =
-        build_policy_observation_parts(state, surface, acting_player, step_index, text_mode)?;
+    let (mut base, policy_surface_context) = build_policy_observation_parts_common(
+        state,
+        surface,
+        acting_player,
+        step_index,
+        text_mode,
+        accept_cant_block,
+    )?;
     if let Some(search) = &extensions.decision_local_library {
         let Some(PendingEffectChoiceSemanticV4::Targets { legal_targets, .. }) = base
             .projection
@@ -6642,9 +6711,10 @@ fn validate_linked_exile_records_public_v4(state: &GameState) -> Result<()> {
     Ok(())
 }
 
-fn continuous_effects_public_v2(
+fn continuous_effects_common_v2(
     state: &GameState,
     acting_player: PlayerId,
+    accept_cant_block: bool,
 ) -> Result<Vec<ContinuousEffectPublicV2>> {
     state.validate_attachment_relations().map_err(|object| {
         RlContractError(format!(
@@ -6862,6 +6932,9 @@ fn continuous_effects_public_v2(
                 });
             }
             UntilEndOfTurnEffect::ResolvedObjectCantBlock { .. } => {
+                if accept_cant_block {
+                    continue;
+                }
                 return Err(RlContractError(
                     "temporary cant-block restriction requires a public successor".into(),
                 ));

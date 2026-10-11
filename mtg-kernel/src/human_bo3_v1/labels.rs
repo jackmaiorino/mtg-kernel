@@ -553,6 +553,38 @@ pub(super) fn label_ooze_v11(
     label_v8(action, observation, handles, human)
 }
 
+/// Definition-owned Sower opt-in. No predecessor entry point calls this.
+pub(super) fn label_sower_v14(
+    action: &A,
+    observation: &super::life_ward_v8::ProjectionPartsV8<'_>,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    if let A::ActivateAbility {
+        source,
+        ability_index,
+        granted_ability,
+        ..
+    } = action
+    {
+        if granted_ability.is_none() && definition(source)?.name == "Sower of Chaos" {
+            let selector = crate::rules_meaning_sower_v1::live_selector_v1()
+                .map_err(|_| Error::UnsupportedPrompt)?;
+            crate::rules_meaning_sower_v1::meaning_v1(
+                &selector,
+                source.card_db_id,
+                u16::from(*ability_index),
+            )
+            .map_err(|_| Error::UnsupportedPrompt)?;
+            if actor(action) != Some(human) || source.zone != Zone::Battlefield {
+                return Err(Error::UnsupportedPrompt);
+            }
+            return Ok(format!("Activate {}: pay {{2}}{{R}}; one target creature cannot block until the next cleanup. Control changes and ability removal do not end the restriction; this source need not remain on the battlefield", handles.name(source)?));
+        }
+    }
+    label_parts_v8(action, observation, handles, human)
+}
+
 /// Definition-owned Heartfire label opt-in. Predecessors retain their refusal.
 pub(super) fn label_heartfire_v12(
     action: &A,

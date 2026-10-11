@@ -86,6 +86,8 @@ pub mod human_opening_v1;
 pub mod native_expanded_training_run_v1;
 mod source_power_activation_v1;
 pub mod sower_of_chaos_v1;
+pub mod sower_public_v1;
+mod sower_restriction_capture_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 pub use experimental_burn_net8_packed_v1::run_public_entropy_gradient_probe_v1;
 pub mod fast_sampler;
