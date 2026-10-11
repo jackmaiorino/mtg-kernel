@@ -271,7 +271,9 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::ExileGraveyardTargetsDrainPerCreature { .. }
         | EffectOp::RemoveTimeCounterFromSource
         | EffectOp::ReturnSourceAsEnduringEnchantment => effect_h::effect_op(op, env, out),
-        EffectOp::StandardLegendV1(_)
+        EffectOp::ReturnTwoDifferentControllerCreaturesToOwnersHands
+        | EffectOp::PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness { .. }
+        | EffectOp::StandardLegendV1(_)
         | EffectOp::AnimateSource
         | EffectOp::AnimateSourcePermanentlyV1
         | EffectOp::SetTargetBasePowerToughnessUntilEndOfTurn { .. }

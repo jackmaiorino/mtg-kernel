@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "admission": "unregistered",
+  "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "java_file": "Mage.Sets/src/mage/cards/r/RunAwayTogether.java",
+  "name": "Run Away Together",
+  "mana_cost": "{1}{U}",
+  "mana_value": 2,
+  "colors": [
+    "U"
+  ],
+  "types": [
+    "Instant"
+  ],
+  "subtypes": [],
+  "supertypes": [],
+  "power": null,
+  "toughness": null,
+  "rules": [
+    "Choose two target creatures controlled by different players. Return those creatures to their owners' hands."
+  ]
+}
