@@ -1,0 +1,33 @@
+name: Cache compiled Cargo output
+description: Reuse compiled output with Cargo's normal freshness checks
+inputs:
+  scope:
+    description: Feature/test group, shared by equivalent Python shards
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Identify compiler, runner image and build settings
+      id: identity
+      shell: bash
+      run: |
+        identity=$({
+          rustc --version --verbose
+          cargo --version --verbose
+          printf '%s\n' "$RUNNER_OS" "$RUNNER_ARCH" "${ImageOS:-}" "${ImageVersion:-}"
+          printf '%s\n' "${RUSTFLAGS:-}" "${CARGO_ENCODED_RUSTFLAGS:-}"
+          printf '%s\n' "${CARGO_PROFILE_RELEASE_LTO:-}" "${CARGO_PROFILE_RELEASE_CODEGEN_UNITS:-}" "${CARGO_PROFILE_RELEASE_INCREMENTAL:-}"
+        } | sha256sum | cut -d ' ' -f 1)
+        echo "hash=$identity" >> "$GITHUB_OUTPUT"
+    - name: Restore compiled Cargo output
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          target
+          ~/.cargo/registry/src
+        # Commit-specific writes let later commits refresh the immutable
+        # cache. Compatible restores retain dependencies; Cargo checks all
+        # source/build-script inputs before reusing workspace artifacts.
+        key: cargo-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}-${{ steps.identity.outputs.hash }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml', '.cargo/**') }}-${{ github.sha }}
+        restore-keys: |
+          cargo-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}-${{ steps.identity.outputs.hash }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml', '.cargo/**') }}-
