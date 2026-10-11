@@ -324,11 +324,15 @@ mod future_printed {
             let request = action(&prompt, "Finish selection");
             let receipt = projector.submit(&mut session, request.clone()).unwrap();
             assert_eq!(
-                session.inner.state.players[actor.index()].library.len(),
+                session.inner.raid_entry_fixture_state().players[actor.index()]
+                    .library
+                    .len(),
                 original.len() - 2
             );
             assert_eq!(
-                session.inner.state.players[actor.index()].graveyard.len(),
+                session.inner.raid_entry_fixture_state().players[actor.index()]
+                    .graveyard
+                    .len(),
                 2
             );
             let hash = session.inner.privileged_core_environment_hash();
@@ -434,16 +438,19 @@ mod future_printed {
                 .unwrap();
             let snapshot = session.snapshot_v21();
             let mut decisions = 0;
-            while crate::planeswalker_v1::loyalty(&session.inner.state, walker) == Some(4)
+            while crate::planeswalker_v1::loyalty(&session.inner.raid_entry_fixture_state(), walker)
+                == Some(4)
                 && decisions < 12
             {
                 let e = expected(&session);
-                let c = session.inner.current.as_ref().unwrap();
-                let index = c
-                    .candidates
+                let (_, actions, _) = session
+                    .inner
+                    .raid_entry_current_decision_input_v21(e, e.acting_player)
+                    .unwrap();
+                let index = actions
                     .iter()
-                    .position(|candidate| {
-                        matches!(candidate.semantic, crate::rl::ActionSemanticV1::Pass { .. })
+                    .position(|semantic| {
+                        matches!(semantic, crate::rl::ActionSemanticV1::Pass { .. })
                     })
                     .unwrap();
                 session
@@ -453,22 +460,25 @@ mod future_printed {
                 decisions += 1;
             }
             assert_eq!(
-                crate::planeswalker_v1::loyalty(&session.inner.state, walker),
+                crate::planeswalker_v1::loyalty(&session.inner.raid_entry_fixture_state(), walker),
                 Some(2)
             );
             let first = session.inner.privileged_core_environment_hash();
             session.restore_v21(&snapshot).unwrap();
             decisions = 0;
-            while crate::planeswalker_v1::loyalty(&session.inner.state, walker) == Some(4)
+            while crate::planeswalker_v1::loyalty(&session.inner.raid_entry_fixture_state(), walker)
+                == Some(4)
                 && decisions < 12
             {
                 let e = expected(&session);
-                let c = session.inner.current.as_ref().unwrap();
-                let index = c
-                    .candidates
+                let (_, actions, _) = session
+                    .inner
+                    .raid_entry_current_decision_input_v21(e, e.acting_player)
+                    .unwrap();
+                let index = actions
                     .iter()
-                    .position(|candidate| {
-                        matches!(candidate.semantic, crate::rl::ActionSemanticV1::Pass { .. })
+                    .position(|semantic| {
+                        matches!(semantic, crate::rl::ActionSemanticV1::Pass { .. })
                     })
                     .unwrap();
                 session

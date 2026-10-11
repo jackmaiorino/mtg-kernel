@@ -94,6 +94,11 @@ impl FastActorSessionV1 {
         session.advance_to_decision_or_terminal();
         session
     }
+    #[cfg(test)]
+    pub(crate) fn raid_entry_fixture_state(&self) -> &GameState {
+        &self.state
+    }
+
     pub fn into_raid_entry_v21(mut self) -> Result<Self, RlContractError> {
         validate_state(&self.state)?;
         self.flat_action_contract_mode = FlatActionContractModeV1::RaidEntryV21;
