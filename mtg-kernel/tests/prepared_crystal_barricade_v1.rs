@@ -506,7 +506,7 @@ fn mixed_prevention_erased_owner_receipt_and_menu_forgeries_refuse_readonly() {
         shield(&mut state, wall, target, 1);
         announce_bolt(&mut state, actor.opponent(), Target::Object(target));
         mixed_menu(&mut state);
-        for case in 0..5 {
+        for case in 0..6 {
             let mut bad = restore(&state);
             match case {
                 0 => bad.engine.pending_effect = None,
@@ -526,6 +526,20 @@ fn mixed_prevention_erased_owner_receipt_and_menu_forgeries_refuse_readonly() {
                     });
                 }
                 3 => bad.stack.clear(),
+                5 => {
+                    let private =
+                        bad.engine
+                            .event_history
+                            .iter()
+                            .rev()
+                            .find(|event| {
+                                matches!(event,
+                        mtg_kernel::event::CommittedEvent::CrystalPreventionBoundaryV1 { .. })
+                            })
+                            .unwrap()
+                            .clone();
+                    bad.engine.event_log.push(private);
+                }
                 _ => {
                     if let Some(mtg_kernel::effect::PendingEffectChoice::ChooseOption {
                         purpose:

@@ -369,6 +369,16 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     validate_with_owner(state, None)
 }
 fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(), String> {
+    if state.engine.event_log.iter().any(|event| {
+        matches!(
+            event,
+            CommittedEvent::CrystalPreventionBoundaryV1 { .. }
+                | CommittedEvent::CrystalShieldOperationV1 { .. }
+                | CommittedEvent::CrystalExecutionV1 { .. }
+        )
+    }) {
+        return Err("private Crystal ownership cannot enter the public trigger log".into());
+    }
     validate_shields(state)?;
     validate_executions(state)?;
     for (index, event) in state.engine.event_history.iter().enumerate() {

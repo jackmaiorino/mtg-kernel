@@ -969,6 +969,22 @@ pub(super) fn conflicts(
     }) {
         return true;
     }
+    // Crystal execution captures whole historical item/context authority.
+    // Its private-history resampling semantics have not been qualified.
+    if state.engine.event_history.iter().any(|event| {
+        matches!(
+            event,
+            crate::event::CommittedEvent::CrystalPreventionBoundaryV1 { .. }
+                | crate::event::CommittedEvent::CrystalShieldOperationV1 { .. }
+                | crate::event::CommittedEvent::CrystalExecutionV1 { .. }
+        )
+    }) || state
+        .stack
+        .iter()
+        .any(|item| item.v4.crystal_prevention_started_v1.0.is_some())
+    {
+        return true;
+    }
     let s = Scan { state, pool };
     if let Some(crate::engine::PendingDiscard {
         resume: crate::engine::DiscardResume::FinishEffectContinuation { original_hand, .. },
@@ -1022,6 +1038,11 @@ pub(super) fn conflicts(
     state.engine.event_log.iter().any(|event| {
         use crate::event::CommittedEvent::*;
         match event {
+            // These are history-only owning records. Reject malformed log
+            // transport too, rather than implying sampler admission.
+            CrystalPreventionBoundaryV1 { .. }
+            | CrystalShieldOperationV1 { .. }
+            | CrystalExecutionV1 { .. } => true,
             Damage { source, target, .. } => {
                 s.raw(*source) || matches!(target,crate::state::Target::Object(id) if s.raw(*id))
             }
