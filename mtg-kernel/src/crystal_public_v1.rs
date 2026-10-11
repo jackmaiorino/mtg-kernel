@@ -34,6 +34,8 @@ pub struct MenuV1 {
     /// Includes the current affected recipient. No hidden roster or raw IDs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub simultaneous_choices_remaining: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creature_power_at_resolution: Option<i32>,
     pub source: CardStableRefV1,
     pub recipient: CardStableRefV1,
     pub remaining_damage: i32,
@@ -271,6 +273,10 @@ fn menu(state: &GameState) -> Result<Option<MenuV1>, RlContractError> {
                 })
                 .count()
         }),
+        creature_power_at_resolution: crate::effect::crystal_prevention_v1::creature_power_signed(
+            state, choice,
+        )
+        .map_err(RlContractError)?,
         recipient: public_ref(state, recipient)?,
         remaining_damage: choice.remaining_amount,
         options,

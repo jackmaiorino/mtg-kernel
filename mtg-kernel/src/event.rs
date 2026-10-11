@@ -1366,6 +1366,22 @@ pub(crate) fn propose_and_commit_crystal_owned(
     }
     propose_and_commit_inner(state, event);
 }
+pub(crate) fn propose_and_commit_crystal_power_owned(
+    state: &mut GameState,
+    damage: DamageProposed,
+    capture: &crate::effect::crystal_prevention_v1::CreaturePowerCaptureV2,
+    owner: &crate::effect::crystal_prevention_v1::OwnerV1,
+) {
+    let event = ProposedEvent::Damage(damage);
+    if !owner.permits_creature_power(state, capture, &event) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            capture.ctx.source,
+        ));
+        return;
+    }
+    propose_and_commit_inner(state, event);
+}
 pub(crate) fn propose_and_commit_crystal_life_gain_owned(
     state: &mut GameState,
     player: crate::effect::PlayerRef,

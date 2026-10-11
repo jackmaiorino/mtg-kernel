@@ -18,6 +18,8 @@ pub struct ChoiceV1 {
     pub historical_source: Option<StackItemId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch: Option<BatchProgressV2>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creature_power: Option<u32>,
     pub target: Target,
     pub original_amount: i32,
     pub remaining_amount: i32,
@@ -82,6 +84,8 @@ pub struct ExecutionStepV1 {
     pub nondamage_history: Vec<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch_capture: Option<BatchCaptureV2>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creature_power_capture: Option<CreaturePowerCaptureV2>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct BatchDamageV2 {
@@ -140,6 +144,19 @@ pub struct BatchCommitV2 {
     pub capture: u32,
     pub outcomes: Vec<BatchOutcomeV2>,
     pub damage_history: Vec<u32>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CreaturePowerCaptureV2 {
+    pub ctx: ExecCtx,
+    pub op: EffectOp,
+    pub path: Vec<u16>,
+    pub source_legal: bool,
+    pub recipient_legal: bool,
+    pub source_before: Option<crate::state::GameObject>,
+    pub source_after: Option<crate::state::GameObject>,
+    pub signed_power: i32,
+    pub counter_history: Vec<u32>,
+    pub damage: Option<BatchDamageV2>,
 }
 pub(crate) fn shield_operation(
     state: &mut GameState,
@@ -314,6 +331,23 @@ impl OwnerV1 {
                         && d.amount > 0 && d.amount <= original.amount))
             })
     }
+    pub(crate) fn permits_creature_power(
+        &self,
+        state: &GameState,
+        capture: &CreaturePowerCaptureV2,
+        event: &crate::event::ProposedEvent,
+    ) -> bool {
+        let damage = capture.damage.as_ref().map(BatchDamageV2::proposed);
+        capture.ctx == context(&self.expected)
+            && effect_op_at_structural_path(&self.root, &capture.path) == Some(&capture.op)
+            && matches!(event, crate::event::ProposedEvent::Damage(d) if damage.as_ref() == Some(d))
+            && !state
+                .stack
+                .iter()
+                .any(|i| i.v4.stack_item_id == self.expected.v4.stack_item_id)
+            && state.engine.pending_effect.is_none()
+            && validate_live_creature_power(state, capture).is_ok()
+    }
     pub(crate) fn controller(&self) -> PlayerId {
         self.expected.controller
     }
@@ -471,6 +505,9 @@ fn has_damage(op: &EffectOp) -> bool {
     match op {
         EffectOp::DealDamage { .. }
         | EffectOp::DamageAllCreatures { .. }
+        | EffectOp::CreatureTargetPowerDamage {
+            plus1_plus1: 0.., ..
+        }
         | EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1) => {
             true
         }
@@ -487,6 +524,9 @@ fn supported(op: &EffectOp) -> bool {
         } => true,
         EffectOp::DealDamage { .. }
         | EffectOp::DamageAllCreatures { .. }
+        | EffectOp::CreatureTargetPowerDamage {
+            plus1_plus1: 0.., ..
+        }
         | EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1) => {
             true
         }
@@ -781,7 +821,7 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
                 } else {
                     let op = effect_op_at_structural_path(&b.root, &choice.path)
                         .ok_or("Crystal historical menu lost its printed instruction")?;
-                    let damage = original_damage(state, &p.ctx, op)?;
+                    let damage = choice_original_damage(state, &p.ctx, op, choice)?;
                     let mut frames = Vec::new();
                     remaining(&b.root, &choice.path, &[], &mut frames)?;
                     if p.choice.as_ref() != Some(&menu((**choice).clone()))
@@ -919,6 +959,7 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
             damage_history: Vec::new(),
             nondamage_history: Vec::new(),
             batch_capture: None,
+            creature_power_capture: None,
         };
         match op {
             EffectOp::Sequence(ops) => {
@@ -977,6 +1018,45 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                         );
                     }
                 }
+            }
+            EffectOp::CreatureTargetPowerDamage { .. } => {
+                let capture = capture_creature_power(state, &pending.ctx, op, path)?;
+                if let Some(damage) = capture.damage.as_ref() {
+                    let occurrence = u32::try_from(state.engine.event_history.len())
+                        .map_err(|_| "Crystal power capture exceeds u32")?;
+                    if offer_damage(
+                        state,
+                        &mut pending,
+                        damage.proposed(),
+                        path,
+                        Some(occurrence),
+                    )? {
+                        step.offered_menu = pending.choice.clone();
+                        step.creature_power_capture = Some(capture);
+                        steps.push(step);
+                        break;
+                    }
+                    let start = state.engine.event_history.len();
+                    crate::event::propose_and_commit_crystal_power_owned(
+                        state,
+                        damage.proposed(),
+                        &capture,
+                        owner,
+                    );
+                    if state.engine.halted.is_some() {
+                        state.engine.pending_effect = Some(pending);
+                        return Err("Crystal chosen-creature damage halted".into());
+                    }
+                    for (offset, event) in state.engine.event_history[start..].iter().enumerate() {
+                        if matches!(event, CommittedEvent::Damage { .. }) {
+                            step.damage_history.push(
+                                u32::try_from(start + offset)
+                                    .map_err(|_| "Crystal power damage history exceeds u32")?,
+                            );
+                        }
+                    }
+                }
+                step.creature_power_capture = Some(capture);
             }
             EffectOp::DamageAllCreatures { .. } => {
                 let capture = capture_batch(state, owner, &pending.ctx, op, path)?;
@@ -1110,6 +1190,13 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
             let EffectFrame::Program { op, path } = &step.frame else {
                 return Err("Crystal execution committed a foreign frame".into());
             };
+            if !matches!(op, EffectOp::CreatureTargetPowerDamage { .. })
+                && step.creature_power_capture.is_some()
+            {
+                return Err(
+                    "Crystal other instruction carries foreign creature-power capture".into(),
+                );
+            }
             if !matches!(op, EffectOp::DamageAllCreatures { .. }) && step.batch_capture.is_some() {
                 return Err("Crystal nonbatch instruction carries foreign batch authority".into());
             }
@@ -1218,6 +1305,85 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                         }
                     }
                 }
+                EffectOp::CreatureTargetPowerDamage { .. } => {
+                    let capture = step
+                        .creature_power_capture
+                        .as_ref()
+                        .ok_or("Crystal power lost actual capture")?;
+                    validate_creature_power_capture(
+                        state,
+                        capture,
+                        &pending.ctx,
+                        op,
+                        path,
+                        last_damage,
+                        index,
+                    )?;
+                    if let Some(at) = capture.counter_history.last() {
+                        last_damage = *at as usize;
+                    }
+                    if step.conditional_result.is_some() {
+                        return Err("Crystal creature power has foreign branch".into());
+                    }
+                    if let Some(offered) = step.offered_menu.as_ref() {
+                        let damage = capture
+                            .damage
+                            .as_ref()
+                            .ok_or("Crystal power menu without damage")?;
+                        if step_index + 1 != execution.steps.len()
+                            || !step.damage_history.is_empty()
+                        {
+                            return Err(
+                                "Crystal creature-power menu skipped exact suspended instruction"
+                                    .into(),
+                            );
+                        }
+                        let PendingEffectChoice::ChooseOption {
+                            purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                            ..
+                        } = offered
+                        else {
+                            return Err("Crystal power offered foreign menu".into());
+                        };
+                        if choice.creature_power != Some(execution.history_index)
+                            || choice.batch.is_some()
+                            || choice.path != *path
+                            || choice.source != damage.source
+                            || choice.target != damage.target
+                            || choice.original_amount != damage.amount
+                            || choice.remaining_amount != damage.amount
+                            || choice.historical_source.is_some()
+                            || !choice.touched.is_empty()
+                            || choice.remaining_frames != pending.frames
+                        {
+                            return Err(
+                                "Crystal power offered changed source/amount/remainder".into()
+                            );
+                        }
+                        pending.choice = Some(offered.clone());
+                    } else {
+                        if step.damage_history.len() > usize::from(capture.damage.is_some()) {
+                            return Err("Crystal power repeated genuine damage".into());
+                        }
+                        for saved in &step.damage_history {
+                            let at = *saved as usize;
+                            let damage = capture
+                                .damage
+                                .as_ref()
+                                .ok_or("Crystal illegal power nevertheless dealt damage")?;
+                            if at <= last_damage
+                                || at >= index
+                                || !matches!(state.engine.event_history.get(at),
+                                Some(CommittedEvent::Damage { source, target, amount, .. })
+                                    if *source == damage.source && *target == damage.target
+                                        && *amount > 0 && *amount <= damage.amount)
+                            {
+                                return Err("Crystal power lost genuine damage occurrence".into());
+                            }
+                            last_damage = at;
+                        }
+                    }
+                }
                 EffectOp::DamageAllCreatures { .. } => {
                     let capture = step
                         .batch_capture
@@ -1312,6 +1478,270 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
     }
     Ok(())
 }
+
+fn creature_power_at<'a>(
+    state: &'a GameState,
+    index: u32,
+    path: &[u16],
+) -> Result<&'a CreaturePowerCaptureV2, String> {
+    let Some(CommittedEvent::CrystalExecutionV1 { execution }) =
+        state.engine.event_history.get(index as usize)
+    else {
+        return Err("Crystal creature power lost actual execution capture".into());
+    };
+    let mut captures = execution
+        .steps
+        .iter()
+        .filter_map(|s| s.creature_power_capture.as_ref())
+        .filter(|capture| capture.path == path);
+    let capture = captures
+        .next()
+        .ok_or("Crystal creature power lost printed leaf")?;
+    if captures.next().is_some() {
+        return Err("Crystal creature power repeated leaf".into());
+    }
+    Ok(capture)
+}
+pub(crate) fn creature_power_signed(
+    state: &GameState,
+    choice: &ChoiceV1,
+) -> Result<Option<i32>, String> {
+    choice
+        .creature_power
+        .map(|at| creature_power_at(state, at, &choice.path).map(|c| c.signed_power))
+        .transpose()
+}
+fn choice_original_damage(
+    state: &GameState,
+    ctx: &ExecCtx,
+    op: &EffectOp,
+    choice: &ChoiceV1,
+) -> Result<DamageProposed, String> {
+    if let Some(at) = choice.creature_power {
+        let capture = creature_power_at(state, at, &choice.path)?;
+        if capture.ctx != *ctx || capture.op != *op {
+            return Err("Crystal chosen power borrowed foreign printed instruction".into());
+        }
+        let Some(CommittedEvent::CrystalExecutionV1 { execution }) =
+            state.engine.event_history.get(at as usize)
+        else {
+            unreachable!()
+        };
+        if context(&execution.item) != *ctx {
+            return Err("Crystal chosen power borrowed foreign stack incarnation".into());
+        }
+        return capture
+            .damage
+            .as_ref()
+            .map(BatchDamageV2::proposed)
+            .ok_or_else(|| "Crystal creature-power menu has no genuine damage".into());
+    }
+    original_damage(state, ctx, op)
+}
+fn capture_creature_power(
+    state: &mut GameState,
+    ctx: &ExecCtx,
+    op: &EffectOp,
+    path: &[u16],
+) -> Result<CreaturePowerCaptureV2, String> {
+    let EffectOp::CreatureTargetPowerDamage {
+        source_index,
+        target_index,
+        plus1_plus1,
+        target_spec,
+    } = op
+    else {
+        return Err("Crystal chosen power has foreign leaf".into());
+    };
+    if *plus1_plus1 < 0 {
+        return Err("Crystal chosen power has negative counter".into());
+    }
+    let legal = |slot: u8| {
+        ctx.target_incarnation_matches(usize::from(slot), state)
+            && crate::engine::effect_target_is_legal(
+                state,
+                ctx.source,
+                ctx.controller,
+                *target_spec,
+                &ctx.targets,
+                usize::from(slot),
+            )
+    };
+    let source_legal = legal(*source_index);
+    let recipient_legal = legal(*target_index);
+    let mut capture = CreaturePowerCaptureV2 {
+        ctx: ctx.clone(),
+        op: op.clone(),
+        path: path.to_vec(),
+        source_legal,
+        recipient_legal,
+        source_before: None,
+        source_after: None,
+        signed_power: 0,
+        counter_history: Vec::new(),
+        damage: None,
+    };
+    if !source_legal {
+        return Ok(capture);
+    }
+    let Some(Target::Object(source)) = ctx.targets.get(usize::from(*source_index)).copied() else {
+        return Err("Crystal creature-power source is not original object target".into());
+    };
+    capture.source_before = Some(state.objects.get(source).clone());
+    if recipient_legal {
+        let target = *ctx
+            .targets
+            .get(usize::from(*target_index))
+            .ok_or("Crystal power recipient absent")?;
+        let probe = crate::event::ProposedEvent::damage(source, target, i32::MAX);
+        let crate::event::ProposedEvent::Damage(probe) = probe else {
+            unreachable!()
+        };
+        u16::try_from(applicable(state, &probe).len())
+            .map_err(|_| "Crystal power prevention menu exceeds u16")?;
+    }
+    let start = state.engine.event_history.len();
+    if *plus1_plus1 > 0 {
+        // The same checked production primitive commits counter observers.
+        crate::event::add_plus_one_counters(
+            state,
+            source,
+            ctx.controller,
+            i32::from(*plus1_plus1),
+        )?;
+    }
+    capture.counter_history = state.engine.event_history[start..]
+        .iter()
+        .enumerate()
+        .filter_map(|(offset, e)| {
+            matches!(e, CommittedEvent::PlusOneCountersAdded { .. }).then_some(start + offset)
+        })
+        .map(|at| u32::try_from(at).map_err(|_| "Crystal counter index exceeds u32"))
+        .collect::<Result<Vec<_>, _>>()?;
+    capture.source_after = Some(state.objects.get(source).clone());
+    capture.signed_power = crate::engine::effective_power(state, source);
+    if recipient_legal && capture.signed_power > 0 {
+        capture.damage = Some(BatchDamageV2 {
+            source,
+            target: *ctx
+                .targets
+                .get(usize::from(*target_index))
+                .ok_or("Crystal power recipient absent")?,
+            amount: capture.signed_power,
+            touched: Vec::new(),
+        });
+    }
+    Ok(capture)
+}
+fn validate_creature_power_capture(
+    state: &GameState,
+    capture: &CreaturePowerCaptureV2,
+    ctx: &ExecCtx,
+    op: &EffectOp,
+    path: &[u16],
+    previous: usize,
+    until: usize,
+) -> Result<(), String> {
+    let EffectOp::CreatureTargetPowerDamage {
+        source_index,
+        target_index,
+        plus1_plus1,
+        ..
+    } = op
+    else {
+        return Err("Crystal creature power carries foreign recipe".into());
+    };
+    if capture.ctx != *ctx || capture.op != *op || capture.path != path || *plus1_plus1 < 0 {
+        return Err("Crystal creature power changed exact original context/root".into());
+    }
+    if !capture.source_legal {
+        if capture.source_before.is_some()
+            || capture.source_after.is_some()
+            || capture.signed_power != 0
+            || capture.damage.is_some()
+            || !capture.counter_history.is_empty()
+        {
+            return Err("Crystal illegal source nevertheless executed creature power".into());
+        }
+        return Ok(());
+    }
+    let Some(Target::Object(source)) = ctx.targets.get(usize::from(*source_index)) else {
+        return Err("Crystal power source lost target".into());
+    };
+    let before = capture
+        .source_before
+        .as_ref()
+        .ok_or("Crystal power lost source before counters")?;
+    let after = capture
+        .source_after
+        .as_ref()
+        .ok_or("Crystal power lost source after counters")?;
+    let contract = ctx
+        .target_contracts
+        .get(usize::from(*source_index))
+        .ok_or("Crystal power lost announced contract")?;
+    if !matches!(contract, crate::state::StackTargetContractV4::Object { object, owner, zone, zone_change_count, .. }
+        if object == source && *owner == before.owner && *zone == before.zone
+            && *zone_change_count == before.zone_change_count)
+        || before.zone != Zone::Battlefield
+        || before.controller != ctx.controller
+    {
+        return Err("Crystal power snapshot lost original legal source incarnation".into());
+    }
+    let mut expected_after = before.clone();
+    expected_after.counters.plus1_plus1 = expected_after
+        .counters
+        .plus1_plus1
+        .checked_add(i32::from(*plus1_plus1))
+        .ok_or("Crystal counter overflow")?;
+    if *after != expected_after || capture.counter_history.len() != usize::from(*plus1_plus1 > 0) {
+        return Err("Crystal power sampled before its precise counter placement".into());
+    }
+    for at in &capture.counter_history {
+        let at = *at as usize;
+        if at <= previous
+            || at >= until
+            || !matches!(state.engine.event_history.get(at),
+            Some(CommittedEvent::PlusOneCountersAdded { object, zone_change_count, player, count })
+                if object == source && *zone_change_count == before.zone_change_count
+                    && *player == ctx.controller && *count == i32::from(*plus1_plus1))
+        {
+            return Err("Crystal creature power lost genuine counter occurrence".into());
+        }
+    }
+    let expected_damage = if capture.recipient_legal && capture.signed_power > 0 {
+        Some(BatchDamageV2 {
+            source: *source,
+            target: *ctx
+                .targets
+                .get(usize::from(*target_index))
+                .ok_or("Crystal creature power lost recipient")?,
+            amount: capture.signed_power,
+            touched: Vec::new(),
+        })
+    } else {
+        None
+    };
+    if capture.damage != expected_damage {
+        return Err("Crystal power changed damage source/recipient/signed amount".into());
+    }
+    Ok(())
+}
+fn validate_live_creature_power(
+    state: &GameState,
+    capture: &CreaturePowerCaptureV2,
+) -> Result<(), String> {
+    let Some(damage) = capture.damage.as_ref() else {
+        return Err("Crystal power menu lost damage".into());
+    };
+    if state.objects.try_get(damage.source) != capture.source_after.as_ref()
+        || crate::engine::effective_power(state, damage.source) != capture.signed_power
+    {
+        return Err("Crystal waiting chosen-creature source changed after power capture".into());
+    }
+    Ok(())
+}
+
 fn batch_capture_at<'a>(
     state: &'a GameState,
     index: u32,
@@ -1364,6 +1794,7 @@ fn batch_choice(
         source: damage.source,
         historical_source: None,
         batch: Some(progress),
+        creature_power: None,
         target: damage.target,
         original_amount: damage.amount,
         remaining_amount: damage.amount,
@@ -1707,6 +2138,7 @@ fn validate_batch_choice_record(
     if choice.source != original.source
         || choice.target != original.target
         || choice.historical_source.is_some()
+        || choice.creature_power.is_some()
         || choice.original_amount != original.original_amount
         || choice.remaining_amount <= 0
         || choice.remaining_amount > choice.original_amount
@@ -1899,6 +2331,15 @@ pub(crate) fn offer(
     path: &[u16],
 ) -> Result<bool, String> {
     let damage = original_damage(state, &continuation.ctx, op)?;
+    offer_damage(state, continuation, damage, path, None)
+}
+fn offer_damage(
+    state: &GameState,
+    continuation: &mut EffectContinuation,
+    damage: DamageProposed,
+    path: &[u16],
+    creature_power: Option<u32>,
+) -> Result<bool, String> {
     if !needs_choice(state, &damage) {
         return Ok(false);
     }
@@ -1918,6 +2359,7 @@ pub(crate) fn offer(
         source: damage.source,
         historical_source: damage.historical_source,
         batch: None,
+        creature_power,
         target: damage.target,
         original_amount: damage.amount,
         remaining_amount: damage.amount,
@@ -1988,7 +2430,10 @@ fn validate_choice(state: &GameState, pending: &EffectContinuation) -> Result<()
     }
     let op = effect_op_at_structural_path(&root, &choice.path)
         .ok_or("Crystal choice lost its actual damage instruction")?;
-    let damage = original_damage(state, &pending.ctx, op)?;
+    let damage = choice_original_damage(state, &pending.ctx, op, choice)?;
+    if let Some(index) = choice.creature_power {
+        validate_live_creature_power(state, creature_power_at(state, index, &choice.path)?)?;
+    }
     let mut expected_frames = Vec::new();
     remaining(&root, &choice.path, &[], &mut expected_frames)?;
     let Target::Object(recipient) = choice.target else {

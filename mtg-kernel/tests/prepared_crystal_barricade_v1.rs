@@ -1338,3 +1338,283 @@ fn real_seismic_batch_uses_effective_flying_at_resolution_before_prevention_choi
         );
     }
 }
+
+fn announce_power_spell(
+    state: &mut GameState,
+    actor: PlayerId,
+    name: &str,
+    source: ObjectId,
+    target: ObjectId,
+) -> ObjectId {
+    let spell = put(state, actor, name, Zone::Hand);
+    state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 1;
+    state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 2;
+    priority(state, actor);
+    engine::step(state, Action::CastSpell(spell)).unwrap();
+    for target in [source, target] {
+        assert!(
+            matches!(next(state), Decision::ChooseTargets { legal_targets, .. }
+            if legal_targets.contains(&Target::Object(target)))
+        );
+        engine::step(state, Action::ChooseTarget(Target::Object(target))).unwrap();
+    }
+    let _ = next(state);
+    assert!(state.stack.iter().any(|item| item.source == spell
+        && item.targets == vec![Target::Object(source), Target::Object(target)]));
+    spell
+}
+#[test]
+fn real_bite_and_felling_use_selected_creature_power_after_counters_and_keep_restore() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for name in ["Bite Down", "Felling Blow"] {
+            for shield_first in [false, true] {
+                let mut state = ready(actor);
+                // Genuine printed static definition with physical battlefield setup.
+                let wall = put(
+                    &mut state,
+                    actor.opponent(),
+                    "Crystal Barricade",
+                    Zone::Battlefield,
+                );
+                let recipient = put(
+                    &mut state,
+                    actor.opponent(),
+                    "Llanowar Elves",
+                    Zone::Battlefield,
+                );
+                let dealer = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+                shield(&mut state, wall, recipient, 1);
+                let spell = announce_power_spell(&mut state, actor, name, dealer, recipient);
+                assert!(
+                    matches!(mixed_menu(&mut state), Decision::ChooseEffectOption { player, .. } if player == actor.opponent())
+                );
+                let expected_power = if name == "Felling Blow" { 2 } else { 1 };
+                assert_eq!(
+                    state.objects.get(dealer).counters.plus1_plus1,
+                    expected_power - 1
+                );
+                let public = mtg_kernel::crystal_public_v1::observe_v1(
+                    &state,
+                    &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+                    actor.opponent(),
+                    0,
+                    0,
+                    0,
+                    1,
+                )
+                .unwrap();
+                let menu = public.prevention_menu.unwrap();
+                assert_eq!(menu.source.arena_id, dealer.0);
+                assert_eq!(menu.creature_power_at_resolution, Some(expected_power));
+                assert_eq!(menu.remaining_damage, expected_power);
+                assert!(menu.source_history.is_none());
+                let mut replay = restore(&state);
+                for current in [&mut state, &mut replay] {
+                    let chosen = option(current, shield_first);
+                    engine::step(current, Action::ChooseEffectOption(chosen)).unwrap();
+                    if shield_first && expected_power > 1 {
+                        assert!(matches!(next(current), Decision::ChooseEffectOption { .. }));
+                        let chosen = option(current, false);
+                        engine::step(current, Action::ChooseEffectOption(chosen)).unwrap();
+                    }
+                    finish(current);
+                    assert_eq!(current.objects.get(spell).zone, Zone::Graveyard);
+                    assert_eq!(
+                        current.objects.get(dealer).counters.plus1_plus1,
+                        expected_power - 1
+                    );
+                    assert_eq!(current.objects.get(recipient).zone, Zone::Battlefield);
+                    assert_eq!(current.objects.get(recipient).damage, 0);
+                    assert_eq!(
+                        current.engine.active_replacements.len(),
+                        usize::from(!shield_first)
+                    );
+                    assert!(!current.engine.event_history.iter().any(|e| matches!(e, event::CommittedEvent::Damage { source, .. } if *source == spell)));
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&replay).unwrap()
+                );
+            }
+        }
+    }
+}
+#[test]
+fn real_felling_partial_targets_preserve_only_genuine_legal_source_counter() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for mode in 0..4 {
+            let mut state = ready(actor);
+            let wall = put(
+                &mut state,
+                actor.opponent(),
+                "Crystal Barricade",
+                Zone::Battlefield,
+            );
+            let recipient = put(
+                &mut state,
+                actor.opponent(),
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            let dealer = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            shield(&mut state, wall, recipient, 1);
+            let spell = announce_power_spell(&mut state, actor, "Felling Blow", dealer, recipient);
+            match mode {
+                0 => event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(recipient, Zone::Graveyard),
+                ),
+                1 => {
+                    event::propose_and_commit(
+                        &mut state,
+                        ProposedEvent::zone_change(recipient, Zone::Exile),
+                    );
+                    event::propose_and_commit(
+                        &mut state,
+                        ProposedEvent::zone_change(recipient, Zone::Battlefield),
+                    );
+                }
+                2 => event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(dealer, Zone::Graveyard),
+                ),
+                _ => control_primitive(&mut state, dealer, actor.opponent()),
+            }
+            let mut replay = restore(&state);
+            for current in [&mut state, &mut replay] {
+                finish(current);
+                assert_eq!(current.objects.get(spell).zone, Zone::Graveyard);
+                assert_eq!(
+                    current.objects.get(dealer).counters.plus1_plus1,
+                    i32::from(mode < 2)
+                );
+                assert_eq!(current.objects.get(recipient).damage, 0);
+                assert_eq!(current.engine.active_replacements.len(), 1);
+                assert!(current.engine.pending_effect.is_none());
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&replay).unwrap()
+            );
+        }
+    }
+}
+#[test]
+fn chosen_power_capture_and_coherent_menu_amount_forgeries_refuse_readonly() {
+    use mtg_kernel::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut original = ready(actor);
+        let wall = put(
+            &mut original,
+            actor.opponent(),
+            "Crystal Barricade",
+            Zone::Battlefield,
+        );
+        let recipient = put(
+            &mut original,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let dealer = put(&mut original, actor, "Llanowar Elves", Zone::Battlefield);
+        shield(&mut original, wall, recipient, 1);
+        announce_power_spell(&mut original, actor, "Felling Blow", dealer, recipient);
+        mixed_menu(&mut original);
+        for mode in 0..4 {
+            let mut state = restore(&original);
+            match mode {
+                0 | 1 => {
+                    for event in &mut state.engine.event_history {
+                        if let event::CommittedEvent::CrystalExecutionV1 { execution } = event {
+                            if let Some(capture) = execution
+                                .steps
+                                .iter_mut()
+                                .find_map(|s| s.creature_power_capture.as_mut())
+                            {
+                                if mode == 0 {
+                                    capture.counter_history.clear();
+                                } else {
+                                    capture.signed_power += 1;
+                                    capture.damage.as_mut().unwrap().amount += 1;
+                                }
+                            }
+                            if mode == 1 {
+                                if let Some(PendingEffectChoice::ChooseOption {
+                                    purpose:
+                                        EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                                    ..
+                                }) = execution.after.as_mut().and_then(|p| p.choice.as_mut())
+                                {
+                                    choice.original_amount += 1;
+                                    choice.remaining_amount += 1;
+                                }
+                                for step in &mut execution.steps {
+                                    if let Some(PendingEffectChoice::ChooseOption {
+                                        purpose:
+                                            EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                                        ..
+                                    }) = step.offered_menu.as_mut()
+                                    {
+                                        choice.original_amount += 1;
+                                        choice.remaining_amount += 1;
+                                    }
+                                }
+                            }
+                        }
+                        if mode == 1 {
+                            if let event::CommittedEvent::CrystalPreventionBoundaryV1 { boundary } =
+                                event
+                            {
+                                if let Some(PendingEffectChoice::ChooseOption {
+                                    purpose:
+                                        EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                                    ..
+                                }) = boundary.pending.as_mut().and_then(|p| p.choice.as_mut())
+                                {
+                                    choice.original_amount += 1;
+                                    choice.remaining_amount += 1;
+                                }
+                            }
+                        }
+                    }
+                    if mode == 1 {
+                        let Some(PendingEffectChoice::ChooseOption {
+                            purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                            ..
+                        }) = state
+                            .engine
+                            .pending_effect
+                            .as_mut()
+                            .and_then(|p| p.choice.as_mut())
+                        else {
+                            unreachable!()
+                        };
+                        choice.original_amount += 1;
+                        choice.remaining_amount += 1;
+                    }
+                }
+                2 => {
+                    state.objects.get_mut(dealer).counters.plus1_plus1 += 1;
+                }
+                _ => {
+                    let Some(PendingEffectChoice::ChooseOption {
+                        purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                        ..
+                    }) = state
+                        .engine
+                        .pending_effect
+                        .as_mut()
+                        .and_then(|p| p.choice.as_mut())
+                    else {
+                        unreachable!()
+                    };
+                    choice.creature_power = None;
+                }
+            }
+            let before = serde_json::to_vec(&state).unwrap();
+            assert!(engine::step(&mut state, Action::ChooseEffectOption(0)).is_err());
+            assert!(engine::step(&mut state, Action::Pass).is_err());
+            assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+        }
+    }
+}
