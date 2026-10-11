@@ -908,6 +908,10 @@ const DAZZLING_ANGEL_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::OtherControlledCreatureEnters { subtype: None },
     ..etb_trigger(gain_one_life_effect)
 }];
+const SKYKNIGHT_SQUIRE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::OtherControlledCreatureEnters { subtype: None },
+    ..etb_trigger(writhing_chrysalis_counter_marker_effect)
+}];
 const CLINQUANT_SKYMAGE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::ControllerDraws,
     ..etb_trigger(writhing_chrysalis_counter_marker_effect)
@@ -3236,6 +3240,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Ambush Wolf" => &AMBUSH_WOLF_TRIGGERS,
         "Tatyova, Benthic Druid" => &TATYOVA_BENTHIC_DRUID_TRIGGERS,
         "Dazzling Angel" => &DAZZLING_ANGEL_TRIGGERS,
+        "Skyknight Squire" => &SKYKNIGHT_SQUIRE_TRIGGERS,
         "Clinquant Skymage" => &CLINQUANT_SKYMAGE_TRIGGERS,
         "Mischievous Mystic" => &MISCHIEVOUS_MYSTIC_TRIGGERS,
         "Homunculus Horde" | "Homunculus Horde Token" => &HOMUNCULUS_HORDE_TRIGGERS,

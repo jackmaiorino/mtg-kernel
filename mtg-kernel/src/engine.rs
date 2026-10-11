@@ -12835,6 +12835,33 @@ pub(crate) fn static_counter_keyword_controller_turn_only_for(name: &str) -> boo
     name == "Inspiring Paladin"
 }
 
+pub(crate) fn static_plus_one_counter_characteristics_for(
+    name: &str,
+) -> Option<(u16, Keywords, card_def::Subtype)> {
+    match name {
+        "Skyknight Squire" => Some((3, Keywords::FLYING, card_def::Subtype::Knight)),
+        _ => None,
+    }
+}
+
+fn live_plus_one_counter_characteristics(
+    state: &GameState,
+    id: ObjectId,
+) -> Option<(Keywords, card_def::Subtype)> {
+    let object = state.objects.try_get(id)?;
+    let definition = card_def::CARD_DEFS.get(object.card_def as usize)?;
+    if object.zone != Zone::Battlefield
+        || object.v4.face_index != 0
+        || !definition.is_executable()
+        || !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+    {
+        return None;
+    }
+    let (minimum, keywords, subtype) =
+        static_plus_one_counter_characteristics_for(definition.name)?;
+    (object.counters.plus1_plus1 >= i32::from(minimum)).then_some((keywords, subtype))
+}
+
 /// Whether `id` currently has `kw`, folding in every source this kernel
 /// models: the card's own static `Keywords`, `static_self_boost_for`'s
 /// conditional self-grant (Goblin Tomb Raider's haste), and any active
@@ -12868,6 +12895,11 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
         return true;
     }
     if printed_active && def.keywords_for_face(obj.v4.face_index).has(kw) {
+        return true;
+    }
+    if live_plus_one_counter_characteristics(state, id)
+        .is_some_and(|(keywords, _)| keywords.has(kw))
+    {
         return true;
     }
     if printed_active
@@ -13303,6 +13335,11 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
     if let Some((animation, _)) = crate::continuous_characteristics_v1::animation(state, id) {
         subtype_ids.extend(animation.subtypes.iter().map(|subtype| subtype.stable_id()));
     }
+    if let Some((_, subtype)) = live_plus_one_counter_characteristics(state, id) {
+        if object_has_type(state, id, CardType::Creature) {
+            subtype_ids.push(subtype.stable_id());
+        }
+    }
     subtype_ids.extend(
         attached_equipment_profiles(state, id)
             .filter(|(equipment_id, _)| {
@@ -13333,6 +13370,9 @@ pub fn has_effective_subtype(state: &GameState, id: ObjectId, subtype: card_def:
         |(characteristics, _)| characteristics.subtype.same_subtype_as(subtype),
     );
     base_has_subtype
+        || (object_has_type(state, id, CardType::Creature)
+            && live_plus_one_counter_characteristics(state, id)
+                .is_some_and(|(_, added)| added.same_subtype_as(subtype)))
         || crate::continuous_characteristics_v1::animation(state, id).is_some_and(
             |(animation, _)| {
                 animation

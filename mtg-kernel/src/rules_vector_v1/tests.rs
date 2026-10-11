@@ -684,6 +684,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Darkstar Augur Offspring Token",
     "Dauntless Veteran",
     "Dazzling Angel",
+    "Skyknight Squire",
     "Deep-Cavern Bat",
     "Delver of Secrets",
     "Dismal Backwater",
@@ -831,6 +832,11 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
         "effect.rs",
         "Micromancer",
         "definition-owned exact spell search continuation authentication",
+    ),
+    (
+        "engine.rs",
+        "Skyknight Squire",
+        "read via static_plus_one_counter_characteristics_for (counter predicate and added subtype opaque)",
     ),
     (
         "engine.rs",

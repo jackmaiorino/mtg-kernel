@@ -3726,6 +3726,7 @@ fn effect_recipe_for(card: &CardJson) -> String {
                 "High Fae Trickster" => ";static=controller_casts_nonland_spells_as_though_flash:while_live_battlefield_printed_abilities:does_not_grant_keyword_or_activate_or_play_lands",
                 "Paradise Druid" => ";static=source_has_hexproof_while_untapped:live_battlefield_front_face_printed_source_abilities",
                 "Inspiring Paladin" => ";static=controller_turn:first_strike_on_source_and_live_controlled_creatures_with_positive_plus_one_counters:front_face_printed_source_abilities:layer6_timestamps",
+                "Skyknight Squire" => ";static=source_positive_plus_one_counters_at_least:3:flying_and_additional_Knight_subtype:live_battlefield_front_face_printed_abilities",
                 "Billowing Shriekmass" => ";static=controller_graveyard_cards_at_least:7:boost_source:2:1:layer7c:printed_source_abilities",
                 "Dreadwing Scavenger" => ";static=controller_graveyard_cards_at_least:7:boost_source:1:1:layer7c:deathtouch:printed_source_abilities",
                 _ => "",
@@ -6222,6 +6223,7 @@ fn delve_for(name: &str) -> bool {
 /// event, target, and effect part of the generated card database identity.
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Skyknight Squire" => "other_controlled_effective_creature_enters:token_or_nontoken:plus_one_counter_on_exact_bound_source:1:untargeted",
         "Brineborn Cutthroat" => "controller_cast_spell_during_opponent_turn:plus_one_counter_on_bound_source:1",
         "Nessian Hornbeetle" => "beginning_controller_combat_if_other_creature_effective_power_at_least:4:recheck_at_resolution:plus_one_counter_on_bound_source:1",
         "Micromancer" => "etb:may_search_library:instant_or_sorcery_mana_value:1:reveal_to_hand:shuffle:fail_to_find_allowed",

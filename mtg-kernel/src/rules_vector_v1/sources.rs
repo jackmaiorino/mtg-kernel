@@ -990,6 +990,33 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
     }
 
     // Static abilities the engine keys by name outside `CardDef`.
+    if let Some((minimum, keywords, subtype)) =
+        crate::engine::static_plus_one_counter_characteristics_for(name)
+    {
+        walk.rec(
+            "static_plus_one_counter_characteristics",
+            json!({"minimum": minimum, "keywords": keywords.0, "added_subtype": subtype}),
+        );
+        walk.opaque
+            .push("live source plus-one counter threshold and additional creature subtype");
+        walk.ability(CtxF::Static, |out| {
+            out.control(ControlF::Conditional);
+            out.atoms.push(Atom::Opaque);
+            for keyword in keyword_bits(keywords) {
+                out.effect(
+                    EffectAtom::new(EvF::GrantKeyword)
+                        .obj(ObjF::ThisObject)
+                        .duration(DurF::WhileOnBattlefield)
+                        .keyword(keyword),
+                );
+            }
+            out.effect(
+                EffectAtom::new(EvF::SetCharacteristic)
+                    .obj(ObjF::ThisObject)
+                    .duration(DurF::WhileOnBattlefield),
+            );
+        });
+    }
     if let Some(keywords) = crate::engine::static_controller_turn_self_keyword_for(name) {
         walk.rec("static_controller_turn_self_keyword", json!(keywords.0));
         walk.opaque
