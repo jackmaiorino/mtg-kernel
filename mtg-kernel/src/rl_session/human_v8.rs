@@ -76,7 +76,11 @@ impl FastActorSessionV1 {
 
     /// Separate test input selecting the already public engine-priority surface.
     /// Existing constructors and production surface identities are unchanged.
-    #[cfg(test)]
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     pub(crate) fn from_human_v8_engine_priority_fixture_state(state: GameState) -> Self {
         Self::from_human_v8_fixture_state_and_surface(
             state,
