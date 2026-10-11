@@ -787,11 +787,11 @@ impl Roles {
                             .iter()
                             .position(|x| *x == edge)
                             .ok_or_else(|| PlayErr::Fault("staged edge not in menu".into()))?;
+                        if let Some(cap) = capture.as_deref_mut() {
+                            cap.see(key, &s, d, depth, &cn, &path)?;
+                        }
                         let node =
                             Node::new(&key, parent.0, parent.1.clone(), cn, depth, ctx.seeds);
-                        if let Some(cap) = capture.as_deref_mut() {
-                            cap.pending_created.push(key);
-                        }
                         path.push((key, e));
                         new.push((key, node));
                         parent = (key, edge);

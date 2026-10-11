@@ -132,9 +132,27 @@ def diff_paths(a, b, path=""):
     return [path]
 
 
+def bound_index(records, key):
+    indexed = {}
+    for record in records:
+        binding = key(record)
+        if binding in indexed and indexed[binding] != record:
+            raise ValueError(f"conflicting duplicate identity binding {binding}")
+        indexed[binding] = record
+    return indexed
+
+
+def group_binding(group, default_root=None):
+    root = group.get("root_id", default_root)
+    if root is None:
+        raise ValueError("group lacks an unambiguous root binding")
+    return root, group["parent"], json.dumps(group["edge"], sort_keys=True)
+
+
 def groups(dump: Path, out: Path, keys_out: Path | None):
     rows = [json.loads(l) for l in dump.read_text(encoding="utf-8").splitlines() if l.strip()]
     gs = [r for r in rows if r["kind"] == "group"]
+    gs = list(bound_index(gs, group_binding).values())
     result, keys = [], []
     for g in gs:
         kids = [child_summary(c) for c in g["children"]]  # sorted by visits desc, key
@@ -144,6 +162,8 @@ def groups(dump: Path, out: Path, keys_out: Path | None):
             classes.setdefault(k["target_class"], []).append(k["key"])
         # Witnesses: top two, then up to two previously unseen classes (highest-visited, key-tied).
         top = kids[:2]
+        if not top:
+            raise ValueError("identity group has no children")
         seen = {k["target_class"] for k in top}
         extra = []
         for k in kids[2:]:
@@ -154,8 +174,9 @@ def groups(dump: Path, out: Path, keys_out: Path | None):
                 extra.append(k)
         wit = top + extra
         keys += [w["key"] for w in wit]
-        a, b = by_key[top[0]["key"]], by_key[top[1]["key"]]
-        pair = diff_paths(a["obs"], b["obs"])
+        a = by_key[top[0]["key"]]
+        b = by_key[top[1]["key"]] if len(top) == 2 else None
+        pair = diff_paths(a["obs"], b["obs"]) if b else None
         # Pairwise: for each child, does it differ from the top child only in stack target ids?
         only_target = 0
         for c in g["children"][1:]:
@@ -165,7 +186,7 @@ def groups(dump: Path, out: Path, keys_out: Path | None):
         n = len(kids)
         target_children = [k for k in kids if k["targets"]]
         result.append({
-            "rank": g["rank"], "parent": g["parent"], "edge": g["edge"], "parent_physical_depth": g["parent_physical_depth"],
+            "root_id": g["root_id"], "rank": g["rank"], "parent": g["parent"], "edge": g["edge"], "parent_physical_depth": g["parent_physical_depth"],
             "children": n, "children_visits": sum(k["visits"] for k in kids),
             "children_with_object_targets": len(target_children),
             "children_without_object_targets": n - len(target_children),
@@ -174,7 +195,7 @@ def groups(dump: Path, out: Path, keys_out: Path | None):
             "class_sizes": sorted((len(v) for v in classes.values()), reverse=True),
             "top_pair": {"keys": [top[0]["key"], top[1]["key"]], "visits": [top[0]["visits"], top[1]["visits"]],
                          "full_canonical_diff_paths": pair, "menus_equal": a["edges"] == b["edges"],
-                         "same_target_class": top[0]["target_class"] == top[1]["target_class"]},
+                         "same_target_class": top[0]["target_class"] == top[1]["target_class"]} if b else None,
             "children_differing_from_top_only_in_target_ids": only_target,
             "witnesses": [{"key": w["key"], "visits": w["visits"], "target_class": w["target_class"],
                            "created_sim": w["created_sim"], "targets": w["targets"]} for w in wit],
@@ -223,22 +244,28 @@ def get(v, path):
 
 def witnesses(groups_path: Path, dump: Path, capture: Path, probe: Path, out: Path):
     gs = json.loads(groups_path.read_text())["groups"]
-    canon = {g["rank"]: {c["key"]: c for c in g["children"]} for g in
-             (json.loads(l) for l in dump.read_text(encoding="utf-8").splitlines() if l.strip())
-             if g["kind"] == "group"}
+    raw_groups = [g for g in
+                  (json.loads(l) for l in dump.read_text(encoding="utf-8").splitlines() if l.strip())
+                  if g["kind"] == "group"]
+    canon = bound_index(raw_groups, group_binding)
+    roots = {g["root_id"] for g in raw_groups}
+    default_root = next(iter(roots)) if len(roots) == 1 else None
+    bound_index(gs, lambda g: group_binding(g, default_root))
     rows = [json.loads(l) for l in capture.read_text(encoding="utf-8").splitlines() if l.strip()]
-    caps = {r["key"]: r for r in rows if r["kind"] == "capture"}
-    probes = {(r["a"], r["b"]): r["result"] for r in rows if r["kind"] == "probe"}
+    caps = bound_index((r for r in rows if r["kind"] == "capture"), lambda r: (r["root_id"], r["key"]))
     probe_rows = [json.loads(l) for l in probe.read_text(encoding="utf-8").splitlines() if l.strip()] if probe else rows
-    probes.update({(r["a"], r["b"]): r["result"] for r in probe_rows if r["kind"] == "probe"})
+    probes = bound_index((r for r in rows + probe_rows if r["kind"] == "probe"),
+                         lambda r: (r["root_id"], r["a"], r["b"]))
     report = []
     for g in gs:
-        kids = canon[g["rank"]]
+        binding = group_binding(g, default_root)
+        root = binding[0]
+        kids = {c["key"]: c for c in canon[binding]["children"]}
         top = g["witnesses"][0]
         a_c = kids[top["key"]]
         ws = []
         for w in g["witnesses"]:
-            c, cap = kids[w["key"]], caps.get(w["key"])
+            c, cap = kids[w["key"]], caps.get((root, w["key"]))
             paths = diff_paths(a_c["obs"], c["obs"])
             tdesc = [{"canonical_id": t["canonical_id"],
                       "raw_id": cap["mapping"]["order"][t["canonical_id"]] if cap else None,
@@ -257,13 +284,14 @@ def witnesses(groups_path: Path, dump: Path, capture: Path, probe: Path, out: Pa
                            "chain": cap["chain"], "raw_obs_sha256": sha(cap["raw_obs"]),
                            "raw_menu_sha256": sha(cap["raw_menu"])}})
         # The top pair: exchange evidence and visible history.
-        b = g["witnesses"][1]
-        pr = probes.get((top["key"], b["key"]))
+        b = g["witnesses"][1] if len(g["witnesses"]) > 1 else None
+        probe_record = probes.get((root, top["key"], b["key"])) if b else None
+        pr = probe_record["result"] if probe_record else None
         hist = []
         if pr and "x" in pr:
             x, y = pr["x"], pr["y"]
-            for h in caps[top["key"]]["chain"]:
-                anc = caps.get(h["key"])
+            for h in caps[(root, top["key"])]["chain"]:
+                anc = caps.get((root, h["key"]))
                 if anc is None:
                     hist.append({"key": h["key"], "captured": False})
                     continue
@@ -283,7 +311,7 @@ def witnesses(groups_path: Path, dump: Path, capture: Path, probe: Path, out: Pa
             classes.setdefault(candidate_key(c), []).append(c)
         merged = [v for v in classes.values() if len(v) > 1]
         report.append({
-            "rank": g["rank"], "parent": g["parent"], "edge": g["edge"], "children": g["children"],
+            "root_id": root, "rank": g["rank"], "parent": g["parent"], "edge": g["edge"], "children": g["children"],
             "denominators": {"children": g["children"], "with_object_targets": g["children_with_object_targets"],
                              "unresolved_targets": g["children_with_unresolved_targets"],
                              "target_descriptor_classes": g["target_descriptor_classes"],

@@ -132,12 +132,64 @@ def tree_summary(r):
             "simulations": s}
 
 
+def attribution_accounting(row):
+    """Validate accounting before aggregation; v2 conditional depths are distinct from v1 means."""
+    natural = row["simulations"]["natural"]
+    schema = row.get("schema")
+    if schema in (None, "branch-root-v1"):
+        if row["simulations"].get("schema") not in (None, "branch-sim-accounting-v1"):
+            raise ValueError("row and accounting schemas disagree")
+        share = natural["mean_transitions_after_first_expansion"] / max(1.0, natural["mean_transitions"])
+        depth = sum(int(k) * v for k, v in natural["first_expansion_depth_histogram"].items()) / max(1, natural["count"])
+        if not all(math.isfinite(v) for v in (share, depth)):
+            raise ValueError("nonfinite legacy attribution")
+        return "v1", share, depth
+    if schema != "branch-root-v2" or row["simulations"]["schema"] != "branch-sim-accounting-v2":
+        raise ValueError("unsupported accounting schema")
+    required = ("attempts_equal_accepted_plus_rejections", "transitions_equal_selection_total",
+                "calls_equal_selection_total", "buckets_sum_to_totals", "snapshots_within_totals",
+                "rejections_equal_sampler_count", "natural_expansion_iff_committed")
+    if any(row["simulations"]["reconciles"].get(k) is not True for k in required):
+        raise ValueError("accounting does not reconcile")
+    count, expanded, absent = (natural[k] for k in ("count", "expanded", "not_expanded"))
+    if (any(type(v) is not int or v < 0 for v in (count, expanded, absent))
+            or expanded + absent != count):
+        raise ValueError("invalid natural counts")
+    histogram = natural["first_expansion_depth_histogram"]
+    if (not isinstance(histogram, dict)
+            or any(not isinstance(k, str) or (k != "none" and not re.fullmatch(r"0|[1-9]\d*", k))
+                   or type(v) is not int or v < 0 for k, v in histogram.items())
+            or histogram.get("none", 0) != absent
+            or sum(v for k, v in histogram.items() if k != "none") != expanded):
+        raise ValueError("expansion histogram does not reconcile")
+    shares = natural["pooled_share_of_natural_work"]["transitions"]
+    values = [shares[k] for k in ("tree_prefix", "after_expansion", "depth_tail_without_expansion")]
+    if not all(v is None for v in values):
+        if (any(type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 1 for v in values)
+                or not math.isclose(sum(values), 1.0)
+                or (expanded == 0 and shares["after_expansion"] != 0)):
+            raise ValueError("invalid pooled transition shares")
+    depth = (sum(int(k) * v for k, v in histogram.items() if k != "none") / expanded
+             if expanded else None)
+    return "v2", shares["after_expansion"], depth
+
+
 def attribution(b1: dict, expected: dict, bindings: dict, cases: list) -> dict:
     contract(expected, bindings, cases)
     invalid = [k for k in sorted(set(b1) | set(expected))
                if k not in expected or not input_contract(k, [("B1", 1, b1.get(k))], expected[k], bindings)]
     if invalid:
         return {"complete": False, "incomplete": invalid}
+    accounting = {}
+    for k, row in b1.items():
+        try:
+            accounting[k] = attribution_accounting(row)
+        except (KeyError, TypeError, ValueError, AttributeError, OverflowError):
+            invalid.append(k)
+    if invalid:
+        return {"complete": False, "incomplete": sorted(invalid)}
+    if len({v[0] for v in accounting.values()}) != 1:
+        return {"complete": False, "incomplete": sorted(b1), "reason": "mixed accounting schemas"}
     panel = {k: v for k, v in b1.items() if not named(k)}
     out = {"roots": len(panel), "named": sorted(k for k in b1 if named(k)),
            "parity": {k: v["b1_parity"] for k, v in b1.items()},
@@ -166,16 +218,23 @@ def attribution(b1: dict, expected: dict, bindings: dict, cases: list) -> dict:
             "depth3_nodes_with_eligible_share": m(lambda r: next((d["nodes_with_eligible"] / max(1, d["nodes"])
                                                                for d in r["tree"]["by_physical_depth"]
                                                                if d["physical_depth"] == 3), 0.0)),
-            "transitions_after_first_expansion_share": m(
-                lambda r: r["simulations"]["natural"]["mean_transitions_after_first_expansion"]
-                / max(1.0, r["simulations"]["natural"]["mean_transitions"])),
-            "first_expansion_mean_depth": m(lambda r: sum(int(k) * v for k, v in r["simulations"]["natural"]
-                                                          ["first_expansion_depth_histogram"].items())
-                                            / max(1, r["simulations"]["natural"]["count"])),
             "sibling_tags": {tag: sum(r["tree"]["action_groups"]["sibling_difference_tags"].get(tag, 0) for r in rs)
                              for tag in ("own_private", "opponent_known", "own_public", "opponent_public",
                                          "public_other", "menu", "residual")},
             "decks": sorted({r["own"] for r in rs})}
+        if accounting[rs[0]["root_id"]][0] == "v1":
+            out["lineages"][lin]["transitions_after_first_expansion_share"] = m(lambda r: accounting[r["root_id"]][1])
+            out["lineages"][lin]["first_expansion_mean_depth"] = m(lambda r: accounting[r["root_id"]][2])
+        else:
+            for index, label in ((1, "pooled_natural_transitions_after_expansion_share"),
+                                 (2, "first_expansion_mean_depth_among_expanded")):
+                values = [accounting[r["root_id"]][index] for r in rs]
+                defined = [v for v in values if v is not None]
+                out["lineages"][lin][label] = {
+                    "defined_roots": len(defined), "undefined_roots": len(values) - len(defined),
+                    "mean": st.mean(defined) if defined else None,
+                    "median": st.median(defined) if defined else None,
+                    "min": min(defined) if defined else None, "max": max(defined) if defined else None}
     out["complete"] = not out["failed_searches"]
     return out
 
