@@ -35,9 +35,10 @@ use crate::ids::PlayerId;
 use crate::rl::PlayerSeatV1;
 use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashSet;
+use std::io::Write;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
@@ -45,14 +46,14 @@ use std::time::Instant;
 pub(super) const ROW_KIND: &str = "bank_source";
 pub(super) const URGENCY: f64 = 1.5;
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct DeckSpec {
     pub(super) label: String,
     pub(super) mainboard: Vec<u16>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct SourceSpec {
     pub(super) id: String,
@@ -68,7 +69,7 @@ pub(super) struct SourceSpec {
     pub(super) search_root: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct BankSpec {
     pub(super) schema: String,
@@ -458,22 +459,92 @@ fn actions_bytes(actions: &[u32]) -> Vec<u8> {
     actions.iter().flat_map(|a| a.to_le_bytes()).collect()
 }
 
-/// Completed source ids already in `out` (resume); a partial last line is
-/// cut by the caller.
-fn done_ids(bytes: &[u8], lineage: &str) -> Result<HashSet<String>, String> {
-    let keep = bytes.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
-    let text = std::str::from_utf8(&bytes[..keep]).map_err(|e| e.to_string())?;
+/// Bind every future row to the actual installed policies and all inputs.
+/// Historical rows stay untouched and cannot be resumed under this binding.
+fn bank_binding(policy: &FrozenPlayPolicyV1, sh: &BankShared) -> Result<String, String> {
+    let identity = |p: &FrozenPlayPolicyV1| {
+        json!({"origin":p.identity_v1(),"actual":p.actual_model_identity_v1(),
+            "sampler":p.runtime_sampler_identity_v1(),
+            "max_actions":p.runtime_sampler_max_actions_v1()})
+    };
+    if sh.labels.len() != sh.opponents.len()
+        || sh.labels.iter().collect::<HashSet<_>>().len() != sh.labels.len()
+        || sh.spec.sources.iter().any(|s| !sh.labels.contains(&s.opp))
+    {
+        return Err("bank opponent labels must be unique and cover every source".into());
+    }
+    let binding = json!({"schema":"spy-reset-bank-binding-v1","spec":sh.spec,
+        "focal":identity(policy),"opponents":sh.labels.iter().zip(&sh.opponents)
+            .map(|(label, p)| json!({"label":label,"policy":identity(p)})).collect::<Vec<_>>(),
+        "limits":sh.limits.json(),"prior":sh.prior,"urgency":URGENCY,
+        "sampler":super::world::SAMPLER_VERSION,"seed_namespace":super::seeds::NAMESPACE,
+        "git_head":env!("MTG_KERNEL_BUILD_GIT_HEAD"),
+        "tracked_tree_sha256":env!("MTG_KERNEL_BUILD_TRACKED_TREE_SHA256"),
+        "carddb_hash":format!("{:016x}",crate::card_def::KERNEL_CARDDB_HASH)});
+    Ok(sha(
+        &serde_json::to_vec(&binding).map_err(|e| e.to_string())?
+    ))
+}
+
+#[derive(Debug)]
+struct BankResume {
+    done: HashSet<String>,
+    keep: usize,
+    needs_newline: bool,
+}
+
+/// Parse and authenticate all retained rows before any output mutation.
+/// A complete unterminated record is retained; only an interrupted final
+/// JSON record may be discarded after preceding rows have been validated.
+fn bank_resume(
+    bytes: &[u8],
+    lineage: &str,
+    binding: &str,
+    source_ids: &HashSet<&str>,
+) -> Result<BankResume, String> {
+    let boundary = bytes.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+    let text = std::str::from_utf8(&bytes[..boundary]).map_err(|e| e.to_string())?;
     let mut done = HashSet::new();
-    for line in text.lines().filter(|l| !l.trim().is_empty()) {
-        let row: Value = serde_json::from_str(line).map_err(|e| e.to_string())?;
-        if row["kind"] == ROW_KIND {
-            if row["lineage"] != lineage || row["select_rule"] != "fpu-1.5" {
-                return Err("resume refused: lineage or select rule differs".into());
+    let mut admit = |row: Value| -> Result<(), String> {
+        if row["lineage"] != lineage || row["bank_binding_sha256"] != binding {
+            return Err("resume refused: bank input binding differs or is absent; preserve the output and use a new path".into());
+        }
+        let id = row["id"].as_str().ok_or("resume row has no source id")?;
+        if !source_ids.contains(id) {
+            return Err(format!("resume row names unknown source {id}"));
+        }
+        if row["kind"] == ROW_KIND && row["select_rule"] == "fpu-1.5" {
+            if !done.insert(id.to_owned()) {
+                return Err(format!("duplicate completed source {id}"));
             }
-            done.insert(row["id"].as_str().unwrap_or("").to_owned());
+        } else if row["kind"] == "error" {
+            return Err("resume refused: retained error row makes the bank inadmissible; preserve the output and use a new path".into());
+        } else {
+            return Err("resume row kind or select rule differs".into());
+        }
+        Ok(())
+    };
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        admit(serde_json::from_str(line).map_err(|e| e.to_string())?)?;
+    }
+    let mut keep = boundary;
+    let mut needs_newline = false;
+    if boundary < bytes.len() {
+        match serde_json::from_slice::<Value>(&bytes[boundary..]) {
+            Ok(row) => {
+                admit(row)?;
+                keep = bytes.len();
+                needs_newline = true;
+            }
+            Err(e) if e.is_eof() => {}
+            Err(e) => return Err(format!("resume final row is malformed: {e}")),
         }
     }
-    Ok(done)
+    Ok(BankResume {
+        done,
+        keep,
+        needs_newline,
+    })
 }
 
 pub(super) fn run_bank(
@@ -482,24 +553,29 @@ pub(super) fn run_bank(
     sh: BankShared,
 ) -> Result<(), String> {
     sh.spec.validate()?;
-    if let Ok(bytes) = std::fs::read(&cfg.out) {
-        if !bytes.is_empty() && !bytes.ends_with(b"\n") {
-            let keep = bytes.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
-            std::fs::write(&cfg.out, &bytes[..keep]).map_err(|e| e.to_string())?;
-        }
-    }
-    let done = match std::fs::read(&cfg.out) {
-        Ok(bytes) => done_ids(&bytes, &sh.spec.lineage)?,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => HashSet::new(),
+    let binding = bank_binding(policy, &sh)?;
+    let source_ids = sh.spec.sources.iter().map(|s| s.id.as_str()).collect();
+    let bytes = match std::fs::read(&cfg.out) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
         Err(e) => return Err(e.to_string()),
     };
-    let sink = Mutex::new(
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&cfg.out)
-            .map_err(|e| e.to_string())?,
-    );
+    let resume = bank_resume(&bytes, &sh.spec.lineage, &binding, &source_ids)?;
+    let mut output = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&cfg.out)
+        .map_err(|e| e.to_string())?;
+    if resume.keep != bytes.len() {
+        output
+            .set_len(resume.keep as u64)
+            .map_err(|e| e.to_string())?;
+    }
+    if resume.needs_newline {
+        output.write_all(b"\n").map_err(|e| e.to_string())?;
+    }
+    let done = resume.done;
+    let sink = Mutex::new(output);
     let first = cfg.first_game as usize;
     let end = if cfg.games == 0 {
         sh.spec.sources.len()
@@ -518,7 +594,7 @@ pub(super) fn run_bank(
         let mut handles = Vec::new();
         for _ in 0..cfg.workers {
             let mut roles = bank_roles(policy, &sh.opponents)?;
-            let (sh, sink, next, done) = (&sh, &sink, &next, &done);
+            let (sh, sink, next, done, binding) = (&sh, &sink, &next, &done, &binding);
             handles.push(scope.spawn(move || -> Result<(), String> {
                 loop {
                     let item = next.fetch_add(1, Ordering::SeqCst);
@@ -529,9 +605,10 @@ pub(super) fn run_bank(
                     if done.contains(&src.id) {
                         continue;
                     }
-                    let row = source_row(sh, &mut roles, src).unwrap_or_else(
+                    let mut row = source_row(sh, &mut roles, src).unwrap_or_else(
                         |e| json!({"kind":"error","id":src.id,"lineage":sh.spec.lineage,"error":e}),
                     );
+                    row["bank_binding_sha256"] = json!(binding);
                     write_line(sink, &row)?;
                     eprintln!(
                         "source {} done at {:.1}s",
@@ -546,4 +623,75 @@ pub(super) fn run_bank(
         }
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod resume_tests {
+    use super::*;
+
+    fn row() -> Value {
+        json!({"kind":ROW_KIND,"id":"source-1","lineage":"r1",
+            "select_rule":"fpu-1.5","bank_binding_sha256":"binding-1"})
+    }
+
+    fn parse(bytes: &[u8]) -> Result<BankResume, String> {
+        bank_resume(bytes, "r1", "binding-1", &HashSet::from(["source-1"]))
+    }
+
+    #[test]
+    fn bank_resume_preserves_complete_unterminated_record() {
+        let bytes = serde_json::to_vec(&row()).unwrap();
+        let resume = parse(&bytes).unwrap();
+        assert_eq!(resume.done, HashSet::from(["source-1".to_owned()]));
+        assert_eq!(resume.keep, bytes.len());
+        assert!(resume.needs_newline);
+    }
+
+    #[test]
+    fn bank_resume_refuses_changed_or_unbound_inputs_before_tail_recovery() {
+        for binding in [Value::Null, json!("changed-spec-or-model")] {
+            let mut r = row();
+            r["bank_binding_sha256"] = binding;
+            let bytes = format!("{r}\n{{\"interrupted\":");
+            assert!(parse(bytes.as_bytes()).unwrap_err().contains("binding"));
+        }
+    }
+
+    #[test]
+    fn bank_resume_rejects_duplicate_and_unknown_sources() {
+        let r = row();
+        assert!(parse(format!("{r}\n{r}\n").as_bytes()).is_err());
+        let mut unknown = r;
+        unknown["id"] = json!("foreign-source");
+        assert!(parse(format!("{unknown}\n").as_bytes()).is_err());
+    }
+
+    #[test]
+    fn bank_resume_rejects_malformed_complete_records() {
+        assert!(parse(b"{invalid}\n{\"interrupted\":").is_err());
+        assert!(parse(b"{invalid}").is_err());
+    }
+
+    #[test]
+    fn bank_resume_recovers_only_interrupted_final_record() {
+        let complete = format!("{}\n", row());
+        for tail in [b"{\"id\":".as_slice(), b"{\"id\":\"\xe2\x82".as_slice()] {
+            let bytes = [complete.as_bytes(), tail].concat();
+            let resume = parse(&bytes).unwrap();
+            assert_eq!(resume.keep, complete.len());
+            assert!(!resume.needs_newline);
+            assert_eq!(resume.done.len(), 1);
+        }
+    }
+
+    #[test]
+    fn bank_resume_refuses_retained_error_rows_without_relabeling_evidence() {
+        let mut r = row();
+        r["kind"] = json!("error");
+        assert!(parse(format!("{r}\n").as_bytes())
+            .unwrap_err()
+            .contains("retained error row"));
+        r["bank_binding_sha256"] = Value::Null;
+        assert!(parse(format!("{r}\n").as_bytes()).is_err());
+    }
 }

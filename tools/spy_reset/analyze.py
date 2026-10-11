@@ -1,6 +1,8 @@
 """Frozen analysis of the reset pilot's raw-policy panel (RUNNER.md sections 7-8).
 
-Input: an index {"panels": [{"checkpoint": ID, "opponent": "T1"|"H", "rows": PATH, "labels": PATH}]}
+Input: an index {"panels": [{"checkpoint": ID, "opponent": "T1"|"H",
+"checkpoint_sha256": SHA, "rows": PATH, "labels": PATH}]}. Copy the expected
+checkpoint hash from the existing panel plan's candidate.checkpoint.sha256.
 with checkpoint IDs r1-parent, r2-parent, r1-O, r1-P, r1-S, r2-O, r2-P, r2-S and T1.
 ``rows`` are nine_deck_public_panel_v1 rows (game one score per case); ``labels`` are
 ``regret_census_v1 mode=s4a-label-replay`` rows for the Spy-own cases.
@@ -39,27 +41,64 @@ def load(index: dict) -> dict:
     """data[(checkpoint, opponent)][(own, other, repeat, seat)] = case record."""
     data = {}
     for panel in index["panels"]:
+        key = (panel["checkpoint"], panel["opponent"])
+        if key in data or key[1] not in OPPONENTS or key[0] not in (
+                "T1", *(f"{lin}-{role}" for lin in LINEAGES for role in (*ARMS, "parent"))):
+            raise ValueError(f"duplicate or unknown panel {key}")
+        expected_panel = f"{key[0]}-vs-{key[1]}"
+        expected_hash = panel.get("checkpoint_sha256")
+        if (not isinstance(expected_hash, str) or len(expected_hash) != 64
+                or any(c not in "0123456789abcdef" for c in expected_hash)):
+            raise ValueError(f"{expected_panel}: expected checkpoint_sha256 is required")
+        expected_cases = {(o, t, k, s) for o in range(DECKS) for t in range(DECKS)
+                          for k in range(REPEATS) for s in (0, 1)}
         cases = {}
         for line in Path(panel["rows"]).read_text().splitlines():
             if line.strip():
                 r = json.loads(line)
-                cases[(r["own"], r["other"], r["repeat"], r["seat"])] = {
-                    "score": r["score"], "complete": r["complete"]}
-        if len(cases) != DECKS * DECKS * REPEATS * 2:
-            raise ValueError(f"{panel['rows']}: {len(cases)} cases")
+                case_key = (r["own"], r["other"], r["repeat"], r["seat"])
+                if (any(type(v) is not int for v in case_key) or case_key not in expected_cases
+                        or case_key in cases):
+                    raise ValueError(f"{panel['rows']}: duplicate or unknown case {case_key}")
+                if (r.get("panel") != expected_panel or r.get("checkpoint_sha256") != expected_hash
+                        or r.get("seed") != pilot.panel_seed(*case_key[:3])):
+                    raise ValueError(f"{panel['rows']}: panel, checkpoint or seed differs")
+                if (type(r["complete"]) is not bool
+                        or (r["complete"] and (type(r["score"]) not in (int, float)
+                                               or r["score"] not in (0, 0.5, 1)))
+                        or (not r["complete"] and r["score"] is not None)):
+                    raise ValueError(f"{panel['rows']}: invalid completion or score")
+                cases[case_key] = r
+        if cases.keys() != expected_cases:
+            raise ValueError(f"{panel['rows']}: exact case roster differs")
+        expected_labels = {f"{expected_panel}/o{o}-t{t}-k{k}-s{s}": (o, t, k, s)
+                           for (o, t, k, s) in expected_cases if o == SPY}
         labels = {}
         for line in Path(panel["labels"]).read_text().splitlines():
             if line.strip():
                 r = json.loads(line)
-                labels[r["id"].rsplit("/", 1)[1]] = r
+                if r["id"] not in expected_labels or r["id"] in labels:
+                    raise ValueError(f"{panel['labels']}: duplicate or foreign label {r['id']}")
+                labels[r["id"]] = r
         for (o, t, k, s), case in cases.items():
             if o != SPY:
                 continue
-            lab = labels.get(f"o{o}-t{t}-k{k}-s{s}")
+            lab = labels.get(f"{expected_panel}/o{o}-t{t}-k{k}-s{s}")
             if case["complete"] and (lab is None or lab["kind"] != "label_replay"):
                 raise ValueError(f"{panel['labels']}: missing label for a complete Spy case o{o}-t{t}-k{k}-s{s}")
+            if lab is not None and lab["kind"] == "label_replay":
+                winner = lab["winner"]
+                if (type(lab["focal"]) is not int or lab["focal"] != s
+                        or (winner is not None and (type(winner) is not int or winner not in (0, 1)))
+                        or type(lab["win"]) is not bool or lab["win"] != (winner == s)
+                        or type(lab["combo_resolved"]) is not bool
+                        or type(lab["combo_won"]) is not bool
+                        or lab["combo_won"] != (lab["combo_resolved"] and lab["win"])
+                        or (case["complete"] and case["score"] != (
+                            0.5 if winner is None else float(winner == s)))):
+                    raise ValueError(f"{panel['labels']}: focal, winner or score differs")
             case["labels"] = lab
-        data[(panel["checkpoint"], panel["opponent"])] = cases
+        data[key] = cases
     return data
 
 
