@@ -529,6 +529,7 @@ fn target_key(t: &Target) -> String {
     match t {
         Target::Player(p) => format!("P{}", p.index()),
         Target::Object(id) => format!("O{}", id.0),
+        Target::StackItem(id) => format!("S{}", id.0),
     }
 }
 
@@ -542,6 +543,9 @@ fn target_name(state: &GameState, t: &Target, p0_name: &str, p1_name: &str) -> S
             }
         }
         Target::Object(id) => state.objects.get(*id).name.clone(),
+        Target::StackItem(id) => {
+            panic!("walk_diff has no Mage-pinned renderer for stack target {id:?}")
+        }
     }
 }
 
@@ -1288,7 +1292,9 @@ fn render_cost(cost: &Cost) -> String {
             Pip::Hybrid(a, b) => {
                 s.push_str(&format!("{{{}/{}}}", mana_symbol(*a), mana_symbol(*b)))
             }
-            Pip::Phyrexian(c) => s.push_str(&format!("{{{}/P}}", mana_symbol(*c))),
+            Pip::Phyrexian(c) | Pip::PhyrexianAnyColor(c) => {
+                s.push_str(&format!("{{{}/P}}", mana_symbol(*c)))
+            }
         }
     }
     if s.is_empty() {
@@ -1723,7 +1729,10 @@ fn render_activated_ability_text(state: &GameState, id: ObjectId, ability_idx: u
             | card_def::CostComponent::ConvokeMana(_)
 
             | card_def::CostComponent::ExileCraftArtifactMaterial
-            | card_def::CostComponent::RemoveNetCounterFromSelf) => {
+            | card_def::CostComponent::RemoveNetCounterFromSelf
+            | card_def::CostComponent::LoyaltyX
+            | card_def::CostComponent::Crew(_)
+            | card_def::CostComponent::RemoveChargeCounterFromSelf) => {
                 panic!("walk_diff has no Mage-pinned renderer for activated cost {unsupported:?}")
             }
         }
