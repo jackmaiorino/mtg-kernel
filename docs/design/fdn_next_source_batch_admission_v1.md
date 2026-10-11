@@ -160,3 +160,19 @@ or grouped-execution pass. Native60's three new-card failures, later catalog
 registration and remaining consumers/model gaps remain separate from this
 404-definition candidate. Final native receipts and prerequisite PR226/default
 delivery remain pending before acceptance.
+
+Native60's final scoped consumer checks pass across all three catalogs:
+Heartfire Limited input3/Human6, Standard/Default input1/Human4 each;
+Sower Limited public4/Human5/session1, Standard/Default public1/Human2/session1
+each. The later409 catalog's complete Default/Standard replay exports equal
+Native33 bytes. The overall batch is101/101, with331 passing and5 failing
+among336 actual occurrences versus339 requested. Cerberus/Wildwood failures
+and the Limited Frenzied style error belong to the separate later source;
+the omitted profile/guard occurrences remain unqualified. These scoped
+consumer receipts do not qualify the current404 grouped fixture execution.
+
+PR226 currentee5f2ce9 has24 successful CI checks and one failed Ubuntu Python
+shard0. The check annotation reports lost hosted-runner communication; final
+API step data remains in_progress and its log is unavailable. The existing
+delivery owner must recover that exact-head required check before integration.
+No failed check has been treated as a pass.
