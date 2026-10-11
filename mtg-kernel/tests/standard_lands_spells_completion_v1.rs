@@ -177,13 +177,25 @@ fn removal_targets_use_effective_power_and_toughness_and_artifact_type() {
     let spell = put(&mut state, PlayerId::P0, "Cut Down", Zone::Hand);
     state.players[0].mana_pool = pool(&[(ManaColor::B, 1)], 0);
     cast(&mut state, spell, &[Target::Object(small)]);
+    // Target selection is still part of announcement. Finish casting before
+    // changing the target in the response window.
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert!(state.engine.pending_cast.is_none());
+    assert_eq!(state.stack.last().unwrap().source, spell);
     state.objects.get_mut(small).counters.plus1_plus1 = 1;
-    settled(&mut state);
-    assert_eq!(
-        state.objects.get(small).zone,
-        Zone::Battlefield,
-        "target is rechecked after a pump"
-    );
+    let mut restored: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    for current in [&mut state, &mut restored] {
+        settled(current);
+        assert_eq!(
+            current.objects.get(small).zone,
+            Zone::Battlefield,
+            "target is rechecked after a pump"
+        );
+        assert_eq!(current.objects.get(spell).zone, Zone::Graveyard);
+        assert!(current.stack.is_empty());
+    }
+    assert_eq!(state, restored);
 }
 
 #[test]
