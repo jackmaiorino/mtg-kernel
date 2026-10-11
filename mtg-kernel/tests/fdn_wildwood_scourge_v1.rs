@@ -494,6 +494,240 @@ fn actual_witness_changes_recipient_hydra_classification_at_counter_event_time()
     }
 }
 
+#[test]
+fn future_precise_meaning_selects_real_entry_and_counter_roots_and_refuses_forged_semantics() {
+    use mtg_kernel::rules_meaning_wildwood_v1 as meaning;
+    let selector = meaning::live_selector_v1().unwrap();
+    let id = card_id_by_name("Wildwood Scourge").expect("genuine registration required");
+    let selected = meaning::meaning_v1(&selector, id).unwrap();
+    assert_eq!(selected.entry.printed_cost, "{X}{G}");
+    assert_eq!(
+        (
+            selected.entry.represented_x_minimum,
+            selected.entry.represented_x_maximum
+        ),
+        (0, 255)
+    );
+    assert_eq!(
+        selected.counter_trigger.excluded_effective_subtype,
+        Subtype::Hydra
+    );
+    assert_eq!(
+        selected
+            .counter_trigger
+            .triggers_per_qualifying_recipient_event,
+        1
+    );
+    assert!(
+        selected
+            .counter_trigger
+            .counter_placing_player_is_irrelevant
+    );
+    assert!(
+        !selected
+            .counter_trigger
+            .recipient_condition_rechecked_at_resolution
+    );
+    assert!(!selected.historical_event_capture_transport_supplied);
+    assert!(selected.complete_apnap_capture_merge_supplied);
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for x in [0, 2, 5] {
+            let mut state = ready(actor);
+            let source = announce(&mut state, actor, x);
+            let item = state.stack.last().unwrap();
+            assert_eq!(item.source, source);
+            assert_eq!(u16::from(item.v4.x_value), x);
+            assert_eq!(item.v4.source_contract.unwrap().card_def, selected.card_id);
+            let before = serde_json::to_vec(&state).unwrap();
+            meaning::validate_meaning_v1(&selected).unwrap();
+            assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+            let restored = restore(&state);
+            assert_eq!(
+                meaning::meaning_v1(&selector, restored.objects.get(source).card_def).unwrap(),
+                selected
+            );
+            let mut replay = restored;
+            settle(&mut state);
+            settle(&mut replay);
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&replay).unwrap()
+            );
+            assert_eq!(
+                state.objects.get(source).zone,
+                if x == 0 {
+                    Zone::Graveyard
+                } else {
+                    Zone::Battlefield
+                }
+            );
+            if x != 0 {
+                assert_eq!(state.objects.get(source).counters.plus1_plus1, i32::from(x));
+            }
+        }
+        let state = ready(actor);
+        let before = serde_json::to_vec(&state).unwrap();
+        for field in 0..14 {
+            let mut forged = selected.clone();
+            match field {
+                0 => forged.entry.counter_count_equals_captured_x = false,
+                1 => forged.entry.represented_x_maximum = u16::MAX,
+                2 => forged.entry.entry_is_a_replacement_not_a_trigger = false,
+                3 => forged.counter_trigger.excluded_effective_subtype = Subtype::Elf,
+                4 => forged.counter_trigger.counter_placing_player_is_irrelevant = false,
+                5 => {
+                    forged
+                        .counter_trigger
+                        .recipient_condition_rechecked_at_resolution = true
+                }
+                6 => {
+                    forged
+                        .counter_trigger
+                        .capture_original_source_controller_and_incarnation = false
+                }
+                7 => forged.counter_trigger.source_reentry_receives_old_counter = true,
+                8 => forged.counter_trigger.placement.clear(),
+                9 => forged.historical_event_capture_transport_supplied = true,
+                10 => forged.unbounded_x_successor_supplied = true,
+                11 => forged.frozen_vector_model_admission_supplied = true,
+                12 => forged.complete_apnap_capture_merge_supplied = false,
+                _ => forged.counter_trigger.trigger_root_sha256.clear(),
+            }
+            assert_eq!(
+                meaning::validate_meaning_v1(&forged),
+                Err(meaning::ErrorV1::WrongMeaning)
+            );
+            assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+        }
+    }
+    let value = serde_json::to_value(&selected).unwrap();
+    assert_eq!(
+        serde_json::from_value::<meaning::MeaningV1>(value.clone()).unwrap(),
+        selected
+    );
+    for path in ["entry", "counter_trigger", "selector"] {
+        let mut bad = value.clone();
+        bad[path]
+            .as_object_mut()
+            .unwrap()
+            .insert("unknown".into(), true.into());
+        assert!(serde_json::from_value::<meaning::MeaningV1>(bad).is_err());
+    }
+    let mut bad = value;
+    bad.as_object_mut()
+        .unwrap()
+        .insert("unknown".into(), true.into());
+    assert!(serde_json::from_value::<meaning::MeaningV1>(bad).is_err());
+}
+
+#[test]
+fn future_committed_counter_captures_keep_original_controller_and_apnap_after_restore() {
+    fn transfer(state: &mut GameState, object: ObjectId, controller: PlayerId) {
+        let previous = state.objects.get(object).controller;
+        state.players[previous.index()]
+            .battlefield
+            .retain(|id| *id != object);
+        state.players[controller.index()].battlefield.push(object);
+        state.objects.get_mut(object).controller = controller;
+    }
+    use mtg_kernel::effect::{EffectObjectBinding, EffectOp};
+    use mtg_kernel::rules_meaning_wildwood_v1 as meaning;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let first = scourge(&mut state, actor);
+        let second = scourge(&mut state, actor);
+        // Both are actually cast printed sources. This typed control setup
+        // supplies two event-time controllers without claiming a printed theft spell.
+        transfer(&mut state, second, actor.opponent());
+        let a = add(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        let b = add(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let first_generation = state.objects.get(first).zone_change_count;
+        let second_generation = state.objects.get(second).zone_change_count;
+        // Reverse event order must still publish AP before NAP at the actual
+        // checkpoint. This acceptance case requires the documented capture merge.
+        counters(&mut state, actor, b, 5);
+        counters(&mut state, actor.opponent(), a, 3);
+        assert_eq!(state.wildwood_waiting_v1.as_ref().unwrap().len(), 2);
+        assert!(state.engine.pending_triggers.is_empty());
+        for (source, controller, generation) in [
+            (first, actor, first_generation),
+            (second, actor.opponent(), second_generation),
+        ] {
+            let capture = state
+                .wildwood_waiting_v1
+                .as_ref()
+                .unwrap()
+                .iter()
+                .find(|trigger| trigger.source == source)
+                .unwrap();
+            assert_eq!(capture.controller, controller);
+            let contract = capture.source_contract.unwrap();
+            assert_eq!(
+                (contract.controller, contract.zone_change_count),
+                (controller, generation)
+            );
+            assert_eq!(
+                capture.effect,
+                EffectOp::PutPlusOnePlusOneCounterOnBoundObject {
+                    object: EffectObjectBinding {
+                        object: source,
+                        expected_zone: Zone::Battlefield,
+                        expected_zone_change_count: generation,
+                    },
+                }
+            );
+            let selected =
+                meaning::meaning_v1(&meaning::live_selector_v1().unwrap(), contract.card_def)
+                    .unwrap();
+            assert!(
+                selected
+                    .counter_trigger
+                    .capture_original_source_controller_and_incarnation
+            );
+            assert!(
+                !selected
+                    .counter_trigger
+                    .source_current_controller_rechecked_at_resolution
+            );
+        }
+        transfer(&mut state, first, actor.opponent());
+        transfer(&mut state, second, actor);
+        let mut replay = restore(&state);
+        for branch in [&mut state, &mut replay] {
+            assert!(matches!(next(branch), Decision::CastSpellOrPass { .. }));
+            assert!(branch.engine.pending_triggers.is_empty());
+            assert_eq!(
+                branch
+                    .stack
+                    .iter()
+                    .map(|item| item.source)
+                    .collect::<Vec<_>>(),
+                vec![first, second]
+            );
+            assert_eq!(
+                branch
+                    .stack
+                    .iter()
+                    .map(|item| item.controller)
+                    .collect::<Vec<_>>(),
+                vec![actor, actor.opponent()]
+            );
+            settle(branch);
+            assert_eq!(branch.objects.get(first).counters.plus1_plus1, 3);
+            assert_eq!(branch.objects.get(second).counters.plus1_plus1, 3);
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+    }
+}
+
 fn transfer_for_capture_test(state: &mut GameState, id: ObjectId, controller: PlayerId) {
     // Typed control-primitive setup, not a claim of a printed theft spell.
     for player in &mut state.players {

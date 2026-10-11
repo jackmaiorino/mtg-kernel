@@ -510,6 +510,7 @@ pub mod rules_meaning_self_reflection_v1;
 pub mod rules_meaning_sower_v1;
 pub mod rules_meaning_squad_rallier_v1;
 pub mod rules_meaning_v2;
+pub mod rules_meaning_wildwood_v1;
 /// Engine-derived per-card rules features (no names or registry labels).
 pub mod rules_vector_v1;
 
