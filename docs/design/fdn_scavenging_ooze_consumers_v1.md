@@ -28,6 +28,12 @@ Ooze, choose a card ID, create a profile, change weights, or claim Full admissio
   Exact normalized executable candidates and V8 binding remain backend-only.
   Submission revalidates that complete private binding and the authenticated
   public companion before calling the existing session execution path.
+  The owning session also binds a private allocation identity and monotonic
+  restore generation. Snapshots do not capture this authority. Owning restore
+  increments it before old prompts or receipts can be reused, and refuses
+  generation exhaustion without mutation. A rollback or rebuilt future core
+  state cannot revive an issued request; retry receipts require the same owning
+  authority. Predecessor restore and receipt contracts remain unchanged.
   Public artifact digest validation grants no execution authority.
 
 The meaning explicitly describes exactly one unrestricted card in either
@@ -60,7 +66,9 @@ remain unchanged pending explicit array consumer/admission work.
 
 Registered predecessor fixtures compare complete V9/V11 safe states and
 ordered menus, exercise actual land submission, identical retry, stale binding,
-snapshot replay, private opponent-hand perturbation, and Generic Ward pay and
+snapshot replay including same-projector accepted retry, pending prompt and
+rebuilt-future refusal after owning rollback for both seats, private
+opponent-hand perturbation, and Generic Ward pay and
 decline through real existing targeters. Human fixtures check that backend keys
 never enter the safe DTO. Public and meaning fixtures reject schema/catalog/
 source/semantic forgery and unrelated definition roots. Future actual Ooze

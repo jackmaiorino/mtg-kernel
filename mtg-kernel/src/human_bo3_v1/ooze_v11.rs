@@ -9,8 +9,21 @@ use crate::rl_session::{FastActorResponseV1, FastActorSessionSnapshotV1};
 use std::collections::BTreeMap;
 type Error = HumanDecisionErrorV1;
 
+// Backend-only authority survives owning restore. Snapshots never capture it.
+#[derive(Clone)]
+struct AuthorityV11 {
+    owner: std::sync::Arc<()>,
+    generation: u64,
+}
+impl PartialEq for AuthorityV11 {
+    fn eq(&self, other: &Self) -> bool {
+        self.generation == other.generation && std::sync::Arc::ptr_eq(&self.owner, &other.owner)
+    }
+}
+impl Eq for AuthorityV11 {}
 pub struct HumanOozeSessionV11 {
     inner: FastActorSessionV1,
+    authority: AuthorityV11,
 }
 #[derive(Clone)]
 pub struct HumanOozeSnapshotV11(FastActorSessionSnapshotV1);
@@ -18,6 +31,10 @@ impl HumanOozeSessionV11 {
     pub fn from_session(session: FastActorSessionV1) -> Result<Self, crate::rl::RlContractError> {
         Ok(Self {
             inner: session.into_human_v8()?,
+            authority: AuthorityV11 {
+                owner: std::sync::Arc::new(()),
+                generation: 0,
+            },
         })
     }
     pub fn current_response(&self) -> FastActorResponseV1 {
@@ -26,8 +43,15 @@ impl HumanOozeSessionV11 {
     pub fn snapshot_v11(&self) -> HumanOozeSnapshotV11 {
         HumanOozeSnapshotV11(self.inner.snapshot_v1())
     }
-    pub fn restore_v11(&mut self, snapshot: &HumanOozeSnapshotV11) {
+    pub fn restore_v11(&mut self, snapshot: &HumanOozeSnapshotV11) -> Result<(), Error> {
+        let next = self
+            .authority
+            .generation
+            .checked_add(1)
+            .ok_or(Error::PromptSequenceExhausted)?;
         self.inner.restore_v1(&snapshot.0);
+        self.authority.generation = next;
+        Ok(())
     }
     /// Public typed transport, not the safe Human DTO and not scorer admission.
     pub fn public_observation(
@@ -116,6 +140,7 @@ fn project_base(
 }
 
 struct BoundOozeV11 {
+    authority: AuthorityV11,
     expected: FastActorDecisionV1,
     binding: HumanDecisionBindingV8,
     public: crate::ooze_public_v1::OozePublicObservationV1,
@@ -126,7 +151,7 @@ pub struct HumanOozeProjectorV11 {
     human_seat: PlayerSeatV1,
     next_prompt_seq: u64,
     pending: Option<BoundOozeV11>,
-    accepted: Option<HumanActionReceiptV1>,
+    accepted: Option<(HumanActionReceiptV1, AuthorityV11)>,
 }
 impl HumanOozeProjectorV11 {
     pub fn new(human_seat: PlayerSeatV1) -> Self {
@@ -153,7 +178,8 @@ impl HumanOozeProjectorV11 {
             .public_observation(expected)
             .map_err(|_| Error::StaleDecision)?;
         if let Some(pending) = &self.pending {
-            if pending.expected == expected
+            if pending.authority == session.authority
+                && pending.expected == expected
                 && pending.binding == binding
                 && pending.public == public
             {
@@ -196,6 +222,7 @@ impl HumanOozeProjectorV11 {
             actions,
         };
         self.pending = Some(BoundOozeV11 {
+            authority: session.authority.clone(),
             expected,
             binding,
             public,
@@ -210,8 +237,11 @@ impl HumanOozeProjectorV11 {
         session: &mut HumanOozeSessionV11,
         request: HumanActionRequestV1,
     ) -> Result<HumanActionReceiptV1, Error> {
-        if let Some(receipt) = &self.accepted {
+        if let Some((receipt, authority)) = &self.accepted {
             if receipt.prompt_seq == request.prompt_seq {
+                if *authority != session.authority {
+                    return Err(Error::StaleDecision);
+                }
                 return if receipt.action_index == request.action_index {
                     Ok(receipt.clone())
                 } else {
@@ -220,7 +250,9 @@ impl HumanOozeProjectorV11 {
             }
         }
         let pending = self.pending.as_ref().ok_or(Error::StaleDecision)?;
-        if request.prompt_seq != pending.visible.prompt_seq {
+        if pending.authority != session.authority
+            || request.prompt_seq != pending.visible.prompt_seq
+        {
             return Err(Error::StaleDecision);
         }
         let index = *pending
@@ -247,7 +279,7 @@ impl HumanOozeProjectorV11 {
             prompt_seq: request.prompt_seq,
             action_index: request.action_index,
         };
-        self.accepted = Some(receipt.clone());
+        self.accepted = Some((receipt.clone(), session.authority.clone()));
         Ok(receipt)
     }
 }

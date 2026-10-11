@@ -100,7 +100,7 @@ fn predecessor_parity_privacy_restore_and_retry_use_real_registered_decisions() 
         assert_eq!(projector.submit(&mut session, input).unwrap(), receipt);
         assert_eq!(session.inner.privileged_core_environment_hash(), after);
         old_projector.submit(&mut old_session, old_request).unwrap();
-        session.restore_v11(&snapshot);
+        session.restore_v11(&snapshot).unwrap();
         let mut replay = HumanOozeProjectorV11::new(actor.into());
         let restored_prompt = replay
             .project_current(&session, expected(&session))
@@ -189,7 +189,12 @@ fn future_printed_ooze_activation_public_meaning_human_target_and_exact_replay_b
             let choice = request(&target_prompt, &format!("Target {target_name}"));
             selector.submit(&mut session, choice.clone()).unwrap();
             let announced = session.inner.privileged_core_environment_hash();
-            session.restore_v11(&snapshot);
+            session.restore_v11(&snapshot).unwrap();
+            assert_eq!(
+                selector.submit(&mut session, choice.clone()),
+                Err(Error::StaleDecision)
+            );
+            assert_eq!(session.inner.privileged_core_environment_hash(), before);
             let mut selector = HumanOozeProjectorV11::new(actor.into());
             assert_eq!(
                 selector
@@ -292,7 +297,7 @@ fn inherited_registered_generic_ward_menu_is_preserved_and_submission_replays() 
             receipt
         );
         assert_eq!(session.inner.privileged_core_environment_hash(), after);
-        session.restore_v11(&snapshot);
+        session.restore_v11(&snapshot).unwrap();
         let mut replay = HumanOozeProjectorV11::new(e.acting_player);
         assert_eq!(
             replay
@@ -302,5 +307,94 @@ fn inherited_registered_generic_ward_menu_is_preserved_and_submission_replays() 
         );
         replay.submit(&mut session, input).unwrap();
         assert_eq!(session.inner.privileged_core_environment_hash(), after);
+    }
+}
+
+#[test]
+fn owning_restore_invalidates_same_projector_receipts_pending_and_rebuilt_future_both_seats() {
+    use crate::mana::ManaColor;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = basic(actor, "Fireblast");
+        put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+        let mut session = owned(state);
+        let snapshot = session.snapshot_v11();
+        let initial = session.inner.privileged_core_environment_hash();
+        let mut accepted = HumanOozeProjectorV11::new(actor.into());
+        let prompt = accepted
+            .project_current(&session, expected(&session))
+            .unwrap();
+        let input = request(&prompt, "Play Forest");
+        let mut pending = HumanOozeProjectorV11::new(actor.into());
+        assert_eq!(
+            pending
+                .project_current(&session, expected(&session))
+                .unwrap(),
+            prompt
+        );
+        accepted.submit(&mut session, input.clone()).unwrap();
+        let after = session.inner.privileged_core_environment_hash();
+        assert_ne!(initial, after);
+        let mut future = HumanOozeProjectorV11::new(actor.into());
+        let future_prompt = future
+            .project_current(&session, expected(&session))
+            .unwrap();
+        let future_input = request(&future_prompt, "Begin casting Lightning Bolt");
+        session.restore_v11(&snapshot).unwrap();
+        assert_eq!(session.inner.privileged_core_environment_hash(), initial);
+        assert_eq!(
+            accepted.submit(&mut session, input.clone()),
+            Err(Error::StaleDecision)
+        );
+        assert_eq!(
+            pending.submit(&mut session, input.clone()),
+            Err(Error::StaleDecision)
+        );
+        assert_eq!(
+            future.submit(&mut session, future_input.clone()),
+            Err(Error::StaleDecision)
+        );
+        assert_eq!(session.inner.privileged_core_environment_hash(), initial);
+        let refreshed = accepted
+            .project_current(&session, expected(&session))
+            .unwrap();
+        assert!(refreshed.prompt_seq > prompt.prompt_seq);
+        accepted
+            .submit(&mut session, request(&refreshed, "Play Forest"))
+            .unwrap();
+        assert_eq!(session.inner.privileged_core_environment_hash(), after);
+        // Even the exact formerly issued future state does not revive its prompt.
+        assert_eq!(
+            future.submit(&mut session, future_input),
+            Err(Error::StaleDecision)
+        );
+        assert_eq!(session.inner.privileged_core_environment_hash(), after);
+        let refreshed_receipt_request = request(&refreshed, "Play Forest");
+        assert!(accepted
+            .submit(&mut session, refreshed_receipt_request)
+            .is_ok());
+        assert_eq!(session.inner.privileged_core_environment_hash(), after);
+    }
+}
+#[test]
+fn owning_identity_and_restore_generation_exhaustion_are_read_only() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let first = owned(basic(actor, "Fireblast"));
+        let mut foreign = owned(basic(actor, "Fireblast"));
+        let mut projector = HumanOozeProjectorV11::new(actor.into());
+        let prompt = projector.project_current(&first, expected(&first)).unwrap();
+        let before = foreign.inner.privileged_core_environment_hash();
+        assert_eq!(
+            projector.submit(&mut foreign, request(&prompt, "Play Forest")),
+            Err(Error::StaleDecision)
+        );
+        assert_eq!(foreign.inner.privileged_core_environment_hash(), before);
+        let snapshot = foreign.snapshot_v11();
+        foreign.authority.generation = u64::MAX;
+        assert_eq!(
+            foreign.restore_v11(&snapshot),
+            Err(Error::PromptSequenceExhausted)
+        );
+        assert_eq!(foreign.inner.privileged_core_environment_hash(), before);
     }
 }
