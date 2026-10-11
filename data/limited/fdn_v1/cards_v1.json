@@ -5309,6 +5309,199 @@
       "oracle_id": "28045b32-4c1a-40e5-a15d-524d0f8fe6ec",
       "complexity": "moderate",
       "mechanics": []
+    },
+    {
+      "name": "Brineborn Cutthroat",
+      "mana_cost": "{1}{U}",
+      "mana_value": 2,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Merfolk",
+        "Pirate"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_conditional_flash_power_creatures.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [],
+      "java_file": "Mage.Sets/src/mage/cards/b/BrinebornCutthroat.java",
+      "scryfall_id": "acf7aafb-931f-49e5-8691-eab8cb34b05e",
+      "oracle_id": "916cb70f-3b06-48ed-972d-75f805aa0892"
+    },
+    {
+      "name": "Ruby, Daring Tracker",
+      "mana_cost": "{R}{G}",
+      "mana_value": 2,
+      "colors": [
+        "R",
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Scout"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 1,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [
+        "R",
+        "G"
+      ],
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_conditional_flash_power_creatures.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RubyDaringTracker.java",
+      "scryfall_id": "fe3e7dd2-b66d-4218-9fde-f84bec26b7bf",
+      "oracle_id": "5d1b0eee-3a7a-4f22-a40d-7658a368962a"
+    },
+    {
+      "name": "Courageous Goblin",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Goblin"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_conditional_flash_power_creatures.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [],
+      "java_file": "Mage.Sets/src/mage/cards/c/CourageousGoblin.java",
+      "scryfall_id": "8db6819c-666a-409d-85a5-b9ac34d8dd2f",
+      "oracle_id": "c107e271-5741-4a84-bfc4-3bc322972d0d"
+    },
+    {
+      "name": "High Fae Trickster",
+      "mana_cost": "{3}{U}",
+      "mana_value": 4,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Faerie",
+        "Wizard"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_conditional_flash_power_creatures.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [],
+      "java_file": "Mage.Sets/src/mage/cards/h/HighFaeTrickster.java",
+      "scryfall_id": "7f1b93ea-1ec1-4010-9343-765742f5088b",
+      "oracle_id": "28c1a4a0-f58c-4d07-a918-51ff8a74f050"
+    },
+    {
+      "name": "Elvish Archdruid",
+      "mana_cost": "{1}{G}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elf",
+        "Druid"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [
+        "G"
+      ],
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_conditional_flash_power_creatures.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/ElvishArchdruid.java",
+      "scryfall_id": "341da856-7414-403b-b2e3-4bebd58a5aa4",
+      "oracle_id": "6e2c2423-d854-4478-99e6-64f29851f026"
+    },
+    {
+      "name": "Ghalta, Primal Hunger",
+      "mana_cost": "{10}{G}{G}",
+      "mana_value": 12,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elder",
+        "Dinosaur"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 12,
+      "toughness": 12,
+      "is_land": false,
+      "produces_mana": [],
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_conditional_flash_power_creatures.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [],
+      "java_file": "Mage.Sets/src/mage/cards/g/GhaltaPrimalHunger.java",
+      "scryfall_id": "6a9c39e4-a8cf-42dd-8d0e-45634b335546",
+      "oracle_id": "b0b6be0c-41cf-4757-9f0e-87227b6ba6b3"
     }
   ]
 }
