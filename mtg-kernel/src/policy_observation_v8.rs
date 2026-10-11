@@ -296,10 +296,70 @@ impl ObservationV8 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::policy_surface_v5::PolicySurfaceV5;
     use crate::rl::{observe_policy_v6, observe_policy_v8};
+
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    pub(crate) fn actual_sire_state(
+        actor: PlayerId,
+        life: i32,
+        targeters: usize,
+        pending: bool,
+    ) -> GameState {
+        use crate::effect::EffectBooleanChoicePurpose;
+        use crate::engine::{self, Action, Decision};
+        use crate::mana::ManaColor;
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::state::{Target, Zone};
+        let mut state = ready_state();
+        state.active_player = actor;
+        state.priority_player = actor;
+        state.players[actor.index()].life = life;
+        state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 4;
+        let sire = put(
+            &mut state,
+            actor.opponent(),
+            "Sire of Seven Deaths",
+            Zone::Battlefield,
+        );
+        for _ in 0..targeters {
+            let snap = put(&mut state, actor, "Snap", Zone::Hand);
+            assert!(matches!(engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { player, .. } if player == actor));
+            engine::step(&mut state, Action::CastSpell(snap)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::ChooseTargets { .. }
+            ));
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(sire))).unwrap();
+        }
+        if pending {
+            for _ in 0..32 {
+                match engine::advance_until_decision(&mut state) {
+                    Decision::ChooseEffectBoolean {
+                        purpose: EffectBooleanChoicePurpose::CounterUnlessPaysLife { life: 7, .. },
+                        ..
+                    } => return state,
+                    Decision::CastSpellOrPass { .. } => {
+                        engine::step(&mut state, Action::Pass).unwrap()
+                    }
+                    Decision::OrderTriggers { pending, .. } => engine::step(
+                        &mut state,
+                        Action::OrderTriggers((0..pending.len()).collect()),
+                    )
+                    .unwrap(),
+                    other => panic!("actual Sire payment fixture: {other:?}"),
+                }
+            }
+            panic!("actual Sire payment did not suspend");
+        }
+        state
+    }
 
     #[cfg(feature = "standard-magezero-fixtures")]
     fn observe(state: &GameState, actor: PlayerId) -> ObservationV8 {

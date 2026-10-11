@@ -32,6 +32,23 @@ fn fixture_states() -> Vec<(&'static str, GameState)> {
     states.push(("hidden_shared", shared));
     states.push(("hidden_single_target", single));
     states.push(("ward_source_changed_controller", ward_state(true)));
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    {
+        use crate::policy_observation_v8::tests::actual_sire_state;
+        for (name, actor, life, targeters, pending) in [
+            ("actual_sire_visible_p0", PlayerId::P0, 20, 0, false),
+            ("actual_sire_visible_p1", PlayerId::P1, 20, 0, false),
+            ("actual_sire_pending_exact_p0", PlayerId::P0, 7, 1, true),
+            ("actual_sire_pending_exact_p1", PlayerId::P1, 7, 1, true),
+            ("actual_sire_queued_multi_p0", PlayerId::P0, 20, 2, false),
+            ("actual_sire_queued_multi_p1", PlayerId::P1, 20, 2, false),
+        ] {
+            states.push((name, actual_sire_state(actor, life, targeters, pending)));
+        }
+    }
     #[cfg(feature = "standard-magezero-fixtures")]
     {
         for (name, actor) in [
@@ -53,6 +70,48 @@ fn fixture_states() -> Vec<(&'static str, GameState)> {
         }
     }
     states
+}
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[test]
+fn actual_sire_payment_binding_restore_and_refusal_preserve_authority() {
+    use crate::policy_observation_v8::tests::actual_sire_state;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut session =
+            FastActorSessionV1::from_v5_fixture_state(actual_sire_state(actor, 7, 1, true));
+        let e = expected(&session);
+        let mut encoder = NativeFlatPolicyEncoderV5::default();
+        let output = encoder.encode(&session, e).unwrap();
+        let (observation, _) = session.flat_rich_current_input_v5(e).unwrap();
+        assert_eq!(
+            observation
+                .extensions
+                .pending_ward_life_payment
+                .as_ref()
+                .unwrap()
+                .life,
+            7
+        );
+        assert_eq!(observation.extensions.ward_life_card_traits.len(), 1);
+        let before = session.privileged_core_environment_hash();
+        let mut forged = output.binding();
+        forged.1[0] ^= 1;
+        assert!(session.step_flat_action_v5(e, forged, 0).is_err());
+        assert_eq!(session.privileged_core_environment_hash(), before);
+        let snapshot = session.snapshot_v1();
+        let response = session.step_flat_action_v5(e, output.binding(), 0).unwrap();
+        let after = session.privileged_core_environment_hash();
+        session.restore_v1(&snapshot);
+        assert_eq!(encoder.encode(&session, e).unwrap(), output);
+        assert_eq!(
+            session.step_flat_action_v5(e, output.binding(), 0).unwrap(),
+            response
+        );
+        assert_eq!(session.privileged_core_environment_hash(), after);
+    }
 }
 
 fn ward_state(changed_controller: bool) -> GameState {

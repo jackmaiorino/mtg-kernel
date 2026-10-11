@@ -11,6 +11,61 @@ fn expected(session: &FastActorSessionV1) -> FastActorDecisionV1 {
     e
 }
 
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[test]
+fn actual_sire_payment_prompt_submission_and_retry_use_live_producer() {
+    use crate::policy_observation_v8::tests::actual_sire_state;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for life in [7, 20] {
+            for pay in [false, true] {
+                let mut session = FastActorSessionV1::from_human_v8_fixture_state(
+                    actual_sire_state(actor, life, 1, true),
+                );
+                let e = expected(&session);
+                let before = session.privileged_core_environment_hash();
+                assert_eq!(
+                    HumanDecisionProjectorV8::new(actor.opponent().into())
+                        .project_current(&session, e),
+                    Err(Error::NotHumanTurn)
+                );
+                assert_eq!(session.privileged_core_environment_hash(), before);
+                let mut adapter = HumanDecisionProjectorV8::new(e.acting_player);
+                let prompt = adapter.project_current(&session, e).unwrap();
+                let payment = prompt
+                    .state
+                    .extensions
+                    .pending_ward_life_payment
+                    .as_ref()
+                    .unwrap();
+                assert_eq!((payment.life, payment.payer_life), (7, life));
+                assert_eq!(prompt.state.extensions.ward_life_card_traits.len(), 1);
+                let prefix = if pay {
+                    "Pay 7 life"
+                } else {
+                    "Decline to pay 7 life"
+                };
+                let action = prompt
+                    .actions
+                    .iter()
+                    .find(|row| row.label.starts_with(prefix))
+                    .unwrap();
+                let request = HumanActionRequestV1 {
+                    prompt_seq: prompt.prompt_seq,
+                    action_index: action.action_index,
+                };
+                let receipt = adapter.submit(&mut session, request.clone()).unwrap();
+                let after = session.privileged_core_environment_hash();
+                assert_ne!(before, after);
+                assert_eq!(adapter.submit(&mut session, request).unwrap(), receipt);
+                assert_eq!(session.privileged_core_environment_hash(), after);
+            }
+        }
+    }
+}
+
 fn basic(actor: PlayerId, reversed: bool) -> GameState {
     let mut state = ready_state();
     state.active_player = actor;
