@@ -166,3 +166,44 @@ The submitted manifest is verified cold. Runtime qualification is pending.
 
 All83 affected Python cases pass on3f13: deck/registry/frozen pool, Limited
 session and existing V8/V9 features. The whole candidate diff check passes.
+
+Native65 finalized101/101 with both compiles failed and zero runtime cases;
+the missed Heartfire argument was repaired at968d. Native66 at exact968d
+finalized101/101: both all-test compiles pass, all103 group counts match,
+551 passed,8 failed,3 ignored,559 actually executed. Limited and Standard
+strict lints pass; Default fails only unused `record_begin`. Complete
+Default/Standard replay exports are byte-identical to retained Native33.
+Final manifests/logs/exports are durably verified under E:/storage-records/fdn110.
+Only exact owned terminal helper126524 was released after job membership,
+executable path and start verification; guard101 and absent supervisor160380
+were observed before target reuse.
+
+Repairs throughbe68 preserve the actual Counterspell Object target, correct
+Authority own-hand privacy setup, plain face-down noncreature expectations,
+Employment post-install predecessor refusal and frozen replay consumers.
+The Cerberus Human completion fixture at5d882 adds both-seat libraries for
+the next Draw and diagnostic terminal output, retaining all public/restore/
+retry/completion/untap assertions. This proposed repair remains unqualified.
+A corrected immutable-binary targeted diagnostic reproduced its original
+failure; an earlier malformed command invoked the unit binary without the
+intended selector and was stopped after exact owned process verification.
+Neither diagnostic is a pass.
+
+Reviewed delivery repaircc142 additionally refuses foreign Cerberus journals
+before indexing, separates Variable Cast public commitment from private
+authority with a process-local owner, initializes copied transformed tokens
+before entry observers, and preserves the original Surge Engine catalog
+hash token. Its scope review and the narrow5d882 fixture review are CLEAR.
+Clean merged sourcee9e66065300d248d0877df8fa184d3e29ccc0c22 passes whole
+format/diff checks and all83 affected Python cases.
+
+Native67 exacte9e660 is submitted through supportedhandle
+1476dceb8fff4da78cb6af28ab6e4781/supervisor156136 on four BelowNormal
+cores. Its27 affected groups request129 cases with no ignored case expected,
+three all-target compiles and three all-target strict lints. Selection
+includes every Native66 failure, new catalog/owner/privacy/transformed-copy
+repairs, existing benchmark correctness cases and complete legacy exports.
+Helper/bundle SHA-256s, clean detached source, prior supervisor absence and
+Haley disk free70826487808 bytes were verified before guarded submission.
+Native67 and current PR CI are pending, not acceptance. Separate future
+Librarian/Raid/Crystal/Temporal preparations remain unregistered and native-unrun.
