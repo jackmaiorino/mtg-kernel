@@ -56,6 +56,7 @@ def input_contract(k, entries, spec, bindings):
         for arm, retain, row in entries:
             if (row["kind"] != "branch_root" or row["root_id"] != k
                     or row["selection_failed"] is not False
+                    or not math.isfinite(row["timing"]["selection"]) or row["timing"]["selection"] <= 0
                     or row["source"] != spec["source"] or row["budget"] != spec["budget"]
                     or row["arm"] != arm or row["retain"] != retain
                     or row["lineage"] != lin or row["own"] != int(own) or row["seat"] != int(seat)

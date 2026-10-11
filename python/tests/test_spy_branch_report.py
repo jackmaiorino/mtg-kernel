@@ -133,6 +133,9 @@ class BranchReportTest(unittest.TestCase):
         a = panel(3, 8, "B1")
         a[CASES[0]]["selection_failed"] = None
         self.assertFalse(report.attribution(a, EXPECTED, BINDINGS, CASES)["complete"])
+        a[CASES[0]]["selection_failed"] = False
+        a[CASES[0]]["timing"]["selection"] = float("nan")
+        self.assertFalse(report.attribution(a, EXPECTED, BINDINGS, CASES)["complete"])
 
     def test_cli_incomplete_returns_failure_and_writes_disposition(self):
         with tempfile.TemporaryDirectory() as directory:
