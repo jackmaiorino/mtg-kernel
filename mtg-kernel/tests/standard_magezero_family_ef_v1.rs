@@ -2656,10 +2656,23 @@ fn chandra_drive(
                 can_finish,
                 ..
             } => {
-                let pick = if can_finish {
-                    ability_targets.next()
-                } else {
+                // Retargeting a copy is optional too. `can_finish` does not
+                // distinguish it from Chandra's up-to-two-target ability.
+                let copying = matches!(
+                    state
+                        .engine
+                        .pending_effect
+                        .as_ref()
+                        .and_then(|pending| pending.choice.as_ref()),
+                    Some(mtg_kernel::effect::PendingEffectChoice::SelectTargets {
+                        purpose: mtg_kernel::effect::EffectTargetSelectionPurpose::CopyTarget { .. },
+                        ..
+                    })
+                );
+                let pick = if copying {
                     copy_target
+                } else {
+                    ability_targets.next()
                 };
                 match pick {
                     Some(pick) => {
@@ -2669,7 +2682,10 @@ fn chandra_drive(
                         );
                         act(state, Action::ChooseEffectTarget(pick));
                     }
-                    None => act(state, Action::FinishEffectSelection),
+                    None => {
+                        assert!(can_finish);
+                        act(state, Action::FinishEffectSelection);
+                    }
                 }
             }
             Decision::OrderTriggers { pending, .. } => {
@@ -2822,6 +2838,12 @@ fn chandra_copies_the_first_instant_each_turn_with_a_new_target() {
     act(&mut state, Action::CastSpell(second));
     chandra_drive(&mut state, Target::Player(P1), None, &[]);
     assert_eq!(state.players[1].life, 16);
+    let copy_parents = state
+        .objects
+        .iter()
+        .filter_map(|(_, object)| object.spell_copy_origin.map(|origin| origin.parent))
+        .collect::<Vec<_>>();
+    assert_eq!(copy_parents, vec![burst], "only the first spell is copied");
 }
 
 // ---- Assimilation Aegis ----------------------------------------------------
