@@ -65,10 +65,6 @@ pub struct StandardStateV1 {
     /// The Irencrag incarnations that became Everflame, Heroes' Legacy.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     everflames: Vec<(ObjectId, u32)>,
-    /// Net counters removed from each Braided Net incarnation, which enters
-    /// with three.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    net_counters_removed: Vec<(ObjectId, u32, u8)>,
     /// Permanents Braided Net tapped whose activated abilities can't be
     /// activated for as long as they remain tapped, per exact incarnation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -87,6 +83,14 @@ pub struct StandardStateV1 {
     /// valid when the copy starts or ends.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     copied_card_defs: Vec<(ObjectId, u32, u16)>,
+    /// Exact Vehicles currently affected by a resolved crew effect.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    crewed_creatures: Vec<(ObjectId, u32)>,
+    /// Physical creatures that paid crew this turn, even when they later untap.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    crew_members: Vec<((ObjectId, u32), Vec<EffectObjectBinding>)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    last_charge: Vec<(ObjectId, u32, i32)>,
 }
 
 /// One Assimilation Aegis copy effect: the Aegis and the creature, per exact
@@ -139,6 +143,8 @@ pub enum StandardTargetV1 {
     UpToOneCreature,
     /// A card in any graveyard.
     CardInAGraveyard,
+    TappedOpponentCreature,
+    CrewedSourceThisTurn,
 }
 
 impl StandardTargetV1 {
@@ -175,7 +181,7 @@ pub(crate) fn target_zone(target: StandardTargetV1) -> Zone {
 pub(crate) fn legal_targets(
     target: StandardTargetV1,
     controller: PlayerId,
-    source: Option<ObjectId>,
+    source: Option<(ObjectId, u32)>,
     prefix: &[Target],
     state: &GameState,
 ) -> Vec<Target> {
@@ -213,11 +219,26 @@ pub(crate) fn legal_targets(
         .into_iter()
         .filter(|&id| target_matches(target, controller, id, state))
         .filter(|&id| {
+            target != StandardTargetV1::CrewedSourceThisTurn
+                || source.is_some_and(|key| {
+                    state.standard_v1.as_ref().is_some_and(|standard| {
+                        standard.crew_members.iter().any(|(vehicle, members)| {
+                            *vehicle == key
+                                && members.iter().any(|binding| {
+                                    binding.object == id
+                                        && binding.expected_zone_change_count
+                                            == state.objects.get(id).zone_change_count
+                                })
+                        })
+                    })
+                })
+        })
+        .filter(|&id| {
             !matches!(
                 target,
                 StandardTargetV1::AnotherNonlegendaryControlledCreature
                     | StandardTargetV1::AnotherNonlandPermanent
-            ) || Some(id) != source
+            ) || Some(id) != source.map(|(id, _)| id)
         })
         .map(Target::Object)
         .collect()
@@ -266,7 +287,12 @@ pub(crate) fn target_matches(
         StandardTargetV1::UpToTwoAnyTargets => {
             has(CardType::Creature) || has(CardType::Planeswalker)
         }
-        StandardTargetV1::UpToOneCreature => has(CardType::Creature),
+        StandardTargetV1::UpToOneCreature | StandardTargetV1::CrewedSourceThisTurn => {
+            has(CardType::Creature)
+        }
+        StandardTargetV1::TappedOpponentCreature => {
+            live.controller != controller && live.tapped && has(CardType::Creature)
+        }
         StandardTargetV1::CardInAGraveyard => false,
         StandardTargetV1::AnotherNonlegendaryControlledCreature => {
             live.controller == controller
@@ -285,7 +311,9 @@ pub(crate) fn target_matches(
 pub enum StandardOpV1 {
     /// Put loyalty counters on the resolving ability's own source, if it is
     /// still the same battlefield planeswalker incarnation.
-    AddLoyaltyToSource { amount: u8 },
+    AddLoyaltyToSource {
+        amount: u8,
+    },
     /// `player` chooses one permanent they control matching `filter` (a
     /// public choice, not targeted) and `action` applies to it. With one
     /// candidate the choice is automatic; with none nothing happens.
@@ -302,7 +330,9 @@ pub enum StandardOpV1 {
     },
     /// Each nonland permanent `player` controls goes into its owner's
     /// library, then every affected library is shuffled.
-    ShuffleNonlandPermanentsIntoLibraries { player: PlayerRef },
+    ShuffleNonlandPermanentsIntoLibraries {
+        player: PlayerRef,
+    },
     /// Transform the resolving ability's source to its other face, if it is
     /// still the same battlefield incarnation.
     TransformSource,
@@ -312,10 +342,14 @@ pub enum StandardOpV1 {
     /// Cecil, Dark Knight: its controller loses `amount` life. Then if their
     /// life total is at most half their starting life total, untap the
     /// source and transform it.
-    CecilDarkness { amount: u32 },
+    CecilDarkness {
+        amount: u32,
+    },
     /// Other attacking creatures the controller controls gain `keywords`
     /// until end of turn.
-    OtherAttackersGainUntilEndOfTurn { keywords: Keywords },
+    OtherAttackersGainUntilEndOfTurn {
+        keywords: Keywords,
+    },
     /// The source, put into a graveyard from the battlefield by the event
     /// that triggered this ability, returns to the battlefield tapped and
     /// transformed under its owner's control.
@@ -328,7 +362,9 @@ pub enum StandardOpV1 {
     RoomEnters,
     /// Unlock `door` of the ability's source Room, if it is still the same
     /// battlefield incarnation and that door is locked.
-    UnlockSourceDoor { door: u8 },
+    UnlockSourceDoor {
+        door: u8,
+    },
     /// A resolving Aura spell enters the battlefield attached to its target
     /// (303.4f), for this module's Auras whose enchant restriction is not
     /// "enchant creature".
@@ -336,10 +372,14 @@ pub enum StandardOpV1 {
     /// Lunar Convocation: "if you gained life this turn, each opponent loses
     /// `amount` life", the intervening condition rechecked on resolution
     /// (603.4).
-    OpponentLosesLifeIfYouGainedLife { amount: u8 },
+    OpponentLosesLifeIfYouGainedLife {
+        amount: u8,
+    },
     /// Lunar Convocation: "if you gained and lost life this turn, create"
     /// the token, the intervening condition rechecked on resolution.
-    CreateTokenIfYouGainedAndLostLife { token_def: u16 },
+    CreateTokenIfYouGainedAndLostLife {
+        token_def: u16,
+    },
     /// Case of the Gateway Express: each creature you control deals 1
     /// damage to the target creature, simultaneously.
     EachControlledCreatureDealsOneDamageToTarget,
@@ -348,18 +388,24 @@ pub enum StandardOpV1 {
     SolveSourceCase,
     /// A Class's level-up ability resolves: the source gains `level` if it
     /// is still the same incarnation at the level before it (716.2a).
-    GainClassLevel { level: u8 },
+    GainClassLevel {
+        level: u8,
+    },
     /// Case of the Uneaten Feast: creature cards now in your graveyard gain
     /// "You may cast this card from your graveyard" until end of turn.
     GraveyardCreaturesCastableThisTurn,
     /// Liliana of the Veil's +1: each player discards `count` cards, the
     /// controller first. Like `EffectOp::DiscardCards`, it must be the last
     /// leaf of its program.
-    EachPlayerDiscards { count: u32 },
+    EachPlayerDiscards {
+        count: u32,
+    },
     /// Liliana of the Veil's -6: the controller separates all permanents
     /// `player` controls into two piles, and `player` sacrifices all
     /// permanents in the pile of their choice.
-    SeparatePilesThenSacrifice { player: PlayerRef },
+    SeparatePilesThenSacrifice {
+        player: PlayerRef,
+    },
     /// The separated piles, waiting for `player` to choose one:
     /// interpreter owned.
     ChooseSacrificePile {
@@ -379,14 +425,19 @@ pub enum StandardOpV1 {
     /// control together.
     PutCreatureOrPlaneswalkerFromEachGraveyard,
     /// The chosen cards, one per graveyard that had one: interpreter owned.
-    PutChosenCardsOntoBattlefield { cards: Vec<EffectObjectBinding> },
+    PutChosenCardsOntoBattlefield {
+        cards: Vec<EffectObjectBinding>,
+    },
     /// Each creature the controller controls becomes a Phyrexian in
     /// addition to its other types, for as long as it stays on the
     /// battlefield.
     ControlledCreaturesBecomePhyrexian,
     /// Fable of the Mirror-Breaker chapter II: `player` may discard up to
     /// `count` cards, then draws as many as they discarded.
-    MayDiscardUpToThenDraw { player: PlayerRef, count: u8 },
+    MayDiscardUpToThenDraw {
+        player: PlayerRef,
+        count: u8,
+    },
     /// The chosen hand cards: interpreter owned.
     DiscardChosenThenDraw {
         player: PlayerId,
@@ -406,7 +457,9 @@ pub enum StandardOpV1 {
     /// artifact named Everflame, Heroes' Legacy".
     MayBecomeEverflame,
     /// The accepted choice: interpreter owned.
-    BecomeEverflame { source: EffectObjectBinding },
+    BecomeEverflame {
+        source: EffectObjectBinding,
+    },
     /// Craft (702.167a): the source, exiled to pay the ability's cost,
     /// returns to the battlefield transformed under its owner's control.
     ReturnExiledSourceTransformed,
@@ -425,12 +478,16 @@ pub enum StandardOpV1 {
     /// among them.
     ExileTopFiveMayCastOneInstantOrSorcery,
     /// Chandra's -X: it deals `amount` damage to each of its targets.
-    DamageEachTarget { amount: u8 },
+    DamageEachTarget {
+        amount: u8,
+    },
     /// Chandra's copy trigger template, bound to the cast spell when the
     /// trigger fires (`materialize_event`).
     BindCopyCastSpell,
     /// Copy `spell`; its controller may choose new targets for the copy.
-    CopySpellMayChooseNewTargets { spell: ObjectId },
+    CopySpellMayChooseNewTargets {
+        spell: ObjectId,
+    },
     /// The answered target for the copy: interpreter owned.
     RetargetSpellCopy {
         copy: crate::ids::StackItemId,
@@ -439,6 +496,11 @@ pub enum StandardOpV1 {
     /// Exile the targeted graveyard card with this ability's source
     /// (Agatha's Soul Cauldron), linking it to that source incarnation.
     ExileTargetCardWithSource,
+    /// Use the X chosen and paid by this exact activation.
+    DamageEachTargetChosenX,
+    /// Crew and the Chariot's alternate animation affect only types, not P/T.
+    SourceBecomesArtifactCreatureUntilEndOfTurn,
+    BankbusterAfterDraw,
 }
 
 impl StandardOpV1 {
@@ -575,7 +637,69 @@ fn transform_resolving_source(ctx: &ExecCtx, state: &mut GameState) {
 
 pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        StandardOpV1::BankbusterAfterDraw => {
+            let Some(contract) = ctx.ability_source_contract else {
+                return;
+            };
+            let charge = if source_incarnation_live(ctx, state) {
+                state.objects.get(ctx.source).counters.charge
+            } else {
+                state
+                    .standard_v1
+                    .as_ref()
+                    .and_then(|standard| {
+                        standard.last_charge.iter().find(|(id, zcc, _)| {
+                            *id == ctx.source && *zcc == contract.zone_change_count
+                        })
+                    })
+                    .map_or(0, |(_, _, n)| *n)
+            };
+            if charge == 0 {
+                for name in ["Treasure Token", "Pilot Token"] {
+                    let op = EffectOp::CreateToken {
+                        token_def: crate::card_def::card_id_by_name(name)
+                            .expect("Bankbuster token"),
+                        controller: PlayerRef::Controller,
+                    };
+                    crate::effect::execute(&op, ctx, state);
+                }
+            }
+        }
         StandardOpV1::TransformSource => transform_resolving_source(ctx, state),
+        StandardOpV1::SourceBecomesArtifactCreatureUntilEndOfTurn => {
+            if source_incarnation_live(ctx, state) {
+                let key = (ctx.source, state.objects.get(ctx.source).zone_change_count);
+                let standard = state.standard_v1.get_or_insert_with(Default::default);
+                if !standard.crewed_creatures.contains(&key) {
+                    standard.crewed_creatures.push(key);
+                }
+            }
+        }
+        StandardOpV1::DamageEachTargetChosenX => {
+            for index in 0..ctx.targets.len() {
+                if ctx.target_incarnation_matches(index, state)
+                    && crate::engine::effect_target_is_legal(
+                        state,
+                        ctx.source,
+                        ctx.controller,
+                        crate::card_def::TargetSpec::StandardV1(
+                            StandardTargetV1::UpToTwoAnyTargets,
+                        ),
+                        &ctx.targets,
+                        index,
+                    )
+                {
+                    event::propose_and_commit(
+                        state,
+                        ProposedEvent::damage(
+                            ctx.source,
+                            ctx.targets[index],
+                            i32::from(ctx.x_value),
+                        ),
+                    );
+                }
+            }
+        }
         StandardOpV1::RoomEnters => room_enters(ctx, state),
         StandardOpV1::AuraEnters => aura_enters_battlefield(ctx, state),
         StandardOpV1::OpponentLosesLifeIfYouGainedLife { amount } => {
@@ -1551,6 +1675,8 @@ pub(crate) fn mana_abilities_active(state: &GameState, object: ObjectId, def: &C
 /// Triggered abilities of this module's cards, by registry name.
 pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
+        "Subterranean Schooner" => &SCHOONER_TRIGGERS,
+        "Spring-Loaded Sawblades" => &SAWBLADES_TRIGGERS,
         "Teferi, Temporal Pilgrim" => &TEFERI_TRIGGERS,
         "Teferi Spirit Token" => &TEFERI_SPIRIT_TRIGGERS,
         CECIL => &CECIL_TRIGGERS,
@@ -1837,6 +1963,16 @@ pub(crate) fn trigger_target_spec(
     effect: &EffectOp,
 ) -> Option<crate::card_def::TargetSpec> {
     use crate::card_def::TargetSpec;
+    if name == "Subterranean Schooner" {
+        return Some(TargetSpec::StandardV1(
+            StandardTargetV1::CrewedSourceThisTurn,
+        ));
+    }
+    if name == "Spring-Loaded Sawblades" {
+        return Some(TargetSpec::StandardV1(
+            StandardTargetV1::TappedOpponentCreature,
+        ));
+    }
     if name == CASE_OF_THE_GATEWAY_EXPRESS && *effect == gateway_express_damage() {
         return Some(TargetSpec::OpponentControlledCreature);
     }
@@ -2346,6 +2482,9 @@ fn has_counters(state: &GameState, object: ObjectId) -> bool {
         || counters.minus0_minus1 > 0
         || counters.stun > 0
         || counters.lore > 0
+        || counters.oil > 0
+        || counters.net > 0
+        || counters.charge > 0
         || live.v4.lifelink_keyword_counters > 0
         || crate::planeswalker_v1::loyalty(state, object).is_some_and(|loyalty| loyalty > 0)
 }
@@ -2936,7 +3075,6 @@ const CLAY_FIRED_BRICKS_TRIGGERS: [TriggeredAbilityDef; 2] = [
 // ---- Craft: Braided Net // Braided Quipu ----------------------------------
 
 const BRAIDED_NET: &str = "Braided Net";
-const NET_COUNTERS_ON_ENTRY: u8 = 3;
 
 /// "{T}, Remove a net counter from Braided Net: Tap another target nonland
 /// permanent. Its activated abilities can't be activated for as long as it
@@ -2953,43 +3091,16 @@ pub fn braided_quipu_draw() -> EffectOp {
 
 /// Net counters on `object`: a Braided Net battlefield incarnation enters
 /// with three (its front face's replacement) and keeps the rest.
-pub(crate) fn net_counters(state: &GameState, object: ObjectId) -> u8 {
-    let Some(live) = state.objects.try_get(object) else {
-        return 0;
-    };
-    if live.zone != Zone::Battlefield
-        || live.v4.face_index != 0
-        || CARD_DEFS[live.card_def as usize].name != BRAIDED_NET
-    {
-        return 0;
-    }
-    let removed = state.standard_v1.as_ref().map_or(0, |standard| {
-        standard
-            .net_counters_removed
-            .iter()
-            .find(|(id, zcc, _)| *id == object && *zcc == live.zone_change_count)
-            .map_or(0, |(_, _, removed)| *removed)
-    });
-    NET_COUNTERS_ON_ENTRY.saturating_sub(removed)
+pub(crate) fn net_counters(state: &GameState, object: ObjectId) -> i32 {
+    state
+        .objects
+        .try_get(object)
+        .filter(|live| live.zone == Zone::Battlefield)
+        .map_or(0, |live| live.counters.net)
 }
-
-/// Pays "Remove a net counter from this".
 pub(crate) fn remove_net_counter(state: &mut GameState, object: ObjectId) {
-    if net_counters(state, object) == 0 {
-        return;
-    }
-    let zone_change_count = state.objects.get(object).zone_change_count;
-    let standard = state.standard_v1.get_or_insert_with(Default::default);
-    if let Some(entry) = standard
-        .net_counters_removed
-        .iter_mut()
-        .find(|(id, zcc, _)| *id == object && *zcc == zone_change_count)
-    {
-        entry.2 += 1;
-    } else {
-        standard
-            .net_counters_removed
-            .push((object, zone_change_count, 1));
+    if net_counters(state, object) > 0 {
+        state.objects.get_mut(object).counters.net -= 1;
     }
 }
 
@@ -3060,40 +3171,10 @@ pub fn chandra_impulse() -> EffectOp {
     EffectOp::StandardV1(StandardOpV1::ExileTopFiveMayCastOneInstantOrSorcery)
 }
 
-/// -X: "Chandra, Hope's Beacon deals X damage to each of up to two
-/// targets." Each X is its own loyalty ability (`build_standard_v1`).
-macro_rules! chandra_minus {
-    ($($name:ident = $x:literal),* $(,)?) => {
-        $(
-            pub fn $name() -> EffectOp {
-                EffectOp::StandardV1(StandardOpV1::DamageEachTarget { amount: $x })
-            }
-        )*
-    };
+/// The resolving activation carries the selected X in its frozen stack context.
+pub fn chandra_minus_x() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::DamageEachTargetChosenX)
 }
-
-chandra_minus!(
-    chandra_minus_1 = 1,
-    chandra_minus_2 = 2,
-    chandra_minus_3 = 3,
-    chandra_minus_4 = 4,
-    chandra_minus_5 = 5,
-    chandra_minus_6 = 6,
-    chandra_minus_7 = 7,
-    chandra_minus_8 = 8,
-    chandra_minus_9 = 9,
-    chandra_minus_10 = 10,
-    chandra_minus_11 = 11,
-    chandra_minus_12 = 12,
-    chandra_minus_13 = 13,
-    chandra_minus_14 = 14,
-    chandra_minus_15 = 15,
-    chandra_minus_16 = 16,
-    chandra_minus_17 = 17,
-    chandra_minus_18 = 18,
-    chandra_minus_19 = 19,
-    chandra_minus_20 = 20,
-);
 
 /// The fifteen two-mana color combinations, in WUBRG order.
 pub(crate) fn two_mana_combinations(player: PlayerRef) -> Vec<EffectOp> {
@@ -3548,3 +3629,104 @@ fn controlled_cauldrons(state: &GameState, player: PlayerId) -> Vec<crate::state
 fn controls_cauldron(state: &GameState, player: PlayerId) -> bool {
     cauldron_card_def().is_some() && !controlled_cauldrons(state, player).is_empty()
 }
+
+pub(crate) fn record_crew(state: &mut GameState, vehicle: ObjectId, creatures: &[ObjectId]) {
+    let key = (vehicle, state.objects.get(vehicle).zone_change_count);
+    let bindings = creatures
+        .iter()
+        .map(|&object| EffectObjectBinding {
+            object,
+            expected_zone: Zone::Battlefield,
+            expected_zone_change_count: state.objects.get(object).zone_change_count,
+        })
+        .collect::<Vec<_>>();
+    let standard = state.standard_v1.get_or_insert_with(Default::default);
+    if let Some((_, members)) = standard.crew_members.iter_mut().find(|(id, _)| *id == key) {
+        for binding in bindings {
+            if !members.contains(&binding) {
+                members.push(binding);
+            }
+        }
+    } else {
+        standard.crew_members.push((key, bindings));
+    }
+}
+pub(crate) fn is_crewed_creature(state: &GameState, object: ObjectId) -> bool {
+    state.objects.try_get(object).is_some_and(|live| {
+        live.zone == Zone::Battlefield
+            && state.standard_v1.as_ref().is_some_and(|standard| {
+                standard
+                    .crewed_creatures
+                    .contains(&(object, live.zone_change_count))
+            })
+    })
+}
+pub fn crew_animation() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::SourceBecomesArtifactCreatureUntilEndOfTurn)
+}
+pub(crate) fn cleanup(state: &mut GameState) {
+    if let Some(standard) = state.standard_v1.as_mut() {
+        standard.crewed_creatures.clear();
+    }
+}
+pub(crate) fn begin_turn(state: &mut GameState) {
+    if let Some(standard) = state.standard_v1.as_mut() {
+        standard.life_this_turn = None;
+        standard.red_noncombat_damage = None;
+        standard.attackers_this_turn = None;
+        standard.crew_members.clear();
+    }
+}
+
+/// These counters are placed as the permanent enters, before its ETB trigger.
+pub(crate) fn initialize_entry_counters(state: &mut GameState, object: ObjectId) {
+    let live = state.objects.get(object);
+    let name = CARD_DEFS[live.card_def as usize].name;
+    if live.v4.face_index != 0 {
+        return;
+    }
+    let count = scale_counters(state, live.controller, 3);
+    match name {
+        "Braided Net" => state.objects.get_mut(object).counters.net = count,
+        "Reckoner Bankbuster" => state.objects.get_mut(object).counters.charge = count,
+        _ => {}
+    }
+}
+
+pub(crate) fn before_departure(state: &mut GameState, object: ObjectId) {
+    let live = state.objects.get(object);
+    if live.zone == Zone::Battlefield
+        && CARD_DEFS[live.card_def as usize].name == "Reckoner Bankbuster"
+    {
+        let entry = (object, live.zone_change_count, live.counters.charge);
+        state
+            .standard_v1
+            .get_or_insert_with(Default::default)
+            .last_charge
+            .push(entry);
+    }
+}
+pub fn bankbuster_draw() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        },
+        EffectOp::StandardV1(StandardOpV1::BankbusterAfterDraw),
+    ])
+}
+fn schooner_explore() -> EffectOp {
+    EffectOp::ExploreTarget {
+        object: crate::effect::ObjectRef::Target(0),
+    }
+}
+fn sawblades_damage() -> EffectOp {
+    EffectOp::DealDamage {
+        target: crate::effect::TargetRef::Target(0),
+        amount: 5,
+    }
+}
+const SCHOONER_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [trigger(TriggerCondition::Attacks, schooner_explore)];
+const SAWBLADES_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [trigger(TriggerCondition::Etb, sawblades_damage)];

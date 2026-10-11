@@ -318,6 +318,8 @@ pub enum Subtype {
     Liliana,
     Gnome,
     Chandra,
+    Vehicle,
+    Pilot,
 }
 
 impl Subtype {
@@ -325,6 +327,7 @@ impl Subtype {
     /// order. Case-distinct registry spellings remain separate because their
     /// existing ids and subtype queries are intentionally preserved.
     pub const CREATURE_TYPES: &'static [Subtype] = &[
+        Subtype::Pilot,
         Subtype::Ape,
         Subtype::BirdAllCaps,
         Subtype::Bird,
@@ -1064,7 +1067,10 @@ pub enum CostComponent {
     SacrificeLands(u8),
     /// Sacrifice `count` controlled permanents matching `filter`, announced
     /// one at a time through `Decision::ChooseCostTargets`.
-    SacrificeControlled { count: u8, filter: PermanentFilter },
+    SacrificeControlled {
+        count: u8,
+        filter: PermanentFilter,
+    },
     /// An ordinary mana payment, solved by `mana::solve` same as a spell's
     /// printed cost.
     Mana(Cost),
@@ -1110,7 +1116,10 @@ pub enum CostComponent {
     /// tap regardless of summoning sickness because this is not {T}.
     /// Activations only; staged one pick at a time like
     /// `SacrificeControlled`.
-    TapControlled { count: u8, filter: PermanentFilter },
+    TapControlled {
+        count: u8,
+        filter: PermanentFilter,
+    },
     /// Remove `n` +1/+1 counters from among creatures the payer controls
     /// (MageZero Standard, Hopeful Initiate). Paid without a choice: each
     /// counter comes off the controlled creature with the most +1/+1
@@ -1133,7 +1142,11 @@ pub enum CostComponent {
     /// loyalty ability, so it is sorcery-speed and shares the source's
     /// one-loyalty-activation-per-turn limit (606.3). Appended for the
     /// Standard planeswalkers.
-    Loyalty(i8),
+    Loyalty(i32),
+    /// Choose X and remove X loyalty counters as the activation cost.
+    LoyaltyX,
+    /// Tap any selected creatures with total crew power at least this value.
+    Crew(u8),
     /// Craft with artifact's material (702.167a): exile one other artifact
     /// the payer controls or one artifact card from their own graveyard.
     /// The exact object is staged through `Decision::ChooseCostTargets`
@@ -1142,11 +1155,12 @@ pub enum CostComponent {
     /// "Remove a net counter from this" (Braided Net). The counters live in
     /// `standard_cards_v1`'s per-incarnation state.
     RemoveNetCounterFromSelf,
+    RemoveChargeCounterFromSelf,
 }
 
 impl CostComponent {
     pub const fn is_loyalty(self) -> bool {
-        matches!(self, Self::Loyalty(_))
+        matches!(self, Self::Loyalty(_) | Self::LoyaltyX)
     }
 }
 
@@ -1317,7 +1331,7 @@ impl ActivatedAbilityDef {
     }
 
     /// The loyalty counters this ability's cost adds (positive) or removes.
-    pub fn loyalty_delta(&self) -> Option<i8> {
+    pub fn loyalty_delta(&self) -> Option<i32> {
         self.cost.iter().find_map(|component| match component {
             CostComponent::Loyalty(delta) => Some(*delta),
             _ => None,

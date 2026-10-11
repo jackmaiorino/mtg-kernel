@@ -4949,6 +4949,114 @@
         "mana_any_color"
       ],
       "java_file": "Mage.Sets/src/mage/cards/a/AgathasSoulCauldron.java"
+    },
+    {
+      "name": "Reckoner Bankbuster",
+      "engine_capability": "partial",
+      "mana_cost": "{2}",
+      "mana_value": 2,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Vehicle"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "crew"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/ReckonerBankbuster.java"
+    },
+    {
+      "name": "Subterranean Schooner",
+      "engine_capability": "partial",
+      "mana_cost": "{1}{U}",
+      "mana_value": 2,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Vehicle"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "crew"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SubterraneanSchooner.java"
+    },
+    {
+      "name": "Spring-Loaded Sawblades",
+      "engine_capability": "partial",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "crew"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SpringLoadedSawblades.java"
+    },
+    {
+      "name": "Pilot Token",
+      "engine_capability": "partial",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Pilot"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "token"
+      ],
+      "java_file": "generated:pilot"
     }
   ]
 }

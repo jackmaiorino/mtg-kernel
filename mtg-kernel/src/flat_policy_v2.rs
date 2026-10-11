@@ -1696,6 +1696,9 @@ impl FlatDecisionEncoderV2 {
         ordinal: u32,
         current_turn: u32,
     ) -> Result<u32, FlatDecisionErrorV2> {
+        if card.counters.oil != 0 || card.counters.charge != 0 || card.counters.net != 0 {
+            return Err(FlatDecisionErrorV2::ObservationContract);
+        }
         let index = self.add_stable(
             &card.stable,
             actor,
@@ -5958,6 +5961,9 @@ mod tests {
                 minus0_minus1: 0,
                 stun: 0,
                 lore: 0,
+                oil: 0,
+                charge: 0,
+                net: 0,
             },
             attachments: Vec::new(),
             plotted_turn: None,

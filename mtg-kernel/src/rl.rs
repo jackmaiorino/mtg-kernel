@@ -204,6 +204,18 @@ pub struct CountersV1 {
     pub minus0_minus1: i16,
     pub stun: i16,
     pub lore: i16,
+    #[serde(default, skip_serializing_if = "counter_i16_zero")]
+    pub oil: i16,
+    #[serde(default, skip_serializing_if = "counter_i32_zero")]
+    pub charge: i32,
+    #[serde(default, skip_serializing_if = "counter_i32_zero")]
+    pub net: i32,
+}
+fn counter_i16_zero(value: &i16) -> bool {
+    *value == 0
+}
+fn counter_i32_zero(value: &i32) -> bool {
+    *value == 0
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -5443,6 +5455,9 @@ fn public_card(state: &GameState, id: ObjectId) -> Result<CardPublicV1> {
             minus0_minus1: object.counters.minus0_minus1,
             stun: object.counters.stun,
             lore: object.counters.lore,
+            oil: object.counters.oil,
+            charge: object.counters.charge,
+            net: object.counters.net,
         },
         attachments: object.attachments.iter().map(|id| id.0).collect(),
         plotted_turn: object.plotted_turn,
@@ -5480,6 +5495,9 @@ fn public_card_v2(
             minus0_minus1: object.counters.minus0_minus1,
             stun: object.counters.stun,
             lore: object.counters.lore,
+            oil: object.counters.oil,
+            charge: object.counters.charge,
+            net: object.counters.net,
         },
         attachments: object.attachments.iter().map(|id| id.0).collect(),
         plotted_turn: object.plotted_turn,

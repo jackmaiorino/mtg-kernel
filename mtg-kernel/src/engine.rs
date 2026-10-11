@@ -837,7 +837,7 @@ fn bool_is_false(value: &bool) -> bool {
     !*value
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingActivation {
     pub source: ObjectId,
     /// Exact CR 400.7 incarnation bound when activation began (or refreshed
@@ -862,6 +862,32 @@ pub struct PendingActivation {
     /// driven and deliberately independent of the source card's identity.
     #[serde(default)]
     pub object_cost_chosen: Vec<EffectObjectBinding>,
+    #[serde(default, skip_serializing_if = "bool_is_false")]
+    pub crew_finished: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loyalty_x: Option<u8>,
+}
+
+impl std::hash::Hash for PendingActivation {
+    fn hash<H: std::hash::Hasher>(&self, hash: &mut H) {
+        self.source.hash(hash);
+        self.source_zone_change_count.hash(hash);
+        self.controller.hash(hash);
+        self.ability_index.hash(hash);
+        self.target_spec.hash(hash);
+        self.targets_chosen.hash(hash);
+        self.target_contracts.hash(hash);
+        self.cost_discard_paid.hash(hash);
+        self.object_cost_chosen.hash(hash);
+        if self.crew_finished {
+            b"crew_finished_v1".hash(hash);
+            true.hash(hash);
+        }
+        if let Some(x) = self.loyalty_x {
+            b"loyalty_x_v1".hash(hash);
+            x.hash(hash);
+        }
+    }
 }
 
 /// A staged land drop waiting for an as-this-enters color choice.
@@ -3027,7 +3053,7 @@ fn legal_targets_for_controller_from_source(
         TargetSpec::StandardV1(filter) => crate::standard_cards_v1::legal_targets(
             filter,
             controller,
-            source.map(|source| source.object),
+            source.map(|source| (source.object, source.zone_change_count)),
             targets_chosen,
             state,
         ),
@@ -4244,15 +4270,20 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
             CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand => {
                 chosen_creature_count += 1;
             }
-            CostComponent::Loyalty(_) => {
+            CostComponent::Loyalty(_) | CostComponent::LoyaltyX => {
                 loyalty_count += 1;
             }
             CostComponent::ExileCraftArtifactMaterial => {
                 craft_material_count += 1;
                 saw_source_changing_component = true;
             }
-            CostComponent::RemoveNetCounterFromSelf => {
+            CostComponent::RemoveNetCounterFromSelf
+            | CostComponent::RemoveChargeCounterFromSelf => {
                 net_counter_count += 1;
+            }
+            CostComponent::Crew(_) => {
+                sacrifice_controlled_count += 1;
+                saw_source_changing_component = true;
             }
         }
     }
@@ -4538,6 +4569,14 @@ fn can_pay_components(
                         .has_type(*card_type)
                 })
             }
+            CostComponent::Crew(required) => {
+                crew_candidates(state, player, &[])
+                    .iter()
+                    .map(|binding| crew_power(state, binding.object).max(0))
+                    .sum::<i64>()
+                    >= i64::from(*required)
+            }
+            CostComponent::LoyaltyX => crate::planeswalker_v1::loyalty(state, source).is_some(),
             CostComponent::Loyalty(delta) => crate::planeswalker_v1::loyalty(state, source)
                 .is_some_and(|loyalty| *delta >= 0 || loyalty >= u32::from(delta.unsigned_abs())),
             CostComponent::ExileCraftArtifactMaterial => {
@@ -4545,6 +4584,9 @@ fn can_pay_components(
             }
             CostComponent::RemoveNetCounterFromSelf => {
                 crate::standard_cards_v1::net_counters(state, source) > 0
+            }
+            CostComponent::RemoveChargeCounterFromSelf => {
+                state.objects.get(source).counters.charge > 0
             }
             CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand => {
                 !chosen_creature_cost_candidates(
@@ -4628,17 +4670,36 @@ fn validate_cost_component_choices_v1(
     if components.iter().any(|component| {
         matches!(component, CostComponent::Loyalty(delta) if !crate::planeswalker_v1::loyalty(state, source).is_some_and(|loyalty| *delta >= 0 || loyalty >= u32::from(delta.unsigned_abs())))
     }) {
-        return false;
+        return None;
     }
     if components.iter().any(|component| {
         matches!(component, CostComponent::RemoveNetCounterFromSelf)
             && crate::standard_cards_v1::net_counters(state, source) == 0
     }) {
-        return false;
+        return None;
     }
     if components.iter().any(|component| {
         matches!(component, CostComponent::RevealHandIfNoCardsWithType(card_type) if state.players[player.index()].hand.iter().any(|&object| card_def::CARD_DEFS[state.objects.get(object).card_def as usize].has_type(*card_type)))
     }) {
+        return None;
+    }
+    if let Some(required) = crew_requirement(components) {
+        let candidates = crew_candidates(state, player, &[]);
+        if object_cost_chosen.iter().enumerate().any(|(i, id)| {
+            object_cost_chosen[..i].contains(id)
+                || !candidates.iter().any(|binding| binding.object == *id)
+        }) || object_cost_chosen
+            .iter()
+            .map(|&id| crew_power(state, id))
+            .sum::<i64>()
+            < i64::from(required)
+        {
+            return None;
+        }
+    }
+    if components.contains(&CostComponent::RemoveChargeCounterFromSelf)
+        && state.objects.get(source).counters.charge <= 0
+    {
         return None;
     }
     let sacrifice_needed = components.iter().find_map(|component| match component {
@@ -4808,7 +4869,7 @@ fn validate_cost_component_choices_v1(
                 .iter()
                 .any(|binding| binding.object == object_cost_chosen[0]))
     {
-        return false;
+        return None;
     }
     if sacrifice_needed.is_none()
         && sacrifice_controlled.is_none()
@@ -4854,6 +4915,14 @@ fn pay_cost_components_spending_mana(
     object_cost_chosen: &[ObjectId],
     x_value: u8,
 ) -> Option<u16> {
+    let concrete: Vec<_> = components
+        .iter()
+        .map(|c| match c {
+            CostComponent::LoyaltyX => CostComponent::Loyalty(-i32::from(x_value)),
+            other => *other,
+        })
+        .collect();
+    let components = concrete.as_slice();
     let reserved =
         validate_cost_component_choices_v1(state, player, source, components, object_cost_chosen)?;
     // Derive the sole mana plan before applying any state-changing component.
@@ -5037,7 +5106,14 @@ fn commit_cost_components_from_plan_v1(
             }
             CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand => {}
             CostComponent::Loyalty(delta) => {
-                crate::planeswalker_v1::change_loyalty(state, source, i32::from(*delta));
+                crate::planeswalker_v1::change_loyalty(state, source, *delta);
+            }
+            CostComponent::LoyaltyX => return None, // resolved to a concrete cost before payment
+            CostComponent::Crew(_) => {
+                crate::standard_cards_v1::record_crew(state, source, object_cost_chosen);
+                for &object in object_cost_chosen {
+                    event::propose_and_commit(state, ProposedEvent::tap(object));
+                }
             }
             CostComponent::ExileCraftArtifactMaterial => event::propose_and_commit(
                 state,
@@ -5045,6 +5121,9 @@ fn commit_cost_components_from_plan_v1(
             ),
             CostComponent::RemoveNetCounterFromSelf => {
                 crate::standard_cards_v1::remove_net_counter(state, source);
+            }
+            CostComponent::RemoveChargeCounterFromSelf => {
+                state.objects.get_mut(source).counters.charge -= 1;
             }
         }
     }
@@ -10094,6 +10173,39 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
     )
     .expect("validate_pending_activation already confirmed this ability index resolves");
     let ability = &ability;
+    if ability.cost.contains(&CostComponent::LoyaltyX) && pending.loyalty_x.is_none() {
+        let maximum = crate::planeswalker_v1::loyalty(state, pending.source)
+            .unwrap_or(0)
+            .min(u32::from(u8::MAX));
+        return Some(Decision::ChooseEffectOption {
+            player: pending.controller,
+            source: pending.source,
+            option_count: maximum as u16 + 1,
+        });
+    }
+    if let Some(required) = crew_requirement(ability.cost) {
+        if !pending.crew_finished {
+            let candidates =
+                crew_candidates(state, pending.controller, &pending.object_cost_chosen);
+            return Some(Decision::ChooseEffectTargets {
+                player: pending.controller,
+                source: pending.source,
+                selected_count: pending.object_cost_chosen.len() as u16,
+                min_targets: 0,
+                max_targets: (pending.object_cost_chosen.len() + candidates.len()) as u16,
+                legal_targets: candidates
+                    .iter()
+                    .map(|binding| Target::Object(binding.object))
+                    .collect(),
+                can_finish: pending
+                    .object_cost_chosen
+                    .iter()
+                    .map(|binding| crew_power(state, binding.object))
+                    .sum::<i64>()
+                    >= i64::from(required),
+            });
+        }
+    }
 
     let max_targets = target_count(pending.target_spec);
     if (pending.targets_chosen.len() as u8) < max_targets {
@@ -10411,7 +10523,40 @@ pub(crate) fn validate_pending_activation(
         + usize::from(tap_cost_subtype.is_some())
         + usize::from(sacrifice_cost.is_some())
         + usize::from(returns_unblocked_attacker)
-        + usize::from(craft_material);
+        + usize::from(craft_material)
+        + usize::from(crew_requirement(ability.cost).is_some());
+    if let Some(required) = crew_requirement(ability.cost) {
+        let candidates = crew_candidates(state, pending.controller, &[]);
+        if pending
+            .object_cost_chosen
+            .iter()
+            .enumerate()
+            .any(|(index, binding)| {
+                pending.object_cost_chosen[..index].contains(binding)
+                    || !candidates.contains(binding)
+            })
+        {
+            return Err("crew selection contains a stale, duplicate or illegal creature".into());
+        }
+        let selected_power = pending
+            .object_cost_chosen
+            .iter()
+            .map(|binding| crew_power(state, binding.object))
+            .sum::<i64>();
+        if pending.crew_finished && selected_power < i64::from(required) {
+            return Err("crew payment is incomplete".into());
+        }
+    } else if pending.crew_finished {
+        return Err("non-crew ability carries a crew completion".into());
+    }
+    if let Some(x) = pending.loyalty_x {
+        if !ability.cost.contains(&CostComponent::LoyaltyX)
+            || crate::planeswalker_v1::loyalty(state, pending.source)
+                .is_none_or(|n| n < u32::from(x))
+        {
+            return Err("invalid variable loyalty cost".into());
+        }
+    }
     if interactive_families > 1 {
         return Err("activation has multiple interactive object-cost families".to_string());
     }
@@ -12401,6 +12546,7 @@ fn attachment_prevents_untap(state: &GameState, host: ObjectId) -> bool {
 fn run_step_entry_action(state: &mut GameState, step: Step) {
     match step {
         Step::Untap => {
+            crate::standard_cards_v1::begin_turn(state);
             let p = state.active_player;
             state
                 .engine
@@ -12603,6 +12749,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             collect_and_queue_triggers(state);
         }
         Step::Cleanup => {
+            crate::standard_cards_v1::cleanup(state);
             // 514.1/514.2: reset damage, "until end of turn" effects end,
             // then discard down to the maximum hand size, then reset the
             // land-drop counter for the player whose turn just ended.
@@ -12896,6 +13043,9 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
     }
     if crate::continuous_characteristics_v1::creature_override(state, id).is_some() {
         return card_type == CardType::Creature;
+    }
+    if card_type == CardType::Creature && crate::standard_cards_v1::is_crewed_creature(state, id) {
+        return true;
     }
     // An animated land keeps its printed types and gains Creature (and
     // Artifact for Mishra's Foundry).
@@ -14076,6 +14226,8 @@ enum PendingActivationActionStage {
     AwaitEngineAdvance,
     /// Appended generic interactive permanent-cost stage.
     ChooseCostTarget,
+    Crew,
+    ChooseLoyaltyX,
 }
 
 /// Purely derives the one action family, if any, exposed by a staged cast.
@@ -14216,6 +14368,19 @@ fn pending_activation_action_stage(
     if state.engine.pending_discard.is_some() {
         return Ok(PendingActivationActionStage::Discard);
     }
+    let staged_ability = resolved_activated_ability(
+        state.objects.get(pending.source).card_def,
+        pending.ability_index,
+        state,
+        pending.source,
+    )
+    .ok_or("missing activation")?;
+    if staged_ability.cost.contains(&CostComponent::LoyaltyX) && pending.loyalty_x.is_none() {
+        return Ok(PendingActivationActionStage::ChooseLoyaltyX);
+    }
+    if crew_requirement(staged_ability.cost).is_some() && !pending.crew_finished {
+        return Ok(PendingActivationActionStage::Crew);
+    }
     if pending.targets_chosen.len() < usize::from(target_count(pending.target_spec)) {
         if target_min_count(pending.target_spec) < target_count(pending.target_spec) {
             return Ok(PendingActivationActionStage::ChooseOptionalTarget);
@@ -14263,6 +14428,12 @@ fn action_matches_pending_activation_stage(
         ) | (
             PendingActivationActionStage::ChooseOptionalTarget,
             Action::ChooseEffectTarget(_) | Action::FinishEffectSelection
+        ) | (
+            PendingActivationActionStage::Crew,
+            Action::ChooseEffectTarget(_) | Action::FinishEffectSelection
+        ) | (
+            PendingActivationActionStage::ChooseLoyaltyX,
+            Action::ChooseEffectOption(_)
         ) | (PendingActivationActionStage::Discard, Action::Discard(_))
             | (
                 PendingActivationActionStage::ChooseCostTarget,
@@ -14555,6 +14726,15 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
                 apply_choose_land_color(state, option_index)
             } else if state.engine.pending_cast.is_some() {
                 apply_pending_cast_effect_option(state, option_index)
+            } else if state.engine.pending_activation.is_some() {
+                let pending = state.engine.pending_activation.as_ref().unwrap();
+                if pending_activation_action_stage(state,pending)? != PendingActivationActionStage::ChooseLoyaltyX {
+                    return Err("activation is not choosing X".into());
+                }
+                let x = u8::try_from(option_index).map_err(|_|"loyalty X exceeds supported range")?;
+                if crate::planeswalker_v1::loyalty(state,pending.source).is_none_or(|n|n<u32::from(x)) { return Err("insufficient loyalty for X".into()); }
+                state.engine.pending_activation.as_mut().unwrap().loyalty_x = Some(x);
+                Ok(())
             } else {
                 effect::choose_resumable_option(state, option_index)
             }
@@ -14563,7 +14743,9 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
             if state.engine.pending_cast.is_some() {
                 apply_choose_collect_evidence_target(state, target)
             } else if state.engine.pending_activation.is_some() {
-                apply_choose_optional_activation_target(state, target)
+                if pending_activation_action_stage(state,state.engine.pending_activation.as_ref().unwrap())? == PendingActivationActionStage::Crew {
+                    choose_crew_member(state,target)
+                } else { apply_choose_optional_activation_target(state, target) }
             } else {
                 effect::choose_resumable_target(state, target)
             }
@@ -14572,7 +14754,9 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
             if state.engine.pending_cast.is_some() {
                 finish_optional_cast_or_collect_evidence(state)
             } else if state.engine.pending_activation.is_some() {
-                finish_optional_activation_targets(state)
+                if pending_activation_action_stage(state,state.engine.pending_activation.as_ref().unwrap())? == PendingActivationActionStage::Crew {
+                    finish_crew(state)
+                } else { finish_optional_activation_targets(state) }
             } else if state.engine.pending_effect.is_none() && !state.engine.pending_triggers.is_empty()
             {
                 finish_optional_trigger_targets(state)
@@ -16921,6 +17105,8 @@ fn begin_activation(state: &mut GameState, player: PlayerId, source: ObjectId, a
             None
         },
         object_cost_chosen: vec![],
+        crew_finished: false,
+        loyalty_x: None,
     });
 }
 
@@ -17223,6 +17409,16 @@ fn finalize_activation(state: &mut GameState) {
     };
     if validate_pending_activation(state, staged).is_err()
         || !target_cardinality_is_complete(staged.target_spec, staged.targets_chosen.len())
+        || resolved_activated_ability(
+            state.objects.get(staged.source).card_def,
+            staged.ability_index,
+            state,
+            staged.source,
+        )
+        .is_none_or(|ability| {
+            ability.cost.contains(&CostComponent::LoyaltyX) && staged.loyalty_x.is_none()
+                || crew_requirement(ability.cost).is_some() && !staged.crew_finished
+        })
     {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
@@ -17258,7 +17454,11 @@ fn finalize_activation(state: &mut GameState) {
         .iter()
         .map(|binding| binding.object)
         .collect::<Vec<_>>();
-    let x_value = match activation_x_value(ability, &pending.targets_chosen, state) {
+    let x_value = match pending
+        .loyalty_x
+        .map(Ok)
+        .unwrap_or_else(|| activation_x_value(ability, &pending.targets_chosen, state))
+    {
         Ok(value) => value,
         Err(_) => {
             state.engine.halted = Some((
@@ -17398,8 +17598,10 @@ fn push_paid_activation(
             }
         }
     }
-    let x_value = activation_x_value(ability, &pending.targets_chosen, state)
-        .expect("validated paid activation retains its target-bound X value");
+    let x_value = pending.loyalty_x.unwrap_or_else(|| {
+        activation_x_value(ability, &pending.targets_chosen, state)
+            .expect("validated paid activation retains its target-bound X value")
+    });
     let stack_item_id = next_stack_item_id(state);
     state.stack.push(StackItem {
         kind: StackItemKind::ActivatedAbility,
@@ -23936,4 +24138,102 @@ mod tests {
              being countered"
         );
     }
+}
+
+fn crew_requirement(components: &[CostComponent]) -> Option<u8> {
+    components.iter().find_map(|component| {
+        if let CostComponent::Crew(power) = component {
+            Some(*power)
+        } else {
+            None
+        }
+    })
+}
+fn crew_power(state: &GameState, object: ObjectId) -> i64 {
+    let bonus =
+        if card_def::CARD_DEFS[state.objects.get(object).card_def as usize].name == "Pilot Token" {
+            2
+        } else {
+            0
+        };
+    i64::from(effective_power(state, object)) + bonus
+}
+fn crew_candidates(
+    state: &GameState,
+    player: PlayerId,
+    selected: &[EffectObjectBinding],
+) -> Vec<EffectObjectBinding> {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .filter_map(|&object| {
+            let live = state.objects.get(object);
+            let binding = EffectObjectBinding {
+                object,
+                expected_zone: Zone::Battlefield,
+                expected_zone_change_count: live.zone_change_count,
+            };
+            (live.controller == player
+                && live.zone == Zone::Battlefield
+                && !live.tapped
+                && object_has_type(state, object, CardType::Creature)
+                && !selected.contains(&binding))
+            .then_some(binding)
+        })
+        .collect()
+}
+fn choose_crew_member(state: &mut GameState, target: Target) -> Result<(), String> {
+    let pending = state
+        .engine
+        .pending_activation
+        .as_ref()
+        .ok_or("missing crew activation")?;
+    validate_pending_activation(state, pending)?;
+    let Target::Object(object) = target else {
+        return Err("crew requires a creature".into());
+    };
+    let binding = crew_candidates(state, pending.controller, &pending.object_cost_chosen)
+        .into_iter()
+        .find(|b| b.object == object)
+        .ok_or("illegal crew member")?;
+    state
+        .engine
+        .pending_activation
+        .as_mut()
+        .unwrap()
+        .object_cost_chosen
+        .push(binding);
+    Ok(())
+}
+fn finish_crew(state: &mut GameState) -> Result<(), String> {
+    let pending = state
+        .engine
+        .pending_activation
+        .as_ref()
+        .ok_or("missing crew activation")?;
+    validate_pending_activation(state, pending)?;
+    let ability = resolved_activated_ability(
+        state.objects.get(pending.source).card_def,
+        pending.ability_index,
+        state,
+        pending.source,
+    )
+    .ok_or("missing crew ability")?;
+    let required = crew_requirement(ability.cost).ok_or("ability has no crew cost")?;
+    if pending
+        .object_cost_chosen
+        .iter()
+        .map(|b| crew_power(state, b.object))
+        .sum::<i64>()
+        < i64::from(required)
+    {
+        return Err("crew power is insufficient".into());
+    }
+    state
+        .engine
+        .pending_activation
+        .as_mut()
+        .unwrap()
+        .crew_finished = true;
+    Ok(())
 }

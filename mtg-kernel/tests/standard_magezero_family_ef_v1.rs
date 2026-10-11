@@ -2402,12 +2402,17 @@ fn chandra_minus_x_deals_x_to_each_of_up_to_two_targets() {
     let chandra = put(&mut state, P0, CHANDRA, Zone::Battlefield);
     let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
     let offered = activatable(&mut state);
-    // -1 through -5 are affordable at five loyalty; -6 and up are not.
-    for index in 2..7 {
-        assert!(offered.contains(&(chandra, index)), "{index}");
-    }
-    assert!(!offered.contains(&(chandra, 7)));
-    act(&mut state, Action::ActivateAbility(chandra, 4));
+    assert!(offered.contains(&(chandra, 2)));
+    assert!(!offered.contains(&(chandra, 3)));
+    act(&mut state, Action::ActivateAbility(chandra, 2));
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption {
+            option_count: 6,
+            ..
+        }
+    ));
+    act(&mut state, Action::ChooseEffectOption(3));
     chandra_drive(
         &mut state,
         Target::Player(P1),
@@ -2425,6 +2430,14 @@ fn chandra_minus_x_may_choose_one_target() {
     let chandra = put(&mut state, P0, CHANDRA, Zone::Battlefield);
     next(&mut state);
     act(&mut state, Action::ActivateAbility(chandra, 2));
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption {
+            option_count: 6,
+            ..
+        }
+    ));
+    act(&mut state, Action::ChooseEffectOption(1));
     chandra_drive(&mut state, Target::Player(P1), None, &[Target::Player(P1)]);
     assert_eq!(state.players[1].life, 19);
     assert_eq!(loyalty(&state, chandra), Some(4));
@@ -2701,4 +2714,98 @@ fn agathas_soul_cauldron_exiling_a_noncreature_card_adds_no_counter() {
     drive(&mut state, &[Target::Object(bolt)]);
     assert_eq!(state.objects.get(bolt).zone, Zone::Exile);
     assert_eq!(state.objects.get(terror).counters.plus1_plus1, 0);
+}
+
+#[test]
+fn chandra_variable_loyalty_includes_zero_and_values_above_twenty() {
+    for x in [0, 21] {
+        let mut state = game();
+        let chandra = put(&mut state, P0, CHANDRA, Zone::Battlefield);
+        change_loyalty(&mut state, chandra, 20);
+        next(&mut state);
+        act(&mut state, Action::ActivateAbility(chandra, 2));
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseEffectOption {
+                option_count: 26,
+                ..
+            }
+        ));
+        act(&mut state, Action::ChooseEffectOption(x));
+        chandra_drive(&mut state, Target::Player(P1), None, &[]);
+        assert_eq!(loyalty(&state, chandra), Some(25 - u32::from(x)));
+    }
+}
+
+#[test]
+fn bankbuster_crew_accepts_summoning_sick_pilot_and_ends_at_cleanup() {
+    let mut state = game();
+    let vehicle = put(&mut state, P0, "Reckoner Bankbuster", Zone::Battlefield);
+    let pilot = put(&mut state, P0, "Pilot Token", Zone::Battlefield);
+    state.objects.get_mut(pilot).summoning_sick = true;
+    assert_eq!(state.objects.get(vehicle).counters.charge, 3);
+    assert!(!engine::object_has_type(
+        &state,
+        vehicle,
+        CardType::Creature
+    ));
+    assert!(activatable(&mut state).contains(&(vehicle, 1)));
+    act(&mut state, Action::ActivateAbility(vehicle, 1));
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectTargets {
+            can_finish: false,
+            ..
+        }
+    ));
+    act(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(pilot)),
+    );
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectTargets {
+            can_finish: true,
+            ..
+        }
+    ));
+    act(&mut state, Action::FinishEffectSelection);
+    resolve_stack(&mut state);
+    assert!(state.objects.get(pilot).tapped);
+    assert!(engine::object_has_type(&state, vehicle, CardType::Creature));
+    assert_eq!(engine::effective_power(&state, vehicle), 4);
+    for _ in 0..100 {
+        if state.step == Step::Untap || state.active_player == P1 {
+            break;
+        }
+        match next(&mut state) {
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            Decision::DeclareAttackers { .. } => act(&mut state, Action::DeclareAttackers(vec![])),
+            other => panic!("{other:?}"),
+        }
+    }
+    assert!(!engine::object_has_type(
+        &state,
+        vehicle,
+        CardType::Creature
+    ));
+}
+
+#[test]
+fn bankbuster_last_charge_creates_tokens_even_if_source_leaves_in_response() {
+    let mut state = game();
+    let vehicle = put(&mut state, P0, "Reckoner Bankbuster", Zone::Battlefield);
+    state.objects.get_mut(vehicle).counters.charge = 1;
+    state.players[0].mana_pool[ManaColor::C.pool_index()] = 2;
+    next(&mut state);
+    act(&mut state, Action::ActivateAbility(vehicle, 0));
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(state.objects.get(vehicle).counters.charge, 0);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(vehicle, Zone::Graveyard),
+    );
+    resolve_stack(&mut state);
+    assert_eq!(battlefield_named(&state, P0, "Pilot").len(), 1);
+    assert_eq!(battlefield_named(&state, P0, "Treasure").len(), 1);
 }

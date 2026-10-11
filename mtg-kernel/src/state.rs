@@ -62,6 +62,14 @@ pub struct Counters {
     /// state hash while zero, so every earlier snapshot and hash is unchanged.
     #[serde(default, skip_serializing_if = "is_zero_i16")]
     pub oil: i16,
+    #[serde(default, skip_serializing_if = "counter_i32_zero")]
+    pub charge: i32,
+    #[serde(default, skip_serializing_if = "counter_i32_zero")]
+    pub net: i32,
+}
+
+fn counter_i32_zero(value: &i32) -> bool {
+    *value == 0
 }
 
 fn is_zero_i16(value: &i16) -> bool {
@@ -77,6 +85,8 @@ impl Counters {
             || self.stun != 0
             || self.lore != 0
             || self.oil != 0
+            || self.charge != 0
+            || self.net != 0
     }
 }
 
@@ -97,6 +107,14 @@ impl std::hash::Hash for Counters {
         self.minus0_minus1.hash(state);
         self.stun.hash(state);
         self.lore.hash(state);
+        if self.charge != 0 {
+            b"charge_v1".hash(state);
+            self.charge.hash(state);
+        }
+        if self.net != 0 {
+            b"net_v1".hash(state);
+            self.net.hash(state);
+        }
         if self.oil != 0 {
             b"oil_counters_v1".hash(state);
             self.oil.hash(state);

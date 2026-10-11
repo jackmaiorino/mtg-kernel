@@ -68,9 +68,8 @@ const LILIANA_OF_THE_VEIL: [ActivatedAbilityRecipe; 3] = [
 const CHANDRA_TARGETS: &str =
     "StandardV1(crate::standard_cards_v1::StandardTargetV1::UpToTwoAnyTargets)";
 
-/// Chandra, Hope's Beacon: +2 mana, +1 impulse, then "-X: deals X damage to
-/// each of up to two targets" as one loyalty ability per X from 1 to 20.
-const CHANDRA: [ActivatedAbilityRecipe; 22] = [
+/// Chandra's third ability selects X as part of announcing the activation.
+const CHANDRA: [ActivatedAbilityRecipe; 3] = [
     loyalty(
         &[Loyalty(2)],
         Program("crate::standard_cards_v1::chandra_two_mana"),
@@ -82,103 +81,8 @@ const CHANDRA: [ActivatedAbilityRecipe; 22] = [
         "None",
     ),
     loyalty(
-        &[Loyalty(-1)],
-        Program("crate::standard_cards_v1::chandra_minus_1"),
-        CHANDRA_TARGETS,
-    ),
-    loyalty(
-        &[Loyalty(-2)],
-        Program("crate::standard_cards_v1::chandra_minus_2"),
-        CHANDRA_TARGETS,
-    ),
-    loyalty(
-        &[Loyalty(-3)],
-        Program("crate::standard_cards_v1::chandra_minus_3"),
-        CHANDRA_TARGETS,
-    ),
-    loyalty(
-        &[Loyalty(-4)],
-        Program("crate::standard_cards_v1::chandra_minus_4"),
-        CHANDRA_TARGETS,
-    ),
-    loyalty(
-        &[Loyalty(-5)],
-        Program("crate::standard_cards_v1::chandra_minus_5"),
-        CHANDRA_TARGETS,
-    ),
-    loyalty(
-        &[Loyalty(-6)],
-        Program("crate::standard_cards_v1::chandra_minus_6"),
-        CHANDRA_TARGETS,
-    ),
-    loyalty(
-        &[Loyalty(-7)],
-        Program("crate::standard_cards_v1::chandra_minus_7"),
-        CHANDRA_TARGETS,
-    ),
-    loyalty(
-        &[Loyalty(-8)],
-        Program("crate::standard_cards_v1::chandra_minus_8"),
-        CHANDRA_TARGETS,
-    ),
-    loyalty(
-        &[Loyalty(-9)],
-        Program("crate::standard_cards_v1::chandra_minus_9"),
-        CHANDRA_TARGETS,
-    ),
-    loyalty(
-        &[Loyalty(-10)],
-        Program("crate::standard_cards_v1::chandra_minus_10"),
-        CHANDRA_TARGETS,
-    ),
-    loyalty(
-        &[Loyalty(-11)],
-        Program("crate::standard_cards_v1::chandra_minus_11"),
-        CHANDRA_TARGETS,
-    ),
-    loyalty(
-        &[Loyalty(-12)],
-        Program("crate::standard_cards_v1::chandra_minus_12"),
-        CHANDRA_TARGETS,
-    ),
-    loyalty(
-        &[Loyalty(-13)],
-        Program("crate::standard_cards_v1::chandra_minus_13"),
-        CHANDRA_TARGETS,
-    ),
-    loyalty(
-        &[Loyalty(-14)],
-        Program("crate::standard_cards_v1::chandra_minus_14"),
-        CHANDRA_TARGETS,
-    ),
-    loyalty(
-        &[Loyalty(-15)],
-        Program("crate::standard_cards_v1::chandra_minus_15"),
-        CHANDRA_TARGETS,
-    ),
-    loyalty(
-        &[Loyalty(-16)],
-        Program("crate::standard_cards_v1::chandra_minus_16"),
-        CHANDRA_TARGETS,
-    ),
-    loyalty(
-        &[Loyalty(-17)],
-        Program("crate::standard_cards_v1::chandra_minus_17"),
-        CHANDRA_TARGETS,
-    ),
-    loyalty(
-        &[Loyalty(-18)],
-        Program("crate::standard_cards_v1::chandra_minus_18"),
-        CHANDRA_TARGETS,
-    ),
-    loyalty(
-        &[Loyalty(-19)],
-        Program("crate::standard_cards_v1::chandra_minus_19"),
-        CHANDRA_TARGETS,
-    ),
-    loyalty(
-        &[Loyalty(-20)],
-        Program("crate::standard_cards_v1::chandra_minus_20"),
+        &[AbilityCostRecipe::LoyaltyX],
+        Program("crate::standard_cards_v1::chandra_minus_x"),
         CHANDRA_TARGETS,
     ),
 ];
@@ -409,6 +313,9 @@ const STORMCHASERS_TALENT: [ActivatedAbilityRecipe; 2] = [
 
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
+        "Reckoner Bankbuster" => &BANKBUSTER,
+        "Subterranean Schooner" => &SCHOONER,
+        "Spring-Loaded Sawblades" => &SAWBLADES,
         "Innkeeper's Talent" => &INNKEEPERS_TALENT,
         "Stormchaser's Talent" => &STORMCHASERS_TALENT,
         "Candy Trail" => &CANDY_TRAIL,
@@ -436,6 +343,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
 /// for a single-faced card).
 pub(super) fn activated_ability_face_for(name: &str, index: usize) -> Option<u8> {
     match name {
+        "Spring-Loaded Sawblades" => Some(u8::from(index != 0)),
         "Braided Net" => Some(u8::from(index == 2)),
         "Polukranos Reborn" | "Clay-Fired Bricks" => Some(0),
         "Ojer Axonil, Deepest Might" | "Fable of the Mirror-Breaker" => Some(1),
@@ -447,6 +355,7 @@ pub(super) fn activated_ability_face_for(name: &str, index: usize) -> Option<u8>
 /// card's supertypes.
 pub(super) fn transform_face_for(name: &str) -> &'static str {
     match name {
+        "Spring-Loaded Sawblades" => "Some(TransformFaceDef { name: \"Bladewheel Chariot\", types: &[CardType::Artifact], subtypes: &[Subtype::Vehicle], colors: &[ManaColor::W], power: Some(5), toughness: Some(5), keywords: Keywords::NONE })",
         "Cecil, Dark Knight" => "Some(TransformFaceDef { name: \"Cecil, Redeemed Paladin\", types: &[CardType::Creature], subtypes: &[Subtype::Human, Subtype::Knight], colors: &[ManaColor::W], power: Some(4), toughness: Some(4), keywords: Keywords::LIFELINK })",
         "Polukranos Reborn" => "Some(TransformFaceDef { name: \"Polukranos, Engine of Ruin\", types: &[CardType::Creature], subtypes: &[Subtype::Phyrexian, Subtype::Hydra], colors: &[ManaColor::W, ManaColor::G], power: Some(6), toughness: Some(6), keywords: Keywords(Keywords::REACH.0 | Keywords::LIFELINK.0) })",
         "Ojer Axonil, Deepest Might" => "Some(TransformFaceDef { name: \"Temple of Power\", types: &[CardType::Land], subtypes: &[], colors: &[], power: None, toughness: None, keywords: Keywords::NONE })",
@@ -467,6 +376,7 @@ pub(super) fn saga_for(name: &str) -> &'static str {
 
 pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
     match name {
+        "Spring-Loaded Sawblades" => Some("Bladewheel Chariot"),
         "Cecil, Dark Knight" => Some("Cecil, Redeemed Paladin"),
         "Polukranos Reborn" => Some("Polukranos, Engine of Ruin"),
         "Ojer Axonil, Deepest Might" => Some("Temple of Power"),
@@ -482,6 +392,10 @@ pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
 /// `standard_cards_v1::controlled_boost`.
 pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Reckoner Bankbuster" => "enters_with_3_charge;draw_then_if_no_charge:create_treasure_and_pilot;crew_3",
+        "Subterranean Schooner" => "attacks:target_creature_that_crewed_this_turn_explores;crew_1",
+        "Spring-Loaded Sawblades" => "etb:5_damage_to_target_tapped_opponent_creature;craft_artifact_3W;back:crew_1;back:tap_two_other_artifacts_animate",
+        "Pilot Token" => "may_crew_with_power_two_greater",
         "Teferi, Temporal Pilgrim" => "controller_draws:add_loyalty_to_bound_source:1",
         "Teferi Spirit Token" => "controller_draws:plus_one_counter_on_bound_source:1",
         "Cecil, Dark Knight" => {
@@ -541,6 +455,7 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
 /// Printed keywords (front face), in printed order.
 pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
     match name {
+        "Spring-Loaded Sawblades" => &["Keywords::FLASH"],
         "Teferi Spirit Token" => &["Keywords::VIGILANCE"],
         "Cecil, Dark Knight" => &["Keywords::DEATHTOUCH"],
         "Polukranos Reborn" | "Phyrexian Hydra Reach Token" => &["Keywords::REACH"],
@@ -555,6 +470,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
 /// disambiguating suffix.
 pub(super) fn object_name_for(name: &str) -> Option<&'static str> {
     match name {
+        "Pilot Token" => Some("Pilot"),
         "Teferi Spirit Token" => Some("Spirit"),
         "Phyrexian Hydra Reach Token" | "Phyrexian Hydra Lifelink Token" => Some("Phyrexian Hydra"),
         "Demon Flying Token" => Some("Demon"),
@@ -637,3 +553,50 @@ pub(super) fn additional_cost_for(name: &str) -> &'static str {
         _ => "None",
     }
 }
+
+const fn permanent_activation(
+    cost: &'static [AbilityCostRecipe],
+    effect: AbilityEffectRecipe,
+) -> ActivatedAbilityRecipe {
+    ActivatedAbilityRecipe {
+        cost,
+        effect,
+        activation_zone: "Battlefield",
+        sorcery_speed_only: false,
+        target_spec: "None",
+        activation_target_filter: "TargetSpecOnly",
+        max_activations_per_turn: None,
+    }
+}
+const BANKBUSTER: [ActivatedAbilityRecipe; 2] = [
+    permanent_activation(
+        &[
+            ManaCost("{2}"),
+            Tap,
+            AbilityCostRecipe::RemoveChargeCounterFromSelf,
+        ],
+        Program("crate::standard_cards_v1::bankbuster_draw"),
+    ),
+    permanent_activation(
+        &[AbilityCostRecipe::Crew(3)],
+        Program("crate::standard_cards_v1::crew_animation"),
+    ),
+];
+const SCHOONER: [ActivatedAbilityRecipe; 1] = [permanent_activation(
+    &[AbilityCostRecipe::Crew(1)],
+    Program("crate::standard_cards_v1::crew_animation"),
+)];
+const SAWBLADES: [ActivatedAbilityRecipe; 3] = [
+    craft_with_artifact(&[ManaCost("{3}{W}"), ExileCraftArtifactMaterial, ExileSelf]),
+    permanent_activation(
+        &[AbilityCostRecipe::Crew(1)],
+        Program("crate::standard_cards_v1::crew_animation"),
+    ),
+    permanent_activation(
+        &[AbilityCostRecipe::TapControlled {
+            count: 2,
+            filter: PermanentFilterRecipe::AnotherArtifact,
+        }],
+        Program("crate::standard_cards_v1::crew_animation"),
+    ),
+];

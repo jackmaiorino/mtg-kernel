@@ -54,6 +54,12 @@ pub(crate) fn after_zone_change(state: &mut GameState, object: ObjectId) {
                 .starting_loyalty
                 .unwrap_or(0),
         );
+        let counters = crate::standard_cards_v1::scale_counters(
+            state,
+            live.controller,
+            counters as i32,
+        )
+        .max(0) as u32;
         let entry = LoyaltyV1 {
             permanent: ObjectLinkV4 {
                 object,
@@ -81,7 +87,14 @@ pub fn change_loyalty(state: &mut GameState, object: ObjectId, delta: i32) {
         return;
     };
     let counters = if delta >= 0 {
-        counters.saturating_add(delta as u32)
+        counters.saturating_add(
+            crate::standard_cards_v1::scale_counters(
+                state,
+                state.objects.get(object).controller,
+                delta,
+            )
+            .max(0) as u32,
+        )
     } else {
         counters.saturating_sub(delta.unsigned_abs())
     };

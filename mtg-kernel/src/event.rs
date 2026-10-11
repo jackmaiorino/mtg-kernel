@@ -1016,6 +1016,7 @@ fn commit_with_ability_lki(
             #[cfg(not(feature = "standard-magezero-fixtures"))]
             let _ = &mut z;
             let from = state.objects.get(z.object).zone;
+            crate::standard_cards_v1::before_departure(state, z.object);
             #[cfg(feature = "standard-magezero-fixtures")]
             if from == Zone::Battlefield {
                 crate::standard_cards_v1::end_aegis_copies_before_departure(state, z.object);
@@ -1287,6 +1288,7 @@ fn commit_with_ability_lki(
     }
     crate::life_gain_turn_v1::capture_committed_gain(state);
     if let Some(object) = entry_counter_object {
+        crate::standard_cards_v1::initialize_entry_counters(state, object);
         let live = state.objects.get(object);
         let count = live.counters.plus1_plus1;
         let controller = live.controller;
