@@ -49,6 +49,7 @@ pub(super) fn trace_source(
     sh: &BankShared,
     roles: &mut Roles,
     src: &SourceSpec,
+    binding: &str,
 ) -> Result<Value, String> {
     let spec = &sh.spec;
     let focal = PlayerId(src.seat);
@@ -71,11 +72,24 @@ pub(super) fn trace_source(
         }
         Ok(())
     })?;
+    if eligible.is_empty() {
+        return Err("source has no eligible anchor".into());
+    }
     let index = ((u128::from(src.anchor_draw) * eligible.len() as u128) >> 64) as usize;
     let anchor = walk(
         source_session(spec, src)?,
         &source_actions[..eligible[index] as usize],
         |_, _, _| Ok(()),
+    )?;
+    let mut row = super::bank::source_identity(
+        sh,
+        src,
+        &s,
+        &source_actions,
+        &anchor,
+        index,
+        eligible.len(),
+        binding,
     )?;
     let seeds = RootSeeds {
         model: spec.lineage.clone(),
@@ -195,9 +209,12 @@ pub(super) fn trace_source(
         actions.push(a);
         apply(&mut s, &d, a, &mut meter, focal, None, &defs).map_err(err)?;
     }
-    Ok(
-        json!({"kind":"bank_trace","id":src.id,"anchor_step":eligible[index],
-        "selection":sel.json(),"actions":actions,"end":outcome(&s, focal),
-        "decisions":decisions,"first_miss":first_miss}),
-    )
+    row["kind"] = json!("bank_trace");
+    row["anchor_step"] = json!(eligible[index]);
+    row["selection"] = sel.json();
+    row["actions"] = json!(actions);
+    row["end"] = json!(outcome(&s, focal));
+    row["decisions"] = json!(decisions);
+    row["first_miss"] = json!(first_miss);
+    Ok(row)
 }

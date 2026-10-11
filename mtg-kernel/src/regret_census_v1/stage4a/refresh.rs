@@ -376,6 +376,7 @@ pub(super) fn source_arms(
     policy: &FrozenPlayPolicyV1,
     src: &SourceSpec,
     parity: bool,
+    binding: &str,
 ) -> Result<Value, String> {
     let started = Instant::now();
     let spec = &sh.spec;
@@ -415,6 +416,16 @@ pub(super) fn source_arms(
         source_session(spec, src)?,
         &source_actions[..eligible[index] as usize],
         |_, _, _| Ok(()),
+    )?;
+    let mut row = super::bank::source_identity(
+        sh,
+        src,
+        &s,
+        &source_actions,
+        &anchor,
+        index,
+        eligible.len(),
+        binding,
     )?;
     let mut arms = serde_json::Map::new();
     if parity {
@@ -464,12 +475,13 @@ pub(super) fn source_arms(
         };
         arms.insert("S128".into(), rec);
     }
-    Ok(
-        json!({"kind":"refresh_source","id":src.id,"lineage":spec.lineage,"own":src.own,
-        "other":src.other,"seat":src.seat,"opp":src.opp,"anchor_step":eligible[index],
-        "allocation":{"total":TOTAL_BUDGET,"anchor":ANCHOR_BUDGET,"refresh":REFRESH_BUDGET},
-        "arms":arms,"wall":started.elapsed().as_secs_f64()}),
-    )
+    row["kind"] = json!("refresh_source");
+    row["anchor_step"] = json!(eligible[index]);
+    row["allocation"] =
+        json!({"total":TOTAL_BUDGET,"anchor":ANCHOR_BUDGET,"refresh":REFRESH_BUDGET});
+    row["arms"] = json!(arms);
+    row["wall"] = json!(started.elapsed().as_secs_f64());
+    Ok(row)
 }
 
 #[cfg(test)]

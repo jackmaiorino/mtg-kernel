@@ -901,6 +901,8 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         limits: parse_limits()?,
     };
     if cfg.mode == "s4a-refresh" {
+        sh.spec.validate()?;
+        let binding = bank::bank_binding(policy, &sh)?;
         // Cases: REFRESH_CASES lists source ids; this process plays cases
         // [first_game, first_game + games). REFRESH_PARITY=1 plays the
         // 512,000-at-anchor parity arm instead of R and S128.
@@ -928,7 +930,9 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
             let row = std::thread::scope(|scope| {
                 std::thread::Builder::new()
                     .stack_size(256 << 20)
-                    .spawn_scoped(scope, || refresh::source_arms(&sh, policy, src, parity))
+                    .spawn_scoped(scope, || {
+                        refresh::source_arms(&sh, policy, src, parity, &binding)
+                    })
                     .map_err(|e| e.to_string())?
                     .join()
                     .map_err(|_| "refresh worker panicked".to_owned())?
@@ -942,6 +946,8 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
     }
     if cfg.mode == "s4a-bank-trace" {
+        sh.spec.validate()?;
+        let binding = bank::bank_binding(policy, &sh)?;
         let id = std::env::var("BANK_TRACE_ID").map_err(|_| "BANK_TRACE_ID is required")?;
         let src = sh
             .spec
@@ -951,7 +957,7 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
             .ok_or("unknown BANK_TRACE_ID")?
             .clone();
         let mut roles = bank::bank_roles(policy, &sh.opponents)?;
-        let row = bank_trace::trace_source(&sh, &mut roles, &src)?;
+        let row = bank_trace::trace_source(&sh, &mut roles, &src, &binding)?;
         return std::fs::write(
             &cfg.out,
             format!(

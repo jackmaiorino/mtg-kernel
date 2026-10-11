@@ -471,7 +471,7 @@ fn actions_bytes(actions: &[u32]) -> Vec<u8> {
 
 /// Bind every future row to the actual installed policies and all inputs.
 /// Historical rows stay untouched and cannot be resumed under this binding.
-fn bank_binding(policy: &FrozenPlayPolicyV1, sh: &BankShared) -> Result<String, String> {
+pub(super) fn bank_binding(policy: &FrozenPlayPolicyV1, sh: &BankShared) -> Result<String, String> {
     let identity = |p: &FrozenPlayPolicyV1| {
         json!({"origin":p.identity_v1(),"actual":p.actual_model_identity_v1(),
             "sampler":p.runtime_sampler_identity_v1(),
@@ -494,6 +494,43 @@ fn bank_binding(policy: &FrozenPlayPolicyV1, sh: &BankShared) -> Result<String, 
     Ok(sha(
         &serde_json::to_vec(&binding).map_err(|e| e.to_string())?
     ))
+}
+
+/// Witnesses for new paired consumers. Historical bank rows remain untouched.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "explicit paired source witnesses"
+)]
+pub(super) fn source_identity(
+    sh: &BankShared,
+    src: &SourceSpec,
+    source: &FastActorSessionV1,
+    actions: &[u32],
+    anchor: &FastActorSessionV1,
+    index: usize,
+    eligible: usize,
+    binding: &str,
+) -> Result<Value, String> {
+    let focal = PlayerId(src.seat);
+    let end = outcome(source, focal).ok_or("source did not end")?;
+    if end == "nonnatural" || eligible == 0 || index >= eligible {
+        return Err("paired source must be natural and have an eligible anchor".into());
+    }
+    let d = decision(anchor).ok_or("anchor is terminal")?;
+    if acting(&d) != focal || d.substep_index != 0 || d.legal_action_count < 2 {
+        return Err("paired anchor is not an eligible focal decision".into());
+    }
+    let (obs, menu) = replay_key(anchor, d)?;
+    Ok(json!({"id":src.id,"lineage":sh.spec.lineage,"own":src.own,
+        "other":src.other,"seat":src.seat,"opp":src.opp,"seed":src.seed,
+        "starting_player":src.starting_player,"runtime_rules":sh.spec.runtime_rules,
+        "select_rule":sh.spec.select_rule,"limits":sh.limits.json(),
+        "bank_binding_sha256":binding,
+        "source":{"end":end,"steps":actions.len(),"eligible_anchors":eligible,
+            "actions_sha256":sha(&actions_bytes(actions))},
+        "anchor":{"index":index,"step":d.step,"physical_decision_id":d.physical_decision_id,
+            "k":d.legal_action_count,"obs_hash":obs,"menu_hash":menu,
+            "state_hash":format!("{:016x}",anchor.diagnostic_state_hash())}}))
 }
 
 #[derive(Debug)]

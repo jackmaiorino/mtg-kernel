@@ -4,7 +4,8 @@ CLI:
   cases    --out CASES.txt                108 source ids: per lineage and own deck, both
                                           seats against the 3 other decks first in the
                                           SHA-256 order of ["spy-search-refresh-pilot-v1", lineage, own, other]
-  analyze  --bank r1=BANK --bank r2=BANK --rows ROWS.jsonl [...] --out REPORT.json
+  analyze  --bank r1=BANK --bank r2=BANK --binding r1=SHA --binding r2=SHA
+           --rows ROWS.jsonl [...] --out REPORT.json
 
 Units (PLAN section 1): a real physical decision is a guide-player decision
 group whose first substep has two or more legal actions; it is tree-controlled
@@ -16,6 +17,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -80,12 +82,86 @@ def bank_s(row: dict) -> dict:
     return {"real": real, "tree": len(executed), "end": g["end"], "learner_starts": len(g["starts"])}
 
 
-def analyze(banks: dict, rows: list[dict]) -> dict:
+IDENTITY_FIELDS = ("id", "lineage", "own", "other", "seat", "opp", "seed",
+                   "starting_player", "runtime_rules", "select_rule", "limits")
+SOURCE_FIELDS = ("end", "steps", "eligible_anchors", "actions_sha256")
+ANCHOR_FIELDS = ("index", "step", "physical_decision_id", "k", "obs_hash",
+                 "menu_hash", "state_hash")
+NATURAL = {"win", "loss", "draw"}
+
+
+def same_value(actual, expected) -> bool:
+    if type(actual) is not type(expected):
+        return False
+    if isinstance(actual, dict):
+        return actual.keys() == expected.keys() and all(same_value(actual[k], expected[k]) for k in actual)
+    if isinstance(actual, list):
+        return len(actual) == len(expected) and all(same_value(a, b) for a, b in zip(actual, expected))
+    return actual == expected
+
+
+def validate_pair(row: dict, bank: dict, expected_binding: str) -> None:
+    if bank.get("usable") is not True or row.get("kind") != "refresh_source":
+        raise ValueError("pair requires a usable stopped bank and a refresh source row")
+    if row.get("bank_binding_sha256") != expected_binding:
+        raise ValueError("actual refresh input binding differs from frozen qualification binding")
+    for field in IDENTITY_FIELDS:
+        if field not in bank or field not in row or not same_value(row[field], bank[field]):
+            raise ValueError(f"paired source identity differs: {field}")
+    for section, fields in (("source", SOURCE_FIELDS), ("anchor", ANCHOR_FIELDS)):
+        for field in fields:
+            a, b = row.get(section, {}), bank.get(section, {})
+            if field not in a or field not in b or not same_value(a[field], b[field]):
+                raise ValueError(f"paired {section} identity differs: {field}")
+    if not same_value(row.get("anchor_step"), bank["anchor"]["step"]):
+        raise ValueError("anchor step differs")
+    if row["source"]["end"] not in NATURAL:
+        raise ValueError("paired source outcome is nonnatural")
+    if not same_value(row.get("allocation"), {"total": 512_000, "anchor": 128_000, "refresh": 64_000}):
+        raise ValueError("frozen refresh allocation differs")
+    for arm in ("R", "S128"):
+        record = row["arms"][arm]
+        if record.get("valid") is not True or record.get("end") not in NATURAL:
+            raise ValueError(f"invalid or nonnatural {arm} arm")
+        searches = record.get("searches", [])
+        if not searches or len(searches) > (7 if arm == "R" else 1):
+            raise ValueError(f"invalid {arm} search count")
+        total = 0
+        for index, search in enumerate(searches):
+            budget = 128_000 if index == 0 else 64_000
+            if (type(search.get("transitions")) is not int
+                    or search["transitions"] != budget or search.get("budget") != budget
+                    or search.get("search") != index or search.get("incomplete") is not False
+                    or search.get("faults") != []):
+                raise ValueError(f"invalid {arm} search ledger")
+            total += search["transitions"]
+        if searches[0].get("step") != row["anchor_step"] or searches[0].get("reason") != "anchor":
+            raise ValueError(f"{arm} search does not start at paired anchor")
+        if not same_value(record.get("transitions_used"), total):
+            raise ValueError(f"{arm} transition sum differs")
+        if bank["guides"]["S" if arm == "R" else "P"]["end"] not in NATURAL:
+            raise ValueError("stopped-bank guide outcome is nonnatural")
+    if not same_value(row["arms"]["R"]["searches"][0], row["arms"]["S128"]["searches"][0]):
+        raise ValueError("R and S128 do not share the identical anchor search")
+
+
+def analyze(banks: dict, rows: list[dict], expected_bindings: dict | None = None) -> dict:
+    # Binding includes the current compiled build and cannot be compared with
+    # the older stopped bank's binding. The owner freezes these exact future
+    # input bindings in qualification; historical rows are never backfilled.
+    if (not expected_bindings or set(expected_bindings) != set(LINEAGES)
+            or any(not isinstance(v, str) or not re.fullmatch(r"[0-9a-f]{64}", v)
+                   for v in expected_bindings.values())):
+        raise ValueError("both frozen current input bindings are required")
+    if set(banks) != set(LINEAGES):
+        raise ValueError("both stopped-bank lineages are required")
     expected = set(cases())
     by_id = {}
     for r in rows:
-        if r.get("kind") == "refresh_source":
-            by_id[r["id"]] = r
+        cid = r.get("id")
+        if cid not in expected or cid in by_id or r.get("kind") != "refresh_source":
+            raise ValueError("unknown, duplicate or error refresh row")
+        by_id[cid] = r
     out = {"cases": len(expected), "rows": len(by_id), "missing": sorted(expected - set(by_id)),
            "invalid": [], "lineages": {}}
     for lineage in LINEAGES:
@@ -93,6 +169,11 @@ def analyze(banks: dict, rows: list[dict]) -> dict:
         for cid in sorted(c for c in expected if c.startswith(lineage + "-")):
             r, b = by_id.get(cid), banks[lineage][cid]
             if r is None:
+                continue
+            try:
+                validate_pair(r, b, expected_bindings[lineage])
+            except (ValueError, KeyError, TypeError) as error:
+                out["invalid"].append({"id": cid, "reason": str(error)})
                 continue
             arms = r["arms"]
             bad = [a for a in ("R", "S128") if not arms[a].get("valid")]
@@ -147,6 +228,8 @@ def main(argv=None) -> int:
     a = sub.add_parser("analyze")
     a.add_argument("--bank", action="append", required=True)
     a.add_argument("--rows", type=Path, nargs="+", required=True)
+    a.add_argument("--binding", action="append", required=True,
+                   help="LINEAGE=SHA256 from frozen current-input qualification; never inferred from rows")
     a.add_argument("--out", type=Path, required=True)
     args = ap.parse_args(argv)
     if args.op == "cases":
@@ -157,9 +240,25 @@ def main(argv=None) -> int:
     banks = {}
     for item in args.bank:
         lineage, path = item.split("=", 1)
-        banks[lineage] = {json.loads(l)["id"]: json.loads(l) for l in Path(path).read_text().splitlines() if l.strip()}
+        if lineage in banks:
+            raise ValueError("duplicate bank lineage")
+        bank = {}
+        for line in Path(path).read_text().splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if row["id"] in bank:
+                raise ValueError("duplicate stopped-bank source")
+            bank[row["id"]] = row
+        banks[lineage] = bank
+    bindings = {}
+    for item in args.binding:
+        lineage, binding = item.split("=", 1)
+        if lineage in bindings:
+            raise ValueError("duplicate input binding lineage")
+        bindings[lineage] = binding
     rows = [json.loads(l) for p in args.rows for l in Path(p).read_text().splitlines() if l.strip()]
-    result = analyze(banks, rows)
+    result = analyze(banks, rows, bindings)
     args.out.write_text(json.dumps(result, indent=1) + "\n")
     print(json.dumps({"disposition": result["disposition"],
                       "lineages": {k: {x: v[x] for x in ("pairs", "tree_per_guide", "wins", "control_extends",
