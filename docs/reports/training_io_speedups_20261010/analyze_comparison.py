@@ -632,6 +632,24 @@ def continuation_provenance(reader, state, state_pin):
             and type(prior_process["creation_time"]) is int and prior_process["creation_time"] > 0
             and prior_process["state"] == "absent" and prior_process.get("observed_utc"),
             "recorded terminal prior coordinator identity required")
+    additional_refs = {key: metadata[key] for key in ("prefix_recovery", "inventory", "prior_job", "prior_stderr")}
+    for ref in additional_refs.values():
+        require(ref in state["sources"], "continuation provenance pin absent from execution source graph")
+        reader.verify(ref)
+    require(additional_refs["prefix_recovery"]["sha256"] == original_ref["sha256"]
+            and Path(additional_refs["prefix_recovery"]["path"]).is_relative_to(COLD),
+            "independent failed-prefix state copy differs")
+    prior_job = reader.json(additional_refs["prior_job"])
+    original_implementation = next(ref for ref in original["sources"]
+                                   if same_path(ref["path"], ROOT / "run_comparison_retry.py"))
+    require(prior_job["pid"] == prior_process["pid"]
+            and prior_job["creation_filetime"] == prior_process["creation_time"]
+            and prior_job["plan_sha256"] == state["plan"]["sha256"]
+            and same_path(prior_job["state"], original_ref["path"])
+            and same_path(prior_job["plan"], state["plan"]["path"])
+            and same_path(prior_job["script"], original_implementation["path"])
+            and prior_job["source_sha256"] == original_implementation["sha256"],
+            "preserved prior process/source/seal provenance differs")
     require(metadata["prefix_started_utc"] == original["started_utc"] == state["started_utc"]
             and metadata["prefix_finished_utc"] == original["finished_utc"]
             and metadata["prior_error"] == original["error"]
@@ -647,6 +665,8 @@ def continuation_provenance(reader, state, state_pin):
             and metadata["interrupted_admission_limit_seconds"] == 7200
             and metadata["admission_wait_limit_seconds"] == 21600, "continuation admission interval/bounds differ")
     return {"prefix_state": original_ref, "implementation": implementation,
+            **additional_refs, "measurement_scope": metadata["scope"],
+            "source_check_accounting": metadata["source_check_accounting"],
             "preserved_prefix_sha256": metadata["preserved_prefix_sha256"], "prefix_completed_labels": LABELS[:2],
             "remaining_labels": LABELS[2:], "prior_process": prior_process, "prior_error": original["error"],
             "prior_queue_waiting": original["queue_waiting"], "prefix_receipt_sources": receipt_sources,
@@ -750,6 +770,8 @@ def analyze(state_path):
               "accounting": "Primary matched case wall equals raw case wall minus only the first-case one-time allocation audit. It includes controller envelopes, late payload recovery, late receipt self-copy, final receipt SHA reads and canonical generation observation. Subsequent durable completed-state writes are outside case wall and included in coordinator elapsed. Archive/child/exposure timers are nested diagnostics and must not be added to totals. Coordinator queues and outside-case overhead are separate. Final coordinator-state cold copy and analysis are outside the completed coordinator clock.",
               "scope": "Combined package and qualified per-variant allocation comparison; two observed matched ABBA pairs. Every case retained. No outlier exclusion, individual-patch causality, confidence interval, playing-strength or holdout claim.",
               "inputs": sorted(reader.inputs.values(), key=lambda item: item["path"])}
+    if continued is not None:
+        result["scope"] += " " + continued["measurement_scope"]
     return result, devices
 
 
