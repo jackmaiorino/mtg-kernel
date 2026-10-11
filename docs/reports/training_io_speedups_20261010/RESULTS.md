@@ -46,7 +46,7 @@ Both frozen variants used eight collection/preparation workers on even CPUs 0 th
 
 The analyzer verified full ordered trajectories, model and optimizer fingerprints, checkpoints and ledger; all 162 deterministic update outputs per case; unchanged exposure and embedding gates; equal native member coverage except the separately pinned and recovered candidate exposure sidecar; source and independent destination SHA for every recovered member; physical allocation reconciliation; and both failed-prefix provenance chains. Update comparisons exclude only enumerated timing/worker telemetry. Unknown scientific fields, paths, exact numbers and deterministic preparation counters remain compared. See the full analysis for every excluded field.
 
-Both release builds and all 24 affected native tests passed. Focused Python validation passed 62 tests with five platform/privilege skips. Frozen baseline `b3bd1c1c0d7b5b6766359a3901549de768bcc175` includes PR200; frozen candidate `172ccb3c818a96f082f2cab44c570134a0b21ee3` contains the production package. Later commits add harness, analyzer and reporting repairs only.
+Both release builds and all 24 affected native tests passed. Focused Python validation passed 62 tests with five platform/privilege skips. Frozen baseline `b3bd1c1c0d7b5b6766359a3901549de768bcc175` includes PR200; the measured result applies to frozen candidate `172ccb3c818a96f082f2cab44c570134a0b21ee3`, which contains the production package. Later task commits repair the harness, analyzer and reporting. Delivery also integrates accepted main `6db8129f5f6110f4e0adb0d7a70ec52af6cfd8c2`; the integrated delivery head was not the measured candidate.
 
 ## Complete elapsed accounting
 
