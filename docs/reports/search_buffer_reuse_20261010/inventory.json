@@ -1,0 +1,263 @@
+{
+  "schema": "search-buffer-reuse-fleet-inventory/v1",
+  "observed_utc": "2026-10-11T02:10:30.537104+00:00",
+  "jacks_pc": {
+    "gpu": [
+      "index, name, driver_version, memory.total [MiB], memory.used [MiB], utilization.gpu [%]",
+      "0, NVIDIA GeForce RTX 4070 SUPER, 596.36, 12282 MiB, 1984 MiB, 1 %",
+      "1, NVIDIA GeForce RTX 3050, 596.36, 6144 MiB, 22 MiB, 0 %"
+    ],
+    "observed_utc": "2026-10-11T02:10:32.2032266Z",
+    "memory": {
+      "TotalVisibleMemorySize": 134025436,
+      "FreePhysicalMemory": 76306284
+    },
+    "volumes": [
+      {
+        "DeviceID": "C:",
+        "Size": 999136686080,
+        "FreeSpace": 54944096256
+      },
+      {
+        "DeviceID": "D:",
+        "Size": 1000186310656,
+        "FreeSpace": 494063718400
+      },
+      {
+        "DeviceID": "E:",
+        "Size": 4000768323584,
+        "FreeSpace": 778979094528
+      }
+    ],
+    "cpu": [
+      {
+        "Name": "13th Gen Intel(R) Core(TM) i7-13700K",
+        "NumberOfCores": 16,
+        "NumberOfLogicalProcessors": 24,
+        "LoadPercentage": 29
+      }
+    ],
+    "slots": {
+      "read_only": true,
+      "reader_source_sha256": "2c499cdda847093a0a3844577c728e089ea6eebb16d09e7925faee28a3976a0b",
+      "logical_cpus": 24,
+      "config": {
+        "cores": [
+          23,
+          22,
+          21,
+          20,
+          19,
+          18,
+          17,
+          16
+        ],
+        "keep_free": 0,
+        "priority": "below_normal"
+      },
+      "timed": {
+        "held": true,
+        "cores": [
+          0,
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          14
+        ],
+        "lane": "claude-spy-reset-pilot-20261010",
+        "work_id": "bank-r1",
+        "acquired_at": "2026-10-11T01:03:37.933+00:00",
+        "why": "timed work declared its cores"
+      },
+      "claims": [
+        {
+          "lane": "codex-training-io-speedups-20261010",
+          "work_id": "candidate-build-tests",
+          "cores": [
+            16,
+            17
+          ],
+          "priority": "below_normal",
+          "state": "running",
+          "acquired_at": "2026-10-11T01:54:02.865+00:00",
+          "process_identity_state": "alive"
+        },
+        {
+          "lane": "ci-runners",
+          "work_id": "ci-win-3",
+          "cores": [
+            19,
+            20,
+            21
+          ],
+          "priority": "below_normal",
+          "state": "running",
+          "acquired_at": "2026-10-10T23:12:53.850+00:00",
+          "process_identity_state": "unknown"
+        },
+        {
+          "lane": "ci-runners",
+          "work_id": "ci-win-2",
+          "cores": [
+            18,
+            22,
+            23
+          ],
+          "priority": "below_normal",
+          "state": "running",
+          "acquired_at": "2026-10-10T23:20:56.613+00:00",
+          "process_identity_state": "unknown"
+        }
+      ],
+      "queue": [
+        {
+          "lane": "codex-issue36-serving",
+          "work_id": "issue36-arrangement-python",
+          "cores_wanted": 2,
+          "enqueued_at": "2026-10-11T01:36:14.884+00:00",
+          "process_identity_state": "alive"
+        },
+        {
+          "lane": "codex-fdn-issue110",
+          "work_id": "fdn110-six-creatures-admission-native2",
+          "cores_wanted": 2,
+          "enqueued_at": "2026-10-11T01:55:36.326+00:00",
+          "process_identity_state": "alive"
+        },
+        {
+          "lane": "codex-standard-completion",
+          "work_id": "root-standard-check-001",
+          "cores_wanted": 1,
+          "enqueued_at": "2026-10-11T02:00:20.972+00:00",
+          "process_identity_state": "alive"
+        },
+        {
+          "lane": "codex-standard-completion",
+          "work_id": "keywords-check-1",
+          "cores_wanted": 1,
+          "enqueued_at": "2026-10-11T02:00:38.107+00:00",
+          "process_identity_state": "alive"
+        },
+        {
+          "lane": "codex-standard-completion",
+          "work_id": "lands-spells-check-1",
+          "cores_wanted": 1,
+          "enqueued_at": "2026-10-11T02:00:48.761+00:00",
+          "process_identity_state": "alive"
+        },
+        {
+          "lane": "codex-standard-completion",
+          "work_id": "creatures-check-1",
+          "cores_wanted": 1,
+          "enqueued_at": "2026-10-11T02:00:57.670+00:00",
+          "process_identity_state": "alive"
+        },
+        {
+          "lane": "codex-issue36-serving",
+          "work_id": "issue36-combined-build-native-002",
+          "cores_wanted": 2,
+          "enqueued_at": "2026-10-11T02:05:52.040+00:00",
+          "process_identity_state": "alive"
+        }
+      ],
+      "free_cores": [],
+      "stale_records_ignored_without_deletion": 0,
+      "unreadable_records": 0,
+      "limitation": "A one-shot snapshot is not a reservation; admission must be checked by the supported launcher."
+    },
+    "connectivity": "local_ok"
+  },
+  "haleys_pc": {
+    "gpu": [
+      "index, name, driver_version, memory.total [MiB], memory.used [MiB], utilization.gpu [%]",
+      "0, NVIDIA GeForce RTX 4060, 591.86, 8188 MiB, 1894 MiB, 0 %"
+    ],
+    "observed_utc": "2026-10-11T02:10:32.8511240Z",
+    "memory": {
+      "TotalVisibleMemorySize": 33478692,
+      "FreePhysicalMemory": 16438744
+    },
+    "volumes": [
+      {
+        "DeviceID": "C:",
+        "Size": 999123054592,
+        "FreeSpace": 71125860352
+      }
+    ],
+    "cpu": [
+      {
+        "Name": "AMD Ryzen 7 3700X 8-Core Processor             ",
+        "NumberOfCores": 8,
+        "NumberOfLogicalProcessors": 16,
+        "LoadPercentage": 12
+      }
+    ],
+    "slots": {
+      "read_only": true,
+      "reader_source_sha256": "2c499cdda847093a0a3844577c728e089ea6eebb16d09e7925faee28a3976a0b",
+      "logical_cpus": 16,
+      "config": {
+        "cores": [
+          15,
+          14,
+          13,
+          12,
+          11,
+          10,
+          9,
+          8,
+          7,
+          6,
+          5,
+          4,
+          3,
+          2,
+          1,
+          0
+        ],
+        "keep_free": 0,
+        "priority": "below_normal"
+      },
+      "timed": {
+        "held": true,
+        "cores": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "lane": "claude-spy-reset-pilot-20261010",
+        "work_id": "bank-r2",
+        "acquired_at": "2026-10-11T01:03:31.080+00:00",
+        "why": "timed work declared its cores"
+      },
+      "claims": [],
+      "queue": [],
+      "free_cores": [],
+      "stale_records_ignored_without_deletion": 0,
+      "unreadable_records": 0,
+      "limitation": "A one-shot snapshot is not a reservation; admission must be checked by the supported launcher."
+    },
+    "connectivity": "ssh_batchmode_ok"
+  },
+  "runpod": {
+    "capture_failed": true,
+    "error": "HTTPError",
+    "http_status": 403
+  }
+}

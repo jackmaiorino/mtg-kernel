@@ -1,0 +1,32 @@
+{
+  "schema": "search-buffer-reuse-state/v1",
+  "pull_request": "https://github.com/jackmaiorino/mtg-kernel/pull/220",
+  "baseline_commit": "1d2404775a141db4cd90d7579f8f765db37d55df",
+  "candidate_commit": "ed0482436c2f91bc318557d02e44108ae56b5f66",
+  "baseline_build": {
+    "state": "queued",
+    "claim_id": "186897bc64444827b21f30edf3a6d06f",
+    "runner_pid": 33924,
+    "log": "D:/search-buffer-reuse-20261010/build-baseline-1d240477-claim.log",
+    "receipt": "D:/search-buffer-reuse-20261010/build-baseline.json"
+  },
+  "candidate_build_and_tests": "One-shot watcher started; candidate ed048 waits for baseline success and host_slots admission",
+  "measurements": "Authorized bounded one/two-worker qualification and ABBA; queued after successful candidate tests/build, no execution yet",
+  "speedup_claim": null,
+  "resource_constraint": "No admissible cores in the one-shot fleet inventory; bank-r1 release condition is complete or failed, with no reliable ETA",
+  "next_wake": "Existing host_slots baseline queue admission, followed by one-shot watcher for candidate checks and measurement",
+  "retired_attempt": "D:/search-buffer-reuse-20261010/retired-baseline-c86b1bf0-queue.json",
+  "storage": {
+    "scratch": "D:/search-buffer-reuse-20261010",
+    "projected_bytes": 12884901888,
+    "cap_bytes": 21474836480,
+    "reserve_bytes": 64424509440
+  },
+  "watcher": {
+    "record": "D:/search-buffer-reuse-20261010/pipeline-watcher.json",
+    "errors": "D:/search-buffer-reuse-20261010/pipeline-watch-error.log",
+    "deadline_hours": 12,
+    "pid": 43508,
+    "log": "D:/search-buffer-reuse-20261010/pipeline-watch.log"
+  }
+}
