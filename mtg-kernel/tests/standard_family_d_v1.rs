@@ -2980,30 +2980,24 @@ fn restored_discover_child_refuses_missing_or_mismatched_parent_before_payment()
     engine::step(&mut state, Action::ChooseEffectBoolean(true)).unwrap();
     assert!(matches!(next(&mut state), Decision::ChooseKicker { spell, .. } if spell == hit));
     for corruption in 0..5 {
-        let mut restored: GameState =
-            serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
-        let context = restored
-            .standard_v1
-            .as_mut()
-            .unwrap()
-            .resolution_play
-            .as_mut()
-            .unwrap();
+        let mut saved = serde_json::to_value(&state).unwrap();
+        let context = &mut saved["standard_v1"]["resolution_play"];
+        assert!(context.is_object());
         match corruption {
-            0 => context.suspended = None,
-            1 => context.parent = mtg_kernel::ids::StackItemId::default(),
-            2 => context.parent_index = usize::MAX,
-            3 => context.suspended.as_mut().unwrap().ctx.stack_item_id = None,
+            0 => context["suspended"] = serde_json::Value::Null,
+            1 => {
+                context["parent"] =
+                    serde_json::to_value(mtg_kernel::ids::StackItemId::default()).unwrap()
+            }
+            2 => context["parent_index"] = serde_json::to_value(usize::MAX).unwrap(),
+            3 => context["suspended"]["ctx"]["stack_item_id"] = serde_json::Value::Null,
             4 => {
-                context
-                    .suspended
-                    .as_mut()
-                    .unwrap()
-                    .resolving_item
-                    .controller = PlayerId::P1
+                context["suspended"]["resolving_item"]["controller"] =
+                    serde_json::to_value(PlayerId::P1).unwrap()
             }
             _ => unreachable!(),
         }
+        let mut restored: GameState = serde_json::from_value(saved).unwrap();
         let mana = restored.players[0].mana_pool;
         let library = restored.players[0].library.clone();
         let exile = restored.exile.clone();
