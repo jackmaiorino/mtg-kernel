@@ -175,20 +175,19 @@ fn label(
     super::labels::label_v8(action, observation, handles, human)
 }
 
+type ZombiePromptPartsV13 = (
+    HumanVisibleStateV8,
+    Vec<HumanLegalActionV1>,
+    Vec<u32>,
+    Vec<HumanSingleGraveyardContextV13>,
+);
+
 fn project_base(
     observation: &ObservationV8,
     actions: &[ActionSemanticV1],
     human: PlayerSeatV1,
     contexts: &[crate::soul_shackled_zombie_public_v1::SingleGraveyardContextV1],
-) -> Result<
-    (
-        HumanVisibleStateV8,
-        Vec<HumanLegalActionV1>,
-        Vec<u32>,
-        Vec<HumanSingleGraveyardContextV13>,
-    ),
-    Error,
-> {
+) -> Result<ZombiePromptPartsV13, Error> {
     if observation.acting_player != human {
         return Err(Error::NotHumanTurn);
     }
