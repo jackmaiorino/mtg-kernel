@@ -665,6 +665,7 @@ fn flat_cost_kind_v1(kind: CostKind) -> u8 {
         CostKind::RemoveCounters => 10,
         CostKind::PutCounters => 11,
         CostKind::ChooseCreatureOrRevealCreature => 12,
+        CostKind::ExileCraftMaterial => 13,
     }
 }
 

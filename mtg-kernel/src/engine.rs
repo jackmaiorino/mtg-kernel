@@ -775,6 +775,8 @@ pub enum CostKind {
     /// hand-card choice. The selected zone is bound separately before this
     /// object pick is offered.
     ChooseCreatureOrRevealCreature,
+    /// Another controlled artifact or artifact card in the controller's graveyard.
+    ExileCraftMaterial,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -11168,7 +11170,7 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
         return Some(Decision::ChooseCostTargets {
             player: pending.controller,
             source: pending.source,
-            cost_kind: CostKind::ExileFromGraveyard,
+            cost_kind: CostKind::ExileCraftMaterial,
             remaining: 1,
             candidates: candidates
                 .into_iter()

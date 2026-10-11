@@ -526,6 +526,7 @@ pub(super) fn label(
                 | CostKind::SacrificeArtifacts => "Sacrifice",
                 CostKind::DiscardCards => "Discard",
                 CostKind::ExileFromGraveyard => "Exile from your graveyard",
+                CostKind::ExileCraftMaterial => "Exile as craft material",
                 CostKind::TapPermanents => "Tap",
                 CostKind::ReturnPermanentsToHand => "Return to its owner's hand",
                 CostKind::ChooseCreatureOrRevealCreature => {
