@@ -205,7 +205,13 @@ fn missing_duplicate_coherent_capture_and_expired_reinsertion_refuse_readonly() 
     use crate::engine::UntilEndOfTurnEffect;
     use crate::event::CommittedEvent;
     for actor in [PlayerId::P0, PlayerId::P1] {
-        let (state, _, _) = activated(actor);
+        let (mut state, _, recipient) = activated(actor);
+        let foreign = put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
         let surface = PolicySurfaceV5::new();
         let receipt = state
             .engine
@@ -215,6 +221,89 @@ fn missing_duplicate_coherent_capture_and_expired_reinsertion_refuse_readonly() 
             .unwrap()
             .clone();
         let mut cases = Vec::new();
+        // Rewriting every successor record and the live marker together must
+        // not redirect the original independently committed targeting event.
+        let targeted: Vec<_> = state
+            .engine
+            .event_history
+            .iter()
+            .filter(|event| matches!(event, CommittedEvent::Targeted { .. }))
+            .cloned()
+            .collect();
+        assert!(targeted.iter().any(|event| matches!(event,
+            CommittedEvent::Targeted { target, .. } if *target == recipient)));
+        let mut redirected = state.clone();
+        let replacement = crate::state::Target::Object(foreign);
+        let contract = crate::state::StackTargetContractV4::capture(&redirected, replacement);
+        let public_ref = crate::rl::card_ref(&redirected, foreign).unwrap();
+        let snapshot = serde_json::to_string(redirected.objects.get(foreign)).unwrap();
+        for event in &mut redirected.engine.event_history {
+            match event {
+                CommittedEvent::SowerRestrictionResolutionV1 {
+                    item,
+                    recipient_snapshot,
+                    ..
+                } => {
+                    item.targets = vec![replacement];
+                    item.v4.target_contracts = vec![contract];
+                    *recipient_snapshot = snapshot.clone();
+                }
+                CommittedEvent::SowerRestrictionInstalledV1 { capture } => {
+                    capture.item.targets = vec![replacement];
+                    capture.item.v4.target_contracts = vec![contract];
+                    capture.recipient = public_ref;
+                    capture.recipient_snapshot = snapshot.clone();
+                }
+                _ => {}
+            }
+        }
+        for effect in &mut redirected.engine.until_end_of_turn {
+            if let UntilEndOfTurnEffect::ResolvedObjectCantBlock {
+                object_id,
+                object_zone_change_count,
+                ..
+            } = effect
+            {
+                *object_id = foreign;
+                *object_zone_change_count = public_ref.zone_change_count;
+            }
+        }
+        assert_eq!(
+            redirected
+                .engine
+                .event_history
+                .iter()
+                .filter(|event| matches!(event, CommittedEvent::Targeted { .. }))
+                .cloned()
+                .collect::<Vec<_>>(),
+            targeted
+        );
+        cases.push(redirected);
+        let mut redirected_controller = state.clone();
+        for event in &mut redirected_controller.engine.event_history {
+            let item = match event {
+                CommittedEvent::SowerRestrictionResolutionV1 { item, .. } => item,
+                CommittedEvent::SowerRestrictionInstalledV1 { capture } => &mut capture.item,
+                _ => continue,
+            };
+            item.controller = actor.opponent();
+            item.v4.ability_source_contract.as_mut().unwrap().controller = actor.opponent();
+        }
+        cases.push(redirected_controller);
+        let mut missing_targeted = state.clone();
+        missing_targeted
+            .engine
+            .event_history
+            .retain(|event| !matches!(event, CommittedEvent::Targeted { .. }));
+        cases.push(missing_targeted);
+        let mut duplicate_targeted = state.clone();
+        // Duplicates must precede resolution to test the unique announcement
+        // authority, rather than merely appending unrelated later history.
+        duplicate_targeted
+            .engine
+            .event_history
+            .insert(0, targeted[0].clone());
+        cases.push(duplicate_targeted);
         let mut bad = state.clone();
         bad.engine.until_end_of_turn.clear();
         cases.push(bad);
@@ -290,7 +379,11 @@ fn missing_duplicate_coherent_capture_and_expired_reinsertion_refuse_readonly() 
         cases.push(expired);
         for bad in cases {
             let before = serde_json::to_vec(&bad).unwrap();
-            assert!(observe_v1(&bad, &surface, actor, 0, 0, 0, 1).is_err());
+            for viewer in [actor, actor.opponent()] {
+                assert!(observe_v1(&bad, &surface, viewer, 0, 0, 0, 1).is_err());
+                let restored: GameState = serde_json::from_slice(&before).unwrap();
+                assert!(observe_v1(&restored, &surface, viewer, 0, 0, 0, 1).is_err());
+            }
             assert_eq!(serde_json::to_vec(&bad).unwrap(), before);
             assert!(matches!(
                 crate::rl_session::FastActorSessionV1::from_sower_v14_fixture_state(bad)

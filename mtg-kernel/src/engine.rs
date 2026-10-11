@@ -13876,8 +13876,12 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
-    if targets_legal {
-        crate::sower_restriction_capture_v1::begin_resolution(state);
+    if targets_legal && crate::sower_restriction_capture_v1::begin_resolution(state).is_err() {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            resolving_source,
+        ));
+        return ResolutionProgress::Suspended;
     }
     let item = state
         .stack

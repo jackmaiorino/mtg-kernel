@@ -63,15 +63,63 @@ fn owns_item(item: &StackItem) -> bool {
     crate::rules_meaning_sower_v1::meaning_v1(&selector, source.card_def, u16::from(index)).is_ok()
 }
 
-pub(crate) fn begin_resolution(state: &mut GameState) {
-    let Some(item) = state.stack.last().filter(|item| owns_item(item)).cloned() else {
-        return;
+/// Announcement owns the original target and payer independently of the
+/// successor's resolution/installation records. Recipient control may change
+/// afterwards, so only the captured target generation and targeting controller
+/// are compared here.
+fn validate_targeting(
+    state: &GameState,
+    item: &StackItem,
+    before: usize,
+) -> Result<(), RlContractError> {
+    let invalid = || RlContractError("Sower restriction lost its committed target".into());
+    let (
+        [Target::Object(target)],
+        [StackTargetContractV4::Object {
+            object,
+            zone: Zone::Battlefield,
+            zone_change_count,
+            ..
+        }],
+    ) = (item.targets.as_slice(), item.v4.target_contracts.as_slice())
+    else {
+        return Err(invalid());
     };
+    if target != object || item.v4.stack_item_id.0 == 0 {
+        return Err(invalid());
+    }
+    let mut events = state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .filter(|(_, event)| {
+            matches!(event, CommittedEvent::Targeted { targeting_stack_item, .. }
+            if *targeting_stack_item == item.v4.stack_item_id)
+        });
+    if !matches!(events.next(), Some((ordinal, CommittedEvent::Targeted {
+        target: actual,
+        target_zone_change_count: generation,
+        targeting_controller,
+        ..
+    })) if ordinal < before && actual == target && generation == zone_change_count && *targeting_controller == item.controller)
+        || events.next().is_some()
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+pub(crate) fn begin_resolution(state: &mut GameState) -> Result<(), RlContractError> {
+    let Some(item) = state.stack.last().filter(|item| owns_item(item)).cloned() else {
+        return Ok(());
+    };
+    validate_targeting(state, &item, state.engine.event_history.len())?;
     let Some(Target::Object(recipient)) = item.targets.first() else {
-        return;
+        return Ok(());
     };
     let Some(object) = state.objects.try_get(*recipient) else {
-        return;
+        return Ok(());
     };
     let recipient_snapshot = serde_json::to_string(object).expect("target snapshot serializes");
     state
@@ -82,6 +130,7 @@ pub(crate) fn begin_resolution(state: &mut GameState) {
             timestamp: state.engine.next_effect_timestamp,
             recipient_snapshot,
         });
+    Ok(())
 }
 
 pub(crate) fn install(state: &mut GameState, ctx: &ExecCtx, object: ObjectId, timestamp: u64) {
@@ -95,6 +144,13 @@ pub(crate) fn install(state: &mut GameState, ctx: &ExecCtx, object: ObjectId, ti
     }) else {
         return;
     };
+    if validate_targeting(state, item, state.engine.event_history.len()).is_err() {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
     if masked_ref(object, state.objects.get(object)).is_err() {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -220,6 +276,7 @@ pub(crate) fn active(state: &GameState) -> Result<Vec<&CaptureV1>, RlContractErr
                 timestamp,
                 recipient_snapshot,
             } => {
+                validate_targeting(state, item, ordinal)?;
                 if !owns_item(item)
                     || resolutions
                         .iter()
@@ -238,6 +295,7 @@ pub(crate) fn active(state: &GameState) -> Result<Vec<&CaptureV1>, RlContractErr
             }
             CommittedEvent::SowerRestrictionInstalledV1 { capture } => {
                 authenticate(capture)?;
+                validate_targeting(state, &capture.item, ordinal)?;
                 if !resolutions
                     .iter()
                     .any(|(before, item, timestamp, snapshot)| {
