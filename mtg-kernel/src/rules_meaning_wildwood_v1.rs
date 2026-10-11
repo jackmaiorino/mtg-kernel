@@ -183,7 +183,7 @@ pub fn meaning_v1(selector: &SelectorV1, card_id: u16) -> Result<MeaningV1, Erro
     }
     let spell_root = serde_json::to_vec(&(
         card_id,
-        format!("{:?}", def.cost),
+        def.cost,
         def.types,
         def.subtypes,
         def.colors,
@@ -255,7 +255,7 @@ pub fn meaning_v1(selector: &SelectorV1, card_id: u16) -> Result<MeaningV1, Erro
             later_batch_collection_duplicates_capture: false,
         },
         historical_event_capture_transport_supplied: false,
-        complete_apnap_capture_merge_supplied: false,
+        complete_apnap_capture_merge_supplied: true,
         unbounded_x_successor_supplied: false,
         frozen_vector_model_admission_supplied: false,
     })

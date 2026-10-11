@@ -1,10 +1,16 @@
 # Wildwood Scourge precise meaning source
 
-This companion is prepared on reviewed source
-`ac6c34f3e9ab1ec527135d9230196989a7e88681`. Wildwood remains unregistered.
+This companion composes source ac6c34f3 with the separate APNAP repair
+`0d14226dfbdde4b1164daea47dc0c0692b86e2ba` (composed as 318a4c25).
+Wildwood remains unregistered. The original direct pending-queue capture
+was outside the normal APNAP batch; the repair routes an unpublished queue
+through the partial/final normal checkpoint without sorting existing
+ordered or target-suspended stages.
 The separate schema is `mtg-kernel/rules-meaning/wildwood-scourge/v1`.
 It changes no predecessor vectors, IDs, action layouts, catalog/profile tuples
-or engine state. Default and Standard catalogs explicitly refuse; Limited
+or accepted engine identities. The prerequisite adds an optional unpublished
+capture queue; its absence retains previous serialized bytes and Hash input.
+Default and Standard catalogs explicitly refuse; Limited
 without Standard can select only a genuine Full Wildwood catalog definition.
 There is no fixture admission hook or caller-supplied printed program.
 
@@ -48,9 +54,10 @@ refusal, nested unknown-field refusal, and two actually cast Wildwood sources
 whose counter captures retain their original controllers despite later
 control changes and restore. The latter uses clearly labeled existing typed
 control/counter operand setups and observes actual APNAP stack placement.
-The prior four primitive and ten future printed core groups are preserved.
+The original four primitive and ten future printed core groups are preserved,
+along with the repair's one absence unit and three APNAP/placement groups.
 
-The ac6 core retains source/controller captures in PendingTrigger but does
+The repaired core retains source/controller captures in PendingTrigger but does
 not retain an independent historical recipient control/type/subtype receipt.
 PlusOneCountersAdded history itself contains only recipient ID/ZCC, placing
 player and count. This static companion never reconstructs event-time
@@ -58,7 +65,9 @@ characteristics from the current board. Authenticated public event/capture
 transport, safe Human labels for the precise event predicate, copied/hidden
 historical-source sampling, complete trigger-ordering consumers and frozen
 tensor/model/profile successors remain separate requirements. All supplied
-admission flags remain false. Broader unbounded-X support is also unsupplied.
+admission flags remain false. The separate APNAP merge supplied flag is true
+for the implemented source repair, not a runtime qualification claim.
+Broader unbounded-X support is also unsupplied.
 
 Pinned Rust 1.94.1 formatting and git diff checks are the only checks performed
 here. Compilation/native/gameplay and registration qualification remain
