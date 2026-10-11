@@ -37,7 +37,7 @@ measurement identity change and no execution admission or result claim.
 
 Native60 exact359a6e76984215913c769818f678f0f15a9dfb7d is submitted under
 supportedhandle9914bdf3fcd348a2b2bd15720cc021aa/supervisor143300, actual cores12-15
-BelowNormal. Its43 selected groups request336 runtime cases plus both all-test
+BelowNormal. Its43 selected groups request339 runtime case occurrences plus both all-test
 typechecks, Limited/Default strict lints and complete Default/Standard replay
 exports. This also covers the reviewed Sower pre-advancement capture validation
 and separate HeartfireV12 recipient input. Native59 actual101/101, absent
