@@ -219,6 +219,7 @@ fn run_goldfish(state: &mut GameState) -> RunResult {
             | Decision::ChooseEffectBoolean { .. }
             | Decision::ChooseCombatDamageRange { .. }
             | Decision::ChooseLegendPermanent { .. }
+            | Decision::ChooseAttackTarget { .. }
             | Decision::ChooseLondonMulligan { .. }
             | Decision::ChooseLondonBottom { .. }
             | Decision::ChooseEffectTargets { .. }

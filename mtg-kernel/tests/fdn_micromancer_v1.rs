@@ -367,6 +367,97 @@ fn forged_filter_fingerprint_and_candidate_bindings_refuse_without_state_mutatio
 }
 
 #[test]
+fn restored_spell_search_rejects_coherent_artifact_filter_without_mutation() {
+    use mtg_kernel::effect::{
+        self, EffectFrame, EffectObjectBinding, EffectTargetCandidate,
+        EffectTargetSelectionPurpose, LibraryCardFilter, PendingEffectChoice,
+    };
+    // FNV-1a for the merged artifact filter's tag 10 and mana value 1.
+    const ARTIFACT_FINGERPRINT: u64 = 0x7f12_3281_14e3_0cce;
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, _) = stage(player);
+        let spell = put(&mut state, player, "Burst Lightning", Zone::Library);
+        let artifact = put(&mut state, player, "Nihil Spellbomb", Zone::Library);
+        assert_eq!(search(&mut state, player), vec![Target::Object(spell)]);
+        let artifact_binding = EffectObjectBinding {
+            object: artifact,
+            expected_zone: Zone::Library,
+            expected_zone_change_count: state.objects.get(artifact).zone_change_count,
+        };
+        let mut forged = restored(&state);
+        let Some(PendingEffectChoice::SelectTargets { purpose, legal, .. }) = forged
+            .engine
+            .pending_effect
+            .as_mut()
+            .unwrap()
+            .choice
+            .as_mut()
+        else {
+            panic!("expected the restored spell-search choice")
+        };
+        let EffectTargetSelectionPurpose::SearchLibraryToHand {
+            filter,
+            filter_fingerprint,
+            ..
+        } = purpose
+        else {
+            panic!("expected a library search")
+        };
+        *filter = LibraryCardFilter::ArtifactWithManaValue(1);
+        *filter_fingerprint = ARTIFACT_FINGERPRINT;
+        *legal = vec![EffectTargetCandidate {
+            target: Target::Object(artifact),
+            expected_object: Some(artifact_binding),
+        }];
+        let before = serde_json::to_vec(&forged).unwrap();
+        assert!(engine::step(
+            &mut forged,
+            Action::ChooseEffectTarget(Target::Object(artifact))
+        )
+        .is_err());
+        assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
+
+        // The unmodified restored prompt still accepts and resolves its spell.
+        let mut valid = restored(&state);
+        engine::step(
+            &mut valid,
+            Action::ChooseEffectTarget(Target::Object(spell)),
+        )
+        .unwrap();
+        assert!(effect::validate_pending_effect_choice(&valid).is_ok());
+        if matches!(next(&mut valid), Decision::ChooseEffectTargets { .. }) {
+            engine::step(&mut valid, Action::FinishEffectSelection).unwrap();
+        }
+        assert!(matches!(
+            settle(&mut valid),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(valid.objects.get(spell).zone, Zone::Hand);
+        assert_eq!(valid.objects.get(artifact).zone, Zone::Library);
+
+        // Answered frames must retain the same definition binding too.
+        engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+        assert!(effect::validate_pending_effect_choice(&state).is_ok());
+        let mut forged = restored(&state);
+        let EffectFrame::SearchLibraryToHand {
+            filter,
+            filter_fingerprint,
+            selected,
+            ..
+        } = &mut forged.engine.pending_effect.as_mut().unwrap().frames[0]
+        else {
+            panic!("expected an answered spell-search frame")
+        };
+        *filter = LibraryCardFilter::ArtifactWithManaValue(1);
+        *filter_fingerprint = ARTIFACT_FINGERPRINT;
+        *selected = Some(artifact_binding);
+        let before = serde_json::to_vec(&forged).unwrap();
+        assert!(effect::validate_pending_effect_choice(&forged).is_err());
+        assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
+    }
+}
+
+#[test]
 fn coherent_search_forgeries_and_answered_program_edits_refuse() {
     use mtg_kernel::effect::{
         self, EffectFrame, EffectObjectBinding, EffectOp, EffectTargetCandidate,

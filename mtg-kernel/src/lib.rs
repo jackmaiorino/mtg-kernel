@@ -38,6 +38,7 @@ pub mod async_flat_scored_rollout_v1;
 pub mod async_flat_scored_rollout_v2;
 pub mod async_rollout;
 pub mod async_rollout_v2;
+pub mod attack_target_v1;
 pub mod bo3_match;
 pub mod bo3_session;
 pub mod bounded_staleness_async_harness_v1;
@@ -50,6 +51,9 @@ pub mod legend_rule_v1;
 pub mod native_search_collection_v3;
 pub mod native_search_trajectory_v3;
 pub mod planeswalker_v1;
+pub mod standard_cards_v1;
+pub mod standard_creature_choices_v1;
+pub mod standard_creatures_v1;
 #[cfg(feature = "standard-magezero-fixtures")]
 pub mod standard_keywords_v1;
 #[cfg(feature = "standard-magezero-fixtures")]
@@ -456,6 +460,7 @@ pub mod rl_session;
 pub mod runtime_decks;
 pub mod sideboard;
 pub mod snapshot;
+pub mod standard_legends_v1;
 pub mod state;
 #[cfg(test)]
 mod store_v2_resume_walk_timing_harness_v1;
@@ -491,3 +496,5 @@ pub fn run_experimental_burn_net8_packed_cuda_v1() -> Result<(), Box<dyn std::er
 pub fn run_experimental_burn_net8_cuda_train_v1() -> Result<(), Box<dyn std::error::Error>> {
     experimental_burn_net8_packed_v1::run_cuda_training_v1()
 }
+
+pub mod cauldron_grants_v1;

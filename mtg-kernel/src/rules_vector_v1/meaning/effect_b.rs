@@ -116,6 +116,9 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                 // The holder is the controller; expires at the cleanup of
                 // the controller's next turn.
                 ImpulseDuration::UntilOwnersNextTurn => DurF::UntilYourNextTurn,
+                // Exact end-step expiry is exposed in the public permission;
+                // the fixed rules-vector vocabulary has no end-step duration.
+                ImpulseDuration::UntilOwnersNextEndStep => DurF::UntilYourNextTurn,
             };
             let mut permission = EffectAtom::new(EvF::PlayPermission)
                 .player(RelF::You)
@@ -431,7 +434,8 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                 // The resolving spell's mana spent, frozen at cast time.
                 // Vocabulary gap: no cast-payment read; the amount is
                 // state-dependent.
-                crate::effect::LibraryLookCount::ManaSpentToCast => AmtF::Dynamic,
+                crate::effect::LibraryLookCount::ManaSpentToCast
+                | crate::effect::LibraryLookCount::ControllerArtifacts => AmtF::Dynamic,
             };
             let mut look = EffectAtom::new(EvF::Look)
                 .player(player)
@@ -454,6 +458,39 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                 reorder.from = Some(ZoneF::Library);
                 out.effect(reorder);
             }
+        }
+        EffectOp::LookTopSelectV1 {
+            player,
+            count: _,
+            rule,
+            pick_x,
+        } => {
+            let player = player_ref(*player);
+            out.control(ControlF::ChooseObjects);
+            let mut look = EffectAtom::new(EvF::Look)
+                .player(player)
+                .obj(ObjF::AnyCard)
+                .amount(AmtF::Dynamic);
+            look.from = Some(ZoneF::Library);
+            out.effect(look);
+            let destination = if rule
+                .selection
+                .is_some_and(|selection| selection.destination == crate::state::Zone::Battlefield)
+            {
+                ZoneF::Battlefield
+            } else {
+                ZoneF::Hand
+            };
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Library), destination)
+                    .player(player)
+                    .obj(ObjF::AnyCard)
+                    .amount(if *pick_x {
+                        AmtF::Dynamic
+                    } else {
+                        AmtF::fixed(i64::from(rule.pick))
+                    }),
+            );
         }
         _ => unreachable!("dispatched to the wrong slice"),
     }

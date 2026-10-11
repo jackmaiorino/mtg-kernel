@@ -24,6 +24,8 @@ pub enum LibraryPlacement {
     Top,
     SecondFromTop,
     Bottom,
+    /// Appended for Braided Quipu.
+    ThirdFromTop,
 }
 
 /// Which observers learn the identity of a card inserted into a library at
@@ -574,11 +576,45 @@ pub enum CommittedEvent {
         turn: u32,
         active_player: PlayerId,
     },
+    /// Precedes a transforming permanent's departure from the battlefield
+    /// while it showed a face other than its front, so leave triggers see
+    /// the face that left. Only the Standard catalog's transforming cards
+    /// record it.
+    LeftBattlefieldFaceV1 {
+        object: ObjectId,
+        zone_change_count: u32,
+        face_index: u8,
+    },
+    /// A door of a Room permanent became unlocked (709.5), either as the
+    /// Room entered after its half was cast or by the unlock special action.
+    /// Only the Standard catalog's Rooms record it.
+    RoomDoorUnlockedV1 {
+        object: ObjectId,
+        zone_change_count: u32,
+        door: u8,
+    },
+    /// A Class permanent gained a level (716.2). Only the Standard catalog's
+    /// Classes record it.
+    ClassLevelGainedV1 {
+        object: ObjectId,
+        zone_change_count: u32,
+        level: u8,
+    },
+    TurnedFaceUp {
+        object: ObjectId,
+        zone_change_count: u32,
+    },
+    BeginningPrecombatMainV1 {
+        active_player: PlayerId,
+    },
+    LeftBattlefieldCopyV1 {
+        source: crate::state::AbilitySourceContractV4,
+        face_index: u8,
+    },
 }
 
 /// Remembers the counters of a departing permanent whose own leave ability
-/// reads them. Entries for incarnations that have since moved again are
-/// dropped, so the list only holds objects still where they went.
+/// reads them. Each exact departing incarnation remains available to its triggers.
 #[cfg(feature = "standard-magezero-fixtures")]
 fn record_counter_lki(state: &mut GameState, object: ObjectId) {
     let live = state.objects.get(object);
@@ -587,21 +623,22 @@ fn record_counter_lki(state: &mut GameState, object: ObjectId) {
     }
     let mut entries = state.counter_lki_v1.take().unwrap_or_default();
     entries.retain(|entry| {
-        state
-            .objects
-            .try_get(entry.source.object)
-            .is_some_and(|candidate| {
-                candidate.zone_change_count == entry.source.zone_change_count + 1
-                    && entry.source.object != object
-            })
+        entry.source.object != object || entry.source.zone_change_count != live.zone_change_count
     });
-    if live.counters.any() {
+    let extras = crate::standard_creatures_v1::CounterExtrasV1 {
+        loyalty: crate::planeswalker_v1::loyalty(state, object).unwrap_or(0),
+        lifelink: live.v4.lifelink_keyword_counters,
+        time: live.v4.time_counters_v1,
+        finality: live.v4.creature_upgrade.as_ref().map_or(0, |u| u.finality),
+    };
+    if live.counters.any() || extras != Default::default() {
         entries.push(crate::state::CounterLkiV1 {
             source: crate::state::ObjectLinkV4 {
                 object,
                 zone_change_count: live.zone_change_count,
             },
             counters: live.counters,
+            extras: (extras != Default::default()).then_some(extras),
         });
     }
     state.counter_lki_v1 = (!entries.is_empty()).then_some(entries);
@@ -613,7 +650,12 @@ fn initialize_entry_counters(state: &mut GameState, object: ObjectId, kicked: bo
     if definition.is_executable() {
         if let Some(entry) = definition.enters_with_plus_one_counters {
             if !entry.if_kicked || kicked {
-                state.objects.get_mut(object).counters.plus1_plus1 = entry.count;
+                #[cfg(feature = "standard-magezero-fixtures")]
+                let entry_count =
+                    crate::standard_cards_v1::scale_counters(state, live.controller, entry.count);
+                #[cfg(not(feature = "standard-magezero-fixtures"))]
+                let entry_count = entry.count;
+                state.objects.get_mut(object).counters.plus1_plus1 = entry_count;
             }
         }
     }
@@ -651,6 +693,8 @@ pub(crate) fn add_plus_one_counters(
     if live.zone != Zone::Battlefield || count < 0 {
         return Err("invalid +1/+1 counter placement".to_string());
     }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    let count = crate::standard_cards_v1::scale_counters(state, player, count);
     let total = live
         .counters
         .plus1_plus1
@@ -669,6 +713,19 @@ pub fn apply_replacements(
     state: &mut GameState,
     mut proposed: ProposedEvent,
 ) -> Option<ProposedEvent> {
+    if let ProposedEvent::ZoneChange(change) = &mut proposed {
+        if change.to_zone == Zone::Graveyard
+            && state.objects.try_get(change.object).is_some_and(|o| {
+                o.zone == Zone::Battlefield
+                    && o.v4
+                        .creature_upgrade
+                        .as_ref()
+                        .is_some_and(|u| u.finality > 0)
+            })
+        {
+            change.to_zone = Zone::Exile;
+        }
+    }
     let damage_cannot_be_prevented = matches!(&proposed, ProposedEvent::Damage(_))
         && state.engine.until_end_of_turn.iter().any(|effect| {
             matches!(
@@ -676,6 +733,9 @@ pub fn apply_replacements(
                 crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
             )
         });
+    if let ProposedEvent::Damage(damage) = &mut proposed {
+        crate::standard_cards_v1::replace_damage(state, damage);
+    }
     if let ProposedEvent::Damage(damage) = &proposed {
         if !damage_cannot_be_prevented
             && crate::engine::damage_is_prevented_by_protection(state, damage.source, damage.target)
@@ -916,6 +976,20 @@ fn commit_with_ability_lki(
     event: ProposedEvent,
     abilities_removed_before: Option<bool>,
 ) {
+    let mut event = event;
+    if let ProposedEvent::ZoneChange(change) = &mut event {
+        if change.to_zone == Zone::Graveyard
+            && state.objects.try_get(change.object).is_some_and(|o| {
+                o.zone == Zone::Battlefield
+                    && o.v4
+                        .creature_upgrade
+                        .as_ref()
+                        .is_some_and(|u| u.finality > 0)
+            })
+        {
+            change.to_zone = Zone::Exile;
+        }
+    }
     let committed = match event {
         ProposedEvent::Damage(d) => {
             let source_has_deathtouch = d.amount > 0
@@ -953,6 +1027,7 @@ fn commit_with_ability_lki(
                         obj.v4.deathtouch_damage |= source_has_deathtouch;
                     }
                 }
+                Target::StackItem(_) => return,
                 Target::Player(p) => {
                     let lost = d.amount;
                     #[cfg(feature = "standard-magezero-fixtures")]
@@ -962,8 +1037,12 @@ fn commit_with_ability_lki(
                         state.record_life_loss_v1(p);
                     }
                     state.players[p.index()].life -= lost;
+                    #[cfg(feature = "standard-magezero-fixtures")]
+                    crate::standard_cards_v1::record_life(state, p, 0, lost);
                 }
             }
+            #[cfg(feature = "standard-magezero-fixtures")]
+            crate::standard_cards_v1::after_damage(state, d.source, d.amount, d.is_combat);
             CommittedEvent::Damage {
                 source: d.source,
                 target: d.target,
@@ -975,11 +1054,40 @@ fn commit_with_ability_lki(
             crate::standard_keywords_v1::unearth_exile_instead(state, &mut z);
             #[cfg(not(feature = "standard-magezero-fixtures"))]
             let _ = &mut z;
+            crate::standard_legends_v1::before_zone_change(state, z.object, z.to_zone);
             let from = state.objects.get(z.object).zone;
+            crate::standard_cards_v1::before_departure(state, z.object);
+            if from == Zone::Battlefield
+                && crate::standard_cards_v1::active_aegis_copy(state, z.object)
+            {
+                let marker = CommittedEvent::LeftBattlefieldCopyV1 {
+                    source: crate::state::AbilitySourceContractV4::capture(state, z.object),
+                    face_index: state.objects.get(z.object).v4.face_index,
+                };
+                state.engine.event_log.push(marker.clone());
+                state.engine.event_history.push(marker);
+            }
             let controller_before = state.objects.get(z.object).controller;
+            if from == Zone::Battlefield {
+                let live = state.objects.get(z.object);
+                if live.v4.face_index != 0
+                    && crate::standard_cards_v1::records_departure_face(
+                        &crate::card_def::CARD_DEFS[live.card_def as usize],
+                    )
+                {
+                    let marker = CommittedEvent::LeftBattlefieldFaceV1 {
+                        object: z.object,
+                        zone_change_count: live.zone_change_count,
+                        face_index: live.v4.face_index,
+                    };
+                    state.engine.event_log.push(marker.clone());
+                    state.engine.event_history.push(marker);
+                }
+            }
             #[cfg(feature = "standard-magezero-fixtures")]
             if from == Zone::Battlefield {
                 record_counter_lki(state, z.object);
+                crate::standard_statics_v1::record_creature_stats_lki(state, z.object);
             }
             #[cfg(feature = "standard-magezero-fixtures")]
             crate::standard_keywords_v1::before_zone_change(state, z.object, z.to_zone);
@@ -1003,6 +1111,10 @@ fn commit_with_ability_lki(
                     z.object,
                     crate::card_def::CardType::Creature,
                 );
+            #[cfg(feature = "standard-magezero-fixtures")]
+            if from == Zone::Battlefield {
+                crate::standard_cards_v1::end_aegis_copies_before_departure(state, z.object);
+            }
             commit_zone_change(
                 state,
                 z.object,
@@ -1037,6 +1149,8 @@ fn commit_with_ability_lki(
                 state.record_life_loss_v1(l.player);
             }
             state.players[l.player.index()].life -= amount;
+            #[cfg(feature = "standard-magezero-fixtures")]
+            crate::standard_cards_v1::record_life(state, l.player, 0, amount);
             CommittedEvent::LifeLoss {
                 player: l.player,
                 amount,
@@ -1047,6 +1161,8 @@ fn commit_with_ability_lki(
                 return;
             }
             state.players[g.player.index()].life += g.amount;
+            #[cfg(feature = "standard-magezero-fixtures")]
+            crate::standard_cards_v1::record_life(state, g.player, g.amount, 0);
             CommittedEvent::LifeGain {
                 player: g.player,
                 amount: g.amount,
@@ -1212,6 +1328,11 @@ fn commit_with_ability_lki(
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
     if let Some(object) = left_battlefield {
+        crate::standard_legends_v1::return_lagrella_exiles(
+            state,
+            object,
+            state.objects.get(object).zone_change_count - 1,
+        );
         if !state.engine.linked_exile_records.is_empty() {
             let left_zone_change_count = state.objects.get(object).zone_change_count - 1;
             crate::effect::return_cards_exiled_until_source_leaves(
@@ -1223,20 +1344,14 @@ fn commit_with_ability_lki(
     }
     crate::life_gain_turn_v1::capture_committed_gain(state);
     if let Some(object) = entry_counter_object {
+        crate::standard_cards_v1::initialize_entry_counters(state, object);
         let live = state.objects.get(object);
         let count = live.counters.plus1_plus1;
         let controller = live.controller;
         log_plus_one_counters_added(state, object, controller, count);
     }
     if let Some(source) = saga_source {
-        let chapter = {
-            let lore = &mut state.objects.get_mut(source).counters.lore;
-            *lore = lore
-                .checked_add(1)
-                .expect("a newly entered Saga's first lore counter fits i16");
-            u8::try_from(*lore).expect("a supported Saga chapter fits u8")
-        };
-        log_saga_chapter(state, source, chapter);
+        add_lore_counters(state, source, 1).expect("new Saga counters fit");
     }
 }
 
@@ -1253,6 +1368,14 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
         .into_iter()
         .filter_map(|e| apply_replacements(state, e))
         .collect();
+    #[cfg(feature = "standard-magezero-fixtures")]
+    for event in &survivors {
+        if let ProposedEvent::ZoneChange(change) = event {
+            if state.objects.get(change.object).zone == Zone::Battlefield {
+                crate::standard_statics_v1::record_creature_stats_lki(state, change.object);
+            }
+        }
+    }
     // Lifelink changes life at the same time as the damage. Capture every
     // source/controller before any member of the simultaneous batch can die.
     // CR 119.9: one source damaging several recipients simultaneously is
@@ -1571,6 +1694,12 @@ fn commit_zone_change(
     });
     let owner = state.objects.get(id).owner;
     let from_zone = state.objects.get(id).zone;
+    // A resolving permanent enters under its spell controller (608.3),
+    // including a spell cast from another player's exile through Etali.
+    let battlefield_controller = battlefield_controller.or_else(|| {
+        (from_zone == Zone::Stack && to_zone == Zone::Battlefield)
+            .then_some(state.objects.get(id).controller)
+    });
     refresh_paid_creature_power_lki(state, id, from_zone);
     let informed_observer_mask =
         if preserve_known_identity && from_zone == Zone::Library && to_zone == Zone::Hand {
@@ -1613,6 +1742,7 @@ fn commit_zone_change(
                 LibraryPlacement::Top => 0,
                 LibraryPlacement::SecondFromTop => 1.min(library_len),
                 LibraryPlacement::Bottom => library_len,
+                LibraryPlacement::ThirdFromTop => 2.min(library_len),
             };
             // The insertion position is public even when the inserted
             // identity is not. Preserve every still-valid older fact by
@@ -1638,8 +1768,8 @@ fn commit_zone_change(
         let obj = state.objects.get_mut(id);
         obj.zone = to_zone;
         // A zone change creates a new object with no carried-over control
-        // effect. Moves to Stack are engine actions and never enter this
-        // helper, so every destination handled here begins owner-controlled.
+        // effect. A resolving permanent or an explicit controller override
+        // chooses the battlefield controller; other destinations use the owner.
         obj.controller = if to_zone == Zone::Battlefield {
             battlefield_controller.unwrap_or(owner)
         } else {
@@ -1899,6 +2029,33 @@ fn remove_from_zone(state: &mut GameState, owner: PlayerId, id: ObjectId, zone: 
             before != state.stack.len()
         }
     }
+}
+
+/// Place lore counters together, then trigger every chapter whose threshold was crossed.
+pub(crate) fn add_lore_counters(
+    state: &mut GameState,
+    source: ObjectId,
+    amount: i16,
+) -> Result<(), String> {
+    let live = state.objects.get(source);
+    let count = crate::standard_cards_v1::scale_counters(state, live.controller, i32::from(amount));
+    let before = live.counters.lore;
+    let after = before
+        .checked_add(i16::try_from(count).map_err(|_| "lore count overflow")?)
+        .ok_or("lore counters overflow")?;
+    let chapters = crate::card_def::CARD_DEFS[live.card_def as usize]
+        .saga
+        .as_ref()
+        .filter(|_| {
+            live.v4.face_index == 0
+                && crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+        })
+        .map_or(0, |saga| saga.chapter_effects.len());
+    state.objects.get_mut(source).counters.lore = after;
+    for chapter in (before.max(0) + 1)..=after.min(i16::try_from(chapters).unwrap_or(i16::MAX)) {
+        log_saga_chapter(state, source, chapter as u8);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

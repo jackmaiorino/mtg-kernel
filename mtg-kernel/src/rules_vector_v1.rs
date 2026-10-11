@@ -83,6 +83,14 @@ const EXTRACTOR_SOURCES_V1: &[(&str, &str)] = &[
         include_str!("rules_vector_v1/meaning/effect_g.rs"),
     ),
     (
+        "rules_vector_v1/meaning/effect_h.rs",
+        include_str!("rules_vector_v1/meaning/effect_h.rs"),
+    ),
+    (
+        "rules_vector_v1/meaning/effect_i.rs",
+        include_str!("rules_vector_v1/meaning/effect_i.rs"),
+    ),
+    (
         "rules_vector_v1/meaning/reads.rs",
         include_str!("rules_vector_v1/meaning/reads.rs"),
     ),

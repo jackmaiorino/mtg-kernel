@@ -118,10 +118,10 @@ pub(super) fn prepare_spell_nonmana_v1(
                 return None;
             }
             let action = match component {
-                CostComponent::RemovePlusOneCountersFromControlledCreatures(amount) => {
-                    PreparedNonmanaActionV1::CounterRemovals(
-                        super::controlled_plus_one_counter_removals(player, &projected, amount)?,
-                    )
+                CostComponent::RemovePlusOneCountersFromControlledCreatures(_) => {
+                    // Validation bound the exact selected counters above. Do
+                    // not replace the player's selection with arena order.
+                    PreparedNonmanaActionV1::CounterRemovals(chosen.to_vec())
                 }
                 CostComponent::RevealHandIfNoCardsWithType(_) => {
                     let hand = projected.players[player.index()].hand.clone();
@@ -144,6 +144,7 @@ pub(super) struct SpellComponentChoicesV1 {
 }
 
 pub(super) struct SelectedSpellManaCostsV1 {
+    pub(super) legendary_spell: bool,
     pub(super) costs: Vec<Cost>,
     pub(super) component_groups: Vec<&'static [CostComponent]>,
     pub(super) types: &'static [CardType],
@@ -347,7 +348,7 @@ impl SelectedSpellManaCostsV1 {
         // Preserve deterministic minimum-exile, oldest-first Delve payment.
         let max_exiled = graveyard.len().min(generic as usize);
         for exiled in 0..=max_exiled {
-            if let Some(mana) = mana::plan_spell_mana_total_v1(
+            if let Some(mana) = mana::plan_spell_mana_total_with_restrictions_v1(
                 &pips,
                 generic - exiled as u32,
                 player,
@@ -355,6 +356,7 @@ impl SelectedSpellManaCostsV1 {
                 self.types.contains(&CardType::Creature),
                 reserved,
                 additional_life,
+                self.legendary_spell,
             ) {
                 return Some(SpellManaPaymentV1 {
                     mana,
@@ -419,6 +421,10 @@ pub(super) fn selected_spell_mana_costs_v1(
     state: &GameState,
 ) -> Option<SelectedSpellManaCostsV1> {
     let mut selected = SelectedSpellManaCostsV1 {
+        legendary_spell: definition
+            .supertypes
+            .contains(&card_def::Supertype::Legendary)
+            && method != CastMethodV4::Omen,
         costs: Vec::new(),
         component_groups: Vec::new(),
         types: definition.types,
@@ -475,6 +481,27 @@ pub(super) fn selected_spell_mana_costs_v1(
     Some(selected)
 }
 
+// Keep selected form, payment and source inputs explicit at this shared quote boundary.
+pub(super) fn selected_spell_mana_costs_for_source_v1(
+    source: ObjectId,
+    definition: &card_def::CardDef,
+    form: (CastMethodV4, bool, u8),
+    targets: &[Target],
+    player: PlayerId,
+    state: &GameState,
+) -> Option<SelectedSpellManaCostsV1> {
+    let (method, kicked, mode) = form;
+    let mut selected =
+        selected_spell_mana_costs_v1(definition, method, kicked, mode, targets, player, state)?;
+    if super::resolution_cast_v1::free_cast_for(state, source, player) {
+        if !super::resolution_cast_v1::form_allowed_for(state, source, method, player) {
+            return None;
+        }
+        selected.costs.remove(0);
+    }
+    Some(selected)
+}
+
 /// Quote a selected total before all interactive cost objects are picked.
 /// Complete the current pipeline's single supported object family without
 /// changing state. Tap picks reserve mana sources; sacrifices may use their
@@ -494,6 +521,9 @@ pub(super) fn selected_spell_quote_v1(
     state: &GameState,
     reserved_graveyard: &[ObjectId],
 ) -> Option<SpellManaPaymentV1> {
+    if x != 0 && super::resolution_cast_v1::free_cast_for(state, source, player) {
+        return None;
+    }
     if method == CastMethodV4::Alternative
         && !super::alt_cost_condition_met(
             definition.alt_cost?.condition,
@@ -504,8 +534,14 @@ pub(super) fn selected_spell_quote_v1(
     {
         return None;
     }
-    let selected =
-        selected_spell_mana_costs_v1(definition, method, kicked, mode, targets, player, state)?;
+    let selected = selected_spell_mana_costs_for_source_v1(
+        source,
+        definition,
+        (method, kicked, mode),
+        targets,
+        player,
+        state,
+    )?;
     let modifiers = super::spell_cost_generic_modifiers_v1(state, selected.types, player);
     let mut family = None;
     let mut discard_count = 0usize;
@@ -716,11 +752,14 @@ pub(super) fn prepare_final_spell_payment_v1(
     let definition = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
     let player = pending.controller;
     let source = pending.spell;
-    let selected = selected_spell_mana_costs_v1(
+    let selected = selected_spell_mana_costs_for_source_v1(
+        source,
         definition,
-        method,
-        pending.kicked == Some(true),
-        pending.mode_chosen.unwrap_or(0),
+        (
+            method,
+            pending.kicked == Some(true),
+            pending.mode_chosen.unwrap_or(0),
+        ),
         &pending.targets_chosen,
         player,
         state,
@@ -813,6 +852,13 @@ pub(super) fn prepare_final_spell_payment_v1(
         ordered_objects: choices.ordered_objects,
         chosen_power_lki: None,
     };
+    if selected.convoke {
+        if !pending.convoke_finished {
+            return None;
+        }
+        prepared.mana =
+            super::standard_cast_convoke::payment(resources, pending, &pending.convoke_chosen)?;
+    }
     // Ordinary mana-only spells require no whole-state projection.
     if selected.component_groups.is_empty()
         && discarded.is_empty()
@@ -1573,6 +1619,12 @@ mod tests {
             CostComponent::PayLife(2),
             CostComponent::RemovePlusOneCountersFromControlledCreatures(2),
         ] {
+            let chosen = match component {
+                CostComponent::RemovePlusOneCountersFromControlledCreatures(_) => {
+                    vec![object, object]
+                }
+                _ => Vec::new(),
+            };
             assert!(super::super::can_pay_components(
                 &[component],
                 PlayerId::P0,
@@ -1583,7 +1635,7 @@ mod tests {
                 &state,
                 PlayerId::P0,
                 object,
-                &[(&[component], &[]), (&[component], &[])],
+                &[(&[component], &chosen), (&[component], &chosen)],
             )
             .is_none());
             assert_eq!(serde_json::to_value(&state).unwrap(), before);
@@ -1597,13 +1649,13 @@ mod tests {
                     &[CostComponent::RemovePlusOneCountersFromControlledCreatures(
                         1,
                     )],
-                    &[],
+                    &[object],
                 ),
                 (
                     &[CostComponent::RemovePlusOneCountersFromControlledCreatures(
                         1,
                     )],
-                    &[],
+                    &[object],
                 ),
             ],
         )
@@ -1612,6 +1664,35 @@ mod tests {
         prepared.commit(&mut state, PlayerId::P0, object);
         assert_eq!(state.objects.get(object).counters.plus1_plus1, 0);
         assert_eq!(state.players[0].life, 3);
+    }
+
+    #[test]
+    fn prepared_counter_payment_preserves_the_selected_creature() {
+        let elf = card_def::card_id_by_name("Llanowar Elves").unwrap();
+        let mut state = GameState::new_from_libraries(&[elf, elf], &[], |_| "elf".into(), 953);
+        let first = state.draw_card(PlayerId::P0).unwrap();
+        let selected = state.draw_card(PlayerId::P0).unwrap();
+        for object in [first, selected] {
+            assert!(state.move_hand_to_battlefield(PlayerId::P0, object));
+            state.objects.get_mut(object).counters.plus1_plus1 = 1;
+        }
+        let before = state.clone();
+        let payment = prepare_spell_nonmana_v1(
+            &state,
+            PlayerId::P0,
+            first,
+            &[(
+                &[CostComponent::RemovePlusOneCountersFromControlledCreatures(
+                    1,
+                )],
+                &[selected],
+            )],
+        )
+        .unwrap();
+        assert_eq!(state, before);
+        payment.commit(&mut state, PlayerId::P0, first);
+        assert_eq!(state.objects.get(first).counters.plus1_plus1, 1);
+        assert_eq!(state.objects.get(selected).counters.plus1_plus1, 0);
     }
 
     #[test]
@@ -1641,7 +1722,7 @@ mod tests {
                     &[CostComponent::RemovePlusOneCountersFromControlledCreatures(
                         1
                     )],
-                    &[]
+                    &[creature]
                 ),
             ],
         )

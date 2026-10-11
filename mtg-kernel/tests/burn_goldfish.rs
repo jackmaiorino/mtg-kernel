@@ -81,6 +81,7 @@ fn kind_of(d: &Decision) -> Kind {
         | Decision::ChooseEffectBoolean { .. }
         | Decision::ChooseCombatDamageRange { .. }
         | Decision::ChooseLegendPermanent { .. }
+        | Decision::ChooseAttackTarget { .. }
         | Decision::ChooseLondonMulligan { .. }
         | Decision::ChooseLondonBottom { .. }
         | Decision::ChooseEffectTargets { .. }
@@ -164,6 +165,7 @@ fn run_goldfish(state: &mut GameState) -> (Vec<Kind>, Vec<i32>) {
             | Decision::ChooseEffectBoolean { .. }
             | Decision::ChooseCombatDamageRange { .. }
             | Decision::ChooseLegendPermanent { .. }
+            | Decision::ChooseAttackTarget { .. }
             | Decision::ChooseLondonMulligan { .. }
             | Decision::ChooseLondonBottom { .. }
             | Decision::ChooseEffectTargets { .. }

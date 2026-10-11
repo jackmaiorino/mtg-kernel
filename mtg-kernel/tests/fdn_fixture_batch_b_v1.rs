@@ -103,6 +103,7 @@ fn drain(surface: &mut HarnessSurfaceV2, state: &mut GameState) {
 
 fn draw(state: &mut GameState, source: ObjectId, controller: PlayerId, count: u32) {
     let ctx = ExecCtx {
+        cauldron_grant: Default::default(),
         stack_item_id: None,
         source,
         controller,
