@@ -15,7 +15,7 @@ use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 
 /// Appended after the 192 Pauper definitions, in registry order.
-const STANDARD_APPENDED: [&str; 253] = [
+const STANDARD_APPENDED: [&str; 254] = [
     "Plains",
     "Burst Lightning",
     "Shock",
@@ -269,6 +269,7 @@ const STANDARD_APPENDED: [&str; 253] = [
     "Glissa Sunslayer",
     "Tranquil Frillback",
     "Zoraline, Cosmos Caller",
+    "Witness Protection",
 ];
 
 /// All distinct nonbasic deck cards admitted by the completion candidate.
