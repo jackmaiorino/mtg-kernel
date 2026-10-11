@@ -32,6 +32,8 @@ mod fdn_counter_creatures_v1;
 mod fdn_counters_threats_v1;
 #[path = "fdn/fdn_creature_power_and_elf_v1.rs"]
 mod fdn_creature_power_and_elf_v1;
+#[path = "fdn/fdn_divine_resilience_v1.rs"]
+mod fdn_divine_resilience_v1;
 #[path = "fdn/fdn_draw_creatures_v1.rs"]
 mod fdn_draw_creatures_v1;
 #[path = "fdn/fdn_dreadwing_scavenger_v1.rs"]
@@ -60,6 +62,8 @@ mod fdn_gainlands_lifegain_v1;
 mod fdn_graveyard_triggers_v1;
 #[path = "fdn/fdn_hare_apparent_v1.rs"]
 mod fdn_hare_apparent_v1;
+#[path = "fdn/fdn_heartfire_immolator_v1.rs"]
+mod fdn_heartfire_immolator_v1;
 #[path = "fdn/fdn_homunculus_creature_v1.rs"]
 mod fdn_homunculus_creature_v1;
 #[path = "fdn/fdn_inspiring_call_v1.rs"]
@@ -116,8 +120,14 @@ mod fdn_removal_tricks_v1;
 mod fdn_rise_dark_realms_v1;
 #[path = "fdn/fdn_run_away_together_v1.rs"]
 mod fdn_run_away_together_v1;
+#[path = "fdn/fdn_scavenging_ooze_v1.rs"]
+mod fdn_scavenging_ooze_v1;
+#[path = "fdn/fdn_searslicer_goblin_v1.rs"]
+mod fdn_searslicer_goblin_v1;
 #[path = "fdn/fdn_second_rite_v1.rs"]
 mod fdn_second_rite_v1;
+#[path = "fdn/fdn_self_reflection_v1.rs"]
+mod fdn_self_reflection_v1;
 #[path = "fdn/fdn_simple_triggers_v1.rs"]
 mod fdn_simple_triggers_v1;
 #[path = "fdn/fdn_sire_life_ward_v1.rs"]
@@ -126,8 +136,14 @@ mod fdn_sire_life_ward_v1;
 mod fdn_skeleton_v1;
 #[path = "fdn/fdn_skyknight_squire_v1.rs"]
 mod fdn_skyknight_squire_v1;
+#[path = "fdn/fdn_soul_shackled_zombie_v1.rs"]
+mod fdn_soul_shackled_zombie_v1;
 #[path = "fdn/fdn_soulcaller_v1.rs"]
 mod fdn_soulcaller_v1;
+#[path = "fdn/fdn_sower_of_chaos_v1.rs"]
+mod fdn_sower_of_chaos_v1;
+#[path = "fdn/fdn_squad_rallier_v1.rs"]
+mod fdn_squad_rallier_v1;
 #[path = "fdn/fdn_static_team_boosts_v1.rs"]
 mod fdn_static_team_boosts_v1;
 #[path = "fdn/fdn_stroke_midnight_v1.rs"]
