@@ -876,6 +876,12 @@ pub enum CommittedEvent {
         source: crate::state::StackSourceContractV4,
         stack_item_id: StackItemId,
     },
+    /// Private scoped power snapshot before a genuine battlefield departure.
+    AshrootPowerBeforeDepartureV1 {
+        source: crate::state::ObjectLinkV4,
+        owner: PlayerId,
+        power: i32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1468,6 +1474,7 @@ fn commit_with_ability_lki_and_entry_batch(
                 crate::standard_statics_v1::record_creature_stats_lki(state, z.object);
             }
             if from == Zone::Battlefield {
+                crate::ashroot_animist_v1::before_departure(state, z.object);
                 crate::source_power_activation_v1::before_departure(state, z.object);
             }
             #[cfg(feature = "standard-magezero-fixtures")]
@@ -1827,6 +1834,7 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
             }
         }
     }
+    crate::ashroot_animist_v1::before_batch_departures(state, &survivors);
     // Lifelink changes life at the same time as the damage. Capture every
     // source/controller before any member of the simultaneous batch can die.
     // CR 119.9: one source damaging several recipients simultaneously is

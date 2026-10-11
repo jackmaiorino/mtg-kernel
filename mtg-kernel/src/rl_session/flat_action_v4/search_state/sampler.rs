@@ -7,6 +7,15 @@ fn conflicts(
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    // The source's old definition and power remain authoritative after it returns
+    // to a hidden zone. This lane does not admit a historical resampling scheme.
+    if state.engine.event_history.iter().any(|event| {
+        matches!(event,
+        crate::event::CommittedEvent::AshrootPowerBeforeDepartureV1 { source, .. }
+            if pool.contains(&source.object))
+    }) {
+        return true;
+    }
     // Receipt-owned references remain binding through legend/deferred stages
     // and after the physical source or recipient returns to a hidden zone.
     match crate::wildwood_capture_v1::active(state) {

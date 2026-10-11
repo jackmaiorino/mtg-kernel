@@ -36,6 +36,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fmt;
 
+pub(crate) mod ashroot_v27;
 pub(crate) mod authority_v17;
 mod bloom_tender_v24;
 pub mod census_future_v2;
@@ -4444,6 +4445,7 @@ enum FlatActionContractModeV1 {
     RaidEntryV21,
     ExtraTurnV23,
     JuggernautV25,
+    AshrootV27,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -7293,6 +7295,21 @@ impl FastActorSessionV1 {
                 self.flat_action_cache_spare_v2 = None;
                 let cache_result = flat_action_v3::prepare_and_build_v3(self, &mut current);
                 flat_install_action_cache_build_result_v2(&mut current, cache_result);
+            }
+            FlatActionContractModeV1::AshrootV27 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = ashroot_v27::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:ashroot_v27:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
             }
             FlatActionContractModeV1::HumanV8 => {
                 self.flat_action_cache_spare = None;

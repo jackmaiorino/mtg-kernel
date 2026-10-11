@@ -301,6 +301,16 @@ fn materialize_trigger_source_program(
             then: Box::new(materialize_trigger_source_program(*then, source, state)),
             else_: Box::new(materialize_trigger_source_program(*else_, source, state)),
         },
+        EffectOp::BindAshrootAttackBoostV1 => {
+            let live = state.objects.get(source);
+            EffectOp::AshrootAttackBoostV1 {
+                source: EffectObjectBinding {
+                    object: source,
+                    expected_zone: live.zone,
+                    expected_zone_change_count: live.zone_change_count,
+                },
+            }
+        }
         EffectOp::BindTemporaryBoostToTriggerSource { power, toughness } => {
             let live = state.objects.get(source);
             EffectOp::BoostBoundObjectUntilEndOfTurn {
@@ -375,6 +385,7 @@ fn materialize_trigger_source_program(
 fn contains_source_binding_template(effect: &EffectOp) -> bool {
     match effect {
         EffectOp::BindTemporaryBoostToTriggerSource { .. }
+        | EffectOp::BindAshrootAttackBoostV1
         | EffectOp::BindPlusOnePlusOneCounterToTriggerSource
         | EffectOp::BindDoublePlusOneCountersToTriggerSource
         | EffectOp::BindOilCounterToTriggerSource => true,
@@ -1640,6 +1651,11 @@ fn courageous_goblin_effect() -> EffectOp {
         },
     ])
 }
+
+const ASHROOT_ANIMIST_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Attacks,
+    ..etb_trigger(|| EffectOp::BindAshrootAttackBoostV1)
+}];
 
 const RUBY_DARING_TRACKER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::AttacksWhileControllerHasPowerFourCreature,
@@ -3484,6 +3500,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Ruby, Daring Tracker" => &RUBY_DARING_TRACKER_TRIGGERS,
         "Courageous Goblin" => &COURAGEOUS_GOBLIN_TRIGGERS,
         "Frenzied Goblin" => &FRENZIED_GOBLIN_TRIGGERS,
+        "Ashroot Animist" => &ASHROOT_ANIMIST_TRIGGERS,
         "Webweaver Changeling" => &WEBWEAVER_CHANGELING_TRIGGERS,
         "Glint Hawk" => &GLINT_HAWK_TRIGGERS,
         "Gatecreeper Vine" => &GATECREEPER_VINE_TRIGGERS,
@@ -3665,7 +3682,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
     };
     match card.name {
         "Lagrella, the Magpie" => TargetSpec::UpToTwoOtherCreaturesDifferentControllers,
-        "Halana and Alena, Partners" => TargetSpec::AnotherControlledCreature,
+        "Halana and Alena, Partners" | "Ashroot Animist" => TargetSpec::AnotherControlledCreature,
         "Restless Bivouac" => TargetSpec::ControlledCreature,
         "Restless Cottage" => TargetSpec::UpToOneCardInGraveyards,
         "Restless Reef" => TargetSpec::AnyPlayer,
@@ -3800,6 +3817,7 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
         return true;
     }
     match (template, effect) {
+        (EffectOp::BindAshrootAttackBoostV1, EffectOp::AshrootAttackBoostV1 { .. }) => true,
         (
             EffectOp::Conditional { cond, then, else_ },
             EffectOp::Conditional {

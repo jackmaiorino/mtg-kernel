@@ -29,6 +29,8 @@ pub mod extra_turn_v23;
 pub use extra_turn_v23::*;
 mod juggernaut_v25;
 pub use juggernaut_v25::*;
+mod ashroot_v27;
+pub use ashroot_v27::*;
 mod authority_v17;
 pub use authority_v17::*;
 mod frenzied_v15;
