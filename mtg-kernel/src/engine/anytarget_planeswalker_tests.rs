@@ -103,10 +103,11 @@ mod fdn {
 
     fn ajani_recipient(state: &mut GameState, owner: PlayerId) -> ObjectId {
         let ajani = put(state, owner, "Ajani, Caller of the Pride", Zone::Hand);
-        assert_eq!(
-            card_def::CARD_DEFS[state.objects.get(ajani).card_def as usize].capability,
-            CardCapability::Partial
-        );
+        let definition = &card_def::CARD_DEFS[state.objects.get(ajani).card_def as usize];
+        assert_eq!(definition.capability, CardCapability::Partial);
+        // Partial is executable, but full-deck admission still refuses its missing printed abilities.
+        assert!(definition.is_executable());
+        assert!(!definition.has_full_support());
         // Actual zone event initializes registered starting loyalty; no casting/admission bypass.
         event::propose_and_commit(state, ProposedEvent::zone_change(ajani, Zone::Battlefield));
         assert_eq!(planeswalker_v1::loyalty(state, ajani), Some(4));
@@ -151,6 +152,12 @@ mod fdn {
         let (bolt, offered) = announce_bolt(surface, state, actor);
         assert!(offered.contains(&target));
         apply(surface, state, Action::ChooseTarget(target));
+        // ChooseTarget only records the pending prefix. Advance through actual cost payment/finalization.
+        assert!(matches!(
+            next(surface, state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert!(state.engine.pending_cast.is_none());
         assert!(state
             .stack
             .iter()
@@ -211,6 +218,9 @@ mod fdn {
     }
 
     fn grant(state: &mut GameState, source: ObjectId, recipient: ObjectId, keyword: Keywords) {
+        // Direct typed recipient primitive; this is not a printed ability of the setup source.
+        let target = Target::Object(recipient);
+        let contract = StackTargetContractV4::capture(state, target);
         effect::execute(
             &EffectOp::GrantKeywordTargetUntilEndOfTurn {
                 object: ObjectRef::Target(0),
@@ -220,8 +230,8 @@ mod fdn {
                 stack_item_id: None,
                 source,
                 controller: state.objects.get(source).controller,
-                targets: vec![Target::Object(recipient)],
-                target_contracts: vec![],
+                targets: vec![target],
+                target_contracts: vec![contract],
                 discarded: vec![],
                 paid_cost_refs: vec![],
                 hidden_ability_source: None,
@@ -399,6 +409,40 @@ mod fdn {
                 cast_bolt(&mut surface, &mut state, actor, Target::Object(ajani));
                 drain_restored(&mut state, &mut surface, None);
                 assert_eq!(planeswalker_v1::loyalty(&state, ajani), Some(1));
+            }
+        }
+    }
+
+    #[test]
+    fn partial_recipient_grants_restore_survive_source_departure_and_expire_at_cleanup() {
+        for owner in [PlayerId::P0, PlayerId::P1] {
+            for keyword in [Keywords::HEXPROOF, Keywords::PROTECTION_FROM_MONOCOLORED] {
+                let mut state = ready(owner);
+                let ajani = ajani_recipient(&mut state, owner);
+                let source = put(&mut state, owner.opponent(), "Lightning Bolt", Zone::Hand);
+                let definition = &card_def::CARD_DEFS[state.objects.get(ajani).card_def as usize];
+                assert!(!definition.keywords_for_face(0).has(keyword));
+                assert!(!has_effective_keyword(&state, ajani, keyword));
+                grant(&mut state, source, ajani, keyword);
+                event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(source, Zone::Graveyard),
+                );
+                assert!(has_effective_keyword(&state, ajani, keyword));
+                let mut replay = restored(&state);
+                for current in [&mut state, &mut replay] {
+                    assert!(has_effective_keyword(current, ajani, keyword));
+                    // Recipient primitive expiry calls the same production entry action as engine advance.
+                    run_step_entry_action(current, Step::Cleanup);
+                    assert!(!has_effective_keyword(current, ajani, keyword));
+                    assert_eq!(planeswalker_v1::loyalty(current, ajani), Some(4));
+                    assert_eq!(current.objects.get(source).zone, Zone::Graveyard);
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&replay).unwrap()
+                );
+                assert_eq!(state.state_hash(), replay.state_hash());
             }
         }
     }

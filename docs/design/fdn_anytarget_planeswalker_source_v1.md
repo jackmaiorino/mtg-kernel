@@ -12,9 +12,15 @@ The fixture initializes Partial Ajani through a real Hand-to-Battlefield zone ev
 
 ## Prepared checks and execution boundary
 
-`engine::anytarget_planeswalker_tests` contains seven named groups: feature precedence and target ordering; real Bolt target choice with both players, creatures and planeswalkers; both seats and both recipient controllers with loyalty damage and zero-loyalty SBA; departed/reentered recipient rejection and fresh recast; protection at announcement, resolution and damage prevention; hexproof controller filtering and resolution recheck; and restored Sire life-Ward source/targeter/payer bindings with both payment answers. Pending casts, completed target selection, resolution and Ward decisions are serialized and restored using normal production validation, then compared by exact bytes and state hash.
+`engine::anytarget_planeswalker_tests` contains eight named groups: feature precedence and target ordering; real Bolt target choice with both players, creatures and planeswalkers; both seats and both recipient controllers with loyalty damage and zero-loyalty SBA; departed/reentered recipient rejection and fresh recast; protection at announcement, resolution and damage prevention; hexproof controller filtering and resolution recheck; restored recipient grants surviving source departure and expiring through the production Cleanup entry action; and restored Sire life-Ward source/targeter/payer bindings with both payment answers. Pending casts, completed target selection, resolution and Ward decisions are serialized and restored using normal production validation, then compared by exact bytes and state hash.
 
 These Rust fixtures remain **unexecuted** until parent-owned serial native qualification. Rustfmt and `git diff --check` are the permitted static checks. Run the named groups under Limited-only and the ordering/precedence group under default, Standard-only and combined features. Parent must verify old default/Standard/combined replay hashes against existing frozen evidence and qualify actual recipient traces before claiming gameplay support.
+
+## Prepared fixture repair
+
+`cast_bolt` now advances through the real surface after `ChooseTarget` and requires completed cast payment/finalization before inspecting stack targets or mutating the post-announcement recipient. The pending-cast prefix alone is not a finalized spell.
+
+The queried source does **not** suppress external grants on Partial Ajani: `CardCapability::is_executable` returns false only for `NoEffect`, and `CardDef::is_executable` delegates it. The registered Ajani row is Partial, so it already reaches the normal generation-bound temporary grant query. Fixtures explicitly require `is_executable` and reject `has_full_support`, then distinguish printed keyword absence from a recorded recipient grant. No production keyword guard was relaxed. The new recipient-primitive group restores the actual grant, moves its setup source to the graveyard, verifies the grant survives, and invokes the production Cleanup entry action to verify expiry. This is a physical effect primitive test, not printed Ajani ability admission. Existing departure/reentry and actual Bolt target/recheck tests still exercise the separate source and recipient contracts.
 
 ## Consumer and acceptance dependencies
 
