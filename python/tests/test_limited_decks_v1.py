@@ -316,6 +316,15 @@ class LimitedDeckTest(unittest.TestCase):
                 limited.resolve_mainboard(limited.parse_dck("39 Plains\n1 " + name), self.registry)
         self.assertEqual(self.registry["Sower of Chaos"].card_id, 403)
 
+    def test_authority_and_employment_candidate_preserves_prior_registry_ids(self) -> None:
+        for slug, name, ident in [("authority_of_the_consuls", "Authority of the Consuls", 409),
+                                  ("involuntary_employment", "Involuntary Employment", 410)]:
+            deck = limited.parse_dck((FIXTURES / f"FDN_reference_{slug}.dck").read_text(encoding="utf-8"))
+            self.assertEqual(limited.resolve_mainboard(deck, self.registry)[:4], [ident] * 4)
+            self.assertEqual(self.registry[name].card_id, ident)
+        self.assertEqual(self.registry["Wildwood Scourge"].card_id, 406)
+        self.assertEqual(self.registry["Face-down card"].card_id, 408)
+
     def test_unknown_partial_no_effect_and_token_are_all_rejected(self) -> None:
         registry = limited.registry_from_json({"version": 2, "cards": [
             {"name": "Supported", "engine_capability": "full"},
@@ -368,7 +377,7 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("FDN_top_*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
-        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 204)
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 206)
         self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
                              for card in report["cards"]), 0)
 

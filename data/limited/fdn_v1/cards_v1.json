@@ -6426,6 +6426,56 @@
       "complexity": "moderate",
       "mechanics": [],
       "name": "Face-down card"
+    },
+    {
+      "name": "Authority of the Consuls",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/a/AuthorityOfTheConsuls.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_authority_of_the_consuls.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "name": "Involuntary Employment",
+      "mana_cost": "{3}{R}",
+      "mana_value": 4,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/i/InvoluntaryEmployment.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_involuntary_employment.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": []
     }
   ]
 }
