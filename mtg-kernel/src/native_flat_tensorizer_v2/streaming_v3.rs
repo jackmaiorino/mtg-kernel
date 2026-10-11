@@ -438,7 +438,7 @@ pub(super) fn effects(
     projection: &ObjectProjectionV2,
     out: &mut Vec<u8>,
 ) -> Result {
-    let result = (|| {
+    let result = {
         let mut baselines = decision
             .relations()
             .iter()
@@ -503,6 +503,6 @@ pub(super) fn effects(
                 )
             },
         )
-    })();
+    };
     original_error(result, || canonical_effects_v2(decision, projection))
 }

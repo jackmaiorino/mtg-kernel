@@ -187,12 +187,10 @@ fn streamed_extensions_preserve_errors_before_common_observation_errors() {
     };
     use crate::flat_policy_v4::{FlatScoringDecisionViewV4, FlatScoringExtensionsV4};
     use crate::state::CastMethodV4;
-    let globals = FlatGlobalsV2 {
-        phase: u8::MAX,
-        ..FlatGlobalsV2::default()
-    };
+    let globals = FlatGlobalsV2::default();
     let objects = [FlatObjectCoreV1 {
         card_token: 0,
+        visible_ordinal: 1,
         zone: Some(FlatZoneV1::Hand),
         ..FlatObjectCoreV1::default()
     }];
@@ -229,6 +227,11 @@ fn streamed_extensions_preserve_errors_before_common_observation_errors() {
         raw_to_node: vec![Some(0)],
         node_to_raw: vec![0],
     };
+    assert_eq!(
+        write_canonical_observation_v2(common, &projection, &mut Vec::new()),
+        Err(NativeFlatTensorErrorV2::ObjectOrder),
+        "the malformed common observation must have a distinct error"
+    );
     let mut output = Vec::new();
     let mut base = b"unwritten".to_vec();
     assert_eq!(
