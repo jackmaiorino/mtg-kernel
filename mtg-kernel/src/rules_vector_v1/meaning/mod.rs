@@ -233,7 +233,9 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. } => {
             effect_g::effect_op(op, env, out)
         }
-        EffectOp::DiscardUpToThenDraw { .. }
+        EffectOp::CastExiledWithoutMana { .. }
+        | EffectOp::PlayExiledLand { .. }
+        | EffectOp::DiscardUpToThenDraw { .. }
         | EffectOp::ExileRandomGraveyardCardPlayableThisTurn { .. }
         | EffectOp::ExileUntilThenCastV1 { .. }
         | EffectOp::Discover { .. }
@@ -276,5 +278,81 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::CreateTokensWithHasteUntilEndOfTurnV1 { .. } => {
             effect_i::effect_op(op, env, out)
         }
+    }
+}
+
+#[cfg(test)]
+mod standard_completion_tests {
+    use super::*;
+
+    #[test]
+    fn resolution_cast_and_land_play_have_distinct_destinations_without_persistent_permission() {
+        let card = crate::effect::EffectObjectBinding {
+            object: crate::ids::ObjectId(1),
+            expected_zone: crate::state::Zone::Exile,
+            expected_zone_change_count: 2,
+        };
+        for (op, destination) in [
+            (
+                EffectOp::CastExiledWithoutMana {
+                    card,
+                    maximum_mana_value: Some(3),
+                },
+                ZoneF::Stack,
+            ),
+            (EffectOp::PlayExiledLand { card }, ZoneF::Battlefield),
+        ] {
+            let mut out = Collector::default();
+            effect_op(
+                &op,
+                &Env {
+                    target_spec: TargetSpec::None,
+                },
+                &mut out,
+            );
+            assert!(out.atoms.iter().any(|atom| matches!(atom,
+                Atom::Effect(effect) if effect.ev == EvF::Move
+                    && effect.from == Some(ZoneF::Exile) && effect.to == Some(destination))));
+            assert!(!out.atoms.iter().any(|atom| matches!(atom,
+                Atom::Effect(effect) if effect.ev == EvF::PlayPermission)));
+            assert!(out.atoms.contains(&Atom::Opaque));
+        }
+    }
+
+    #[test]
+    fn crew_members_do_not_inherit_a_current_controller_restriction() {
+        use crate::standard_cards_v1::StandardTargetV1 as S;
+        for (filter, controller) in [
+            (S::CrewedSourceThisTurn, None),
+            (S::TappedOpponentCreature, Some(RelF::Opponent)),
+        ] {
+            let mut out = Collector::default();
+            targets::target_spec(TargetSpec::StandardV1(filter), &mut out);
+            assert!(out.atoms.iter().any(|atom| matches!(atom,
+                Atom::Target(TargetAtom::Object { obj, controller: actual, zone, .. })
+                    if *obj == ObjF::Typed(CardTypeF::Creature)
+                        && *actual == controller && *zone == ZoneF::Battlefield)));
+            assert!(out.atoms.contains(&Atom::Opaque));
+        }
+    }
+
+    #[test]
+    fn crew_and_counter_payments_are_costs_without_changing_legacy_loyalty_atoms() {
+        let mut crew = Collector::default();
+        triggers_costs::cost_component(CostComponent::Crew(3), &mut crew);
+        assert!(crew.atoms.contains(&Atom::Cost(CostAtom::TapOthers)));
+        assert!(!crew.atoms.contains(&Atom::Cost(CostAtom::Tap)));
+        for cost in [
+            CostComponent::LoyaltyX,
+            CostComponent::RemoveChargeCounterFromSelf,
+        ] {
+            let mut out = Collector::default();
+            triggers_costs::cost_component(cost, &mut out);
+            assert!(out.atoms.contains(&Atom::Cost(CostAtom::RemoveCounters)));
+            assert!(!out.atoms.iter().any(|atom| matches!(atom, Atom::Effect(_))));
+        }
+        let mut legacy = Collector::default();
+        triggers_costs::cost_component(CostComponent::Loyalty(-2), &mut legacy);
+        assert_eq!(legacy.atoms, [Atom::Opaque]);
     }
 }

@@ -37,7 +37,7 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
             match kind {
                 CreatureChoiceV1::AegisCopy { .. } => {
                     out.control(ControlF::ChooseObjects);
-                    out.effect(EffectAtom::new(EvF::Copy).obj(ObjF::Creature));
+                    out.effect(EffectAtom::new(EvF::Copy).obj(ObjF::Typed(CardTypeF::Creature)));
                 }
                 CreatureChoiceV1::GlissaCounters(remaining) => out.effect(
                     EffectAtom::new(EvF::RemoveCounter)
@@ -53,7 +53,7 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                 }
                 CreatureChoiceV1::ZoralinePayment => {
                     out.cost(CostAtom::Mana);
-                    out.cost(CostAtom::PayLife(bucket(2)));
+                    out.cost(CostAtom::PayLife(triggers_costs::bucket(2)));
                     out.control(ControlF::Conditional);
                     super::effect_op(
                         &crate::standard_creature_choices_v1::zoraline_return(),

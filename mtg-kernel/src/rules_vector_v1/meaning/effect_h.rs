@@ -33,6 +33,35 @@ fn exile_self(out: &mut Collector) {
 pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     let _ = env;
     match op {
+        EffectOp::CastExiledWithoutMana {
+            card,
+            maximum_mana_value,
+        } => {
+            // This instruction casts during resolution, moving the exact
+            // exile card to the stack. It does not grant lasting permission.
+            let _ = (card, maximum_mana_value);
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Exile), ZoneF::Stack)
+                    .player(RelF::You)
+                    .obj(ObjF::AnyCard)
+                    .amount(AmtF::fixed(1)),
+            );
+            // The base mana waiver, X=0, selected-form value limit and
+            // resumed parent resolution have no facets in this vocabulary.
+            out.atoms.push(Atom::Opaque);
+        }
+        EffectOp::PlayExiledLand { card } => {
+            let _ = card;
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Exile), ZoneF::Battlefield)
+                    .player(RelF::You)
+                    .obj(ObjF::Typed(CardTypeF::Land))
+                    .amount(AmtF::fixed(1)),
+            );
+            // Uses a remaining land play on the controller's turn, inside
+            // resolution, including ordinary as-enters land choices.
+            out.atoms.push(Atom::Opaque);
+        }
         EffectOp::DiscardUpToThenDraw { player, maximum } => {
             out.effect(
                 EffectAtom::moving(Some(ZoneF::Hand), ZoneF::Graveyard)

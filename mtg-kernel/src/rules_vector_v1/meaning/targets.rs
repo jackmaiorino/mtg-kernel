@@ -634,7 +634,10 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::OpponentArtifactOrCreature => ObjF::Permanent,
         S::ControlledArtifact => typed(CardType::Artifact),
         S::InstantOrSorceryCardInOwnGraveyard | S::CardInAGraveyard => ObjF::AnyCard,
-        S::AnotherNonlegendaryControlledCreature | S::UpToOneCreature => creature(),
+        S::AnotherNonlegendaryControlledCreature
+        | S::UpToOneCreature
+        | S::TappedOpponentCreature
+        | S::CrewedSourceThisTurn => creature(),
         S::UpToTwoAnyTargets => ObjF::PlayerOrPermanent,
     }
 }
@@ -651,8 +654,13 @@ pub(super) fn standard_target_origin(
         }
         S::OpponentNonlandPermanentManaValueAtMost(_)
         | S::OpponentNonlandPermanent
-        | S::OpponentArtifactOrCreature => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
-        S::AnotherNonlandPermanent | S::UpToTwoAnyTargets | S::UpToOneCreature => {
+        | S::OpponentArtifactOrCreature
+        | S::TappedOpponentCreature => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
+        S::AnotherNonlandPermanent
+        | S::UpToTwoAnyTargets
+        | S::UpToOneCreature
+        | S::CrewedSourceThisTurn => {
+            // A crew member may have changed controller since it crewed.
             (Some(ZoneF::Battlefield), None)
         }
     }
@@ -687,6 +695,11 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
         S::AnotherNonlandPermanent | S::AnotherNonlegendaryControlledCreature => {
             object(out, standard_target_obj(filter), relation, zone);
             out.atoms.push(Atom::Opaque); // Source exclusion and Legendary refinement.
+        }
+        S::TappedOpponentCreature | S::CrewedSourceThisTurn => {
+            object(out, creature(), relation, zone);
+            // Tapped status and exact-incarnation crew history have no facet.
+            out.atoms.push(Atom::Opaque);
         }
         S::UpToOneCreature => {
             object(out, creature(), relation, zone);

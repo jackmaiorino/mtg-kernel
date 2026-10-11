@@ -127,7 +127,7 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                 EffectAtom::new(EvF::SetCharacteristic)
                     .player(RelF::You)
                     .obj(ObjF::Typed(CardTypeF::Creature))
-                    .amount(AmtF::fixed(*power))
+                    .amount(AmtF::fixed(i64::from(*power)))
                     .duration(DurF::EndOfTurn),
             );
         }

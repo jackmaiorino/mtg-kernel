@@ -13,7 +13,7 @@
 use super::*;
 
 /// The bucket `AmtF::fixed` assigns to `n`.
-fn bucket(n: i64) -> u8 {
+pub(super) fn bucket(n: i64) -> u8 {
     match AmtF::fixed(n) {
         AmtF::Fixed(bucket) => bucket,
         AmtF::Unit
@@ -529,6 +529,33 @@ fn move_self_cost(out: &mut Collector, from: ZoneF, to: ZoneF) {
 /// One component of an activation, flashback or additional cost.
 pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
     match component {
+        CostComponent::LoyaltyX => {
+            // Announcement chooses X; payment removes that many loyalty
+            // counters. Counter kind, variable quantity and the loyalty
+            // activation restriction are outside the frozen cost vocabulary.
+            out.cost(CostAtom::RemoveCounters);
+            out.atoms.push(Atom::Opaque);
+        }
+        CostComponent::RemoveChargeCounterFromSelf => {
+            // Exactly one charge counter leaves the source as payment.
+            out.cost(CostAtom::RemoveCounters);
+            out.atoms.push(Atom::Opaque); // Counter kind and quantity.
+        }
+        CostComponent::Crew(required) => {
+            // The payer selects untapped creatures, excluding the source,
+            // whose total crew power meets the threshold, then taps them.
+            // Summoning sickness is irrelevant; this is not a tap symbol.
+            let _ = required; // No summed-power threshold facet.
+            out.cost(CostAtom::TapOthers);
+            out.control(ControlF::ChooseObjects);
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Typed(CardTypeF::Creature)),
+                AggF::Characteristic,
+            );
+            out.atoms.push(Atom::Opaque);
+        }
         CostComponent::Loyalty(_)
         | CostComponent::ExileCraftArtifactMaterial
         | CostComponent::RemoveNetCounterFromSelf => {
