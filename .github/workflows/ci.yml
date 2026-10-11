@@ -77,7 +77,7 @@ jobs:
             # also relevant because they determine which tests execute.
             # Other non-embedded python, docs, and markdown are irrelevant.
             case "$f" in
-              python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py)
+              python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py|python/tools/run_rust_integration_tests.py|python/tools/check_rust_integration_inventory.py)
                 rust_relevant=true ;;
               python/tests/*|python/tools/*|docs/*|*.md) : ;;
               *) rust_relevant=true ;;
@@ -118,6 +118,11 @@ jobs:
           key: cargo-registry-quality-ubuntu-24.04-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
           restore-keys: |
             cargo-registry-quality-ubuntu-24.04-
+
+      - name: Cache compiled quality output
+        uses: ./.github/actions/cargo-build-cache
+        with:
+          scope: quality
 
       - name: Report pinned toolchain
         run: rustc --version --verbose
@@ -184,6 +189,7 @@ jobs:
         # Slowest groups first: runners take matrix jobs in this order.
         group:
           - limited
+          - standard
           - workspace
           - cuda
           - native-store
@@ -297,21 +303,23 @@ jobs:
           restore-keys: |
             cargo-registry-tests-${{ matrix.os }}-
 
-      - name: Validate Witness Protection layered rules
-        if: matrix.group == 'limited'
-        run: cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test fdn_witness_protection_v1
+      - name: Cache compiled test output
+        if: runner.environment == 'github-hosted'
+        uses: ./.github/actions/cargo-build-cache
+        with:
+          scope: tests-${{ matrix.group }}
 
       - name: Validate London mulligans and original fixture games
         if: matrix.group == 'limited'
         run: |
-          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test london_mulligans_v1 -- --nocapture
+          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test london_mulligans_v1 --test limited_session_v1 --test limited_priority_v1 --test limited_combat_v1 -- --nocapture
           cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib london_session_snapshot_restores
 
       - name: Validate MageZero Standard catalog
-        if: matrix.group == 'limited'
+        if: matrix.group == 'standard'
         run: |
-          python python/tools/run_rust_lib_filters.py --features standard-magezero-fixtures card_def:: cauldron_grants_v1:: rl::legacy_hash_v1:: human_bo3_v1::visible::standard:: resolution_cast_v1:: finalized_case_cast_rejects_a_restored_prior_incarnation_grant engine::standard_spell_copy::tests:: frozen_encoder_rejects_creature_upgrades_in_every_public_zone frozen_encoder_rejects_known_face_down_identities frozen_encoder_rejects_private_face_down_knowledge face_down_crew_payment_reference captured_disguise_stack_target standard_face_down_public_refs channel_payment_preserves_printed_ability_discount counter_removal_payment_accepts_repeated_creature crew_payment_reserves_its_contributors event::tests::heartfire_death_respects_the_pre_zone_change_ability_snapshot engine::legacy_attack_hash_baseline_tests:: engine::anytarget_planeswalker_tests:: native_flat_tensorizer_v5::tests::known_face_down_knowledge_refuses_frozen_successor_encoders
-          cargo test --release --locked --no-fail-fast -p mtg-kernel --features standard-magezero-fixtures --test standard_cast_forms_completion_v1 --test standard_characteristics_completion_v1 --test standard_copy_hideaway_v1 --test standard_family_d_v1 --test standard_family_g_v1 --test standard_jodah_v1 --test standard_lands_spells_completion_v1 --test standard_lands_v1 --test standard_magezero_catalog_v1 --test standard_magezero_family_ef_v1 --test standard_sessions_completion_v1
+          python python/tools/run_rust_lib_filters.py --features standard-magezero-fixtures card_def:: cauldron_grants_v1:: rl::legacy_hash_v1:: human_bo3_v1::visible::standard:: resolution_cast_v1:: finalized_case_cast_rejects_a_restored_prior_incarnation_grant engine::standard_spell_copy::tests:: frozen_encoder_rejects_creature_upgrades_in_every_public_zone frozen_encoder_rejects_known_face_down_identities frozen_encoder_rejects_private_face_down_knowledge face_down_crew_payment_reference captured_disguise_stack_target standard_face_down_public_refs channel_payment_preserves_printed_ability_discount counter_removal_payment_accepts_repeated_creature crew_payment_reserves_its_contributors event::tests::heartfire_death_respects_the_pre_zone_change_ability_snapshot engine::legacy_attack_hash_baseline_tests:: engine::anytarget_planeswalker_tests:: native_flat_tensorizer_v5::tests::known_face_down_knowledge_refuses_frozen_successor_encoders effect::squad_rallier_resolution_v1:: rules_meaning_squad_rallier_v1:: self_reflection_v1:: sower_public_v1:: sower_restriction_capture_v1:: rules_meaning_sower_v1:: rl_session::sower_v14:: rl_session::heartfire_v12:: human_bo3_v1::sower_v14:: human_bo3_v1::heartfire_v12::
+          python python/tools/run_rust_integration_tests.py standard_integration --features standard-magezero-fixtures
 
       - name: Run Rust release tests
         if: matrix.group == 'workspace'
@@ -338,8 +346,8 @@ jobs:
       - name: Validate FDN Limited gameplay and catalog separation
         if: matrix.group == 'limited'
         run: |
-          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test fdn_fixture_batch_a_v1 --test fdn_fixture_batch_b_v1 --test limited_session_v1 --test limited_priority_v1 --test limited_combat_v1 --test fdn_combat_cards_v1 --test fdn_legend_rule_v1 --test fdn_targeted_spells_v1 --test fdn_counter_creatures_v1 --test fdn_lifegain_creatures_v1 --test fdn_draw_creatures_v1 --test fdn_homunculus_creature_v1 --test fdn_koma_creature_v1 --test fdn_kiora_creature_v1 --test fdn_prowler_creature_v1 --test fdn_luminous_rebuke_v1 --test fdn_uncharted_voyage_v1 --test fdn_sylvan_scavenging_v1 --test fdn_celestial_armor_v1 --test fdn_keyword_creatures_v1 --test fdn_gainlands_lifegain_v1 --test fdn_triggers_tricks_v1 --test fdn_equipment_search_v1 --test fdn_tokens_auras_v1 --test fdn_removal_tricks_v1 --test fdn_counters_threats_v1 --test fdn_library_search_v1 --test fdn_simple_triggers_v1 --test fdn_activated_combat_v1 --test fdn_surveil_many_v1 --test fdn_first_lifegain_v1 --test fdn_graveyard_triggers_v1 --test fdn_static_team_boosts_v1 --test fdn_aetherize_v1 --test fdn_arbiter_of_woe_v1 --test fdn_armasaur_guide_v1 --test fdn_attack_draw_triggers_v1 --test fdn_bounty_v1 --test fdn_casting_triggers_v1 --test fdn_dreadwing_scavenger_v1 --test fdn_exsanguinate_v1 --test fdn_felidar_savior_v1 --test fdn_fight_v1 --test fdn_folly_v1 --test fdn_lunar_insight_v1 --test fdn_mill_modal_v1 --test fdn_mischievous_pup_v1 --test fdn_morbid_landfall_v1 --test fdn_offer_v1 --test fdn_other_creature_sacrifice_v1 --test fdn_pilfer_v1 --test fdn_raise_past_v1 --test fdn_rise_dark_realms_v1 --test fdn_second_rite_v1 --test fdn_skeleton_v1 --test fdn_soulcaller_v1 --test fdn_subtype_cost_reducers_v1 --test fdn_instant_sorcery_reducers_v1 --test fdn_brineborn_cutthroat_v1 --test fdn_ferocious_attacks_v1 --test fdn_controller_flash_v1 --test fdn_creature_power_and_elf_v1 --test fdn_nessian_hornbeetle_v1 --test fdn_micromancer_v1 --test fdn_paradise_druid_v1 --test fdn_bulk_up_v1 --test fdn_inspiring_call_v1 --test fdn_needletooth_pack_v1 --test fdn_stroke_midnight_v1 --test fdn_hare_apparent_v1 --test fdn_wardens_cycle_v1 --test fdn_inspiring_paladin_v1 --test fdn_skyknight_squire_v1 --test fdn_sire_life_ward_v1 --test fdn_raid_entries_v1 --test fdn_condemn_v1 --test fdn_run_away_together_v1 --test fdn_vengeful_bloodwitch_v1
-          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures limited_session_v1::tests rl_session::tests card_def:: koma_spell_protection threshold_counts_graveyard native_training_store_run_v2:: policy_observation_v8:: policy_observation_v9:: engine::raid_history_tests:: trigger::tests::raid_ effect::condemn_tests:: effect::run_away_together_tests:: bloodwitch_ engine::anytarget_planeswalker_tests:: rules_meaning_v2:: flat_policy_v4:: native_flat_tensorizer_v4:: native_flat_tensorizer_v5:: native_flat_tensorizer_v6:: rl_session::human_v8:: human_bo3_v1::
+          python python/tools/run_rust_integration_tests.py fdn_integration --features limited-fdn-fixtures
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures limited_session_v1::tests rl_session::tests card_def:: koma_spell_protection threshold_counts_graveyard native_training_store_run_v2:: policy_observation_v8:: policy_observation_v9:: engine::raid_history_tests:: trigger::tests::raid_ effect::condemn_tests:: effect::run_away_together_tests:: bloodwitch_ engine::anytarget_planeswalker_tests:: rules_meaning_v2:: flat_policy_v4:: native_flat_tensorizer_v4:: native_flat_tensorizer_v5:: native_flat_tensorizer_v6:: rl_session::human_v8:: human_bo3_v1:: effect::divine_variable_targets_tests:: engine::divine_variable_targeting_tests:: effect::scavenging_ooze_v1:: ooze_public_v1:: rules_meaning_ooze_v1:: soul_shackled_zombie_v1:: soul_shackled_zombie_public_v1:: rules_meaning_soul_shackled_zombie_v1:: source_power_activation_v1:: heartfire_history_v1:: heartfire_public_v1:: rules_meaning_heartfire_v1:: rl_session::heartfire_v12:: rl_session::heartfire_history_v1:: rl_session::soul_shackled_zombie_v13:: searslicer_goblin_tests:: rules_meaning_searslicer_v1:: effect::squad_rallier_resolution_v1:: rules_meaning_squad_rallier_v1:: self_reflection_v1:: sower_public_v1:: sower_restriction_capture_v1:: rules_meaning_sower_v1:: rl_session::sower_v14::
 
       - name: Validate FDN profiles under the native Store feature
         if: matrix.group == 'limited-store'
@@ -426,6 +434,11 @@ jobs:
       - name: Validate canonical Pauper manifests
         if: matrix.shard == 0
         run: uv run --no-sync python python/tools/generate_pauper_manifests.py --check --repo-root .
+
+      - name: Cache compiled Python environment
+        uses: ./.github/actions/cargo-build-cache
+        with:
+          scope: python-env
 
       - name: Build release JSONL environment
         run: cargo build --release --locked --bin kernel_rl_env
