@@ -11,9 +11,11 @@ fn basic(actor: PlayerId, hidden: &str) -> crate::state::GameState {
     put(&mut state, actor.opponent(), hidden, Zone::Hand);
     state
 }
+#[track_caller]
 fn expected(session: &HumanCerberusSessionV19) -> FastActorDecisionV1 {
-    let FastActorResponseV1::Decision(decision) = session.current_response() else {
-        panic!("real decision");
+    let response = session.current_response();
+    let FastActorResponseV1::Decision(decision) = response else {
+        panic!("real decision, observed {response:?}");
     };
     decision
 }
@@ -227,7 +229,15 @@ fn inherited_registered_generic_ward_menu_is_preserved_and_submission_replays() 
 fn actual_printed_trigger_public_submission_restore_retry_and_completed_capture_both_seats() {
     use crate::cerberus_capture_v1::tests::actual_trigger;
     for actor in [PlayerId::P0, PlayerId::P1] {
-        let (state, source) = actual_trigger(actor);
+        let (mut state, source) = actual_trigger(actor);
+        // Public submission advances through the End step after resolution.
+        // Keep both seats alive across Draw so the completed trigger can be
+        // inspected and restored at the next real decision.
+        for seat in [PlayerId::P0, PlayerId::P1] {
+            for _ in 0..8 {
+                put(&mut state, seat, "Forest", Zone::Library);
+            }
+        }
         let base = FastActorSessionV1::from_cerberus_v19_fixture_state(state);
         let mut session = HumanCerberusSessionV19::from_session(base).unwrap();
         let current = expected(&session);
