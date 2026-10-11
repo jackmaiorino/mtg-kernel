@@ -75,6 +75,7 @@ pub enum CreatureEffectV1 {
     EssenceTransferCounters,
     TidebinderCounter,
     FinalityReturnedTarget,
+    LibrarianWerewolfAndCounters,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -373,6 +374,9 @@ pub(crate) fn combat_impulse_grant(
 }
 
 pub(crate) fn activation_allowed(state: &GameState, id: ObjectId, index: usize) -> bool {
+    if !crate::mild_mannered_librarian_v1::activation_allowed(state, id, index) {
+        return false;
+    }
     let object = state.objects.get(id);
     if crate::card_def::CARD_DEFS[object.card_def as usize].name != "Surge Engine" {
         return true;
@@ -388,6 +392,7 @@ pub(crate) fn activation_allowed(state: &GameState, id: ObjectId, index: usize) 
 }
 
 pub(crate) fn activation_paid(state: &mut GameState, id: ObjectId, index: usize) {
+    crate::mild_mannered_librarian_v1::activation_paid(state, id, index);
     if crate::card_def::CARD_DEFS[state.objects.get(id).card_def as usize].name == "Surge Engine"
         && index == 2
     {
@@ -438,6 +443,10 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
 }
 
 pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameState) {
+    if effect == CreatureEffectV1::LibrarianWerewolfAndCounters {
+        crate::mild_mannered_librarian_v1::resolve_source_upgrade(state, ctx);
+        return;
+    }
     if effect == CreatureEffectV1::FinalityReturnedTarget {
         let Some(crate::state::StackTargetContractV4::Object {
             object,
@@ -867,6 +876,9 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
             unreachable!("independent effect handled above")
         }
         CreatureEffectV1::ToughCookieAnimate => unreachable!("targeted animation handled above"),
+        CreatureEffectV1::LibrarianWerewolfAndCounters => {
+            unreachable!("Librarian source upgrade handled above")
+        }
         CreatureEffectV1::GingerEvasion => value.haste_blockers_only = true,
         CreatureEffectV1::KellanDetective => {
             value.creature_types = Some((

@@ -4756,6 +4756,15 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
         return recipes;
     }
     match name {
+        "Mild-Mannered Librarian" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ManaCost("{3}{G}")],
+            effect: AbilityEffectRecipe::StandardProgram("crate::mild_mannered_librarian_v1::program_v1"),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Scavenging Ooze" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Mana { colored: Some("G"), generic: 0 }],
             effect: AbilityEffectRecipe::Program {
