@@ -3779,7 +3779,7 @@ pub(crate) mod tests {
         let (_, _, mut saved) = checkpoint_fixture_v1();
         saved.trajectories = (0..2)
             .map(|index| PinnedFileV1 {
-                path: format!("trajectory-{index}.json").into(),
+                path: format!("batch/trajectory-{index}.json").into(),
                 sha256: format!("{index:064x}"),
             })
             .collect();
@@ -3797,7 +3797,8 @@ pub(crate) mod tests {
             .is_ok());
         let mut reordered = saved.trajectories.clone();
         let mut differently_spelled = saved.trajectories.clone();
-        differently_spelled[0].path = "./trajectory-0.json".into();
+        differently_spelled[0].path = "batch/./trajectory-0.json".into();
+        assert_eq!(differently_spelled[0].path, saved.trajectories[0].path);
         assert!(inputs
             .validate_v1(
                 &differently_spelled,
