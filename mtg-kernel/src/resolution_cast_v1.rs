@@ -189,6 +189,7 @@ pub(crate) fn stage(
     context
         .deferred_triggers
         .append(&mut state.engine.pending_triggers);
+    state.priority_player = controller;
     if land {
         let def = &card_def::CARD_DEFS[state.objects.get(card.object).card_def as usize];
         if let Some(excluded_color) = def.as_enters_choose_color_other_than {

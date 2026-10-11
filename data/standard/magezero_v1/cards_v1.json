@@ -6758,6 +6758,32 @@
         "activated_ability"
       ],
       "java_file": "Mage.Sets/src/mage/cards/p/PlazaOfHeroes.java"
+    },
+    {
+      "name": "Gix's Command",
+      "engine_capability": "partial",
+      "mana_cost": "{3}{B}{B}",
+      "mana_value": 5,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "mechanics": [
+        "modal_spell"
+      ],
+      "decks": [
+        "Standard16-UB",
+        "Standard16-GB"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GixsCommand.java"
     }
   ]
 }

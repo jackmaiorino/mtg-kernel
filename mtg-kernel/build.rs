@@ -3628,6 +3628,7 @@ fn standard_program_for(name: &str) -> Option<Special> {
         "Kayla's Reconstruction" => program("None", "EffectOp::LookTopSelectV1 { player: PlayerRef::Controller, count: crate::effect::LibraryLookCount::Fixed(7), rule: crate::effect::LibraryPickRule { pick: 0, choose_rest_order: false, selection: Some(crate::effect::LibraryPickSelectionV1 { filter: crate::effect::LibraryPickFilterV1::ArtifactOrCreatureManaValueAtMost(3), optional: true, destination: Zone::Battlefield, reveal_selected: false }) }, pick_x: true }", "EffectOp::LookTopSelectV1 { player: PlayerRef::Controller, count: crate::effect::LibraryLookCount::Fixed(7), rule: crate::effect::LibraryPickRule { pick: 0, choose_rest_order: false, selection: Some(crate::effect::LibraryPickSelectionV1 { filter: crate::effect::LibraryPickFilterV1::ArtifactOrCreatureManaValueAtMost(3), optional: true, destination: Zone::Battlefield, reveal_selected: false }) }, pick_x: true }"),
         "Witchstalker Frenzy" => program("Creature", "DealDamage(Target(0),5);GenericReduction=CreaturesAttackedThisTurn", "EffectOp::DealDamage { target: TargetRef::Target(0), amount: 5 }"),
         "Maelstrom Pulse" => program("NonlandPermanent", "DestroyPermanentsSharingTargetName(0)", "EffectOp::DestroyPermanentsSharingTargetNameV1 { index: 0 }"),
+        "Gix's Command" => program("None", "ChooseTwoOfFour:GixCommand", "crate::effect::standard_selection_v1::gix_command_pair(0)"),
         "Tear Asunder" => program("ArtifactOrEnchantmentPermanent", "ExileTarget;KickerTarget=NonlandPermanent", "EffectOp::MoveObject { object: ObjectRef::Target(0), to_zone: Zone::Exile }"),
         "Sheoldred's Edict" => Special::Program {
             target: "None",
@@ -6246,6 +6247,9 @@ fn madness_cost_for(name: &str) -> String {
 /// `Some` second-mode source text (`CardDef::mode2`) for the symmetric
 /// Elemental Blast/Pyroblast/Hydroblast family.
 fn mode2_for(name: &str) -> String {
+    if name == "Gix's Command" {
+        return "Some(ModeDef { target_spec: TargetSpec::None, effect: crate::effect::standard_selection_v1::gix_pair_1 })".into();
+    }
     match special_for(name) {
         Special::ColorBlast {
             checked_color,
@@ -6285,6 +6289,9 @@ fn mode2_for(name: &str) -> String {
 /// half runs first from `standard_keywords_v1::spree_mode_prelude`, since a
 /// counter-unless-pays program must stay rooted.
 fn mode3_for(name: &str) -> String {
+    if name == "Gix's Command" {
+        return "Some(ModeDef { target_spec: TargetSpec::None, effect: crate::effect::standard_selection_v1::gix_pair_2 })".into();
+    }
     if name == "Sheoldred's Edict" {
         return "Some(ModeDef { target_spec: TargetSpec::None, effect: mode3_effect_sheoldreds_edict })".to_string();
     }
@@ -9535,6 +9542,18 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out, "        madness_cost: {},", madness_cost_for(&c.name)).unwrap();
         writeln!(out, "        mode2: {},", mode2_for(&c.name)).unwrap();
         writeln!(out, "        mode3: {},", mode3_for(&c.name)).unwrap();
+        let extra_modes = if c.name == "Gix's Command" {
+            "&[ModeDef { target_spec: TargetSpec::None, effect: crate::effect::standard_selection_v1::gix_pair_3 }, ModeDef { target_spec: TargetSpec::None, effect: crate::effect::standard_selection_v1::gix_pair_4 }, ModeDef { target_spec: TargetSpec::None, effect: crate::effect::standard_selection_v1::gix_pair_5 }]"
+        } else {
+            "&[]"
+        };
+        writeln!(out, "        additional_modes: {extra_modes},").unwrap();
+        let kicked_target = if c.name == "Tear Asunder" {
+            "Some(TargetSpec::NonlandPermanent)"
+        } else {
+            "None"
+        };
+        writeln!(out, "        kicked_target_spec: {kicked_target},").unwrap();
         writeln!(out, "        is_token: {},", c.is_token).unwrap();
         writeln!(out, "        escape: {},", escape_for(&c.name)).unwrap();
         let mana_ability_choices_src = mana_ability_colors

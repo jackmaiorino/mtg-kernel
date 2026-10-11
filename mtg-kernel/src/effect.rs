@@ -5065,12 +5065,7 @@ fn validate_counter_target_unless_pays_program(
     let def = crate::card_def::CARD_DEFS
         .get(state.objects.get(pending.resolving_item.source).card_def as usize)
         .ok_or("counter-unless-pay resolving definition is missing")?;
-    let program = match pending.resolving_item.mode_chosen {
-        0 => (def.spell_effect)(),
-        1 => def.mode2.as_ref().map(|mode| (mode.effect)()),
-        2 => def.mode3.as_ref().map(|mode| (mode.effect)()),
-        _ => None,
-    };
+    let program = def.printed_mode_effect(pending.resolving_item.mode_chosen);
     if program
         != Some(EffectOp::CounterTargetUnlessPaysGeneric {
             target: TargetRef::Target(0),
@@ -5223,12 +5218,7 @@ fn validated_definition_owned_root_effect(
                 .map(|adventure| (adventure.effect)())
                 .or_else(|| crate::engine::supported_omen(definition).map(|omen| (omen.effect)()))
         } else {
-            match pending.resolving_item.mode_chosen {
-                0 => (definition.spell_effect)(),
-                1 => definition.mode2.as_ref().map(|mode| (mode.effect)()),
-                2 => definition.mode3.as_ref().map(|mode| (mode.effect)()),
-                _ => None,
-            }
+            definition.printed_mode_effect(pending.resolving_item.mode_chosen)
         }
         .ok_or("answered spell frame lost its definition-owned root program")?;
         Box::new(effect)

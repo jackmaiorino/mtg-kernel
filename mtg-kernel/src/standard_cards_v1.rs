@@ -2140,7 +2140,7 @@ pub(crate) fn record_life(state: &mut GameState, player: PlayerId, gained: i32, 
     losses[index] = losses[index].saturating_add(lost.max(0).unsigned_abs());
 }
 
-fn life_gained_this_turn(state: &GameState, player: PlayerId) -> u32 {
+pub(crate) fn life_gained_this_turn(state: &GameState, player: PlayerId) -> u32 {
     state
         .standard_v1
         .as_ref()

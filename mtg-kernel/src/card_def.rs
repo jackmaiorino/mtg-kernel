@@ -334,7 +334,6 @@ impl Subtype {
     /// order. Case-distinct registry spellings remain separate because their
     /// existing ids and subtype queries are intentionally preserved.
     pub const CREATURE_TYPES: &'static [Subtype] = &[
-        Subtype::Pilot,
         Subtype::Ape,
         Subtype::BirdAllCaps,
         Subtype::Bird,
@@ -579,6 +578,8 @@ impl Subtype {
         Subtype::God,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Gnome,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Pilot,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Siren,
         #[cfg(feature = "standard-magezero-fixtures")]
@@ -1958,6 +1959,10 @@ pub struct CardDef {
     pub mode2: Option<ModeDef>,
     /// Optional third printed mode. Piracy Charm is the first consumer.
     pub mode3: Option<ModeDef>,
+    /// Additional printed mode combinations, starting at index 3.
+    pub additional_modes: &'static [ModeDef],
+    /// Replaces the target specification when the kicker is paid.
+    pub kicked_target_spec: Option<TargetSpec>,
     /// A permanent token (`cards_v1.json`'s own `is_token`, e.g. Blood),
     /// never itself a deck card -- read by `trigger::sba_fixed_point` for
     /// 111.8/704.5d ("if a token is in a zone other than the battlefield,
@@ -2142,6 +2147,32 @@ impl CardDef {
             }
         }
         self.keywords
+    }
+
+    pub fn printed_mode_target(&self, mode: u8, kicked: bool) -> Option<TargetSpec> {
+        if kicked && self.kicked_target_spec.is_some() {
+            return self.kicked_target_spec;
+        }
+        match mode {
+            0 => Some(self.target_spec),
+            1 => self.mode2.as_ref().map(|m| m.target_spec),
+            2 => self.mode3.as_ref().map(|m| m.target_spec),
+            _ => self
+                .additional_modes
+                .get(usize::from(mode) - 3)
+                .map(|m| m.target_spec),
+        }
+    }
+    pub fn printed_mode_effect(&self, mode: u8) -> Option<EffectOp> {
+        match mode {
+            0 => (self.spell_effect)(),
+            1 => self.mode2.as_ref().map(|m| (m.effect)()),
+            2 => self.mode3.as_ref().map(|m| (m.effect)()),
+            _ => self
+                .additional_modes
+                .get(usize::from(mode) - 3)
+                .map(|m| (m.effect)()),
+        }
     }
 
     pub fn is_castable(&self) -> bool {

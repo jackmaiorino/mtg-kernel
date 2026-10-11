@@ -234,3 +234,19 @@ pub fn gix_command_pair(pair: u8) -> EffectOp {
     let (a, b) = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)][usize::from(pair)];
     EffectOp::Sequence(vec![modes[a].clone(), modes[b].clone()])
 }
+
+pub fn gix_pair_1() -> EffectOp {
+    gix_command_pair(1)
+}
+pub fn gix_pair_2() -> EffectOp {
+    gix_command_pair(2)
+}
+pub fn gix_pair_3() -> EffectOp {
+    gix_command_pair(3)
+}
+pub fn gix_pair_4() -> EffectOp {
+    gix_command_pair(4)
+}
+pub fn gix_pair_5() -> EffectOp {
+    gix_command_pair(5)
+}

@@ -439,6 +439,8 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         madness_cost,
         mode2,
         mode3,
+        additional_modes,
+        kicked_target_spec,
         is_token,
         escape,
         mana_ability_choices,
@@ -596,11 +598,20 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         }),
     );
 
+    if let Some(spec) = kicked_target_spec {
+        if let Some(op) = spell_effect() {
+            walk.program(CtxF::Mode, "kicked_spell", *spec, &op);
+        }
+    }
     // Resolution programs.
     if let Some(op) = spell_effect() {
         walk.program(CtxF::Spell, "spell", *target_spec, &op);
     }
-    for mode in [mode2, mode3].into_iter().flatten() {
+    for mode in [mode2, mode3]
+        .into_iter()
+        .flatten()
+        .chain(additional_modes.iter())
+    {
         let program = (mode.effect)();
         walk.program(CtxF::Mode, "mode", mode.target_spec, &program);
     }

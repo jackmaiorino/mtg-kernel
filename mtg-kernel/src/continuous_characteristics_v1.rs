@@ -112,7 +112,13 @@ pub(crate) fn base_power_toughness(state: &GameState, id: ObjectId) -> Option<(i
                 .v4
                 .creature_upgrade
                 .as_ref()
-                .and_then(|upgrade| upgrade.base_stats),
+                .into_iter()
+                .flat_map(|upgrade| {
+                    upgrade
+                        .base_stats
+                        .into_iter()
+                        .chain(upgrade.temporary_creature)
+                }),
         );
     }
     settings

@@ -173,10 +173,8 @@ pub(crate) fn animated_creature(state: &GameState, id: ObjectId) -> bool {
         })
 }
 
-/// The base catalog has player-only attack declarations. The integration
-/// with attack_target_v1 overrides this predicate to exclude planeswalkers.
-pub(crate) fn attacks_player(_state: &GameState, _attacker: ObjectId) -> bool {
-    true
+pub(crate) fn attacks_player(state: &GameState, attacker: ObjectId) -> bool {
+    crate::attack_target_v1::attacked_planeswalker(state, attacker).is_none()
 }
 
 pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: ObjectId) -> bool {

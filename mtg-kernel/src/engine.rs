@@ -3871,6 +3871,17 @@ fn viable_printed_spell_modes(
             modes.push(2);
         }
     }
+    for (index, mode) in def.additional_modes.iter().enumerate() {
+        if target_prefix_can_complete_for_controller_and_source(
+            mode.target_spec,
+            &[],
+            controller,
+            source,
+            state,
+        ) {
+            modes.push(3 + index as u8);
+        }
+    }
     #[cfg(feature = "standard-magezero-fixtures")]
     if crate::standard_keywords_v1::spree_extra_generic(def.name, 0).is_some() {
         modes.retain(|&mode| {
@@ -6527,12 +6538,16 @@ pub(crate) fn supported_adventure(def: &card_def::CardDef) -> Option<&card_def::
 fn has_spell_form_choice(def: &card_def::CardDef) -> bool {
     def.mode2.is_some()
         || def.mode3.is_some()
+        || !def.additional_modes.is_empty()
         || supported_omen(def).is_some()
         || supported_bestow(def).is_some()
         || supported_adventure(def).is_some()
 }
 
 fn printed_spell_form_count(def: &card_def::CardDef) -> u8 {
+    if !def.additional_modes.is_empty() {
+        return 3 + def.additional_modes.len() as u8;
+    }
     if def.mode3.is_some() {
         3
     } else if def.mode2.is_some()
@@ -6556,9 +6571,39 @@ fn spell_form_target_spec(def: &card_def::CardDef, form: u8) -> Option<TargetSpe
             .or_else(|| supported_omen(def).map(|omen| omen.target_spec))
             .or_else(|| supported_bestow(def).map(|bestow| bestow.target_spec))
             .or_else(|| supported_adventure(def).map(|adventure| adventure.target_spec)),
-        2 => def.mode3.as_ref().map(|mode| mode.target_spec),
-        _ => None,
+        _ => def.printed_mode_target(form, false),
     }
+}
+
+fn selected_spell_target_spec(
+    def: &card_def::CardDef,
+    form: u8,
+    kicked: bool,
+) -> Option<TargetSpec> {
+    if kicked && def.kicked_target_spec.is_some() {
+        def.kicked_target_spec
+    } else {
+        spell_form_target_spec(def, form)
+    }
+}
+
+fn kicker_targets_complete(
+    state: &GameState,
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    kicked: bool,
+) -> bool {
+    let Some(spec) = selected_spell_target_spec(def, pending.mode_chosen.unwrap_or(0), kicked)
+    else {
+        return false;
+    };
+    target_prefix_can_complete_for_controller_and_source(
+        spec,
+        &pending.targets_chosen,
+        pending.controller,
+        targeting_source_for_object(state, pending.spell),
+        state,
+    )
 }
 
 fn spell_types_have_instant(types: &[CardType]) -> bool {
@@ -6571,8 +6616,7 @@ fn cast_form_timing_ok(
     player: PlayerId,
     state: &GameState,
 ) -> bool {
-    resolution_cast_v1::free_cast(state, pending.spell)
-        || spell_types_have_instant(types)
+    spell_types_have_instant(types)
         || keywords.has(Keywords::FLASH)
         || sorcery_speed_timing_ok(player, state)
 }
@@ -6583,7 +6627,8 @@ fn pending_cast_form_timing_ok(
     pending: &PendingCast,
     state: &GameState,
 ) -> bool {
-    spell_types_have_instant(types)
+    resolution_cast_v1::free_cast(state, pending.spell)
+        || spell_types_have_instant(types)
         || keywords.has(Keywords::FLASH)
         || (pending.controller == state.active_player
             && pending.controller == state.priority_player
@@ -6603,6 +6648,23 @@ fn viable_pending_spell_forms(
     pending: &PendingCast,
     state: &GameState,
 ) -> Vec<u8> {
+    if def.kicked_target_spec.is_some() && pending.kicked.is_some() {
+        return if kicker_targets_complete(state, def, pending, pending.kicked == Some(true))
+            && pending_cast_quote_v1(
+                def,
+                pending,
+                CastMethodV4::Normal,
+                pending.kicked == Some(true),
+                0,
+                state,
+            )
+            .is_some()
+        {
+            vec![0]
+        } else {
+            Vec::new()
+        };
+    }
     let free = resolution_cast_v1::free_cast(state, pending.spell);
     let alternative = if supported_bestow(def).is_some() && !free {
         Some((CastMethodV4::Bestow, &[CardType::Enchantment][..]))
@@ -6646,7 +6708,7 @@ fn viable_pending_spell_forms(
         return forms;
     }
     let mut modes = viable_printed_spell_modes(def, pending.spell, pending.controller, state);
-    if def.mode2.is_some() || def.mode3.is_some() {
+    if def.mode2.is_some() || def.mode3.is_some() || !def.additional_modes.is_empty() {
         modes.retain(|&mode| {
             let mut selected = pending.clone();
             selected.mode_chosen = Some(mode);
@@ -6958,9 +7020,35 @@ fn is_castable_now(
                 )
                 .is_some()
             };
+            let kicked_ok = || {
+                def.kicked_target_spec.is_some_and(|spec| {
+                    target_prefix_can_complete_for_controller_and_source(
+                        spec,
+                        &[],
+                        player,
+                        targeting_source_for_object(state, id),
+                        state,
+                    ) && spell_costs_v1::selected_spell_quote_v1(
+                        def,
+                        id,
+                        state.objects.get(id).zone,
+                        CastMethodV4::Normal,
+                        true,
+                        0,
+                        0,
+                        &[],
+                        &[],
+                        player,
+                        state,
+                        &[],
+                    )
+                    .is_some()
+                })
+            };
             let main_ok = main_timing_ok
-                && (normal_ok() || alt_ok())
-                && !viable_printed_spell_modes(def, id, player, state).is_empty();
+                && (((normal_ok() || alt_ok())
+                    && !viable_printed_spell_modes(def, id, player, state).is_empty())
+                    || kicked_ok());
             let omen_ok = || {
                 supported_omen(def).is_some_and(|omen| {
                     matches!(state.objects.get(id).zone, Zone::Hand | Zone::Exile)
@@ -9412,7 +9500,8 @@ pub(crate) fn validate_pending_cast(
     let mode_shape_valid = match pending.mode_chosen {
         None => has_spell_form_choice(def),
         Some(mode) => {
-            spell_form_target_spec(def, mode).is_some() && (has_spell_form_choice(def) || mode == 0)
+            selected_spell_target_spec(def, mode, pending.kicked == Some(true)).is_some()
+                && (has_spell_form_choice(def) || mode == 0)
         }
     };
     if !mode_shape_valid {
@@ -9428,7 +9517,7 @@ pub(crate) fn validate_pending_cast(
     let active_spec = pending
         .mode_chosen
         .map(|mode| {
-            spell_form_target_spec(def, mode)
+            selected_spell_target_spec(def, mode, pending.kicked == Some(true))
                 .ok_or("pending cast selected a nonexistent spell form".to_string())
         })
         .transpose()?;
@@ -9915,27 +10004,35 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     // mandatory target assignment against the announcing spell's real
     // self-excluding stack state, and revert any impossible announcement
     // instead of exposing an empty targeting decision.
-    let targeting_can_complete = match pending.mode_chosen {
-        Some(mode) => spell_form_target_spec(def, mode).is_some_and(|spec| {
-            let legal_completion = target_prefix_can_complete_for_controller_and_source(
-                spec,
-                &pending.targets_chosen,
-                pending.controller,
-                targeting_source_for_object(state, pending.spell),
-                state,
-            );
-            legal_completion
-                && (!normal_cast_cost_depends_on_targets(def)
-                    || normal_cast_target_prefix_is_payable(
-                        def,
-                        pending.spell,
+    let targeting_can_complete = if pending.kicked.is_none() && def.kicked_target_spec.is_some() {
+        kicker_targets_complete(state, def, &pending, false)
+            || (kicker_targets_complete(state, def, &pending, true)
+                && pending_cast_quote_v1(def, &pending, CastMethodV4::Normal, true, 0, state)
+                    .is_some())
+    } else {
+        match pending.mode_chosen {
+            Some(mode) => selected_spell_target_spec(def, mode, pending.kicked == Some(true))
+                .is_some_and(|spec| {
+                    let legal_completion = target_prefix_can_complete_for_controller_and_source(
                         spec,
-                        pending.controller,
                         &pending.targets_chosen,
+                        pending.controller,
+                        targeting_source_for_object(state, pending.spell),
                         state,
-                    ))
-        }),
-        None => !viable_pending_spell_forms(def, &pending, state).is_empty(),
+                    );
+                    legal_completion
+                        && (!normal_cast_cost_depends_on_targets(def)
+                            || normal_cast_target_prefix_is_payable(
+                                def,
+                                pending.spell,
+                                spec,
+                                pending.controller,
+                                &pending.targets_chosen,
+                                state,
+                            ))
+                }),
+            None => !viable_pending_spell_forms(def, &pending, state).is_empty(),
+        }
     };
     if !targeting_can_complete {
         let cast_method = finalized_cast_method(&pending, staged_method, def);
@@ -9953,6 +10050,13 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     if def.kicker_cost.is_some() && pending.kicked.is_none() {
         let payable =
             pending_cast_quote_v1(def, &pending, CastMethodV4::Normal, true, 0, state).is_some();
+        if payable
+            && def.kicked_target_spec.is_some()
+            && !kicker_targets_complete(state, def, &pending, false)
+        {
+            state.engine.pending_cast.as_mut().unwrap().kicked = Some(true);
+            return drain_pending_cast_or_decide(state);
+        }
         if payable {
             return Some(Decision::ChooseKicker {
                 player: pending.controller,
@@ -10019,11 +10123,12 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             legal_modes: viable_modes,
         });
     }
-    let active_target_spec = spell_form_target_spec(
+    let active_target_spec = selected_spell_target_spec(
         def,
         pending
             .mode_chosen
             .expect("spell-form choice completed before targeting"),
+        pending.kicked == Some(true),
     )
     .expect("mode shape validated at drain entry");
 
@@ -12064,22 +12169,10 @@ pub(crate) fn validated_stack_item_target_spec(
                         .target_spec,
                 )
             } else {
-                Some(match item.mode_chosen {
-                    0 => def.target_spec,
-                    1 => {
-                        def.mode2
-                            .as_ref()
-                            .ok_or("spell stack item selected a nonexistent second mode")?
-                            .target_spec
-                    }
-                    2 => {
-                        def.mode3
-                            .as_ref()
-                            .ok_or("spell stack item selected a nonexistent third mode")?
-                            .target_spec
-                    }
-                    _ => return Err("spell stack item carries an unknown mode index".to_string()),
-                })
+                Some(
+                    def.printed_mode_target(item.mode_chosen, item.kicked)
+                        .ok_or("spell stack item selected a nonexistent mode")?,
+                )
             }
         }
         StackItemKind::ActivatedAbility => {
@@ -12726,12 +12819,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             }
         })
     } else {
-        match item.mode_chosen {
-            0 => (def.spell_effect)(),
-            1 => def.mode2.as_ref().map(|mode| (mode.effect)()),
-            2 => def.mode3.as_ref().map(|mode| (mode.effect)()),
-            _ => None,
-        }
+        def.printed_mode_effect(item.mode_chosen)
     };
     let convoked_creatures = state.objects.get(item.source).v4.convoked_creatures_v1;
     #[cfg(feature = "standard-magezero-fixtures")]
@@ -14691,11 +14779,12 @@ fn pending_cast_action_stage(
     if pending.mode_chosen.is_none() {
         return Ok(PendingCastActionStage::ChooseSpellMode);
     }
-    let active_target_spec = spell_form_target_spec(
+    let active_target_spec = selected_spell_target_spec(
         def,
         pending
             .mode_chosen
             .expect("handled unresolved spell-form choice above"),
+        pending.kicked == Some(true),
     )
     .ok_or("pending cast selected a nonexistent spell form")?;
     if !pending_cast_targeting_is_complete(pending, active_target_spec) {
@@ -15095,12 +15184,11 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
                 return Err("this cast's mode has already been chosen".to_string());
             }
             let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-            let active_target_spec = spell_form_target_spec(
+            let active_target_spec = selected_spell_target_spec(
                 def,
                 pending
                     .mode_chosen
-                    .ok_or("cast mode chosen before the spell form completed")?,
-            )
+                    .ok_or("cast mode chosen before the spell form completed")?, pending.kicked == Some(true))
             .ok_or("pending cast selected a nonexistent spell form")?;
             if pending.kicked.is_none()
                 || pending.targets_chosen.len()
@@ -15140,6 +15228,9 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
             if pending_cast_quote_v1(def, &pending, CastMethodV4::Normal, true, 0, state).is_none()
             {
                 return Err("the kicker choice is no longer payable".to_string());
+            }
+            if def.kicked_target_spec.is_some() && !kicker_targets_complete(state, def, &pending, kicked) {
+                return Err("chosen kicker option has no legal target completion".into());
             }
             state
                 .engine
@@ -15261,7 +15352,7 @@ fn exact_targeting_producer(state: &GameState) -> Result<TargetingProducer, Stri
         if pending.kicked.is_some() {
             if let Some(mode) = pending.mode_chosen {
                 let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-                let spec = spell_form_target_spec(def, mode)
+                let spec = selected_spell_target_spec(def, mode, pending.kicked == Some(true))
                     .ok_or("pending cast selected a nonexistent spell form")?;
                 if !pending_cast_targeting_is_complete(pending, spec) {
                     producers.push(TargetingProducer::Cast {
@@ -15536,11 +15627,12 @@ fn finish_optional_cast_targets(state: &mut GameState) -> Result<(), String> {
         .ok_or("no cast is selecting optional targets")?;
     validate_pending_cast(state, &pending)?;
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-    let spec = spell_form_target_spec(
+    let spec = selected_spell_target_spec(
         def,
         pending
             .mode_chosen
             .ok_or("cast target selection finished before choosing a spell form")?,
+        pending.kicked == Some(true),
     )
     .ok_or("pending cast selected a nonexistent spell form")?;
     let min = usize::from(target_min_count(spec));
@@ -15670,11 +15762,12 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
         let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
         let needed = sacrifice_lands_needed(&pending, def);
         if (pending.sacrifice_chosen.len() as u8) < needed {
-            let active_target_spec = spell_form_target_spec(
+            let active_target_spec = selected_spell_target_spec(
                 def,
                 pending
                     .mode_chosen
                     .ok_or("cast sacrifice target chosen before spell form completed")?,
+                pending.kicked == Some(true),
             )
             .ok_or("pending cast selected a nonexistent spell form")?;
             if pending.kicked.is_none()
@@ -15705,11 +15798,12 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
         }
         let graveyard_exile_needed = graveyard_exile_cards_needed(&pending, def);
         if (pending.sacrifice_chosen.len() as u8) < graveyard_exile_needed {
-            let active_target_spec = spell_form_target_spec(
+            let active_target_spec = selected_spell_target_spec(
                 def,
                 pending
                     .mode_chosen
                     .ok_or("cast graveyard-exile target chosen before spell form completed")?,
+                pending.kicked == Some(true),
             )
             .ok_or("pending cast selected a nonexistent spell form")?;
             if pending.kicked.is_none()
@@ -15748,11 +15842,12 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
         }
         if let Some((needed, filter)) = controlled_permanent_sacrifice_needed(&pending, def) {
             if (pending.sacrifice_chosen.len() as u8) < needed {
-                let active_target_spec = spell_form_target_spec(
+                let active_target_spec = selected_spell_target_spec(
                     def,
                     pending.mode_chosen.ok_or(
                         "cast permanent-sacrifice target chosen before spell form completed",
                     )?,
+                    pending.kicked == Some(true),
                 )
                 .ok_or("pending cast selected a nonexistent spell form")?;
                 if pending.kicked.is_none()
@@ -15793,11 +15888,12 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
         }
         if let Some(filter) = cast_tap_permanent_filter_needed(&pending, def) {
             if pending.sacrifice_chosen.is_empty() {
-                let active_target_spec = spell_form_target_spec(
+                let active_target_spec = selected_spell_target_spec(
                     def,
                     pending
                         .mode_chosen
                         .ok_or("cast tap-cost target chosen before spell form completed")?,
+                    pending.kicked == Some(true),
                 )
                 .ok_or("pending cast selected a nonexistent spell form")?;
                 if pending.kicked.is_none()
@@ -16506,12 +16602,7 @@ fn has_supported_spell_copy_offer_program(state: &GameState, item: &StackItem) -
         return false;
     };
     let def = &card_def::CARD_DEFS[source.card_def as usize];
-    let effect = match item.mode_chosen {
-        0 => (def.spell_effect)(),
-        1 => def.mode2.as_ref().map(|mode| (mode.effect)()),
-        2 => def.mode3.as_ref().map(|mode| (mode.effect)()),
-        _ => None,
-    };
+    let effect = def.printed_mode_effect(item.mode_chosen);
     effect
         == Some(EffectOp::Sequence(vec![
             EffectOp::DealDamage {
@@ -17656,8 +17747,12 @@ fn finalize_owned_cast(
             .expect("validated Bestow cast retains its definition")
             .target_spec
     } else {
-        spell_form_target_spec(def, pending.mode_chosen.unwrap_or(0))
-            .expect("validated cast retains its selected spell form")
+        selected_spell_target_spec(
+            def,
+            pending.mode_chosen.unwrap_or(0),
+            pending.kicked == Some(true),
+        )
+        .expect("validated cast retains its selected spell form")
     };
     // Payment is now irrevocably complete. Stamp the independently owned
     // source-object record before recapturing the finalized stack contract;
