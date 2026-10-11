@@ -3010,3 +3010,29 @@ fn smithy_taps_exactly_five_and_barracks_tracks_floating_mana_after_untap() {
     assert_eq!(battlefield_named(&state, P0, "Gnome Soldier").len(), 2);
     assert!(state.players[0].restricted_mana_pool.0.is_empty());
 }
+#[test]
+fn twilight_target_admission_uses_cost_reduction_and_taxes() {
+    let mut reduced = game();
+    put(&mut reduced, P0, "Haughty Djinn", Zone::Battlefield);
+    let elves = put(&mut reduced, P1, "Llanowar Elves", Zone::Battlefield);
+    reduced.players[0].mana_pool[ManaColor::U.pool_index()] = 2;
+    cast_twilight(&mut reduced, elves, 1);
+    assert_eq!(reduced.objects.get(elves).controller, P0);
+
+    let mut taxed = game();
+    put(
+        &mut taxed,
+        P1,
+        "Thalia, Guardian of Thraben",
+        Zone::Battlefield,
+    );
+    put(&mut taxed, P1, "Llanowar Elves", Zone::Battlefield);
+    let spell = put(&mut taxed, P0, "Blue Sun's Twilight", Zone::Hand);
+    taxed.players[0].mana_pool[ManaColor::U.pool_index()] = 3;
+    match next(&mut taxed) {
+        Decision::CastSpellOrPass {
+            castable_spells, ..
+        } => assert!(!castable_spells.contains(&spell)),
+        other => panic!("unexpected {other:?}"),
+    }
+}
