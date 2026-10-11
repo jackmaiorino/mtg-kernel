@@ -71,12 +71,12 @@ impl FastActorSessionV1 {
                 .source_contract
                 .ok_or_else(|| RlContractError("missing Zombie source".into()))?;
             let (legal_choices, can_finish) = match &current.origin_decision {
-                Decision::ChooseTargets {
+                PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::ChooseTargets {
                     spell,
                     legal_targets,
                     can_finish,
                     ..
-                } if ordinal == 0 && *spell == pending.source => {
+                })) if ordinal == 0 && *spell == pending.source => {
                     let choices = legal_targets
                         .iter()
                         .map(|target| {
