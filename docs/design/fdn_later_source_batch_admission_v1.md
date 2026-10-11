@@ -95,3 +95,29 @@ remain, with historical v78 and stale publish/resume guards. Runtime deck SHA
 is unchanged. Native runtime and current consumers/model remain unqualified.
 Final failed artifacts are cold mirrored. Exact owned helper145508 release,
 guard101 and absent supervisor145856 were observed before any target reuse.
+
+Native62 exact33d1 passes both all-test compiles0/0 and reproduces actual411
+generator bytes above. It executes zero runtime cases. Final Frenzied1d0329
+and Employmentf91 source repairs are separately reviewed CLEAR and composed
+with Wildwood1179 and existing Authority hooks. Native63 exactb612 then fails
+both compiles101/101: ObjectId has no Default and Frenzied shared storage
+lacked an explicit Wildwood-refusal argument. No runtime case executes.
+Rootac264 uses ObjectId(0), passes false for Wildwood, and scopes Wildwood
+capture imports to its owning catalog. Retained Native63 helper/log banner
+409/v78 is stale; exactGit/manifest scope411/v79 is authoritative. No generated
+output is inferred from that failed compile.
+
+Native64 exactac264b7599b837b8b8b8116e75debe24af1d7094 is submitted through
+supportedhandled436012513a0494f8146a7e2e7c824e8/supervisor162716, four
+BelowNormal cores. Same62 groups request412 actual runtime occurrences,
+both all-test compiles, three strict lints and complete Default/Standard
+replay exports. Correct Windows selectors cover stale v77/v78 publisher and
+resume guards. Runtime skips if either compile fails. Final Native63 command
+and guard101, exact owned helper160004 release and absent supervisor140336
+were verified before target reuse. Failed receipts are cold mirrored.
+
+Prerequisite PR226 is accepted at actual default032c007e with25 candidate
+checks and69 affected default Python passes,193 Full/1 Partial/92 Missing.
+Future206 Full markers in this source remain unaccepted. Separate Authority
+V17, EmploymentV18 and CerberusV19 source lanes are outside Native64; all
+consumer/model/sampler and broader issue110 criteria remain open.
