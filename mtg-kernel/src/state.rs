@@ -346,6 +346,7 @@ impl ObjectStateV4 {
                 Some(
                     crate::card_def::WardCostDef::CollectEvidence(_)
                     | crate::card_def::WardCostDef::BackFacePayLife(_)
+                    | crate::card_def::WardCostDef::PayLife(_)
                     | crate::card_def::WardCostDef::DiscardCard,
                 )
                 | None => 0,

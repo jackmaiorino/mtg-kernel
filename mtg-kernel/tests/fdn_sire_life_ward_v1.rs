@@ -140,6 +140,10 @@ fn sire_printed_shape_has_six_keywords_and_life_ward() {
     }
     assert!(!def.keywords.has(Keywords::DEATHTOUCH));
     assert_eq!(def.ward_cost, Some(WardCostDef::PayLife(7)));
+    assert_eq!(
+        ObjectStateV4::from_card_def(card_id_by_name("Sire of Seven Deaths").unwrap()).ward_generic,
+        0
+    );
 }
 
 fn pending_life_ward(state: &mut GameState, surf: &mut HarnessSurfaceV2) {
