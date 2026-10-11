@@ -65,3 +65,22 @@ and helper target exactf6cca, actual411 generation and both all-test typechecks
 only. It is not submitted and cannot reuse Native60's target until actual
 terminal, guard exit, supervisor absence and exact owned-helper release.
 No411 hash or new profile has been invented before the actual generator runs.
+
+Native60 is final101/101:331 passed and5 failed among336 executed occurrences,
+with339 originally requested across43 groups. Both all-test typechecks and
+Default strict lint pass. Limited strict lint fails the Frenzied replace_box
+fixture, repaired at3db48b0c. Complete Default/Standard replay exports equal
+Native33 bytes. Profile selects161 rather than162; two prior-v77 guards select
+zero due wrong module filters. Their three missing occurrences remain
+unqualified. The original requested counts are retained. Final manifests,
+logs, guard and full exports are cold mirrored with SHA/byte verification.
+Only owned terminal helper145360 was released after command terminal,
+job668 membership and exact path/start checks. Actual guard101 and absent
+supervisor143300 were observed before target reuse.
+
+Native61 exactf6cca4615b8b778b7ec3ebb7d55923402fd9beb2 is now submitted through
+supportedhandlead038ce59f624e5d9bcff7af363779e7/supervisor145856, four free
+BelowNormal cores. It requests actual411 generation and Limited/Standard
+all-test typechecks only. The helper and bundle hashes match the prepared
+manifest; the actual checkout is clean. No runtime, lint, profile or new
+accepted coverage claim follows from this compile preflight.
