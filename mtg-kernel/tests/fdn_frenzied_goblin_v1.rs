@@ -533,7 +533,7 @@ fn protection_at_placement_wrong_target_and_payment_forgeries_are_readonly() {
                         *payer = actor.opponent();
                     }
                     1 => *colored = vec![ManaColor::G],
-                    _ => *then = Box::new(mtg_kernel::effect::EffectOp::Sequence(vec![])),
+                    _ => **then = mtg_kernel::effect::EffectOp::Sequence(vec![]),
                 }
             } else {
                 pending.choice = None;
