@@ -41,10 +41,10 @@ use crate::native_flat_tensorizer_v4::{
 };
 use crate::native_policy_train_step_v1::native_train_state_parameter_layout_v1;
 use crate::native_policy_value_net_v1::{
-    NativeNamedParameterV1, NativePolicyValueForwardScratchV1, NativePolicyValueModelConfigV1,
-    NativePolicyValueNetV1, CARD_EMBEDDING_DIM_V1, CARD_VOCAB_SIZE_V1, FEATURE_CONTRACT_DIGEST_V1,
-    FEATURE_ENCODING_DIGEST_V1, MODEL_ARCHITECTURE_VERSION_V1, MODEL_CONFIG_FINGERPRINT_V1,
-    PARAMETER_COUNT_V1,
+    ForwardActivationModeV1, NativeNamedParameterV1, NativePolicyValueForwardScratchV1,
+    NativePolicyValueModelConfigV1, NativePolicyValueNetV1, CARD_EMBEDDING_DIM_V1,
+    CARD_VOCAB_SIZE_V1, FEATURE_CONTRACT_DIGEST_V1, FEATURE_ENCODING_DIGEST_V1,
+    MODEL_ARCHITECTURE_VERSION_V1, MODEL_CONFIG_FINGERPRINT_V1, PARAMETER_COUNT_V1,
 };
 use crate::paired_bo1_harness_v1::{
     PairedBo1PolicyInputV1, PairedBo1PolicyV1, PlayPolicyGenerationV1,
@@ -211,6 +211,10 @@ pub struct FrozenPlayPolicyV1 {
     /// it. Every draw still consumes exactly one `next_u64` of the acting
     /// seat's stream.
     collection_sampler: Option<UnclampedSoftmaxScratchV1>,
+    /// Search-only forward (`ForwardActivationModeV1::FastSearchTanh`).
+    /// Off for every constructed policy; only a search driver that asks for
+    /// it turns it on, and collection forks keep it.
+    fast_search_forward: bool,
 }
 
 #[derive(Default)]
@@ -460,6 +464,7 @@ impl FrozenPlayPolicyV1 {
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
             collection_sampler: None,
+            fast_search_forward: false,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -503,6 +508,7 @@ impl FrozenPlayPolicyV1 {
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
             collection_sampler: None,
+            fast_search_forward: false,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -581,6 +587,7 @@ impl FrozenPlayPolicyV1 {
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
             collection_sampler: None,
+            fast_search_forward: false,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -641,6 +648,7 @@ impl FrozenPlayPolicyV1 {
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
             collection_sampler: None,
+            fast_search_forward: false,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -701,6 +709,7 @@ impl FrozenPlayPolicyV1 {
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
             collection_sampler: None,
+            fast_search_forward: false,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -773,6 +782,7 @@ impl FrozenPlayPolicyV1 {
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
             collection_sampler: None,
+            fast_search_forward: false,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -950,6 +960,7 @@ impl FrozenPlayPolicyV1 {
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
             collection_sampler: None,
+            fast_search_forward: false,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -1018,6 +1029,7 @@ impl FrozenPlayPolicyV1 {
                 .collection_sampler
                 .as_ref()
                 .map(|_| UnclampedSoftmaxScratchV1::default()),
+            fast_search_forward: self.fast_search_forward,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -1071,6 +1083,19 @@ impl FrozenPlayPolicyV1 {
     /// sampler. Collection forks inherit it; opponents never do.
     pub(crate) fn enable_unclamped_collection_sampler_v1(&mut self) {
         self.collection_sampler = Some(UnclampedSoftmaxScratchV1::default());
+    }
+
+    /// Score with the search-only fast forward from now on (and in forks).
+    /// Outputs differ from the ordinary forward only in the last bits of
+    /// each tanh; ordinary play, training and evaluation never set this.
+    pub(crate) fn enable_fast_search_forward_v1(&mut self) {
+        self.set_fast_search_forward_v1(true);
+    }
+
+    /// Frozen-root reconstruction uses ordinary play before the search driver
+    /// restores its explicitly declared activation mode.
+    pub(crate) fn set_fast_search_forward_v1(&mut self, enabled: bool) {
+        self.fast_search_forward = enabled;
     }
 
     /// A fork that plays another seat as a frozen policy: its declared
@@ -1376,6 +1401,78 @@ impl FrozenPlayPolicyV1 {
         self.score_owned()
     }
 
+    /// Test-only cost split of one V3 `score_fast_session_v1` call:
+    /// (encode, tensorize, forward) seconds.
+    #[cfg(test)]
+    pub(crate) fn profile_score_phases_v3(&mut self, session: &FastActorSessionV1) -> [f64; 8] {
+        use std::time::Instant;
+        let FastActorResponseV1::Decision(decision) = session.current_response() else {
+            panic!("terminal");
+        };
+        let mode = if self.fast_search_forward {
+            ForwardActivationModeV1::FastSearchTanh
+        } else {
+            ForwardActivationModeV1::LibmTanh
+        };
+        let successor = self.successor.as_mut().expect("V3 policy");
+        let t0 = Instant::now();
+        let encoded = session
+            .encode_current_flat_scoring_decision_owned_v3(
+                decision,
+                &mut successor.encoder,
+                &mut self.owned.buffers(),
+            )
+            .unwrap();
+        self.owned.globals = encoded.globals;
+        successor.extensions = encoded.extensions;
+        let t1 = Instant::now();
+        successor
+            .tensorizer
+            .fill(
+                FlatScoringDecisionViewV3::new(self.owned.view(), &successor.extensions),
+                &mut successor.tensor,
+            )
+            .unwrap();
+        let t2 = Instant::now();
+        let out = self
+            .model
+            .forward_feature_transfer_v3_mode(encoded_decision_view_v3(&successor.tensor), mode)
+            .unwrap();
+        std::hint::black_box(out);
+        let t3 = Instant::now();
+        // Same tensor again, weights now hot in cache: the best case for
+        // batching positions on CPU.
+        for _ in 0..4 {
+            std::hint::black_box(
+                self.model
+                    .forward_feature_transfer_v3_mode(
+                        encoded_decision_view_v3(&successor.tensor),
+                        mode,
+                    )
+                    .unwrap(),
+            );
+        }
+        let t4 = Instant::now();
+        let v = encoded_decision_view_v3(&successor.tensor);
+        let rows = [
+            v.object_features.len() / crate::native_policy_value_net_v1::OBJECT_FEATURE_DIM_V1,
+            v.edge_features.len() / crate::native_policy_value_net_v1::EDGE_FEATURE_DIM_V1,
+            v.action_ref_features.len()
+                / crate::native_policy_value_net_v1::ACTION_REF_FEATURE_DIM_V1,
+            v.action_features.len() / crate::native_policy_value_net_v1::ACTION_FEATURE_DIM_V1,
+        ];
+        [
+            (t1 - t0).as_secs_f64(),
+            (t2 - t1).as_secs_f64(),
+            (t3 - t2).as_secs_f64(),
+            (t4 - t3).as_secs_f64() / 4.0,
+            rows[0] as f64,
+            rows[1] as f64,
+            rows[2] as f64,
+            rows[3] as f64,
+        ]
+    }
+
     /// Diagnostic only: the V4 tensor filled by the most recent
     /// `score_fast_session_v1` call on a fresh-lineage (V4) policy.
     pub(crate) fn diagnostic_last_v4_tensor(&self) -> Option<&NativeFlatDecisionTensorV4> {
@@ -1414,6 +1511,11 @@ impl FrozenPlayPolicyV1 {
     }
 
     fn score_owned(&mut self) -> Result<FrozenPlayDecisionScoresV1, String> {
+        let mode = if self.fast_search_forward {
+            ForwardActivationModeV1::FastSearchTanh
+        } else {
+            ForwardActivationModeV1::LibmTanh
+        };
         let output = if let Some(successor) = &mut self.successor {
             successor
                 .tensorizer
@@ -1426,6 +1528,7 @@ impl FrozenPlayPolicyV1 {
                 .forward_feature_transfer_v3_with_scratch_v1(
                     encoded_decision_view_v3(&successor.tensor),
                     &mut self.forward_scratch,
+                    mode,
                 )
                 .map_err(|e| format!("explicit V3 frozen feature transfer: {e:?}"))?
         } else if let Some(fresh) = &mut self.fresh_successor {
@@ -1440,6 +1543,7 @@ impl FrozenPlayPolicyV1 {
                 .forward_feature_transfer_v4_with_scratch_v1(
                     encoded_decision_view_v4(&fresh.tensor),
                     &mut self.forward_scratch,
+                    mode,
                 )
                 .map_err(|e| format!("explicit V4 frozen feature transfer: {e:?}"))?
         } else {
@@ -1450,6 +1554,7 @@ impl FrozenPlayPolicyV1 {
                 .forward_with_scratch_v1(
                     encoded_decision_view_v1(&self.tensor),
                     &mut self.forward_scratch,
+                    mode,
                 )
                 .map_err(|e| format!("frozen scalar inference: {e:?}"))?
         };

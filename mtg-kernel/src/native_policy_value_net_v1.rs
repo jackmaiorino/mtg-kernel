@@ -35,9 +35,18 @@ use scratch_v1::NativePolicyValueOutputViewV1;
 /// this module threads through; adding a mode here changes no existing
 /// behavior by itself, only which literal each call site passes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(
+    clippy::enum_variant_names,
+    reason = "every mode is a tanh implementation"
+)]
 pub(crate) enum ForwardActivationModeV1 {
     LibmTanh,
     KernelDeterministicTanh,
+    /// Search-only: a branch-free rational tanh ([`fast_tanh_f32_v1`]) that
+    /// the compiler vectorizes. The sampled accuracy regression requires
+    /// absolute error at most 5e-7 on its tested inputs; it is not a proof
+    /// over every finite f32. Never enabled by default for training or play.
+    FastSearchTanh,
 }
 
 impl ForwardActivationModeV1 {
@@ -48,6 +57,7 @@ impl ForwardActivationModeV1 {
             ForwardActivationModeV1::KernelDeterministicTanh => {
                 deterministic_math_v1::tanh_f32_v1(value)
             }
+            ForwardActivationModeV1::FastSearchTanh => fast_tanh_f32_v1(value),
         }
     }
 }
@@ -629,6 +639,15 @@ impl NativePolicyValueNetV1 {
         )
     }
 
+    /// [`Self::forward_v1`] with an explicit activation mode.
+    pub(crate) fn forward_v1_mode(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+        activation_mode: ForwardActivationModeV1,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+        self.forward_with_action_ingress_capture_v1(encoded, None, activation_mode)
+    }
+
     /// Search-scoped forward variant (`CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md`
     /// Section 1.5, Option S; `docs/audits/model_guided_forward_determinism_audit_v1.md`).
     /// Byte-for-byte identical to [`Self::forward_v1`] except that every
@@ -687,8 +706,17 @@ impl NativePolicyValueNetV1 {
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,
     ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+        self.forward_feature_transfer_v3_mode(encoded, ForwardActivationModeV1::LibmTanh)
+    }
+
+    /// [`Self::forward_feature_transfer_v3`] with an explicit activation mode.
+    pub(crate) fn forward_feature_transfer_v3_mode(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+        activation_mode: ForwardActivationModeV1,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
         let counts = encoded.validate(self.feature_transfer_config_v3())?;
-        self.forward_validated_rows_v1(encoded, counts, None, ForwardActivationModeV1::LibmTanh)
+        self.forward_validated_rows_v1(encoded, counts, None, activation_mode)
     }
 
     /// V4 sibling of `feature_transfer_config_v3`, for the fresh-lineage
@@ -711,8 +739,17 @@ impl NativePolicyValueNetV1 {
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,
     ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+        self.forward_feature_transfer_v4_mode(encoded, ForwardActivationModeV1::LibmTanh)
+    }
+
+    /// [`Self::forward_feature_transfer_v4`] with an explicit activation mode.
+    pub(crate) fn forward_feature_transfer_v4_mode(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+        activation_mode: ForwardActivationModeV1,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
         let counts = encoded.validate(self.feature_transfer_config_v4())?;
-        self.forward_validated_rows_v1(encoded, counts, None, ForwardActivationModeV1::LibmTanh)
+        self.forward_validated_rows_v1(encoded, counts, None, activation_mode)
     }
 
     /// Explicit V4 search-only forward; existing V4 inference remains LibmTanh.
@@ -1316,7 +1353,38 @@ fn linear_rows_v1(linear: &LinearV1, input: &[f32], rows: usize) -> Vec<f32> {
 /// every k in ascending order. Each output is still one sequential f32 sum in
 /// input order (bias first), exactly as the [output, input] loop computes it;
 /// only independent outputs are interleaved.
+///
+/// On x86-64 CPUs with AVX2 the same loop runs with 8-wide vectors. AVX2 does
+/// not enable FMA, so each product is still rounded before its add and the
+/// result is bit-identical; only the vector width changes.
 fn accumulate_linear_row_v1(
+    linear: &LinearV1,
+    input_row: &[f32],
+    first_input: usize,
+    accumulator: &mut [f32],
+) {
+    #[cfg(target_arch = "x86_64")]
+    if std::arch::is_x86_feature_detected!("avx2") {
+        // SAFETY: AVX2 support was detected at run time just above.
+        unsafe { accumulate_linear_row_avx2_v1(linear, input_row, first_input, accumulator) };
+        return;
+    }
+    accumulate_linear_row_body_v1(linear, input_row, first_input, accumulator);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn accumulate_linear_row_avx2_v1(
+    linear: &LinearV1,
+    input_row: &[f32],
+    first_input: usize,
+    accumulator: &mut [f32],
+) {
+    accumulate_linear_row_body_v1(linear, input_row, first_input, accumulator);
+}
+
+#[inline(always)]
+fn accumulate_linear_row_body_v1(
     linear: &LinearV1,
     input_row: &[f32],
     first_input: usize,
@@ -1326,11 +1394,40 @@ fn accumulate_linear_row_v1(
     debug_assert_eq!(accumulator.len(), output_dim);
     debug_assert!(first_input + input_row.len() <= linear.input_dim);
     let weights = &linear.weight_t[first_input * output_dim..];
-    for (&value, weight_row) in input_row.iter().zip(weights.chunks_exact(output_dim)) {
-        for (sum, &weight) in accumulator.iter_mut().zip(weight_row) {
-            *sum += value * weight;
+    match output_dim {
+        HIDDEN_DIM_V1 => {
+            accumulate_fixed_width_v1::<HIDDEN_DIM_V1>(weights, input_row, accumulator)
+        }
+        W_HIDDEN_DIM_V1 => {
+            accumulate_fixed_width_v1::<W_HIDDEN_DIM_V1>(weights, input_row, accumulator)
+        }
+        _ => {
+            for (&value, weight_row) in input_row.iter().zip(weights.chunks_exact(output_dim)) {
+                for (sum, &weight) in accumulator.iter_mut().zip(weight_row) {
+                    *sum += value * weight;
+                }
+            }
         }
     }
+}
+
+/// The same loop for a width known at compile time, so the partial sums stay
+/// in vector registers across inputs instead of round-tripping memory. Each
+/// output's arithmetic and order are unchanged.
+#[inline(always)]
+fn accumulate_fixed_width_v1<const N: usize>(
+    weights: &[f32],
+    input_row: &[f32],
+    accumulator: &mut [f32],
+) {
+    let mut sums: [f32; N] = accumulator.try_into().expect("accumulator width");
+    for (&value, weight_row) in input_row.iter().zip(weights.chunks_exact(N)) {
+        let weight_row: &[f32; N] = weight_row.try_into().expect("weight row width");
+        for output in 0..N {
+            sums[output] += value * weight_row[output];
+        }
+    }
+    accumulator.copy_from_slice(&sums);
 }
 
 /// `scorer_first` over `[state_hidden, action_row]` for every action row.
@@ -1375,8 +1472,71 @@ fn linear_rows_reference_v1(linear: &LinearV1, input: &[f32], rows: usize) -> Ve
 }
 
 fn tanh_in_place_v1(values: &mut [f32], activation_mode: ForwardActivationModeV1) {
+    if activation_mode == ForwardActivationModeV1::FastSearchTanh {
+        fast_tanh_in_place_v1(values);
+        return;
+    }
     for value in values {
         *value = activation_mode.apply_v1(*value);
+    }
+}
+
+fn fast_tanh_in_place_v1(values: &mut [f32]) {
+    #[cfg(target_arch = "x86_64")]
+    if std::arch::is_x86_feature_detected!("avx2") {
+        // SAFETY: AVX2 support was detected at run time just above.
+        unsafe { fast_tanh_in_place_avx2_v1(values) };
+        return;
+    }
+    for value in values {
+        *value = fast_tanh_f32_v1(*value);
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn fast_tanh_in_place_avx2_v1(values: &mut [f32]) {
+    for value in values {
+        *value = fast_tanh_f32_v1(*value);
+    }
+}
+
+/// Branch-free rational tanh for the search-only forward: odd degree-13
+/// numerator over even degree-6 denominator on the input clamped to
+/// [-7.905311, 7.905311], and the identity below 4e-4 (the coefficients of
+/// Eigen's float tanh). The sampled regression checks absolute error <=5e-7;
+/// it does not prove a bound over every finite f32.
+#[inline(always)]
+pub(crate) fn fast_tanh_f32_v1(x: f32) -> f32 {
+    const CLAMP: f32 = 7.905_311;
+    const A1: f32 = 4.893_524_6e-3;
+    const A3: f32 = 6.372_619_3e-4;
+    const A5: f32 = 1.485_722_4e-5;
+    const A7: f32 = 5.122_297e-8;
+    const A9: f32 = -8.604_672e-11;
+    const A11: f32 = 2.000_188e-13;
+    const A13: f32 = -2.760_768_5e-16;
+    const B0: f32 = 4.893_525e-3;
+    const B2: f32 = 2.268_434_6e-3;
+    const B4: f32 = 1.185_347_1e-4;
+    const B6: f32 = 1.198_258_4e-6;
+    let xc = x.clamp(-CLAMP, CLAMP);
+    let x2 = xc * xc;
+    let mut p = x2 * A13 + A11;
+    p = p * x2 + A9;
+    p = p * x2 + A7;
+    p = p * x2 + A5;
+    p = p * x2 + A3;
+    p = p * x2 + A1;
+    p *= xc;
+    let mut q = x2 * B6 + B4;
+    q = q * x2 + B2;
+    q = q * x2 + B0;
+    let r = p / q;
+    if x.abs() < 4e-4 {
+        x
+    } else {
+        r
     }
 }
 
@@ -2807,9 +2967,10 @@ mod tests {
             NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
                 .unwrap();
         let mut scratch = NativePolicyValueForwardScratchV1::default();
+        let mode = ForwardActivationModeV1::LibmTanh;
         for case in &fixture.cases {
             model
-                .forward_with_scratch_v1(view(case), &mut scratch)
+                .forward_with_scratch_v1(view(case), &mut scratch, mode)
                 .unwrap();
         }
         let warmed_allocations = scratch.allocation_layout_v1();
@@ -2818,34 +2979,39 @@ mod tests {
         for index in [1, 0, 1, 0, 0, 1] {
             let case = &fixture.cases[index];
             let encoded = view(case);
-            let expected = model.forward_v1(encoded).unwrap();
-            assert_scratch_output_bits(
-                model
-                    .forward_with_scratch_v1(encoded, &mut scratch)
-                    .unwrap(),
-                &expected,
-            );
-            let v3 = NativeEncodedDecisionViewV1 {
-                schema: crate::native_flat_tensorizer_v3::schema_v3(),
-                ..encoded
-            };
-            assert_scratch_output_bits(
-                model
-                    .forward_feature_transfer_v3_with_scratch_v1(v3, &mut scratch)
-                    .unwrap(),
-                &model.forward_feature_transfer_v3(v3).unwrap(),
-            );
-            let v4 = NativeEncodedDecisionViewV1 {
-                schema: crate::native_flat_tensorizer_v4::schema_v4(),
-                ..encoded
-            };
-            assert_scratch_output_bits(
-                model
-                    .forward_feature_transfer_v4_with_scratch_v1(v4, &mut scratch)
-                    .unwrap(),
-                &model.forward_feature_transfer_v4(v4).unwrap(),
-            );
-            assert_eq!(scratch.allocation_layout_v1(), warmed_allocations);
+            for mode in [
+                ForwardActivationModeV1::LibmTanh,
+                ForwardActivationModeV1::FastSearchTanh,
+            ] {
+                let expected = model.forward_v1_mode(encoded, mode).unwrap();
+                assert_scratch_output_bits(
+                    model
+                        .forward_with_scratch_v1(encoded, &mut scratch, mode)
+                        .unwrap(),
+                    &expected,
+                );
+                let v3 = NativeEncodedDecisionViewV1 {
+                    schema: crate::native_flat_tensorizer_v3::schema_v3(),
+                    ..encoded
+                };
+                assert_scratch_output_bits(
+                    model
+                        .forward_feature_transfer_v3_with_scratch_v1(v3, &mut scratch, mode)
+                        .unwrap(),
+                    &model.forward_feature_transfer_v3_mode(v3, mode).unwrap(),
+                );
+                let v4 = NativeEncodedDecisionViewV1 {
+                    schema: crate::native_flat_tensorizer_v4::schema_v4(),
+                    ..encoded
+                };
+                assert_scratch_output_bits(
+                    model
+                        .forward_feature_transfer_v4_with_scratch_v1(v4, &mut scratch, mode)
+                        .unwrap(),
+                    &model.forward_feature_transfer_v4_mode(v4, mode).unwrap(),
+                );
+                assert_eq!(scratch.allocation_layout_v1(), warmed_allocations);
+            }
         }
     }
 
@@ -2857,8 +3023,9 @@ mod tests {
             NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
                 .unwrap();
         let mut scratch = NativePolicyValueForwardScratchV1::default();
+        let mode = ForwardActivationModeV1::LibmTanh;
         model
-            .forward_with_scratch_v1(view(case), &mut scratch)
+            .forward_with_scratch_v1(view(case), &mut scratch, mode)
             .unwrap();
         let mut nonfinite = case.state.clone();
         nonfinite[0] = f32::INFINITY;
@@ -2868,7 +3035,7 @@ mod tests {
         };
         assert_eq!(
             model
-                .forward_with_scratch_v1(bad, &mut scratch)
+                .forward_with_scratch_v1(bad, &mut scratch, mode)
                 .unwrap_err(),
             model.forward_v1(bad).unwrap_err(),
         );
@@ -2880,7 +3047,7 @@ mod tests {
         };
         assert_eq!(
             model
-                .forward_with_scratch_v1(bad, &mut scratch)
+                .forward_with_scratch_v1(bad, &mut scratch, mode)
                 .unwrap_err(),
             model.forward_v1(bad).unwrap_err(),
         );
@@ -2890,21 +3057,21 @@ mod tests {
         model.scorer_second.bias[0] = f32::NAN;
         assert_eq!(
             model
-                .forward_with_scratch_v1(view(case), &mut scratch)
+                .forward_with_scratch_v1(view(case), &mut scratch, mode)
                 .unwrap_err(),
             model.forward_v1(view(case)).unwrap_err(),
         );
         model.replace_parameter_snapshot_v1(&original).unwrap();
         assert_scratch_output_bits(
             model
-                .forward_with_scratch_v1(view(case), &mut scratch)
+                .forward_with_scratch_v1(view(case), &mut scratch, mode)
                 .unwrap(),
             &model.forward_v1(view(case)).unwrap(),
         );
         model.value_second.bias[0] = f32::NAN;
         assert_eq!(
             model
-                .forward_with_scratch_v1(view(case), &mut scratch)
+                .forward_with_scratch_v1(view(case), &mut scratch, mode)
                 .unwrap_err(),
             model.forward_v1(view(case)).unwrap_err(),
         );
@@ -2923,12 +3090,19 @@ mod tests {
                 schema: crate::native_flat_tensorizer_v4::schema_v4(),
                 ..view(case)
             };
-            assert_scratch_output_bits(
-                model
-                    .forward_feature_transfer_v4_with_scratch_v1(encoded, &mut scratch)
-                    .unwrap(),
-                &model.forward_feature_transfer_v4(encoded).unwrap(),
-            );
+            for mode in [
+                ForwardActivationModeV1::LibmTanh,
+                ForwardActivationModeV1::FastSearchTanh,
+            ] {
+                assert_scratch_output_bits(
+                    model
+                        .forward_feature_transfer_v4_with_scratch_v1(encoded, &mut scratch, mode)
+                        .unwrap(),
+                    &model
+                        .forward_feature_transfer_v4_mode(encoded, mode)
+                        .unwrap(),
+                );
+            }
         }
     }
 
@@ -3289,6 +3463,80 @@ mod linear_rows_bit_exact_tests {
                 );
             }
         }
+    }
+
+    /// Both the portable loop and the AVX2 build of it (when this CPU has
+    /// AVX2) give the reference sums bit for bit.
+    #[test]
+    fn portable_and_avx2_accumulation_match_the_reference_bit_for_bit() {
+        let mut rng = SplitMix64::seed(0xA7C2_0261);
+        for (input_dim, output_dim) in [
+            (98, 64),
+            (169, 64),
+            (1499, 64),
+            (256, 128),
+            (128, 1),
+            (3, 5),
+        ] {
+            let linear = random_linear(&mut rng, input_dim, output_dim);
+            let input = values(&mut rng, input_dim);
+            let reference = linear_rows_reference_v1(&linear, &input, 1);
+            let mut portable = linear.bias.clone();
+            accumulate_linear_row_body_v1(&linear, &input, 0, &mut portable);
+            assert_eq!(
+                bits(&portable),
+                bits(&reference),
+                "{input_dim}x{output_dim}"
+            );
+            #[cfg(target_arch = "x86_64")]
+            if std::arch::is_x86_feature_detected!("avx2") {
+                let mut wide = linear.bias.clone();
+                // SAFETY: AVX2 support was detected just above.
+                unsafe { accumulate_linear_row_avx2_v1(&linear, &input, 0, &mut wide) };
+                assert_eq!(
+                    bits(&wide),
+                    bits(&reference),
+                    "avx2 {input_dim}x{output_dim}"
+                );
+            }
+        }
+    }
+
+    /// The search-only tanh stays within 5e-7 of the true tanh (libm's own
+    /// tanhf is within about 2 ulp), keeps odd symmetry, saturates to +-1,
+    /// and gives the same values from the vector and scalar paths.
+    #[test]
+    fn fast_search_tanh_is_within_its_error_bound() {
+        let mut worst = 0f64;
+        let mut inputs = Vec::new();
+        let mut bits_value = 0u32;
+        while bits_value < 0x7f80_0000 {
+            inputs.push(f32::from_bits(bits_value));
+            bits_value += 4093;
+        }
+        inputs.extend([0.0, 4e-4, 3.9e-4, 1.0, 7.905_311, 7.91, 9.0, 1e30, f32::MAX]);
+        for &x in &inputs {
+            let fast = fast_tanh_f32_v1(x);
+            let error = (f64::from(fast) - f64::from(x).tanh()).abs();
+            worst = worst.max(error);
+            assert_eq!(
+                fast_tanh_f32_v1(-x).to_bits(),
+                (-fast).to_bits(),
+                "odd at {x}"
+            );
+            assert!(fast.abs() <= 1.0, "{x} -> {fast}");
+        }
+        assert!(worst <= 5e-7, "max abs error {worst:e}");
+        assert_eq!(fast_tanh_f32_v1(f32::INFINITY), 1.0);
+        assert_eq!(fast_tanh_f32_v1(f32::NEG_INFINITY), -1.0);
+        assert!(fast_tanh_f32_v1(f32::NAN).is_nan());
+        let mut vector: Vec<f32> = inputs.iter().flat_map(|&x| [x, -x]).collect();
+        let scalar: Vec<u32> = vector
+            .iter()
+            .map(|&x| fast_tanh_f32_v1(x).to_bits())
+            .collect();
+        tanh_in_place_v1(&mut vector, ForwardActivationModeV1::FastSearchTanh);
+        assert_eq!(bits(&vector), scalar);
     }
 
     #[test]

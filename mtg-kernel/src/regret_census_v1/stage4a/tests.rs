@@ -691,6 +691,196 @@ fn suffix_labels_follow_a_scripted_spy_line() {
     assert!(!other.complete(), "{other:?}");
 }
 
+/// The search-only fast forward scores like the ordinary one: logits and
+/// values within 1e-4 and the same argmax at every fixture decision.
+#[test]
+fn fast_search_forward_matches_the_ordinary_forward_closely() {
+    let mut plain = FrozenPlayPolicyV1::training_fixture_v3();
+    let mut fast = FrozenPlayPolicyV1::training_fixture_v3();
+    fast.enable_fast_search_forward_v1();
+    let (mut worst, mut decisions) = (0f32, 0u64);
+    for game in 0..2 {
+        each_decision(game, |s, _| {
+            let a = plain.score_fast_session_v1(s).unwrap();
+            let b = fast.score_fast_session_v1(s).unwrap();
+            assert_eq!(a.logits.len(), b.logits.len());
+            for (x, y) in a.logits.iter().zip(&b.logits) {
+                worst = worst.max((x - y).abs());
+            }
+            worst = worst.max((a.value - b.value).abs());
+            let argmax = |v: &[f32]| (0..v.len()).max_by(|&i, &j| v[i].total_cmp(&v[j]));
+            assert_eq!(argmax(&a.logits), argmax(&b.logits));
+            decisions += 1;
+        });
+    }
+    assert!(
+        decisions > 100 && worst <= 1e-4,
+        "{decisions} decisions, worst {worst:e}"
+    );
+}
+
+#[test]
+fn resume_refuses_mixed_forward_activation_modes() {
+    let ordinary = json!({"kind":"s4a_root","root_id":"ordinary","config":{}}).to_string() + "\n";
+    let fast = json!({"kind":"s4a_root","root_id":"fast","config":{"fast_search_forward":true}})
+        .to_string()
+        + "\n";
+    assert!(completed_roots(&ordinary, false, "s4a_root")
+        .unwrap()
+        .contains("ordinary"));
+    assert!(completed_roots(&fast, true, "s4a_root")
+        .unwrap()
+        .contains("fast"));
+    assert!(completed_roots(&ordinary, true, "s4a_root").is_err());
+    assert!(completed_roots(&fast, false, "s4a_root").is_err());
+    assert!(completed_roots(&(ordinary.clone() + &fast), false, "s4a_root").is_err());
+    assert!(completed_roots(&(ordinary + &fast), true, "s4a_root").is_err());
+    assert!(completed_roots(fast.trim_end(), false, "s4a_root")
+        .unwrap()
+        .is_empty());
+    let mut interrupted = fast.as_bytes().to_vec();
+    interrupted.extend_from_slice(&[0xe2, 0x82]);
+    assert!(completed_roots_from_bytes(&interrupted, false, "s4a_root", None, None).is_err());
+    assert!(
+        completed_roots_from_bytes(&interrupted, true, "s4a_root", None, None)
+            .unwrap()
+            .contains("fast")
+    );
+    assert!(completed_roots_from_bytes(&[0xff, b'\n'], false, "s4a_root", None, None).is_err());
+}
+
+#[test]
+fn diagnostic_resume_preserves_row_kind_and_ordinary_activation() {
+    let diag =
+        json!({"kind":"s4a_diag_root","root_id":"diagnostic","config":{}}).to_string() + "\n";
+    assert!(
+        completed_roots_from_bytes(diag.as_bytes(), false, "s4a_diag_root", None, None)
+            .unwrap()
+            .contains("diagnostic")
+    );
+    assert!(
+        completed_roots_from_bytes(diag.as_bytes(), false, "s4a_root", None, None)
+            .unwrap()
+            .is_empty()
+    );
+    let mixed =
+        json!({"kind":"s4a_diag_root","root_id":"invalid","config":{"fast_search_forward":true}})
+            .to_string()
+            + "\n";
+    assert!(
+        completed_roots_from_bytes(mixed.as_bytes(), false, "s4a_diag_root", None, None).is_err()
+    );
+    assert!(validate_fast_forward_mode("s4a-diag", true).is_err());
+    assert!(validate_fast_forward_mode("s4a-diag", false).is_ok());
+}
+
+#[test]
+fn resume_binds_runtime_selection_and_forward_mode_together() {
+    use crate::engine::RuntimeRulesV1;
+    let runtime = Some(RuntimeRulesV1::RESOLUTION_BOUNDARY_V1);
+    let row = json!({"kind":"s4a_diag_root","root_id":"retained",
+        "runtime_rules":"resolution-boundary-v1","select_rule":"fpu-1.5","config":{}});
+    let mut bytes = (row.to_string() + "\n").into_bytes();
+    // Disposable interrupted UTF8 must not hide any identity mismatch.
+    bytes.extend_from_slice(&[0xe2, 0x82]);
+    assert!(
+        completed_roots_from_bytes(&bytes, false, "s4a_diag_root", runtime, Some("fpu-1.5"))
+            .unwrap()
+            .contains("retained")
+    );
+    for (fast, rules, select) in [
+        (true, runtime, Some("fpu-1.5")),
+        (false, None, Some("fpu-1.5")),
+        (false, runtime, None),
+    ] {
+        assert!(completed_roots_from_bytes(&bytes, fast, "s4a_diag_root", rules, select).is_err());
+    }
+    let malformed = b"{\"kind\":\"s4a_diag_root\",\"root_id\":\"retained\"}\ninvalid\n";
+    assert!(completed_roots_from_bytes(malformed, false, "s4a_diag_root", None, None).is_err());
+}
+
+#[test]
+fn corpus_cannot_enable_unrecorded_fast_forward() {
+    assert!(validate_fast_forward_mode("s4a-corpus", true).is_err());
+    assert!(validate_fast_forward_mode("s4a-corpus", false).is_ok());
+    assert!(validate_fast_forward_mode("s4a-run", true).is_ok());
+}
+
+#[test]
+fn replay_roles_restore_ordinary_scoring_after_each_fast_root() {
+    let cfg = test_cfg();
+    let setup = game_setup(&cfg, 1, 0);
+    let session = new_session(&setup).unwrap();
+    let mut reference = fixture();
+    let expected = reference.score_fast_session_v1(&session).unwrap();
+    let mut roles = Roles {
+        focal: fixture(),
+        opps: vec![fixture()],
+        scorer: fixture(),
+        inner_focal: fixture(),
+        inner_opps: vec![fixture()],
+    };
+    for _ in 0..2 {
+        set_replay_forward(&mut roles, true);
+        set_replay_forward(&mut roles, false);
+        for policy in std::iter::once(&mut roles.focal).chain(roles.opps.iter_mut()) {
+            let actual = policy.score_fast_session_v1(&session).unwrap();
+            assert_eq!(
+                actual
+                    .logits
+                    .iter()
+                    .map(|v| v.to_bits())
+                    .collect::<Vec<_>>(),
+                expected
+                    .logits
+                    .iter()
+                    .map(|v| v.to_bits())
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(actual.value.to_bits(), expected.value.to_bits());
+        }
+    }
+}
+
+/// Per-call cost of policy scoring, ordinary vs fast search forward
+/// (manual: --ignored --nocapture).
+#[test]
+#[ignore]
+fn profile_policy_scoring_phases() {
+    for fast in [false, true] {
+        let mut p = FrozenPlayPolicyV1::training_fixture_v3();
+        if fast {
+            p.enable_fast_search_forward_v1();
+        }
+        let mut t = [0f64; 8];
+        let mut n = 0u64;
+        let mut worst = 0f32;
+        let mut reference = FrozenPlayPolicyV1::training_fixture_v3();
+        for game in 0..6 {
+            each_decision(game, |s, _| {
+                let x = p.profile_score_phases_v3(s);
+                for i in 0..8 {
+                    t[i] += x[i];
+                }
+                let (a, b) = (
+                    p.score_fast_session_v1(s).unwrap(),
+                    reference.score_fast_session_v1(s).unwrap(),
+                );
+                for (x, y) in a.logits.iter().zip(&b.logits) {
+                    worst = worst.max((x - y).abs());
+                }
+                n += 1;
+            });
+        }
+        let m = |i: usize| t[i] * 1e3 / n as f64;
+        let r = |i: usize| t[i] / n as f64;
+        eprintln!(
+            "fast={fast} decisions={n} per-call ms: encode={:.4} tensorize={:.4} forward={:.4} forward_hot={:.4} total={:.4}; rows objects={:.1} edges={:.1} action_refs={:.1} actions={:.1}; max logit diff {worst:e}",
+            m(0), m(1), m(2), m(3), m(0) + m(1) + m(2), r(4), r(5), r(6), r(7)
+        );
+    }
+}
+
 /// The passive diagnostic trace leaves E's selection and frozen execution
 /// unchanged, reconstructs every node's terminal backups from the ordered
 /// simulation records, and classifies every focal non-forced execution

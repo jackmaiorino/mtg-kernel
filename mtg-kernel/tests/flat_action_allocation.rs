@@ -80,17 +80,20 @@ fn assert_admitted_flat_action_slice_encode_allocates_nothing(mut session: FastA
             .unwrap();
         TRACK_ALLOCATIONS.store(false, Ordering::SeqCst);
         ENCODER_THREAD.set(false);
+        // The admitted encoder is synchronous. Other test-harness threads do
+        // not belong to this call; retain their process count for diagnosis.
+        let process_allocation_count = ALLOCATION_COUNT.load(Ordering::SeqCst);
+        let allocation_count = ENCODER_THREAD_ALLOCATION_COUNT.load(Ordering::SeqCst);
 
         std::hint::black_box((&actions, &refs, &objects));
         assert!(encoded.active_action_count > 0);
-        // The encoder is synchronous; harness allocations on other threads
-        // do not test this contract. Keep the process total for diagnosis.
         assert_eq!(
-            ENCODER_THREAD_ALLOCATION_COUNT.load(Ordering::SeqCst),
-            0,
-            "decision {encoded_decisions}; process allocations {}",
-            ALLOCATION_COUNT.load(Ordering::SeqCst)
+            allocation_count, 0,
+            "decision {encoded_decisions}, process allocations {process_allocation_count}"
         );
+        if process_allocation_count != 0 {
+            eprintln!("decision {encoded_decisions}: encoder allocations {allocation_count}, process allocations {process_allocation_count}");
+        }
 
         #[cfg(feature = "flat-action-diagnostic")]
         {
@@ -103,11 +106,11 @@ fn assert_admitted_flat_action_slice_encode_allocates_nothing(mut session: FastA
                 .unwrap();
             TRACK_ALLOCATIONS.store(false, Ordering::SeqCst);
             ENCODER_THREAD.set(false);
+            let process_allocation_count = ALLOCATION_COUNT.load(Ordering::SeqCst);
             assert_eq!(
                 ENCODER_THREAD_ALLOCATION_COUNT.load(Ordering::SeqCst),
                 0,
-                "cache rebuild at decision {encoded_decisions}; process allocations {}",
-                ALLOCATION_COUNT.load(Ordering::SeqCst)
+                "cache rebuild at decision {encoded_decisions}, process allocations {process_allocation_count}"
             );
             assert_eq!(
                 rebuilt_commitment,

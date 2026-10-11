@@ -1,4 +1,4 @@
-//! Caller-owned intermediate storage for the ordinary Net8 inference paths.
+//! Caller-owned intermediate storage for the Net8 inference paths.
 //!
 //! No model-derived values are reused across calls. Every active row is rebuilt,
 //! so a scratch instance can be reused after a shape change, failed call or
@@ -58,31 +58,34 @@ impl NativePolicyValueNetV1 {
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,
         scratch: &'a mut NativePolicyValueForwardScratchV1,
+        activation_mode: ForwardActivationModeV1,
     ) -> Result<NativePolicyValueOutputViewV1<'a>, NativePolicyValueErrorV1> {
         let counts = encoded.validate(self.config)?;
-        self.forward_validated_with_scratch_v1(encoded, counts, scratch)
+        self.forward_validated_with_scratch_v1(encoded, counts, scratch, activation_mode)
     }
 
     pub(crate) fn forward_feature_transfer_v3_with_scratch_v1<'a>(
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,
         scratch: &'a mut NativePolicyValueForwardScratchV1,
+        activation_mode: ForwardActivationModeV1,
     ) -> Result<NativePolicyValueOutputViewV1<'a>, NativePolicyValueErrorV1> {
         let counts = encoded.validate(self.feature_transfer_config_v3())?;
-        self.forward_validated_with_scratch_v1(encoded, counts, scratch)
+        self.forward_validated_with_scratch_v1(encoded, counts, scratch, activation_mode)
     }
 
     pub(crate) fn forward_feature_transfer_v4_with_scratch_v1<'a>(
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,
         scratch: &'a mut NativePolicyValueForwardScratchV1,
+        activation_mode: ForwardActivationModeV1,
     ) -> Result<NativePolicyValueOutputViewV1<'a>, NativePolicyValueErrorV1> {
         let counts = encoded.validate(self.feature_transfer_config_v4())?;
-        self.forward_validated_with_scratch_v1(encoded, counts, scratch)
+        self.forward_validated_with_scratch_v1(encoded, counts, scratch, activation_mode)
     }
 
     /// Same row and reduction order as `forward_validated_rows_v1`, with
-    /// ordinary libm activations and no public/stack projection extension.
+    /// the declared activations and no public/stack projection extension.
     /// On error scratch contents are unspecified, but the next call rebuilds
     /// every consumed element. No partially validated output is returned.
     fn forward_validated_with_scratch_v1<'a>(
@@ -90,8 +93,8 @@ impl NativePolicyValueNetV1 {
         encoded: NativeEncodedDecisionViewV1<'_>,
         counts: ValidatedCountsV1,
         scratch: &'a mut NativePolicyValueForwardScratchV1,
+        mode: ForwardActivationModeV1,
     ) -> Result<NativePolicyValueOutputViewV1<'a>, NativePolicyValueErrorV1> {
-        let mode = ForwardActivationModeV1::LibmTanh;
         clear_for(
             &mut scratch.input,
             counts.object_count * OBJECT_ENCODER_INPUT_V1,
