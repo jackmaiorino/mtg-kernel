@@ -11,6 +11,10 @@ import sys
 
 
 SUITES = {"fdn_integration": "fdn", "standard_integration": "standard"}
+# Main retains these future-card fixtures but does not execute them in the
+# admitted FDN CI group: Skyship Buccaneer/Goblin Boarders are unregistered.
+# Keep their standalone target and existing cfg/coverage unchanged.
+STANDALONE = {"fdn_raid_entries_v1"}
 
 
 def suite_modules(root: Path, suite: str) -> list[str]:
@@ -19,7 +23,7 @@ def suite_modules(root: Path, suite: str) -> list[str]:
     declared = re.findall(r"^mod (\w+);$", source, re.MULTILINE)
     expected = sorted(path.stem for path in (directory / SUITES[suite]).glob("*.rs"))
     ungrouped = [path.name for path in directory.glob(SUITES[suite] + "_*.rs")
-                 if path.stem != suite]
+                 if path.stem != suite and path.stem not in STANDALONE]
     if ungrouped:
         raise ValueError(f"{suite}: ungrouped integration sources: {ungrouped}")
     if not expected or sorted(declared) != expected:

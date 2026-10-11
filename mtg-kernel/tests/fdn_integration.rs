@@ -104,8 +104,6 @@ mod fdn_paradise_druid_v1;
 mod fdn_pilfer_v1;
 #[path = "fdn/fdn_prowler_creature_v1.rs"]
 mod fdn_prowler_creature_v1;
-#[path = "fdn/fdn_raid_entries_v1.rs"]
-mod fdn_raid_entries_v1;
 #[path = "fdn/fdn_raise_past_v1.rs"]
 mod fdn_raise_past_v1;
 #[path = "fdn/fdn_removal_tricks_v1.rs"]

@@ -21,6 +21,8 @@ cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --te
 Allocator instrumentation, London mulligans, Limited CLI and the other
 integration targets remain standalone. Default workspace tests retain their
 coverage; the feature-gated FDN/Standard suites are skipped when unavailable.
+The existing `fdn_raid_entries_v1` future-card fixtures also remain standalone:
+their cards are unregistered and main's admitted FDN CI does not select them.
 
 The optional `python/tools/check_rust_integration_inventory.py` compares compiled
 test names with a pre-consolidation checkout. It normalizes only the original
