@@ -1,0 +1,19 @@
+{
+  "schema": "mtg-kernel/fdn-unregistered-source/v1",
+  "name": "Self-Reflection",
+  "base": "b62fa679a07c49167ef918da4a701e0df23a4b31",
+  "reference": {
+    "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+    "mage_source": "Mage.Sets/src/mage/cards/s/SelfReflection.java"
+  },
+  "cost": "{4}{U}{U}",
+  "type": "Sorcery",
+  "text": "Create a token that's a copy of target creature you control. Flashback {3}{U}",
+  "target": "ControlledCreature",
+  "effect": "CreateControlledCreatureTargetCopyV1",
+  "flashback": "{3}{U}",
+  "internal_runtime_dependency": "self_reflection_internal_token_prepared_v1.json; neutral blueprint unregistered, no ID",
+  "registration": "absent",
+  "qualification": "native and printed gameplay unrun",
+  "disposition": "documentation only, not registry input; precise copy meaning and public/Human/model admission remain separate"
+}

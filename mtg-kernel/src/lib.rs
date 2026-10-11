@@ -475,6 +475,7 @@ pub mod rl;
 pub mod rl_session;
 pub mod rules_meaning_soul_shackled_zombie_v1;
 pub mod runtime_decks;
+mod self_reflection_v1;
 pub mod sideboard;
 pub mod snapshot;
 pub mod soul_shackled_zombie_public_v1;

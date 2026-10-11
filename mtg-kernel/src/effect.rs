@@ -1568,6 +1568,9 @@ pub enum EffectOp {
     /// Exile up to two targets from one graveyard; if a creature card was
     /// actually exiled, each opponent loses 2 and the captured controller gains 2.
     ExileSingleGraveyardTargetsThenDrainTwoV1,
+    /// A token copy of the current copiable values of one legal controlled
+    /// creature. Appended; ordinary copy/flashback authority is inherited.
+    CreateControlledCreatureTargetCopyV1,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -18361,6 +18364,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 })
                 .collect();
             event::propose_and_commit_batch(state, events);
+        }
+        EffectOp::CreateControlledCreatureTargetCopyV1 => {
+            crate::self_reflection_v1::execute(state, ctx);
         }
         EffectOp::DoubleTargetPowerUntilEndOfTurn { target_index } => {
             let index = usize::from(*target_index);

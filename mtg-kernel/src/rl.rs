@@ -1823,7 +1823,12 @@ fn derive_seed(base_seed: u64, episode_id: u64, stream: u64) -> u64 {
 }
 
 pub fn card_name(card_id: u16) -> String {
-    CARD_DEFS[card_id as usize].name.to_string()
+    let def = &CARD_DEFS[card_id as usize];
+    if def.name == crate::self_reflection_v1::ANONYMOUS_BLUEPRINT {
+        def.object_name.to_string()
+    } else {
+        def.name.to_string()
+    }
 }
 
 pub fn observe_v1(

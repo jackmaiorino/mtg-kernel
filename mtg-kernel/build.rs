@@ -3458,6 +3458,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         mode2: None,
     };
     Some(match name {
+        "Self-Reflection" => program(
+            "ControlledCreature",
+            "CreateControlledCreatureTargetCopyV1(Target0,currentController,exactPhysicalIncarnation,currentCopiableDefinitionAndFace,tokenOwnerController=spellController,ordinaryETB,noHasteOrDelayedSacrifice)",
+            "EffectOp::CreateControlledCreatureTargetCopyV1",
+        ),
         "Run Away Together" => program(
             "TwoCreaturesWithDifferentControllers",
             "ReturnTwoDifferentControllerCreaturesToOwnersHands(exactlyTwo,distinctObjects,currentDifferentControllers,exactIncarnations,simultaneousLegalitySnapshot,batchOwnerHandMove,partialLegalTargets)",
@@ -4408,6 +4413,7 @@ fn additional_mana_abilities_for(name: &str) -> String {
 
 fn object_name_for(name: &str) -> &str {
     match name {
+        "Nameless Creature Copy Token" => "",
         "Monster Role Token" => "Monster",
         "Sacred Cat Embalmed Token" => "Sacred Cat",
         "Homunculus Horde Token" => "Homunculus Horde",
@@ -4655,6 +4661,13 @@ fn flashback_for(name: &str) -> String {
         }
         "Think Twice" => {
             let (pips, generic, x_count) = parse_cost("{2}{U}");
+            format!(
+                "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})] }})",
+                pips.join(", ")
+            )
+        }
+        "Self-Reflection" => {
+            let (pips, generic, x_count) = parse_cost("{3}{U}");
             format!(
                 "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})] }})",
                 pips.join(", ")

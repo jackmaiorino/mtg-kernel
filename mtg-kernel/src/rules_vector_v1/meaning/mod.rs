@@ -284,6 +284,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
             // to this once-only drain. A rooted successor is required.
             out.atoms.push(Atom::Opaque);
         }
+        EffectOp::CreateControlledCreatureTargetCopyV1 => out.atoms.push(Atom::Opaque),
         EffectOp::ReturnTwoDifferentControllerCreaturesToOwnersHands
         | EffectOp::PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness { .. }
         | EffectOp::StandardLegendV1(_)

@@ -159,6 +159,7 @@ impl Scan<'_> {
             | PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness { .. }
             | GrantKeywordToDeclaredTargetsUntilEndOfTurn { .. }
             | ReturnTwoDifferentControllerCreaturesToOwnersHands
+            | CreateControlledCreatureTargetCopyV1
             | DoubleTargetPowerUntilEndOfTurn { .. }
             | DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
             | CreateTokensForOtherControlledCreaturesNamed { .. }

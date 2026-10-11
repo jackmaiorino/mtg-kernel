@@ -13330,6 +13330,11 @@ pub(crate) fn validated_stack_item_target_spec(
         .zip(&item.v4.target_contracts)
         .enumerate()
     {
+        let contract = if crate::self_reflection_v1::owns_spell(state, item) {
+            crate::self_reflection_v1::normalize_historical_target(state, contract)
+        } else {
+            contract
+        };
         if !stack_target_contract_is_structurally_valid(state, spec, target_index, target, contract)
         {
             return Err("stack target contract is structurally malformed".to_string());
@@ -13413,7 +13418,11 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
     let mut chosen = Vec::with_capacity(item.targets.len());
     let mut any_legal = false;
     for (&target, &contract) in item.targets.iter().zip(&item.v4.target_contracts) {
-        let same_incarnation = target_contract_matches_live(state, target, contract);
+        let same_incarnation = if crate::self_reflection_v1::owns_spell(state, item) {
+            crate::self_reflection_v1::target_matches_live(state, target, contract)
+        } else {
+            target_contract_matches_live(state, target, contract)
+        };
         let legal_now = match item.kind {
             StackItemKind::ActivatedAbility => {
                 let ability_index = item

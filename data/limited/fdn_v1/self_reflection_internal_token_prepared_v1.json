@@ -1,0 +1,30 @@
+{
+  "schema": "mtg-kernel/fdn-unregistered-internal-token/v1",
+  "registration": "absent; documentation only, not generator input",
+  "registry_record": {
+    "name": "Nameless Creature Copy Token",
+    "engine_capability": "full",
+    "mana_cost": "",
+    "mana_value": 0,
+    "colors": [],
+    "types": ["Creature"],
+    "subtypes": [],
+    "supertypes": [],
+    "power": 2,
+    "toughness": 2,
+    "is_land": false,
+    "produces_mana": [],
+    "decks": [],
+    "sideboard_only": false,
+    "complexity": "simple",
+    "mechanics": [],
+    "java_file": "Mage/src/main/java/mage/util/functions/CopyTokenFunction.java",
+    "is_token": true
+  },
+  "public_object_name": "",
+  "abilities": [],
+  "orientation": "face up",
+  "reference_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "scope": "additional internal runtime blueprint, outside frozen 286 booster names and 24 external token dependencies; no assigned ID or profile",
+  "admission": "Self-Reflection requires actual neutral blueprint registration and qualification together, including observer name/privacy and ordinary ETB"
+}
