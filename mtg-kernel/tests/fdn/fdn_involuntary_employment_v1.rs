@@ -487,20 +487,18 @@ fn actual_short_payment_refuses_without_mutation_and_counterspell_prevents_every
             if player == actor.opponent() && castable_spells.contains(&counter))
         );
         apply(&mut surface, &mut state, Action::CastSpell(counter));
-        assert!(
-            matches!(next(&mut surface, &mut state), Decision::ChooseTargets { legal_targets, .. }
-            if legal_targets.contains(&Target::StackItem(item_id)))
-        );
-        apply(
-            &mut surface,
-            &mut state,
-            Action::ChooseTarget(Target::StackItem(item_id)),
-        );
+        // The existing surface answers this sole legal stack target.
         assert!(matches!(
             next(&mut surface, &mut state),
             Decision::CastSpellOrPass { .. }
         ));
         assert_eq!(state.stack.len(), 2);
+        let counter_item = state
+            .stack
+            .iter()
+            .find(|item| item.source == counter)
+            .unwrap();
+        assert_eq!(counter_item.targets, vec![Target::StackItem(item_id)]);
         let mut restored = replay(&state);
         resolve(&mut surface, &mut state);
         resolve(&mut self::surface(), &mut restored);

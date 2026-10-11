@@ -1386,6 +1386,10 @@ fn run(
             skip_stale_forced_discards(&state, &mut ctx, player, outcome);
         }
         match decision {
+            SurfaceDecision::Decision(Decision::ChooseVariableCastTargets { .. })
+            | SurfaceDecision::Decision(Decision::ChooseVariableCastKicker { .. }) => {
+                return Err("unsupported-variable-cast-protocol".to_string());
+            }
             SurfaceDecision::Decision(Decision::GameOver { winner }) => {
                 outcome.reached_game_over = true;
                 let winner_name = winner.map(|p| {
@@ -1778,6 +1782,8 @@ fn decision_player(d: &SurfaceDecision, state: &GameState) -> Option<PlayerId> {
     match d {
         SurfaceDecision::Decision(Decision::CastSpellOrPass { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseTargets { player, .. })
+        | SurfaceDecision::Decision(Decision::ChooseVariableCastTargets { player, .. })
+        | SurfaceDecision::Decision(Decision::ChooseVariableCastKicker { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseCostTargets { player, .. })
         | SurfaceDecision::Decision(Decision::DeclareAttackers { player, .. })
         | SurfaceDecision::Decision(Decision::DeclareBlockers { player, .. })
