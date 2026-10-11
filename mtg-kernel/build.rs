@@ -6195,10 +6195,16 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
             format!("ability_effect_draw_{draw}_lose_life_{life}")
         }
         AbilityEffectRecipe::ImpulseDraw { count, duration } => {
-            format!("ability_effect_impulse_{count}_{duration}")
+            format!(
+                "ability_effect_impulse_{count}_{}",
+                duration.to_ascii_lowercase()
+            )
         }
         AbilityEffectRecipe::CreatureUpgrade(kind) => {
-            format!("ability_effect_creature_upgrade_{kind}")
+            format!(
+                "ability_effect_creature_upgrade_{}",
+                kind.to_ascii_lowercase()
+            )
         }
         AbilityEffectRecipe::AnimateSource => "ability_effect_animate_source".to_string(),
         AbilityEffectRecipe::PumpTargetUntilEndOfTurn { power, toughness } => format!(
@@ -6429,7 +6435,7 @@ fn omen_effect_recipe_for(name: &str) -> Option<AbilityEffectRecipe> {
 /// instead of its ordinary graveyard departure.
 fn adventure_for(name: &str) -> String {
     match name {
-        "Questing Druid" => "Some(AdventureDef { name: \"Seek the Beast\", cost: Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 1, x_count: 0 }, types: &[CardType::Instant], target_spec: TargetSpec::None, effect: ability_effect_impulse_2_UntilOwnersNextEndStep })".to_string(),
+        "Questing Druid" => "Some(AdventureDef { name: \"Seek the Beast\", cost: Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 1, x_count: 0 }, types: &[CardType::Instant], target_spec: TargetSpec::None, effect: ability_effect_impulse_2_untilownersnextendstep })".to_string(),
         "Mosswood Dreadknight" => "Some(AdventureDef { name: \"Dread Whispers\", cost: Cost { pips: &[Pip::Colored(ManaColor::B)], generic: 1, x_count: 0 }, types: &[CardType::Sorcery], target_spec: TargetSpec::None, effect: ability_effect_draw_1_lose_life_1 })".to_string(),
         "Imodane's Recruiter" => "Some(AdventureDef { name: \"Train Troops\", cost: Cost { pips: &[Pip::Colored(ManaColor::W)], generic: 4, x_count: 0 }, types: &[CardType::Sorcery], target_spec: TargetSpec::None, effect: ability_effect_create_knight_vigilance_token_2 })".to_string(),
         "Virtue of Loyalty" => "Some(AdventureDef { name: \"Ardenvale Fealty\", cost: Cost { pips: &[Pip::Colored(ManaColor::W)], generic: 1, x_count: 0 }, types: &[CardType::Instant], target_spec: TargetSpec::None, effect: ability_effect_create_knight_vigilance_token_1 })".to_string(),
