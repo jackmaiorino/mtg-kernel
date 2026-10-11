@@ -4,9 +4,7 @@
     not(feature = "standard-magezero-fixtures")
 ))]
 
-use mtg_kernel::card_def::{
-    card_id_by_name, CardCapability, CardType, Keywords, Subtype, CARD_DEFS,
-};
+use mtg_kernel::card_def::{card_id_by_name, CardCapability, CardType, Subtype, CARD_DEFS};
 use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
@@ -257,11 +255,29 @@ fn private_match_presence_does_not_change_nonacting_public_projection() {
         assert_eq!(search(&mut found, player).len(), 1);
         assert_eq!(
             serde_json::to_value(
-                mtg_kernel::rl::observe_policy_v6(&empty, player.opponent()).unwrap()
+                mtg_kernel::rl::observe_policy_v6(
+                    &empty,
+                    &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+                    player.opponent(),
+                    0,
+                    0,
+                    0,
+                    1,
+                )
+                .unwrap()
             )
             .unwrap(),
             serde_json::to_value(
-                mtg_kernel::rl::observe_policy_v6(&found, player.opponent()).unwrap()
+                mtg_kernel::rl::observe_policy_v6(
+                    &found,
+                    &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+                    player.opponent(),
+                    0,
+                    0,
+                    0,
+                    1,
+                )
+                .unwrap()
             )
             .unwrap()
         );
@@ -347,5 +363,137 @@ fn forged_filter_fingerprint_and_candidate_bindings_refuse_without_state_mutatio
             assert!(engine::step(&mut forged, Action::FinishEffectSelection).is_err());
             assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
         }
+    }
+}
+
+#[test]
+fn coherent_search_forgeries_and_answered_program_edits_refuse() {
+    use mtg_kernel::effect::{
+        self, EffectFrame, EffectObjectBinding, EffectOp, EffectTargetCandidate,
+        EffectTargetSelectionPurpose, LibraryCardFilter, PendingEffectChoice, PlayerRef,
+    };
+    // The existing tag-7 representation, independently recomputed so the
+    // forged filter is internally consistent rather than a stale checksum.
+    let fingerprint = [7_u64, 2]
+        .into_iter()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, value| {
+            value.to_le_bytes().into_iter().fold(hash, |hash, byte| {
+                (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+            })
+        });
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, _) = stage(player);
+        let mut forged = restored(&state);
+        let Some(PendingEffectChoice::ChooseOption { options, .. }) = forged
+            .engine
+            .pending_effect
+            .as_mut()
+            .unwrap()
+            .choice
+            .as_mut()
+        else {
+            panic!("expected optional choice")
+        };
+        options[0] = EffectOp::SearchLibraryToHand {
+            player: PlayerRef::Controller,
+            filter: LibraryCardFilter::AnyCard,
+        };
+        let before = serde_json::to_vec(&forged).unwrap();
+        assert!(engine::step(&mut forged, Action::ChooseEffectOption(0)).is_err());
+        assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
+
+        let mut answered = restored(&state);
+        engine::step(&mut answered, Action::ChooseEffectOption(0)).unwrap();
+        assert!(effect::validate_pending_effect_choice(&answered).is_ok());
+        let EffectFrame::Program { op, .. } =
+            &mut answered.engine.pending_effect.as_mut().unwrap().frames[0]
+        else {
+            panic!("expected answered option")
+        };
+        *op = EffectOp::SearchLibraryToHand {
+            player: PlayerRef::Controller,
+            filter: LibraryCardFilter::AnyCard,
+        };
+        assert!(effect::validate_pending_effect_choice(&answered).is_err());
+
+        put(&mut state, player, "Burst Lightning", Zone::Library);
+        let other_value = put(&mut state, player, "Think Twice", Zone::Library);
+        assert_eq!(search(&mut state, player).len(), 1);
+        let binding = EffectObjectBinding {
+            object: other_value,
+            expected_zone: Zone::Library,
+            expected_zone_change_count: state.objects.get(other_value).zone_change_count,
+        };
+        let mut forged = restored(&state);
+        let Some(PendingEffectChoice::SelectTargets { purpose, legal, .. }) = forged
+            .engine
+            .pending_effect
+            .as_mut()
+            .unwrap()
+            .choice
+            .as_mut()
+        else {
+            panic!("expected search")
+        };
+        let EffectTargetSelectionPurpose::SearchLibraryToHand {
+            filter,
+            filter_fingerprint,
+            ..
+        } = purpose
+        else {
+            panic!("expected search purpose")
+        };
+        *filter = LibraryCardFilter::InstantOrSorceryManaValue(2);
+        *filter_fingerprint = fingerprint;
+        *legal = vec![EffectTargetCandidate {
+            target: Target::Object(other_value),
+            expected_object: Some(binding),
+        }];
+        let before = serde_json::to_vec(&forged).unwrap();
+        assert!(engine::step(
+            &mut forged,
+            Action::ChooseEffectTarget(Target::Object(other_value))
+        )
+        .is_err());
+        assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
+
+        engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+        assert!(effect::validate_pending_effect_choice(&state).is_ok());
+        let mut forged = restored(&state);
+        let EffectFrame::SearchLibraryToHand {
+            filter,
+            filter_fingerprint,
+            selected,
+            ..
+        } = &mut forged.engine.pending_effect.as_mut().unwrap().frames[0]
+        else {
+            panic!("expected answered search")
+        };
+        *filter = LibraryCardFilter::InstantOrSorceryManaValue(2);
+        *filter_fingerprint = fingerprint;
+        *selected = Some(binding);
+        assert!(effect::validate_pending_effect_choice(&forged).is_err());
+
+        let mut forged = restored(&state);
+        forged
+            .engine
+            .pending_effect
+            .as_mut()
+            .unwrap()
+            .frames
+            .clear();
+        assert!(effect::validate_pending_effect_choice(&forged).is_err());
+        let mut forged = restored(&state);
+        forged
+            .engine
+            .pending_effect
+            .as_mut()
+            .unwrap()
+            .frames
+            .push(EffectFrame::Program {
+                op: EffectOp::Sequence(vec![]),
+                path: vec![1],
+            });
+        assert!(effect::validate_pending_effect_choice(&forged).is_err());
     }
 }

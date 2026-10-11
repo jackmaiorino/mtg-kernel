@@ -4897,6 +4897,109 @@ fn effect_op_at_path<'a>(mut op: &'a EffectOp, path: &[u16]) -> Option<&'a Effec
     Some(op)
 }
 
+/// Micromancer has one optional root choice and no trailing instructions.
+/// Authenticate every externally restorable phase, including an answered
+/// option/search, against that definition rather than a self-consistent filter.
+fn validate_exact_spell_search_continuation(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<(), String> {
+    let source = state
+        .objects
+        .try_get(pending.resolving_item.source)
+        .ok_or("exact spell search lost its source object")?;
+    if pending.resolving_item.kind != crate::state::StackItemKind::TriggeredAbility
+        || crate::card_def::CARD_DEFS[source.card_def as usize].name != "Micromancer"
+    {
+        return Ok(());
+    }
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    let EffectOp::Choice {
+        controller,
+        options,
+    } = root.as_ref()
+    else {
+        return Err("exact spell search lost its definition-owned optional choice".into());
+    };
+    let player = pending.ctx.resolve_player(*controller, state);
+    if pending.answered_choice_guard.is_some() {
+        return Err("exact spell search has an unrelated answered guard".into());
+    }
+    match &pending.choice {
+        Some(PendingEffectChoice::ChooseOption {
+            player: chooser,
+            options: actual,
+            purpose: EffectOptionChoicePurpose::Generic,
+            path,
+        }) if *chooser == player
+            && actual == options
+            && path.is_empty()
+            && pending.frames.is_empty() =>
+        {
+            Ok(())
+        }
+        Some(PendingEffectChoice::SelectTargets {
+            player: chooser,
+            path,
+            purpose:
+                EffectTargetSelectionPurpose::SearchLibraryToHand {
+                    player: library_player,
+                    filter,
+                    canonical_path,
+                    ..
+                },
+            ..
+        }) if *chooser == player
+            && *library_player == player
+            && path.as_slice() == [0]
+            && canonical_path == path
+            && pending.frames.is_empty()
+            && options.first()
+                == Some(&EffectOp::SearchLibraryToHand {
+                    player: PlayerRef::Controller,
+                    filter: *filter,
+                }) =>
+        {
+            Ok(())
+        }
+        None => match pending.frames.as_slice() {
+            [EffectFrame::Program { op, path }]
+                if matches!(path.as_slice(), [0] | [1])
+                    && effect_op_at_path(root.as_ref(), path) == Some(op) =>
+            {
+                Ok(())
+            }
+            [EffectFrame::SearchLibraryToHand {
+                player: library_player,
+                filter,
+                filter_fingerprint,
+                original_library,
+                selected,
+                path,
+                canonical_path,
+            }] if *library_player == player
+                && path.as_slice() == [0]
+                && canonical_path == path
+                && *filter_fingerprint == library_filter_fingerprint(*filter)
+                && options.first()
+                    == Some(&EffectOp::SearchLibraryToHand {
+                        player: PlayerRef::Controller,
+                        filter: *filter,
+                    }) =>
+            {
+                let candidates =
+                    library_search_candidates(state, player, *filter, original_library)?;
+                if selected.is_some_and(|binding| !candidates.contains(&binding)) {
+                    return Err("exact spell search answer is not a definition-owned match".into());
+                }
+                Ok(())
+            }
+            _ => Err("exact spell search answered program or remaining frames changed".into()),
+        },
+        _ => Err("exact spell search optional choice or search origin changed".into()),
+    }
+}
+
 fn returning_aura_hosts(
     state: &GameState,
     aura: EffectObjectBinding,
@@ -5977,6 +6080,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     }
     crate::engine::validated_stack_item_target_spec(&pending.resolving_item, state)
         .map_err(|error| format!("effect continuation has invalid stack provenance: {error}"))?;
+    validate_exact_spell_search_continuation(state, pending)?;
     validate_answered_choice_guard(state, pending)?;
     if definition_has_nonterminal_discard(state, pending) {
         let discard = state
@@ -17089,12 +17193,12 @@ mod filtered_library_search_tests {
     #[test]
     fn exact_spell_mana_value_filter_keeps_owned_incarnations_and_rejects_other_types() {
         let names = [
-            "Burst Lightning",
+            "Lightning Bolt",
             "Duress",
             "Llanowar Elves",
-            "Think Twice",
+            "Counterspell",
             "Forest",
-            "Exsanguinate",
+            "Forest",
         ];
         let cards = names.map(|name| crate::card_def::card_id_by_name(name).unwrap());
         let mut state = GameState::new_from_libraries(

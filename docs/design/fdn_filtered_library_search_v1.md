@@ -21,5 +21,8 @@ restoration and stale zone/face refusal. Five unregistered card groups cover
 metadata and actual cast/search/reveal, decline and failure to find, nonacting
 privacy across different hidden match presence, captured controller after source
 departure/control change, and forged filter/fingerprint/candidate refusal.
+A sixth group coherently changes the filter, fingerprint and legal candidates,
+or the optional/answered program and remaining frames. Every restorable phase
+must match the definition-owned root and captured controller before mutation.
 Formatting and diff checks pass. Native type checking, all actual card groups,
 catalog/profile admission, review, CI and default acceptance remain pending.
