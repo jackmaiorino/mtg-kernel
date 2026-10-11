@@ -1070,6 +1070,7 @@ pub(super) fn conflicts(
             | SowerRestrictionInstalledV1 { .. }
             | SowerRestrictionExpiredV1 { .. }
             | SowerRestrictionResolutionV1 { .. }
+            | AuthorityEntryPublicFactsV1 { .. }
             | WildwoodCounterCaptureV1 { .. }
             | WildwoodTriggerPublishedV1 { .. }
             | WildwoodTriggerResolvingV1 { .. }

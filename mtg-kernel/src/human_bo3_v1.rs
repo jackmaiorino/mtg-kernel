@@ -15,6 +15,8 @@ mod sower_v14;
 pub use sower_v14::*;
 mod wildwood_v16;
 pub use wildwood_v16::*;
+mod authority_v17;
+pub use authority_v17::*;
 mod frenzied_v15;
 pub use frenzied_v15::*;
 mod raid_v9;

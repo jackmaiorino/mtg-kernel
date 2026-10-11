@@ -73,6 +73,8 @@ pub mod environment_randomization_v2;
 // no-replace move; replaceable pointer files use a distinct receipt type.
 pub mod durable_move_publication_v2;
 // Strict Python-authoritative initial-model snapshot loader for matched trials.
+mod authority_public_capture_v1;
+pub mod authority_public_v1;
 #[allow(dead_code)]
 pub(crate) mod common_model_snapshot_v1;
 pub mod effect;

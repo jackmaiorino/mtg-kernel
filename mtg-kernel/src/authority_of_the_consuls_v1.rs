@@ -66,7 +66,7 @@ fn enabled() -> bool {
             .any(|(id, _)| owns_definition(id as u16))
     })
 }
-fn active(state: &GameState, source: ObjectId) -> bool {
+pub(crate) fn active(state: &GameState, source: ObjectId) -> bool {
     let object = state.objects.get(source);
     object.zone == Zone::Battlefield
         && object.v4.face_index == 0
@@ -164,6 +164,7 @@ pub(crate) fn record_entry(state: &mut GameState, entry_history_index: usize) {
             entrant_controller,
             sources: sources.clone(),
         });
+    crate::authority_public_capture_v1::record_entry(state, observer_authority_index);
     for source in sources {
         let capture = AuthorityEntryCaptureV1 {
             history_index: u64::try_from(state.engine.event_history.len())
@@ -634,6 +635,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     if !enabled() {
         return Ok(());
     }
+    crate::authority_public_capture_v1::validate_facts(state)?;
     validate_observed_entries(state)
         .map_err(|_| "opponent entry observer authority is incomplete")?;
     for event in &state.engine.event_history {

@@ -779,6 +779,10 @@ pub enum CommittedEvent {
         step: crate::state::Step,
         captures: Vec<crate::effect::FrenziedGoblinRestrictionV1>,
     },
+    /// History-only event-time public entrant facts. Never copied to a DTO.
+    AuthorityEntryPublicFactsV1 {
+        capture: crate::authority_public_capture_v1::EntryPublicFactsV1,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

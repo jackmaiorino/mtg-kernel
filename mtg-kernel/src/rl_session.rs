@@ -36,6 +36,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fmt;
 
+pub(crate) mod authority_v17;
 pub mod census_future_v2;
 pub(crate) mod frenzied_v15;
 pub(crate) mod human_opening_v1;
@@ -4427,6 +4428,7 @@ enum FlatActionContractModeV1 {
     HeartfireV12,
     WildwoodV16,
     FrenziedV15,
+    AuthorityV17,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -7314,6 +7316,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:frenzied_v15:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::AuthorityV17 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = authority_v17::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:authority_v17:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));
