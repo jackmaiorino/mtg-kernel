@@ -983,6 +983,7 @@ pub enum TargetSpec {
     UpToOneStackAbility,
     AnotherArtifactOrCreature,
     UpToTwoOtherCreaturesDifferentControllers,
+    ArtifactOrEnchantmentThenPlayer,
 }
 
 impl TargetSpec {
@@ -1069,6 +1070,7 @@ impl TargetSpec {
             TargetSpec::UpToOneStackAbility => 73,
             TargetSpec::AnotherArtifactOrCreature => 101,
             TargetSpec::UpToTwoOtherCreaturesDifferentControllers => 102,
+            TargetSpec::ArtifactOrEnchantmentThenPlayer => 74,
         }
     }
 }
@@ -2576,6 +2578,7 @@ mod tests {
             (TargetSpec::ControlledNoncreatureArtifactPermanent, 71),
             (TargetSpec::CreatureWithStunCounter, 72),
             (TargetSpec::UpToOneStackAbility, 73),
+            (TargetSpec::ArtifactOrEnchantmentThenPlayer, 74),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);

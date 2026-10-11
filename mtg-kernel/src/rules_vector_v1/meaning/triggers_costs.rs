@@ -273,7 +273,8 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
             // nearest is the attack declaration.
             out.trigger(TrigF::Attacks);
         }
-        TriggerCondition::ControllerAttacksWithSubtype(subtype) => {
+        TriggerCondition::ControlledCreatureWithSubtypeAttacks(subtype)
+        | TriggerCondition::ControllerAttacksWithSubtype(subtype) => {
             // The controller declares attackers including one with the
             // subtype. Vocabulary gap: no "you attack" event and ObjF has no
             // subtype class.

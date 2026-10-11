@@ -1629,6 +1629,7 @@ fn step_grants_priority(step: Step) -> bool {
 pub(crate) fn target_count(spec: TargetSpec) -> u8 {
     match spec {
         TargetSpec::None | TargetSpec::CounterDistribution => 0,
+        TargetSpec::ArtifactOrEnchantmentThenPlayer => 2,
         TargetSpec::AnyTarget
         | TargetSpec::AnyPlayer
         | TargetSpec::AnySpellOnStack
@@ -2934,6 +2935,8 @@ fn legal_targets_for_controller_from_source(
     state: &GameState,
 ) -> Vec<Target> {
     let mut targets = match spec {
+        TargetSpec::ArtifactOrEnchantmentThenPlayer => legal_targets_for_controller_from_source(
+            if targets_chosen.is_empty() {TargetSpec::ArtifactOrEnchantmentPermanent} else {TargetSpec::AnyPlayer}, &[], controller, source, state),
         TargetSpec::None => Vec::new(),
         TargetSpec::CounterDistribution => battlefield_objects(state)
             .filter(|&id| {
@@ -17441,16 +17444,33 @@ pub(crate) fn finish_declare_attackers(state: &mut GameState, attackers: Vec<Obj
     crate::standard_cards_v1::record_attackers(state, attackers.len());
     state.engine.combat.attackers = attackers;
     state.engine.combat.attackers_declared = true;
+    let another_observes_attacks = state.players[state.active_player.index()]
+        .battlefield
+        .iter()
+        .any(|id| {
+            trigger::triggers_for(state.objects.get(*id).card_def)
+                .iter()
+                .any(|def| {
+                    matches!(
+                        def.condition,
+                        trigger::TriggerCondition::ControlledCreatureWithSubtypeAttacks(_)
+                    )
+                })
+        });
     for &source in &state.engine.combat.attackers {
         let object = state.objects.get(source);
-        if trigger::triggers_for(object.card_def).iter().any(|def| {
-            matches!(
-                def.condition,
-                trigger::TriggerCondition::Attacks
-                    | trigger::TriggerCondition::AttacksWithControllerGraveyardCardCountAtLeast(_)
-                    | trigger::TriggerCondition::AttacksWithGreaterPowerAttacker
-            )
-        }) {
+        if another_observes_attacks
+            || trigger::triggers_for(object.card_def).iter().any(|def| {
+                matches!(
+                    def.condition,
+                    trigger::TriggerCondition::Attacks
+                        | trigger::TriggerCondition::AttacksWithControllerGraveyardCardCountAtLeast(
+                            _
+                        )
+                        | trigger::TriggerCondition::AttacksWithGreaterPowerAttacker
+                )
+            })
+        {
             let event = CommittedEvent::DeclaredAttacker {
                 source,
                 source_zone_change_count: object.zone_change_count,

@@ -83,6 +83,8 @@ impl Scan<'_> {
             | DealDamage { .. }
             | DistributePlusOneCounters { .. }
             | CreatureUpgrade(_)
+            | CreatureChoiceV1(_)
+            | CreatureChoiceAnswerV1 { .. }
             | ReturnTargetPermanentToBattlefield { .. }
             | GainLife { .. }
             | LoseLife { .. }
@@ -677,6 +679,10 @@ impl Scan<'_> {
                             ..
                         } => self.fs(expected_remaining_frames),
                         Generic => false,
+                        CreatureChoiceV1 {
+                            expected_remaining_frames,
+                            ..
+                        } => self.fs(expected_remaining_frames),
                         OwnerLibraryTopOrBottom {
                             object,
                             expected_remaining_frames,
@@ -818,6 +824,9 @@ pub(super) fn conflicts(
             use EffectAnsweredChoiceGuard::*;
             let guard_conflicts = match g {
                 StandardSelection { frame } => s.f(frame),
+                CreatureChoiceV1 {
+                    remaining_frames, ..
+                } => s.fs(remaining_frames),
                 OwnerLibrarySecondOrBottom { frame }
                 | CounterUnlessPaysGeneric { frame }
                 | CounterTargetUnlessPaysGeneric { frame }

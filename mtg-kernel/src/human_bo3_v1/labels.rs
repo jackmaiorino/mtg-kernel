@@ -614,6 +614,7 @@ pub(super) fn label(
                 player,
                 structural_path,
                 option_count: count,
+                creature_options,
             }) = &pending.choice
             else {
                 return Err(Error::UnsupportedPrompt);
@@ -621,6 +622,12 @@ pub(super) fn label(
             if pending.source.as_ref() != Some(source) || *player != human || count != option_count
             {
                 return Err(Error::UnsupportedPrompt);
+            }
+            if let Some(options) = creature_options {
+                let option = options
+                    .get(*option_index as usize)
+                    .ok_or(Error::UnsupportedPrompt)?;
+                return Ok(format!("For {}, {}", handles.name(source)?, option.label()));
             }
             let EffectOp::Choice { options, .. } =
                 pending_program(source, structural_path, observation)?

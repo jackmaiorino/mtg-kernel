@@ -29,8 +29,39 @@ fn plain_counter(player: RelF, obj: ObjF, amount: AmtF, out: &mut Collector) {
 
 pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
+        EffectOp::CreatureChoiceV1(kind) | EffectOp::CreatureChoiceAnswerV1 { kind, .. } => {
+            use crate::standard_creature_choices_v1::CreatureChoiceV1;
+            out.control(ControlF::Optional);
+            match kind {
+                CreatureChoiceV1::GlissaCounters(remaining) => out.effect(
+                    EffectAtom::new(EvF::RemoveCounter)
+                        .obj(ObjF::Permanent)
+                        .amount(AmtF::fixed(i64::from(*remaining))),
+                ),
+                CreatureChoiceV1::FrillbackPayment => {
+                    out.cost(CostAtom::Mana);
+                    out.control(ControlF::Conditional);
+                    for (_, effect) in crate::standard_creature_choices_v1::frillback_modes(1) {
+                        super::effect_op(&effect, env, out);
+                    }
+                }
+                CreatureChoiceV1::ZoralinePayment => {
+                    out.cost(CostAtom::Mana);
+                    out.cost(CostAtom::PayLife(bucket(2)));
+                    out.control(ControlF::Conditional);
+                    super::effect_op(
+                        &crate::standard_creature_choices_v1::zoraline_return(),
+                        env,
+                        out,
+                    );
+                }
+            }
+        }
         EffectOp::CreatureUpgrade(effect) => {
             use crate::standard_creatures_v1::CreatureEffectV1;
+            if matches!(effect, CreatureEffectV1::FinalityReturnedTarget) {
+                plain_counter(RelF::You, ObjF::NonlandPermanent, AmtF::fixed(1), out);
+            }
             if matches!(effect, CreatureEffectV1::TidebinderCounter) {
                 // The frozen vocabulary has CounterSpell but no separate ability-counter atom.
                 out.effect(EffectAtom::new(EvF::CounterSpell).obj(ObjF::AnyCard));

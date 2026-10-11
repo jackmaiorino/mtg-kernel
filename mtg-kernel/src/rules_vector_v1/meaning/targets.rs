@@ -20,6 +20,11 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
         TargetSpec::StandardV1(filter) => standard_target_spec(filter, out),
         // Target count 0: nothing is announced.
         TargetSpec::None => {}
+        TargetSpec::ArtifactOrEnchantmentThenPlayer => {
+            target_spec(TargetSpec::ArtifactOrEnchantmentPermanent, out);
+            target_spec(TargetSpec::AnyPlayer, out);
+            out.target(TargetAtom::MultipleTargets);
+        }
         TargetSpec::UpToOneOtherControlledPermanent => {
             object(out, ObjF::Permanent, Some(RelF::You), ZoneF::Battlefield);
             out.target(TargetAtom::UpTo);
@@ -426,6 +431,13 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
             ObjF::Player
         }
         TargetSpec::UpToOneStackAbility => ObjF::AnyCard,
+        TargetSpec::ArtifactOrEnchantmentThenPlayer => {
+            if slot == 0 {
+                ObjF::Permanent
+            } else {
+                ObjF::Player
+            }
+        }
         TargetSpec::AnySpellOnStack
         | TargetSpec::BlueSpellOnStack
         | TargetSpec::RedSpellOnStack

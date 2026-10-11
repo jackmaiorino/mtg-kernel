@@ -234,6 +234,7 @@ pub enum TriggerCondition {
     ControlledCreatureOrCreatureSpellBecomesTargetOfOpponent,
     TurnedFaceUp,
     CastSpellWithAnyColor(u8),
+    ControlledCreatureWithSubtypeAttacks(Subtype),
 }
 
 pub struct TriggeredAbilityDef {
@@ -1096,6 +1097,9 @@ pub fn unselected_trigger_modes(
     #[cfg(feature = "standard-magezero-fixtures")]
     if card.name == "Ertai Resurrected" && *effect == standard_legends_v1::ertai_effect() {
         return Some(standard_legends_v1::ertai_modes());
+    }
+    if let Some(modes) = crate::standard_creature_choices_v1::trigger_modes(card_def, effect) {
+        return Some(modes);
     }
     if card.name == "Apothecary Stomper" && *effect == apothecary_stomper_effect() {
         return Some(apothecary_stomper_modes());
@@ -3302,6 +3306,12 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         #[cfg(feature = "standard-magezero-fixtures")]
         "Tishana's Tidebinder" => &standard_family_g_v1::TIDEBINDER_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
+        "Glissa Sunslayer" => &standard_family_g_v1::GLISSA_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Tranquil Frillback" => &standard_family_g_v1::FRILLBACK_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Zoraline, Cosmos Caller" => &standard_family_g_v1::ZORALINE_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
         "Brightglass Gearhulk" => &standard_family_g_v1::BRIGHTGLASS_GEARHULK_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Essence Channeler" => &standard_family_g_v1::ESSENCE_CHANNELER_TRIGGERS,
@@ -3607,6 +3617,9 @@ fn source_bound_trigger_program_matches(template: &EffectOp, effect: &EffectOp) 
 }
 
 pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
+    if crate::standard_creature_choices_v1::trigger_target_spec(card_def, effect).is_some() {
+        return true;
+    }
     let Some(card) = crate::card_def::CARD_DEFS.get(card_def as usize) else {
         return false;
     };
@@ -3711,6 +3724,9 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    if let Some(spec) = crate::standard_creature_choices_v1::trigger_target_spec(card_def, effect) {
+        return Some(spec);
+    }
     // The monarch end-step draw trigger is engine-owned like Initiative's
     // Undercity trigger, but (unlike Avenging Hunter's fixed Initiative
     // source) its source is never one fixed card: Azure Fleet Admiral's ETB
@@ -5160,6 +5176,21 @@ fn trigger_matches(
                 })
                 .count();
             count >= usize::from(minimum_count)
+        }
+        (
+            TriggerCondition::ControlledCreatureWithSubtypeAttacks(subtype),
+            CommittedEvent::DeclaredAttacker {
+                source: attacker,
+                source_zone_change_count,
+                controller: event_controller,
+            },
+        ) => {
+            *event_controller == controller
+                && state.objects.try_get(*attacker).is_some_and(|o| {
+                    o.zone == Zone::Battlefield
+                        && o.zone_change_count == *source_zone_change_count
+                        && crate::engine::has_effective_subtype(state, *attacker, subtype)
+                })
         }
         (
             TriggerCondition::Attacks,

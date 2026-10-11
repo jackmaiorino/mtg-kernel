@@ -3378,3 +3378,300 @@ fn tidebinder_may_target_nothing() {
     settled(&mut state);
     assert_eq!(state.objects.get(tidebinder).zone, Zone::Battlefield);
 }
+
+fn choose_creature_option(state: &mut GameState, answer: u8) {
+    let pending = state.engine.pending_effect.as_ref().unwrap();
+    let Some(mtg_kernel::effect::PendingEffectChoice::ChooseOption { options, .. }) =
+        &pending.choice
+    else {
+        panic!("expected creature choice")
+    };
+    let index = options.iter().position(|op| matches!(op, mtg_kernel::effect::EffectOp::CreatureChoiceAnswerV1 {answer: candidate, ..} if *candidate == answer)).unwrap();
+    engine::step(state, Action::ChooseEffectOption(index as u16)).unwrap();
+}
+
+#[test]
+fn glissa_announces_modes_and_removes_only_three_chosen_counter_kinds() {
+    use mtg_kernel::standard_creature_choices_v1::CounterKindV1;
+    let mut state = ready(Step::Main1);
+    let glissa = put(
+        &mut state,
+        PlayerId::P0,
+        "Glissa Sunslayer",
+        Zone::Battlefield,
+    );
+    let target = put(&mut state, PlayerId::P1, "Gingerbrute", Zone::Battlefield);
+    {
+        let object = state.objects.get_mut(target);
+        object.counters.plus1_plus1 = 2;
+        object.counters.stun = 1;
+        object.counters.charge = 2;
+        object
+            .v4
+            .creature_upgrade
+            .get_or_insert_with(Default::default)
+            .finality = 1;
+    }
+    combat_hit(&mut state, glissa);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseTriggerMode { .. })
+    ));
+    engine::step(&mut state, Action::ChooseTriggerMode(2)).unwrap();
+    assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+    for counter in [
+        CounterKindV1::Stun,
+        CounterKindV1::Finality,
+        CounterKindV1::Charge,
+    ] {
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectOption { .. })
+        ));
+        let answer = CounterKindV1::ALL
+            .iter()
+            .position(|c| *c == counter)
+            .unwrap() as u8
+            + 1;
+        state = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+        choose_creature_option(&mut state, answer);
+        // The answered guard also survives restoration before execution.
+        state = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+    }
+    settled(&mut state);
+    let object = state.objects.get(target);
+    assert_eq!(object.counters.plus1_plus1, 2);
+    assert_eq!(object.counters.charge, 1);
+    assert_eq!(object.counters.stun, 0);
+    assert_eq!(object.v4.creature_upgrade.as_ref().unwrap().finality, 0);
+    move_to(&mut state, target, Zone::Graveyard);
+    assert_eq!(state.objects.get(target).zone, Zone::Graveyard);
+}
+
+#[test]
+fn glissa_draw_mode_loses_life_and_counter_mode_can_stop_early() {
+    let mut state = ready(Step::Main1);
+    let glissa = put(
+        &mut state,
+        PlayerId::P0,
+        "Glissa Sunslayer",
+        Zone::Battlefield,
+    );
+    combat_hit(&mut state, glissa);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseTriggerMode { .. })
+    ));
+    engine::step(&mut state, Action::ChooseTriggerMode(0)).unwrap();
+    settled(&mut state);
+    assert_eq!(state.players[0].life, 19);
+    assert_eq!(state.players[0].hand.len(), 1);
+    state.objects.get_mut(glissa).counters.oil = 5;
+    combat_hit(&mut state, glissa);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseTriggerMode { .. })
+    ));
+    engine::step(&mut state, Action::ChooseTriggerMode(2)).unwrap();
+    next(&mut state);
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(glissa))).unwrap();
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectOption { .. })
+    ));
+    choose_creature_option(&mut state, 0);
+    settled(&mut state);
+    assert_eq!(state.objects.get(glissa).counters.oil, 5);
+}
+
+#[test]
+fn frillback_payment_creates_separate_modal_trigger_and_preserves_legal_target() {
+    let mut state = ready(Step::Main1);
+    let artifact = put(&mut state, PlayerId::P1, "Gingerbrute", Zone::Battlefield);
+    let dead = put(
+        &mut state,
+        PlayerId::P1,
+        "Mosswood Dreadknight",
+        Zone::Graveyard,
+    );
+    let source = cast_creature(&mut state, "Tranquil Frillback");
+    next(&mut state);
+    state.players[0].mana_pool = pool(&[(ManaColor::G, 3)], 0);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectOption {
+            option_count: 4,
+            ..
+        })
+    ));
+    assert_eq!(state.stack.len(), 1);
+    choose_creature_option(&mut state, 3);
+    state = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseTriggerMode { .. }
+    ));
+    // All three modes are the eighth subset. The payment trigger has finished.
+    assert!(state.stack.is_empty());
+    engine::step(&mut state, Action::ChooseTriggerMode(7)).unwrap();
+    next(&mut state);
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(artifact))).unwrap();
+    next(&mut state);
+    engine::step(
+        &mut state,
+        Action::ChooseTarget(Target::Player(PlayerId::P1)),
+    )
+    .unwrap();
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(state.stack.len(), 1);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
+    // Both the source and one target may leave during the new response window.
+    move_to(&mut state, source, Zone::Hand);
+    move_to(&mut state, artifact, Zone::Hand);
+    settled(&mut state);
+    assert_eq!(state.objects.get(artifact).zone, Zone::Hand);
+    assert_eq!(state.objects.get(dead).zone, Zone::Exile);
+    assert_eq!(state.players[0].life, 24);
+}
+
+#[test]
+fn frillback_one_payment_limits_modes_and_decline_creates_no_reflexive_trigger() {
+    for paid in [0, 1] {
+        let mut state = ready(Step::Main1);
+        cast_creature(&mut state, "Tranquil Frillback");
+        next(&mut state);
+        state.players[0].mana_pool = pool(&[(ManaColor::G, 1)], 0);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectOption {
+                option_count: 2,
+                ..
+            })
+        ));
+        choose_creature_option(&mut state, paid);
+        if paid == 1 {
+            let Decision::ChooseTriggerMode { .. } = next(&mut state) else {
+                panic!("expected reflexive modes")
+            };
+            // No artifact exists: mode1 is unavailable, but subset indices stay stable.
+            assert!(engine::step(&mut state, Action::ChooseTriggerMode(4)).is_err());
+            engine::step(&mut state, Action::ChooseTriggerMode(3)).unwrap();
+        }
+        settled(&mut state);
+        assert_eq!(state.players[0].life, if paid == 1 { 24 } else { 20 });
+        assert_eq!(
+            state.players[0].mana_pool[ManaColor::G.pool_index()],
+            1 - paid
+        );
+    }
+}
+
+#[test]
+fn zoraline_payment_targeting_and_finality_survive_source_departure() {
+    let mut state = ready(Step::Main1);
+    let dead = put(
+        &mut state,
+        PlayerId::P0,
+        "Mosswood Dreadknight",
+        Zone::Graveyard,
+    );
+    let source = cast_creature(&mut state, "Zoraline, Cosmos Caller");
+    next(&mut state);
+    state.players[0].mana_pool = pool(&[(ManaColor::W, 1), (ManaColor::B, 1)], 0);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectOption {
+            option_count: 2,
+            ..
+        })
+    ));
+    choose_creature_option(&mut state, 1);
+    assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
+    assert_eq!(state.players[0].life, 18);
+    assert!(state.stack.is_empty());
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(dead))).unwrap();
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    move_to(&mut state, source, Zone::Hand);
+    state = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(dead).zone, Zone::Battlefield);
+    assert_eq!(
+        state
+            .objects
+            .get(dead)
+            .v4
+            .creature_upgrade
+            .as_ref()
+            .unwrap()
+            .finality,
+        1
+    );
+    move_to(&mut state, dead, Zone::Graveyard);
+    assert_eq!(state.objects.get(dead).zone, Zone::Exile);
+    assert!(
+        state.engine.pending_triggers.is_empty(),
+        "finality prevents the dies event"
+    );
+}
+
+#[test]
+fn zoraline_triggers_once_per_attacking_bat_and_cannot_pay_unavailable_life() {
+    let mut state = ready(Step::DeclareAttackers);
+    let zoraline = put(
+        &mut state,
+        PlayerId::P0,
+        "Zoraline, Cosmos Caller",
+        Zone::Battlefield,
+    );
+    let bat = put(
+        &mut state,
+        PlayerId::P0,
+        "Deep-Cavern Bat",
+        Zone::Battlefield,
+    );
+    assert!(matches!(
+        next(&mut state),
+        Decision::DeclareAttackers { .. }
+    ));
+    engine::step(&mut state, Action::DeclareAttackers(vec![zoraline, bat])).unwrap();
+    assert_eq!(
+        state.engine.pending_triggers.len(),
+        3,
+        "two Bat gains and Zoraline's optional attack payment"
+    );
+    settled(&mut state);
+    assert_eq!(state.players[0].life, 22);
+
+    let mut state = ready(Step::Main1);
+    state.players[0].life = 1;
+    cast_creature(&mut state, "Zoraline, Cosmos Caller");
+    next(&mut state);
+    state.players[0].mana_pool = pool(&[(ManaColor::W, 1), (ManaColor::B, 1)], 0);
+    settled(&mut state);
+    assert_eq!(state.players[0].life, 1);
+    assert_eq!(
+        state.players[0].mana_pool,
+        pool(&[(ManaColor::W, 1), (ManaColor::B, 1)], 0)
+    );
+}
+
+#[test]
+fn finality_applies_to_lethal_state_based_actions_without_dies_triggers() {
+    let mut state = ready(Step::Main1);
+    let creature = put(
+        &mut state,
+        PlayerId::P0,
+        "Mosswood Dreadknight",
+        Zone::Battlefield,
+    );
+    let live = state.objects.get_mut(creature);
+    live.v4
+        .creature_upgrade
+        .get_or_insert_with(Default::default)
+        .finality = 1;
+    live.damage = 3;
+    let triggers = trigger::collect_and_process(&mut state);
+    assert_eq!(state.objects.get(creature).zone, Zone::Exile);
+    assert!(triggers.is_empty());
+}

@@ -625,6 +625,7 @@ fn record_counter_lki(state: &mut GameState, object: ObjectId) {
         loyalty: crate::planeswalker_v1::loyalty(state, object).unwrap_or(0),
         lifelink: live.v4.lifelink_keyword_counters,
         time: live.v4.time_counters_v1,
+        finality: live.v4.creature_upgrade.as_ref().map_or(0, |u| u.finality),
     };
     if live.counters.any() || extras != Default::default() {
         entries.push(crate::state::CounterLkiV1 {
@@ -708,6 +709,19 @@ pub fn apply_replacements(
     state: &mut GameState,
     mut proposed: ProposedEvent,
 ) -> Option<ProposedEvent> {
+    if let ProposedEvent::ZoneChange(change) = &mut proposed {
+        if change.to_zone == Zone::Graveyard
+            && state.objects.try_get(change.object).is_some_and(|o| {
+                o.zone == Zone::Battlefield
+                    && o.v4
+                        .creature_upgrade
+                        .as_ref()
+                        .is_some_and(|u| u.finality > 0)
+            })
+        {
+            change.to_zone = Zone::Exile;
+        }
+    }
     let damage_cannot_be_prevented = matches!(&proposed, ProposedEvent::Damage(_))
         && state.engine.until_end_of_turn.iter().any(|effect| {
             matches!(
@@ -958,6 +972,20 @@ fn commit_with_ability_lki(
     event: ProposedEvent,
     abilities_removed_before: Option<bool>,
 ) {
+    let mut event = event;
+    if let ProposedEvent::ZoneChange(change) = &mut event {
+        if change.to_zone == Zone::Graveyard
+            && state.objects.try_get(change.object).is_some_and(|o| {
+                o.zone == Zone::Battlefield
+                    && o.v4
+                        .creature_upgrade
+                        .as_ref()
+                        .is_some_and(|u| u.finality > 0)
+            })
+        {
+            change.to_zone = Zone::Exile;
+        }
+    }
     let committed = match event {
         ProposedEvent::Damage(d) => {
             let source_has_deathtouch = d.amount > 0

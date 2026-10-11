@@ -10,6 +10,7 @@ use crate::state::{GameState, Zone};
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CreatureUpgradeV1 {
+    pub finality: u16,
     pub temporary_creature: Option<(i16, i16, u64)>,
     pub suppressed_by: Vec<TidebinderSuppressionV1>,
     pub graveyard_adventure: Option<GraveyardAdventurePermissionV1>,
@@ -41,6 +42,7 @@ pub enum CreatureEffectV1 {
     FloodpitsShuffle,
     EssenceTransferCounters,
     TidebinderCounter,
+    FinalityReturnedTarget,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -95,6 +97,8 @@ pub struct CounterExtrasV1 {
     pub loyalty: u32,
     pub lifelink: i16,
     pub time: u8,
+    #[serde(default)]
+    pub finality: u16,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -169,6 +173,12 @@ fn apply_counter_transfer(
         .v4
         .time_counters_v1
         .checked_add(u8::try_from(scale(i32::from(snapshot.extras.time))).ok()?)?;
+    let finality = live
+        .v4
+        .creature_upgrade
+        .as_ref()
+        .map_or(0, |u| u.finality)
+        .checked_add(u16::try_from(scale(i32::from(snapshot.extras.finality))).ok()?)?;
     crate::event::add_plus_one_counters(state, target, player, counters.plus1_plus1).ok()?;
     let keyword_timestamp =
         (snapshot.extras.lifelink > 0).then(|| crate::engine::next_timestamp(state));
@@ -182,6 +192,12 @@ fn apply_counter_transfer(
     live.counters.net = net;
     live.v4.lifelink_keyword_counters = lifelink;
     live.v4.time_counters_v1 = time;
+    if finality > 0 {
+        live.v4
+            .creature_upgrade
+            .get_or_insert_with(Default::default)
+            .finality = finality;
+    }
     if keyword_timestamp.is_some() {
         live.v4.lifelink_counter_timestamp = keyword_timestamp;
     }
@@ -365,6 +381,41 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
 }
 
 pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameState) {
+    if effect == CreatureEffectV1::FinalityReturnedTarget {
+        let Some(crate::state::StackTargetContractV4::Object {
+            object,
+            zone: Zone::Graveyard,
+            zone_change_count,
+            ..
+        }) = ctx.target_contracts.first().copied()
+        else {
+            return;
+        };
+        let Some(live) = state.objects.try_get(object) else {
+            return;
+        };
+        if live.zone != Zone::Battlefield
+            || zone_change_count.checked_add(1) != Some(live.zone_change_count)
+        {
+            return;
+        }
+        #[cfg(feature = "standard-magezero-fixtures")]
+        let amount = crate::standard_cards_v1::scale_counters(state, live.controller, 1);
+        #[cfg(not(feature = "standard-magezero-fixtures"))]
+        let amount = 1;
+        let upgrade = state
+            .objects
+            .get_mut(object)
+            .v4
+            .creature_upgrade
+            .get_or_insert_with(Default::default);
+        if let Ok(amount) = u16::try_from(amount) {
+            if let Some(total) = upgrade.finality.checked_add(amount) {
+                upgrade.finality = total;
+            }
+        }
+        return;
+    }
     if effect == CreatureEffectV1::TidebinderCounter {
         let Some(crate::state::Target::StackItem(target)) = ctx.targets.first().copied() else {
             return;
@@ -740,7 +791,9 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
         .creature_upgrade
         .get_or_insert_with(Default::default);
     match effect {
-        CreatureEffectV1::TidebinderCounter => unreachable!("counter ability handled above"),
+        CreatureEffectV1::FinalityReturnedTarget | CreatureEffectV1::TidebinderCounter => {
+            unreachable!("counter ability handled above")
+        }
         CreatureEffectV1::EssenceTransferCounters => unreachable!("counter transfer handled above"),
         CreatureEffectV1::FloodpitsTapStun | CreatureEffectV1::FloodpitsShuffle => {
             unreachable!("targeted effect handled above")

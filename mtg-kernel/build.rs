@@ -4081,6 +4081,14 @@ fn keywords_for(card: &CardJson) -> String {
             keywords.push("Keywords::FLASH");
             keywords.push("Keywords::VIGILANCE");
         }
+        "Glissa Sunslayer" => {
+            keywords.push("Keywords::FIRST_STRIKE");
+            keywords.push("Keywords::DEATHTOUCH");
+        }
+        "Zoraline, Cosmos Caller" => {
+            keywords.push("Keywords::FLYING");
+            keywords.push("Keywords::VIGILANCE");
+        }
         "Gingerbrute" => keywords.push("Keywords::HASTE"),
         "Surge Engine" => keywords.push("Keywords::DEFENDER"),
         "Spyglass Siren" => keywords.push("Keywords::FLYING"),
@@ -6679,6 +6687,9 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Brightglass Gearhulk" => "etb:may_search_library:up_to_two:artifact_creature_enchantment_mv_at_most_one:reveal_hand_shuffle",
         "Tishana's Tidebinder" => "etb:counter_up_to_one_stack_ability:source_permanent_loses_abilities_while_tidebinder_remains",
         "Sandstorm Salvager" => "etb:create_golem_token:1",
+        "Glissa Sunslayer" => "combat_damage_player:choose_one:draw_lose_one:destroy_enchantment:remove_up_to_three_counters",
+        "Tranquil Frillback" => "etb:pay_green_up_to_three:reflexive_choose_up_to_paid_modes:destroy_artifact_enchantment:exile_player_graveyard:gain_four_life",
+        "Zoraline, Cosmos Caller" => "controlled_bat_attacks:gain_one;etb_or_attacks:may_pay_white_black_two_life:reflexive_reanimate_nonland_permanent_mv_at_most_three_with_finality",
         "Preacher of the Schism" => "attacks_player_with_most_life:create_white_vampire_token;attacks_while_controller_most_life:draw:1:lose_life:1",
         "Tough Cookie" => "etb:create_food_token:1",
         "Kellan, Planar Trailblazer" => "granted_combat_damage_player:impulse:1:end_of_turn",

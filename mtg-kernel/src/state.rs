@@ -1203,6 +1203,17 @@ pub fn stack_target_contract_is_structurally_valid(
         || matches!(
             (spec, target_index, contract),
             (
+                TargetSpec::ArtifactOrEnchantmentThenPlayer,
+                0,
+                StackTargetContractV4::Object {
+                    zone: Zone::Battlefield,
+                    ..
+                }
+            ) | (
+                TargetSpec::ArtifactOrEnchantmentThenPlayer,
+                1,
+                StackTargetContractV4::Player(_)
+            ) | (
                 TargetSpec::CounterDistribution,
                 _,
                 StackTargetContractV4::Object {

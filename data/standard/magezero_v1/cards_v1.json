@@ -7688,6 +7688,109 @@
       ],
       "is_token": true,
       "object_name": "Gnome Soldier"
+    },
+    {
+      "name": "Glissa Sunslayer",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}{G}",
+      "mana_value": 3,
+      "colors": [
+        "B",
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Phyrexian",
+        "Zombie",
+        "Elf"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "high",
+      "mechanics": [
+        "first_strike",
+        "deathtouch",
+        "combat_damage_modal"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GlissaSunslayer.java"
+    },
+    {
+      "name": "Tranquil Frillback",
+      "engine_capability": "full",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dinosaur"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "high",
+      "mechanics": [
+        "etb_optional_mana",
+        "reflexive_modal"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/TranquilFrillback.java"
+    },
+    {
+      "name": "Zoraline, Cosmos Caller",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}{B}",
+      "mana_value": 3,
+      "colors": [
+        "W",
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bat",
+        "Cleric"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-BW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "high",
+      "mechanics": [
+        "flying",
+        "vigilance",
+        "bat_attack_life",
+        "reflexive_reanimation",
+        "finality_counter"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/z/ZoralineCosmosCaller.java"
     }
   ]
 }

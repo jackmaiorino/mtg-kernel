@@ -1857,6 +1857,7 @@ impl FlatDecisionEncoderV1 {
                     player,
                     structural_path,
                     option_count,
+                    ..
                 }) => {
                     let (path_start, path_count) = self.append_context_elements(
                         FlatContextKindV1::PendingEffect,

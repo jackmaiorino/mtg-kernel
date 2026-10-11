@@ -659,6 +659,8 @@ pub enum PendingEffectChoiceSemanticV4 {
         player: PlayerSeatV1,
         structural_path: Vec<u16>,
         option_count: u16,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        creature_options: Option<Vec<crate::standard_creature_choices_v1::CreatureChoiceOptionV1>>,
     },
     Targets {
         player: PlayerSeatV1,
@@ -6970,6 +6972,7 @@ fn pending_effect_semantic_v4(
                         legal_colors: legal_colors.clone(),
                     }),
                     _ => Ok(PendingEffectChoiceSemanticV4::Options {
+                        creature_options: if matches!(purpose, crate::effect::EffectOptionChoicePurpose::CreatureChoiceV1 {..}) { Some(options.iter().filter_map(crate::standard_creature_choices_v1::public_option).collect()) } else { None },
                         player: (*player).into(),
                         structural_path: path.clone(),
                         option_count: options.len().try_into().map_err(|_| {

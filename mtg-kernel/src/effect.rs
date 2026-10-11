@@ -1512,6 +1512,11 @@ pub enum EffectOp {
         player: PlayerRef,
         minimum_cards: u8,
     },
+    CreatureChoiceV1(crate::standard_creature_choices_v1::CreatureChoiceV1),
+    CreatureChoiceAnswerV1 {
+        kind: crate::standard_creature_choices_v1::CreatureChoiceV1,
+        answer: u8,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -2471,6 +2476,10 @@ pub enum EffectOptionChoicePurpose {
         canonical_path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
     },
+    CreatureChoiceV1 {
+        kind: crate::standard_creature_choices_v1::CreatureChoiceV1,
+        expected_remaining_frames: Vec<EffectFrame>,
+    },
 }
 
 /// A policy-visible choice yielded by the generic effect interpreter. This is
@@ -2637,6 +2646,12 @@ pub enum EffectAnsweredChoiceGuard {
     },
     StandardSelection {
         frame: Box<EffectFrame>,
+    },
+    CreatureChoiceV1 {
+        kind: crate::standard_creature_choices_v1::CreatureChoiceV1,
+        answer: u8,
+        path: Vec<u16>,
+        remaining_frames: Vec<EffectFrame>,
     },
 }
 
@@ -2807,6 +2822,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         EffectOp::StandardLegendV1(
             crate::standard_legends_v1::LegendEffectV1::ShannaPayAndDraw,
         ) => true,
+        EffectOp::CreatureChoiceV1(_) | EffectOp::CreatureChoiceAnswerV1 { .. } => true,
         EffectOp::RevealTopAndPartitionByType { .. } => true,
         EffectOp::RevealUntilCardTypeAndMill { .. } => true,
         EffectOp::MillCards { count, .. } => *count > 1,
@@ -2942,6 +2958,31 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
                         path,
                         expected_remaining_frames,
                     });
+                }
+                EffectOptionChoicePurpose::CreatureChoiceV1 {
+                    kind,
+                    expected_remaining_frames,
+                } => {
+                    let EffectOp::CreatureChoiceAnswerV1 {
+                        kind: selected_kind,
+                        answer,
+                    } = selected
+                    else {
+                        return Err("creature answer changed operation".into());
+                    };
+                    if kind != selected_kind || continuation.frames != expected_remaining_frames {
+                        return Err("creature choice continuation changed".into());
+                    }
+                    continuation.answered_choice_guard =
+                        Some(EffectAnsweredChoiceGuard::CreatureChoiceV1 {
+                            kind,
+                            answer,
+                            path: path.clone(),
+                            remaining_frames: expected_remaining_frames,
+                        });
+                    continuation
+                        .frames
+                        .push(EffectFrame::Program { op: selected, path });
                 }
                 EffectOptionChoicePurpose::Generic => {
                     path.push(option_index);
@@ -5396,7 +5437,8 @@ fn validated_definition_owned_root_effect(
                     .iter()
                     .any(|chapter| chapter() == *root)
             });
-        if !is_saga_chapter
+        if crate::standard_creature_choices_v1::trigger_target_spec(card_def, &root).is_none()
+            && !is_saga_chapter
             && !crate::trigger::triggers_for(card_def)
                 .iter()
                 .any(|trigger| {
@@ -5417,6 +5459,36 @@ fn validated_definition_owned_root_effect(
     }
     Ok(root)
 }
+fn validate_creature_choice_origin(
+    state: &GameState,
+    pending: &EffectContinuation,
+    kind: crate::standard_creature_choices_v1::CreatureChoiceV1,
+    path: &[u16],
+) -> Result<(), String> {
+    use crate::standard_creature_choices_v1::CreatureChoiceV1;
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    let (origin_kind, origin_path) =
+        if let CreatureChoiceV1::GlissaCounters(remaining @ 1..=3) = kind {
+            let depth = usize::from(3 - remaining);
+            let split = path
+                .len()
+                .checked_sub(depth)
+                .ok_or("counter choice depth changed")?;
+            if path[split..].iter().any(|n| *n == 0 || *n > 12) {
+                return Err("counter choice history changed".into());
+            }
+            (CreatureChoiceV1::GlissaCounters(3), &path[..split])
+        } else {
+            (kind, path)
+        };
+    if effect_op_at_structural_path(&root, origin_path)
+        != Some(&EffectOp::CreatureChoiceV1(origin_kind))
+    {
+        return Err("creature choice lost its definition-owned origin".into());
+    }
+    Ok(())
+}
+
 fn effect_op_at_structural_path<'a>(root: &'a EffectOp, path: &[u16]) -> Option<&'a EffectOp> {
     let Some((&head, tail)) = path.split_first() else {
         return Some(root);
@@ -6500,6 +6572,30 @@ fn validate_answered_choice_guard(
         }
     }
     match &pending.answered_choice_guard {
+        Some(EffectAnsweredChoiceGuard::CreatureChoiceV1 {
+            kind,
+            answer,
+            path,
+            remaining_frames,
+        }) => {
+            validate_creature_choice_origin(state, pending, *kind, path)?;
+            let op = EffectOp::CreatureChoiceAnswerV1 {
+                kind: *kind,
+                answer: *answer,
+            };
+            let mut expected = remaining_frames.clone();
+            expected.push(EffectFrame::Program {
+                op: op.clone(),
+                path: path.clone(),
+            });
+            if pending.choice.is_some()
+                || expected != pending.frames
+                || !crate::standard_creature_choices_v1::options(*kind, &pending.ctx, state)
+                    .contains(&op)
+            {
+                return Err("answered creature choice changed".into());
+            }
+        }
         None => {
             if pending.frames.iter().any(|frame| {
                 matches!(
@@ -8817,6 +8913,19 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     expected_remaining_frames,
                 )?;
             }
+            EffectOptionChoicePurpose::CreatureChoiceV1 {
+                kind,
+                expected_remaining_frames,
+            } => {
+                validate_creature_choice_origin(state, pending, *kind, path)?;
+                if *player != pending.ctx.controller
+                    || pending.frames != *expected_remaining_frames
+                    || *options
+                        != crate::standard_creature_choices_v1::options(*kind, &pending.ctx, state)
+                {
+                    return Err("creature choice options changed".into());
+                }
+            }
             EffectOptionChoicePurpose::Generic => {
                 for option in options {
                     validate_resumable_program(option)?;
@@ -11055,6 +11164,23 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         state.engine.pending_effect = Some(continuation);
                         return Ok(ResumableProgress::Suspended);
                     }
+                }
+            }
+            EffectOp::CreatureChoiceV1(kind) => {
+                let options = crate::standard_creature_choices_v1::options(kind, &continuation.ctx, state);
+                if options.len() > 1 {
+                    continuation.choice = Some(PendingEffectChoice::ChooseOption {player: continuation.ctx.controller, path, options, purpose: EffectOptionChoicePurpose::CreatureChoiceV1 {kind, expected_remaining_frames: continuation.frames.clone()}});
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
+            EffectOp::CreatureChoiceAnswerV1 {kind, answer} => {
+                if continuation.answered_choice_guard.as_ref() != Some(&EffectAnsweredChoiceGuard::CreatureChoiceV1 {kind, answer, path: path.clone(), remaining_frames: continuation.frames.clone()}) { return Err("creature answer lost its guard".into()); }
+                validate_creature_choice_origin(state, &continuation, kind, &path)?;
+                continuation.answered_choice_guard = None;
+                if let Some(next) = crate::standard_creature_choices_v1::answer(kind, answer, &continuation.ctx, state)? {
+                    let mut next_path = path; next_path.push(u16::from(answer));
+                    continuation.frames.push(EffectFrame::Program {op: EffectOp::CreatureChoiceV1(next), path: next_path});
                 }
             }
             EffectOp::PutBoundAuraOntoBattlefieldAttached { aura, host } => {
@@ -16607,6 +16733,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         }
         EffectOp::CreatureUpgrade(effect) => {
             crate::standard_creatures_v1::execute(*effect, ctx, state)
+        }
+        EffectOp::CreatureChoiceV1(_) | EffectOp::CreatureChoiceAnswerV1 { .. } => {
+            panic!("creature choices require resumable resolution")
         }
         EffectOp::AnimateSource | EffectOp::AnimateSourcePermanentlyV1 => {
             let Some(contract) = ctx.ability_source_contract else {

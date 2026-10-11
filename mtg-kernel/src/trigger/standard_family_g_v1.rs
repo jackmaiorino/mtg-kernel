@@ -491,3 +491,37 @@ fn tidebinder_counter_effect() -> EffectOp {
 }
 pub(super) const TIDEBINDER_TRIGGERS: [TriggeredAbilityDef; 1] =
     [etb_trigger(tidebinder_counter_effect)];
+
+fn frillback_payment_effect() -> EffectOp {
+    EffectOp::CreatureChoiceV1(
+        crate::standard_creature_choices_v1::CreatureChoiceV1::FrillbackPayment,
+    )
+}
+fn zoraline_payment_effect() -> EffectOp {
+    EffectOp::CreatureChoiceV1(
+        crate::standard_creature_choices_v1::CreatureChoiceV1::ZoralinePayment,
+    )
+}
+fn zoraline_bat_effect() -> EffectOp {
+    EffectOp::GainLife {
+        player: PlayerRef::Controller,
+        amount: 1,
+    }
+}
+pub(super) const FRILLBACK_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(frillback_payment_effect)];
+pub(super) const GLISSA_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::DealsCombatDamageToPlayer,
+    ..etb_trigger(crate::standard_creature_choices_v1::glissa_marker)
+}];
+pub(super) const ZORALINE_TRIGGERS: [TriggeredAbilityDef; 3] = [
+    etb_trigger(zoraline_payment_effect),
+    TriggeredAbilityDef {
+        condition: TriggerCondition::Attacks,
+        ..etb_trigger(zoraline_payment_effect)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::ControlledCreatureWithSubtypeAttacks(Subtype::Bat),
+        ..etb_trigger(zoraline_bat_effect)
+    },
+];
