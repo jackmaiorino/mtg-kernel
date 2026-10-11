@@ -195,10 +195,26 @@ pub(crate) fn candidates(
                 for &(id, ability_index) in activatable_abilities {
                     predecessor(
                         &mut raw,
-                        ActionSemanticV1::ActivateAbility {
-                            actor,
-                            source: crate::rl::card_ref(state, id)?,
-                            ability_index,
+                        if ability_index == 255 {
+                            ActionSemanticV1::TurnFaceUp {
+                                actor,
+                                source: crate::rl::card_ref(state, id)?,
+                            }
+                        } else {
+                            ActionSemanticV1::ActivateAbility {
+                                actor,
+                                source: crate::rl::card_ref(state, id)?,
+                                ability_index,
+                                granted_ability: crate::rl::GrantedAbilityPublicV1(
+                                    crate::rl::public_granted_ability(
+                                        crate::standard_cards_v1::capture_cauldron_grant(
+                                            state,
+                                            id,
+                                            ability_index,
+                                        ),
+                                    ),
+                                ),
+                            }
                         },
                         Action::ActivateAbility(id, ability_index),
                     );

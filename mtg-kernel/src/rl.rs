@@ -2279,6 +2279,7 @@ pub(crate) struct PolicyObservationStorageV6 {
     pub own_hand: Vec<CardPrivateV1>,
     pub known_library_cards: [Vec<KnownLibraryCardV4>; 2],
     pub known_hand_cards: [Vec<CardPrivateV1>; 2],
+    pub known_face_down_cards: Vec<FaceDownCardKnowledgeV1>,
     pub extensions: crate::policy_observation_v6::PolicyObservationExtensionsV6,
 }
 
@@ -2298,6 +2299,7 @@ impl From<ObservationV6> for PolicyObservationStorageV6 {
             own_hand: base.own_hand,
             known_library_cards: base.known_library_cards,
             known_hand_cards: base.known_hand_cards,
+            known_face_down_cards: base.known_face_down_cards,
             extensions: base.extensions,
         }
     }
@@ -2320,6 +2322,7 @@ impl PolicyObservationStorageV6 {
             own_hand: self.own_hand,
             known_library_cards: self.known_library_cards,
             known_hand_cards: self.known_hand_cards,
+            known_face_down_cards: self.known_face_down_cards,
             extensions: self.extensions,
             visible_projection_hash: 0,
         }
@@ -7707,7 +7710,7 @@ fn pending_activation_semantic_v2(
     })
 }
 
-fn public_granted_ability(
+pub(crate) fn public_granted_ability(
     record: crate::cauldron_grants_v1::CauldronGrantRecordV1,
 ) -> Option<(CardStableRefV1, u16)> {
     record.0.map(|grant| {
