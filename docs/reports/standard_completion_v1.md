@@ -39,9 +39,10 @@ This is rules/harness verification, not a playing-strength experiment.
 
 ## Candidate admission and remaining acceptance
 
-The v7 candidate contains all 225 nonbasic deck cards, with 253 definitions appended to
+The candidate contains all 225 nonbasic deck cards, with 254 definitions appended to
 the frozen Pauper prefix. All extension entries have Full flags to enable acceptance
-checks, including its 32 token or masked-face definitions. Python checks admit all 16
+checks, including 32 token or masked-face definitions and the existing FDN Witness
+Protection fixture for layer-ordering regression coverage. Python checks admit all 16
 decks and bind their original SHA-256 values; Mono-U remains 62 cards and sideboards
 remain empty. Standard appended IDs are fixed by an explicit Rust list. Registry deck
 membership metadata matches the unchanged fixture files.
@@ -51,31 +52,48 @@ set keywords and free casting; creature triggers/statics and last-known informat
 planeswalkers, Rooms, Vehicles, craft, copying and transforming cards; and the five-color
 legends. Generic observations represent the added public state and decision boundaries.
 
-**Runtime verification is pending.** The integration lead still owns the combined
-affected executable tests, terminal public-session/replay execution,
-source review and delivery. Copied abilities are frozen before paying costs;
-borrowed upgrade triggers retain their actual donors. Free-cast triggers are
-captured after each child cast while placement and state-based actions wait
-for the parent resolution. Human observations project new mechanics through
-typed public handles and preserve the absent-extension JSON contract. The native v7 build generator reports `0x020d7a9c4c45b4e2`, now bound by the catalog test. Full flags and Python admission alone are
-not a verified support result. No training, benchmark campaign, paid compute or
-playing-strength claim is part of this assignment.
+**Runtime acceptance remains incomplete.** At `b8d7adfe`, the eleven Standard
+integration binaries compiled and executed: 307 tests passed and 40 failed.
+All 21 catalog checks passed, including admission of all sixteen unchanged decks.
+The first two public-session pairings reached natural terminals and replayed with
+identical transcript hashes; the third exposed an outdated linked-exile observation
+validator. No complete eight-pair session acceptance is claimed yet.
+
+Repairs now cover linked-exile observation, activation payment and Channel reduction,
+copy creation and event-bound continuations, Zoetic animation, Enduring return
+provenance, transformed Incubator abilities, Preacher triggers, Case permissions,
+foreign permanent spell control, and incorrectly staged test prerequisites.
+A combined executable rerun is pending. Review also identified Case/Adventure route
+selection and copy-rejection atomicity; those repairs are in progress.
+The native build generator reports the updated catalog identity `0xd237d07494e53952`.
 
 ## Verification and resources
 
-Rust toolchain remains pinned at 1.94.1. The root queues one combined BelowNormal verification core through
-`python/tools/host_slots_v1.py`, with Cargo `-j1` and its cache on D:. Earlier
-worker checks were canceled to avoid duplicate compilation. A bounded local
-verification process releases its slot after five minutes without another
-check; it is not a recurring automation. Existing host reservations remain binding. Root scratch is
-`D:/e-scratch/magezero-standard-completion`; its code/build logs are reproducible,
-with a 20 GiB cap and at least 60 GiB free reserved on D:. Current tests are
-pending, not passed. Source references and tests stay in Git; bulk caches do not.
+Rust remains pinned at 1.94.1 (`e408947bf`, LLVM 21.1.8). Correctness verification
+uses Haley's permitted cores 13 and 15 through `python/tools/host_slots_v1.py`,
+BelowNormal priority, Cargo `-j2`, no incremental compilation and no debug symbols.
+The research reservation on the even cores remains untouched. The current guarded
+worker is `haley-standard-verify-002`; its target directory is capped at 3 GiB,
+with a 60 GiB disk-free floor. It releases its slot after five idle minutes.
+The first worker exited before a diagnostic job produced compilation output; that
+job has no test result and its replacement uses the same bounded launcher.
 
-Generic public decision observations must describe the supported rules state.
-Frozen Pauper policy encoders may refuse new Standard state rather than silently
-drop it. Training a new Standard policy is a separate research task.
+At `b8d7adfe`, focused native checks passed 45 card-definition tests, one Cauldron
+hash test, five legacy observation hash tests, five typed Standard human observation
+tests, two frozen-encoder refusal tests and the Heartfire regression. Five free-cast
+preflight tests passed; two missing-card fixtures were repaired with registered cards
+and await rerun. The existing 8 Standard deck and 15 generated policy Python tests
+pass. CI's frozen Python source drift is repaired by restoring the three original
+feature authorities exactly; 20 focused Python checks passed, including Standard
+refusal at the existing strict observation boundary. Historical Rust fixture repairs
+retain their original behavioral golden hashes. Current-head native checks and CI,
+review completion, PR integration and default-branch acceptance remain pending.
 
-The first combined check failed in the build script on duplicated cost/program
-variants and a stale helper call. Those integration defects are fixed in source.
-The local verification core is now admitted. Subsequent checks exposed and repaired missing token/subtype generation, feature guards, new enum matches and stale policy source digests. The generated policy checks pass (15 Python tests); the deck importer checks pass (8 tests). Formatting and diff checks pass. The Standard library compiled. The first full suite build exposed two stale observation paths in its tests; both are repaired. A second guarded suite is queued. Executable regressions, frozen identity checks, public-session acceptance and current-head CI remain pending.
+Source and tests stay in Git; bulk build caches and logs stay outside Git under
+`D:/e-scratch/magezero-standard-completion` and
+`C:/mtg-node/codex-standard-completion-20261011` on Haley. One small verification
+manifest binds source, archive, toolchain, guard, input seeds and output hashes.
+No training, benchmark campaign, paid compute or playing-strength claim is part of
+this assignment. Generic observations describe supported Standard state; frozen
+Pauper encoders refuse unsupported extensions. Training a new Standard policy remains
+a separate research task.
