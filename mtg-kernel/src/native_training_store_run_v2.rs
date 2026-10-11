@@ -5761,38 +5761,32 @@ pub(crate) fn test_fixture_bytes_fdn_condemn_return_v1() -> Vec<u8> {
     tests::fixture_bytes_fdn_condemn_return()
 }
 
-#[cfg(test)]
-#[cfg(feature = "limited-fdn-fixtures")]
+#[cfg(all(test, windows, feature = "limited-fdn-fixtures"))]
 pub(crate) fn test_fixture_bytes_fdn_bloodwitch_v1() -> Vec<u8> {
     tests::fixture_bytes_fdn_bloodwitch()
 }
 
-#[cfg(test)]
-#[cfg(feature = "limited-fdn-fixtures")]
+#[cfg(all(test, windows, feature = "limited-fdn-fixtures"))]
 pub(crate) fn test_fixture_bytes_fdn_scavenging_ooze_v1() -> Vec<u8> {
     tests::fixture_bytes_fdn_scavenging_ooze()
 }
 
-#[cfg(test)]
-#[cfg(feature = "limited-fdn-fixtures")]
+#[cfg(all(test, windows, feature = "limited-fdn-fixtures"))]
 pub(crate) fn test_fixture_bytes_fdn_soul_shackled_zombie_v1() -> Vec<u8> {
     tests::fixture_bytes_fdn_soul_shackled_zombie()
 }
 
-#[cfg(test)]
-#[cfg(feature = "limited-fdn-fixtures")]
+#[cfg(all(test, windows, feature = "limited-fdn-fixtures"))]
 pub(crate) fn test_fixture_bytes_fdn_next_source_batch_v1() -> Vec<u8> {
     tests::fixture_bytes_fdn_next_source_batch()
 }
 
-#[cfg(test)]
-#[cfg(feature = "limited-fdn-fixtures")]
+#[cfg(all(test, windows, feature = "limited-fdn-fixtures"))]
 pub(crate) fn test_fixture_bytes_fdn_later_source_batch_v1() -> Vec<u8> {
     tests::fixture_bytes_fdn_later_source_batch()
 }
 
-#[cfg(test)]
-#[cfg(feature = "limited-fdn-fixtures")]
+#[cfg(all(test, windows, feature = "limited-fdn-fixtures"))]
 pub(crate) fn test_fixture_bytes_fdn_divine_resilience_v1() -> Vec<u8> {
     tests::fixture_bytes_fdn_divine_resilience()
 }
