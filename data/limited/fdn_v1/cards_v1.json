@@ -6005,6 +6005,37 @@
         "different_controller_targets",
         "batched_return_to_owner_hand"
       ]
+    },
+    {
+      "name": "Vengeful Bloodwitch",
+      "mana_cost": "{1}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Vampire",
+        "Warlock"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/v/VengefulBloodwitch.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_bloodwitch.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "controlled_creature_death_capture",
+        "targeted_opponent_drain"
+      ]
     }
   ]
 }

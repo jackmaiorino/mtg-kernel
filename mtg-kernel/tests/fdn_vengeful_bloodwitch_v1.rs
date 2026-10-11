@@ -1,6 +1,9 @@
-//! Prepared printed-card acceptance. This card remains unregistered; run only
-//! after a reviewed candidate catalog admits its real definition, without hooks.
-#![cfg(feature = "limited-fdn-fixtures")]
+//! Printed-card acceptance for the actual candidate Bloodwitch definition.
+//! Candidate source remains unaccepted until qualification and integration.
+#![cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 
 use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardType, Subtype, TargetSpec, CARD_DEFS,
