@@ -181,11 +181,11 @@ mod fdn_frenzied_goblin_v1;
 #[path = "fdn/fdn_slumbering_cerberus_v1.rs"]
 mod fdn_slumbering_cerberus_v1;
 
-#[path = "fdn/fdn_wildwood_scourge_v1.rs"]
-mod fdn_wildwood_scourge_v1;
-#[path = "fdn/fdn_mild_mannered_librarian_v1.rs"]
-mod fdn_mild_mannered_librarian_v1;
 #[path = "fdn/fdn_gorehorn_raider_v1.rs"]
 mod fdn_gorehorn_raider_v1;
 #[path = "fdn/fdn_gutless_plunderer_v1.rs"]
 mod fdn_gutless_plunderer_v1;
+#[path = "fdn/fdn_mild_mannered_librarian_v1.rs"]
+mod fdn_mild_mannered_librarian_v1;
+#[path = "fdn/fdn_wildwood_scourge_v1.rs"]
+mod fdn_wildwood_scourge_v1;
