@@ -363,6 +363,11 @@ mod copied_printed {
 
     fn copied(actor: PlayerId) -> (GameState, ObjectId, ObjectId) {
         let mut state = basic(actor, "Fireblast");
+        for player in [actor, actor.opponent()] {
+            put(&mut state, player, "Island", Zone::Library);
+        }
+        put(&mut state, actor.opponent(), "Lightning Bolt", Zone::Hand);
+        state.players[actor.opponent().index()].mana_pool[ManaColor::R.pool_index()] = 1;
         let donor = put(&mut state, actor, "Heartfire Immolator", Zone::Hand);
         state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 2;
         engine::step(&mut state, Action::CastSpell(donor)).unwrap();
@@ -380,6 +385,9 @@ mod copied_printed {
         assert_eq!(state.objects.get(donor).zone, Zone::Battlefield);
         event::propose_and_commit(&mut state, ProposedEvent::zone_change(donor, Zone::Exile));
         let source = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        // A newly entered copy may use Heartfire's tap-free ability, while
+        // the physical equipment's unrelated granted tap ability is unavailable.
+        state.objects.get_mut(source).summoning_sick = true;
         let equipment = put(&mut state, actor, "Viridian Longbow", Zone::Battlefield);
         let host = ObjectLinkV4 {
             object: source,
@@ -500,7 +508,8 @@ mod copied_printed {
                     .any(|card| card.stable.arena_id == source.0
                         && card.card_name == "Llanowar Elves")
             );
-            let mut responder = HumanHeartfireHistoryProjectorV1::new(actor.into());
+            let mut responder =
+                HumanHeartfireHistoryProjectorV1::new(expected(&session).acting_player);
             let safe = responder
                 .project_current(&session, expected(&session))
                 .unwrap();

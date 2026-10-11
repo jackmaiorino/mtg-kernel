@@ -22,13 +22,16 @@ fn future_searslicer_end_step_uses_existing_safe_pass_actions_and_exact_restore(
         for player in [actor, actor.opponent()] {
             put(&mut state, player, "Mountain", Zone::Battlefield);
             put(&mut state, player, "Lightning Bolt", Zone::Hand);
+            put(&mut state, player, "Island", Zone::Library);
         }
+        // The inherited harness suppresses every End priority window. Select
+        // the existing explicit engine-priority surface for this consumer test.
         let mut session = HumanRaidSessionV9::from_session(
-            FastActorSessionV1::from_human_v8_fixture_state(state.clone()),
+            FastActorSessionV1::from_human_v8_engine_priority_fixture_state(state.clone()),
         )
         .unwrap();
         let mut replay = HumanRaidSessionV9::from_session(
-            FastActorSessionV1::from_human_v8_fixture_state(state),
+            FastActorSessionV1::from_human_v8_engine_priority_fixture_state(state),
         )
         .unwrap();
         let mut projectors = [

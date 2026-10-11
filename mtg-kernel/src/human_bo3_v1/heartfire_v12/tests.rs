@@ -368,6 +368,11 @@ mod printed {
         put(&mut state, actor, "Lightning Bolt", Zone::Hand);
         put(&mut state, actor, "Mountain", Zone::Battlefield);
         put(&mut state, actor.opponent(), "Fireblast", Zone::Hand);
+        // The inherited surface force-passes the activator's fresh own item.
+        // Keep a real opponent response so its authenticated stack facts can
+        // be inspected before both players pass and resolve it.
+        put(&mut state, actor.opponent(), "Lightning Bolt", Zone::Hand);
+        state.players[actor.opponent().index()].mana_pool[ManaColor::R.pool_index()] = 1;
         state
     }
     fn settle_raw(state: &mut GameState) {
@@ -502,7 +507,12 @@ mod printed {
                     selector.submit(&mut session, input.clone()).unwrap();
                     let announced_hash = session.inner.privileged_core_environment_hash();
                     let announced = session.public_observation(expected(&session)).unwrap();
-                    assert_eq!(announced.saved_damage.len(), 1);
+                    assert_eq!(
+                        announced.saved_damage.len(),
+                        1,
+                        "actor={actor:?} walker={walker} negative={negative} current={:?}",
+                        expected(&session)
+                    );
                     let saved = &announced.saved_damage[0];
                     assert_eq!(saved.signed_departing_power, power);
                     assert_eq!(saved.damage_if_target_legal_before_prevention, power.max(0));
@@ -513,7 +523,8 @@ mod printed {
                             .iter()
                             .any(|row| row.stable.arena_id == source.0)
                     );
-                    let mut responder = HumanHeartfireProjectorV12::new(actor.into());
+                    let mut responder =
+                        HumanHeartfireProjectorV12::new(expected(&session).acting_player);
                     let pending = responder
                         .project_current(&session, expected(&session))
                         .unwrap();
