@@ -2694,6 +2694,12 @@ fn has_counters(state: &GameState, object: ObjectId) -> bool {
         || counters.net > 0
         || counters.charge > 0
         || live.v4.lifelink_keyword_counters > 0
+        || live.v4.time_counters_v1 > 0
+        || live
+            .v4
+            .creature_upgrade
+            .as_ref()
+            .is_some_and(|u| u.finality > 0)
         || crate::planeswalker_v1::loyalty(state, object).is_some_and(|loyalty| loyalty > 0)
 }
 

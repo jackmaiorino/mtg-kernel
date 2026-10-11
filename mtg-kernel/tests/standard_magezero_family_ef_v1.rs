@@ -3125,3 +3125,48 @@ fn cauldron_grants_legacy_mana_and_preserves_donor_activation_conditions() {
         "once only persists across turns"
     );
 }
+#[test]
+fn innkeeper_doubles_oil_and_poison_placed_by_its_controller() {
+    use mtg_kernel::effect::{EffectObjectBinding, EffectOp, ExecCtx};
+    use mtg_kernel::standard_cards_v1::StandardOpV1;
+    let mut state = game();
+    let class = put(&mut state, P0, "Innkeeper's Talent", Zone::Battlefield);
+    level_up(&mut state, class, 0, ManaColor::G, 1);
+    level_up(&mut state, class, 1, ManaColor::G, 4);
+    let adaptive = put(&mut state, P0, "Evolving Adaptive", Zone::Battlefield);
+    assert_eq!(state.objects.get(adaptive).counters.oil, 2);
+    let binding = EffectObjectBinding {
+        object: adaptive,
+        expected_zone: Zone::Battlefield,
+        expected_zone_change_count: state.objects.get(adaptive).zone_change_count,
+    };
+    let ctx = ExecCtx::no_targets(adaptive, P0);
+    mtg_kernel::effect::execute(
+        &EffectOp::PutOilCounterOnBoundObject { object: binding },
+        &ctx,
+        &mut state,
+    );
+    assert_eq!(state.objects.get(adaptive).counters.oil, 4);
+    mtg_kernel::effect::execute(
+        &EffectOp::StandardV1(StandardOpV1::EtaliPoison {
+            player: P1,
+            amount: 2,
+        }),
+        &ctx,
+        &mut state,
+    );
+    assert_eq!(state.players[1].poison_counters.0, 4);
+    let opponent_ctx = ExecCtx::no_targets(adaptive, P1);
+    mtg_kernel::effect::execute(
+        &EffectOp::StandardV1(StandardOpV1::EtaliPoison {
+            player: P0,
+            amount: 2,
+        }),
+        &opponent_ctx,
+        &mut state,
+    );
+    assert_eq!(
+        state.players[0].poison_counters.0, 2,
+        "recipient's Talent does not double an opponent's placement"
+    );
+}
