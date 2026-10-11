@@ -28,3 +28,12 @@ from PATH. Source2 fixed PATH and exposed the missing non-generic object-state
 Ward arm (code 101). Life Ward now projects zero generic mana in that field;
 qualification of this repair remains pending. Existing frozen tensor identities
 require a separately identified successor before life-Ward model admission.
+
+The typed public preparation now uses observation schema V8. Existing V6/V7
+entry points still refuse life Ward. V8 authenticates the life trigger and its
+exact live targeter before deriving public stack ordinals; a departed targeter
+omits its relation. Pending and queued life fees use separate fields, while
+generic Ward fields and historical source identities retain their meanings.
+This transport is not admitted to the frozen V3/V4 tensor encodings. Their
+Python schemas reject schema8; tensor/Human successors and actual life-Ward
+projection fixtures remain pending. No existing frozen schema pin is changed.

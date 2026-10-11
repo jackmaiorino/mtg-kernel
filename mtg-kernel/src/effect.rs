@@ -4393,6 +4393,39 @@ pub(crate) fn validated_ward_observation_targeter(
     .map(|item| (item, *generic)))
 }
 
+/// Authenticated public relation for the typed life-payment successor.
+pub(crate) fn validated_life_ward_observation_targeter(
+    state: &GameState,
+    trigger: &StackItem,
+) -> Result<Option<(StackItem, u8)>, String> {
+    let Some(EffectOp::CounterUnlessPaysLifeWithChoice {
+        ward_target,
+        targeting_stack_item,
+        life,
+    }) = trigger.inline_effect.as_ref()
+    else {
+        return Ok(None);
+    };
+    crate::engine::validated_stack_item_target_spec(trigger, state)?;
+    let payer = state
+        .stack
+        .iter()
+        .find(|item| item.v4.stack_item_id == *targeting_stack_item)
+        .map(|item| item.controller)
+        .unwrap_or(trigger.controller.opponent());
+    Ok(validate_counter_unless_pays_life(
+        state,
+        *ward_target,
+        trigger.controller,
+        *targeting_stack_item,
+        payer,
+        *life,
+        true,
+        false,
+    )?
+    .map(|item| (item, *life)))
+}
+
 /// Legacy observations can infer the binding only when exactly one live item
 /// targets the Ward source. Keep this coverage restriction at their boundary,
 /// rather than halting the rules engine for successor-aware consumers.

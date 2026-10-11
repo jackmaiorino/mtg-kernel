@@ -182,6 +182,38 @@ fn pay_decline_and_insufficient_life_preserve_mana_and_restore() {
             let mut restored = None;
             if payment.is_some() {
                 pending_life_ward(&mut state, &mut surf);
+                let observation = mtg_kernel::rl::observe_policy_v8(
+                    &state,
+                    &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+                    payer,
+                    0,
+                    0,
+                    0,
+                    1,
+                )
+                .unwrap();
+                assert_eq!(observation.schema_version, 8);
+                let typed = observation
+                    .extensions
+                    .pending_ward_life_payment
+                    .as_ref()
+                    .unwrap();
+                assert_eq!(typed.life, 7);
+                assert_eq!(typed.payer, payer.into());
+                assert!(observation.extensions.pending_ward_payment.is_none());
+                let decoded: mtg_kernel::policy_observation_v8::ObservationV8 =
+                    serde_json::from_slice(&serde_json::to_vec(&observation).unwrap()).unwrap();
+                assert_eq!(observation, decoded);
+                assert!(mtg_kernel::rl::observe_policy_v6(
+                    &state,
+                    &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+                    payer,
+                    0,
+                    0,
+                    0,
+                    1,
+                )
+                .is_err());
                 restored = Some(
                     serde_json::from_slice::<GameState>(&serde_json::to_vec(&state).unwrap())
                         .unwrap(),
@@ -294,4 +326,77 @@ fn restored_life_payment_refuses_forged_fee_payer_targeter_and_stage() {
         assert!(engine::step(&mut restored, Action::ChooseEffectBoolean(true)).is_err());
         assert_eq!(restored.state_hash(), before);
     }
+}
+
+#[test]
+fn typed_public_life_ward_keeps_two_targeters_distinct() {
+    let mut state = ready();
+    let sire = put(
+        &mut state,
+        PlayerId::P1,
+        "Sire of Seven Deaths",
+        Zone::Battlefield,
+    );
+    let spells = ["Snap", "Snap"].map(|name| put(&mut state, PlayerId::P0, name, Zone::Hand));
+    state.players[0].mana_pool[ManaColor::U.pool_index()] = 4;
+    for spell in spells {
+        engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(sire))).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+    }
+    let observation = mtg_kernel::rl::observe_policy_v8(
+        &state,
+        &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+        PlayerId::P0,
+        0,
+        0,
+        0,
+        1,
+    )
+    .unwrap();
+    let wards = &observation.extensions.queued_ward_life_payments;
+    assert_eq!(wards.len(), 2);
+    assert!(observation.extensions.queued_ward_payments.is_empty());
+    assert_ne!(
+        wards[0].payment.targeting_stack_index,
+        wards[1].payment.targeting_stack_index
+    );
+    for (ward, spell) in wards.iter().zip(spells) {
+        assert_eq!(ward.payment.life, 7);
+        let targeter =
+            &observation.projection.surface.stack[ward.payment.targeting_stack_index as usize];
+        assert_eq!(targeter.source.arena_id, spell.0);
+        assert!(ward.payment.targeting_stack_index < ward.stack_index);
+    }
+    let mut surf = surface();
+    pending_life_ward(&mut state, &mut surf);
+    let Decision::ChooseEffectBoolean {
+        purpose:
+            EffectBooleanChoicePurpose::CounterUnlessPaysLife {
+                targeting_stack_item,
+                ..
+            },
+        ..
+    } = next(&mut surf, &mut state)
+    else {
+        panic!("life Ward");
+    };
+    let exact = state
+        .stack
+        .iter()
+        .find(|item| item.v4.stack_item_id == targeting_stack_item)
+        .unwrap()
+        .source;
+    let other = *spells.iter().find(|&&spell| spell != exact).unwrap();
+    engine::step(&mut state, Action::ChooseEffectBoolean(false)).unwrap();
+    assert!(!matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::Halted { .. }
+    ));
+    assert_eq!(state.objects.get(exact).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(other).zone, Zone::Stack);
+    assert_eq!(state.players[0].life, 20);
 }
