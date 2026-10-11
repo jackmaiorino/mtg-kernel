@@ -3971,8 +3971,12 @@ fn keywords_for(card: &CardJson) -> String {
         | "Vitu-Ghazi Inspector"
         | "Webweaver Changeling"
         | "Dwynen, Gilt-Leaf Daen" => keywords.push("Keywords::REACH"),
-        "Spinewoods Paladin" | "Avenging Hunter" | "Beast-Kin Ranger" | "Mossborn Hydra"
-        | "Koma, World-Eater" | "Ghalta, Primal Hunger" => keywords.push("Keywords::TRAMPLE"),
+        "Spinewoods Paladin"
+        | "Avenging Hunter"
+        | "Beast-Kin Ranger"
+        | "Mossborn Hydra"
+        | "Koma, World-Eater"
+        | "Ghalta, Primal Hunger" => keywords.push("Keywords::TRAMPLE"),
         "Outlaw Medic"
         | "Sacred Cat"
         | "Sacred Cat Embalmed Token"

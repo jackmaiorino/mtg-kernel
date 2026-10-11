@@ -29,3 +29,10 @@ primitive test covers signed power, control, live zones and restore. Formatting
 and diff checks pass. Native compilation, gameplay, catalog/version/profile
 admission, CI, review and integration remain pending. The subtype extension
 belongs to a future catalog identity, and cannot be used as accepted v67.
+
+Read-only source and fixture review at63efd00c found no actionable issues.
+Composition54fd3f06 preserves the reviewed Brine, ferocious, global flash and
+power/Elf primitives, including effective-Haste admission and recursive bound
+trigger validation. The staged six-name admission is reviewed but unexecuted.
+It requires actual accepted v67 ancestry and exact registry equality before
+writing candidate IDs371-376, version68 or coverage177.
