@@ -17453,10 +17453,15 @@ mod named_other_creature_token_tests {
     fn live_creature_name_controller_and_exact_source_incarnation_determine_count() {
         let elf = crate::card_def::card_id_by_name("Llanowar Elves").unwrap();
         let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        let name = crate::card_def::CARD_DEFS[elf as usize].object_name;
         let library = [elf, elf, elf, elf, forest];
         for player in [PlayerId::P0, PlayerId::P1] {
-            let mut state =
-                GameState::new_from_libraries(&library, &library, |_| "Hare Apparent".into(), 1111);
+            let mut state = GameState::new_from_libraries(
+                &library,
+                &library,
+                |id| crate::card_def::CARD_DEFS[id as usize].object_name.into(),
+                1111,
+            );
             let ids = state.players[player.index()].library.clone();
             for &id in &ids {
                 event::propose_and_commit(
@@ -17464,6 +17469,9 @@ mod named_other_creature_token_tests {
                     event::ProposedEvent::zone_change(id, Zone::Battlefield),
                 );
             }
+            // Zone changes restore printed names. Set the noncreature
+            // alias after entry to test that matching names alone never count.
+            state.objects.get_mut(ids[4]).name = name.into();
             let source = crate::state::AbilitySourceContractV4::capture(&state, ids[0]);
             let opponent = state.players[player.opponent().index()].library[0];
             event::propose_and_commit(
@@ -17471,14 +17479,14 @@ mod named_other_creature_token_tests {
                 event::ProposedEvent::zone_change(opponent, Zone::Battlefield),
             );
             assert_eq!(
-                other_controlled_creatures_named_count(&state, source, "Hare Apparent"),
+                other_controlled_creatures_named_count(&state, source, name),
                 3
             );
             // Arena ownership is authoritative even with an obsolete list membership.
             state.objects.get_mut(ids[1]).controller = player.opponent();
             state.objects.get_mut(ids[2]).name = "Different name".into();
             assert_eq!(
-                other_controlled_creatures_named_count(&state, source, "Hare Apparent"),
+                other_controlled_creatures_named_count(&state, source, name),
                 1
             );
             event::propose_and_commit(
@@ -17486,7 +17494,7 @@ mod named_other_creature_token_tests {
                 event::ProposedEvent::zone_change(ids[0], Zone::Hand),
             );
             assert_eq!(
-                other_controlled_creatures_named_count(&state, source, "Hare Apparent"),
+                other_controlled_creatures_named_count(&state, source, name),
                 1
             );
             event::propose_and_commit(
@@ -17494,13 +17502,13 @@ mod named_other_creature_token_tests {
                 event::ProposedEvent::zone_change(ids[0], Zone::Battlefield),
             );
             assert_eq!(
-                other_controlled_creatures_named_count(&state, source, "Hare Apparent"),
+                other_controlled_creatures_named_count(&state, source, name),
                 2
             );
             let replay: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
             assert_eq!(
-                other_controlled_creatures_named_count(&replay, source, "Hare Apparent"),
+                other_controlled_creatures_named_count(&replay, source, name),
                 2
             );
         }
@@ -17508,19 +17516,22 @@ mod named_other_creature_token_tests {
 
     #[test]
     fn token_count_is_sampled_once_and_missing_or_mismatched_source_refuses_execution() {
-        let elf = crate::card_def::card_id_by_name("Llanowar Elves").unwrap();
         let token = crate::card_def::card_id_by_name("Human Soldier Token").unwrap();
         let name = crate::card_def::CARD_DEFS[token as usize].object_name;
         for player in [PlayerId::P0, PlayerId::P1] {
-            let mut state =
-                GameState::new_from_libraries(&[elf; 3], &[elf; 3], |_| name.into(), 1112);
-            let ids = state.players[player.index()].library.clone();
-            for &id in &ids {
+            let mut state = GameState::new_from_libraries(
+                &[],
+                &[],
+                |id| crate::card_def::CARD_DEFS[id as usize].object_name.into(),
+                1112,
+            );
+            for _ in 0..3 {
                 event::propose_and_commit(
                     &mut state,
-                    event::ProposedEvent::zone_change(id, Zone::Battlefield),
+                    event::ProposedEvent::create_token(token, player),
                 );
             }
+            let ids = state.players[player.index()].battlefield.clone();
             let mut ctx = ExecCtx::no_targets(ids[0], player);
             let contract = crate::state::AbilitySourceContractV4::capture(&state, ids[0]);
             let effect = EffectOp::CreateTokensForOtherControlledCreaturesNamed {
@@ -17554,7 +17565,7 @@ mod named_other_creature_token_tests {
                         .iter()
                         .filter(|&&id| current.objects.get(id).card_def == token)
                         .count(),
-                    2
+                    5
                 );
                 // Newly created matching creatures did not grow the in-flight count.
                 assert_eq!(
