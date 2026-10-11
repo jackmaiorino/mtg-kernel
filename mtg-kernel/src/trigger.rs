@@ -4609,7 +4609,7 @@ fn triggers_from_events(
 ) -> Vec<PendingTrigger> {
     let mut uses = state.trigger_uses_v1.clone().unwrap_or_default();
     uses.retain(|entry| {
-        entry.turn == state.turn
+        entry.turn == state.turn_key_v1()
             && entry.active_player == state.active_player
             && state
                 .objects
@@ -4936,7 +4936,7 @@ fn triggers_from_events(
                             && matches!(def.condition, TriggerCondition::DealsCombatDamageToPlayer)
                         {
                             moon_circuit_hacker_combat_effect_for_entered_this_turn(
-                                obj.v4.entered_battlefield_turn == Some(state.turn),
+                                obj.v4.entered_battlefield_turn == Some(state.turn_key_v1()),
                             )
                         } else {
                             #[cfg(feature = "standard-magezero-fixtures")]
@@ -5012,7 +5012,7 @@ fn triggers_from_events(
                                 uses.push(crate::state::TriggerUseV1 {
                                     source,
                                     ability_index,
-                                    turn: state.turn,
+                                    turn: state.turn_key_v1(),
                                     active_player: state.active_player,
                                     uses: 1,
                                 });
@@ -6082,7 +6082,9 @@ fn trigger_matches(
                 to: Zone::Exile,
                 ..
             },
-        ) => *object == source && state.objects.get(source).plotted_turn == Some(state.turn),
+        ) => {
+            *object == source && state.objects.get(source).plotted_turn == Some(state.turn_key_v1())
+        }
         (
             TriggerCondition::BecomesTargetOfControllerSpellOrAbilityFirstTimeEachTurn,
             CommittedEvent::Targeted {

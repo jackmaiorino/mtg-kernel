@@ -851,6 +851,31 @@ pub enum CommittedEvent {
         resolving_stack_item: StackItemId,
         initial_boundary_history_index: u32,
     },
+    ExtraTurnStartedV1 {
+        initial: crate::extra_turn_v1::ExtraTurnStateV1,
+        round: u32,
+        active_player: PlayerId,
+    },
+    ExtraTurnScheduledV1 {
+        item: Box<crate::state::StackItem>,
+    },
+    ExtraTurnBeganV1 {
+        previous: crate::extra_turn_v1::ExtraTurnStateV1,
+        after: crate::extra_turn_v1::ExtraTurnStateV1,
+        round: u32,
+        active_player: PlayerId,
+    },
+    ExtraTurnOwnerPublishedV1 {
+        item: Box<crate::state::StackItem>,
+    },
+    ExtraTurnOwnerRemovedV1 {
+        item: Box<crate::state::StackItem>,
+        outcome: crate::extra_turn_v1::RemovalV1,
+    },
+    ExtraTurnVirtualCeasedV1 {
+        source: crate::state::StackSourceContractV4,
+        stack_item_id: StackItemId,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1081,7 +1106,7 @@ fn replacement_applies(
             ProposedEvent::Damage(d),
         ) => {
             d.is_combat
-                && *turn == state.turn
+                && *turn == state.turn_key_v1()
                 && *active_player == state.active_player
                 && d.target == Target::Object(object.object)
                 && state.objects.try_get(object.object).is_some_and(|live| {
@@ -1097,7 +1122,7 @@ fn replacement_applies(
             },
             ProposedEvent::Damage(d),
         ) => {
-            *turn == state.turn
+            *turn == state.turn_key_v1()
                 && *active_player == state.active_player
                 && damage_color_mask(state, d) & crate::card_def::mana_color_mask(*color) != 0
         }
@@ -1179,7 +1204,7 @@ pub fn install_color_damage_prevention(
         source,
         kind: ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn {
             color,
-            turn: state.turn,
+            turn: state.turn_key_v1(),
             active_player: state.active_player,
         },
     });
@@ -1214,7 +1239,7 @@ pub(crate) fn install_combat_damage_prevention(
         source,
         kind: ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn {
             object: binding,
-            turn: state.turn,
+            turn: state.turn_key_v1(),
             active_player: state.active_player,
         },
     });
@@ -1488,7 +1513,7 @@ fn commit_with_ability_lki_and_entry_batch(
             #[cfg(feature = "limited-fdn-fixtures")]
             if creature_died && state.objects.get(z.object).zone == Zone::Graveyard {
                 state.creature_death_turn_v1 = Some(crate::state::CreatureDeathTurnV1 {
-                    turn: state.turn,
+                    turn: state.turn_key_v1(),
                     active_player: state.active_player,
                 });
             }
@@ -1580,7 +1605,7 @@ fn commit_with_ability_lki_and_entry_batch(
                 attachments: Vec::new(),
                 v4: {
                     let mut v4 = crate::state::ObjectStateV4::from_card_def(t.token_def);
-                    v4.entered_battlefield_turn = Some(state.turn);
+                    v4.entered_battlefield_turn = Some(state.turn_key_v1());
                     v4.entered_battlefield_this_turn = cfg!(feature = "standard-magezero-fixtures");
                     v4
                 },
@@ -2140,7 +2165,8 @@ fn permanent_enters_battlefield_tapped(
                 other_lands() < usize::from(least)
             }
             EntersTappedUnlessControllerDef::WithinOwnFirstTurns(turns) => {
-                !(state.active_player == controller && state.turn <= u32::from(turns))
+                !(state.active_player == controller
+                    && state.own_turn_count_v1(controller) <= u32::from(turns))
             }
         };
     }
@@ -2261,7 +2287,7 @@ fn commit_zone_change(
         Zone::Stack => panic!("MoveObject to Stack is an engine action, not an effect leaf"),
     }
 
-    let turn = state.turn;
+    let turn = state.turn_key_v1();
     let enters_battlefield_tapped = to_zone == Zone::Battlefield
         && (force_battlefield_tapped || permanent_enters_battlefield_tapped(state, id, owner));
     {
@@ -2479,10 +2505,35 @@ fn refresh_paid_creature_power_lki(state: &mut GameState, id: ObjectId, from_zon
 /// its leaves-the-battlefield return still resolves from the row by source
 /// contract.
 pub fn cease_to_exist(state: &mut GameState, id: ObjectId) -> bool {
+    let temporal_copy = state
+        .stack
+        .iter()
+        .find(|item| item.source == id && item.is_copy)
+        .filter(|item| {
+            item.v4.source_contract.is_some_and(|source| {
+                crate::card_def::CARD_DEFS
+                    .get(usize::from(source.card_def))
+                    .is_some_and(|def| def.name == "Temporal Manipulation")
+            })
+        })
+        .and_then(|item| {
+            item.v4
+                .source_contract
+                .map(|source| (source, item.v4.stack_item_id))
+        });
     let owner = state.objects.get(id).owner;
     let zone = state.objects.get(id).zone;
     let removed = remove_from_zone(state, owner, id, zone);
     if removed {
+        if let Some((source, stack_item_id)) = temporal_copy {
+            state
+                .engine
+                .event_history
+                .push(CommittedEvent::ExtraTurnVirtualCeasedV1 {
+                    source,
+                    stack_item_id,
+                });
+        }
         state.forget_hand_object(id);
         state.clear_object_relations(id);
         state

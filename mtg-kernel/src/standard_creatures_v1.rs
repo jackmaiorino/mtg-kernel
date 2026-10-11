@@ -820,7 +820,7 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
         return;
     }
     if effect == CreatureEffectV1::WurmletCounterIfFirstResolution {
-        let turn = (state.turn, state.active_player);
+        let turn = (state.turn_key_v1(), state.active_player);
         let value = state
             .objects
             .get_mut(ctx.source)

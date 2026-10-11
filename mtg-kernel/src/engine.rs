@@ -2207,7 +2207,7 @@ fn validate_physical_spell_cast_origin(
                 && cast_method == CastMethodV4::Plotted
                 && def.plot_cost.is_some()
                 && source.plotted_turn == Some(plotted_turn)
-                && plotted_turn < state.turn
+                && plotted_turn < state.turn_key_v1()
         }
         SpellCastRouteV4::Madness => {
             origin.origin_zone == Zone::Exile
@@ -2348,7 +2348,7 @@ fn validate_spell_source_contract_fields(
             if def.plot_cost.is_some()
                 && source
                     .plotted_turn
-                    .is_some_and(|plotted_turn| plotted_turn < state.turn) => {}
+                    .is_some_and(|plotted_turn| plotted_turn < state.turn_key_v1()) => {}
         CastMethodV4::Alternative
         | CastMethodV4::Flashback
         | CastMethodV4::Madness
@@ -2580,7 +2580,7 @@ fn storm_copy_count_from_binding(
     binding: StormCopyBindingV1,
 ) -> Result<u16, String> {
     if binding.producing_stack_item == StackItemId::default()
-        || binding.turn != state.turn
+        || binding.turn != state.turn_key_v1()
         || binding.active_player != state.active_player
         || !storm_source_contract_is_structurally_valid(state, binding.source_contract)
     {
@@ -2707,7 +2707,7 @@ pub(crate) fn materialize_storm_copy_binding(
     let binding = StormCopyBindingV1 {
         source_contract,
         producing_stack_item: producer.v4.stack_item_id,
-        turn: state.turn,
+        turn: state.turn_key_v1(),
         active_player: state.active_player,
         spell_cast_event_index: spell_cast_event_index.try_into().ok()?,
         casts_after_source: [
@@ -7939,7 +7939,7 @@ pub(crate) fn active_permission_for(
                 PlayPermissionExpiry::LaterTurn {
                     granted_turn,
                     granted_active_player,
-                } if granted_turn == state.turn && granted_active_player == state.active_player
+                } if granted_turn == state.turn_key_v1() && granted_active_player == state.active_player
             )
             && !crate::standard_cards_v1::exile_cast_group_spent(state, id)
     })
@@ -7976,7 +7976,7 @@ fn is_plotted_castable_now(player: PlayerId, id: ObjectId, state: &GameState) ->
     let def = &card_def::CARD_DEFS[obj.card_def as usize];
     obj.owner == player
         && def.plot_cost.is_some()
-        && plotted_turn < state.turn
+        && plotted_turn < state.turn_key_v1()
         && def.is_castable()
         && !viable_printed_spell_modes(def, id, player, state).is_empty()
         && sorcery_speed_timing_ok(player, state)
@@ -8825,8 +8825,9 @@ fn eligible_attackers(state: &GameState) -> Vec<ObjectId> {
 }
 
 fn goad_is_active(state: &GameState, goad: &crate::state::GoadStateV4) -> bool {
-    goad.expires_at_turn > state.turn
-        || (goad.expires_at_turn == state.turn && state.active_player != goad.player)
+    state.extra_turn_v1.is_some()
+        || goad.expires_at_turn > state.turn_key_v1()
+        || (goad.expires_at_turn == state.turn_key_v1() && state.active_player != goad.player)
 }
 
 pub(crate) fn required_goaded_attackers(state: &GameState, eligible: &[ObjectId]) -> Vec<ObjectId> {
@@ -9005,6 +9006,13 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    if crate::extra_turn_v1::validate(state).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        return Decision::Halted {
+            mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+            source: ObjectId(0),
+        };
+    }
     // A closed Cerberus operation still owns historical authority. Validate it
     // before automatic step/cleanup work can mutate a restored malformed state.
     if crate::cerberus_capture_v1::validate_state(state).is_err() {
@@ -10409,7 +10417,7 @@ pub(crate) fn validate_pending_cast(
                 || def.plot_cost.is_none()
                 || source
                     .plotted_turn
-                    .is_none_or(|plotted_turn| plotted_turn >= state.turn)
+                    .is_none_or(|plotted_turn| plotted_turn >= state.turn_key_v1())
                 || pending.cast_mode != Some(CastMode::Normal)
             {
                 return Err("Plotted cast has a noncanonical origin or marker".to_string());
@@ -13848,14 +13856,22 @@ pub(crate) fn counter_stack_item_by_id(
         // on the stack after the attempt, so callers finish the effect normally.
         return Ok(Some(item));
     }
-    let departure = if item.kind == StackItemKind::Spell {
+    let mut departure = if item.kind == StackItemKind::Spell {
         Some(plan_spell_departure(state, &item, Zone::Graveyard)?)
     } else {
         None
     };
     let librarian_counter_owner =
         crate::librarian_activation_v1::acquire_counter_owner(state, &item)?;
-    state.stack.remove(position);
+    let temporal_owner = crate::extra_turn_v1::acquire_counter(state, &item)?;
+    if temporal_owner.is_some() && item.is_copy {
+        if let Some(plan) = departure.take() {
+            apply_spell_departure(state, plan)?;
+        }
+    } else {
+        state.stack.remove(position);
+    }
+    crate::extra_turn_v1::record_countered(state, temporal_owner);
     effect::frenzied_goblin_resolution_v1::complete_unstarted(
         state,
         &item,
@@ -13976,7 +13992,9 @@ pub(crate) fn apply_live_stack_spell_departure(
     };
     validate_spell_stack_source(state, &item)?;
     let departure = plan_spell_departure(state, &item, requested_zone)?;
+    let temporal_owner = crate::extra_turn_v1::acquire_counter(state, &item)?;
     apply_spell_departure(state, departure)?;
+    crate::extra_turn_v1::record_other_departure(state, temporal_owner);
     Ok(true)
 }
 
@@ -14148,6 +14166,17 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         ));
         return ResolutionProgress::Suspended;
     }
+    let temporal_owner =
+        match crate::extra_turn_v1::acquire(state, state.stack.last().expect("resolving item")) {
+            Ok(owner) => owner,
+            Err(_) => {
+                state.engine.halted = Some((
+                    UnsupportedMechanic::InvalidEffectContinuation,
+                    resolving_source,
+                ));
+                return ResolutionProgress::Suspended;
+            }
+        };
     let item = state
         .stack
         .pop()
@@ -14288,7 +14317,21 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             effect::execute(&prelude, &ctx, state);
         }
     }
-    if let Some(program) = program {
+    if let Some(owner) = temporal_owner {
+        if program != Some(crate::extra_turn_v1::recipe())
+            || crate::extra_turn_v1::schedule_owned(state, owner).is_err()
+        {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        if item.is_copy {
+            // The private pre-pop owner authenticated this exact virtual row.
+            // Restore it only for the immediately following actual cease;
+            // no decision or priority window intervenes.
+            state.stack.push(item.clone());
+        }
+    } else if let Some(program) = program {
         if execute_resolving_program(
             state,
             &item,
@@ -14514,15 +14557,19 @@ fn advance_step(state: &mut GameState) {
     let mut next_idx = cur_idx + 1;
 
     if next_idx >= STEP_ORDER.len() {
-        state.active_player = state.active_player.opponent();
-        // Round counter advances when the active player comes back around to
-        // whoever started the game, not specifically to physical seat P0.
-        // `state.starting_player` defaults to `PlayerId::P0`, reproducing
-        // this condition's original `== PlayerId::P0` literal exactly when
-        // unset; see `P1-METAMORPHIC-AUDIT-DESIGN-V4.md` Section 1.2, coupled
-        // site 3.
-        if state.active_player == state.starting_player {
-            state.turn += 1;
+        match crate::extra_turn_v1::begin_next_turn(state) {
+            Ok(true) => {}
+            Ok(false) => {
+                state.active_player = state.active_player.opponent();
+                if state.active_player == state.starting_player {
+                    state.turn += 1;
+                }
+            }
+            Err(_) => {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                return;
+            }
         }
         next_idx = 0;
     }
@@ -14622,15 +14669,15 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
         Step::Untap => {
             crate::standard_cards_v1::begin_turn(state);
             let p = state.active_player;
-            state
-                .engine
-                .until_next_turn_keywords
-                .retain(|effect| !(effect.holder == p && effect.expires_at_turn <= state.turn));
+            state.engine.until_next_turn_keywords.retain(|effect| {
+                !(effect.holder == p
+                    && (state.extra_turn_v1.is_some() || effect.expires_at_turn <= state.turn))
+            });
             for (_, object) in state.objects.iter_mut() {
-                object
-                    .v4
-                    .goaded_by
-                    .retain(|goad| !(goad.player == p && goad.expires_at_turn <= state.turn));
+                object.v4.goaded_by.retain(|goad| {
+                    !(goad.player == p
+                        && (state.extra_turn_v1.is_some() || goad.expires_at_turn <= state.turn))
+                });
             }
             // Battlefield zone vectors are ownership-oriented. Untap is
             // controller-oriented, so inspect live objects to cover control
@@ -14657,7 +14704,11 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             state.players[0].draws_this_turn = 0;
             state.players[1].draws_this_turn = 0;
             #[cfg(feature = "standard-magezero-fixtures")]
-            crate::standard_keywords_v1::advance_day_night(state, p.opponent());
+            let previous_active = state
+                .extra_turn_v1
+                .as_ref()
+                .map_or(p.opponent(), |turn| turn.previous_player);
+            crate::standard_keywords_v1::advance_day_night(state, previous_active);
             crate::life_gain_turn_v1::reset_at_untap(state);
             crate::standard_creatures_v1::begin_turn(state);
             state.players[0].spells_cast_this_turn = 0;
@@ -14730,7 +14781,12 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             // to `PlayerId::P0`, reproducing this condition's original
             // `p == PlayerId::P0` literal exactly when unset; see
             // `P1-METAMORPHIC-AUDIT-DESIGN-V4.md` Section 1.2, coupled site 2).
-            let is_first_turn_of_the_game = state.turn == 1 && p == state.starting_player;
+            let is_first_turn_of_the_game = state.turn == 1
+                && p == state.starting_player
+                && state
+                    .extra_turn_v1
+                    .as_ref()
+                    .is_none_or(|turn| turn.original_first_turn);
             if !is_first_turn_of_the_game {
                 event::propose_and_commit(state, ProposedEvent::draw(p));
                 collect_and_queue_triggers(state);
@@ -18192,6 +18248,7 @@ pub(crate) fn copy_spell_for(
     copy.v4.paid_cost_refs = Vec::new();
     copy.v4.optional_additional_cost_paid = None;
     state.stack.push(copy);
+    crate::extra_turn_v1::record_publication(state, copy_stack_item);
     Some((copy_source, copy_stack_item))
 }
 
@@ -18274,6 +18331,7 @@ fn create_spell_copy(state: &mut GameState, pending: &PendingSpellCopy) -> (Obje
         source_contract,
     );
     state.stack.push(copy);
+    crate::extra_turn_v1::record_publication(state, copy_stack_item);
     (copy_source, copy_stack_item)
 }
 
@@ -18818,7 +18876,9 @@ pub(crate) fn finish_declare_attackers(state: &mut GameState, attackers: Vec<Obj
         let mut objects = state
             .creatures_attacked_turn_v1
             .take()
-            .filter(|(turn, active, _)| *turn == state.turn && *active == state.active_player)
+            .filter(|(turn, active, _)| {
+                *turn == state.turn_key_v1() && *active == state.active_player
+            })
             .map_or_else(Vec::new, |(_, _, objects)| objects);
         for &object in &attackers {
             let binding = crate::state::ObjectLinkV4 {
@@ -18829,7 +18889,8 @@ pub(crate) fn finish_declare_attackers(state: &mut GameState, attackers: Vec<Obj
                 objects.push(binding);
             }
         }
-        state.creatures_attacked_turn_v1 = Some((state.turn, state.active_player, objects));
+        state.creatures_attacked_turn_v1 =
+            Some((state.turn_key_v1(), state.active_player, objects));
     }
     for &id in &attackers {
         if !has_effective_keyword(state, id, Keywords::VIGILANCE) {
@@ -18890,7 +18951,7 @@ pub(crate) fn finish_declare_attackers(state: &mut GameState, attackers: Vec<Obj
         ))]
         {
             state.attack_declaration_turn_v1 = Some(crate::state::AttackDeclarationTurnV1 {
-                turn: state.turn,
+                turn: state.turn_key_v1(),
                 active_player: attacker,
             });
         }
@@ -19254,7 +19315,7 @@ fn plot_spell(state: &mut GameState, player: PlayerId, id: ObjectId) {
         .expect("legality already checked by plot_action_candidates");
     pay_plan(state, player, &plan);
     event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Exile));
-    state.objects.get_mut(id).plotted_turn = Some(state.turn);
+    state.objects.get_mut(id).plotted_turn = Some(state.turn_key_v1());
     collect_and_queue_triggers(state);
     state.engine.priority_passes = [false, false];
     state.priority_player = player;
@@ -19306,7 +19367,7 @@ fn begin_cast_ex(
         && origin_zone == Zone::Exile
         && state.objects.get(spell_id).owner == player
         && def.plot_cost.is_some()
-        && plotted_turn.is_some_and(|turn| turn < state.turn);
+        && plotted_turn.is_some_and(|turn| turn < state.turn_key_v1());
     // Fang Dragon's creature face, cast straight from exile while
     // `on_adventure` is set -- see that flag's doc. Read before
     // `move_to_stack` clears it, then re-stamped across this exact
@@ -19768,6 +19829,7 @@ fn finalize_owned_cast(
     .saturating_add(1);
     log_final_targeting_events(state, stack_item_id)?;
     event::log_spell_cast(state, pending.spell, pending.controller);
+    crate::extra_turn_v1::record_publication(state, stack_item_id);
     if matches!(
         paid_optional_additional_cost,
         Some(OptionalAdditionalCostDef::Casualty(_))
@@ -19893,7 +19955,7 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
     }
     state.forget_hand_object(pending.spell);
     state.clear_object_relations(pending.spell);
-    let turn = state.turn;
+    let turn = state.turn_key_v1();
     {
         let object = state.objects.get_mut(pending.spell);
         object.zone = to_zone;
@@ -20245,7 +20307,7 @@ fn move_to_stack(state: &mut GameState, id: ObjectId, from_zone: Zone) {
     }
     state.forget_hand_object(id);
     state.clear_object_relations(id);
-    let turn = state.turn;
+    let turn = state.turn_key_v1();
     let object = state.objects.get_mut(id);
     object.zone = Zone::Stack;
     object.plotted_turn = None;

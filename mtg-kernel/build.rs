@@ -3463,6 +3463,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         mode2: None,
     };
     Some(match name {
+        "Temporal Manipulation" => program(
+            "None",
+            "TakeExtraTurnAfterThisOneV1(Controller,lastCreatedFirst,nextRegularTurnPreserved,distinctOccurrence)",
+            "EffectOp::TakeExtraTurnAfterThisOneV1",
+        ),
         "Self-Reflection" => program(
             "ControlledCreature",
             "CreateControlledCreatureTargetCopyV1(Target0,currentController,exactPhysicalIncarnation,currentCopiableDefinitionAndFace,tokenOwnerController=spellController,ordinaryETB,noHasteOrDelayedSacrifice)",

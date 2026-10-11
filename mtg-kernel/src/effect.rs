@@ -1613,6 +1613,8 @@ pub enum EffectOp {
     LookTopMayKeepOneRestGraveyard {
         count: u8,
     },
+    /// Extra turn owned by the exact removed resolving spell.
+    TakeExtraTurnAfterThisOneV1,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -6742,7 +6744,7 @@ fn until_players_next_turn_expiry(state: &GameState, player: PlayerId) -> Result
             .checked_add(1)
             .ok_or("turn counter overflow while scheduling next-turn expiry".to_string())
     } else {
-        Ok(state.turn)
+        Ok(state.turn_key_v1())
     }
 }
 
@@ -7779,6 +7781,7 @@ fn validate_standard_choose_permanent_origin(
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::raid_entry_v1::validate_state(state)?;
+    crate::extra_turn_v1::validate(state)?;
     temporary_control_v1::authority::validate(state)?;
     crate::self_reflection_v1::validate_live_stack(state)?;
     crate::authority_of_the_consuls_v1::validate_state(state)?;
@@ -16978,7 +16981,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     zone_change_generation: exiled.zone_change_count,
                     play_or_cast: crate::engine::PlayOrCast::Cast,
                     expiry: crate::engine::PlayPermissionExpiry::LaterTurn {
-                        granted_turn: state.turn,
+                        granted_turn: state.turn_key_v1(),
                         granted_active_player: state.active_player,
                     },
                 };
@@ -18542,6 +18545,13 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ));
             }
         }
+        EffectOp::TakeExtraTurnAfterThisOneV1 => {
+            // Only the private pre-removal resolution owner may schedule turns.
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
         EffectOp::PreventTargetBlockingUntilEndOfTurn { target_index } => {
             crate::sower_of_chaos_v1::install(state, ctx, *target_index);
         }
@@ -18621,7 +18631,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                         state.objects.get(ctx.source).name,
                         top.0,
                         state.objects.get(top).name,
-                        state.turn,
+                        state.turn_key_v1(),
                         state.step,
                         state.players[ctx.controller.index()].library.len(),
                         state.players[ctx.controller.index()].hand.len(),

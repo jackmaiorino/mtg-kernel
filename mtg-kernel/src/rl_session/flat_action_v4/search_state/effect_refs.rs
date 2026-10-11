@@ -168,6 +168,7 @@ impl Scan<'_> {
             | AuthorityEntryGainLifeV1 { .. }
             | CerberusUntapV1 { .. }
             | LookTopMayKeepOneRestGraveyard { .. }
+            | TakeExtraTurnAfterThisOneV1
             | CreateControlledCreatureTargetCopyV1
             | DoubleTargetPowerUntilEndOfTurn { .. }
             | DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
@@ -1088,6 +1089,12 @@ pub(super) fn conflicts(
             | LibrarianActivationCounterRemovalV1 { .. }
             | LibrarianActivationOperationV1 { .. }
             | LibrarianActivationFinishedV1 { .. } => true,
+            ExtraTurnOwnerPublishedV1 { .. }
+            | ExtraTurnOwnerRemovedV1 { .. }
+            | ExtraTurnVirtualCeasedV1 { .. }
+            | ExtraTurnScheduledV1 { .. }
+            | ExtraTurnStartedV1 { .. }
+            | ExtraTurnBeganV1 { .. } => true,
             ControlledCreatureDeathCaptureCollectedV1 { .. }
             | AuthorityEntryCollectedV1 { .. }
             | AuthorityEntryCompletedV1 { .. }
