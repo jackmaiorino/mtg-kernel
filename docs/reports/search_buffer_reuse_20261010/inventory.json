@@ -1,32 +1,32 @@
 {
   "schema": "search-buffer-reuse-fleet-inventory/v1",
-  "observed_utc": "2026-10-11T02:10:30.537104+00:00",
+  "observed_utc": "2026-10-11T02:48:45.196410+00:00",
   "jacks_pc": {
     "gpu": [
       "index, name, driver_version, memory.total [MiB], memory.used [MiB], utilization.gpu [%]",
-      "0, NVIDIA GeForce RTX 4070 SUPER, 596.36, 12282 MiB, 1984 MiB, 1 %",
+      "0, NVIDIA GeForce RTX 4070 SUPER, 596.36, 12282 MiB, 1953 MiB, 2 %",
       "1, NVIDIA GeForce RTX 3050, 596.36, 6144 MiB, 22 MiB, 0 %"
     ],
-    "observed_utc": "2026-10-11T02:10:32.2032266Z",
+    "observed_utc": "2026-10-11T02:48:46.8957381Z",
     "memory": {
       "TotalVisibleMemorySize": 134025436,
-      "FreePhysicalMemory": 76306284
+      "FreePhysicalMemory": 76607008
     },
     "volumes": [
       {
         "DeviceID": "C:",
         "Size": 999136686080,
-        "FreeSpace": 54944096256
+        "FreeSpace": 54944059392
       },
       {
         "DeviceID": "D:",
         "Size": 1000186310656,
-        "FreeSpace": 494063718400
+        "FreeSpace": 494253322240
       },
       {
         "DeviceID": "E:",
         "Size": 4000768323584,
-        "FreeSpace": 778979094528
+        "FreeSpace": 778626392064
       }
     ],
     "cpu": [
@@ -34,7 +34,7 @@
         "Name": "13th Gen Intel(R) Core(TM) i7-13700K",
         "NumberOfCores": 16,
         "NumberOfLogicalProcessors": 24,
-        "LoadPercentage": 29
+        "LoadPercentage": 100
       }
     ],
     "slots": {
@@ -74,18 +74,6 @@
       },
       "claims": [
         {
-          "lane": "codex-training-io-speedups-20261010",
-          "work_id": "candidate-build-tests",
-          "cores": [
-            16,
-            17
-          ],
-          "priority": "below_normal",
-          "state": "running",
-          "acquired_at": "2026-10-11T01:54:02.865+00:00",
-          "process_identity_state": "alive"
-        },
-        {
           "lane": "ci-runners",
           "work_id": "ci-win-3",
           "cores": [
@@ -110,35 +98,26 @@
           "state": "running",
           "acquired_at": "2026-10-10T23:20:56.613+00:00",
           "process_identity_state": "unknown"
-        }
-      ],
-      "queue": [
-        {
-          "lane": "codex-issue36-serving",
-          "work_id": "issue36-arrangement-python",
-          "cores_wanted": 2,
-          "enqueued_at": "2026-10-11T01:36:14.884+00:00",
-          "process_identity_state": "alive"
         },
         {
           "lane": "codex-fdn-issue110",
           "work_id": "fdn110-six-creatures-admission-native2",
-          "cores_wanted": 2,
-          "enqueued_at": "2026-10-11T01:55:36.326+00:00",
+          "cores": [
+            16,
+            17
+          ],
+          "priority": "below_normal",
+          "state": "running",
+          "acquired_at": "2026-10-11T02:38:02.425+00:00",
           "process_identity_state": "alive"
-        },
+        }
+      ],
+      "queue": [
         {
           "lane": "codex-standard-completion",
           "work_id": "root-standard-check-001",
           "cores_wanted": 1,
           "enqueued_at": "2026-10-11T02:00:20.972+00:00",
-          "process_identity_state": "alive"
-        },
-        {
-          "lane": "codex-standard-completion",
-          "work_id": "keywords-check-1",
-          "cores_wanted": 1,
-          "enqueued_at": "2026-10-11T02:00:38.107+00:00",
           "process_identity_state": "alive"
         },
         {
@@ -156,10 +135,17 @@
           "process_identity_state": "alive"
         },
         {
-          "lane": "codex-issue36-serving",
-          "work_id": "issue36-combined-build-native-002",
+          "lane": "codex-search-buffer-reuse-20261010",
+          "work_id": "baseline-build-1d240477",
           "cores_wanted": 2,
-          "enqueued_at": "2026-10-11T02:05:52.040+00:00",
+          "enqueued_at": "2026-10-11T02:18:16.647+00:00",
+          "process_identity_state": "alive"
+        },
+        {
+          "lane": "codex-issue36-serving",
+          "work_id": "issue36-combined-build-native-003",
+          "cores_wanted": 2,
+          "enqueued_at": "2026-10-11T02:23:23.669+00:00",
           "process_identity_state": "alive"
         }
       ],
@@ -175,16 +161,16 @@
       "index, name, driver_version, memory.total [MiB], memory.used [MiB], utilization.gpu [%]",
       "0, NVIDIA GeForce RTX 4060, 591.86, 8188 MiB, 1894 MiB, 0 %"
     ],
-    "observed_utc": "2026-10-11T02:10:32.8511240Z",
+    "observed_utc": "2026-10-11T02:48:47.4457692Z",
     "memory": {
       "TotalVisibleMemorySize": 33478692,
-      "FreePhysicalMemory": 16438744
+      "FreePhysicalMemory": 15371648
     },
     "volumes": [
       {
         "DeviceID": "C:",
         "Size": 999123054592,
-        "FreeSpace": 71125860352
+        "FreeSpace": 71114833920
       }
     ],
     "cpu": [
@@ -192,7 +178,7 @@
         "Name": "AMD Ryzen 7 3700X 8-Core Processor             ",
         "NumberOfCores": 8,
         "NumberOfLogicalProcessors": 16,
-        "LoadPercentage": 12
+        "LoadPercentage": 14
       }
     ],
     "slots": {

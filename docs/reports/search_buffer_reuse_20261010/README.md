@@ -1,10 +1,27 @@
-# Exact search buffer reuse qualification
+# Exact search policy throughput qualification
 
 PR220 compares baseline `1d2404775a141db4cd90d7579f8f765db37d55df`
-(main including PR206) with candidate `ed0482436c2f91bc318557d02e44108ae56b5f66`.
+(main including PR206) with the candidate pinned in [STATE.json](STATE.json).
+The combined change reuses tensor/forward buffers, batches V3/V4 state and
+action digests, reuses action-reference working vectors and writes canonical
+observation/extension JSON without temporary Value trees. Hash message bytes,
+feature contracts, arithmetic, activation selection and sampling stay the same.
 Both use Rust 1.94.1, MSVC linker 14.50.35725.0, release defaults and ordinary
 activation math. Build receipts bind source, toolchain and the actual binary.
 No speedup has been measured yet. Current status is in [STATE.json](STATE.json).
+
+Added parity coverage compares mixed menus against the sealed action goldens,
+all common observation fixtures against frozen JSON bytes, every V3/V4
+extension member against the original builders, and populated engine/private
+contexts across effect-choice variants. Deferred digest tests cover ordering,
+duplicate actions, shrinking buffers and recovery after a late error. Separate
+read-only source reviews found no serialization, ordering or validation mismatch.
+These tests are prepared; their native execution remains pending in the queue.
+
+The earlier buffer-only candidate was superseded before its build or any
+measurement started. Its ready markers and watcher records are retained under
+`D:/search-buffer-reuse-20261010/superseded-buffer-only`; the queued baseline
+build is reused. The fixed two-root workload and comparison budgets are unchanged.
 
 The supported host-slots queue owns the baseline build. A single one-shot
 `pipeline.py watch` process waits without holding cores, then submits candidate
