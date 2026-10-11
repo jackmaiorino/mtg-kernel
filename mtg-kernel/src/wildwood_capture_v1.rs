@@ -1,11 +1,10 @@
 //! Private event-time authority for the Wildwood successor. Never a public DTO.
-use crate::card_def::{CardType, Subtype, CARD_DEFS};
+use crate::card_def::CARD_DEFS;
 use crate::effect::{EffectOp, ExecCtx};
 use crate::event::{self, CommittedEvent};
 use crate::ids::{ObjectId, StackItemId};
 use crate::state::{
-    AbilitySourceContractV4, GameState, StackItem, StackItemKind, StackTargetContractV4, Target,
-    Zone,
+    AbilitySourceContractV4, GameState, StackItem, StackItemKind, StackTargetContractV4, Zone,
 };
 use crate::trigger::PendingTrigger;
 use serde::{Deserialize, Serialize};
@@ -42,6 +41,8 @@ pub(crate) fn capture(
     event: &CommittedEvent,
     observers: Vec<AbilitySourceContractV4>,
 ) -> usize {
+    use crate::card_def::{CardType, Subtype};
+    use crate::state::Target;
     let CommittedEvent::PlusOneCountersAdded { object, .. } = event else {
         unreachable!("counter capture hook")
     };

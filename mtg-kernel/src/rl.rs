@@ -2490,6 +2490,7 @@ pub(crate) fn frenzied_observation_storage_v1(
         },
         true,
         true,
+        false,
     )
 }
 
