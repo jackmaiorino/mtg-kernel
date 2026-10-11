@@ -14001,7 +14001,10 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         return ResolutionProgress::Suspended;
     }
     let current = state.stack.last().expect("resolving item exists").clone();
-    if crate::wildwood_capture_v1::begin(state, &current).is_err() {
+    if crate::wildwood_capture_v1::begin(state, &current).is_err()
+        || (targets_legal
+            && effect::temporary_control_v1::authority::begin_resolution(state).is_err())
+    {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
             resolving_source,

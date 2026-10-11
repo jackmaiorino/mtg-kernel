@@ -727,6 +727,26 @@ pub enum CommittedEvent {
     WildwoodTriggerCounteredV1 {
         item: Box<crate::state::StackItem>,
     },
+    /// History-only authority for the appended temporary-control opcode.
+    TemporaryControlResolutionV1 {
+        item: Box<crate::state::StackItem>,
+        recipient_snapshot: String,
+        timestamp: u64,
+        turn: u32,
+        active_player: PlayerId,
+    },
+    TemporaryControlInstalledV1 {
+        installation: Box<crate::effect::temporary_control_v1::authority::InstallationV1>,
+    },
+    TemporaryControlCleanupV1 {
+        turn: u32,
+        active_player: PlayerId,
+        installations: Vec<usize>,
+    },
+    TemporaryControlExpiredV1 {
+        installation_history_index: usize,
+        cleanup_history_index: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1131,6 +1151,9 @@ pub(crate) fn damage_color_mask(state: &GameState, damage: &DamageProposed) -> u
 /// is evaluated from the final damage amount and source immediately before
 /// that damage is committed.
 pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
+    if crate::effect::temporary_control_v1::authority::validate(state).is_err() {
+        return;
+    }
     if let Some(final_event) = apply_replacements(state, event) {
         let lifelink_gain = lifelink_gain_for(state, &final_event);
         commit(state, final_event);

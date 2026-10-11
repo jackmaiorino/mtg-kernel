@@ -164,6 +164,145 @@ fn treasures(state: &GameState, controller: PlayerId) -> usize {
         .filter(|id| state.objects.get(**id).name == "Treasure Token")
         .count()
 }
+#[test]
+fn actual_printed_control_installation_and_cleanup_journal_restores_and_refuses_missing_ownership()
+{
+    use mtg_kernel::event::CommittedEvent;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let target = put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let mut surface = surface();
+        let spell = announce(&mut surface, &mut state, actor, target);
+        let stack_item = state
+            .stack
+            .iter()
+            .find(|item| item.source == spell)
+            .unwrap()
+            .clone();
+        let before_resolution = replay(&state);
+        resolve(&mut surface, &mut state);
+        let mut independently_restored = replay(&before_resolution);
+        resolve(&mut self::surface(), &mut independently_restored);
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&independently_restored).unwrap()
+        );
+        assert!(state.engine.event_history.iter().any(|event| matches!(event,
+            CommittedEvent::TemporaryControlResolutionV1 { item, .. } if item.as_ref() == &stack_item)));
+        assert_eq!(
+            state
+                .engine
+                .event_history
+                .iter()
+                .filter(|event| matches!(event, CommittedEvent::TemporaryControlInstalledV1 { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(state.objects.get(target).controller, actor);
+        for alteration in 0..5 {
+            let mut forged = replay(&state);
+            match alteration {
+                0 => forged.engine.until_end_of_turn.retain(|row| {
+                    !matches!(
+                        row,
+                        engine::UntilEndOfTurnEffect::ResolvedObjectControlEffect { .. }
+                    )
+                }),
+                1 => forged.engine.event_history.retain(|event| {
+                    !matches!(event, CommittedEvent::TemporaryControlInstalledV1 { .. })
+                }),
+                2 => {
+                    forged.engine.until_end_of_turn.retain(|row| {
+                        !matches!(
+                            row,
+                            engine::UntilEndOfTurnEffect::ResolvedObjectControlEffect { .. }
+                        )
+                    });
+                    forged.engine.event_history.retain(|event| {
+                        !matches!(event, CommittedEvent::TemporaryControlInstalledV1 { .. })
+                    });
+                }
+                3 => {
+                    let CommittedEvent::TemporaryControlInstalledV1 { installation } = forged
+                        .engine
+                        .event_history
+                        .iter_mut()
+                        .find(|event| {
+                            matches!(event, CommittedEvent::TemporaryControlInstalledV1 { .. })
+                        })
+                        .unwrap()
+                    else {
+                        unreachable!()
+                    };
+                    installation.source.owner = actor.opponent();
+                }
+                4 => {
+                    let CommittedEvent::TemporaryControlInstalledV1 { installation } = forged
+                        .engine
+                        .event_history
+                        .iter_mut()
+                        .find(|event| {
+                            matches!(event, CommittedEvent::TemporaryControlInstalledV1 { .. })
+                        })
+                        .unwrap()
+                    else {
+                        unreachable!()
+                    };
+                    installation.source.controller = actor.opponent();
+                    installation.controller = actor.opponent();
+                    for row in &mut forged.engine.until_end_of_turn {
+                        if let engine::UntilEndOfTurnEffect::ResolvedObjectControlEffect {
+                            controller,
+                            ..
+                        } = row
+                        {
+                            *controller = actor.opponent();
+                        }
+                    }
+                }
+                _ => unreachable!(),
+            }
+            for mut restored in [replay(&forged), replay(&replay(&forged))] {
+                let before = serde_json::to_vec(&restored).unwrap();
+                assert!(engine::step(&mut restored, Action::Pass).is_err());
+                assert_eq!(before, serde_json::to_vec(&restored).unwrap());
+            }
+        }
+        let saved_row = state
+            .engine
+            .until_end_of_turn
+            .iter()
+            .find(|row| {
+                matches!(
+                    row,
+                    engine::UntilEndOfTurnEffect::ResolvedObjectControlEffect { .. }
+                )
+            })
+            .unwrap()
+            .clone();
+        cleanup(&mut surface, &mut state);
+        assert_eq!(state.objects.get(target).controller, actor.opponent());
+        assert_eq!(
+            state
+                .engine
+                .event_history
+                .iter()
+                .filter(|event| matches!(event, CommittedEvent::TemporaryControlCleanupV1 { .. }))
+                .count(),
+            1
+        );
+        let mut forged = replay(&state);
+        forged.engine.until_end_of_turn.push(saved_row);
+        let before = serde_json::to_vec(&forged).unwrap();
+        assert!(engine::step(&mut forged, Action::Pass).is_err());
+        assert_eq!(before, serde_json::to_vec(&forged).unwrap());
+    }
+}
 fn grant(
     state: &mut GameState,
     source: ObjectId,

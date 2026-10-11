@@ -1076,6 +1076,10 @@ pub(super) fn conflicts(
             | WildwoodTriggerOperationV1 { .. }
             | WildwoodTriggerClosedV1 { .. }
             | WildwoodTriggerCounteredV1 { .. }
+            | TemporaryControlResolutionV1 { .. }
+            | TemporaryControlInstalledV1 { .. }
+            | TemporaryControlCleanupV1 { .. }
+            | TemporaryControlExpiredV1 { .. }
             | DifferentControllerTargetDepartureV1 { .. }
             | LifeLoss { .. }
             | LifeGain { .. }

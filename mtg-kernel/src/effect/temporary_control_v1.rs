@@ -1,6 +1,7 @@
 //! Bounded resolved control effects lasting through the current turn.
 use super::*;
 use crate::engine::UntilEndOfTurnEffect;
+pub(crate) mod authority;
 
 fn printed_program() -> Option<EffectOp> {
     let token_def = crate::card_def::card_id_by_name("Treasure Token")?;
@@ -116,6 +117,10 @@ pub(super) fn gain_control(ctx: &ExecCtx, index: usize, state: &mut GameState) {
     let previous_controller = live.controller;
     let object_zone_change_count = live.zone_change_count;
     let timestamp = crate::engine::next_timestamp(state);
+    authority::install(state, ctx, object, timestamp);
+    if state.engine.halted.is_some() {
+        return;
+    }
     state
         .engine
         .until_end_of_turn
@@ -134,6 +139,7 @@ pub(super) fn gain_control(ctx: &ExecCtx, index: usize, state: &mut GameState) {
 /// effect applied while the caster already controls that creature. Departed
 /// and reentered objects never inherit the old record (400.7).
 pub(crate) fn expire_at_cleanup(state: &mut GameState) {
+    authority::expire(state);
     let effects: Vec<_> = state
         .engine
         .until_end_of_turn
@@ -225,5 +231,7 @@ pub(crate) fn refuse_legacy_observation(state: &GameState) -> Result<(), String>
     Ok(())
 }
 
+#[cfg(test)]
+mod authority_tests;
 #[cfg(test)]
 mod tests;
