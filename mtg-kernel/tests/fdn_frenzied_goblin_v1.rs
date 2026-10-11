@@ -590,3 +590,50 @@ fn physical_owner_differs_from_declaring_controller_and_source_capture_forgery_r
         );
     }
 }
+
+#[test]
+fn older_actual_attack_controller_does_not_authorize_current_trigger() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source, recipient) = fixture(actor);
+        target(&mut state, actor, source, recipient);
+        state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+        payment(&mut state, actor, source);
+        engine::step(&mut state, Action::ChooseEffectBoolean(false)).unwrap();
+        finish(&mut state);
+        loop {
+            let d = next(&mut state);
+            if matches!(d, Decision::DeclareBlockers { .. }) {
+                engine::step(&mut state, Action::DeclareBlockers(vec![])).unwrap();
+                break;
+            }
+            assert!(matches!(d, Decision::CastSpellOrPass { .. }), "{d:?}");
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        cleanup(&mut state, actor);
+        let current = actor.opponent();
+        control_primitive(&mut state, source, current);
+        state.objects.get_mut(source).tapped = false;
+        granted_target_keyword_primitive(&mut state, source, Keywords::HASTE);
+        attack(&mut state, source);
+        assert!(
+            matches!(next(&mut state), Decision::ChooseTargets { player, .. } if player == current)
+        );
+        assert!(state
+            .engine
+            .event_history
+            .iter()
+            .any(|event| matches!(event,
+            mtg_kernel::event::CommittedEvent::DeclaredAttacker { source: s, controller, .. }
+            if *s == source && *controller == actor)));
+        let mut forged = restore(&state);
+        let pending = &mut forged.engine.pending_triggers[0];
+        pending.controller = actor;
+        pending.source_contract.as_mut().unwrap().controller = actor;
+        let before = serde_json::to_vec(&forged).unwrap();
+        assert!(
+            engine::step(&mut forged, Action::ChooseTarget(Target::Object(recipient))).is_err()
+        );
+        assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
+        target(&mut state, current, source, recipient);
+    }
+}

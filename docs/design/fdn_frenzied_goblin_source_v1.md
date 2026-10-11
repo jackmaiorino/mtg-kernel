@@ -27,7 +27,10 @@ cancel the resolved restriction. Recipient departure ends it for that
 incarnation. The shared cleanup and repeated-cleanup path expires it.
 
 A scoped validator binds the source/controller/incarnation to an independently
-committed `DeclaredAttacker` in retained history. Generic definition, physical
+committed latest exact-incarnation `DeclaredAttacker` in retained history.
+An older attack by a different controller cannot authorize a current trigger;
+ordinary gameplay drains the prior combat stack before a later declaration.
+Generic definition, physical
 owner, exact source and target contracts remain authoritative. Payment
 continuations admit only the real root, exact red Boolean prompt, authenticated
 paid frame, or empty declining/unpayable completion. A free consequence frame

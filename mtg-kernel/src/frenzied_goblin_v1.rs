@@ -24,13 +24,24 @@ pub(crate) fn validate_source(
     let source = source.ok_or("Frenzied attack lost its captured source")?;
     if source.card_def != card_def
         || source.zone != Zone::Battlefield
-        || !state.engine.event_history.iter().any(|event| {
-            matches!(event, CommittedEvent::DeclaredAttacker {
-                source: attacker, source_zone_change_count, controller
-            } if *attacker == source.source
-                && *source_zone_change_count == source.zone_change_count
-                && *controller == source.controller)
-        })
+        || state
+            .engine
+            .event_history
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                CommittedEvent::DeclaredAttacker {
+                    source: attacker,
+                    source_zone_change_count,
+                    controller,
+                } if *attacker == source.source
+                    && *source_zone_change_count == source.zone_change_count =>
+                {
+                    Some(*controller)
+                }
+                _ => None,
+            })
+            != Some(source.controller)
     {
         return Err("Frenzied trigger lacks its committed exact attack declaration".into());
     }
