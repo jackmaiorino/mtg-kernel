@@ -3208,7 +3208,7 @@ fn legal_targets_for_controller_from_source(
                                     && live.controller != state.objects.get(id).controller
                             })
                         }
-                        Target::Player(_) => false,
+                        Target::Player(_) | Target::StackItem(_) => false,
                     })
             })
             .map(Target::Object)
@@ -3772,7 +3772,7 @@ pub(crate) fn different_controller_creature_targets_are_legal(
         target_contract_matches_live(state, targets[index], contracts[index])
             && match targets[index] {
                 Target::Object(object) => battlefield_objects(state).any(|live| live == object),
-                Target::Player(_) => false,
+                Target::Player(_) | Target::StackItem(_) => false,
             }
     });
     if current[0] && current[1] {

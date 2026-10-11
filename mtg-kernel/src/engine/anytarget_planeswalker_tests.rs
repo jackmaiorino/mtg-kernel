@@ -39,6 +39,7 @@ fn anytarget_recipient_scope_matches_catalog_precedence_and_existing_order() {
             .copied()
             .filter(|target| match target {
                 Target::Player(_) => true,
+                Target::StackItem(_) => false,
                 Target::Object(object) => {
                     state.objects.get(*object).controller == actor
                         || !has_effective_keyword(&state, *object, Keywords::HEXPROOF)
@@ -232,6 +233,7 @@ mod fdn {
                 paid_cost_refs: vec![],
                 hidden_ability_source: None,
                 ability_source_contract: None,
+                cauldron_grant: None,
                 kicked: false,
                 optional_additional_cost_paid: None,
                 x_value: 0,

@@ -18306,7 +18306,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                         Target::Object(object) => {
                             Some(event::ProposedEvent::zone_change(object, Zone::Hand))
                         }
-                        Target::Player(_) => None,
+                        Target::Player(_) | Target::StackItem(_) => None,
                     }
                 })
                 .collect();
