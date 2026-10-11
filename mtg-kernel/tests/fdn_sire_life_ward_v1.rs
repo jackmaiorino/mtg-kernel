@@ -400,3 +400,92 @@ fn typed_public_life_ward_keeps_two_targeters_distinct() {
     assert_eq!(state.objects.get(other).zone, Zone::Stack);
     assert_eq!(state.players[0].life, 20);
 }
+
+#[test]
+fn pre_target_life_ward_traits_preserve_visibility_and_actual_aura_suppression() {
+    use mtg_kernel::policy_observation_v8::{ObservationV8, WardLifePrintedFaceV8};
+    use mtg_kernel::policy_surface_v5::PolicySurfaceV5;
+    let observe = |state: &GameState, actor| -> ObservationV8 {
+        mtg_kernel::rl::observe_policy_v8(state, &PolicySurfaceV5::new(), actor, 0, 0, 0, 1)
+            .unwrap()
+    };
+    for owner in [PlayerId::P0, PlayerId::P1] {
+        let payer = owner.opponent();
+        let mut state = ready();
+        state.active_player = payer;
+        state.priority_player = payer;
+        let sire = put(&mut state, owner, "Sire of Seven Deaths", Zone::Battlefield);
+        let own = put(&mut state, payer, "Sire of Seven Deaths", Zone::Hand);
+        let hidden = put(&mut state, owner, "Sire of Seven Deaths", Zone::Hand);
+        let library = put(&mut state, payer, "Sire of Seven Deaths", Zone::Hand);
+        mtg_kernel::event::propose_and_commit(
+            &mut state,
+            mtg_kernel::event::ProposedEvent::zone_change(library, Zone::Library),
+        );
+        let before = observe(&state, payer);
+        let traits = &before.extensions.ward_life_card_traits;
+        assert_eq!(traits.len(), 2);
+        assert!(traits
+            .iter()
+            .all(|row| row.life == 7 && row.printed_face == WardLifePrintedFaceV8::Front));
+        assert!(
+            traits
+                .iter()
+                .find(|row| row.source.arena_id == sire.0)
+                .unwrap()
+                .effective
+        );
+        assert!(
+            !traits
+                .iter()
+                .find(|row| row.source.arena_id == own.0)
+                .unwrap()
+                .effective
+        );
+        assert!(traits
+            .iter()
+            .all(|row| row.source.arena_id != hidden.0 && row.source.arena_id != library.0));
+
+        let mut surf = surface();
+        let aura = cast_at(&mut surf, &mut state, payer, "Witness Protection", sire, 1);
+        pending_life_ward(&mut state, &mut surf);
+        let mut replay: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(observe(&state, payer), observe(&replay, payer));
+        assert_eq!(drain(&mut surf, &mut state, Some(true)), 1);
+        assert_eq!(drain(&mut surface(), &mut replay, Some(true)), 1);
+        assert_eq!(state.state_hash(), replay.state_hash());
+        assert_eq!(state.objects.get(aura).zone, Zone::Battlefield);
+        assert_eq!(state.players[payer.index()].life, 13);
+        for actor in [owner, payer] {
+            let suppressed = observe(&state, actor);
+            let row = suppressed
+                .extensions
+                .ward_life_card_traits
+                .iter()
+                .find(|row| row.source.arena_id == sire.0)
+                .unwrap();
+            assert_eq!(
+                (row.life, row.printed_face),
+                (7, WardLifePrintedFaceV8::Front)
+            );
+            assert!(!row.effective);
+            let decoded: ObservationV8 =
+                serde_json::from_slice(&serde_json::to_vec(&suppressed).unwrap()).unwrap();
+            assert_eq!(decoded, suppressed);
+        }
+        mtg_kernel::event::propose_and_commit(
+            &mut state,
+            mtg_kernel::event::ProposedEvent::zone_change(aura, Zone::Graveyard),
+        );
+        assert!(
+            observe(&state, payer)
+                .extensions
+                .ward_life_card_traits
+                .iter()
+                .find(|row| row.source.arena_id == sire.0)
+                .unwrap()
+                .effective
+        );
+    }
+}

@@ -4048,6 +4048,27 @@ fn card_defs_with_event_triggers() -> &'static [bool] {
     })
 }
 
+/// The printed Ward ability currently active on one live battlefield object.
+/// Public successor observations share this predicate with trigger capture.
+pub(crate) fn active_printed_ward_cost(
+    state: &GameState,
+    source: ObjectId,
+) -> Option<crate::card_def::WardCostDef> {
+    let object = state.objects.try_get(source)?;
+    let card = crate::card_def::CARD_DEFS.get(usize::from(object.card_def))?;
+    if object.zone != Zone::Battlefield
+        || !card.is_executable()
+        || !crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+    {
+        return None;
+    }
+    card.ward_cost.filter(|cost| match cost {
+        crate::card_def::WardCostDef::BackFacePayLife(_) => object.v4.face_index == 1,
+        crate::card_def::WardCostDef::DiscardCard => true,
+        _ => object.v4.face_index == 0,
+    })
+}
+
 fn triggers_from_events(
     state: &mut GameState,
     events: &[CommittedEvent],
@@ -4331,86 +4352,77 @@ fn triggers_from_events(
                 }
             }
         }
-        if obj.zone == Zone::Battlefield
-            && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
-        {
-            let ward_cost = card.ward_cost.filter(|cost| match cost {
-                crate::card_def::WardCostDef::BackFacePayLife(_) => obj.v4.face_index == 1,
-                crate::card_def::WardCostDef::DiscardCard => true,
-                _ => obj.v4.face_index == 0,
-            });
-            if let Some(ward_cost) = ward_cost {
-                for event in events {
-                    let CommittedEvent::Targeted {
-                        target,
-                        target_zone_change_count,
-                        targeting_stack_item,
-                        targeting_controller,
-                    } = event
-                    else {
-                        continue;
-                    };
-                    if *target != id
-                        || *target_zone_change_count != obj.zone_change_count
-                        || *targeting_controller == obj.controller
-                    {
-                        continue;
-                    }
-                    let ward_target = crate::state::StackTargetContractV4::capture(
-                        state,
-                        crate::state::Target::Object(id),
-                    );
-                    new_triggers.push(PendingTrigger {
-                        controller: obj.controller,
-                        source: id,
-                        granted_by: None,
-                        effect: match ward_cost {
-                            crate::card_def::WardCostDef::Generic(generic) => {
-                                EffectOp::CounterUnlessPaysGeneric {
-                                    ward_target,
-                                    targeting_stack_item: *targeting_stack_item,
-                                    generic,
-                                }
-                            }
-                            crate::card_def::WardCostDef::CollectEvidence(minimum_mana_value) => {
-                                EffectOp::CounterUnlessCollectsEvidence {
-                                    ward_target,
-                                    targeting_stack_item: *targeting_stack_item,
-                                    minimum_mana_value,
-                                }
-                            }
-                            crate::card_def::WardCostDef::DiscardCard => {
-                                EffectOp::CounterUnlessDiscardsCard {
-                                    ward_target,
-                                    targeting_stack_item: *targeting_stack_item,
-                                }
-                            }
-                            crate::card_def::WardCostDef::BackFacePayLife(life) => {
-                                EffectOp::CounterUnlessPaysLife {
-                                    ward_target,
-                                    targeting_stack_item: *targeting_stack_item,
-                                    life,
-                                }
-                            }
-                            crate::card_def::WardCostDef::PayLife(life) => {
-                                EffectOp::CounterUnlessPaysLifeWithChoice {
-                                    ward_target,
-                                    targeting_stack_item: *targeting_stack_item,
-                                    life,
-                                }
-                            }
-                        },
-                        is_madness_offer: false,
-                        kicked: false,
-                        target_spec: TargetSpec::None,
-                        targets: Vec::new(),
-                        target_contracts: Vec::new(),
-                        placement_ordered: false,
-                        source_contract: Some(AbilitySourceContractV4::capture(state, id)),
-                        optional_additional_cost_paid: None,
-                        paid_cost_refs: Vec::new(),
-                    });
+        if let Some(ward_cost) = active_printed_ward_cost(state, id) {
+            for event in events {
+                let CommittedEvent::Targeted {
+                    target,
+                    target_zone_change_count,
+                    targeting_stack_item,
+                    targeting_controller,
+                } = event
+                else {
+                    continue;
+                };
+                if *target != id
+                    || *target_zone_change_count != obj.zone_change_count
+                    || *targeting_controller == obj.controller
+                {
+                    continue;
                 }
+                let ward_target = crate::state::StackTargetContractV4::capture(
+                    state,
+                    crate::state::Target::Object(id),
+                );
+                new_triggers.push(PendingTrigger {
+                    controller: obj.controller,
+                    source: id,
+                    granted_by: None,
+                    effect: match ward_cost {
+                        crate::card_def::WardCostDef::Generic(generic) => {
+                            EffectOp::CounterUnlessPaysGeneric {
+                                ward_target,
+                                targeting_stack_item: *targeting_stack_item,
+                                generic,
+                            }
+                        }
+                        crate::card_def::WardCostDef::CollectEvidence(minimum_mana_value) => {
+                            EffectOp::CounterUnlessCollectsEvidence {
+                                ward_target,
+                                targeting_stack_item: *targeting_stack_item,
+                                minimum_mana_value,
+                            }
+                        }
+                        crate::card_def::WardCostDef::DiscardCard => {
+                            EffectOp::CounterUnlessDiscardsCard {
+                                ward_target,
+                                targeting_stack_item: *targeting_stack_item,
+                            }
+                        }
+                        crate::card_def::WardCostDef::BackFacePayLife(life) => {
+                            EffectOp::CounterUnlessPaysLife {
+                                ward_target,
+                                targeting_stack_item: *targeting_stack_item,
+                                life,
+                            }
+                        }
+                        crate::card_def::WardCostDef::PayLife(life) => {
+                            EffectOp::CounterUnlessPaysLifeWithChoice {
+                                ward_target,
+                                targeting_stack_item: *targeting_stack_item,
+                                life,
+                            }
+                        }
+                    },
+                    is_madness_offer: false,
+                    kicked: false,
+                    target_spec: TargetSpec::None,
+                    targets: Vec::new(),
+                    target_contracts: Vec::new(),
+                    placement_ordered: false,
+                    source_contract: Some(AbilitySourceContractV4::capture(state, id)),
+                    optional_additional_cost_paid: None,
+                    paid_cost_refs: Vec::new(),
+                });
             }
         }
     }
