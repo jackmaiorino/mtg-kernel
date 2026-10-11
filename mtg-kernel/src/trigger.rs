@@ -3659,11 +3659,6 @@ fn standard_trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetS
                 TargetSpec::None
             },
         ),
-        "Soul-Shackled Zombie" => Some(if *effect == soul_shackled_zombie_effect() {
-            TargetSpec::UpToTwoCardsInSingleGraveyard
-        } else {
-            TargetSpec::None
-        }),
         "Graveyard Trespasser" => Some(match effect {
             EffectOp::ExileGraveyardTargetsDrainPerCreature { max_targets: 1 } => {
                 TargetSpec::UpToOneCardInGraveyards
@@ -3992,6 +3987,8 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
     Some(
         if let Some(spec) = standard_trigger_target_spec(card.name, effect) {
             spec
+        } else if card.name == "Soul-Shackled Zombie" && *effect == soul_shackled_zombie_effect() {
+            TargetSpec::UpToTwoCardsInSingleGraveyard
         } else if card.name == "Mesmeric Fiend" && *effect == mesmeric_fiend_exile_effect() {
             TargetSpec::TargetOpponent
         } else if card.name == "Journey to Nowhere" && *effect == journey_to_nowhere_etb_effect() {
