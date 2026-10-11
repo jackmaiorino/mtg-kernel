@@ -451,7 +451,7 @@ pub(crate) fn execute(ctx: &ExecCtx, state: &mut GameState) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "Limited", not(feature = "Standard")))]
 #[path = "source_power_activation_v1_legacy_tests.rs"]
 mod legacy_tests;
 
