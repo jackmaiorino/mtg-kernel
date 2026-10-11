@@ -303,6 +303,26 @@ class FeaturesV8Tests(unittest.TestCase):
         with self.assertRaises(v8.FeatureSchemaError):
             v8.encode_decision(successor(), legal_actions())
 
+    def test_known_face_down_knowledge_is_not_admitted_by_frozen_successors(self):
+        from mtg_kernel_rl import features_v9 as v9
+
+        obs = observation_v8()
+        obs["known_face_down_cards"] = [{
+            "object": stable_ref(991, 160, "p0", "Battlefield", 4),
+            "card_db_id": 160,
+            "card_name": "Known face-down card",
+        }]
+        with self.assertRaises(v8.FeatureSchemaError):
+            v8.encode_decision(obs, legal_actions())
+        raid = copy.deepcopy(obs)
+        raid["schema_version"] = 9
+        raid["extensions"] = {
+            "predecessor": raid["extensions"],
+            "attacked_this_turn": [False, False],
+        }
+        with self.assertRaises(v8.FeatureSchemaError):
+            v9.encode_decision(raid, legal_actions())
+
 
 if __name__ == "__main__":
     torch.set_num_threads(1)

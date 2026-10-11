@@ -20,6 +20,62 @@ fn ordinary_state(actor: PlayerId) -> GameState {
     state
 }
 
+#[cfg(feature = "standard-magezero-fixtures")]
+#[test]
+fn known_face_down_knowledge_refuses_frozen_successor_encoders() {
+    use crate::native_flat_tensorizer_v6::{NativeFlatPolicyEncoderV6, RaidFlatSessionV6};
+    use crate::state::FaceDownV1;
+
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ordinary_state(actor);
+        let hidden = put(&mut state, actor, "Guttersnipe", Zone::Battlefield);
+        let ordinary = FastActorSessionV1::from_v5_fixture_state(state.clone());
+        assert!(NativeFlatPolicyEncoderV5::default()
+            .encode(&ordinary, expected(&ordinary))
+            .is_ok());
+
+        state.objects.get_mut(hidden).v4.face_down_v1 = Some(FaceDownV1 {
+            disguised: false,
+            lookers: 1 << actor.index(),
+            hidden_by: None,
+            hidden_by_source: None,
+        });
+        let mut session = FastActorSessionV1::from_v5_fixture_state(state);
+        let e = expected(&session);
+        let (observation, _) = session.flat_rich_current_input_v5(e).unwrap();
+        assert_eq!(observation.known_face_down_cards.len(), 1);
+        let before = session.privileged_core_environment_hash();
+        let snapshot = session.snapshot_v1();
+        let error = NativeFlatPolicyEncoderV5::default()
+            .encode(&session, e)
+            .unwrap_err();
+        assert!(error.to_string().contains("ObservationContract"));
+        assert_eq!(session.privileged_core_environment_hash(), before);
+        session.restore_v1(&snapshot);
+        assert!(NativeFlatPolicyEncoderV5::default()
+            .encode(&session, expected(&session))
+            .is_err());
+        assert_eq!(session.privileged_core_environment_hash(), before);
+
+        let mut raid = RaidFlatSessionV6::from_session(session).unwrap();
+        let FastActorResponseV1::Decision(e) = raid.current_response() else {
+            panic!("the successor fixture must retain its real decision");
+        };
+        let snapshot = raid.snapshot_v6();
+        let error = NativeFlatPolicyEncoderV6::default()
+            .encode(&raid, e)
+            .unwrap_err();
+        assert!(error.to_string().contains("ObservationContract"));
+        raid.restore_v6(&snapshot);
+        let FastActorResponseV1::Decision(restored) = raid.current_response() else {
+            panic!("restoring the refused successor must retain its decision");
+        };
+        assert!(NativeFlatPolicyEncoderV6::default()
+            .encode(&raid, restored)
+            .is_err());
+    }
+}
+
 fn fixture_states() -> Vec<(&'static str, GameState)> {
     let (shared, _) = crate::rl_session::hidden_order_triggers_shared_source_state_v1();
     let (mut single, source, _, _) =

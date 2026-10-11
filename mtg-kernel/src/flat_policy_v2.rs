@@ -5900,6 +5900,9 @@ impl FlatDecisionEncoderV2 {
         // not consult a predecessor action cache or its hidden-source rules.
         let observation = session.flat_policy_observation_v5(expected)?;
         if observation.schema_version != 8
+            // The frozen Python V8/V9 contracts do not classify this Standard
+            // knowledge field. Refuse it before shared object registration.
+            || !observation.known_face_down_cards.is_empty()
             || observation.acting_player != expected.acting_player
             || observation.step_index != expected.step
             || observation.physical_decision_id != expected.physical_decision_id
