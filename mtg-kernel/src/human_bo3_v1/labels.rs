@@ -28,6 +28,30 @@ struct LabelInput<'a> {
 }
 
 impl<'a> LabelInput<'a> {
+    fn from_history(
+        observation: &'a crate::heartfire_history_v1::HeartfireHistoryObservationV1,
+    ) -> Self {
+        Self {
+            projection: &observation.projection,
+            pending_chosen_creature_cost: observation
+                .extensions
+                .pending_chosen_creature_cost
+                .as_ref(),
+            pending_ward_payment: observation.extensions.pending_ward_payment.as_ref(),
+            resolving_spell_sources: observation
+                .extensions
+                .historical_public_sources
+                .iter()
+                .filter(|record| {
+                    record.context
+                        == crate::policy_observation_v7::HistoricalSourceContextV7::PendingEffect
+                        && record.stack_item_kind == StackItemKindV2::Spell
+                })
+                .map(|record| &record.source)
+                .collect(),
+        }
+    }
+
     fn from_v6(observation: &'a ObservationV6) -> Self {
         Self {
             projection: &observation.projection,
@@ -511,6 +535,41 @@ fn frozen_human_labels_refuse_heartfire_historical_damage_program() {
         )),
         Err(Error::UnsupportedPrompt)
     );
+}
+
+pub(super) fn label_heartfire_history_v1(
+    action: &A,
+    observation: &crate::heartfire_history_v1::HeartfireHistoryObservationV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    if let A::ActivateAbility {
+        source,
+        ability_index,
+        granted_ability,
+        ..
+    } = action
+    {
+        if granted_ability.is_none()
+            && crate::rules_meaning_heartfire_v1::root_meaning(
+                source.card_db_id,
+                u32::from(*ability_index),
+            )
+            .is_ok()
+        {
+            if actor(action) != Some(human) || source.zone != Zone::Battlefield {
+                return Err(Error::UnsupportedPrompt);
+            }
+            let name = handles.name(source)?;
+            return Ok(format!("Activate {name}: pay {{R}} and sacrifice this permanent: it deals damage equal to its power as it left the battlefield to one target creature or planeswalker. Negative power deals no damage; use its captured controller, color and damage keywords"));
+        }
+    }
+    label_common(
+        action,
+        &LabelInput::from_history(observation),
+        handles,
+        human,
+    )
 }
 
 fn label_common(

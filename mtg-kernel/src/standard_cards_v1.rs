@@ -3799,7 +3799,7 @@ fn end_aegis_copy(state: &mut GameState, index: usize) {
 
 /// A copied creature leaving the battlefield stops being a copy first, so
 /// it arrives in its new zone as its own card.
-#[cfg(feature = "standard-magezero-fixtures")]
+#[cfg(feature = "limited-fdn-fixtures")]
 pub(crate) fn end_aegis_copies_before_departure(state: &mut GameState, object: ObjectId) {
     let zone_change_count = state.objects.get(object).zone_change_count;
     while let Some(index) = state.standard_v1.as_ref().and_then(|standard| {

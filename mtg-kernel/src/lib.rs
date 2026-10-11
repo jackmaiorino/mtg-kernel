@@ -91,6 +91,7 @@ pub mod flat_policy_v2;
 pub mod flat_policy_v3;
 pub mod flat_policy_v4;
 pub mod flat_policy_v5;
+pub mod heartfire_history_v1;
 pub mod heartfire_public_v1;
 pub mod ids;
 pub mod line_b_teacher_target_v1;

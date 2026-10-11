@@ -1208,7 +1208,7 @@ fn commit_with_ability_lki(
                     z.object,
                     crate::card_def::CardType::Creature,
                 );
-            #[cfg(feature = "standard-magezero-fixtures")]
+            #[cfg(feature = "limited-fdn-fixtures")]
             if from == Zone::Battlefield {
                 crate::standard_cards_v1::end_aegis_copies_before_departure(state, z.object);
             }
