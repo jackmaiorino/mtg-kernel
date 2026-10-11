@@ -388,3 +388,47 @@ fn self_and_counter_grants_kill_real_blockers_before_normal_damage_in_both_seats
         }
     }
 }
+
+#[test]
+fn ordinary_cleanup_and_complete_opponent_turn_switch_both_grants_after_restore() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(player);
+        let source = put(&mut state, player, "Inspiring Paladin", Zone::Battlefield);
+        let own = put(&mut state, player, "Llanowar Elves", Zone::Battlefield);
+        state.objects.get_mut(own).counters.plus1_plus1 = 1;
+        state.step = Step::EndStep;
+        assert!(first_strike(&state, source));
+        assert!(first_strike(&state, own));
+        let round = state.turn;
+        let mut replay = restored(&state);
+        for current in [&mut state, &mut replay] {
+            let mut saw_opponent = false;
+            let mut returned = false;
+            for _ in 0..160 {
+                let decision = next(current);
+                if current.active_player == player.opponent() {
+                    saw_opponent = true;
+                    assert!(!first_strike(current, source));
+                    assert!(!first_strike(current, own));
+                } else if saw_opponent {
+                    assert_eq!(current.turn, round + 1);
+                    assert!(first_strike(current, source));
+                    assert!(first_strike(current, own));
+                    returned = true;
+                    break;
+                }
+                match decision {
+                    Decision::CastSpellOrPass { .. } => {
+                        engine::step(current, Action::Pass).unwrap()
+                    }
+                    Decision::DeclareAttackers { .. } => {
+                        engine::step(current, Action::DeclareAttackers(vec![])).unwrap()
+                    }
+                    other => panic!("unexpected turn decision {other:?}"),
+                }
+            }
+            assert!(returned, "ordinary full turn did not finish");
+        }
+        same(&state, &replay);
+    }
+}
