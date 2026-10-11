@@ -130,6 +130,26 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "changed pinned input"):
             dispatch.read_pinned_json(item, validated_files=validated)
 
+    def test_inference_shape_rehashes_before_reusing_parsed_shape(self):
+        value = {"schema": "test", "source_import": "test", "feature_contract_digest": "a",
+                 "feature_encoding_digest": "b", "card_db_hash": "c",
+                 "parameters": [{"name": "a", "shape": [1], "values": [1]}]}
+        item = self.save(value)
+        dispatch._INFERENCE_SHAPES.clear()
+        shape = dispatch.inference_shape({"checkpoint": item})
+        shape["parameters"].clear()
+        with patch.object(dispatch.json, "loads", side_effect=AssertionError("reparsed immutable checkpoint")):
+            self.assertEqual(len(dispatch.inference_shape({"checkpoint": item})["parameters"]), 1)
+        source = Path(item["path"])
+        stat = source.stat()
+        source.write_bytes(source.read_bytes().replace(b'"values": [1]', b'"values": [2]'))
+        os.utime(source, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        with self.assertRaisesRegex(ValueError, "changed pinned input"):
+            dispatch.inference_shape({"checkpoint": item})
+        replacement = dispatch.pin(source)
+        self.assertEqual(dispatch.inference_shape({"checkpoint": replacement})["parameters"],
+                         [("a", [1], 1)])
+
     def test_single_pass_recovery_reader_checks_local_bytes(self):
         source = self.root / "absent-source"
         recovered = self.root / "recovered"
@@ -160,6 +180,17 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
         actual = dispatch.output_fingerprint(dispatch.read(second["executed_config"]["path"]),
                                              "training", result, self.runtime, True)
         self.assertNotEqual(first["fingerprint"], actual)
+
+    def test_exposure_projection_collection_preserves_fingerprint(self):
+        report = dispatch.read(self.trial(1, 10)["path"])
+        config = dispatch.read(report["executed_config"]["path"])
+        result = dispatch.read(report["native_result"]["path"])
+        projected = []
+        actual = dispatch.output_fingerprint(config, "training", result, self.runtime, True,
+                                             exposure_inputs=projected)
+        self.assertEqual(actual, report["fingerprint"])
+        self.assertEqual(len(projected), 1)
+        self.assertEqual(projected[0][0]["source"]["sha256"], actual["iterations"][0]["trajectories"][0])
 
     def test_incomplete_non_natural_and_wrong_runtime_are_refused(self):
         report = dispatch.read(self.trial(1, 10)["path"])

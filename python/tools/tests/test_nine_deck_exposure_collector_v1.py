@@ -1,6 +1,7 @@
 """Exposure collector on a synthetic block tree (no native execution)."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -20,6 +21,16 @@ def pin(path: Path, value) -> dict:
 
 
 class CollectorTests(unittest.TestCase):
+    def projections(self, native):
+        iterations = []
+        completion = json.loads((native / "completion.json").read_bytes())
+        for item in completion["iterations"]:
+            receipt = collector.read_json_pinned(item)
+            collection = collector.read_json_pinned(receipt["collection"])
+            iterations.append([{"source": item, "trajectory": collector.exposure_projection(
+                collector.read_json_pinned(item))} for item in collection["trajectories"]])
+        return pin(native / "exposure-inputs.json", {"schema": collector.INPUT_SCHEMA, "iterations": iterations})
+
     def build(self, root: Path, run="r1", block=1, substeps=lambda own: 3, fail_slot=None, loss=lambda index: 0.5):
         decks = ndb.load_decks(DECKS)
         iterations = ndb.block_iterations(run, block, decks)
@@ -64,6 +75,46 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(len(summary["ledger"]), 1)
         self.assertEqual(summary["checks"]["completed_episodes"]["learner_by_deck"], [180] * 9)
         self.assertEqual(len(summary["retained_updates"]), 4)
+
+    def test_projection_reuse_produces_identical_rows_and_summary_values(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.build(root / "native", fail_slot=(3, 4),
+                       loss=lambda index: float("nan") if index == 7 else 0.5)
+            cached = self.projections(root / "native")
+            plain = collector.collect("r1", 1, root / "native", DECKS, root / "plain")
+            reused = collector.collect("r1", 1, root / "native", DECKS, root / "reused", cached)
+            self.assertEqual(Path(plain["rows"]["path"]).read_bytes(), Path(reused["rows"]["path"]).read_bytes())
+            reused["rows"]["path"] = plain["rows"]["path"]
+            self.assertEqual(plain, reused)
+            self.assertEqual(reused["checks"]["finite_losses"]["nonfinite_iterations"], [7])
+
+    def test_projection_reuse_refuses_changed_sidecar_source_and_source_pin(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.build(root / "native")
+            cached = self.projections(root / "native")
+            data = collector.read_json_pinned(cached)
+            first = data["iterations"][0][0]
+            source = Path(first["source"]["path"])
+            stat = source.stat()
+            original = source.read_bytes()
+            source.write_bytes(original.replace(b'"natural"', b'"changed"'))
+            os.utime(source, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+            with self.assertRaisesRegex(ValueError, "pinned file changed"):
+                collector.collect("r1", 1, root / "native", DECKS, root / "changed", cached)
+            source.write_bytes(original)
+            first["source"]["sha256"] = "0" * 64
+            changed_pin = pin(root / "other-projection.json", data)
+            with self.assertRaisesRegex(ValueError, "projection source pin differs"):
+                collector.collect("r1", 1, root / "native", DECKS, root / "wrong-pin", changed_pin)
+            data["iterations"].pop()
+            short_pin = pin(root / "short-projection.json", data)
+            with self.assertRaisesRegex(ValueError, "projection coverage differs"):
+                collector.collect("r1", 1, root / "native", DECKS, root / "short", short_pin)
+            Path(cached["path"]).write_bytes(b'{}')
+            with self.assertRaisesRegex(ValueError, "pinned file changed"):
+                collector.collect("r1", 1, root / "native", DECKS, root / "wrong-sidecar", cached)
 
     def test_spy_substep_floor_fails(self):
         with tempfile.TemporaryDirectory() as temp:
