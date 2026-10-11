@@ -405,7 +405,7 @@ fn divine_indestructible_keeps_lethal_damage_until_real_cleanup_then_expires() {
         assert_eq!(state.objects.get(creature).zone, Zone::Battlefield);
         assert_eq!(state.objects.get(creature).damage, 3); // Indestructible does not prevent damage.
         assert!(protected(&state, creature));
-        state.step = Step::EndStep; // Prepare a normal end-step priority window, then take real passes.
+        state.step = Step::End; // Prepare a normal end-step priority window, then take real passes.
         let mut replay = restored(&state);
         for current in [&mut state, &mut replay] {
             let mut surface = self::surface();
