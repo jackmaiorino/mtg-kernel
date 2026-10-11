@@ -80,6 +80,8 @@ pub(super) fn payment(
         return None;
     }
     let excluded = chosen.iter().map(|b| b.object).collect::<Vec<_>>();
+    // Recursive payment search carries the chosen creatures and remaining colored pips.
+    #[allow(clippy::too_many_arguments)]
     fn assign(
         state: &GameState,
         p: &PendingCast,

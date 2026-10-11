@@ -91,6 +91,7 @@ fn characteristics(state: &GameState, object: ObjectId) -> CardCharacteristicsV2
     rl::observe_policy_v6(state, &PolicySurfaceV5::new(), P0, 0, 0, 0, 1)
         .unwrap()
         .projection
+        .surface
         .battlefield
         .iter()
         .flatten()
@@ -178,7 +179,7 @@ fn room_casts_have_only_the_selected_door_identity_on_stack_and_battlefield() {
         assert_eq!(engine::object_mana_value(&state, room), mana_value);
         let observation =
             rl::observe_policy_v6(&state, &PolicySurfaceV5::new(), P0, 0, 0, 0, 1).unwrap();
-        let card = observation.projection.battlefield[0]
+        let card = observation.projection.surface.battlefield[0]
             .iter()
             .find(|card| card.stable.arena_id == room.0)
             .unwrap();

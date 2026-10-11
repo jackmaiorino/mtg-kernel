@@ -5796,9 +5796,9 @@ fn returning_aura_hosts(
 ) -> Result<Vec<EffectObjectBinding>, String> {
     validate_effect_object_binding(state, aura)?;
     if aura.expected_zone != Zone::Graveyard
-        || !crate::card_def::CARD_DEFS[state.objects.get(aura.object).card_def as usize]
+        || crate::card_def::CARD_DEFS[state.objects.get(aura.object).card_def as usize]
             .attachment
-            .is_some()
+            .is_none()
     {
         return Err("returning Aura is not a creature Aura in its graveyard".to_string());
     }
@@ -9262,14 +9262,12 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 | EffectFrame::ExilePlay { .. }
                 | EffectFrame::ExileBatchSelect { .. }
                 | EffectFrame::DiscardDraw { .. }
-        ) {
-            if continuation.answered_choice_guard.take()
-                != Some(EffectAnsweredChoiceGuard::StandardSelection {
-                    frame: Box::new(frame.clone()),
-                })
-            {
-                return Err("Standard selection answer changed before execution".into());
-            }
+        ) && continuation.answered_choice_guard.take()
+            != Some(EffectAnsweredChoiceGuard::StandardSelection {
+                frame: Box::new(frame.clone()),
+            })
+        {
+            return Err("Standard selection answer changed before execution".into());
         }
         let EffectFrame::Program { op, path } = frame else {
             match frame {
@@ -14546,7 +14544,7 @@ fn library_partition_matching_prefix(
             LibraryPartitionFilter::ByType(card_type) => definition.has_type(card_type),
             LibraryPartitionFilter::Pick(rule) => {
                 rule.selection
-                    .map_or(true, |selection| match selection.filter {
+                    .is_none_or(|selection| match selection.filter {
                         LibraryPickFilterV1::Any => true,
                         LibraryPickFilterV1::LegendaryCreature => {
                             definition.has_type(CardType::Creature)

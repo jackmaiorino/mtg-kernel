@@ -2025,6 +2025,33 @@ fn remove_from_zone(state: &mut GameState, owner: PlayerId, id: ObjectId, zone: 
     }
 }
 
+/// Place lore counters together, then trigger every chapter whose threshold was crossed.
+pub(crate) fn add_lore_counters(
+    state: &mut GameState,
+    source: ObjectId,
+    amount: i16,
+) -> Result<(), String> {
+    let live = state.objects.get(source);
+    let count = crate::standard_cards_v1::scale_counters(state, live.controller, i32::from(amount));
+    let before = live.counters.lore;
+    let after = before
+        .checked_add(i16::try_from(count).map_err(|_| "lore count overflow")?)
+        .ok_or("lore counters overflow")?;
+    let chapters = crate::card_def::CARD_DEFS[live.card_def as usize]
+        .saga
+        .as_ref()
+        .filter(|_| {
+            live.v4.face_index == 0
+                && crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+        })
+        .map_or(0, |saga| saga.chapter_effects.len());
+    state.objects.get_mut(source).counters.lore = after;
+    for chapter in (before.max(0) + 1)..=after.min(i16::try_from(chapters).unwrap_or(i16::MAX)) {
+        log_saga_chapter(state, source, chapter as u8);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2448,31 +2475,4 @@ mod tests {
             zone_change_count: 0,
         })
     }
-}
-
-/// Place lore counters together, then trigger every chapter whose threshold was crossed.
-pub(crate) fn add_lore_counters(
-    state: &mut GameState,
-    source: ObjectId,
-    amount: i16,
-) -> Result<(), String> {
-    let live = state.objects.get(source);
-    let count = crate::standard_cards_v1::scale_counters(state, live.controller, i32::from(amount));
-    let before = live.counters.lore;
-    let after = before
-        .checked_add(i16::try_from(count).map_err(|_| "lore count overflow")?)
-        .ok_or("lore counters overflow")?;
-    let chapters = crate::card_def::CARD_DEFS[live.card_def as usize]
-        .saga
-        .as_ref()
-        .filter(|_| {
-            live.v4.face_index == 0
-                && crate::continuous_characteristics_v1::printed_abilities_active(state, source)
-        })
-        .map_or(0, |saga| saga.chapter_effects.len());
-    state.objects.get_mut(source).counters.lore = after;
-    for chapter in (before.max(0) + 1)..=after.min(i16::try_from(chapters).unwrap_or(i16::MAX)) {
-        log_saga_chapter(state, source, chapter as u8);
-    }
-    Ok(())
 }

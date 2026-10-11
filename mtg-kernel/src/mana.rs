@@ -1143,6 +1143,53 @@ fn pay_generic_with_source_choices_v1(
     needed == 0
 }
 
+/// Creature-card activations may spend Gwenna mana, including from the hand
+/// and graveyard. Other restricted pools remain unavailable.
+pub(crate) fn plan_activation_mana_v1(
+    cost: &Cost,
+    x: u8,
+    player: PlayerId,
+    state: &GameState,
+    source: ObjectId,
+    excluded: &[ObjectId],
+) -> Option<PaymentPlan> {
+    let eligible =
+        crate::engine::object_has_type(state, source, crate::card_def::CardType::Creature);
+    if !eligible
+        || state.players[player.index()]
+            .restricted_mana_pool
+            .0
+            .is_empty()
+    {
+        return can_pay_excluding_sources(cost, x, player, state, excluded);
+    }
+    let mut projected = state.clone();
+    let allowed = state.players[player.index()]
+        .restricted_mana_pool
+        .0
+        .iter()
+        .enumerate()
+        .filter(|(_, unit)| {
+            unit.restriction
+                == crate::card_def::ManaSpendRestrictionDef::CreatureSpellOrCreatureAbility
+        })
+        .map(|(index, unit)| (index, unit.color))
+        .collect::<Vec<_>>();
+    for &(_, color) in &allowed {
+        projected.players[player.index()].mana_pool[color.pool_index()] =
+            projected.players[player.index()].mana_pool[color.pool_index()].checked_add(1)?;
+    }
+    let mut plan = can_pay_excluding_sources(cost, x, player, &projected, excluded)?;
+    for (index, color) in allowed {
+        let used = &mut plan.pool_used[color.pool_index()];
+        if *used > 0 {
+            *used -= 1;
+            plan.restricted_pool_used.push(index);
+        }
+    }
+    Some(plan)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1797,51 +1844,4 @@ mod tests {
             .expect("2 Mountains should pay both {R} pips");
         assert_eq!(plan.taps.len(), 2);
     }
-}
-
-/// Creature-card activations may spend Gwenna mana, including from the hand
-/// and graveyard. Other restricted pools remain unavailable.
-pub(crate) fn plan_activation_mana_v1(
-    cost: &Cost,
-    x: u8,
-    player: PlayerId,
-    state: &GameState,
-    source: ObjectId,
-    excluded: &[ObjectId],
-) -> Option<PaymentPlan> {
-    let eligible =
-        crate::engine::object_has_type(state, source, crate::card_def::CardType::Creature);
-    if !eligible
-        || state.players[player.index()]
-            .restricted_mana_pool
-            .0
-            .is_empty()
-    {
-        return can_pay_excluding_sources(cost, x, player, state, excluded);
-    }
-    let mut projected = state.clone();
-    let allowed = state.players[player.index()]
-        .restricted_mana_pool
-        .0
-        .iter()
-        .enumerate()
-        .filter(|(_, unit)| {
-            unit.restriction
-                == crate::card_def::ManaSpendRestrictionDef::CreatureSpellOrCreatureAbility
-        })
-        .map(|(index, unit)| (index, unit.color))
-        .collect::<Vec<_>>();
-    for &(_, color) in &allowed {
-        projected.players[player.index()].mana_pool[color.pool_index()] =
-            projected.players[player.index()].mana_pool[color.pool_index()].checked_add(1)?;
-    }
-    let mut plan = can_pay_excluding_sources(cost, x, player, &projected, excluded)?;
-    for (index, color) in allowed {
-        let used = &mut plan.pool_used[color.pool_index()];
-        if *used > 0 {
-            *used -= 1;
-            plan.restricted_pool_used.push(index);
-        }
-    }
-    Some(plan)
 }

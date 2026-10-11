@@ -4069,9 +4069,7 @@ fn sba_fixed_point_with_protected_triggers(
                     });
                     return (!valid).then_some(id);
                 }
-                let Some(attachment) = definition.attachment else {
-                    return None;
-                };
+                let attachment = definition.attachment?;
                 let valid = aura.v4.attached_to.is_some_and(|link| {
                     state.objects.try_get(link.object).is_some_and(|host| {
                         host.zone == Zone::Battlefield
@@ -5873,6 +5871,18 @@ pub(crate) fn pending_trigger_choose_targets_gate_v1(
     Some((pending.source, contract, ordinal))
 }
 
+pub(crate) fn kellan_impulse_effect() -> EffectOp {
+    EffectOp::ImpulseDraw {
+        count: 1,
+        duration: crate::effect::ImpulseDuration::EndOfTurn,
+    }
+}
+/// This definition is active only while Kellan retains its granted ability.
+const KELLAN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::DealsCombatDamageToPlayer,
+    ..etb_trigger(kellan_impulse_effect)
+}];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6113,15 +6123,3 @@ mod tests {
         assert_eq!(ordered, vec![b, a]);
     }
 }
-
-pub(crate) fn kellan_impulse_effect() -> EffectOp {
-    EffectOp::ImpulseDraw {
-        count: 1,
-        duration: crate::effect::ImpulseDuration::EndOfTurn,
-    }
-}
-/// This definition is active only while Kellan retains its granted ability.
-const KELLAN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
-    condition: TriggerCondition::DealsCombatDamageToPlayer,
-    ..etb_trigger(kellan_impulse_effect)
-}];
