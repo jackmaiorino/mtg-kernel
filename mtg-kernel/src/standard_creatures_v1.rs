@@ -30,7 +30,6 @@ pub struct CreatureUpgradeV1 {
 
 impl std::hash::Hash for CreatureUpgradeV1 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        use std::hash::Hash;
         self.finality.hash(state);
         self.temporary_creature.hash(state);
         self.suppressed_by.hash(state);
