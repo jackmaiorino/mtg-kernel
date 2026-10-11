@@ -3957,6 +3957,9 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    if matches!(effect, EffectOp::WildwoodCounterFromReceiptV1 { .. }) {
+        return crate::wildwood_capture_v1::owns_definition(card_def).then_some(TargetSpec::None);
+    }
     if let Some(spec) = crate::standard_creature_choices_v1::trigger_target_spec(card_def, effect) {
         return Some(spec);
     }

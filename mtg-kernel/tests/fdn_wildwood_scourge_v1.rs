@@ -892,3 +892,125 @@ fn unpublished_collection_does_not_reorder_or_reset_an_existing_target_stage() {
         );
     }
 }
+
+#[test]
+fn historical_counter_capture_survives_changes_and_rejects_erased_or_redirected_ownership() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let source = scourge(&mut state, actor);
+        let recipient = add(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        counters(&mut state, actor.opponent(), recipient, 7);
+        let original = serde_json::to_value(&state).unwrap();
+        let history = original["engine"]["event_history"].as_array().unwrap();
+        let capture_index = history
+            .iter()
+            .position(|row| row.get("WildwoodCounterCaptureV1").is_some())
+            .unwrap();
+        let captured = &history[capture_index]["WildwoodCounterCaptureV1"]["capture"];
+        assert_eq!(captured["event"]["PlusOneCountersAdded"]["count"], 7);
+        assert_eq!(
+            captured["event"]["PlusOneCountersAdded"]["player"],
+            serde_json::to_value(actor.opponent()).unwrap()
+        );
+        assert_eq!(captured["recipient_is_creature"], true);
+        assert_eq!(captured["recipient_is_hydra"], false);
+        assert_eq!(
+            captured["observers"][0]["controller"],
+            serde_json::to_value(actor).unwrap()
+        );
+        for mutation in 0..10 {
+            let mut value = original.clone();
+            match mutation {
+                0 => value["wildwood_waiting_v1"] = serde_json::Value::Null,
+                1 => {
+                    let duplicate = value["wildwood_waiting_v1"][0].clone();
+                    value["wildwood_waiting_v1"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(duplicate);
+                }
+                2 => value["wildwood_waiting_v1"][0]["effect"] = serde_json::json!({"Sequence":[]}),
+                3 => {
+                    value["wildwood_waiting_v1"][0]["effect"]["WildwoodCounterFromReceiptV1"]
+                        ["capture_history_index"] = serde_json::json!(capture_index + 1)
+                }
+                4 => value["wildwood_waiting_v1"][0]["source_contract"] = serde_json::Value::Null,
+                5 => {
+                    value["wildwood_waiting_v1"][0]["controller"] =
+                        serde_json::to_value(actor.opponent()).unwrap();
+                    value["wildwood_waiting_v1"][0]["source_contract"]["controller"] =
+                        serde_json::to_value(actor.opponent()).unwrap();
+                }
+                6 => {
+                    value["engine"]["event_history"]
+                        .as_array_mut()
+                        .unwrap()
+                        .remove(capture_index);
+                }
+                7 => {
+                    let duplicate = value["engine"]["event_history"][capture_index].clone();
+                    value["engine"]["event_history"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(duplicate);
+                }
+                8 => {
+                    value["engine"]["event_history"][capture_index]["WildwoodCounterCaptureV1"]
+                        ["capture"]["event"]["PlusOneCountersAdded"]["count"] = serde_json::json!(8)
+                }
+                _ => {
+                    let duplicate = value["engine"]["event_history"][capture_index].clone();
+                    value["engine"]["event_log"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(duplicate);
+                }
+            }
+            let mut forged: GameState = serde_json::from_value(value).unwrap();
+            let before = serde_json::to_vec(&forged).unwrap();
+            assert!(
+                engine::step(&mut forged, Action::Pass).is_err(),
+                "mutation {mutation}"
+            );
+            assert_eq!(
+                serde_json::to_vec(&forged).unwrap(),
+                before,
+                "mutation {mutation}"
+            );
+            let mut restored = restore(&forged);
+            assert!(engine::step(&mut restored, Action::Pass).is_err());
+            assert_eq!(serde_json::to_vec(&restored).unwrap(), before);
+        }
+        // The historical relation remains true after the recipient leaves and
+        // the source changes controller. Only the bound source gets one counter.
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(recipient, Zone::Graveyard),
+        );
+        state.objects.get_mut(source).controller = actor.opponent();
+        let mut replay = restore(&state);
+        settle(&mut state);
+        settle(&mut replay);
+        assert_eq!(state.objects.get(source).counters.plus1_plus1, 3);
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+        let mut resurrected = restore(&state);
+        let published = state
+            .engine
+            .event_history
+            .iter()
+            .find_map(|event| match event {
+                event::CommittedEvent::WildwoodTriggerPublishedV1 { item } => {
+                    Some(item.as_ref().clone())
+                }
+                _ => None,
+            })
+            .unwrap();
+        resurrected.stack.push(published);
+        let before = serde_json::to_vec(&resurrected).unwrap();
+        assert!(engine::step(&mut resurrected, Action::Pass).is_err());
+        assert_eq!(serde_json::to_vec(&resurrected).unwrap(), before);
+    }
+}

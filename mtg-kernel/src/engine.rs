@@ -12812,6 +12812,8 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
         let published = state.stack.last().expect("just published trigger").clone();
         crate::authority_of_the_consuls_v1::publish(state, &published)?;
     }
+    let finalized = state.stack.last().expect("trigger just published").clone();
+    crate::wildwood_capture_v1::publish(state, &finalized);
     // Same `priority_passes`/`priority_player` reset as `reset_priority`
     // (117.5: priority passes to the active player once a triggered
     // ability is put on the stack), but deliberately inlined instead of
@@ -13003,6 +13005,13 @@ fn triggered_stack_item_expected_target_spec(
         return Err("attached-source trigger lost its host LKI".to_string());
     }
     validate_bound_trigger_source_objects(inline_effect, item.source, ability_source_contract)?;
+    crate::wildwood_capture_v1::validate_trigger(
+        state,
+        inline_effect,
+        item.source,
+        item.controller,
+        ability_source_contract,
+    )?;
     crate::frenzied_goblin_v1::validate_source(state, source_card_def, ability_source_contract)?;
     crate::authority_of_the_consuls_v1::validate_source(
         state,
@@ -13755,6 +13764,7 @@ pub(crate) fn counter_stack_item_by_id(
     crate::source_power_activation_v1::finish(state, &item);
     crate::authority_of_the_consuls_v1::record_countered(state, &item);
     crate::authority_of_the_consuls_v1::finish(state, &item);
+    crate::wildwood_capture_v1::close(state, &item, true);
     if let Some(departure) = departure {
         apply_spell_departure(state, departure)?;
     }
@@ -13990,6 +14000,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         ));
         return ResolutionProgress::Suspended;
     }
+    let current = state.stack.last().expect("resolving item exists").clone();
+    if crate::wildwood_capture_v1::begin(state, &current).is_err() {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            resolving_source,
+        ));
+        return ResolutionProgress::Suspended;
+    }
     let item = state
         .stack
         .pop()
@@ -14065,6 +14083,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         if progress == ResolutionProgress::Complete {
             crate::source_power_activation_v1::finish(state, &item);
             crate::authority_of_the_consuls_v1::finish(state, &item);
+            crate::wildwood_capture_v1::close(state, &item, false);
             keep_ability_on_stack_until_discarded(state, &item);
         }
         return progress;

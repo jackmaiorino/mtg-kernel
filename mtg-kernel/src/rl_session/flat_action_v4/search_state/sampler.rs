@@ -7,6 +7,13 @@ fn conflicts(
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    if state.wildwood_waiting_v1.as_ref().is_some_and(|waiting| {
+        waiting
+            .iter()
+            .any(|row| super::effect_refs::op_conflicts(state, pool, &row.effect))
+    }) {
+        return true;
+    }
     if super::effect_refs::conflicts(state, pool, plan) {
         return true;
     }

@@ -52,6 +52,10 @@ impl Scan<'_> {
     fn op(&self, op: &EffectOp) -> bool {
         use EffectOp::*;
         match op {
+            WildwoodCounterFromReceiptV1 { capture_history_index, .. } => usize::try_from(*capture_history_index).ok().and_then(|index| self.state.engine.event_history.get(index)).is_none_or(|event| {
+                let crate::event::CommittedEvent::WildwoodCounterCaptureV1 { capture } = event else { return true; };
+                capture.observers.iter().any(|source| self.raw(source.source)) || matches!(capture.recipient, crate::state::StackTargetContractV4::Object { object, .. } if self.raw(object))
+            }),
             CopySpellSnapshot { spell } => self.copy(spell),
             CastExiledWithoutMana { card, .. } | PlayExiledLand { card } => self.b(card),
             CreatureChoiceV1(kind) | CreatureChoiceAnswerV1 { kind, .. } => {
@@ -246,6 +250,7 @@ impl Scan<'_> {
             | CreateStormCopies { .. }
             | DamageCannotBePreventedThisTurn
             | PreventTargetBlockingUntilEndOfTurn { .. }
+
             | AddMinusOneMinusOneCounter { .. }
             | RevealHandChooseNonlandToLinkedExile { .. }
             | ReturnLinkedExiledCardToOwnersHand
@@ -1065,6 +1070,12 @@ pub(super) fn conflicts(
             | SowerRestrictionInstalledV1 { .. }
             | SowerRestrictionExpiredV1 { .. }
             | SowerRestrictionResolutionV1 { .. }
+            | WildwoodCounterCaptureV1 { .. }
+            | WildwoodTriggerPublishedV1 { .. }
+            | WildwoodTriggerResolvingV1 { .. }
+            | WildwoodTriggerOperationV1 { .. }
+            | WildwoodTriggerClosedV1 { .. }
+            | WildwoodTriggerCounteredV1 { .. }
             | DifferentControllerTargetDepartureV1 { .. }
             | LifeLoss { .. }
             | LifeGain { .. }

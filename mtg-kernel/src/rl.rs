@@ -2064,6 +2064,7 @@ struct PolicyObservationBuildV5<'a> {
 }
 
 fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<ObservationV5> {
+    crate::wildwood_capture_v1::refuse_legacy(request.state)?;
     let PolicyObservationBuildV5 {
         state,
         surface,
@@ -2409,7 +2410,7 @@ fn build_policy_observation_storage_v6(
     request: PolicyObservationBuildV5<'_>,
     accept_life_ward: bool,
 ) -> Result<PolicyObservationStorageV6> {
-    build_policy_observation_storage_common(request, accept_life_ward, false)
+    build_policy_observation_storage_common(request, accept_life_ward, false, false)
 }
 
 pub(crate) fn sower_observation_storage_v1(
@@ -2435,6 +2436,34 @@ pub(crate) fn sower_observation_storage_v1(
         },
         true,
         true,
+        false,
+    )
+}
+
+pub(crate) fn wildwood_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::wildwood_capture_v1::validate_state(state).map_err(RlContractError)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_common(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
+        false,
+        true,
     )
 }
 
@@ -2442,7 +2471,11 @@ fn build_policy_observation_storage_common(
     request: PolicyObservationBuildV5<'_>,
     accept_life_ward: bool,
     accept_cant_block: bool,
+    accept_wildwood: bool,
 ) -> Result<PolicyObservationStorageV6> {
+    if !accept_wildwood {
+        crate::wildwood_capture_v1::refuse_legacy(request.state)?;
+    }
     let PolicyObservationBuildV5 {
         state,
         surface,

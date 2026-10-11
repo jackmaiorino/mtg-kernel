@@ -1592,6 +1592,10 @@ pub enum EffectOp {
     GainControlOfTargetCreatureUntilEndOfTurn {
         target_index: u8,
     },
+    WildwoodCounterFromReceiptV1 {
+        capture_history_index: u64,
+        observer_index: u32,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -7751,6 +7755,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::authority_of_the_consuls_v1::validate_state(state)?;
     crate::soul_shackled_zombie_v1::validate_state(state)?;
     crate::source_power_activation_v1::validate_state(state)?;
+    crate::wildwood_capture_v1::validate_state(state)?;
     squad_rallier_resolution_v1::validate(state)?;
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(());
@@ -18486,6 +18491,14 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                         grant_haste: false,
                     },
                 );
+            }
+        }
+        EffectOp::WildwoodCounterFromReceiptV1 { .. } => {
+            if crate::wildwood_capture_v1::execute(state, ctx, op).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
             }
         }
         EffectOp::PreventTargetBlockingUntilEndOfTurn { target_index } => {

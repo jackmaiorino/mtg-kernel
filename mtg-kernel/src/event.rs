@@ -707,6 +707,26 @@ pub enum CommittedEvent {
         capture_history_index: u64,
         item: crate::state::StackItem,
     },
+    WildwoodCounterCaptureV1 {
+        capture: Box<crate::wildwood_capture_v1::CaptureV1>,
+    },
+    WildwoodTriggerPublishedV1 {
+        item: Box<crate::state::StackItem>,
+    },
+    WildwoodTriggerResolvingV1 {
+        stack_item_id: StackItemId,
+    },
+    WildwoodTriggerOperationV1 {
+        stack_item_id: StackItemId,
+        counter_event_index: Option<usize>,
+    },
+    WildwoodTriggerClosedV1 {
+        stack_item_id: StackItemId,
+        countered: bool,
+    },
+    WildwoodTriggerCounteredV1 {
+        item: Box<crate::state::StackItem>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

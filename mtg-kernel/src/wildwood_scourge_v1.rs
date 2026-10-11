@@ -55,7 +55,7 @@ pub(crate) fn capture_counter_event(state: &mut GameState, event: &CommittedEven
         use crate::card_def::TargetSpec;
         use crate::state::AbilitySourceContractV4;
         use crate::trigger::{PendingTrigger, TriggerCondition};
-        let captures = state
+        let mut captures = state
             .objects
             .iter()
             .filter_map(|(id, object)| {
@@ -97,6 +97,20 @@ pub(crate) fn capture_counter_event(state: &mut GameState, event: &CommittedEven
             })
             .collect::<Vec<_>>();
         if !captures.is_empty() {
+            let contracts = captures
+                .iter()
+                .map(|row| row.source_contract.expect("captured observer"))
+                .collect();
+            let capture_history_index =
+                crate::wildwood_capture_v1::capture(state, event, contracts);
+            for (observer_index, row) in captures.iter_mut().enumerate() {
+                row.effect = EffectOp::WildwoodCounterFromReceiptV1 {
+                    capture_history_index: u64::try_from(capture_history_index)
+                        .expect("history fits transport ordinal"),
+                    observer_index: u32::try_from(observer_index)
+                        .expect("arena observers fit ordinal"),
+                };
+            }
             state
                 .wildwood_waiting_v1
                 .get_or_insert_with(Vec::new)
