@@ -4216,14 +4216,13 @@ pub fn collect_and_process(state: &mut GameState) -> Vec<PendingTrigger> {
     collect_and_process_with_waiting(state, Vec::new())
 }
 
-pub(crate) fn collect_and_process_with_waiting(
-    state: &mut GameState,
-    mut waiting: Vec<PendingTrigger>,
-) -> Vec<PendingTrigger> {
+/// Capture events at their current characteristics without checking SBAs or
+/// placing abilities on the stack. A resolving instruction may cast several
+/// spells; each cast must capture its triggers before the next one changes
+/// spell counts, source membership, or other trigger conditions.
+pub(crate) fn capture_triggers_without_sba(state: &mut GameState) -> Vec<PendingTrigger> {
     crate::engine::refresh_face_down_lookers(state);
-    if state.pending_legend_rule_v1.is_some() {
-        return Vec::new();
-    }
+    let mut waiting = Vec::new();
     match crate::life_gain_turn_v1::take_captures(state) {
         Ok(captures) => waiting.extend(captures),
         Err(source) => {
@@ -4235,12 +4234,10 @@ pub(crate) fn collect_and_process_with_waiting(
         }
     }
     let events: Vec<CommittedEvent> = state.engine.event_log.drain(..).collect();
-    // Single-shot: `engine::resolve_top_of_stack` set this immediately
-    // before the resolution whose events we're about to match, explicitly
-    // (`Some`/`None`) every single time -- taking it here means it can never
-    // carry over into a later, unrelated `collect_and_process` call (see
-    // `EngineState::pending_kicked_source`'s doc).
-    let kicked_source = state.engine.pending_kicked_source.take();
+    // The resolution owner retains this marker until its final checkpoint.
+    // Events are drained once, so keeping it through a partial capture cannot
+    // duplicate any trigger.
+    let kicked_source = state.engine.pending_kicked_source;
     #[cfg(feature = "standard-magezero-fixtures")]
     waiting.extend(crate::standard_keywords_v1::note_life_loss(state, &events));
 
@@ -4250,6 +4247,22 @@ pub(crate) fn collect_and_process_with_waiting(
     // check, so match the pre-SBA batch while its sources still occupy the
     // zones from which their abilities function.
     waiting.extend(triggers_from_events(state, &events, kicked_source));
+    waiting
+}
+
+pub(crate) fn collect_and_process_with_waiting(
+    state: &mut GameState,
+    mut waiting: Vec<PendingTrigger>,
+) -> Vec<PendingTrigger> {
+    if state.pending_legend_rule_v1.is_some() {
+        return Vec::new();
+    }
+    waiting.extend(capture_triggers_without_sba(state));
+    // This checkpoint ends the resolving item's ownership of its kick marker.
+    state.engine.pending_kicked_source = None;
+    if state.engine.halted.is_some() {
+        return Vec::new();
+    }
     let mut new_triggers = waiting;
 
     // Conversely, SBAs can create new trigger events themselves. Lethal

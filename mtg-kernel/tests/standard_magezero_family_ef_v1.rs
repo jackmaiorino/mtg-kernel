@@ -3161,6 +3161,86 @@ fn a_pilot_without_abilities_cannot_supply_the_extra_crew_power() {
 }
 
 #[test]
+fn etali_captures_each_casts_triggers_but_defers_placement_and_sbas() {
+    // An Etali entering without a cast and an Etali following one prior cast
+    // exercise both duplicate-trigger and missed-trigger failure modes.
+    for prior_casts in [0, 1] {
+        let mut state = game();
+        let cutter = put(&mut state, P0, "Cori-Steel Cutter", Zone::Battlefield);
+        let jodah = put(&mut state, P0, "Jodah, the Unifier", Zone::Battlefield);
+        let reliquary = put(&mut state, P0, "Dusk Rose Reliquary", Zone::Hand);
+        let elves = put(&mut state, P1, "Llanowar Elves", Zone::Hand);
+        for card in [reliquary, elves] {
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(card, Zone::Library));
+        }
+        let etali = put(&mut state, P0, "Etali, Primal Conqueror", Zone::Battlefield);
+        state.players[0].spells_cast_this_turn = prior_casts;
+        // Jodah currently gives Etali +2/+2. Sacrificing Jodah for the first
+        // free cast makes this damage lethal, but SBAs must wait for Etali's
+        // entire ability, including its second casting instruction, to finish.
+        assert_eq!(engine::effective_toughness(&state, etali), 9);
+        state.objects.get_mut(etali).damage = 7;
+        for _ in 0..30 {
+            match next(&mut state) {
+                Decision::ChooseEffectTargets {
+                    source,
+                    ref legal_targets,
+                    ..
+                } => {
+                    assert_eq!(source, etali);
+                    assert!(legal_targets.contains(&Target::Object(reliquary)));
+                    assert!(legal_targets.contains(&Target::Object(elves)));
+                    break;
+                }
+                Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+                other => panic!("Etali first free cast: {other:?}"),
+            }
+        }
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(reliquary)),
+        );
+        assert!(
+            matches!(next(&mut state), Decision::ChooseCostTargets { ref candidates, .. }
+            if candidates.contains(&jodah))
+        );
+        act(&mut state, Action::ChooseCostTarget(jodah));
+        assert!(
+            matches!(next(&mut state), Decision::ChooseEffectTargets { source, ref legal_targets, .. }
+            if source == etali && legal_targets == &[Target::Object(elves)])
+        );
+        assert_eq!(state.players[0].spells_cast_this_turn, prior_casts + 1);
+        assert_eq!(state.objects.get(jodah).zone, Zone::Graveyard);
+        assert_eq!(engine::effective_toughness(&state, etali), 7);
+        assert_eq!(state.objects.get(etali).zone, Zone::Battlefield);
+        assert!(state.stack.iter().any(|item| item.source == etali));
+        assert!(!state.stack.iter().any(|item| item.source == cutter));
+        assert!(state.engine.pending_triggers.is_empty());
+        state = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(elves)),
+        );
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        assert_eq!(state.players[0].spells_cast_this_turn, prior_casts + 2);
+        assert_eq!(state.objects.get(etali).zone, Zone::Graveyard);
+        assert!(state.engine.pending_effect.is_none());
+        assert!(!state.stack.iter().any(|item| item.source == etali));
+        assert_eq!(
+            state
+                .stack
+                .iter()
+                .filter(|item| item.source == cutter)
+                .count(),
+            1
+        );
+        assert_eq!(state.stack.last().unwrap().source, cutter);
+        assert_eq!(state.objects.get(reliquary).zone, Zone::Stack);
+        assert_eq!(state.objects.get(elves).zone, Zone::Stack);
+    }
+}
+
+#[test]
 fn etali_free_casts_opponents_spell_then_transforms_and_poison_uses_damage_lki() {
     let mut state = game();
     let foreign = put(&mut state, P1, "Llanowar Elves", Zone::Hand);
