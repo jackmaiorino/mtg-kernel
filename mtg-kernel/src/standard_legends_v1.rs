@@ -666,19 +666,17 @@ pub(crate) fn activate_gwenna_mana(
     source: ObjectId,
     index: u8,
 ) -> Result<bool, String> {
-    if !has_printed_ability(state, source, "Gwenna, Eyes of Gaea") {
-        return Ok(false);
-    }
     let live = state.objects.get(source);
-    let def = &CARD_DEFS[live.card_def as usize];
-    let ability = def
-        .activated_abilities
-        .get(usize::from(index))
-        .ok_or("Gwenna color pair is missing")?;
+    let Some(ability) =
+        crate::engine::resolved_activated_ability(live.card_def, index, state, source)
+    else {
+        return Ok(false);
+    };
     let EffectOp::StandardLegendV1(LegendEffectV1::GwennaMana(first, second)) = (ability.effect)()
     else {
-        return Err("Gwenna mana choice changed definition".into());
+        return Ok(false);
     };
+    let grant = crate::standard_cards_v1::capture_cauldron_grant(state, source, index);
     let link = crate::state::ObjectLinkV4 {
         object: source,
         zone_change_count: live.zone_change_count,
@@ -700,6 +698,9 @@ pub(crate) fn activate_gwenna_mana(
                 source_card_def: card_def,
             },
         );
+    }
+    if let Some(grant) = grant.0 {
+        crate::standard_cards_v1::note_cauldron_activation(state, grant);
     }
     state.engine.priority_passes = [false, false];
     state.engine.mana_ability_activations += 1;

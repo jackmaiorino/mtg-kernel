@@ -86,6 +86,14 @@ pub struct StandardStateV1 {
     /// while that Aegis stays attached, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     aegis_copies: Vec<AegisCopyV1>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    cauldron_uses: Vec<(
+        crate::state::ObjectLinkV4,
+        crate::state::ObjectLinkV4,
+        u16,
+        u32,
+        PlayerId,
+    )>,
     /// Every definition a permanent incarnation has had through an
     /// Assimilation Aegis copy, so its abilities already on the stack stay
     /// valid when the copy starts or ends.
@@ -3663,11 +3671,6 @@ pub(crate) fn end_aegis_copies_before_departure(state: &mut GameState, object: O
 
 const AGATHAS_SOUL_CAULDRON: &str = "Agatha's Soul Cauldron";
 
-/// Granted activated abilities take indices past the host's printed ones
-/// and the Equipment-granted slot: `printed + 1 + card * STRIDE + ability`,
-/// so the exiled card's own ability index survives onto the stack.
-const CAULDRON_GRANT_STRIDE: usize = 8;
-
 /// "{T}: Exile target card from a graveyard."
 pub fn cauldron_exile() -> EffectOp {
     EffectOp::StandardV1(StandardOpV1::ExileTargetCardWithSource)
@@ -3729,32 +3732,92 @@ fn cauldron_exiled_creature_cards(state: &GameState, player: PlayerId) -> Vec<Ob
         .collect()
 }
 
-/// The ability of `card_def` a granted index names, given the host's
-/// printed ability count; only front-face battlefield abilities are
-/// granted.
+/// Front-face battlefield ability, identified independently of its current
+/// position in the host's action list. Simple tap-for-mana abilities use
+/// local slots after the ordinary activated abilities.
 pub(crate) fn cauldron_ability_of(
     card_def: u16,
-    printed: usize,
-    index: u8,
+    local: u16,
 ) -> Option<crate::card_def::ActivatedAbilityDef> {
-    let slot = usize::from(index).checked_sub(printed + 1)?;
-    let ability = *CARD_DEFS
-        .get(card_def as usize)?
-        .activated_abilities
-        .get(slot % CAULDRON_GRANT_STRIDE)?;
-    (ability.activation_zone == Zone::Battlefield
-        && ability.face.is_none_or(|face| face == 0)
-        && !ability.is_loyalty_ability())
-    .then_some(ability)
+    use crate::card_def::{ActivatedAbilityDef, ActivationTargetFilter, CostComponent, TargetSpec};
+    let def = CARD_DEFS.get(card_def as usize)?;
+    if let Some(ability) = def.activated_abilities.get(usize::from(local)) {
+        return (ability.activation_zone == Zone::Battlefield
+            && ability.face.is_none_or(|face| face == 0)
+            && !ability.is_loyalty_ability())
+        .then_some(*ability);
+    }
+    // Double-faced creatures in this catalog have their separate land mana
+    // ability only on the back. An exiled card has its front characteristics.
+    if def.transform_face.is_some() || !def.is_automatic_payment_mana_source() {
+        return None;
+    }
+    let color = *def
+        .mana_ability_choices
+        .get(usize::from(local) - def.activated_abilities.len())?;
+    let effect = match color {
+        ManaColor::W => cauldron_white as fn() -> EffectOp,
+        ManaColor::U => cauldron_blue,
+        ManaColor::B => cauldron_black,
+        ManaColor::R => cauldron_red,
+        ManaColor::G => cauldron_green,
+        ManaColor::C => cauldron_colorless,
+    };
+    Some(ActivatedAbilityDef {
+        cost: &[CostComponent::Tap],
+        target_spec: TargetSpec::None,
+        effect,
+        activation_zone: Zone::Battlefield,
+        sorcery_speed_only: false,
+        activation_target_filter: ActivationTargetFilter::TargetSpecOnly,
+        max_activations_per_turn: None,
+        face: None,
+    })
+}
+fn cauldron_white() -> EffectOp {
+    EffectOp::AddMana {
+        player: PlayerRef::Controller,
+        colors: vec![ManaColor::W],
+    }
+}
+fn cauldron_blue() -> EffectOp {
+    EffectOp::AddMana {
+        player: PlayerRef::Controller,
+        colors: vec![ManaColor::U],
+    }
+}
+fn cauldron_black() -> EffectOp {
+    EffectOp::AddMana {
+        player: PlayerRef::Controller,
+        colors: vec![ManaColor::B],
+    }
+}
+fn cauldron_red() -> EffectOp {
+    EffectOp::AddMana {
+        player: PlayerRef::Controller,
+        colors: vec![ManaColor::R],
+    }
+}
+fn cauldron_green() -> EffectOp {
+    EffectOp::AddMana {
+        player: PlayerRef::Controller,
+        colors: vec![ManaColor::G],
+    }
+}
+fn cauldron_colorless() -> EffectOp {
+    EffectOp::AddMana {
+        player: PlayerRef::Controller,
+        colors: vec![ManaColor::C],
+    }
 }
 
-/// "Creatures you control with +1/+1 counters on them have all activated
-/// abilities of all creature cards exiled with Agatha's Soul Cauldron":
-/// each granted ability of `host` with its index and the exiled card.
+/// Dense actions include every local ability instead of reserving eight
+/// slots per exiled card. Equivalent unrestricted choices need only one
+/// action; restricted abilities retain their separate granting identities.
 pub(crate) fn cauldron_granted_abilities(
     state: &GameState,
     host: ObjectId,
-) -> Vec<(u8, ObjectId, crate::card_def::ActivatedAbilityDef)> {
+) -> Vec<(u8, ObjectId, u16, crate::card_def::ActivatedAbilityDef)> {
     let live = state.objects.get(host);
     if live.zone != Zone::Battlefield
         || live.counters.plus1_plus1 <= 0
@@ -3763,26 +3826,168 @@ pub(crate) fn cauldron_granted_abilities(
         return Vec::new();
     }
     let printed = CARD_DEFS[live.card_def as usize].activated_abilities.len();
-    let mut granted = Vec::new();
-    for (position, card) in cauldron_exiled_creature_cards(state, live.controller)
-        .into_iter()
-        .enumerate()
-    {
-        let card_def = state.objects.get(card).card_def;
-        for local in 0..CARD_DEFS[card_def as usize].activated_abilities.len() {
-            let Ok(index) = u8::try_from(printed + 1 + position * CAULDRON_GRANT_STRIDE + local)
-            else {
-                break;
+    let mut granted: Vec<(u8, ObjectId, u16, crate::card_def::ActivatedAbilityDef)> = Vec::new();
+    for card in cauldron_exiled_creature_cards(state, live.controller) {
+        let donor = state.objects.get(card);
+        let cauldron = donor.v4.exiled_by.expect("exiled with a live Cauldron");
+        if !crate::continuous_characteristics_v1::grant_survives(
+            state,
+            host,
+            state
+                .objects
+                .get(cauldron.object)
+                .v4
+                .layer_timestamp
+                .unwrap_or(0),
+        ) {
+            continue;
+        }
+        let def = &CARD_DEFS[donor.card_def as usize];
+        for local in 0..def.activated_abilities.len() + def.mana_ability_choices.len() {
+            let local = u16::try_from(local).expect("catalog ability count fits u16");
+            let Some(ability) = cauldron_ability_of(donor.card_def, local) else {
+                continue;
             };
-            if local >= CAULDRON_GRANT_STRIDE {
-                break;
+            let once = def.name == "Surge Engine" && local == 2;
+            if !once
+                && ability.max_activations_per_turn.is_none()
+                && granted.iter().any(|(_, _, _, earlier)| {
+                    earlier.max_activations_per_turn.is_none()
+                        && earlier.cost == ability.cost
+                        && earlier.target_spec == ability.target_spec
+                        && earlier.sorcery_speed_only == ability.sorcery_speed_only
+                        && earlier.activation_target_filter == ability.activation_target_filter
+                        && (earlier.effect)() == (ability.effect)()
+                })
+            {
+                continue;
             }
-            if let Some(ability) = cauldron_ability_of(card_def, printed, index) {
-                granted.push((index, card, ability));
-            }
+            let index = u8::try_from(printed + 1 + granted.len())
+                .expect("distinct Cauldron actions exceed the engine action index capacity");
+            assert_ne!(
+                index, 255,
+                "Cauldron action collides with turn-face-up action"
+            );
+            granted.push((index, card, local, ability));
         }
     }
     granted
+}
+
+pub(crate) fn capture_cauldron_grant(
+    state: &GameState,
+    host: ObjectId,
+    index: u8,
+) -> crate::cauldron_grants_v1::CauldronGrantRecordV1 {
+    use crate::cauldron_grants_v1::{CauldronGrantRecordV1, CauldronGrantV1};
+    use crate::state::AbilitySourceContractV4;
+    CauldronGrantRecordV1(
+        cauldron_granted_abilities(state, host)
+            .into_iter()
+            .find(|entry| entry.0 == index)
+            .map(|(_, card, local_index, _)| CauldronGrantV1 {
+                host: AbilitySourceContractV4::capture(state, host),
+                donor: AbilitySourceContractV4::capture(state, card),
+                local_index,
+            }),
+    )
+}
+
+pub(crate) fn cauldron_activation_allowed(
+    state: &GameState,
+    host: ObjectId,
+    donor: ObjectId,
+    local: u16,
+) -> bool {
+    let def = &CARD_DEFS[state.objects.get(donor).card_def as usize];
+    let Some(ability) = cauldron_ability_of(state.objects.get(donor).card_def, local) else {
+        return false;
+    };
+    if !activation_allowed(state, host, def, usize::from(local)) {
+        return false;
+    }
+    let used = state.standard_v1.as_ref().map_or(0, |standard| {
+        standard
+            .cauldron_uses
+            .iter()
+            .filter(|(h, d, i, t, p)| {
+                h.object == host
+                    && h.zone_change_count == state.objects.get(host).zone_change_count
+                    && d.object == donor
+                    && d.zone_change_count == state.objects.get(donor).zone_change_count
+                    && *i == local
+                    && ((def.name == "Surge Engine" && local == 2)
+                        || (*t == state.turn && *p == state.active_player))
+            })
+            .count()
+    });
+    if ability
+        .max_activations_per_turn
+        .is_some_and(|limit| used >= usize::from(limit))
+    {
+        return false;
+    }
+    match (def.name, local) {
+        ("Surge Engine", 1) => {
+            !crate::engine::has_effective_keyword(state, host, Keywords::DEFENDER)
+        }
+        ("Surge Engine", 2) => crate::engine::object_color_mask(state, host) & 2 != 0 && used == 0,
+        ("Hired Claw", 0) => {
+            state.player_lost_life_this_turn_v1(state.objects.get(host).controller.opponent())
+        }
+        _ => true,
+    }
+}
+
+pub(crate) fn note_cauldron_activation(
+    state: &mut GameState,
+    grant: crate::cauldron_grants_v1::CauldronGrantV1,
+) {
+    let host = crate::state::ObjectLinkV4 {
+        object: grant.host.source,
+        zone_change_count: grant.host.zone_change_count,
+    };
+    let donor = crate::state::ObjectLinkV4 {
+        object: grant.donor.source,
+        zone_change_count: grant.donor.zone_change_count,
+    };
+    let turn = state.turn;
+    let active = state.active_player;
+    state
+        .standard_v1
+        .get_or_insert_with(Default::default)
+        .cauldron_uses
+        .push((host, donor, grant.local_index, turn, active));
+}
+
+/// Mana abilities borrowed from the separate legacy mana definition have
+/// the same immediate resolution as a printed tap-for-mana ability.
+pub(crate) fn activate_cauldron_mana(
+    state: &mut GameState,
+    player: PlayerId,
+    source: ObjectId,
+    index: u8,
+) -> bool {
+    let Some(grant) = capture_cauldron_grant(state, source, index).0 else {
+        return false;
+    };
+    let def = &CARD_DEFS[grant.donor.card_def as usize];
+    if usize::from(grant.local_index) < def.activated_abilities.len() {
+        return false;
+    }
+    let Some(ability) = cauldron_ability_of(grant.donor.card_def, grant.local_index) else {
+        return false;
+    };
+    let EffectOp::AddMana { colors, .. } = (ability.effect)() else {
+        return false;
+    };
+    event::propose_and_commit(state, ProposedEvent::tap(source));
+    event::propose_and_commit(state, ProposedEvent::mana_add(player, colors));
+    note_cauldron_activation(state, grant);
+    state.engine.priority_passes = [false, false];
+    state.engine.mana_ability_activations += 1;
+    state.engine.last_mana_ability_activator = Some(player);
+    true
 }
 
 /// "You may spend mana as though it were mana of any color to activate

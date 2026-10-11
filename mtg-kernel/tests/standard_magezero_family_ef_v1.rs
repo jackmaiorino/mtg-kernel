@@ -3036,3 +3036,92 @@ fn twilight_target_admission_uses_cost_reduction_and_taxes() {
         other => panic!("unexpected {other:?}"),
     }
 }
+
+#[test]
+fn cauldron_exposes_all_gwenna_pairs_and_resolves_granted_mana_immediately() {
+    let mut state = game();
+    let cauldron = put(&mut state, P0, "Agatha's Soul Cauldron", Zone::Battlefield);
+    let host = put(&mut state, P0, "Tolarian Terror", Zone::Battlefield);
+    let donor = to_graveyard(&mut state, P0, "Gwenna, Eyes of Gaea");
+    act(&mut state, Action::ActivateAbility(cauldron, 0));
+    drive(&mut state, &[Target::Object(donor), Target::Object(host)]);
+    let choices: Vec<_> = activatable(&mut state)
+        .into_iter()
+        .filter(|(id, _)| *id == host)
+        .collect();
+    assert_eq!(choices.len(), 15);
+    assert!(
+        choices.contains(&(host, 15)),
+        "the fifteenth color pair is offered"
+    );
+    act(&mut state, Action::ActivateAbility(host, 15));
+    assert!(state.stack.is_empty());
+    assert!(state.objects.get(host).tapped);
+    let mana = &state.players[0].restricted_mana_pool.0;
+    assert_eq!(mana.len(), 2);
+    assert!(mana.iter().all(|unit| unit.color == ManaColor::G
+        && unit.restriction
+            == mtg_kernel::card_def::ManaSpendRestrictionDef::CreatureSpellOrCreatureAbility));
+}
+
+#[test]
+fn cauldron_granted_sacrifice_ability_keeps_its_frozen_identity() {
+    let mut state = game();
+    let cauldron = put(&mut state, P0, "Agatha's Soul Cauldron", Zone::Battlefield);
+    let host = put(&mut state, P0, "Tolarian Terror", Zone::Battlefield);
+    let donor = to_graveyard(&mut state, P0, "Bloodtithe Harvester");
+    let victim = put(&mut state, P1, "Gingerbrute", Zone::Battlefield);
+    put(&mut state, P0, "Blood Token", Zone::Battlefield);
+    act(&mut state, Action::ActivateAbility(cauldron, 0));
+    drive(&mut state, &[Target::Object(donor), Target::Object(host)]);
+    act(&mut state, Action::ActivateAbility(host, 1));
+    assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
+    act(&mut state, Action::ChooseTarget(Target::Object(victim)));
+    next(&mut state);
+    assert_eq!(state.objects.get(host).zone, Zone::Graveyard);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(cauldron, Zone::Graveyard),
+    );
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(donor, Zone::Graveyard),
+    );
+    let serialized = serde_json::to_string(&state).unwrap();
+    state = serde_json::from_str(&serialized).unwrap();
+    resolve_stack(&mut state);
+    assert_eq!(state.objects.get(victim).zone, Zone::Graveyard);
+}
+
+#[test]
+fn cauldron_grants_legacy_mana_and_preserves_donor_activation_conditions() {
+    let mut state = game();
+    let cauldron = put(&mut state, P0, "Agatha's Soul Cauldron", Zone::Battlefield);
+    let host = put(&mut state, P0, "Tolarian Terror", Zone::Battlefield);
+    let elves = to_graveyard(&mut state, P0, "Llanowar Elves");
+    act(&mut state, Action::ActivateAbility(cauldron, 0));
+    drive(&mut state, &[Target::Object(elves), Target::Object(host)]);
+    act(&mut state, Action::ActivateAbility(host, 1));
+    assert!(state.stack.is_empty());
+    assert_eq!(state.players[0].mana_pool[ManaColor::G.pool_index()], 1);
+    state.objects.get_mut(host).tapped = false;
+    state.objects.get_mut(cauldron).tapped = false;
+    let surge = to_graveyard(&mut state, P0, "Surge Engine");
+    act(&mut state, Action::ActivateAbility(cauldron, 0));
+    drive(&mut state, &[Target::Object(surge), Target::Object(host)]);
+    state.players[0].mana_pool[ManaColor::G.pool_index()] = 20;
+    // The host is already blue and lacks defender, so both restrictions
+    // inspect its characteristics rather than the exiled card's.
+    let choices = activatable(&mut state);
+    assert!(choices.contains(&(host, 3)) && choices.contains(&(host, 4)));
+    let before = state.players[0].library.len();
+    act(&mut state, Action::ActivateAbility(host, 4));
+    resolve_stack(&mut state);
+    assert_eq!(state.players[0].library.len(), before - 3);
+    assert!(!activatable(&mut state).contains(&(host, 4)));
+    state.turn += 1;
+    assert!(
+        !activatable(&mut state).contains(&(host, 4)),
+        "once only persists across turns"
+    );
+}

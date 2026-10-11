@@ -958,6 +958,11 @@ pub struct PendingActivation {
     pub crew_finished: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loyalty_x: Option<u8>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::cauldron_grants_v1::CauldronGrantRecordV1::is_empty"
+    )]
+    pub cauldron_grant: crate::cauldron_grants_v1::CauldronGrantRecordV1,
 }
 
 impl std::hash::Hash for PendingActivation {
@@ -971,6 +976,7 @@ impl std::hash::Hash for PendingActivation {
         self.target_contracts.hash(hash);
         self.cost_discard_paid.hash(hash);
         self.object_cost_chosen.hash(hash);
+        self.cauldron_grant.hash(hash);
         if self.crew_finished {
             b"crew_finished_v1".hash(hash);
             true.hash(hash);
@@ -8165,15 +8171,14 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
                 out.push((id, 255));
             }
             let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
-            if !def.is_executable()
-                || !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
-            {
+            if !def.is_executable() {
                 continue;
             }
             // Printed activated abilities belong to the front face; no
             // back face in the pool has its own.
             for (i, ability) in def.activated_abilities.iter().enumerate() {
-                if !crate::standard_creatures_v1::activation_allowed(state, id, i)
+                if !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+                    || !crate::standard_creatures_v1::activation_allowed(state, id, i)
                     || ability.activation_zone != zone
                     || !activated_ability_face_active(state, id, ability)
                     || !crate::standard_cards_v1::activation_allowed(state, id, def, i)
@@ -8215,15 +8220,12 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
                 }
                 // Agatha's Soul Cauldron's granted abilities follow
                 // (`standard_cards_v1::cauldron_granted_abilities`).
-                for (index, _, granted) in
+                for (index, donor, local, granted) in
                     crate::standard_cards_v1::cauldron_granted_abilities(state, id)
                 {
-                    if crate::standard_cards_v1::activations_locked(state, id)
-                        || (granted.sorcery_speed_only && !sorcery_speed_timing_ok(player, state))
-                        || granted.max_activations_per_turn.is_some_and(|limit| {
-                            activated_ability_use_count(state, id, u16::from(index))
-                                >= u16::from(limit)
-                        })
+                    if !crate::standard_cards_v1::cauldron_activation_allowed(
+                        state, id, donor, local,
+                    ) || (granted.sorcery_speed_only && !sorcery_speed_timing_ok(player, state))
                     {
                         continue;
                     }
@@ -11312,20 +11314,43 @@ pub(crate) fn validate_pending_activation(
     )
     .ok_or_else(|| "pending activation ability index changed".to_string())?;
     let ability = &ability;
-    if !crate::standard_creatures_v1::activation_allowed(
-        state,
-        pending.source,
-        pending.ability_index as usize,
-    ) {
+    if pending.cauldron_grant
+        != crate::standard_cards_v1::capture_cauldron_grant(
+            state,
+            pending.source,
+            pending.ability_index,
+        )
+    {
+        return Err("pending Cauldron grant changed".into());
+    }
+    if let Some(grant) = pending.cauldron_grant.0 {
+        if !crate::standard_cards_v1::cauldron_activation_allowed(
+            state,
+            pending.source,
+            grant.donor.source,
+            grant.local_index,
+        ) {
+            return Err("Cauldron activation condition is not met".into());
+        }
+    }
+    if pending.cauldron_grant.0.is_none()
+        && !crate::standard_creatures_v1::activation_allowed(
+            state,
+            pending.source,
+            pending.ability_index as usize,
+        )
+    {
         return Err("activation condition is not met".to_string());
     }
     if ability.target_spec != pending.target_spec {
         return Err("pending activation target specification changed".to_string());
     }
-    if ability.max_activations_per_turn.is_some_and(|limit| {
-        activated_ability_use_count(state, pending.source, pending.ability_index as u16)
-            >= u16::from(limit)
-    }) {
+    if pending.cauldron_grant.0.is_none()
+        && ability.max_activations_per_turn.is_some_and(|limit| {
+            activated_ability_use_count(state, pending.source, pending.ability_index as u16)
+                >= u16::from(limit)
+        })
+    {
         return Err("pending activation exceeded its per-turn limit".to_string());
     }
 
@@ -12576,6 +12601,7 @@ pub(crate) fn validated_stack_item_target_spec(
                 source_contract,
                 ability_index,
                 item.v4.granted_by,
+                item.v4.cauldron_grant,
             )?;
             let ability = &ability;
             if item.inline_effect.as_ref() != Some(&(ability.effect)()) {
@@ -12765,6 +12791,7 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
                     source_contract,
                     ability_index,
                     item.v4.granted_by,
+                    item.v4.cauldron_grant,
                 )?;
                 let source_departed = state.objects.try_get(item.source).is_none_or(|live| {
                     live.zone_change_count != source_contract.zone_change_count
@@ -14761,7 +14788,7 @@ fn equipped_granted_activated_ability(
 /// and every later read goes through `resolved_stack_activated_ability`,
 /// never this function -- see that function's doc for why (CR 113.7a: an
 /// activated ability on the stack resolves independently of its source).
-fn resolved_activated_ability(
+pub(crate) fn resolved_activated_ability(
     card_def_idx: u16,
     ability_index: u8,
     state: &GameState,
@@ -14774,8 +14801,8 @@ fn resolved_activated_ability(
     if ability_index as usize != def.activated_abilities.len() {
         return crate::standard_cards_v1::cauldron_granted_abilities(state, source)
             .into_iter()
-            .find(|&(index, _, _)| index == ability_index)
-            .map(|(_, _, ability)| ability);
+            .find(|&(index, _, _, _)| index == ability_index)
+            .map(|(_, _, _, ability)| ability);
     }
     equipped_granted_activated_ability(state, source)
 }
@@ -14807,10 +14834,26 @@ fn resolved_stack_activated_ability(
     host_contract: AbilitySourceContractV4,
     ability_index: u8,
     granted_by: Option<AbilitySourceContractV4>,
+    cauldron: crate::cauldron_grants_v1::CauldronGrantRecordV1,
 ) -> Result<card_def::ActivatedAbilityDef, String> {
     let def = card_def::CARD_DEFS
         .get(host_contract.card_def as usize)
         .ok_or("activated stack item source definition is missing")?;
+    if let Some(grant) = cauldron.0 {
+        if grant.host != host_contract
+            || granted_by != Some(grant.donor)
+            || grant.host.zone != Zone::Battlefield
+            || grant.donor.zone != Zone::Exile
+        {
+            return Err("Cauldron grant has inconsistent frozen provenance".into());
+        }
+        validate_historical_ability_source_contract(state, grant.donor)?;
+        return crate::standard_cards_v1::cauldron_ability_of(
+            grant.donor.card_def,
+            grant.local_index,
+        )
+        .ok_or_else(|| "Cauldron grant lost its definition-owned ability".into());
+    }
     if let Some(ability) = def.activated_abilities.get(ability_index as usize) {
         if granted_by.is_some() {
             return Err(
@@ -14820,17 +14863,7 @@ fn resolved_stack_activated_ability(
         return Ok(*ability);
     }
     if ability_index as usize > def.activated_abilities.len() {
-        let card = granted_by.ok_or("granted activated ability lost its exiled-card provenance")?;
-        validate_historical_ability_source_contract(state, card)?;
-        if card.zone != Zone::Exile || host_contract.zone != Zone::Battlefield {
-            return Err("Cauldron-granted ability provenance is inconsistent".to_string());
-        }
-        return crate::standard_cards_v1::cauldron_ability_of(
-            card.card_def,
-            def.activated_abilities.len(),
-            ability_index,
-        )
-        .ok_or_else(|| "activated stack item carries an out-of-range ability index".to_string());
+        return Err("Cauldron stack item lost frozen ability provenance".into());
     }
     let equipment = granted_by.ok_or("granted activated ability lost its equipment provenance")?;
     validate_historical_ability_source_contract(state, equipment)?;
@@ -15731,7 +15764,8 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
                 return Err(format!("ability {index} on {source} is not activatable by {p:?} right now"));
             }
             if index==255 { return turn_face_up(state,p,source); }
-            if crate::standard_legends_v1::activate_gwenna_mana(state,p,source,index)? {
+            if crate::standard_legends_v1::activate_gwenna_mana(state,p,source,index)?
+                || crate::standard_cards_v1::activate_cauldron_mana(state,p,source,index) {
                 collect_and_queue_triggers(state);
             } else { begin_activation(state, p, source, index); }
             Ok(())
@@ -18261,6 +18295,11 @@ fn begin_activation(state: &mut GameState, player: PlayerId, source: ObjectId, a
         object_cost_chosen: vec![],
         crew_finished: false,
         loyalty_x: None,
+        cauldron_grant: crate::standard_cards_v1::capture_cauldron_grant(
+            state,
+            source,
+            ability_index,
+        ),
     });
 }
 
@@ -18704,7 +18743,9 @@ fn finalize_activation(state: &mut GameState) {
         return;
     }
     let host = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
-    if crate::standard_cards_v1::is_special_action(host, pending.ability_index) {
+    if pending.cauldron_grant.0.is_none()
+        && crate::standard_cards_v1::is_special_action(host, pending.ability_index)
+    {
         // A special action (116.2): no stack object; the activator receives
         // priority again (116.3c).
         crate::standard_cards_v1::special_action(state, pending.source, pending.ability_index);
@@ -18738,16 +18779,26 @@ fn push_paid_activation(
     // `resolved_stack_activated_ability`'s frozen/LKI path instead of
     // re-deriving from live equipment state, so a response that destroys
     // the Equipment or this creature can't halt the ability's resolution.
-    crate::standard_creatures_v1::activation_paid(
-        state,
-        pending.source,
-        pending.ability_index as usize,
-    );
+    if let Some(grant) = pending.cauldron_grant.0 {
+        crate::standard_cards_v1::note_cauldron_activation(state, grant);
+    } else {
+        crate::standard_creatures_v1::activation_paid(
+            state,
+            pending.source,
+            pending.ability_index as usize,
+        );
+    }
     let host_card_def = state.objects.get(pending.source).card_def;
     let printed_len = card_def::CARD_DEFS[host_card_def as usize]
         .activated_abilities
         .len();
-    let (ability, granted_by) = if (pending.ability_index as usize) < printed_len {
+    let (ability, granted_by) = if let Some(grant) = pending.cauldron_grant.0 {
+        (
+            crate::standard_cards_v1::cauldron_ability_of(grant.donor.card_def, grant.local_index)
+                .expect("validated frozen Cauldron ability"),
+            Some(grant.donor),
+        )
+    } else if (pending.ability_index as usize) < printed_len {
         (
             card_def::CARD_DEFS[host_card_def as usize].activated_abilities
                 [pending.ability_index as usize],
@@ -18763,32 +18814,28 @@ fn push_paid_activation(
             Some(AbilitySourceContractV4::capture(state, equipment_id)),
         )
     } else {
-        // An Agatha's Soul Cauldron grant freezes the exiled card it comes
-        // from.
-        let (_, card, ability) =
-            crate::standard_cards_v1::cauldron_granted_abilities(state, pending.source)
-                .into_iter()
-                .find(|&(index, _, _)| index == pending.ability_index)
-                .expect(
-                    "callers validate this ability index resolves before pushing the activation",
-                );
-        (ability, Some(AbilitySourceContractV4::capture(state, card)))
+        panic!("validated activation lost its grant provenance")
     };
     let ability = &ability;
     let source = state.objects.get(pending.source);
-    let ability_source_contract = AbilitySourceContractV4 {
-        source: pending.source,
-        card_def: source.card_def,
-        owner: source.owner,
-        controller: pending.controller,
-        zone: ability.activation_zone,
-        zone_change_count: pending.source_zone_change_count,
-        attached_to: if source.zone_change_count == pending.source_zone_change_count {
-            source.v4.attached_to
-        } else {
-            None
-        },
-    };
+    let ability_source_contract =
+        pending
+            .cauldron_grant
+            .0
+            .map(|grant| grant.host)
+            .unwrap_or(AbilitySourceContractV4 {
+                source: pending.source,
+                card_def: source.card_def,
+                owner: source.owner,
+                controller: pending.controller,
+                zone: ability.activation_zone,
+                zone_change_count: pending.source_zone_change_count,
+                attached_to: if source.zone_change_count == pending.source_zone_change_count {
+                    source.v4.attached_to
+                } else {
+                    None
+                },
+            });
     let mut paid_cost_objects = discarded.clone();
     if counter_removal_cost(ability.cost).is_none() {
         paid_cost_objects.extend(
@@ -18863,6 +18910,7 @@ fn push_paid_activation(
                 },
             ),
             granted_by,
+            cauldron_grant: pending.cauldron_grant,
             ..StackStateV4::default()
         },
     });

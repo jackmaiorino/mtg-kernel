@@ -826,11 +826,16 @@ where
             actor,
             source,
             ability_index,
+            granted_ability,
         } => {
             check_actor(*actor)?;
             core.kind = FlatActionKindV1::ActivateAbility;
             core.ability_index = *ability_index;
             push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+            if let Some((donor, local)) = granted_ability {
+                core.number = i32::from(*local);
+                push_ref(FlatActionRefRoleV1::Card, 0, 0, donor)?;
+            }
         }
         ActionSemanticV1::PlotSpell { actor, source } => {
             check_actor(*actor)?;
@@ -1778,6 +1783,15 @@ fn flat_validate_current_decision_relations_v1(
                     // equipment-granted battlefield ability. The authoritative
                     // origin check below still requires that actual offer.
                     Zone::Battlefield
+                } else if crate::standard_cards_v1::capture_cauldron_grant(
+                    state,
+                    ObjectId(source.arena_id),
+                    *ability_index,
+                )
+                .0
+                .is_some()
+                {
+                    Zone::Battlefield
                 } else {
                     return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
                 };
@@ -2169,6 +2183,7 @@ fn flat_validate_origin_decision_v1(
                             actor,
                             source,
                             ability_index,
+                            ..
                         },
                         PolicyActionV5::Surface(SurfaceAction::Action(Action::ActivateAbility(
                             action,
@@ -13507,6 +13522,7 @@ mod tests {
                 actor,
                 source: a.clone(),
                 ability_index: 7,
+                granted_ability: None,
             },
             ActionSemanticV1::PlotSpell {
                 actor,
@@ -14767,6 +14783,7 @@ mod tests {
                 actor: PlayerSeatV1::P1,
                 source: battlefield_source.clone(),
                 ability_index: 3,
+                granted_ability: None,
             },
         ];
         let mut derived_actions = Vec::new();

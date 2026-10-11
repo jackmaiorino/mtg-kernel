@@ -1152,6 +1152,8 @@ pub enum ActionSemanticV1 {
         actor: PlayerSeatV1,
         source: CardStableRefV1,
         ability_index: u8,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        granted_ability: Option<(CardStableRefV1, u16)>,
     },
     PlotSpell {
         actor: PlayerSeatV1,
@@ -3018,6 +3020,17 @@ fn core_surface_action_candidates_v1(
                                 actor,
                                 source: card_ref(state, id)?,
                                 ability_index,
+                                granted_ability: crate::standard_cards_v1::capture_cauldron_grant(
+                                    state,
+                                    id,
+                                    ability_index,
+                                )
+                                .0
+                                .map(|grant| {
+                                    card_ref(state, grant.donor.source)
+                                        .map(|card| (card, grant.local_index))
+                                })
+                                .transpose()?,
                             }
                         },
                         SurfaceAction::Action(Action::ActivateAbility(id, ability_index)),

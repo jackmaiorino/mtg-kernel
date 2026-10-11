@@ -496,3 +496,5 @@ pub fn run_experimental_burn_net8_packed_cuda_v1() -> Result<(), Box<dyn std::er
 pub fn run_experimental_burn_net8_cuda_train_v1() -> Result<(), Box<dyn std::error::Error>> {
     experimental_burn_net8_packed_v1::run_cuda_training_v1()
 }
+
+pub mod cauldron_grants_v1;

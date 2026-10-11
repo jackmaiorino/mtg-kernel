@@ -1436,6 +1436,11 @@ pub struct StackStateV4 {
     /// every printed, non-granted ability and for spells.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub granted_by: Option<AbilitySourceContractV4>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::cauldron_grants_v1::CauldronGrantRecordV1::is_empty"
+    )]
+    pub cauldron_grant: crate::cauldron_grants_v1::CauldronGrantRecordV1,
     /// Optional additional cost actually paid for this exact cast or the
     /// triggered ability produced by it. Internal cast provenance only;
     /// existing public stack schemas continue to expose the associated

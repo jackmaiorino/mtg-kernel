@@ -370,13 +370,18 @@ pub(super) fn label(
         A::ActivateAbility {
             source,
             ability_index,
+            granted_ability,
             ..
         } => {
             let def = definition(source)?;
-            let ability = def
-                .activated_abilities
-                .get(*ability_index as usize)
-                .ok_or(Error::UnsupportedPrompt)?;
+            let ability = if let Some((donor, local)) = granted_ability {
+                crate::standard_cards_v1::cauldron_ability_of(donor.card_db_id, *local)
+            } else {
+                def.activated_abilities
+                    .get(*ability_index as usize)
+                    .copied()
+            }
+            .ok_or(Error::UnsupportedPrompt)?;
             if ability.activation_zone != source.zone {
                 return Err(Error::UnsupportedPrompt);
             }
