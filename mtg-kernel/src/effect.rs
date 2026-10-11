@@ -25,6 +25,7 @@ mod standard_discard;
 use standard_discard::DiscardDrawChoice;
 mod scavenging_ooze_v1;
 mod standard_exile;
+pub(crate) mod temporary_control_v1;
 use standard_exile::{ExileBatchChoice, ExilePlayChoice, HideawayChoice};
 
 use crate::card_def::{
@@ -21401,4 +21402,3 @@ mod run_away_together_tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 mod divine_variable_targets_tests;
-pub(crate) mod temporary_control_v1;

@@ -322,3 +322,153 @@ fn repeated_cleanup_clears_ordinary_and_restricted_mana_for_both_players() {
         assert_eq!(state.objects.get(target).controller, controller.opponent());
     }
 }
+
+#[test]
+fn accepted_typed_aegis_copy_preserves_employment_target_and_refuses_foreign_or_stale_history() {
+    use crate::state::{AbilitySourceContractV4, ObjectLinkV4};
+    for controller in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state();
+        state.active_player = controller;
+        let source = put(&mut state, controller, "Lightning Bolt", Zone::Hand);
+        let target = put(
+            &mut state,
+            controller.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let original_ctx = ctx(&state, source, controller, target);
+        let attachment = put(
+            &mut state,
+            controller.opponent(),
+            "Viridian Longbow",
+            Zone::Battlefield,
+        );
+        let donor = put(&mut state, controller, "Tolarian Terror", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            event::ProposedEvent::zone_change(donor, Zone::Exile),
+        );
+        let host = ObjectLinkV4 {
+            object: target,
+            zone_change_count: state.objects.get(target).zone_change_count,
+        };
+        state
+            .attach_object_exact(attachment, 0, target, host.zone_change_count)
+            .unwrap();
+        let attachment_source = AbilitySourceContractV4::capture(&state, attachment);
+        let attachment_link = ObjectLinkV4 {
+            object: attachment,
+            zone_change_count: attachment_source.zone_change_count,
+        };
+        state.objects.get_mut(donor).v4.exiled_by = Some(attachment_link);
+        let mut copy_ctx = ExecCtx::no_targets(attachment, controller.opponent());
+        copy_ctx.ability_source_contract = Some(attachment_source);
+        let timestamp = state.objects.get(attachment).v4.layer_timestamp.unwrap();
+        let binding = EffectObjectBinding {
+            object: donor,
+            expected_zone: Zone::Exile,
+            expected_zone_change_count: state.objects.get(donor).zone_change_count,
+        };
+        // Explicitly typed accepted Aegis copy primitive with registered physical
+        // stand-ins. No printed Longbow or Employment definition is changed.
+        assert!(crate::standard_cards_v1::aegis_copy_candidates(
+            &state, &copy_ctx, host, timestamp
+        )
+        .contains(&binding));
+        crate::standard_cards_v1::apply_aegis_copy(&mut state, &copy_ctx, host, timestamp, binding);
+        assert_eq!(
+            state.objects.get(target).card_def,
+            state.objects.get(donor).card_def
+        );
+        assert!(!original_ctx.target_incarnation_matches(0, &state));
+        let original = original_ctx.target_contracts[0];
+        let normalized = normalize_historical_target(&state, original);
+        assert!(crate::engine::target_contract_matches_live(
+            &state,
+            Target::Object(target),
+            normalized
+        ));
+        assert!(crate::state::stack_target_contract_is_structurally_valid(
+            &state,
+            crate::card_def::TargetSpec::Creature,
+            0,
+            Target::Object(target),
+            normalized
+        ));
+        let mut protected = replay(&state);
+        let mut normalized_ctx = original_ctx.clone();
+        normalized_ctx.target_contracts[0] = normalized;
+        execute(
+            &EffectOp::GrantKeywordTargetUntilEndOfTurn {
+                object: ObjectRef::Target(0),
+                keyword: Keywords::PROTECTION_FROM_MONOCOLORED,
+            },
+            &normalized_ctx,
+            &mut protected,
+        );
+        let protected_before = serde_json::to_vec(&protected).unwrap();
+        gain_control(&normalized_ctx, 0, &mut protected);
+        assert_eq!(protected_before, serde_json::to_vec(&protected).unwrap());
+        let mut restored = replay(&state);
+        for current in [&mut state, &mut restored] {
+            let mut context = original_ctx.clone();
+            context.target_contracts[0] = normalize_historical_target(current, original);
+            assert!(context.target_incarnation_matches(0, current));
+            execute(&involuntary_employment_program(), &context, current);
+            assert_eq!(current.objects.get(target).controller, controller);
+            assert!(crate::engine::has_effective_keyword(
+                current,
+                target,
+                Keywords::HASTE
+            ));
+            assert_eq!(
+                current.players[controller.index()]
+                    .battlefield
+                    .iter()
+                    .filter(|id| current.objects.get(**id).name == "Treasure Token")
+                    .count(),
+                1
+            );
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+        for mutate in [0, 1, 2] {
+            let mut forged = original;
+            if let StackTargetContractV4::Object {
+                card_def,
+                owner,
+                zone_change_count,
+                ..
+            } = &mut forged
+            {
+                match mutate {
+                    0 => *card_def = crate::card_def::card_id_by_name("Forest").unwrap(),
+                    1 => *owner = controller,
+                    _ => *zone_change_count += 1,
+                }
+            }
+            assert_eq!(normalize_historical_target(&state, forged), forged);
+            assert!(!crate::engine::target_contract_matches_live(
+                &state,
+                Target::Object(target),
+                forged
+            ));
+        }
+        event::propose_and_commit(
+            &mut state,
+            event::ProposedEvent::zone_change(target, Zone::Hand),
+        );
+        event::propose_and_commit(
+            &mut state,
+            event::ProposedEvent::zone_change(target, Zone::Battlefield),
+        );
+        assert_eq!(normalize_historical_target(&state, original), original);
+        assert!(!crate::engine::target_contract_matches_live(
+            &state,
+            Target::Object(target),
+            original
+        ));
+    }
+}

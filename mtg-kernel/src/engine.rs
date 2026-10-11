@@ -13460,6 +13460,8 @@ pub(crate) fn validated_stack_item_target_spec(
     {
         let contract = if crate::self_reflection_v1::owns_spell(state, item) {
             crate::self_reflection_v1::normalize_historical_target(state, contract)
+        } else if effect::temporary_control_v1::owns_spell(state, item) {
+            effect::temporary_control_v1::normalize_historical_target(state, contract)
         } else {
             contract
         };
@@ -13548,6 +13550,12 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
     for (&target, &contract) in item.targets.iter().zip(&item.v4.target_contracts) {
         let same_incarnation = if crate::self_reflection_v1::owns_spell(state, item) {
             crate::self_reflection_v1::target_matches_live(state, target, contract)
+        } else if effect::temporary_control_v1::owns_spell(state, item) {
+            target_contract_matches_live(
+                state,
+                target,
+                effect::temporary_control_v1::normalize_historical_target(state, contract),
+            )
         } else {
             target_contract_matches_live(state, target, contract)
         };
@@ -13997,7 +14005,17 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         source: item.source,
         controller: item.controller,
         targets: item.targets.clone(),
-        target_contracts: item.v4.target_contracts.clone(),
+        target_contracts: if effect::temporary_control_v1::owns_spell(state, &item) {
+            item.v4
+                .target_contracts
+                .iter()
+                .map(|contract| {
+                    effect::temporary_control_v1::normalize_historical_target(state, *contract)
+                })
+                .collect()
+        } else {
+            item.v4.target_contracts.clone()
+        },
         discarded: item.discarded.clone(),
         paid_cost_refs: item.v4.paid_cost_refs.clone(),
         hidden_ability_source: item.v4.hidden_ability_source,

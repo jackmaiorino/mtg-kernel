@@ -2,10 +2,9 @@
 use super::*;
 use crate::engine::UntilEndOfTurnEffect;
 
-/// The prepared printed recipe stays unregistered; the generator owns its use.
-#[cfg(test)]
-fn involuntary_employment_program() -> EffectOp {
-    EffectOp::Sequence(vec![
+fn printed_program() -> Option<EffectOp> {
+    let token_def = crate::card_def::card_id_by_name("Treasure Token")?;
+    Some(EffectOp::Sequence(vec![
         EffectOp::GainControlOfTargetCreatureUntilEndOfTurn { target_index: 0 },
         EffectOp::UntapObject {
             object: ObjectRef::Target(0),
@@ -15,11 +14,69 @@ fn involuntary_employment_program() -> EffectOp {
             keyword: Keywords::HASTE,
         },
         EffectOp::CreateToken {
-            token_def: crate::card_def::card_id_by_name("Treasure Token")
-                .expect("Treasure Token in CARD_DEFS"),
+            token_def,
             controller: PlayerRef::Controller,
         },
-    ])
+    ]))
+}
+
+/// Only this exact new printed spell accepts accepted copy-history target
+/// definitions. All other spell roots retain their existing validation.
+pub(crate) fn owns_spell(state: &GameState, item: &StackItem) -> bool {
+    item.kind == crate::state::StackItemKind::Spell
+        && item.inline_effect.is_none()
+        && item.mode_chosen == 0
+        && state.objects.try_get(item.source).is_some_and(|source| {
+            crate::card_def::CARD_DEFS
+                .get(usize::from(source.card_def))
+                .is_some_and(|def| {
+                    def.name == "Involuntary Employment"
+                        && def.target_spec == crate::card_def::TargetSpec::Creature
+                        && printed_program().is_some_and(|root| (def.spell_effect)() == Some(root))
+                })
+        })
+}
+
+/// Copying does not change the targeted battlefield incarnation. Historical
+/// definition authority never substitutes a different owner, zone or generation.
+pub(crate) fn normalize_historical_target(
+    state: &GameState,
+    mut contract: StackTargetContractV4,
+) -> StackTargetContractV4 {
+    if let StackTargetContractV4::Object {
+        object,
+        card_def,
+        owner,
+        zone: Zone::Battlefield,
+        zone_change_count,
+        spell_copy_origin,
+        ..
+    } = &mut contract
+    {
+        if let Some(live) = state.objects.try_get(*object) {
+            if live.zone == Zone::Battlefield
+                && live.owner == *owner
+                && live.zone_change_count == *zone_change_count
+                && live.spell_copy_origin == *spell_copy_origin
+                && live.card_def != *card_def
+                && crate::standard_cards_v1::had_card_def(
+                    state,
+                    *object,
+                    *zone_change_count,
+                    *card_def,
+                )
+            {
+                *card_def = live.card_def;
+            }
+        }
+    }
+    contract
+}
+
+/// Registered recipients exercise the recipe as an explicitly typed primitive.
+#[cfg(test)]
+fn involuntary_employment_program() -> EffectOp {
+    printed_program().expect("Treasure Token in CARD_DEFS")
 }
 
 fn transfer(state: &mut GameState, object: ObjectId, controller: PlayerId) {
