@@ -51,14 +51,13 @@ pub(super) fn execute(ctx: &ExecCtx, state: &mut GameState) {
         live.zone == Zone::Battlefield
             && live.zone_change_count == source.zone_change_count
             && live.owner == source.owner
-    }) {
-        if event::add_plus_one_counters(state, source.source, ctx.controller, 1).is_err() {
-            state.engine.halted = Some((
-                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                ctx.source,
-            ));
-            return;
-        }
+    }) && event::add_plus_one_counters(state, source.source, ctx.controller, 1).is_err()
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
     }
     event::propose_and_commit(state, ProposedEvent::life_gain(ctx.controller, 1));
 }
