@@ -310,6 +310,11 @@ mod tests {
                 "schema": "flat-v6-native-python-parity-1",
                 "feature_contract_digest": FEATURE_CONTRACT_DIGEST_V6,
                 "feature_encoding_digest": FEATURE_ENCODING_DIGEST_V6,
+                "feature_schema_version": FEATURE_SCHEMA_VERSION_V6,
+                "feature_registry_version": FEATURE_REGISTRY_VERSION_V6,
+                "features_source_sha256": FEATURES_SOURCE_SHA256_V6,
+                "feature_descriptor_sha256": FEATURE_DESCRIPTOR_SHA256_V6,
+                "model_contract_version": MODEL_CONTRACT_VERSION_V6,
                 "cases": cases
             });
             let mut file = std::fs::OpenOptions::new()

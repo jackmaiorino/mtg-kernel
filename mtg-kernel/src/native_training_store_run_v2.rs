@@ -7785,6 +7785,25 @@ mod tests {
         sha256_hex(&bytes)
     }
 
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        feature = "standard-magezero-fixtures"
+    ))]
+    #[test]
+    fn combined_catalog_is_not_admitted_as_a_limited_training_profile() {
+        let (card_hash, catalog_hash) = live_catalog_build_identity_v1();
+        assert_eq!(
+            classify_catalog_profile_from_identity_v1(&card_hash, &catalog_hash)
+                .unwrap_err()
+                .kind(),
+            TrainRunV2ErrorKind::InvalidLiteral
+        );
+        assert_eq!(
+            decode_train_run_v2(&fixture_bytes()).unwrap_err().kind(),
+            TrainRunV2ErrorKind::InvalidLiteral
+        );
+    }
+
     #[test]
     fn valid_fixture_roundtrips_and_exposes_authority() {
         let bytes = fixture_bytes();

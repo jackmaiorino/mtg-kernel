@@ -12,6 +12,30 @@ from mtg_kernel_rl import features_v9 as features
 import torch
 
 
+def assert_identity(artifact: dict) -> dict:
+    descriptor_path = Path(__file__).resolve().parents[2] / "data/flat_policy_v6/feature_contract_v6.json"
+    descriptor_raw = descriptor_path.read_bytes()
+    descriptor = json.loads(descriptor_raw)
+    expected = {
+        "feature_schema_version": features.FEATURE_SCHEMA_VERSION,
+        "feature_registry_version": features.FEATURE_REGISTRY_VERSION,
+        "feature_contract_digest": features.feature_contract_fingerprint(),
+        "feature_encoding_digest": features.encoding_contract_fingerprint(),
+        "features_source_sha256": hashlib.sha256(Path(features.__file__).read_bytes()).hexdigest(),
+        "feature_descriptor_sha256": hashlib.sha256(descriptor_raw).hexdigest(),
+        "model_contract_version": features.MODEL_CONTRACT_VERSION,
+    }
+    for field, value in expected.items():
+        if artifact.get(field) != value:
+            raise SystemExit(f"Native identity differs: {field}")
+        if field != "feature_descriptor_sha256" and descriptor.get(field) != value:
+            raise SystemExit(f"Descriptor identity differs: {field}")
+    predecessor_hash = hashlib.sha256(Path(features.predecessor.__file__).read_bytes()).hexdigest()
+    if descriptor.get("predecessor_source_sha256") != predecessor_hash:
+        raise SystemExit("Descriptor predecessor source differs")
+    return expected
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("path", type=Path)
@@ -22,10 +46,7 @@ def main() -> None:
     artifact = json.loads(raw)
     if artifact["schema"] != "flat-v6-native-python-parity-1":
         raise SystemExit("Unexpected parity schema")
-    if artifact["feature_contract_digest"] != features.feature_contract_fingerprint():
-        raise SystemExit("Feature contract differs")
-    if artifact["feature_encoding_digest"] != features.encoding_contract_fingerprint():
-        raise SystemExit("Feature encoding differs")
+    identity = assert_identity(artifact)
     names = [case["name"] for case in artifact["cases"]]
     expected_names = {f"declared_cleared_p{declarer}_observer_p{actor}"
                       for declarer in (0, 1) for actor in (0, 1)}
@@ -52,9 +73,7 @@ def main() -> None:
     receipt = {"schema": "flat-v6-native-python-parity-receipt-1", "result": "pass",
                "cases": names, "tensor_groups_per_case": len(fields), "elements": elements,
                "artifact_sha256": hashlib.sha256(raw).hexdigest(),
-               "features_source_sha256": hashlib.sha256(Path(features.__file__).read_bytes()).hexdigest(),
-               "feature_contract_digest": features.feature_contract_fingerprint(),
-               "feature_encoding_digest": features.encoding_contract_fingerprint(),
+               **identity,
                "python": sys.version, "torch": torch.__version__,
                "scope": "Real engine declarations followed by explicit cleared-combat fixture projections, both declaring and observing seats. Encoding parity does not admit cards, models, training or strength."}
     with args.receipt.open("x", encoding="utf-8") as handle:
