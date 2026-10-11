@@ -249,6 +249,8 @@ pub enum TriggerCondition {
     /// This source or another creature it controlled dies. Captured before
     /// commitment, including all observers in a simultaneous death batch.
     ThisOrControlledCreatureDies,
+    /// Controller end step with an intervening successful-declaration Raid gate.
+    BeginningControllerEndStepAfterControllerAttackedThisTurn,
 }
 
 pub struct TriggeredAbilityDef {
@@ -1541,6 +1543,23 @@ fn skyship_buccaneer_effect() -> EffectOp {
 const SKYSHIP_BUCCANEER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::EtbAfterControllerAttackedThisTurn,
     ..etb_trigger(skyship_buccaneer_effect)
+}];
+
+pub(crate) fn searslicer_goblin_effect() -> EffectOp {
+    EffectOp::Conditional {
+        cond: EffectCond::ControllerAttackedThisTurn,
+        then: Box::new(EffectOp::CreateToken {
+            token_def: crate::card_def::card_id_by_name("Goblin Token")
+                .expect("Goblin Token in CARD_DEFS"),
+            controller: PlayerRef::Controller,
+        }),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    }
+}
+
+const SEARSLICER_GOBLIN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningControllerEndStepAfterControllerAttackedThisTurn,
+    ..etb_trigger(searslicer_goblin_effect)
 }];
 
 fn ruby_daring_tracker_effect() -> EffectOp {
@@ -3381,6 +3400,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Nessian Hornbeetle" => &NESSIAN_HORNBEETLE_TRIGGERS,
         "Micromancer" => &MICROMANCER_TRIGGERS,
         "Skyship Buccaneer" => &SKYSHIP_BUCCANEER_TRIGGERS,
+        "Searslicer Goblin" => &SEARSLICER_GOBLIN_TRIGGERS,
         "Ruby, Daring Tracker" => &RUBY_DARING_TRACKER_TRIGGERS,
         "Courageous Goblin" => &COURAGEOUS_GOBLIN_TRIGGERS,
         "Webweaver Changeling" => &WEBWEAVER_CHANGELING_TRIGGERS,
@@ -5604,6 +5624,10 @@ fn trigger_matches(
             TriggerCondition::BeginningControllerEndStep,
             CommittedEvent::BeginningEndStep { active_player, .. },
         ) => *active_player == controller,
+        (
+            TriggerCondition::BeginningControllerEndStepAfterControllerAttackedThisTurn,
+            CommittedEvent::BeginningEndStep { active_player, .. },
+        ) => *active_player == controller && state.player_attacked_this_turn_v1(controller),
         (TriggerCondition::BeginningEndStepAfterWarp, CommittedEvent::BeginningEndStep { .. }) => {
             state.objects.get(source).v4.warped_v1
         }
@@ -6171,6 +6195,14 @@ const KELLAN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::DealsCombatDamageToPlayer,
     ..etb_trigger(kellan_impulse_effect)
 }];
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "searslicer_goblin_tests.rs"]
+mod searslicer_goblin_tests;
 
 #[cfg(test)]
 mod tests {
