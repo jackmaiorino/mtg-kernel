@@ -437,7 +437,8 @@ mod tests {
         state
     }
     fn put(state: &mut GameState, name: &str, zone: Zone) -> ObjectId {
-        let def = card_def::card_id_by_name(name).unwrap_or_else(|| panic!("missing fixture {name}"));
+        let def =
+            card_def::card_id_by_name(name).unwrap_or_else(|| panic!("missing fixture {name}"));
         let object = state.objects.push(crate::state::GameObject {
             card_def: def,
             name: card_def::CARD_DEFS[def as usize].object_name.into(),

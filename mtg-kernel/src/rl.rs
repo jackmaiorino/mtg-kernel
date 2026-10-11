@@ -6298,10 +6298,15 @@ fn validate_linked_exile_records_public_v4(state: &GameState) -> Result<()> {
         let hand_exile = crate::effect::linked_hand_exile_kind(record.source.card_def).is_some();
         if record.source.zone != Zone::Battlefield
             || (record.source.attached_to.is_some()
-                && !definition.subtypes.contains(&crate::card_def::Subtype::Aura))
+                && !definition
+                    .subtypes
+                    .contains(&crate::card_def::Subtype::Aura))
             || !(until_leaves
                 || hand_exile
-                || matches!(definition.name, "Journey to Nowhere" | "Lagrella, the Magpie"))
+                || matches!(
+                    definition.name,
+                    "Journey to Nowhere" | "Lagrella, the Magpie"
+                ))
             || state.engine.linked_exile_records[..index]
                 .iter()
                 .any(|other| {
