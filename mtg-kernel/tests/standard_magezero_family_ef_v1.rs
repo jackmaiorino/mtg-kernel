@@ -2893,3 +2893,60 @@ fn bankbuster_last_charge_creates_tokens_even_if_source_leaves_in_response() {
     assert_eq!(battlefield_named(&state, P0, "Pilot").len(), 1);
     assert_eq!(battlefield_named(&state, P0, "Treasure").len(), 1);
 }
+
+#[test]
+fn etali_free_casts_opponents_spell_then_transforms_and_poison_uses_damage_lki() {
+    let mut state = game();
+    let foreign = put(&mut state, P1, "Llanowar Elves", Zone::Hand);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(foreign, Zone::Library),
+    );
+    let etali = put(&mut state, P0, "Etali, Primal Conqueror", Zone::Battlefield);
+    let mut offered = false;
+    for _ in 0..30 {
+        match next(&mut state) {
+            Decision::ChooseEffectTargets {
+                ref legal_targets, ..
+            } => {
+                assert!(legal_targets.contains(&Target::Object(foreign)));
+                act(
+                    &mut state,
+                    Action::ChooseEffectTarget(Target::Object(foreign)),
+                );
+                offered = true;
+            }
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => break,
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            Decision::OrderTriggers { pending, .. } => act(
+                &mut state,
+                Action::OrderTriggers((0..pending.len()).collect()),
+            ),
+            other => panic!("Etali free cast: {other:?}"),
+        }
+    }
+    assert!(offered);
+    assert_eq!(state.objects.get(foreign).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(foreign).controller, P0);
+    assert_eq!(state.objects.get(foreign).owner, P1);
+    state.players[0].mana_pool[ManaColor::G.pool_index()] = 10;
+    act(&mut state, Action::ActivateAbility(etali, 0));
+    resolve_stack(&mut state);
+    assert_eq!(state.objects.get(etali).v4.face_index, 1);
+    assert_eq!(engine::effective_power(&state, etali), 11);
+    assert!(engine::has_effective_keyword(
+        &state,
+        etali,
+        Keywords::INDESTRUCTIBLE
+    ));
+    let generation = state.objects.get(etali).zone_change_count;
+    event::log_combat_damage_to_player(&mut state, etali, generation, P1, 4);
+    next(&mut state);
+    assert_eq!(
+        state.players[1].poison_counters.0, 0,
+        "poison is a triggered ability"
+    );
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(etali, Zone::Exile));
+    resolve_stack(&mut state);
+    assert_eq!(state.players[1].poison_counters.0, 4);
+}

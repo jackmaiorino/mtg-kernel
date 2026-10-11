@@ -615,8 +615,9 @@ fn record_counter_lki(state: &mut GameState, object: ObjectId) {
         return;
     }
     let mut entries = state.counter_lki_v1.take().unwrap_or_default();
-    entries.retain(|entry| entry.source.object != object
-        || entry.source.zone_change_count != live.zone_change_count);
+    entries.retain(|entry| {
+        entry.source.object != object || entry.source.zone_change_count != live.zone_change_count
+    });
     let extras = crate::standard_creatures_v1::CounterExtrasV1 {
         lifelink: live.v4.lifelink_keyword_counters,
         time: live.v4.time_counters_v1,

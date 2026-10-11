@@ -509,6 +509,11 @@ pub enum StandardOpV1 {
     BankbusterAfterDraw,
     KaitoEmblem,
     DrawIfOpponentLostLifeThisTurn,
+    BindEtaliPoison,
+    EtaliPoison {
+        player: PlayerId,
+        amount: u16,
+    },
 }
 
 impl StandardOpV1 {
@@ -645,6 +650,14 @@ fn transform_resolving_source(ctx: &ExecCtx, state: &mut GameState) {
 
 pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        StandardOpV1::BindEtaliPoison => {}
+        StandardOpV1::EtaliPoison { player, amount } => {
+            let count = scale_counters(state, *player, i32::from(*amount)).max(0) as u16;
+            state.players[player.index()].poison_counters.0 = state.players[player.index()]
+                .poison_counters
+                .0
+                .saturating_add(count);
+        }
         StandardOpV1::KaitoEmblem => {
             let counts = state
                 .standard_v1
@@ -1243,6 +1256,13 @@ const CECIL_TRIGGERS: [TriggeredAbilityDef; 2] = [
 pub(crate) fn materialize_event(effect: &EffectOp, event: &CommittedEvent) -> Option<EffectOp> {
     match (effect, event) {
         (
+            EffectOp::StandardV1(StandardOpV1::BindEtaliPoison),
+            CommittedEvent::CombatDamageToPlayer { player, amount, .. },
+        ) => Some(EffectOp::StandardV1(StandardOpV1::EtaliPoison {
+            player: *player,
+            amount: u16::try_from(*amount).unwrap_or(0),
+        })),
+        (
             EffectOp::StandardV1(StandardOpV1::BindCecilDarkness),
             CommittedEvent::Damage { amount, .. },
         ) => Some(EffectOp::StandardV1(StandardOpV1::CecilDarkness {
@@ -1263,6 +1283,9 @@ pub(crate) fn template_matches(template: &EffectOp, effect: &EffectOp) -> bool {
     matches!(
         (template, effect),
         (
+            EffectOp::StandardV1(StandardOpV1::BindEtaliPoison),
+            EffectOp::StandardV1(StandardOpV1::EtaliPoison { .. })
+        ) | (
             EffectOp::StandardV1(StandardOpV1::BindCecilDarkness),
             EffectOp::StandardV1(StandardOpV1::CecilDarkness { .. }),
         ) | (
@@ -1711,6 +1734,7 @@ pub(crate) fn mana_abilities_active(state: &GameState, object: ObjectId, def: &C
 /// Triggered abilities of this module's cards, by registry name.
 pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
+        "Etali, Primal Conqueror" => &ETALI_TRIGGERS,
         "Subterranean Schooner" => &SCHOONER_TRIGGERS,
         "Spring-Loaded Sawblades" => &SAWBLADES_TRIGGERS,
         "Teferi, Temporal Pilgrim" => &TEFERI_TRIGGERS,
@@ -1746,7 +1770,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
 /// of single-faced cards report face 0.
 pub(crate) fn trigger_face(name: &str, ability_index: usize) -> u8 {
     match (name, ability_index) {
-        (CECIL, 1) | (POLUKRANOS, 0) | (CLAY_FIRED_BRICKS, 1) => 1,
+        ("Etali, Primal Conqueror", 1) | (CECIL, 1) | (POLUKRANOS, 0) | (CLAY_FIRED_BRICKS, 1) => 1,
         _ => 0,
     }
 }
@@ -3836,3 +3860,21 @@ pub(crate) fn ninjutsu_target(
         .find(|(id, _)| *id == stack)
         .map(|(_, target)| *target)
 }
+
+fn etali_exile_cast() -> EffectOp {
+    EffectOp::ExileUntilThenCastV1 {
+        players: vec![PlayerRef::Controller, PlayerRef::Opponent],
+        predicate: crate::effect::ExileCastPredicateV1::Nonland,
+        return_rest_to_bottom: false,
+    }
+}
+fn etali_poison() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::BindEtaliPoison)
+}
+const ETALI_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    trigger(TriggerCondition::Etb, etali_exile_cast),
+    TriggeredAbilityDef {
+        face_index: 1,
+        ..trigger(TriggerCondition::DealsCombatDamageToPlayer, etali_poison)
+    },
+];

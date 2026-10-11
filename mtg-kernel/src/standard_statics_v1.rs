@@ -43,11 +43,23 @@ pub(crate) fn conditional_self_keywords(state: &GameState, id: ObjectId) -> Keyw
         }
         // "This creature has first strike during your turn."
         "Razorkin Needlehead" if state.active_player == controller => Keywords::FIRST_STRIKE,
-        "Essence Channeler" if state.player_lost_life_this_turn_v1(controller) => Keywords(Keywords::FLYING.0 | Keywords::VIGILANCE.0),
-        "Teething Wurmlet" if state.objects.iter().filter(|(object_id, object)| {
-            object.zone == Zone::Battlefield && object.controller == controller
-                && crate::engine::object_has_type(state, *object_id, CardType::Artifact)
-        }).count() >= 3 => Keywords::DEATHTOUCH,
+        "Essence Channeler" if state.player_lost_life_this_turn_v1(controller) => {
+            Keywords(Keywords::FLYING.0 | Keywords::VIGILANCE.0)
+        }
+        "Teething Wurmlet"
+            if state
+                .objects
+                .iter()
+                .filter(|(object_id, object)| {
+                    object.zone == Zone::Battlefield
+                        && object.controller == controller
+                        && crate::engine::object_has_type(state, *object_id, CardType::Artifact)
+                })
+                .count()
+                >= 3 =>
+        {
+            Keywords::DEATHTOUCH
+        }
         // "As long as this creature has three or more counters on it, it has
         // flying and vigilance."
         "Warden of the Inner Sky" if total_counters(state, id) >= 3 => {
@@ -400,8 +412,12 @@ pub(crate) enum StandardStaticV1 {
 /// (`reads_counter_lki`) has an entry.
 pub(crate) fn rules_vector_statics(name: &str) -> &'static [StandardStaticV1] {
     match name {
-        "Teething Wurmlet" => &[StandardStaticV1::ConditionalSelfKeywords(Keywords::DEATHTOUCH)],
-        "Essence Channeler" => &[StandardStaticV1::ConditionalSelfKeywords(Keywords(Keywords::FLYING.0 | Keywords::VIGILANCE.0))],
+        "Teething Wurmlet" => &[StandardStaticV1::ConditionalSelfKeywords(
+            Keywords::DEATHTOUCH,
+        )],
+        "Essence Channeler" => &[StandardStaticV1::ConditionalSelfKeywords(Keywords(
+            Keywords::FLYING.0 | Keywords::VIGILANCE.0,
+        ))],
         "Razorkin Needlehead" => &[StandardStaticV1::ConditionalSelfKeywords(
             Keywords::FIRST_STRIKE,
         )],

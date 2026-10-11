@@ -718,15 +718,36 @@ pub struct CounterDistributionPublicV1 {
     pub amounts: Vec<u32>,
 }
 
-fn public_counter_transfer(state: &GameState, effect: Option<&crate::effect::EffectOp>, source: Option<crate::state::AbilitySourceContractV4>) -> Option<crate::standard_creatures_v1::CounterTransferV1> {
+fn public_counter_transfer(
+    state: &GameState,
+    effect: Option<&crate::effect::EffectOp>,
+    source: Option<crate::state::AbilitySourceContractV4>,
+) -> Option<crate::standard_creatures_v1::CounterTransferV1> {
     let source = source?;
-    matches!(effect?, crate::effect::EffectOp::CreatureUpgrade(crate::standard_creatures_v1::CreatureEffectV1::EssenceTransferCounters))
-        .then(|| crate::standard_creatures_v1::counter_transfer_snapshot(state, source))
+    matches!(
+        effect?,
+        crate::effect::EffectOp::CreatureUpgrade(
+            crate::standard_creatures_v1::CreatureEffectV1::EssenceTransferCounters
+        )
+    )
+    .then(|| crate::standard_creatures_v1::counter_transfer_snapshot(state, source))
 }
 
-fn public_counter_distribution(effect: Option<&crate::effect::EffectOp>, targets: Vec<TargetRefV1>) -> Option<CounterDistributionPublicV1> {
-    let crate::effect::EffectOp::DistributePlusOneCounters { total, allocations, .. } = effect? else { return None; };
-    Some(CounterDistributionPublicV1 { total: *total, targets, amounts: allocations.clone() })
+fn public_counter_distribution(
+    effect: Option<&crate::effect::EffectOp>,
+    targets: Vec<TargetRefV1>,
+) -> Option<CounterDistributionPublicV1> {
+    let crate::effect::EffectOp::DistributePlusOneCounters {
+        total, allocations, ..
+    } = effect?
+    else {
+        return None;
+    };
+    Some(CounterDistributionPublicV1 {
+        total: *total,
+        targets,
+        amounts: allocations.clone(),
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -6527,7 +6548,9 @@ fn exile_play_permissions_public_v2(state: &GameState) -> Result<Vec<ExilePlayPe
             zone_change_generation: perm.zone_change_generation,
             expiry: match perm.expiry {
                 PlayPermissionExpiry::EndOfTurn => PlayPermissionExpiryV2::EndOfTurn,
-                PlayPermissionExpiry::UntilHoldersNextEndStep => PlayPermissionExpiryV2::UntilHoldersNextEndStep,
+                PlayPermissionExpiry::UntilHoldersNextEndStep => {
+                    PlayPermissionExpiryV2::UntilHoldersNextEndStep
+                }
                 PlayPermissionExpiry::UntilHoldersNextTurn {
                     holder_turn_started,
                 } => PlayPermissionExpiryV2::UntilHoldersNextTurn {
@@ -6778,9 +6801,19 @@ fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<Engin
                         PendingTriggerKindV2::TriggeredAbility
                     },
                     kicked: p.kicked,
-                    counter_transfer: public_counter_transfer(state, Some(&p.effect), p.source_contract),
-                    counter_distribution: public_counter_distribution(Some(&p.effect),
-                        p.targets.iter().copied().map(|target| target_ref(state, target)).collect::<Result<Vec<_>>>()?),
+                    counter_transfer: public_counter_transfer(
+                        state,
+                        Some(&p.effect),
+                        p.source_contract,
+                    ),
+                    counter_distribution: public_counter_distribution(
+                        Some(&p.effect),
+                        p.targets
+                            .iter()
+                            .copied()
+                            .map(|target| target_ref(state, target))
+                            .collect::<Result<Vec<_>>>()?,
+                    ),
                 })
             })
             .collect::<Result<Vec<_>>>()?,
@@ -7536,8 +7569,15 @@ fn stack_item_public_v2(
         face_index: item.v4.face_index,
         x_value: item.v4.x_value,
         paid_cost_refs: paid_cost_card_refs(&item.v4.paid_cost_refs, acting_player),
-        counter_transfer: public_counter_transfer(state, item.inline_effect.as_ref(), item.v4.ability_source_contract),
-        counter_distribution: public_counter_distribution(item.inline_effect.as_ref(), stack_target_refs(state, item)?),
+        counter_transfer: public_counter_transfer(
+            state,
+            item.inline_effect.as_ref(),
+            item.v4.ability_source_contract,
+        ),
+        counter_distribution: public_counter_distribution(
+            item.inline_effect.as_ref(),
+            stack_target_refs(state, item)?,
+        ),
     })
 }
 

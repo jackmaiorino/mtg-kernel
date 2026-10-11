@@ -3175,8 +3175,14 @@ enum AbilityEffectRecipe {
     /// Foundry and the Restless lands).
     AnimateSource,
     CreatureUpgrade(&'static str),
-    DrawThenLoseLife { draw: u8, life: u8 },
-    ImpulseDraw { count: u8, duration: &'static str },
+    DrawThenLoseLife {
+        draw: u8,
+        life: u8,
+    },
+    ImpulseDraw {
+        count: u8,
+        duration: &'static str,
+    },
     /// Target(0) gets a fixed +power/+toughness until end of turn.
     PumpTargetUntilEndOfTurn {
         power: i8,
@@ -4066,13 +4072,19 @@ fn keywords_for(card: &CardJson) -> String {
     }
     match card.name.as_str() {
         "Faerie Dreamthief" => keywords.push("Keywords::FLYING"),
-        "Surrak, Elusive Hunter" => keywords.push("Keywords::TRAMPLE"),
+        "Surrak, Elusive Hunter" | "Etali, Primal Conqueror" => keywords.push("Keywords::TRAMPLE"),
         "Preacher of the Schism" => keywords.push("Keywords::DEATHTOUCH"),
         "Vampire Token" => keywords.push("Keywords::LIFELINK"),
         "Knight Vigilance Token" => keywords.push("Keywords::VIGILANCE"),
         "Mosswood Dreadknight" => keywords.push("Keywords::TRAMPLE"),
-        "Brightglass Gearhulk" => { keywords.push("Keywords::FIRST_STRIKE"); keywords.push("Keywords::TRAMPLE"); }
-        "Floodpits Drowner" => { keywords.push("Keywords::FLASH"); keywords.push("Keywords::VIGILANCE"); }
+        "Brightglass Gearhulk" => {
+            keywords.push("Keywords::FIRST_STRIKE");
+            keywords.push("Keywords::TRAMPLE");
+        }
+        "Floodpits Drowner" => {
+            keywords.push("Keywords::FLASH");
+            keywords.push("Keywords::VIGILANCE");
+        }
         "Gingerbrute" => keywords.push("Keywords::HASTE"),
         "Surge Engine" => keywords.push("Keywords::DEFENDER"),
         "Spyglass Siren" => keywords.push("Keywords::FLYING"),
@@ -6163,9 +6175,15 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
                     .collect::<String>()
             )
         }
-        AbilityEffectRecipe::DrawThenLoseLife { draw, life } => format!("ability_effect_draw_{draw}_lose_life_{life}"),
-        AbilityEffectRecipe::ImpulseDraw { count, duration } => format!("ability_effect_impulse_{count}_{duration}"),
-        AbilityEffectRecipe::CreatureUpgrade(kind) => format!("ability_effect_creature_upgrade_{kind}"),
+        AbilityEffectRecipe::DrawThenLoseLife { draw, life } => {
+            format!("ability_effect_draw_{draw}_lose_life_{life}")
+        }
+        AbilityEffectRecipe::ImpulseDraw { count, duration } => {
+            format!("ability_effect_impulse_{count}_{duration}")
+        }
+        AbilityEffectRecipe::CreatureUpgrade(kind) => {
+            format!("ability_effect_creature_upgrade_{kind}")
+        }
         AbilityEffectRecipe::AnimateSource => "ability_effect_animate_source".to_string(),
         AbilityEffectRecipe::PumpTargetUntilEndOfTurn { power, toughness } => format!(
             "ability_effect_pump_target_{}_{}",
@@ -6408,10 +6426,19 @@ fn adventure_for(name: &str) -> String {
 
 fn adventure_effect_recipe_for(name: &str) -> Option<AbilityEffectRecipe> {
     match name {
-        "Questing Druid" => Some(AbilityEffectRecipe::ImpulseDraw { count: 2, duration: "UntilOwnersNextEndStep" }),
+        "Questing Druid" => Some(AbilityEffectRecipe::ImpulseDraw {
+            count: 2,
+            duration: "UntilOwnersNextEndStep",
+        }),
         "Mosswood Dreadknight" => Some(AbilityEffectRecipe::DrawThenLoseLife { draw: 1, life: 1 }),
-        "Imodane's Recruiter" => Some(AbilityEffectRecipe::CreateTokens { token: "Knight Vigilance Token", count: 2 }),
-        "Virtue of Loyalty" => Some(AbilityEffectRecipe::CreateTokens { token: "Knight Vigilance Token", count: 1 }),
+        "Imodane's Recruiter" => Some(AbilityEffectRecipe::CreateTokens {
+            token: "Knight Vigilance Token",
+            count: 2,
+        }),
+        "Virtue of Loyalty" => Some(AbilityEffectRecipe::CreateTokens {
+            token: "Knight Vigilance Token",
+            count: 1,
+        }),
         "Fang Dragon" => Some(AbilityEffectRecipe::DamageAllCreatures {
             amount: 1,
             filter: CreatureEffectFilterRecipe::OpponentControlled,
@@ -10341,7 +10368,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Dog" => "Subtype::Dog",
         "Ox" => "Subtype::Ox",
         "Llama" => "Subtype::Llama",
-        "God" => "Subtype::God",
+        "Elder" => "Subtype::Elder",
         "Horror" => "Subtype::Horror",
         "Nightmare" => "Subtype::Nightmare",
         "Clue" => "Subtype::Clue",

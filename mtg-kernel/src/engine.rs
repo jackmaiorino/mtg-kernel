@@ -1953,13 +1953,21 @@ fn validate_physical_spell_cast_origin(
                 && cast_method == CastMethodV4::Normal
                 && def.adventure.is_some()
         }
-        SpellCastRouteV4::GraveyardAdventure { holder, permission_zone_change_count } => {
+        SpellCastRouteV4::GraveyardAdventure {
+            holder,
+            permission_zone_change_count,
+        } => {
             origin.origin_zone == Zone::Graveyard
                 && holder == item.controller
                 && permission_zone_change_count == origin.origin_zone_change_count
                 && def.name == "Mosswood Dreadknight"
-                && crate::standard_creatures_v1::graveyard_permission(state, item.source).is_some_and(|permission| permission.holder == holder)
-                && if is_pending_placeholder { cast_method == CastMethodV4::Normal } else { cast_method == CastMethodV4::Omen }
+                && crate::standard_creatures_v1::graveyard_permission(state, item.source)
+                    .is_some_and(|permission| permission.holder == holder)
+                && if is_pending_placeholder {
+                    cast_method == CastMethodV4::Normal
+                } else {
+                    cast_method == CastMethodV4::Omen
+                }
         }
         SpellCastRouteV4::GraveyardFlashback => {
             origin.origin_zone == Zone::Graveyard
@@ -2325,7 +2333,6 @@ fn storm_source_contract_is_structurally_valid(
         | SpellCastRouteV4::GraveyardEscape
         | SpellCastRouteV4::AdventureExile
         | SpellCastRouteV4::GraveyardPermissionV1 { .. }
-
         | SpellCastRouteV4::GraveyardAdventure { .. } => false,
     };
     has_storm(definition)
@@ -3378,8 +3385,12 @@ fn legal_targets_for_controller_from_source(
             .map(Target::Object)
             .collect(),
         TargetSpec::CreatureWithStunCounter => battlefield_objects(state)
-            .filter(|&id| object_has_type(state, id, CardType::Creature) && state.objects.get(id).counters.stun > 0)
-            .map(Target::Object).collect(),
+            .filter(|&id| {
+                object_has_type(state, id, CardType::Creature)
+                    && state.objects.get(id).counters.stun > 0
+            })
+            .map(Target::Object)
+            .collect(),
         TargetSpec::ControlledNoncreatureArtifactPermanent => battlefield_objects(state)
             .filter(|&id| {
                 state.objects.get(id).controller == controller
@@ -6750,10 +6761,17 @@ fn viable_pending_spell_forms(
     let alternative = if supported_bestow(def).is_some() && !free {
         Some((CastMethodV4::Bestow, &[CardType::Enchantment][..]))
     } else if let Some(adventure) = supported_adventure(def) {
-        (pending.origin_zone == Zone::Hand || free
-            || (pending.origin_zone == Zone::Exile && !state.objects.get(pending.spell).v4.on_adventure)
-            || pending.source_contract.spell_cast_origin.is_some_and(|origin| matches!(origin.route, SpellCastRouteV4::GraveyardAdventure { .. })))
-            .then_some((CastMethodV4::Omen, adventure.types))
+        (pending.origin_zone == Zone::Hand
+            || free
+            || (pending.origin_zone == Zone::Exile
+                && !state.objects.get(pending.spell).v4.on_adventure)
+            || pending
+                .source_contract
+                .spell_cast_origin
+                .is_some_and(|origin| {
+                    matches!(origin.route, SpellCastRouteV4::GraveyardAdventure { .. })
+                }))
+        .then_some((CastMethodV4::Omen, adventure.types))
     } else {
         supported_omen(def).map(|omen| (CastMethodV4::Omen, omen.types))
     };
@@ -6767,7 +6785,10 @@ fn viable_pending_spell_forms(
             std::iter::once((0, CastMethodV4::Normal, def.types, def.keywords))
                 .chain(alternative.map(|(method, types)| (1, method, types, Keywords::NONE)))
         {
-            if form == 0 && pending.origin_zone == Zone::Graveyard && supported_adventure(def).is_some() {
+            if form == 0
+                && pending.origin_zone == Zone::Graveyard
+                && supported_adventure(def).is_some()
+            {
                 continue;
             }
             let spec = spell_form_target_spec(def, form).expect("supported form owns target spec");
@@ -7132,7 +7153,8 @@ fn is_castable_now(
                     .is_some()
                 })
             };
-            let main_ok = state.objects.get(id).zone != Zone::Graveyard && main_timing_ok
+            let main_ok = state.objects.get(id).zone != Zone::Graveyard
+                && main_timing_ok
                 && (((normal_ok() || alt_ok())
                     && !viable_printed_spell_modes(def, id, player, state).is_empty())
                     || kicked_ok());
@@ -7203,8 +7225,12 @@ fn is_castable_now(
             let adventure_ok = || {
                 supported_adventure(def).is_some_and(|adventure| {
                     (state.objects.get(id).zone == Zone::Hand
-                        || (state.objects.get(id).zone == Zone::Exile && !state.objects.get(id).v4.on_adventure && active_permission_for(player, id, state).is_some())
-                        || crate::standard_creatures_v1::graveyard_adventure_allowed(state, id, player))
+                        || (state.objects.get(id).zone == Zone::Exile
+                            && !state.objects.get(id).v4.on_adventure
+                            && active_permission_for(player, id, state).is_some())
+                        || crate::standard_creatures_v1::graveyard_adventure_allowed(
+                            state, id, player,
+                        ))
                         && cast_form_timing_ok(adventure.types, Keywords::NONE, player, state)
                         && target_prefix_can_complete_for_controller_and_source(
                             adventure.target_spec,
@@ -7263,7 +7289,8 @@ fn castable_spells(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
     for owner in [PlayerId::P0, PlayerId::P1] {
         for &id in &state.players[owner.index()].graveyard {
             if crate::standard_creatures_v1::graveyard_adventure_allowed(state, id, player)
-                && is_castable_now(player, id, CastMethodV4::Normal, state) {
+                && is_castable_now(player, id, CastMethodV4::Normal, state)
+            {
                 out.push(id);
             }
         }
@@ -9695,7 +9722,10 @@ pub(crate) fn validate_pending_cast(
                 && (has_spell_form_choice(def) || mode == 0)
         }
     };
-    if pending.origin_zone == Zone::Graveyard && supported_adventure(def).is_some() && pending.mode_chosen == Some(0) {
+    if pending.origin_zone == Zone::Graveyard
+        && supported_adventure(def).is_some()
+        && pending.mode_chosen == Some(0)
+    {
         return Err("graveyard Adventure permission cannot cast the permanent form".to_string());
     }
     if !mode_shape_valid {
@@ -13464,9 +13494,13 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
         }
         Step::End => {
             state.engine.exile_play_permissions.retain(|permission| {
-                permission.holder != state.active_player || permission.expiry != PlayPermissionExpiry::UntilHoldersNextEndStep
+                permission.holder != state.active_player
+                    || permission.expiry != PlayPermissionExpiry::UntilHoldersNextEndStep
             });
-            #[cfg(any(feature = "limited-fdn-fixtures", feature = "standard-magezero-fixtures"))]
+            #[cfg(any(
+                feature = "limited-fdn-fixtures",
+                feature = "standard-magezero-fixtures"
+            ))]
             {
                 let marker = event::CommittedEvent::BeginningEndStep {
                     active_player: state.active_player,
@@ -13537,7 +13571,8 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     PlayPermissionExpiry::UntilHoldersNextTurn {
                         holder_turn_started,
                     } => !(perm.holder == p && holder_turn_started),
-                    PlayPermissionExpiry::LaterTurn { .. } | PlayPermissionExpiry::UntilHoldersNextEndStep => true,
+                    PlayPermissionExpiry::LaterTurn { .. }
+                    | PlayPermissionExpiry::UntilHoldersNextEndStep => true,
                 });
             let hand_size = state.players[p.index()].hand.len();
             if hand_size > 7 {
@@ -13839,22 +13874,39 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
 /// incarnation. Missing objects fail closed as colorless.
 pub fn object_color_mask(state: &GameState, id: ObjectId) -> u8 {
     if let Some(object) = state.objects.try_get(id) {
-        if object.zone == Zone::Stack && object.v4.spell_cast_origin.and_then(|origin| origin.finalized_method) == Some(CastMethodV4::Omen) {
+        if object.zone == Zone::Stack
+            && object
+                .v4
+                .spell_cast_origin
+                .and_then(|origin| origin.finalized_method)
+                == Some(CastMethodV4::Omen)
+        {
             let definition = &card_def::CARD_DEFS[object.card_def as usize];
-            let cost = supported_adventure(definition).map(|adventure| adventure.cost)
+            let cost = supported_adventure(definition)
+                .map(|adventure| adventure.cost)
                 .or_else(|| supported_omen(definition).map(|omen| omen.cost));
             if let Some(cost) = cost {
                 return cost.pips.iter().fold(0, |mask, pip| {
-                    let color_mask = |color: ManaColor| if color == ManaColor::C { 0 } else { 1 << color.pool_index() };
+                    let color_mask = |color: ManaColor| {
+                        if color == ManaColor::C {
+                            0
+                        } else {
+                            1 << color.pool_index()
+                        }
+                    };
                     mask | match *pip {
-                        mana::Pip::Colored(color) | mana::Pip::Phyrexian(color) => color_mask(color),
+                        mana::Pip::Colored(color) | mana::Pip::Phyrexian(color) => {
+                            color_mask(color)
+                        }
                         mana::Pip::Hybrid(first, second) => color_mask(first) | color_mask(second),
                     }
                 });
             }
         }
     }
-    if let Some(color) = crate::standard_creatures_v1::color(state, id) { return color; }
+    if let Some(color) = crate::standard_creatures_v1::color(state, id) {
+        return color;
+    }
     if let Some((characteristics, _)) =
         crate::continuous_characteristics_v1::creature_override(state, id)
     {
@@ -17724,8 +17776,13 @@ fn begin_cast_ex(
         && origin_zone == Zone::Exile
         && state.objects.get(spell_id).owner == player
         && state.objects.get(spell_id).v4.on_adventure;
-    let graveyard_adventure = crate::standard_creatures_v1::graveyard_adventure_allowed(state, spell_id, player)
-        .then(|| crate::standard_creatures_v1::graveyard_permission(state, spell_id).expect("permitted adventure"));
+    let graveyard_adventure = crate::standard_creatures_v1::graveyard_adventure_allowed(
+        state, spell_id, player,
+    )
+    .then(|| {
+        crate::standard_creatures_v1::graveyard_permission(state, spell_id)
+            .expect("permitted adventure")
+    });
     let target_spec = def.target_spec;
     let graveyard_permission = (forced_cast_method.is_none()
         && origin_zone == Zone::Graveyard
@@ -17762,7 +17819,12 @@ fn begin_cast_ex(
                 .expect("a Plotted cast was derived from an exact Plot marker"),
         },
         CastMethodV4::Madness => SpellCastRouteV4::Madness,
-        CastMethodV4::Normal if graveyard_adventure.is_some() => SpellCastRouteV4::GraveyardAdventure { holder: player, permission_zone_change_count: origin_zone_change_count },
+        CastMethodV4::Normal if graveyard_adventure.is_some() => {
+            SpellCastRouteV4::GraveyardAdventure {
+                holder: player,
+                permission_zone_change_count: origin_zone_change_count,
+            }
+        }
         CastMethodV4::Normal if origin_zone == Zone::Hand => SpellCastRouteV4::Hand,
         CastMethodV4::Normal if origin_zone == Zone::Graveyard => {
             SpellCastRouteV4::GraveyardPermissionV1 {
@@ -17822,7 +17884,13 @@ fn begin_cast_ex(
 
     move_to_stack(state, spell_id, origin_zone);
     if let Some(permission) = graveyard_adventure {
-        state.objects.get_mut(spell_id).v4.creature_upgrade.get_or_insert_with(Default::default).graveyard_adventure = Some(permission);
+        state
+            .objects
+            .get_mut(spell_id)
+            .v4
+            .creature_upgrade
+            .get_or_insert_with(Default::default)
+            .graveyard_adventure = Some(permission);
     }
     if is_plotted {
         // `move_to_stack` clears incarnation-local Plot provenance by
@@ -18223,7 +18291,8 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
         item.is_some_and(|i| i.source == pending.spell),
         "abort_cast expects its spell's placeholder to be the top of the stack"
     );
-    let graveyard_adventure = crate::standard_creatures_v1::graveyard_permission(state, pending.spell);
+    let graveyard_adventure =
+        crate::standard_creatures_v1::graveyard_permission(state, pending.spell);
     let owner = state.objects.get(pending.spell).owner;
     let plotted_turn = state.objects.get(pending.spell).plotted_turn;
     let is_adventure_exile = pending
@@ -18259,7 +18328,11 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
             .reset_for_zone_change(object.card_def, to_zone, turn);
         if to_zone == Zone::Graveyard {
             if let Some(permission) = graveyard_adventure {
-                object.v4.creature_upgrade.get_or_insert_with(Default::default).graveyard_adventure = Some(permission);
+                object
+                    .v4
+                    .creature_upgrade
+                    .get_or_insert_with(Default::default)
+                    .graveyard_adventure = Some(permission);
             }
         }
         if is_adventure_exile && to_zone == Zone::Exile {

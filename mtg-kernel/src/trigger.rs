@@ -3696,7 +3696,18 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
     }
     let card = crate::card_def::CARD_DEFS.get(card_def as usize)?;
     if card.name == "Essence Channeler" {
-        return Some(if matches!(effect, EffectOp::CreatureUpgrade(crate::standard_creatures_v1::CreatureEffectV1::EssenceTransferCounters)) { TargetSpec::ControlledCreature } else { TargetSpec::None });
+        return Some(
+            if matches!(
+                effect,
+                EffectOp::CreatureUpgrade(
+                    crate::standard_creatures_v1::CreatureEffectV1::EssenceTransferCounters
+                )
+            ) {
+                TargetSpec::ControlledCreature
+            } else {
+                TargetSpec::None
+            },
+        );
     }
     #[cfg(feature = "standard-magezero-fixtures")]
     if card.name == "Ertai Resurrected" {
@@ -4950,7 +4961,10 @@ fn trigger_matches(
         ) => *caster == controller,
         (
             TriggerCondition::CastSpellWithAnyColor(mask),
-            CommittedEvent::SpellCast { spell, controller: caster },
+            CommittedEvent::SpellCast {
+                spell,
+                controller: caster,
+            },
         ) => *caster == controller && crate::engine::object_color_mask(state, *spell) & mask != 0,
         (
             TriggerCondition::CastSpellManaValueAtLeast(minimum),

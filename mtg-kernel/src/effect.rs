@@ -14017,7 +14017,16 @@ fn library_filter_matches(
         LibraryCardFilter::ArtifactWithManaValue(mana_value) => {
             def.has_type(CardType::Artifact) && def.mana_value == mana_value
         }
-        LibraryCardFilter::ArtifactCreatureOrEnchantmentManaValueAtMost(maximum) => def.mana_value <= maximum && [CardType::Artifact, CardType::Creature, CardType::Enchantment].into_iter().any(|card_type| def.has_type(card_type)),
+        LibraryCardFilter::ArtifactCreatureOrEnchantmentManaValueAtMost(maximum) => {
+            def.mana_value <= maximum
+                && [
+                    CardType::Artifact,
+                    CardType::Creature,
+                    CardType::Enchantment,
+                ]
+                .into_iter()
+                .any(|card_type| def.has_type(card_type))
+        }
     })
 }
 
@@ -14047,7 +14056,9 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
             fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 7), u64::from(mana_value))
         }
         LibraryCardFilter::LandWithBasicLandType => fnv1a_u64(0xcbf2_9ce4_8422_2325, 8),
-        LibraryCardFilter::ArtifactCreatureOrEnchantmentManaValueAtMost(maximum) => fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 9), u64::from(maximum)),
+        LibraryCardFilter::ArtifactCreatureOrEnchantmentManaValueAtMost(maximum) => {
+            fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 9), u64::from(maximum))
+        }
     }
 }
 
@@ -17351,7 +17362,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 );
                 let expiry = match duration {
                     ImpulseDuration::EndOfTurn => crate::engine::PlayPermissionExpiry::EndOfTurn,
-                    ImpulseDuration::UntilOwnersNextEndStep => crate::engine::PlayPermissionExpiry::UntilHoldersNextEndStep,
+                    ImpulseDuration::UntilOwnersNextEndStep => {
+                        crate::engine::PlayPermissionExpiry::UntilHoldersNextEndStep
+                    }
                     ImpulseDuration::UntilOwnersNextTurn => {
                         crate::engine::PlayPermissionExpiry::UntilHoldersNextTurn {
                             holder_turn_started: false,

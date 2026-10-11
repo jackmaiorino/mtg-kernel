@@ -200,9 +200,12 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
         // An artifact without the creature type. No negated-type facet
         // exists; the nearest class is "an artifact".
         TargetSpec::CreatureWithStunCounter => object(out, creature(), None, ZoneF::Battlefield),
-        TargetSpec::ControlledNoncreatureArtifactPermanent => {
-            object(out, typed(CardType::Artifact), Some(RelF::You), ZoneF::Battlefield)
-        }
+        TargetSpec::ControlledNoncreatureArtifactPermanent => object(
+            out,
+            typed(CardType::Artifact),
+            Some(RelF::You),
+            ZoneF::Battlefield,
+        ),
         TargetSpec::NoncreatureArtifactPermanent => {
             object(out, typed(CardType::Artifact), None, ZoneF::Battlefield)
         }

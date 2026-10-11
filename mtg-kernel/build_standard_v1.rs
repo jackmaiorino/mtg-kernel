@@ -134,6 +134,8 @@ const fn sorcery_transform(cost: &'static [AbilityCostRecipe]) -> ActivatedAbili
     }
 }
 
+const ETALI: [ActivatedAbilityRecipe; 1] = [sorcery_transform(&[ManaCost("{9}{G/P}")])];
+
 const POLUKRANOS: [ActivatedAbilityRecipe; 1] = [sorcery_transform(&[ManaCost("{6}{W/P}")])];
 
 /// Temple of Power's "{2}{R}, {T}: Transform"; its red-damage condition is
@@ -343,6 +345,7 @@ const KAITO: [ActivatedAbilityRecipe; 4] = [
 
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
+        "Etali, Primal Conqueror" => &ETALI,
         "Kaito, Bane of Nightmares" => &KAITO,
         "Reckoner Bankbuster" => &BANKBUSTER,
         "Subterranean Schooner" => &SCHOONER,
@@ -376,7 +379,7 @@ pub(super) fn activated_ability_face_for(name: &str, index: usize) -> Option<u8>
     match name {
         "Spring-Loaded Sawblades" => Some(u8::from(index != 0)),
         "Braided Net" => Some(u8::from(index == 2)),
-        "Polukranos Reborn" | "Clay-Fired Bricks" => Some(0),
+        "Etali, Primal Conqueror" | "Polukranos Reborn" | "Clay-Fired Bricks" => Some(0),
         "Ojer Axonil, Deepest Might" | "Fable of the Mirror-Breaker" => Some(1),
         _ => None,
     }
@@ -386,6 +389,7 @@ pub(super) fn activated_ability_face_for(name: &str, index: usize) -> Option<u8>
 /// card's supertypes.
 pub(super) fn transform_face_for(name: &str) -> &'static str {
     match name {
+        "Etali, Primal Conqueror" => "Some(TransformFaceDef { name: \"Etali, Primal Sickness\", types: &[CardType::Creature], subtypes: &[Subtype::Phyrexian, Subtype::Elder, Subtype::Dinosaur], colors: &[ManaColor::R, ManaColor::G], power: Some(11), toughness: Some(11), keywords: Keywords(Keywords::TRAMPLE.0 | Keywords::INDESTRUCTIBLE.0) })",
         "Spring-Loaded Sawblades" => "Some(TransformFaceDef { name: \"Bladewheel Chariot\", types: &[CardType::Artifact], subtypes: &[Subtype::Vehicle], colors: &[ManaColor::W], power: Some(5), toughness: Some(5), keywords: Keywords::NONE })",
         "Cecil, Dark Knight" => "Some(TransformFaceDef { name: \"Cecil, Redeemed Paladin\", types: &[CardType::Creature], subtypes: &[Subtype::Human, Subtype::Knight], colors: &[ManaColor::W], power: Some(4), toughness: Some(4), keywords: Keywords::LIFELINK })",
         "Polukranos Reborn" => "Some(TransformFaceDef { name: \"Polukranos, Engine of Ruin\", types: &[CardType::Creature], subtypes: &[Subtype::Phyrexian, Subtype::Hydra], colors: &[ManaColor::W, ManaColor::G], power: Some(6), toughness: Some(6), keywords: Keywords(Keywords::REACH.0 | Keywords::LIFELINK.0) })",
@@ -407,6 +411,7 @@ pub(super) fn saga_for(name: &str) -> &'static str {
 
 pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
     match name {
+        "Etali, Primal Conqueror" => Some("Etali, Primal Sickness"),
         "Spring-Loaded Sawblades" => Some("Bladewheel Chariot"),
         "Cecil, Dark Knight" => Some("Cecil, Redeemed Paladin"),
         "Polukranos Reborn" => Some("Polukranos, Engine of Ruin"),
@@ -423,6 +428,7 @@ pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
 /// `standard_cards_v1::controlled_boost`.
 pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Etali, Primal Conqueror" => "etb:each_player_exile_until_nonland_cast_any_free;9GP_transform_sorcery;back:combat_damage_player:that_many_poison",
         "Reckoner Bankbuster" => "enters_with_3_charge;draw_then_if_no_charge:create_treasure_and_pilot;crew_3",
         "Subterranean Schooner" => "attacks:target_creature_that_crewed_this_turn_explores;crew_1",
         "Spring-Loaded Sawblades" => "etb:5_damage_to_target_tapped_opponent_creature;craft_artifact_3W;back:crew_1;back:tap_two_other_artifacts_animate",

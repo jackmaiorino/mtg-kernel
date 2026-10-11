@@ -5949,8 +5949,8 @@ mod tests {
             exiled_by: creature_when_it_left.clone(),
         }];
         observation.projection.surface.stack = vec![StackItemPublicV2 {
-                counter_distribution: None,
-                counter_transfer: None,
+            counter_distribution: None,
+            counter_transfer: None,
             stack_index: 0,
             source: creature_when_it_left.clone(),
             controller: actor,

@@ -814,7 +814,10 @@ pub enum SpellCastRouteV4 {
         maximum_mana_value: Option<u16>,
     },
     /// Mosswood Dreadknight grants only its Adventure form from this exact graveyard incarnation.
-    GraveyardAdventure { holder: PlayerId, permission_zone_change_count: u32 },
+    GraveyardAdventure {
+        holder: PlayerId,
+        permission_zone_change_count: u32,
+    },
 }
 
 /// Incarnation-local cast provenance stored on the physical source object

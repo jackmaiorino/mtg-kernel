@@ -7520,6 +7520,41 @@
       "mechanics": [
         "standard_legend"
       ]
+    },
+    {
+      "name": "Etali, Primal Conqueror",
+      "engine_capability": "partial",
+      "mana_cost": "{5}{R}{R}",
+      "mana_value": 7,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elder",
+        "Dinosaur"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 7,
+      "toughness": 7,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "trample",
+        "transform",
+        "exile_cast",
+        "poison"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/EtaliPrimalConqueror.java"
     }
   ]
 }
