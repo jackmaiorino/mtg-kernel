@@ -6226,6 +6226,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Homunculus Horde" | "Homunculus Horde Token" => "controller_draws_nth_card_this_turn:2:create_homunculus_horde_copy_token:1",
         "Koma, World-Eater" => "source_combat_damage_to_player:create_blue_3_3_serpent_coil_tokens:4",
         "Cackling Prowler" => "beginning_controller_end_step_if_creature_died_this_turn:recheck_morbid:plus_one_counter_on_bound_source:1",
+        "Needletooth Pack" => "beginning_controller_end_step_if_creature_died_this_turn:recheck_morbid:mandatory_controlled_creature_target:exact_incarnation:plus_one_counters:2",
         "Sylvan Scavenging" => "beginning_controller_end_step:mode_before_targets:controlled_creature_plus_one_counter:1|resolution_controls_creature_power_at_least:4:create_green_3_3_raccoon_token:1",
         "Kiora, the Rising Tide" => "etb:draw:2:then_discard:2;attacks_if_controller_graveyard_cards_at_least:7:recheck_threshold:optional_create_legendary_blue_8_8_octopus_scion:1",
         "Sun-Blessed Healer" => "etb_if_kicked:recheck_kicked:return_own_graveyard_nonland_permanent_mana_value_at_most:2",

@@ -933,6 +933,21 @@ const WARDENS_OF_THE_CYCLE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilit
     condition: TriggerCondition::BeginningControllerEndStepIfCreatureDied,
     ..etb_trigger(wardens_of_the_cycle_effect)
 }];
+const NEEDLETOOTH_PACK_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningControllerEndStepIfCreatureDied,
+    ..etb_trigger(needletooth_pack_effect)
+}];
+
+fn needletooth_pack_effect() -> EffectOp {
+    EffectOp::Conditional {
+        cond: EffectCond::CreatureDiedThisTurn,
+        then: Box::new(EffectOp::AddPlusOnePlusOneCounters {
+            object: ObjectRef::Target(0),
+            count: 2,
+        }),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    }
+}
 
 fn wardens_of_the_cycle_modes() -> Vec<(TargetSpec, EffectOp)> {
     [
@@ -3218,6 +3233,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Koma, World-Eater" => &KOMA_WORLD_EATER_TRIGGERS,
         "Kiora, the Rising Tide" => &KIORA_RISING_TIDE_TRIGGERS,
         "Cackling Prowler" => &CACKLING_PROWLER_TRIGGERS,
+        "Needletooth Pack" => &NEEDLETOOTH_PACK_TRIGGERS,
         "Sylvan Scavenging" => &SYLVAN_SCAVENGING_TRIGGERS,
         "Dwynen's Elite" => &DWYNENS_ELITE_TRIGGERS,
         "Good-Fortune Unicorn" => &GOOD_FORTUNE_UNICORN_TRIGGERS,
@@ -3355,7 +3371,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         return TargetSpec::None;
     };
     match card.name {
-        "Celestial Armor" => TargetSpec::ControlledCreature,
+        "Celestial Armor" | "Needletooth Pack" => TargetSpec::ControlledCreature,
         "Sun-Blessed Healer" => TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(2),
         "Elvish Regrower" => TargetSpec::PermanentCardInOwnGraveyard,
         "Mischievous Pup" => TargetSpec::UpToOneOtherControlledPermanent,
