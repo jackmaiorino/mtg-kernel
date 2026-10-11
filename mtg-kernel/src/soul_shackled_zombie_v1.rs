@@ -127,12 +127,25 @@ pub(crate) fn validate_source(
     let [(receipt_index, captured, entry_index)] = entries.as_slice() else {
         return Err("single-graveyard ETB lost its unique committed entry".into());
     };
-    if *captured != source
-        || *entry_index >= *receipt_index
-        || !matches!(state.engine.event_history.get(*entry_index),
-            Some(CommittedEvent::ZoneChange { object, to: Zone::Battlefield, .. })
-                if *object == source.source)
-    {
+    let actual_entry = match state.engine.event_history.get(*entry_index) {
+        Some(CommittedEvent::ZoneChange {
+            object,
+            to: Zone::Battlefield,
+            ..
+        }) => *object == source.source,
+        Some(CommittedEvent::CreateToken {
+            object,
+            token_def,
+            controller,
+        }) => {
+            *object == source.source
+                && *token_def == source.card_def
+                && *controller == source.controller
+                && *controller == source.owner
+        }
+        _ => false,
+    };
+    if *captured != source || *entry_index >= *receipt_index || !actual_entry {
         return Err("single-graveyard ETB source/controller differs from actual entry".into());
     }
     Ok(())
@@ -203,6 +216,52 @@ mod tests {
     use super::*;
     use crate::card_def::{card_id_by_name, CARD_DEFS};
     use crate::state::{GameObject, ObjectStateV4, Step};
+
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    fn actual_zombie_token_copy_captures_committed_entry_and_rejects_rewritten_create_token() {
+        // Future printed fixture requires actual catalog admission, never a stand-in root.
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor);
+            let original = put(
+                &mut state,
+                actor.opponent(),
+                "Soul-Shackled Zombie",
+                Zone::Battlefield,
+            );
+            let token =
+                crate::standard_cards_v1::create_token_copy(&mut state, original, actor).unwrap();
+            let source = AbilitySourceContractV4::capture(&state, token);
+            assert!(state.objects.get(token).v4.is_token);
+            validate_source(&state, source).unwrap();
+            crate::standard_cards_v1::gain_control(&mut state, token, actor.opponent());
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(token, Zone::Exile));
+            let bytes = serde_json::to_vec(&state).unwrap();
+            let restored: GameState = serde_json::from_slice(&bytes).unwrap();
+            validate_source(&restored, source).unwrap();
+            for rewrite in 0..3 {
+                let mut forged = restored.clone();
+                let entry = forged.engine.event_history.iter_mut().find(|entry|
+                    matches!(entry, CommittedEvent::CreateToken { object, .. } if *object == token)).unwrap();
+                if let CommittedEvent::CreateToken {
+                    object,
+                    token_def,
+                    controller,
+                } = entry
+                {
+                    match rewrite {
+                        0 => *object = original,
+                        1 => *token_def = card_id_by_name("Forest").unwrap(),
+                        _ => *controller = actor.opponent(),
+                    }
+                }
+                assert!(validate_source(&forged, source).is_err());
+            }
+        }
+    }
 
     fn ready(actor: PlayerId) -> GameState {
         let forest = card_id_by_name("Forest").unwrap();

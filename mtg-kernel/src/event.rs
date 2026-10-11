@@ -1336,7 +1336,8 @@ fn commit_with_ability_lki(
             object,
             to: Zone::Battlefield,
             ..
-        } => Some(*object),
+        }
+        | CommittedEvent::CreateToken { object, .. } => Some(*object),
         _ => None,
     };
     state.engine.event_log.push(committed.clone());
