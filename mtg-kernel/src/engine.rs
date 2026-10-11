@@ -3066,6 +3066,7 @@ struct TargetingSource {
     /// The creature "other than that creature" names, when a trigger's
     /// target must differ from an object other than its own source.
     other_than: Option<ObjectId>,
+    original_source_incarnation_only: bool,
 }
 
 fn targeting_source_for_object(state: &GameState, object: ObjectId) -> Option<TargetingSource> {
@@ -3075,6 +3076,7 @@ fn targeting_source_for_object(state: &GameState, object: ObjectId) -> Option<Ta
         zone: live.zone,
         zone_change_count: live.zone_change_count,
         other_than: None,
+        original_source_incarnation_only: false,
     })
 }
 
@@ -3113,6 +3115,7 @@ fn triggered_ability_targeting_source(
         zone: contract.zone,
         zone_change_count: contract.zone_change_count,
         other_than,
+        original_source_incarnation_only: matches!(effect, EffectOp::AshrootAttackBoostV1 { .. }),
     })
 }
 
@@ -3442,7 +3445,9 @@ fn legal_targets_for_controller_from_source(
                 .filter(|&id| {
                     state.objects.get(id).controller == controller
                         && object_has_type(state, id, CardType::Creature)
-                        && Some(id) != excluded
+                        && (Some(id) != excluded
+                            || source.is_some_and(|source| source.original_source_incarnation_only
+                                && state.objects.get(id).zone_change_count != source.zone_change_count))
                 })
                 .map(Target::Object)
                 .collect()
@@ -3993,6 +3998,7 @@ pub(crate) fn effect_target_is_legal_from_ability_source(
                 zone: source.zone,
                 zone_change_count: source.zone_change_count,
                 other_than: None,
+                original_source_incarnation_only: false,
             }),
             state,
         )
@@ -4199,6 +4205,7 @@ fn activation_legal_targets_with_source_lki(
             zone: state.objects.get(source).zone,
             zone_change_count: state.objects.get(source).zone_change_count,
             other_than: None,
+            original_source_incarnation_only: false,
         }),
         state,
     )
@@ -8959,6 +8966,13 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    if crate::ashroot_animist_v1::validate_state(state).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        return Decision::Halted {
+            mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+            source: ObjectId(0),
+        };
+    }
     // A closed Cerberus operation still owns historical authority. Validate it
     // before automatic step/cleanup work can mutate a restored malformed state.
     if crate::cerberus_capture_v1::validate_state(state).is_err() {
@@ -13044,6 +13058,17 @@ fn triggered_stack_item_expected_target_spec(
         ability_source_contract,
     )?;
     crate::frenzied_goblin_v1::validate_source(state, source_card_def, ability_source_contract)?;
+    if matches!(inline_effect, EffectOp::AshrootAttackBoostV1 { .. })
+        || (item.v4.granted_by.is_none() && item.v4.cauldron_grant.0.is_none())
+    {
+        crate::ashroot_animist_v1::validate_trigger(
+            state,
+            inline_effect,
+            item.source,
+            item.controller,
+            ability_source_contract,
+        )?;
+    }
     crate::authority_of_the_consuls_v1::validate_source(
         state,
         inline_effect,
@@ -13499,7 +13524,9 @@ pub(crate) fn validated_stack_item_target_spec(
         .zip(&item.v4.target_contracts)
         .enumerate()
     {
-        let contract = if crate::self_reflection_v1::owns_spell(state, item) {
+        let contract = if crate::ashroot_animist_v1::owns_item(item) {
+            crate::ashroot_animist_v1::normalize_target(state, contract)
+        } else if crate::self_reflection_v1::owns_spell(state, item) {
             crate::self_reflection_v1::normalize_historical_target(state, contract)
         } else if effect::temporary_control_v1::owns_spell(state, item) {
             effect::temporary_control_v1::normalize_historical_target(state, contract)
@@ -13589,7 +13616,13 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
     let mut chosen = Vec::with_capacity(item.targets.len());
     let mut any_legal = false;
     for (&target, &contract) in item.targets.iter().zip(&item.v4.target_contracts) {
-        let same_incarnation = if crate::self_reflection_v1::owns_spell(state, item) {
+        let same_incarnation = if crate::ashroot_animist_v1::owns_item(item) {
+            target_contract_matches_live(
+                state,
+                target,
+                crate::ashroot_animist_v1::normalize_target(state, contract),
+            )
+        } else if crate::self_reflection_v1::owns_spell(state, item) {
             crate::self_reflection_v1::target_matches_live(state, target, contract)
         } else if effect::temporary_control_v1::owns_spell(state, item) {
             target_contract_matches_live(
@@ -13655,6 +13688,7 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
                         zone: state.objects.get(item.source).zone,
                         zone_change_count: state.objects.get(item.source).zone_change_count,
                         other_than: None,
+                        original_source_incarnation_only: false,
                     }),
                     StackItemKind::TriggeredAbility => {
                         let source_contract = item

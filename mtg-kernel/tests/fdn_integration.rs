@@ -183,3 +183,6 @@ mod fdn_slumbering_cerberus_v1;
 
 #[path = "fdn/fdn_wildwood_scourge_v1.rs"]
 mod fdn_wildwood_scourge_v1;
+
+#[path = "fdn/fdn_ashroot_animist_v1.rs"]
+mod fdn_ashroot_animist_v1;

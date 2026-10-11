@@ -1609,6 +1609,11 @@ pub enum EffectOp {
     CerberusUntapV1 {
         capture_history_index: u64,
     },
+    /// Definition-owned Ashroot template, bound to the actual attacking source.
+    BindAshrootAttackBoostV1,
+    AshrootAttackBoostV1 {
+        source: EffectObjectBinding,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -7770,6 +7775,7 @@ fn validate_standard_choose_permanent_origin(
 }
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
+    crate::ashroot_animist_v1::validate_state(state)?;
     temporary_control_v1::authority::validate(state)?;
     crate::self_reflection_v1::validate_live_stack(state)?;
     crate::authority_of_the_consuls_v1::validate_state(state)?;
@@ -7782,6 +7788,13 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(());
     };
+    if matches!(
+        pending.resolving_item.inline_effect,
+        Some(EffectOp::AshrootAttackBoostV1 { .. })
+    ) {
+        return Err("Ashroot atomic boost has no externally resumable choice".into());
+    }
+
     if pending.ctx.stack_item_id != Some(pending.resolving_item.v4.stack_item_id)
         || pending.ctx.source != pending.resolving_item.source
         || pending.ctx.controller != pending.resolving_item.controller
@@ -18514,6 +18527,20 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                         grant_haste: false,
                     },
                 );
+            }
+        }
+        EffectOp::BindAshrootAttackBoostV1 => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        EffectOp::AshrootAttackBoostV1 { source } => {
+            if crate::ashroot_animist_v1::execute(state, ctx, *source).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
             }
         }
         EffectOp::WildwoodCounterFromReceiptV1 { .. } => {

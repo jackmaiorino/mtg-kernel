@@ -52,6 +52,7 @@ impl Scan<'_> {
     fn op(&self, op: &EffectOp) -> bool {
         use EffectOp::*;
         match op {
+            AshrootAttackBoostV1 { source } => self.raw(source.object),
             WildwoodCounterFromReceiptV1 { capture_history_index, .. } => usize::try_from(*capture_history_index).ok().and_then(|index| self.state.engine.event_history.get(index)).is_none_or(|event| {
                 let crate::event::CommittedEvent::WildwoodCounterCaptureV1 { capture } = event else { return true; };
                 capture.observers.iter().any(|source| self.raw(source.source)) || matches!(capture.recipient, crate::state::StackTargetContractV4::Object { object, .. } if self.raw(object))
@@ -166,6 +167,7 @@ impl Scan<'_> {
             | ReturnTwoDifferentControllerCreaturesToOwnersHands
             | BindAuthorityEntryGainLifeV1
             | AuthorityEntryGainLifeV1 { .. }
+            | BindAshrootAttackBoostV1
             | CerberusUntapV1 { .. }
             | CreateControlledCreatureTargetCopyV1
             | DoubleTargetPowerUntilEndOfTurn { .. }
@@ -1053,6 +1055,7 @@ pub(super) fn conflicts(
                             || source.attached_to.is_some_and(|link| s.raw(link.object))
                     })
             }
+            AshrootPowerBeforeDepartureV1 { source, .. } => s.raw(source.object),
             CerberusCaptureV1 { capture } => s.raw(capture.source.source),
             CerberusObserversV1 { sources, .. } => {
                 sources.iter().any(|source| s.raw(source.source))

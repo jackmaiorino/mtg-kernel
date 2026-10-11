@@ -651,6 +651,7 @@ fn power_toughness_changes_keep_their_sign() {
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Slumbering Cerberus",
     "Frenzied Goblin",
+    "Ashroot Animist",
     "Wildwood Scourge",
     "Authority of the Consuls",
     "Vengeful Bloodwitch",
