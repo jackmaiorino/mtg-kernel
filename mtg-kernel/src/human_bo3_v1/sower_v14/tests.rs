@@ -181,6 +181,10 @@ fn actual_printed_activation_label_target_payment_resolution_and_restored_select
             }
         }
         state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 3;
+        // The inherited session force-passes the activator's fresh own
+        // item. Keep a legal opposing Bolt response to retain the actual
+        // post-payment decision before the ability resolves.
+        state.players[actor.opponent().index()].mana_pool[ManaColor::R.pool_index()] = 1;
         let base = FastActorSessionV1::from_human_v8_fixture_state(state);
         let old = HumanRaidSessionV9::from_session(base.clone()).unwrap();
         let mut session = HumanSowerSessionV14::from_session(base).unwrap();
@@ -318,6 +322,14 @@ fn actual_attack_blocker_menu_agrees_with_effective_public_restriction() {
     use crate::engine::{self, Action, Decision};
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, source, recipient) = crate::sower_public_v1::tests::activated(actor);
+        // A remaining legal blocker keeps the inherited binary menu open;
+        // the restricted Elf must still be excluded from that real menu.
+        put(
+            &mut state,
+            actor.opponent(),
+            "Burning-Tree Emissary",
+            Zone::Battlefield,
+        );
         state.step = crate::state::Step::DeclareAttackers;
         assert!(matches!(
             engine::advance_until_decision(&mut state),
