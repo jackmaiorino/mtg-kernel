@@ -832,7 +832,7 @@ where
             core.kind = FlatActionKindV1::ActivateAbility;
             core.ability_index = *ability_index;
             push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
-            if let Some((donor, local)) = granted_ability {
+            if let Some((donor, local)) = granted_ability.as_ref() {
                 core.number = i32::from(*local);
                 push_ref(FlatActionRefRoleV1::Card, 0, 0, donor)?;
             }
@@ -13522,7 +13522,7 @@ mod tests {
                 actor,
                 source: a.clone(),
                 ability_index: 7,
-                granted_ability: None,
+                granted_ability: Default::default(),
             },
             ActionSemanticV1::PlotSpell {
                 actor,
@@ -14783,7 +14783,7 @@ mod tests {
                 actor: PlayerSeatV1::P1,
                 source: battlefield_source.clone(),
                 ability_index: 3,
-                granted_ability: None,
+                granted_ability: Default::default(),
             },
         ];
         let mut derived_actions = Vec::new();

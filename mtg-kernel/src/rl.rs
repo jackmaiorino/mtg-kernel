@@ -581,6 +581,8 @@ pub struct PendingActivationSemanticV2 {
     pub crew_finished: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loyalty_x: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub granted_ability: Option<(CardStableRefV1, u16)>,
 }
 
 impl std::hash::Hash for PendingActivationSemanticV2 {
@@ -598,6 +600,10 @@ impl std::hash::Hash for PendingActivationSemanticV2 {
         if let Some(x) = self.loyalty_x {
             std::hash::Hash::hash(b"loyalty_x_v1", hash);
             std::hash::Hash::hash(&x, hash);
+        }
+        if let Some(grant) = &self.granted_ability {
+            std::hash::Hash::hash(b"granted_ability_v1", hash);
+            std::hash::Hash::hash(grant, hash);
         }
     }
 }
@@ -1106,6 +1112,28 @@ pub struct ObservationV5 {
     pub visible_projection_hash: u64,
 }
 
+/// Public provenance of an ability granted by a specific exiled card.
+/// None emits no hash bytes, preserving the original activation action.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct GrantedAbilityPublicV1(pub Option<(CardStableRefV1, u16)>);
+impl GrantedAbilityPublicV1 {
+    pub fn is_none(&self) -> bool {
+        self.0.is_none()
+    }
+    pub fn as_ref(&self) -> Option<&(CardStableRefV1, u16)> {
+        self.0.as_ref()
+    }
+}
+impl Hash for GrantedAbilityPublicV1 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        if let Some(grant) = &self.0 {
+            "granted-ability-public/v1".hash(state);
+            grant.hash(state);
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "action_kind", rename_all = "snake_case")]
 pub enum ActionSemanticV1 {
@@ -1134,8 +1162,8 @@ pub enum ActionSemanticV1 {
         actor: PlayerSeatV1,
         source: CardStableRefV1,
         ability_index: u8,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        granted_ability: Option<(CardStableRefV1, u16)>,
+        #[serde(default, skip_serializing_if = "GrantedAbilityPublicV1::is_none")]
+        granted_ability: GrantedAbilityPublicV1,
     },
     PlotSpell {
         actor: PlayerSeatV1,
@@ -3002,17 +3030,13 @@ fn core_surface_action_candidates_v1(
                                 actor,
                                 source: card_ref(state, id)?,
                                 ability_index,
-                                granted_ability: crate::standard_cards_v1::capture_cauldron_grant(
-                                    state,
-                                    id,
-                                    ability_index,
-                                )
-                                .0
-                                .map(|grant| {
-                                    card_ref(state, grant.donor.source)
-                                        .map(|card| (card, grant.local_index))
-                                })
-                                .transpose()?,
+                                granted_ability: GrantedAbilityPublicV1(public_granted_ability(
+                                    crate::standard_cards_v1::capture_cauldron_grant(
+                                        state,
+                                        id,
+                                        ability_index,
+                                    ),
+                                )),
                             }
                         },
                         SurfaceAction::Action(Action::ActivateAbility(id, ability_index)),
@@ -7407,6 +7431,25 @@ fn pending_activation_semantic_v2(
         object_cost_chosen: visible_card_refs(state, &object_cost_chosen, acting_player)?,
         crew_finished: p.crew_finished,
         loyalty_x: p.loyalty_x,
+        granted_ability: public_granted_ability(p.cauldron_grant),
+    })
+}
+
+fn public_granted_ability(
+    record: crate::cauldron_grants_v1::CauldronGrantRecordV1,
+) -> Option<(CardStableRefV1, u16)> {
+    record.0.map(|grant| {
+        (
+            CardStableRefV1 {
+                arena_id: grant.donor.source.0,
+                card_db_id: grant.donor.card_def,
+                owner: grant.donor.owner.into(),
+                controller: grant.donor.controller.into(),
+                zone: grant.donor.zone,
+                zone_change_count: grant.donor.zone_change_count,
+            },
+            grant.local_index,
+        )
     })
 }
 

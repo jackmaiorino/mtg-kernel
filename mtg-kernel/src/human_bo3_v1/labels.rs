@@ -374,7 +374,7 @@ pub(super) fn label(
             ..
         } => {
             let def = definition(source)?;
-            let ability = if let Some((donor, local)) = granted_ability {
+            let ability = if let Some((donor, local)) = granted_ability.as_ref() {
                 crate::standard_cards_v1::cauldron_ability_of(donor.card_db_id, *local)
             } else {
                 def.activated_abilities

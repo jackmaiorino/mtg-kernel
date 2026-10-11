@@ -334,6 +334,131 @@ mod tests {
         changed = original.clone();
         changed.characteristics.base_pt_until_end_of_turn = Some([3, 3]);
         assert_ne!(bytes(&original), bytes(&changed));
+        changed = original.clone();
+        changed.characteristics.effective_identity = Some(EffectiveIdentityV1 {
+            names: vec!["Changed identity".into()],
+            mana_value: 4,
+            supertypes: vec!["Legendary".into()],
+        });
+        assert_ne!(bytes(&original), bytes(&changed));
+    }
+
+    #[test]
+    fn absent_activation_grants_preserve_action_and_pending_hashes() {
+        let source = card().stable;
+        let action = ActionSemanticV1::ActivateAbility {
+            actor: PlayerSeatV1::P0,
+            source: source.clone(),
+            ability_index: 1,
+            granted_ability: Default::default(),
+        };
+        preserves_legacy::<LegacyActionPrefix>(&action);
+        let encoded = serde_json::to_string(&action).unwrap();
+        assert!(!encoded.contains("granted_ability"));
+        assert_eq!(
+            serde_json::from_str::<ActionSemanticV1>(&encoded).unwrap(),
+            action
+        );
+        let mut pending = PendingActivationSemanticV2 {
+            source: Some(source.clone()),
+            controller: PlayerSeatV1::P0,
+            ability_index: 1,
+            chosen_targets: vec![],
+            cost_discard_paid: Some(vec![]),
+            object_cost_chosen: vec![],
+            crew_finished: false,
+            loyalty_x: None,
+            granted_ability: None,
+        };
+        preserves_legacy::<LegacyPendingActivation>(&pending);
+        let old_pending_hash = bytes(&pending);
+        pending.granted_ability = Some((source.clone(), 7));
+        assert_ne!(bytes(&pending), old_pending_hash);
+        let granted = ActionSemanticV1::ActivateAbility {
+            actor: PlayerSeatV1::P0,
+            source: source.clone(),
+            ability_index: 1,
+            granted_ability: GrantedAbilityPublicV1(Some((source, 7))),
+        };
+        assert_ne!(bytes(&action), bytes(&granted));
+        let encoded = serde_json::to_string(&granted).unwrap();
+        assert!(encoded.contains("granted_ability"));
+        assert_eq!(
+            serde_json::from_str::<ActionSemanticV1>(&encoded).unwrap(),
+            granted
+        );
+    }
+
+    #[test]
+    fn granted_ability_projection_retains_the_captured_donor_incarnation() {
+        let donor = crate::state::AbilitySourceContractV4 {
+            source: ObjectId(17),
+            card_def: 41,
+            owner: PlayerId::P1,
+            controller: PlayerId::P0,
+            zone: Zone::Exile,
+            zone_change_count: 6,
+            attached_to: None,
+        };
+        let record = crate::cauldron_grants_v1::CauldronGrantRecordV1(Some(
+            crate::cauldron_grants_v1::CauldronGrantV1 {
+                host: donor,
+                donor,
+                local_index: 3,
+            },
+        ));
+        let (projected, index) = public_granted_ability(record).unwrap();
+        assert_eq!(
+            projected,
+            CardStableRefV1 {
+                arena_id: 17,
+                card_db_id: 41,
+                owner: PlayerSeatV1::P1,
+                controller: PlayerSeatV1::P0,
+                zone: Zone::Exile,
+                zone_change_count: 6,
+            }
+        );
+        assert_eq!(index, 3);
+    }
+
+    // Original prefix preserves ActivateAbility's discriminant (4).
+    #[derive(Hash, Serialize, Deserialize)]
+    #[serde(tag = "action_kind", rename_all = "snake_case")]
+    enum LegacyActionPrefix {
+        Pass {
+            actor: PlayerSeatV1,
+        },
+        PlayLand {
+            actor: PlayerSeatV1,
+            source: CardStableRefV1,
+        },
+        CastSpell {
+            actor: PlayerSeatV1,
+            source: CardStableRefV1,
+        },
+        ActivateManaAbility {
+            actor: PlayerSeatV1,
+            source: CardStableRefV1,
+            mana_choice: Option<ManaColor>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            cost_target: Option<CardStableRefV1>,
+        },
+        ActivateAbility {
+            actor: PlayerSeatV1,
+            source: CardStableRefV1,
+            ability_index: u8,
+        },
+    }
+    #[derive(Hash, Serialize, Deserialize)]
+    struct LegacyPendingActivation {
+        source: Option<CardStableRefV1>,
+        controller: PlayerSeatV1,
+        ability_index: u8,
+        chosen_targets: Vec<TargetRefV1>,
+        cost_discard_paid: Option<Vec<CardStableRefV1>>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        object_cost_chosen: Vec<CardStableRefV1>,
     }
 
     #[derive(Hash, Serialize, Deserialize)]
