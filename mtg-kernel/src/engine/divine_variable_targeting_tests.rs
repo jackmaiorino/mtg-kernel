@@ -77,3 +77,33 @@ fn absent_variable_source_binding_preserves_legacy_finalized_record_json_and_has
         serde_json::from_slice(&serde_json::to_vec(&old).unwrap()).unwrap();
     assert_eq!(current, restored);
 }
+
+#[test]
+fn restored_ordered_trigger_refuses_spell_only_cardinality_without_panicking() {
+    for controller in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state();
+        state.active_player = controller;
+        state.priority_player = controller;
+        let source = put(&mut state, controller, "Journey to Nowhere", Zone::Hand);
+        let target = put(&mut state, controller, "Llanowar Elves", Zone::Battlefield);
+        crate::event::propose_and_commit(
+            &mut state,
+            crate::event::ProposedEvent::zone_change(source, Zone::Battlefield),
+        );
+        collect_and_queue_triggers(&mut state);
+        assert_eq!(state.engine.pending_triggers.len(), 1);
+        assert!(matches!(
+            drain_pending_triggers_or_decide(&mut state),
+            Some(Decision::ChooseTargets { .. })
+        ));
+        validate_pending_trigger(&state, &state.engine.pending_triggers[0]).unwrap();
+        state.engine.pending_triggers[0].target_spec = TargetSpec::KickerControlledCreatures;
+        let mut replay: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        let before = serde_json::to_vec(&replay).unwrap();
+        assert!(exact_targeting_producer(&replay).is_err());
+        assert!(step(&mut replay, Action::ChooseTarget(Target::Object(target))).is_err());
+        assert!(step(&mut replay, Action::Pass).is_err());
+        assert_eq!(before, serde_json::to_vec(&replay).unwrap());
+    }
+}

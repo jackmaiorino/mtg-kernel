@@ -16357,11 +16357,14 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
                 return Err("only ChooseTriggerMode may answer a pending trigger mode".into());
             }
         }
+        if pending_trigger.placement_ordered {
+            // Authenticate the restored spec before fixed-cardinality dispatch.
+            validate_pending_trigger(state, pending_trigger)?;
+        }
         if pending_trigger.placement_ordered
             && pending_trigger.targets.len()
                 < usize::from(target_count(pending_trigger.target_spec))
         {
-            validate_pending_trigger(state, pending_trigger)?;
             let may_finish = pending_trigger.targets.len()
                 >= usize::from(target_min_count(pending_trigger.target_spec));
             if !(matches!(&action, Action::ChooseTarget(_))
@@ -16681,11 +16684,11 @@ fn exact_targeting_producer(state: &GameState) -> Result<TargetingProducer, Stri
         }
     }
     if let Some(pending) = state.engine.pending_triggers.first() {
-        if pending.placement_ordered
-            && pending.targets.len() < usize::from(target_count(pending.target_spec))
-        {
+        if pending.placement_ordered {
             validate_pending_trigger(state, pending)?;
-            producers.push(TargetingProducer::Trigger(pending.clone()));
+            if pending.targets.len() < usize::from(target_count(pending.target_spec)) {
+                producers.push(TargetingProducer::Trigger(pending.clone()));
+            }
         }
     }
     match producers.len() {

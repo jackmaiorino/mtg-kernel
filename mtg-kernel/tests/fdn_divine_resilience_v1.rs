@@ -531,10 +531,23 @@ fn divine_pending_and_finalized_kicker_bindings_reject_unilateral_restore_rewrit
             } else {
                 item.kicked = false;
             }
-            assert!(matches!(
-                engine::advance_until_decision(&mut forged),
-                Decision::Halted { .. }
-            ));
+            let mut halted = false;
+            for _ in 0..8 {
+                match engine::advance_until_decision(&mut forged) {
+                    Decision::CastSpellOrPass { .. } => {
+                        engine::step(&mut forged, Action::Pass).unwrap();
+                    }
+                    Decision::Halted { .. } => {
+                        halted = true;
+                        break;
+                    }
+                    other => panic!("unexpected forged-cast decision {other:?}"),
+                }
+            }
+            assert!(
+                halted,
+                "forged cast must halt when ordinary priority reaches resolution"
+            );
             assert!(!protected(&forged, creature));
         }
     }
