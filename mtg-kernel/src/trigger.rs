@@ -3240,6 +3240,10 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Monk Token" => &MONASTERY_SWIFTSPEAR_TRIGGERS,
         "Kellan, Planar Trailblazer" => &KELLAN_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
+        "Imodane's Recruiter" => &standard_family_g_v1::IMODANE_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Virtue of Loyalty" => &standard_family_g_v1::VIRTUE_LOYALTY_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
         "Sandstorm Salvager" => &standard_family_g_v1::SANDSTORM_SALVAGER_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Preacher of the Schism" => &standard_family_g_v1::PREACHER_TRIGGERS,

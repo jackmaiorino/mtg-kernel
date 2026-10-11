@@ -412,3 +412,20 @@ pub(super) const PREACHER_TRIGGERS: [TriggeredAbilityDef; 2] = [
         ..etb_trigger(draw_one_lose_one_effect)
     },
 ];
+
+fn imodane_rally_effect() -> EffectOp {
+    EffectOp::BoostPlayerCreaturesUntilEndOfTurn {
+        player: PlayerRef::Controller,
+        power: 1,
+        toughness: 0,
+        keywords: crate::card_def::Keywords::HASTE,
+    }
+}
+pub(super) const IMODANE_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(imodane_rally_effect)];
+fn virtue_counters_untap_effect() -> EffectOp {
+    EffectOp::CreatureUpgrade(crate::standard_creatures_v1::CreatureEffectV1::VirtueCountersUntap)
+}
+pub(super) const VIRTUE_LOYALTY_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningControllerEndStep,
+    ..etb_trigger(virtue_counters_untap_effect)
+}];

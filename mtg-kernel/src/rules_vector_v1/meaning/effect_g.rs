@@ -31,6 +31,19 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
         EffectOp::CreatureUpgrade(effect) => {
             use crate::standard_creatures_v1::CreatureEffectV1;
+            if matches!(effect, CreatureEffectV1::VirtueCountersUntap) {
+                plain_counter(
+                    RelF::You,
+                    ObjF::Typed(CardTypeF::Creature),
+                    AmtF::fixed(1),
+                    out,
+                );
+                out.effect(
+                    EffectAtom::new(EvF::Untap)
+                        .player(RelF::You)
+                        .obj(ObjF::Typed(CardTypeF::Creature)),
+                );
+            }
             if matches!(effect, CreatureEffectV1::SalvagerBoostTokens) {
                 plain_counter(
                     RelF::You,

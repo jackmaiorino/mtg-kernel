@@ -13251,7 +13251,10 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             }
         }
         Step::End => {
-            #[cfg(feature = "limited-fdn-fixtures")]
+            #[cfg(any(
+                feature = "limited-fdn-fixtures",
+                feature = "standard-magezero-fixtures"
+            ))]
             {
                 let marker = event::CommittedEvent::BeginningEndStep {
                     active_player: state.active_player,

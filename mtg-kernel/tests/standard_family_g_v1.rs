@@ -2847,3 +2847,78 @@ fn quirion_cannot_finish_a_partly_assigned_distribution() {
     settled(&mut state);
     assert_eq!(state.objects.get(recipient).counters.plus1_plus1, 2);
 }
+
+fn cast_form(state: &mut GameState, spell: ObjectId, form: u8) {
+    cast(state, spell, &[]);
+    if let Decision::ChooseSpellMode { legal_modes, .. } = next(state) {
+        assert!(legal_modes.contains(&form));
+        engine::step(state, Action::ChooseSpellMode(form)).unwrap();
+    }
+    settled(state);
+}
+
+#[test]
+fn imodane_adventure_makes_vigilant_knights_and_creature_rallies_existing_team() {
+    let mut state = ready(Step::Main1);
+    let recruiter = put(&mut state, PlayerId::P0, "Imodane's Recruiter", Zone::Hand);
+    state.players[0].mana_pool = pool(&[(ManaColor::W, 1)], 4);
+    cast_form(&mut state, recruiter, 1);
+    assert_eq!(state.objects.get(recruiter).zone, Zone::Exile);
+    assert!(state.objects.get(recruiter).v4.on_adventure);
+    let knights = battlefield_tokens(&state, PlayerId::P0, "Knight Vigilance Token");
+    assert_eq!(knights.len(), 2);
+    for &knight in &knights {
+        assert_eq!(engine::effective_power(&state, knight), 2);
+        assert!(engine::has_effective_keyword(
+            &state,
+            knight,
+            Keywords::VIGILANCE
+        ));
+    }
+    state.players[0].mana_pool = pool(&[(ManaColor::R, 1)], 2);
+    cast_form(&mut state, recruiter, 0);
+    assert_eq!(state.objects.get(recruiter).zone, Zone::Battlefield);
+    for id in [recruiter, knights[0], knights[1]] {
+        assert_eq!(engine::effective_power(&state, id), 3);
+        assert!(engine::has_effective_keyword(&state, id, Keywords::HASTE));
+    }
+    let late = put(
+        &mut state,
+        PlayerId::P0,
+        "Knight Vigilance Token",
+        Zone::Battlefield,
+    );
+    assert_eq!(engine::effective_power(&state, late), 2);
+    assert!(!engine::has_effective_keyword(
+        &state,
+        late,
+        Keywords::HASTE
+    ));
+}
+
+#[test]
+fn virtue_adventure_and_end_step_counter_then_untap_current_creatures() {
+    let mut state = ready(Step::Main1);
+    let virtue = put(&mut state, PlayerId::P0, "Virtue of Loyalty", Zone::Hand);
+    state.players[0].mana_pool = pool(&[(ManaColor::W, 1)], 1);
+    cast_form(&mut state, virtue, 1);
+    let knight = battlefield_tokens(&state, PlayerId::P0, "Knight Vigilance Token")[0];
+    state.players[0].mana_pool = pool(&[(ManaColor::W, 2)], 3);
+    cast_form(&mut state, virtue, 0);
+    assert_eq!(state.objects.get(virtue).zone, Zone::Battlefield);
+    state.objects.get_mut(knight).tapped = true;
+    let land = put(&mut state, PlayerId::P0, "Forest", Zone::Battlefield);
+    state.objects.get_mut(land).tapped = true;
+    let theirs = put(&mut state, PlayerId::P1, "Cenote Scout", Zone::Battlefield);
+    state.objects.get_mut(theirs).tapped = true;
+    state.step = Step::Main2;
+    engine::step(&mut state, Action::Pass).unwrap();
+    next(&mut state);
+    engine::step(&mut state, Action::Pass).unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(knight).counters.plus1_plus1, 1);
+    assert!(!state.objects.get(knight).tapped);
+    assert!(state.objects.get(land).tapped);
+    assert!(state.objects.get(theirs).tapped);
+    assert_eq!(state.objects.get(virtue).counters.plus1_plus1, 0);
+}

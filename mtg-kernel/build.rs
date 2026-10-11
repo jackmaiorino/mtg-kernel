@@ -3091,6 +3091,10 @@ enum AbilityEffectRecipe {
     GrantTargetKeywordUntilEndOfTurn(&'static str),
     GainLife(u8),
     CreateToken(&'static str),
+    CreateTokens {
+        token: &'static str,
+        count: u8,
+    },
     DamageTarget(u8),
     MoveAllTargetsToHand,
     ExploreTarget,
@@ -4061,6 +4065,7 @@ fn keywords_for(card: &CardJson) -> String {
         "Surrak, Elusive Hunter" => keywords.push("Keywords::TRAMPLE"),
         "Preacher of the Schism" => keywords.push("Keywords::DEATHTOUCH"),
         "Vampire Token" => keywords.push("Keywords::LIFELINK"),
+        "Knight Vigilance Token" => keywords.push("Keywords::VIGILANCE"),
         "Gingerbrute" => keywords.push("Keywords::HASTE"),
         "Surge Engine" => keywords.push("Keywords::DEFENDER"),
         "Spyglass Siren" => keywords.push("Keywords::FLYING"),
@@ -4326,6 +4331,7 @@ fn object_name_for(name: &str) -> &str {
         "Manifold Mouse Offspring Token" => "Manifold Mouse",
         "Koma's Coil Token" => "Koma's Coil",
         "Scion of the Deep Token" => "Scion of the Deep",
+        "Knight Vigilance Token" => "Knight Token",
         _ => build_standard_v1::object_name_for(name).unwrap_or(name),
     }
 }
@@ -5795,6 +5801,7 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::Surveil(count) => format!("surveil:{count}"),
         AbilityEffectRecipe::GainLife(amount) => format!("gain_life:{amount}"),
         AbilityEffectRecipe::CreateToken(name) => format!("create_token:{name}"),
+        AbilityEffectRecipe::CreateTokens { token, count } => format!("create_tokens:{token}:{count}"),
         AbilityEffectRecipe::DamageTarget(amount) => format!("damage_target:{amount}"),
         AbilityEffectRecipe::MoveAllTargetsToHand => "move_all_targets_to_hand".to_string(),
         AbilityEffectRecipe::ExploreTarget => "explore_target".to_string(),
@@ -5951,6 +5958,11 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::DrawCards(count) => format!("ability_effect_draw_{count}"),
         AbilityEffectRecipe::Surveil(count) => format!("ability_effect_surveil_{count}"),
         AbilityEffectRecipe::GainLife(amount) => format!("ability_effect_gain_life_{amount}"),
+        AbilityEffectRecipe::CreateTokens { token, count } => format!(
+            "ability_effect_create_{}_{}",
+            token.replace(' ', "_").to_lowercase(),
+            count
+        ),
         AbilityEffectRecipe::CreateToken("Samurai Token") => {
             "ability_effect_create_samurai_token".to_string()
         }
@@ -6335,6 +6347,8 @@ fn omen_effect_recipe_for(name: &str) -> Option<AbilityEffectRecipe> {
 /// instead of its ordinary graveyard departure.
 fn adventure_for(name: &str) -> String {
     match name {
+        "Imodane's Recruiter" => "Some(AdventureDef { name: \"Train Troops\", cost: Cost { pips: &[Pip::Colored(ManaColor::W)], generic: 4, x_count: 0 }, types: &[CardType::Sorcery], target_spec: TargetSpec::None, effect: ability_effect_create_knight_vigilance_token_2 })".to_string(),
+        "Virtue of Loyalty" => "Some(AdventureDef { name: \"Ardenvale Fealty\", cost: Cost { pips: &[Pip::Colored(ManaColor::W)], generic: 1, x_count: 0 }, types: &[CardType::Instant], target_spec: TargetSpec::None, effect: ability_effect_create_knight_vigilance_token_1 })".to_string(),
         "Fang Dragon" => {
             "Some(AdventureDef { name: \"Forktail Sweep\", cost: Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 1, x_count: 0 }, types: &[CardType::Sorcery], target_spec: TargetSpec::None, effect: ability_effect_damage_all_creatures_opponent_controlled_1 })".to_string()
         }
@@ -6344,6 +6358,14 @@ fn adventure_for(name: &str) -> String {
 
 fn adventure_effect_recipe_for(name: &str) -> Option<AbilityEffectRecipe> {
     match name {
+        "Imodane's Recruiter" => Some(AbilityEffectRecipe::CreateTokens {
+            token: "Knight Vigilance Token",
+            count: 2,
+        }),
+        "Virtue of Loyalty" => Some(AbilityEffectRecipe::CreateTokens {
+            token: "Knight Vigilance Token",
+            count: 1,
+        }),
         "Fang Dragon" => Some(AbilityEffectRecipe::DamageAllCreatures {
             amount: 1,
             filter: CreatureEffectFilterRecipe::OpponentControlled,
@@ -6357,6 +6379,8 @@ fn adventure_effect_recipe_for(name: &str) -> Option<AbilityEffectRecipe> {
 /// `card_id_by_visible_name`'s face-2 arm.
 fn adventure_face_name_for(name: &str) -> Option<&'static str> {
     match name {
+        "Imodane's Recruiter" => Some("Train Troops"),
+        "Virtue of Loyalty" => Some("Ardenvale Fealty"),
         "Fang Dragon" => Some("Forktail Sweep"),
         _ => None,
     }
@@ -6566,6 +6590,8 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Teething Wurmlet" => "controlled_artifact_enters:gain_life:1;first_resolution_each_turn:source_counter:1",
         "Surrak, Elusive Hunter" => "opponent_targets_controlled_creature_or_creature_spell:draw:1",
         "Bloodtithe Harvester" => "etb:create_blood_token:1",
+        "Imodane's Recruiter" => "etb:boost_controlled_creatures:1:0:haste:end_of_turn",
+        "Virtue of Loyalty" => "beginning_controller_end_step:counter_controlled_creatures_then_untap_them",
         "Sandstorm Salvager" => "etb:create_golem_token:1",
         "Preacher of the Schism" => "attacks_player_with_most_life:create_white_vampire_token;attacks_while_controller_most_life:draw:1:lose_life:1",
         "Tough Cookie" => "etb:create_food_token:1",
@@ -7257,6 +7283,10 @@ fn codegen(cards: &[CardJson]) -> String {
                     "    EffectOp::Surveil {{ player: PlayerRef::Controller, count: {count} }}"
                 )
                 .unwrap();
+            }
+            AbilityEffectRecipe::CreateTokens { token, count } => {
+                writeln!(out, "    let token = crate::card_def::card_id_by_name({token:?}).expect(\"token in CARD_DEFS\");").unwrap();
+                writeln!(out, "    EffectOp::Sequence((0..{count}).map(|_| EffectOp::CreateToken {{ token_def: token, controller: PlayerRef::Controller }}).collect())").unwrap();
             }
             AbilityEffectRecipe::CreateToken(name) => {
                 writeln!(out, "    let token = crate::card_def::card_id_by_name({name:?}).expect(\"{name} in CARD_DEFS\");").unwrap();

@@ -33,6 +33,7 @@ pub enum CreatureEffectV1 {
     WurmletCounterIfFirstResolution,
     HarvesterWeakening,
     SalvagerBoostTokens,
+    VirtueCountersUntap,
 }
 
 fn upgrade(state: &GameState, id: ObjectId) -> Option<&CreatureUpgradeV1> {
@@ -183,14 +184,17 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
 }
 
 pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameState) {
-    if effect == CreatureEffectV1::SalvagerBoostTokens {
+    if matches!(
+        effect,
+        CreatureEffectV1::SalvagerBoostTokens | CreatureEffectV1::VirtueCountersUntap
+    ) {
         let objects: Vec<_> = state
             .objects
             .iter()
             .filter_map(|(object, live)| {
                 (live.zone == Zone::Battlefield
                     && live.controller == ctx.controller
-                    && live.v4.is_token
+                    && (effect == CreatureEffectV1::VirtueCountersUntap || live.v4.is_token)
                     && crate::engine::object_has_type(
                         state,
                         object,
@@ -214,7 +218,11 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
             }
         }
         for object in objects {
-            crate::effect::install_temporary_boost(state, object, 0, 0, Keywords::TRAMPLE);
+            if effect == CreatureEffectV1::VirtueCountersUntap {
+                state.objects.get_mut(object.object).tapped = false;
+            } else {
+                crate::effect::install_temporary_boost(state, object, 0, 0, Keywords::TRAMPLE);
+            }
         }
         return;
     }
@@ -335,7 +343,9 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
         CreatureEffectV1::WurmletCounterIfFirstResolution => {
             unreachable!("resolution marker handled above")
         }
-        CreatureEffectV1::HarvesterWeakening | CreatureEffectV1::SalvagerBoostTokens => {
+        CreatureEffectV1::HarvesterWeakening
+        | CreatureEffectV1::SalvagerBoostTokens
+        | CreatureEffectV1::VirtueCountersUntap => {
             unreachable!("independent effect handled above")
         }
         CreatureEffectV1::ToughCookieAnimate => unreachable!("targeted animation handled above"),

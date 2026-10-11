@@ -6784,6 +6784,93 @@
         "Standard16-GB"
       ],
       "java_file": "Mage.Sets/src/mage/cards/g/GixsCommand.java"
+    },
+    {
+      "name": "Imodane's Recruiter",
+      "engine_capability": "full",
+      "mana_cost": "{2}{R}",
+      "mana_value": 3,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Knight"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "medium",
+      "mechanics": [
+        "adventure",
+        "etb_boost"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/i/ImodanesRecruiter.java"
+    },
+    {
+      "name": "Virtue of Loyalty",
+      "engine_capability": "full",
+      "mana_cost": "{3}{W}{W}",
+      "mana_value": 5,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "medium",
+      "mechanics": [
+        "adventure",
+        "end_step_counters_untap"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/v/VirtueOfLoyalty.java"
+    },
+    {
+      "name": "Knight Vigilance Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Knight"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "medium",
+      "mechanics": [
+        "vigilance"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/KnightToken.java",
+      "is_token": true
     }
   ]
 }
