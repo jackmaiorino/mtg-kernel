@@ -1053,6 +1053,15 @@ pub(super) fn conflicts(
                             || source.attached_to.is_some_and(|link| s.raw(link.object))
                     })
             }
+            BanishingEntryV1 { .. }
+            | BanishingCollectedV1 { .. }
+            | BanishingNoTargetsV1 { .. }
+            | BanishingPublishedV1 { .. }
+            | BanishingRemovedV1 { .. }
+            | BanishingFinishedV1 { .. }
+            | BanishingLinkInstalledV1 { .. }
+            | BanishingLinkExpiredV1 { .. }
+            | BanishingRecipientCeasedV1 { .. } => true,
             CerberusCaptureV1 { capture } => s.raw(capture.source.source),
             CerberusObserversV1 { sources, .. } => {
                 sources.iter().any(|source| s.raw(source.source))

@@ -4532,8 +4532,13 @@ pub(crate) fn collect_and_process_with_waiting(
     // checkpoint, rather than at the earlier event-matching snapshot. The
     // targets must be legal for the trigger's own source (protection,
     // "other than this"), the same set its target decision will offer.
-    new_triggers
-        .retain(|pending| crate::engine::pending_trigger_targets_can_complete(pending, state));
+    new_triggers.retain(|pending| {
+        let keep = crate::engine::pending_trigger_targets_can_complete(pending, state);
+        if !keep {
+            crate::banishing_light_v1::discard_without_targets(state, pending);
+        }
+        keep
+    });
 
     order_apnap(new_triggers, state.active_player)
 }
@@ -4597,6 +4602,16 @@ fn triggers_from_events(
                 })
     });
     let mut new_triggers = state.legend_pending_v1.take().unwrap_or_default();
+    match crate::banishing_light_v1::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
     match crate::cerberus_capture_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
@@ -4792,6 +4807,11 @@ fn triggers_from_events(
                 }
             }
             for (ability_index, def) in triggers_for(obj.card_def).iter().enumerate() {
+                if def.condition == TriggerCondition::Etb
+                    && crate::banishing_light_v1::owns_definition(obj.card_def)
+                {
+                    continue;
+                }
                 if def.condition == TriggerCondition::BeginningAnyEndStepIfCreatureDied
                     && crate::card_def::CARD_DEFS[usize::from(obj.card_def)].name
                         == "Slumbering Cerberus"

@@ -820,6 +820,39 @@ pub enum CommittedEvent {
         stack_item_id: StackItemId,
         operation_history_index: u64,
     },
+    /// History-only definition-owned entry and linked-duration authority.
+    BanishingEntryV1 {
+        source: crate::state::AbilitySourceContractV4,
+        entry_history_index: u64,
+    },
+    BanishingCollectedV1 {
+        source: crate::state::AbilitySourceContractV4,
+    },
+    BanishingNoTargetsV1 {
+        source: crate::state::AbilitySourceContractV4,
+    },
+    BanishingPublishedV1 {
+        item: Box<crate::state::StackItem>,
+    },
+    BanishingRemovedV1 {
+        item: Box<crate::state::StackItem>,
+        outcome: crate::banishing_light_v1::RemovalV1,
+    },
+    BanishingFinishedV1 {
+        stack_item_id: StackItemId,
+    },
+    BanishingLinkInstalledV1 {
+        record: crate::state::LinkedExileRecordV4,
+        exile_history_index: u64,
+    },
+    BanishingLinkExpiredV1 {
+        record: crate::state::LinkedExileRecordV4,
+        departure_history_index: u64,
+        return_history_index: Option<u64>,
+    },
+    BanishingRecipientCeasedV1 {
+        record: crate::state::LinkedExileRecordV4,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1706,6 +1739,7 @@ fn commit_with_ability_lki_and_entry_batch(
     );
     let entry_history_index = state.engine.event_history.len();
     state.engine.event_history.push(committed);
+    crate::banishing_light_v1::record_entry(state, entry_history_index);
     if committed_death {
         for capture in death_captures {
             state.engine.event_log.push(capture.clone());
@@ -2449,8 +2483,19 @@ fn refresh_paid_creature_power_lki(state: &mut GameState, id: ObjectId, from_zon
 pub fn cease_to_exist(state: &mut GameState, id: ObjectId) -> bool {
     let owner = state.objects.get(id).owner;
     let zone = state.objects.get(id).zone;
+    let banishing_records: Vec<_> = state
+        .engine
+        .linked_exile_records
+        .iter()
+        .filter(|record| {
+            record.exiled == id
+                && crate::banishing_light_v1::owns_definition(record.source.card_def)
+        })
+        .copied()
+        .collect();
     let removed = remove_from_zone(state, owner, id, zone);
     if removed {
+        crate::banishing_light_v1::record_recipient_ceased(state, &banishing_records);
         state.forget_hand_object(id);
         state.clear_object_relations(id);
         state

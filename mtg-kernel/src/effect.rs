@@ -7777,6 +7777,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::authority_of_the_consuls_v1::validate_state(state)?;
     crate::cerberus_capture_v1::validate_state(state)?;
     crate::soul_shackled_zombie_v1::validate_state(state)?;
+    crate::banishing_light_v1::validate_state(state)?;
     crate::source_power_activation_v1::validate_state(state)?;
     crate::wildwood_capture_v1::validate_state(state)?;
     squad_rallier_resolution_v1::validate(state)?;
@@ -14739,6 +14740,7 @@ pub(crate) fn return_cards_exiled_until_source_leaves(
         });
         let Some(position) = position else { break };
         let record = state.engine.linked_exile_records.remove(position);
+        let return_start = state.engine.event_history.len();
         if state.objects.try_get(record.exiled).is_some_and(|live| {
             live.zone == Zone::Exile && live.zone_change_count == record.exiled_zone_change_count
         }) {
@@ -14752,6 +14754,7 @@ pub(crate) fn return_cards_exiled_until_source_leaves(
                 event::ProposedEvent::zone_change_preserving_known_identity(record.exiled, to),
             );
         }
+        crate::banishing_light_v1::record_expiry(state, record, return_start);
     }
 }
 
@@ -18815,6 +18818,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             }
             let target_owner = state.objects.get(object).owner;
             let target_generation = state.objects.get(object).zone_change_count;
+            let exile_start = state.engine.event_history.len();
             event::propose_and_commit(
                 state,
                 event::ProposedEvent::zone_change(object, Zone::Exile),
@@ -18854,6 +18858,12 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     exiled_owner: target_owner,
                     exiled_zone_change_count,
                 });
+                let installed = *state
+                    .engine
+                    .linked_exile_records
+                    .last()
+                    .expect("just installed link");
+                crate::banishing_light_v1::record_install(state, installed, exile_start);
                 state.objects.get_mut(object).v4.exiled_by = Some(source);
                 if crate::card_def::CARD_DEFS[source_contract.card_def as usize].name
                     == "Banishing Light"

@@ -2631,6 +2631,11 @@ fn build_policy_observation_storage_common(
     accept_cerberus: bool,
     accept_authority: bool,
 ) -> Result<PolicyObservationStorageV6> {
+    if crate::banishing_light_v1::requires_successor(request.state) {
+        return Err(RlContractError(
+            "Banishing Light requires its selected public/Human successor".into(),
+        ));
+    }
     if !accept_authority && crate::authority_of_the_consuls_v1::requires_successor(request.state) {
         return Err(RlContractError(
             "Authority requires its selected public/Human successor".into(),

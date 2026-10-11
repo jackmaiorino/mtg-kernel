@@ -12845,6 +12845,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
     crate::wildwood_capture_v1::publish(state, &finalized);
     effect::frenzied_goblin_resolution_v1::publish(state)?;
     crate::cerberus_capture_v1::publish(state, &finalized)?;
+    crate::banishing_light_v1::publish(state, &finalized)?;
     // Same `priority_passes`/`priority_player` reset as `reset_priority`
     // (117.5: priority passes to the active player once a triggered
     // ability is put on the stack), but deliberately inlined instead of
@@ -13168,6 +13169,14 @@ fn triggered_stack_item_expected_target_spec(
         crate::soul_shackled_zombie_v1::validate_source(
             state,
             ability_source_contract.ok_or("single-graveyard ETB lost its source capture")?,
+        )?;
+    }
+    if crate::banishing_light_v1::owns_definition(source_card_def)
+        && *inline_effect == crate::banishing_light_v1::recipe()
+    {
+        crate::banishing_light_v1::validate_source(
+            state,
+            ability_source_contract.ok_or("Banishing ETB lost source")?,
         )?;
     }
     let definition_target_spec = trigger::target_spec_for_trigger(source_card_def, inline_effect);
@@ -13793,7 +13802,14 @@ pub(crate) fn counter_stack_item_by_id(
     } else {
         None
     };
+    let banishing_owner = crate::banishing_light_v1::acquire(state, &item)?;
     state.stack.remove(position);
+    crate::banishing_light_v1::record_removed(
+        state,
+        banishing_owner,
+        crate::banishing_light_v1::RemovalV1::Countered,
+    );
+    crate::banishing_light_v1::finish(state, &item);
     effect::frenzied_goblin_resolution_v1::complete_unstarted(
         state,
         &item,
@@ -14083,10 +14099,32 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         ));
         return ResolutionProgress::Suspended;
     }
+    let banishing_owner = match crate::banishing_light_v1::acquire(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
+    let banishing_source_present = current
+        .v4
+        .ability_source_contract
+        .is_some_and(|source| crate::banishing_light_v1::source_present(state, source));
     let item = state
         .stack
         .pop()
         .expect("resolve_top_of_stack called with an empty stack");
+    crate::banishing_light_v1::record_removed(
+        state,
+        banishing_owner,
+        crate::banishing_light_v1::RemovalV1::Resolving {
+            source_present: banishing_source_present,
+            target_legal: targets_legal,
+        },
+    );
     // Single-shot signal to the trigger-collection pass that always
     // immediately follows this resolution (`collect_and_queue_triggers`,
     // called right after by every caller of `resolve_top_of_stack`) --
@@ -14148,6 +14186,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
             return ResolutionProgress::Suspended;
         }
+        crate::banishing_light_v1::finish(state, &item);
         crate::source_power_activation_v1::finish(state, &item);
         return ResolutionProgress::Complete;
     }
@@ -14166,6 +14205,21 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     }
 
     if let Some(effect) = item.inline_effect.clone() {
+        if item
+            .v4
+            .ability_source_contract
+            .is_some_and(|source| crate::banishing_light_v1::owns_definition(source.card_def))
+            && effect == crate::banishing_light_v1::recipe()
+        {
+            // This definition-owned leaf is atomic. The original removal loan
+            // authenticates it while its actual row is absent from the stack.
+            effect::execute(&effect, &ctx, state);
+            if state.engine.halted.is_some() {
+                return ResolutionProgress::Suspended;
+            }
+            crate::banishing_light_v1::finish(state, &item);
+            return ResolutionProgress::Complete;
+        }
         let progress = execute_resolving_program(
             state,
             &item,
@@ -14175,6 +14229,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             frenzied_owner.as_ref(),
         );
         if progress == ResolutionProgress::Complete {
+            crate::banishing_light_v1::finish(state, &item);
             crate::source_power_activation_v1::finish(state, &item);
             crate::authority_of_the_consuls_v1::finish(state, &item);
             crate::cerberus_capture_v1::finish(state, &item);

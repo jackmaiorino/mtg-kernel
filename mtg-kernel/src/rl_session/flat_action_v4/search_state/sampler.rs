@@ -7,6 +7,11 @@ fn conflicts(
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    // This source preparation does not admit retained linked-duration history
+    // to hidden-state sampling, including already-closed rows.
+    if crate::banishing_light_v1::requires_successor(state) {
+        return true;
+    }
     // Receipt-owned references remain binding through legend/deferred stages
     // and after the physical source or recipient returns to a hidden zone.
     match crate::wildwood_capture_v1::active(state) {

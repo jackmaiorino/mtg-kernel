@@ -621,3 +621,99 @@ fn known_partial_planeswalker_is_a_nonland_recipient_primitive_not_admitted_ajan
         );
     }
 }
+
+fn refuses_pass_without_mutation(state: &mut GameState) {
+    let before = serde_json::to_vec(state).unwrap();
+    assert!(engine::step(state, Action::Pass).is_err());
+    assert_eq!(before, serde_json::to_vec(state).unwrap());
+}
+
+#[test]
+fn original_entry_controller_and_dispatch_owner_cannot_be_rewritten_or_dropped_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let target = put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let (source, _) = cast_to_trigger(&mut state, actor);
+        change_controller(&mut state, source, actor.opponent());
+        let mut forged = replay(&state);
+        let pending = forged
+            .engine
+            .pending_triggers
+            .iter_mut()
+            .find(|pending| pending.source == source)
+            .unwrap();
+        pending.controller = actor.opponent();
+        pending.source_contract.as_mut().unwrap().controller = actor.opponent();
+        refuses_pass_without_mutation(&mut forged);
+        let mut erased = replay(&state);
+        erased
+            .engine
+            .pending_triggers
+            .retain(|pending| pending.source != source);
+        refuses_pass_without_mutation(&mut erased);
+        announce_target(&mut state, source, target);
+        let saved = state
+            .stack
+            .iter()
+            .find(|item| item.source == source && item.kind == StackItemKind::TriggeredAbility)
+            .unwrap()
+            .clone();
+        let mut erased = replay(&state);
+        erased
+            .stack
+            .retain(|item| item.v4.stack_item_id != saved.v4.stack_item_id);
+        refuses_pass_without_mutation(&mut erased);
+        settle(&mut state);
+        assert_eq!(state.objects.get(target).zone, Zone::Exile);
+        let mut replayed = replay(&state);
+        replayed.stack.push(saved);
+        refuses_pass_without_mutation(&mut replayed);
+    }
+}
+
+#[test]
+fn actual_installation_requires_live_link_and_expiry_cannot_be_erased_or_replayed_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let target = put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let (source, _) = cast_to_trigger(&mut state, actor);
+        announce_target(&mut state, source, target);
+        settle(&mut state);
+        let original = state.engine.linked_exile_records[0];
+        for erase_receipt in [false, true] {
+            let mut forged = replay(&state);
+            forged.engine.linked_exile_records.clear();
+            if erase_receipt {
+                forged.engine.event_history.retain(|event| {
+                    !matches!(
+                        event,
+                        event::CommittedEvent::BanishingLinkInstalledV1 { .. }
+                    )
+                });
+            }
+            refuses_pass_without_mutation(&mut forged);
+        }
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+        assert_eq!(state.objects.get(target).zone, Zone::Battlefield);
+        mtg_kernel::banishing_light_v1::validate_state(&state).unwrap();
+        let mut erased = replay(&state);
+        erased
+            .engine
+            .event_history
+            .retain(|event| !matches!(event, event::CommittedEvent::BanishingLinkExpiredV1 { .. }));
+        refuses_pass_without_mutation(&mut erased);
+        let mut replayed = replay(&state);
+        replayed.engine.linked_exile_records.push(original);
+        refuses_pass_without_mutation(&mut replayed);
+    }
+}
