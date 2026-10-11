@@ -116,7 +116,7 @@ fn payment(
     })
 }
 
-fn project_state(
+pub(super) fn project_state(
     observation: &ObservationV8,
     handles: &mut Handles,
 ) -> Result<HumanVisibleStateV8, Error> {

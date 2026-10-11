@@ -471,6 +471,48 @@ pub(super) fn label_v8(
     label_common(action, &LabelInput::from_v8(observation), handles, human)
 }
 
+/// Definition-owned Heartfire label opt-in. Predecessors retain their refusal.
+pub(super) fn label_heartfire_v12(
+    action: &A,
+    observation: &crate::policy_observation_v8::ObservationV8,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    if let A::ActivateAbility {
+        source,
+        ability_index,
+        granted_ability,
+        ..
+    } = action
+    {
+        if granted_ability.is_none()
+            && crate::rules_meaning_heartfire_v1::root_meaning(
+                source.card_db_id,
+                u32::from(*ability_index),
+            )
+            .is_ok()
+        {
+            if actor(action) != Some(human) || source.zone != Zone::Battlefield {
+                return Err(Error::UnsupportedPrompt);
+            }
+            let name = handles.name(source)?;
+            return Ok(format!("Activate {name}: pay {{R}} and sacrifice this permanent: it deals damage equal to its power as it left the battlefield to one target creature or planeswalker. Negative power deals no damage; use its captured controller, color and damage keywords"));
+        }
+    }
+    label_v8(action, observation, handles, human)
+}
+
+#[cfg(test)]
+#[test]
+fn frozen_human_labels_refuse_heartfire_historical_damage_program() {
+    assert_eq!(
+        describe_effect(&EffectOp::StandardV1(
+            crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1
+        )),
+        Err(Error::UnsupportedPrompt)
+    );
+}
+
 fn label_common(
     action: &A,
     observation: &LabelInput<'_>,
