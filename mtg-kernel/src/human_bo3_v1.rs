@@ -7,8 +7,10 @@
 
 mod labels;
 mod life_ward_v8;
+mod raid_v9;
 mod visible;
 pub use life_ward_v8::*;
+pub use raid_v9::*;
 pub use visible::*;
 
 use crate::rl::PlayerSeatV1;

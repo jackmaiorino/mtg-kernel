@@ -191,9 +191,9 @@ fn typed_life_boundary_case(pending: bool) -> serde_json::Value {
         state.players[1].battlefield.retain(|&id| id != source);
         state.players[0].battlefield.push(source);
         state.objects.get_mut(source).controller = PlayerId::P0;
-        // A second legal action prevents the session's forced-pass collapse
-        // from advancing this queued boundary into a pending payment.
-        put(&mut state, PlayerId::P0, "Mountain", Zone::Hand);
+        // A castable instant prevents forced passes while the stack is
+        // nonempty. A land cannot be played at this queued boundary.
+        put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
     }
     let session = FastActorSessionV1::from_v5_fixture_state(state);
     let e = expected(&session);
