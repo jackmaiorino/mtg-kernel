@@ -64,11 +64,11 @@ power and toughness 2/2, the Assembly-Worker subtype and its printed colors, "st
 land". All engine creature and artifact queries for battlefield objects go through the
 existing effective-characteristics helpers (`object_has_type`, `effective_base_power`,
 `effective_base_toughness`, `effective_subtype_ids`, `has_effective_subtype`,
-`object_color_mask`, `has_effective_keyword`); the remaining printed-type reads for
-battlefield objects in combat, state-based actions, targeting, mana sources and
-activation costs move to those helpers. An Aura creature override (FDN's
-`creature_override`) on an animated land replaces the animation until the Aura leaves; no
-card in either pool can put both on one permanent yet. The animation ends at cleanup (514.2) or when the
+`object_color_mask`, `has_effective_keyword`). Combat, state-based actions, targeting,
+mana sources and activation costs use these helpers for effective battlefield
+characteristics. Aura creature overrides and land animation use timestamps for competing
+base-power/toughness settings. Witness Protection, included as a shared rules fixture,
+can enchant an animated land. The animation ends at cleanup (514.2) or when the
 object changes zones. Summoning sickness applies to the animated land's attacks and tap
 abilities through the ordinary `summoning_sick` flag, which every permanent already
 carries.

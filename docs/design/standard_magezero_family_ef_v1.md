@@ -115,11 +115,12 @@ that use the stack and can be activated only at the level before them
 (716.2a); the level lives in `GameState::standard_v1` per exact
 incarnation, and each gain commits `ClassLevelGainedV1` for "when this
 Class becomes level N". The beginning of combat step commits
-`BeginningCombatV1` under the Standard feature for "at the beginning of
+`BeginningOfCombat` under the Standard or FDN feature for "at the beginning of
 combat on your turn". Innkeeper's Talent level 2 gives each permanent you
-control with a counter on it ward {1} through the existing ward trigger,
-and level 3 doubles the +1/+1, lifelink and stun counters you put on
-permanents, once per such Class (616.1). Stormchaser's Talent makes a 1/1
+control with a counter on it ward {1} through the existing ward trigger.
+Level 3 doubles positive counter placements on permanents and players,
+including loyalty, lore and poison, once per such Class (616.1).
+Stormchaser's Talent makes a 1/1
 Otter with prowess on entry, returns an instant or sorcery card from your
 graveyard at level 2, and makes an Otter whenever you cast an instant or
 sorcery at level 3. Prowess is a trigger on the token, as in the keyword
@@ -214,10 +215,11 @@ consumer: the front face searches for a basic Plains and gains 2 life; the
 back face makes two 1/1 Gnome artifact creature tokens and gives creatures
 its controller controls +1/+1.
 
-Braided Net // Braided Quipu is the second. Its three net counters are
-the entering count minus the removals recorded per incarnation in
-`GameState::standard_v1`, paid by the appended
-`CostComponent::RemoveNetCounterFromSelf`. Its tap ability records the
+Braided Net // Braided Quipu is the second. Its front face enters with
+three net counters, subject to counter-placement replacements. The live
+count is stored in `GameObject::counters.net` and exposed in public counter
+observations; `CostComponent::RemoveNetCounterFromSelf` removes one to pay
+for its ability. Its tap ability records the
 tapped target's incarnation; `standard_cards_v1::activations_locked` then
 refuses that permanent's activated and mana abilities while it stays
 tapped, and every untap path releases the lock
@@ -251,11 +253,12 @@ activated and mana abilities to eligible controlled creatures, and permits any c
 of mana for controlled creature activations. Granted abilities must retain their
 origin's costs, timing and activation conditions.
 
-The integration's final Aegis/Cauldron repairs and their focused tests are still under
-review. Full admission flags allow those acceptance checks to run and do not certify
-these interactions before the combined runtime verification finishes.
+Focused regressions cover copied abilities after attachment ends, departed sources,
+captured copy characteristics, donor-specific activation conditions and restored
+payments. Native results and current delivery status are recorded in the
+[verification receipt](../reports/standard_completion_v1.md).
 
-## Completion repairs and remaining verification
+## Completion repairs and verification
 
 Room identity and Temple's nonlegendary face, effective back-face sacrifice eligibility,
 ninjutsu attack targets, distinct attacking-creature counts, loyalty/lore/poison counter
@@ -263,10 +266,11 @@ doubling, Reflection's frozen creating source, and public charge/net counters ha
 repairs. Chandra uses variable X and shared copy retargeting. Graveyard cards reset to
 the front face, so collect-evidence eligibility reads their current graveyard identity.
 
-The remaining integration audit includes Craft's public material-choice labels,
-Aegis/Cauldron semantics and granted activation conditions, all new observation fields,
-and terminal deterministic public-session execution. The current acceptance status is
-recorded in `docs/reports/standard_completion_v1.md`; this design is not a runtime pass.
+Craft's public material-choice labels, Aegis/Cauldron source provenance and granted
+activation conditions, and the added observation fields are implemented with focused
+regressions. Public-session checks exercise all sixteen decks through natural terminals
+and deterministic replay. The [verification receipt](../reports/standard_completion_v1.md)
+binds executed checks to their tested source and records the current delivery status.
 
 ## Catalog identity
 
