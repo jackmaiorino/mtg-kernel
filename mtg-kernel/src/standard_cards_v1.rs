@@ -1580,15 +1580,6 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     }
 }
 
-/// The transforming-card face each triggered ability is printed on. Abilities
-/// of single-faced cards report face 0.
-pub(crate) fn trigger_face(name: &str, ability_index: usize) -> u8 {
-    match (name, ability_index) {
-        (CECIL, 1) | (POLUKRANOS, 0) | (CLAY_FIRED_BRICKS, 1) => 1,
-        _ => 0,
-    }
-}
-
 // ---- Blue Sun's Twilight ---------------------------------------------------
 
 const BLUE_SUNS_TWILIGHT: &str = "Blue Sun's Twilight";
@@ -1971,6 +1962,7 @@ fn granted_ward_of(name: &str) -> Option<u8> {
 
 /// Whether some definition in this catalog grants ward `generic`, so a
 /// ward trigger restored after its Aura left can still be recognized.
+#[cfg(feature = "standard-magezero-fixtures")]
 pub(crate) fn ward_grant_exists(generic: u8) -> bool {
     CARD_DEFS
         .iter()
