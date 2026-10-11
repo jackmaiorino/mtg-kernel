@@ -49,6 +49,10 @@ pub fn source_sha256() -> String {
             "source_power_activation_v1.rs",
             include_str!("source_power_activation_v1.rs"),
         ),
+        (
+            "creature_stats_lki_v1.rs",
+            include_str!("creature_stats_lki_v1.rs"),
+        ),
         ("effect.rs", include_str!("effect.rs")),
         ("event.rs", include_str!("event.rs")),
         ("engine.rs", include_str!("engine.rs")),

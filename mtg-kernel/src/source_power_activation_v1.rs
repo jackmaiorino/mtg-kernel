@@ -52,7 +52,7 @@ pub(crate) fn before_departure(state: &mut GameState, source: ObjectId) {
     if !needs_stats(state, source) {
         return;
     }
-    crate::standard_statics_v1::record_creature_stats_lki(state, source);
+    crate::creature_stats_lki_v1::record_creature_stats_lki(state, source);
     let damage_source = capture_damage_source(state, source);
     state
         .engine
@@ -82,7 +82,7 @@ pub(crate) fn record_paid(state: &mut GameState, id: StackItemId) {
         expected_zone_change_count: source.zone_change_count,
     };
     let (power, toughness) =
-        crate::standard_statics_v1::current_or_last_creature_stats(state, binding)
+        crate::creature_stats_lki_v1::current_or_last_creature_stats(state, binding)
             .expect("source-sacrifice payment recorded exact departing creature stats");
     let damage_source = state
         .engine
@@ -454,10 +454,10 @@ mod tests {
                 crate::card_def::Keywords::NONE,
             );
             assert_eq!(
-                crate::standard_statics_v1::current_or_last_creature_stats(&state, binding),
+                crate::creature_stats_lki_v1::current_or_last_creature_stats(&state, binding),
                 Some((-2, 3))
             );
-            crate::standard_statics_v1::record_creature_stats_lki(&mut state, source);
+            crate::creature_stats_lki_v1::record_creature_stats_lki(&mut state, source);
             event::propose_and_commit(
                 &mut state,
                 ProposedEvent::zone_change(source, Zone::Graveyard),
@@ -465,7 +465,7 @@ mod tests {
             let encoded = serde_json::to_vec(&state).unwrap();
             state = serde_json::from_slice(&encoded).unwrap();
             assert_eq!(
-                crate::standard_statics_v1::current_or_last_creature_stats(&state, binding),
+                crate::creature_stats_lki_v1::current_or_last_creature_stats(&state, binding),
                 Some((-2, 3))
             );
             event::propose_and_commit(
@@ -474,7 +474,7 @@ mod tests {
             );
             event::add_plus_one_counters(&mut state, source, actor, 20).unwrap();
             assert_eq!(
-                crate::standard_statics_v1::current_or_last_creature_stats(&state, binding),
+                crate::creature_stats_lki_v1::current_or_last_creature_stats(&state, binding),
                 Some((-2, 3))
             );
             assert!(state.engine.event_history.iter().all(|event| !matches!(

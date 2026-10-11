@@ -494,9 +494,12 @@ mod copied_printed {
                 view.projection.surface.stack[0].source.card_db_id,
                 crate::card_def::card_id_by_name("Heartfire Immolator").unwrap()
             );
-            assert!(view.projection.surface.graveyards[actor.index()]
-                .iter()
-                .any(|card| card.stable.arena_id == source.0 && card.name == "Llanowar Elves"));
+            assert!(
+                view.projection.surface.graveyards[actor.index()]
+                    .iter()
+                    .any(|card| card.stable.arena_id == source.0
+                        && card.card_name == "Llanowar Elves")
+            );
             let mut responder = HumanHeartfireHistoryProjectorV1::new(actor.into());
             let safe = responder
                 .project_current(&session, expected(&session))

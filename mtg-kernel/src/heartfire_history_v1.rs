@@ -46,6 +46,7 @@ pub fn source_sha256() -> String {
                 include_str!("rl_session/heartfire_history_v1.rs"),
                 include_str!("human_bo3_v1/heartfire_history_v1.rs"),
                 include_str!("source_power_activation_v1.rs"),
+                include_str!("creature_stats_lki_v1.rs"),
                 include_str!("rl.rs"),
                 include_str!("rl_session.rs"),
                 include_str!("human_bo3_v1/labels.rs"),
