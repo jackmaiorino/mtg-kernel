@@ -10,7 +10,9 @@ use mtg_kernel::mana::ManaColor;
 use mtg_kernel::policy_surface_v5::PolicySurfaceV5;
 use mtg_kernel::rl::{self, CardCharacteristicsV2};
 use mtg_kernel::standard_cards_v1::StandardTargetV1;
-use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
+use mtg_kernel::state::{
+    AbilitySourceContractV4, GameObject, GameState, ObjectStateV4, Step, Target, Zone,
+};
 use std::hash::{Hash, Hasher};
 
 const P0: PlayerId = PlayerId::P0;
@@ -79,13 +81,23 @@ fn settle(state: &mut GameState) {
 }
 fn unlock(state: &mut GameState, object: ObjectId, door: u8) {
     let controller = state.objects.get(object).controller;
-    let ctx = ExecCtx::no_targets(object, controller);
+    let mut ctx = ExecCtx::no_targets(object, controller);
+    // This fixture executes the already-paid source effect directly. Like a
+    // real special action, it must bind the exact battlefield incarnation.
+    ctx.ability_source_contract = Some(AbilitySourceContractV4::capture(state, object));
     let effect = if door == 0 {
         mtg_kernel::standard_cards_v1::unlock_left_door()
     } else {
         mtg_kernel::standard_cards_v1::unlock_right_door()
     };
     effect::execute(&effect, &ctx, state);
+    assert!(
+        engine::effective_names(state, object).contains(&if door == 0 {
+            "Unholy Annex"
+        } else {
+            "Ritual Chamber"
+        })
+    );
 }
 fn characteristics(state: &GameState, object: ObjectId) -> CardCharacteristicsV2 {
     rl::observe_policy_v6(state, &PolicySurfaceV5::new(), P0, 0, 0, 0, 1)
@@ -203,8 +215,15 @@ fn etali_can_cast_either_room_door_free_during_combat_and_resume_after_restore()
     ] {
         let mut state = game();
         state.step = Step::DeclareBlockers;
+        assert!(matches!(next(&mut state), Decision::DeclareBlockers { .. }));
+        act(&mut state, Action::DeclareBlockers(Vec::new()));
         let room = put(&mut state, P1, ROOM, Zone::Library);
         put(&mut state, P0, "Etali, Primal Conqueror", Zone::Battlefield);
+        // The direct event fixture has no enclosing engine action to capture
+        // its ETB. Queue that checkpoint before asking for combat priority.
+        let triggers = mtg_kernel::trigger::collect_and_process(&mut state);
+        assert_eq!(triggers.len(), 1);
+        state.engine.pending_triggers.extend(triggers);
         let mut chose_card = false;
         let mut chose_door = false;
         for _ in 0..30 {
@@ -251,7 +270,7 @@ fn etali_can_cast_either_room_door_free_during_combat_and_resume_after_restore()
 }
 
 #[test]
-fn portable_hole_uses_room_current_mana_value() {
+fn low_mana_value_target_filter_uses_room_current_mana_value() {
     let mut state = game();
     let locked = put(&mut state, P1, ROOM, Zone::Battlefield);
     let left = put(&mut state, P1, ROOM, Zone::Battlefield);
@@ -348,9 +367,11 @@ fn absent_effective_identity_preserves_characteristic_hash_and_json() {
     let mut actual = std::collections::hash_map::DefaultHasher::new();
     card.hash(&mut actual);
     let mut legacy = std::collections::hash_map::DefaultHasher::new();
-    card.legend_return_sources.hash(&mut legacy);
-    card.legend_rules.hash(&mut legacy);
-    card.base_pt_until_end_of_turn.hash(&mut legacy);
+    // These optional extensions were appended alongside effective identity;
+    // the frozen pre-Standard hash contains none of their absent markers.
+    assert!(card.legend_return_sources.is_none());
+    assert!(card.legend_rules.is_none());
+    assert!(card.base_pt_until_end_of_turn.is_none());
     card.type_flags.hash(&mut legacy);
     card.base_power.hash(&mut legacy);
     card.base_toughness.hash(&mut legacy);

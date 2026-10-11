@@ -375,7 +375,8 @@ fn united_battlefront_filters_optional_picks_and_puts_them_on_battlefield() {
     );
     let original = state.players[0].library.clone();
     let spell = put(&mut state, PlayerId::P0, "United Battlefront", Zone::Hand);
-    state.players[0].mana_pool = pool(&[(ManaColor::W, 2)], 1);
+    // United Battlefront costs {3}{W}.
+    state.players[0].mana_pool = pool(&[(ManaColor::W, 1)], 3);
     cast(&mut state, spell, &[]);
     let Some(Decision::ChooseEffectTargets {
         min_targets,
@@ -629,6 +630,10 @@ fn ertai_can_choose_one_of_two_abilities_from_the_same_departed_source() {
     engine::step(&mut state, Action::ActivateAbility(source, 0)).unwrap();
     next(&mut state);
     engine::step(&mut state, Action::ActivateAbility(source, 0)).unwrap();
+    // Announcing an activation stages its payment. Drain that announcement
+    // before inspecting the two distinct completed stack items.
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert!(state.engine.pending_activation.is_none());
     let targets = engine::legal_targets_for(TargetSpec::StackAbility, &[], &state);
     assert_eq!(targets.len(), 2);
     assert_ne!(targets[0], targets[1]);
