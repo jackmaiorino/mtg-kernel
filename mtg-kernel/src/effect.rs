@@ -41,6 +41,7 @@ use crate::state::{
 };
 use serde::{Deserialize, Serialize};
 mod squad_rallier_resolution_v1;
+pub(crate) use squad_rallier_resolution_v1::owned_root as squad_rallier_root_is_exact;
 pub use squad_rallier_resolution_v1::SquadRallierResolutionReceiptV1;
 pub(crate) mod library_choice_search_v2;
 mod standard_payment_v1;

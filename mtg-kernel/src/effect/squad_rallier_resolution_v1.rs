@@ -17,7 +17,7 @@ pub struct SquadRallierResolutionReceiptV1 {
     pub pending: Option<Box<EffectContinuation>>,
 }
 
-fn owned_root(op: &EffectOp) -> bool {
+pub(crate) fn owned_root(op: &EffectOp) -> bool {
     matches!(op, EffectOp::LookTopSelectV1 { player: PlayerRef::Controller,
     count: LibraryLookCount::Fixed(4), rule, pick_x: false }
     if *rule == LibraryPickRule {
