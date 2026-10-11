@@ -8,6 +8,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -34,6 +35,22 @@ def checked(ref):
 
 def now(): return datetime.now(timezone.utc).isoformat()
 
+def reservation_observation(reservations):
+    """Observe canonical generations without acquiring, reclaiming or polling."""
+    lock = reservations.lock_path()
+    pattern = re.compile(re.escape(lock.stem) + r'\.g([0-9]{8})\.[0-9a-f]{32}\.')
+    generations = [int(match.group(1)) for path in lock.parent.iterdir()
+                   if (match := pattern.match(path.name))]
+    try:
+        current = read(lock)
+    except FileNotFoundError:
+        current = None
+    if current is not None:
+        generations.append(current['generation'])
+        current = {key: current[key] for key in ('generation', 'lane', 'work_id', 'acquired_at')}
+    return {'observed_utc': now(), 'current': current,
+            'highest_generation': max(generations, default=0)}
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--plan', type=Path, default=ROOT/'formal/seal.plan.json')
@@ -57,6 +74,7 @@ def main():
         require(pin(ref['path'])==ref,'sealed supporting helper changed')
     sys.path.insert(0,str(ROOT))
     import wait_canonical_free
+    reservations = wait_canonical_free.reservation_api()
     dependencies=BASE/'desktop/maintenance-dependencies-20261010.json'
     dependency_records=read(dependencies)
     sources.append(pin(dependencies))
@@ -129,6 +147,7 @@ def main():
             queue=wait_canonical_free.wait_free(queue_changed)
             state.setdefault('queue_waits',[]).append({'case':case['label'],**queue});state.pop('queue_waiting',None);save()
             case_start=time.monotonic()
+            case_started_utc=now()
             label=case['label']; python=case['argv'][0]
             require(not COMMON.exists(),'prior native root remains')
             run(label,'dispatch',case['argv'])
@@ -147,6 +166,8 @@ def main():
                 require(shutil.disk_usage('D:/').free >= request['storage']['reserve_bytes']+request['storage']['projected_volume_bytes']['D:'],'next block reserve insufficient')
                 state['first_block_reconciliation']=dict(seconds=time.monotonic()-audit_start,growth=growth,measurement=pin(out/'first-block.allocation.json'),accounting='One-time allocation audit overhead; excluded from per-case complete elapsed totals'); save()
             maintenance=ROOT/'measure/maintenance'/label
+            maintenance_started_utc=now()
+            reservation_before=reservation_observation(reservations)
             common=[python,'-B',str(post),'--launcher-root',str(ROOT/label.split('-')[-1]),'--comparison-root',str(ROOT),'--request',case['request']['path'],'--decks',str(args.decks),'--t1',str(args.t1),'--out',str(maintenance),'--recovery-mode','desktop-local']
             run(label,'inspect',common[:3]+['inspect']+common[3:])
             inspection=read(maintenance/'inspect.json'); recovery=inspection['recovery_copy_plan']; checked(recovery)
@@ -196,9 +217,18 @@ def main():
             latecold=cold/'late-copy-receipt.json'
             copy_recovery.cold_copy(latepath,latecold)
             require(pin(latecold)['sha256']==pin(latepath)['sha256'],'late copy receipt readback differs')
+            metadata_seconds=time.monotonic()-metadata_start
+            reservation_after=reservation_observation(reservations)
+            dispatch_generation=controller['dispatch']['generation']
+            observations={'before':reservation_before,'after':reservation_after,
+                          'dispatch_generation':dispatch_generation,
+                          'additional_generations_observed':any(x['highest_generation']>dispatch_generation for x in (reservation_before,reservation_after)),
+                          'scope':'Canonical reservation generations only. Includes short completed reservations through archived filenames. Does not rule out shared-slot or unreserved background work; does not reject or exclude a case.'}
+            completed=dict(label=label,report=controller['report'],inspect=pin(maintenance/'inspect.json'),transport=receipt,retain=pin(maintenance/'retain.json'),late_copy=pin(latepath),late_receipt_metadata_seconds=metadata_seconds,late_copy_cold_receipt=pin(latecold),started_utc=case_started_utc,maintenance_started_utc=maintenance_started_utc,maintenance_reservation_observations=observations)
             wall=time.monotonic()-case_start
             audit=state['first_block_reconciliation']['seconds'] if index==0 else 0.0
-            state['completed'].append(dict(label=label,report=controller['report'],inspect=pin(maintenance/'inspect.json'),transport=receipt,retain=pin(maintenance/'retain.json'),late_copy=pin(latepath),late_receipt_metadata_seconds=time.monotonic()-metadata_start,late_copy_cold_receipt=pin(latecold),coordinator_case_wall_seconds=wall,matched_case_wall_seconds=wall-audit,excluded_one_time_allocation_audit_seconds=audit)); save()
+            completed.update(coordinator_case_wall_seconds=wall,matched_case_wall_seconds=wall-audit,excluded_one_time_allocation_audit_seconds=audit,finished_utc=now(),timing_boundary='Through final recovery receipt SHA reads and canonical generation observation; subsequent durable coordinator-state write is outside case wall and included in coordinator elapsed.')
+            state['completed'].append(completed); save()
         state.update(complete=True,finished_utc=now()); save()
         finalcold=Path('E:/training-io-speedups-20261010')/'formal-final-state.json'
         require(not finalcold.exists(),'final metadata destination exists')
