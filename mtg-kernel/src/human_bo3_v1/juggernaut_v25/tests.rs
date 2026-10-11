@@ -173,6 +173,28 @@ fn actual_juggernaut_combat_scan_public_frozen_refusal_submit_and_stale_facts_bo
         )
         .is_err());
         assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+        let manifest = crate::juggernaut_public_v1::observe_v1(
+            &state,
+            &crate::policy_surface_v5::PolicySurfaceV5::new_for_session(),
+            actor,
+            0,
+            0,
+            0,
+            1,
+        )
+        .unwrap();
+        assert_eq!(manifest.roots.len(), 2);
+        assert_eq!(
+            manifest
+                .roots
+                .iter()
+                .map(|row| row.root)
+                .collect::<Vec<_>>(),
+            vec![
+                crate::rules_meaning_juggernaut_v1::RootV1::MustAttackEachCombat,
+                crate::rules_meaning_juggernaut_v1::RootV1::CannotBeBlockedByWalls
+            ]
+        );
         let base = FastActorSessionV1::from_juggernaut_v25_fixture_state(state);
         let mut session = HumanJuggernautSessionV25::from_session(base).unwrap();
         let current = expected(&session);

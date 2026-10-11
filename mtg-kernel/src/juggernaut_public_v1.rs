@@ -137,7 +137,7 @@ fn roots() -> Result<Vec<RootV1>, RlContractError> {
     )) {
         return Ok(Vec::new());
     }
-    let Some(id) = crate::card_def::card_id_by_name("Slumbering Juggernaut") else {
+    let Some(id) = crate::card_def::card_id_by_name("Juggernaut") else {
         return Ok(Vec::new());
     };
     let selector = crate::rules_meaning_juggernaut_v1::live_selector()
