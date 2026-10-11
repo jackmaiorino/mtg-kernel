@@ -1863,7 +1863,11 @@ impl FlatDecisionEncoderV2 {
         observation: &impl FlatCommonObservation,
     ) -> Result<(), FlatDecisionErrorV2> {
         let observation = observation.flat_common();
-        if observation.projection.poison_counters.is_some()
+        if observation
+            .projection
+            .creatures_attacked_this_turn
+            .is_some()
+            || observation.projection.poison_counters.is_some()
             || observation.projection.restricted_mana.is_some()
             || observation
                 .projection

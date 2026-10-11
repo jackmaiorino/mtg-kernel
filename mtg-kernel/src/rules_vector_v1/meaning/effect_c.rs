@@ -22,6 +22,11 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
     const GRAVEYARD: Option<ZoneF> = Some(ZoneF::Graveyard);
     match spec {
         TargetSpec::None => (None, None),
+        TargetSpec::CardInOwnGraveyardWithAnySubtype(_) => (GRAVEYARD, Some(RelF::You)),
+        TargetSpec::OpponentArtifactEnchantmentOrNonbasicLand => {
+            (BATTLEFIELD, Some(RelF::Opponent))
+        }
+        TargetSpec::LegendaryCreature => (BATTLEFIELD, None),
         // Slot 0 is a creature or a player; only the creature has a zone.
         TargetSpec::AnyTarget => (BATTLEFIELD, None),
         // Slot 0 is the player, slot 1 a creature that player controls.

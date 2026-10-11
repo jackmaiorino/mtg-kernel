@@ -6366,6 +6366,398 @@
       ],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/IxalanVampireToken.java",
       "is_token": true
+    },
+    {
+      "name": "United Battlefront",
+      "engine_capability": "full",
+      "mana_cost": "{3}{W}",
+      "mana_value": 4,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "look_top",
+        "put_onto_battlefield"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/u/UnitedBattlefront.java"
+    },
+    {
+      "name": "Kayla's Reconstruction",
+      "engine_capability": "full",
+      "mana_cost": "{X}{W}{W}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "look_top",
+        "put_onto_battlefield"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/k/KaylasReconstruction.java"
+    },
+    {
+      "name": "Lupinflower Village",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C"
+      ],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "mana_ability",
+        "activated_ability"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LupinflowerVillage.java"
+    },
+    {
+      "name": "Fomori Vault",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C"
+      ],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "mana_ability",
+        "activated_ability"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FomoriVault.java"
+    },
+    {
+      "name": "Mudflat Village",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C"
+      ],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "activated_ability"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MudflatVillage.java"
+    },
+    {
+      "name": "Boseiju, Who Endures",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "G"
+      ],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "activated_ability"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BoseijuWhoEndures.java"
+    },
+    {
+      "name": "Takenuma, Abandoned Mire",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "B"
+      ],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "activated_ability"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/TakenumaAbandonedMire.java"
+    },
+    {
+      "name": "Sokenzan, Crucible of Defiance",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "R"
+      ],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "activated_ability"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SokenzanCrucibleOfDefiance.java"
+    },
+    {
+      "name": "Fountainport",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C"
+      ],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "activated_ability"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/Fountainport.java"
+    },
+    {
+      "name": "Maelstrom Pulse",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}{G}",
+      "mana_value": 3,
+      "colors": [
+        "B",
+        "G"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "spell_effect"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MaelstromPulse.java"
+    },
+    {
+      "name": "Tear Asunder",
+      "engine_capability": "partial",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "spell_effect"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/TearAsunder.java"
+    },
+    {
+      "name": "Witchstalker Frenzy",
+      "engine_capability": "full",
+      "mana_cost": "{3}{R}",
+      "mana_value": 4,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "spell_effect"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/w/WitchstalkerFrenzy.java"
+    },
+    {
+      "name": "Colorless Spirit Token",
+      "object_name": "Spirit",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Spirit"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/SpiritToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Fish Token",
+      "object_name": "Fish",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Fish"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/FishNoAbilityToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Plaza of Heroes",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C"
+      ],
+      "decks": [
+        "Standard16-5C.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "mana_ability",
+        "restricted_mana",
+        "activated_ability"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/p/PlazaOfHeroes.java"
     }
   ]
 }

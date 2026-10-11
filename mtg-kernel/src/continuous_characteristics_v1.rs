@@ -98,8 +98,12 @@ pub(crate) fn base_power_toughness(state: &GameState, id: ObjectId) -> Option<(i
     if let Some((override_, timestamp)) = creature_override(state, id) {
         settings.push((override_.power, override_.toughness, timestamp));
     }
-    if let Some((animation, timestamp)) = animation(state, id) {
-        settings.push((animation.power, animation.toughness, timestamp));
+    if object.zone == Zone::Battlefield {
+        if let Some(timestamp) = object.v4.animation_timestamp {
+            if let Some(animation) = CARD_DEFS[object.card_def as usize].animation {
+                settings.push((animation.power, animation.toughness, timestamp));
+            }
+        }
     }
     if object.zone == Zone::Battlefield {
         settings.extend(object.v4.temporary_base_pt_v1);

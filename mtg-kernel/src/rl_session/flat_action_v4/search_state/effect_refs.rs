@@ -111,6 +111,12 @@ impl Scan<'_> {
             | GainLifeDynamic { .. }
             | UntapObject { .. }
             | AnimateSource
+            | AnimateSourcePermanentlyV1
+            | LookTopSelectV1 { .. }
+            | SelectObjectsV1 { .. }
+            | DestroyCreaturesPowerAtMostV1 { .. }
+            | DestroyPermanentsSharingTargetNameV1 { .. }
+            | CreateTokensWithHasteUntilEndOfTurnV1 { .. }
             | PumpTargetUntilEndOfTurnDynamic { .. }
             | LookTopSelectByTypeToHandBottomRest { .. }
             | LookTopPickToHandBottomRest { .. }
@@ -231,6 +237,11 @@ impl Scan<'_> {
             WardPayment {
                 choice, selected, ..
             } => self.bs(&choice.candidates) || self.bs(selected) || self.fs(&choice.remaining),
+            ApplySelectedObjectsV1 {
+                original_candidates,
+                selected,
+                ..
+            } => self.bs(original_candidates) || self.bs(selected),
             Program { op, .. } => self.op(op),
             MoveObjectsBatch { objects, .. }
             | MillLibraryBatch { objects, .. }
@@ -531,7 +542,11 @@ impl Scan<'_> {
                 then,
                 ..
             } => self.bs(original_graveyard) || self.bs(candidates) || self.op(then),
-            SacrificeCreature {
+            SelectObjectsV1 {
+                original_candidates,
+                ..
+            }
+            | SacrificeCreature {
                 original_candidates,
                 ..
             }

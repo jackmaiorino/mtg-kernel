@@ -8,7 +8,7 @@ use super::*;
 pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     let _ = env;
     match op {
-        EffectOp::AnimateSource => {
+        EffectOp::AnimateSource | EffectOp::AnimateSourcePermanentlyV1 => {
             // The source's exact battlefield incarnation becomes its
             // definition's `animation` creature until end of turn (514.2):
             // it gains Creature (and Artifact), base power and toughness,
@@ -18,7 +18,11 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                 EffectAtom::new(EvF::SetCharacteristic)
                     .player(RelF::You)
                     .obj(ObjF::ThisObject)
-                    .duration(DurF::EndOfTurn),
+                    .duration(if matches!(op, EffectOp::AnimateSourcePermanentlyV1) {
+                        DurF::Permanent
+                    } else {
+                        DurF::EndOfTurn
+                    }),
             );
         }
         EffectOp::SetTargetBasePowerToughnessUntilEndOfTurn { index, .. } => {
@@ -35,6 +39,53 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                     .obj(ObjF::Typed(CardTypeF::Creature))
                     .amount(AmtF::fixed(*power))
                     .duration(DurF::EndOfTurn),
+            );
+        }
+        EffectOp::SelectObjectsV1 { rule } => {
+            out.control(ControlF::ChooseObjects);
+            match rule.action {
+                crate::effect::ObjectSelectionActionV1::MoveTo(zone) => out.effect(
+                    EffectAtom::moving(Some(rule.zone.into()), zone.into())
+                        .player(player_ref(rule.player))
+                        .obj(ObjF::AnyCard)
+                        .amount(AmtF::fixed(i64::from(rule.max))),
+                ),
+                crate::effect::ObjectSelectionActionV1::CountersAndKeyword {
+                    counters,
+                    keyword,
+                } => {
+                    out.effect(
+                        EffectAtom::new(EvF::PlaceCounter)
+                            .obj(ObjF::Typed(CardTypeF::Creature))
+                            .amount(AmtF::fixed(i64::from(counters))),
+                    );
+                    for keyword in keyword_bits(keyword) {
+                        out.effect(
+                            EffectAtom::new(EvF::GrantKeyword)
+                                .obj(ObjF::Typed(CardTypeF::Creature))
+                                .keyword(keyword)
+                                .duration(DurF::EndOfTurn),
+                        );
+                    }
+                }
+            }
+        }
+        EffectOp::DestroyCreaturesPowerAtMostV1 { power: _ }
+        | EffectOp::DestroyPermanentsSharingTargetNameV1 { index: _ } => {
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Battlefield), ZoneF::Graveyard)
+                    .obj(ObjF::Permanent)
+                    .amount(AmtF::All),
+            );
+        }
+        EffectOp::CreateTokensWithHasteUntilEndOfTurnV1 {
+            token_def: _,
+            count,
+        } => {
+            out.effect(
+                EffectAtom::new(EvF::CreateToken)
+                    .obj(ObjF::Permanent)
+                    .amount(AmtF::fixed(i64::from(*count))),
             );
         }
         _ => unreachable!("dispatched to the wrong slice"),

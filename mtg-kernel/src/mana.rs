@@ -242,10 +242,15 @@ impl std::hash::Hash for RestrictedManaPoolV1 {
     }
 }
 
-fn spell_floating_pool(state: &GameState, player: PlayerId, creature_spell: bool) -> [u8; 6] {
+fn spell_floating_pool(
+    state: &GameState,
+    player: PlayerId,
+    creature_spell: bool,
+    legendary_spell: bool,
+) -> [u8; 6] {
     let mut pool = state.players[player.index()].mana_pool;
-    if creature_spell {
-        for unit in &state.players[player.index()].restricted_mana_pool.0 {
+    for unit in &state.players[player.index()].restricted_mana_pool.0 {
+        if restriction_permits(unit.restriction, creature_spell, legendary_spell) {
             pool[unit.color.pool_index()] = pool[unit.color.pool_index()].saturating_add(1);
         }
     }
@@ -257,14 +262,18 @@ fn separate_restricted_spending(
     state: &GameState,
     player: PlayerId,
     creature_spell: bool,
+    legendary_spell: bool,
 ) {
-    if creature_spell {
+    {
         for (index, unit) in state.players[player.index()]
             .restricted_mana_pool
             .0
             .iter()
             .enumerate()
         {
+            if !restriction_permits(unit.restriction, creature_spell, legendary_spell) {
+                continue;
+            }
             let used = &mut plan.pool_used[unit.color.pool_index()];
             if *used > 0 {
                 *used -= 1;
@@ -333,11 +342,11 @@ pub fn can_pay_spell(
     creature_spell: bool,
 ) -> Option<PaymentPlan> {
     let sources = gather_sources_for_spell(player, state, creature_spell);
-    let pool = spell_floating_pool(state, player, creature_spell);
+    let pool = spell_floating_pool(state, player, creature_spell, false);
     let mut plan = solve(cost, x_value, pool, &sources).filter(|plan| {
         life_payment_affordable(plan.life_paid, state.players[player.index()].life)
     })?;
-    separate_restricted_spending(&mut plan, state, player, creature_spell);
+    separate_restricted_spending(&mut plan, state, player, creature_spell, false);
     Some(plan)
 }
 
@@ -446,16 +455,40 @@ pub(crate) fn plan_spell_mana_total_v1(
     excluded: &[ObjectId],
     additional_life: u32,
 ) -> Option<PaymentPlan> {
+    plan_spell_mana_total_with_restrictions_v1(
+        pips,
+        generic,
+        player,
+        state,
+        creature_spell,
+        excluded,
+        additional_life,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn plan_spell_mana_total_with_restrictions_v1(
+    pips: &[Pip],
+    generic: u32,
+    player: PlayerId,
+    state: &GameState,
+    creature_spell: bool,
+    excluded: &[ObjectId],
+    additional_life: u32,
+    legendary_spell: bool,
+) -> Option<PaymentPlan> {
     let life = i64::from(state.players[player.index()].life);
     if additional_life != 0 && i64::from(additional_life) > life {
         return None;
     }
     let mana_life_budget = (life - i64::from(additional_life)).max(0);
-    let sources = gather_sources_for_spell(player, state, creature_spell)
-        .into_iter()
-        .filter(|source| !excluded.contains(&source.id))
-        .collect::<Vec<_>>();
-    let pool = spell_floating_pool(state, player, creature_spell);
+    let sources =
+        gather_sources_for_spell_restrictions_v1(player, state, creature_spell, legendary_spell)
+            .into_iter()
+            .filter(|source| !excluded.contains(&source.id))
+            .collect::<Vec<_>>();
+    let pool = spell_floating_pool(state, player, creature_spell, legendary_spell);
 
     let mut plan = PaymentPlan::default();
     let mut pool_remaining = pool;
@@ -473,7 +506,7 @@ pub(crate) fn plan_spell_mana_total_v1(
     ) {
         return None;
     }
-    separate_restricted_spending(&mut plan, state, player, creature_spell);
+    separate_restricted_spending(&mut plan, state, player, creature_spell, legendary_spell);
     let total_life = i64::from(plan.life_paid) + i64::from(additional_life);
     (total_life == 0 || total_life <= i64::from(state.players[player.index()].life)).then_some(plan)
 }
@@ -550,7 +583,7 @@ pub(crate) fn plan_spell_mana_total_with_convoke_v1(
         sources.push(source);
     }
     let mut plan = PaymentPlan::default();
-    let mut pool = spell_floating_pool(state, player, creature_spell);
+    let mut pool = spell_floating_pool(state, player, creature_spell, false);
     let mut used = vec![false; sources.len()];
     if !solve_pips_with_life_budget_v1(
         pips,
@@ -576,7 +609,7 @@ pub(crate) fn plan_spell_mana_total_with_convoke_v1(
             true
         }
     });
-    separate_restricted_spending(&mut plan, state, player, creature_spell);
+    separate_restricted_spending(&mut plan, state, player, creature_spell, false);
     Some((plan, convoked))
 }
 
@@ -668,6 +701,26 @@ pub fn gather_sources_for_spell(
     state: &GameState,
     creature_spell: bool,
 ) -> Vec<ManaSource> {
+    gather_sources_for_spell_restrictions_v1(player, state, creature_spell, false)
+}
+
+fn restriction_permits(
+    restriction: crate::card_def::ManaSpendRestrictionDef,
+    creature_spell: bool,
+    legendary_spell: bool,
+) -> bool {
+    match restriction {
+        crate::card_def::ManaSpendRestrictionDef::CreatureSpell => creature_spell,
+        crate::card_def::ManaSpendRestrictionDef::LegendarySpell => legendary_spell,
+    }
+}
+
+fn gather_sources_for_spell_restrictions_v1(
+    player: PlayerId,
+    state: &GameState,
+    creature_spell: bool,
+    legendary_spell: bool,
+) -> Vec<ManaSource> {
     let mut sources = Vec::new();
     for &id in &state.players[player.index()].battlefield {
         let obj = state.objects.get(id);
@@ -692,10 +745,10 @@ pub fn gather_sources_for_spell(
         } else {
             Vec::new()
         };
-        if creature_spell {
+        {
             for restricted in def.restricted_mana_abilities {
-                match restricted.restriction {
-                    crate::card_def::ManaSpendRestrictionDef::CreatureSpell => {}
+                if !restriction_permits(restricted.restriction, creature_spell, legendary_spell) {
+                    continue;
                 }
                 for &color in restricted.colors {
                     if !choices.contains(&color) {

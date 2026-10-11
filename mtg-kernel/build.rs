@@ -3031,6 +3031,7 @@ impl Special {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AbilityCostRecipe {
+    PayLife(u8),
     Mana {
         colored: Option<&'static str>,
         generic: u8,
@@ -3078,6 +3079,10 @@ enum AbilityCostRecipe {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AbilityEffectRecipe {
+    Program {
+        name: &'static str,
+        effect: &'static str,
+    },
     DrawCards(u8),
     PumpSourceUntilEndOfTurn {
         power: i32,
@@ -3189,6 +3194,7 @@ enum AbilityEffectRecipe {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PermanentFilterRecipe {
+    Token,
     Artifact,
     ArtifactOrCreature,
     AnotherArtifact,
@@ -3618,6 +3624,11 @@ fn standard_program_for(name: &str) -> Option<Special> {
         "Lightning Strike" => Special::BurnAnyTarget(3),
         "Negate" => Special::CounterTarget(StackSpellFilter::Noncreature),
         "Opt" => Special::ScryThenDraw { scry: 1, draw: 1 },
+        "United Battlefront" => program("None", "EffectOp::LookTopSelectV1 { player: PlayerRef::Controller, count: crate::effect::LibraryLookCount::Fixed(7), rule: crate::effect::LibraryPickRule { pick: 2, choose_rest_order: false, selection: Some(crate::effect::LibraryPickSelectionV1 { filter: crate::effect::LibraryPickFilterV1::NoncreatureNonlandPermanentManaValueAtMost(3), optional: true, destination: Zone::Battlefield, reveal_selected: false }) }, pick_x: false }", "EffectOp::LookTopSelectV1 { player: PlayerRef::Controller, count: crate::effect::LibraryLookCount::Fixed(7), rule: crate::effect::LibraryPickRule { pick: 2, choose_rest_order: false, selection: Some(crate::effect::LibraryPickSelectionV1 { filter: crate::effect::LibraryPickFilterV1::NoncreatureNonlandPermanentManaValueAtMost(3), optional: true, destination: Zone::Battlefield, reveal_selected: false }) }, pick_x: false }"),
+        "Kayla's Reconstruction" => program("None", "EffectOp::LookTopSelectV1 { player: PlayerRef::Controller, count: crate::effect::LibraryLookCount::Fixed(7), rule: crate::effect::LibraryPickRule { pick: 0, choose_rest_order: false, selection: Some(crate::effect::LibraryPickSelectionV1 { filter: crate::effect::LibraryPickFilterV1::ArtifactOrCreatureManaValueAtMost(3), optional: true, destination: Zone::Battlefield, reveal_selected: false }) }, pick_x: true }", "EffectOp::LookTopSelectV1 { player: PlayerRef::Controller, count: crate::effect::LibraryLookCount::Fixed(7), rule: crate::effect::LibraryPickRule { pick: 0, choose_rest_order: false, selection: Some(crate::effect::LibraryPickSelectionV1 { filter: crate::effect::LibraryPickFilterV1::ArtifactOrCreatureManaValueAtMost(3), optional: true, destination: Zone::Battlefield, reveal_selected: false }) }, pick_x: true }"),
+        "Witchstalker Frenzy" => program("Creature", "DealDamage(Target(0),5);GenericReduction=CreaturesAttackedThisTurn", "EffectOp::DealDamage { target: TargetRef::Target(0), amount: 5 }"),
+        "Maelstrom Pulse" => program("NonlandPermanent", "DestroyPermanentsSharingTargetName(0)", "EffectOp::DestroyPermanentsSharingTargetNameV1 { index: 0 }"),
+        "Tear Asunder" => program("ArtifactOrEnchantmentPermanent", "ExileTarget;KickerTarget=NonlandPermanent", "EffectOp::MoveObject { object: ObjectRef::Target(0), to_zone: Zone::Exile }"),
         "Sheoldred's Edict" => Special::Program {
             target: "None",
             recipe: "SacrificeOpponent(NontokenCreature);mode3=SacrificeOpponent(Planeswalker)",
@@ -3754,6 +3765,8 @@ fn program_target_spec_src(target: &str) -> &'static str {
         "TargetOpponent" => "TargetSpec::TargetOpponent",
         "Creature" => "TargetSpec::Creature",
         "ControlledCreature" => "TargetSpec::ControlledCreature",
+        "NonlandPermanent" => "TargetSpec::NonlandPermanent",
+        "ArtifactOrEnchantmentPermanent" => "TargetSpec::ArtifactOrEnchantmentPermanent",
         "ArtifactPermanent" => "TargetSpec::ArtifactPermanent",
         "CreatureOrPlaneswalker" => "TargetSpec::CreatureOrPlaneswalker",
         "ArtifactEnchantmentOrFlyingCreature" => "TargetSpec::ArtifactEnchantmentOrFlyingCreature",
@@ -4425,6 +4438,7 @@ fn kicker_cost_for(name: &str) -> String {
         "Gnarlid Colony" => cost_src("{2}{G}"),
         "Sun-Blessed Healer" => cost_src("{1}{W}"),
         "Burst Lightning" => cost_src("{4}"),
+        "Tear Asunder" => cost_src("{1}{B}"),
         "Grow from the Ashes" => cost_src("{2}"),
         "Gatekeeper of Malakir" => cost_src("{B}"),
         _ => "None".to_string(),
@@ -5654,6 +5668,7 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
             format!("CostComponent::DiscardCards({count})")
         }
         AbilityCostRecipe::DiscardSelf => "CostComponent::DiscardSelf".to_string(),
+        AbilityCostRecipe::PayLife(n) => format!("CostComponent::PayLife({n})"),
         AbilityCostRecipe::SacrificeSelf => "CostComponent::SacrificeSelf".to_string(),
         AbilityCostRecipe::SacrificeOtherControlledCreatures(count) => {
             format!("CostComponent::SacrificeOtherControlledCreatures({count})")
@@ -5712,6 +5727,7 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::Tap => "tap".to_string(),
         AbilityCostRecipe::DiscardCards(count) => format!("discard_cards:{count}"),
         AbilityCostRecipe::DiscardSelf => "discard_self".to_string(),
+        AbilityCostRecipe::PayLife(n) => format!("pay_life:{n}"),
         AbilityCostRecipe::SacrificeSelf => "sacrifice_self".to_string(),
         AbilityCostRecipe::SacrificeOtherControlledCreatures(count) => {
             format!("sacrifice_other_controlled_creatures:{count}")
@@ -5754,6 +5770,7 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
 fn permanent_filter_src(filter: PermanentFilterRecipe) -> &'static str {
     match filter {
         PermanentFilterRecipe::Artifact => "PermanentFilter::Artifact",
+        PermanentFilterRecipe::Token => "PermanentFilter::Token",
         PermanentFilterRecipe::ArtifactOrCreature => "PermanentFilter::ArtifactOrCreature",
         PermanentFilterRecipe::AnotherArtifact => "PermanentFilter::AnotherArtifact",
     }
@@ -5762,6 +5779,7 @@ fn permanent_filter_src(filter: PermanentFilterRecipe) -> &'static str {
 fn permanent_filter_token(filter: PermanentFilterRecipe) -> &'static str {
     match filter {
         PermanentFilterRecipe::Artifact => "artifact",
+        PermanentFilterRecipe::Token => "token",
         PermanentFilterRecipe::ArtifactOrCreature => "artifact_or_creature",
         PermanentFilterRecipe::AnotherArtifact => "another_artifact",
     }
@@ -5769,6 +5787,7 @@ fn permanent_filter_token(filter: PermanentFilterRecipe) -> &'static str {
 
 fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
     match effect {
+        AbilityEffectRecipe::Program { name, effect } => format!("program:{name}:{effect}"),
         AbilityEffectRecipe::PumpSourceUntilEndOfTurn { power, toughness } => format!("pump_source_until_end_of_turn:{power}:{toughness}:exact_incarnation"),
         AbilityEffectRecipe::GrantTargetKeywordUntilEndOfTurn(keyword) => format!("grant_target_keyword_until_end_of_turn:{keyword}:exact_incarnation"),
         AbilityEffectRecipe::DrawCards(count) => format!("draw_cards:{count}"),
@@ -5920,6 +5939,7 @@ fn library_search_filter_src(filter: LibrarySearchFilterRecipe) -> String {
 
 fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
     match effect {
+        AbilityEffectRecipe::Program { name, .. } => format!("ability_effect_{name}"),
         AbilityEffectRecipe::PumpSourceUntilEndOfTurn { power, toughness } => {
             format!("ability_effect_pump_source_{power}_{toughness}")
         }
@@ -6365,6 +6385,7 @@ fn cost_src(mana_cost: &str) -> String {
 
 fn generic_cost_reduction_for(name: &str) -> &'static str {
     match name {
+        "Witchstalker Frenzy" => "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::CreaturesAttackedThisTurn })",
         "Arcane Epiphany" => {
             "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerHasPermanentSubtype(Subtype::Wizard) })"
         }
@@ -7200,6 +7221,9 @@ fn codegen(cards: &[CardJson]) -> String {
         let function_name = ability_effect_fn_name(effect);
         writeln!(out, "fn {function_name}() -> EffectOp {{").unwrap();
         match effect {
+            AbilityEffectRecipe::Program { effect, .. } => {
+                writeln!(out, "    {effect}").unwrap();
+            }
             AbilityEffectRecipe::PumpSourceUntilEndOfTurn { power, toughness } => {
                 writeln!(out, "    EffectOp::PumpTargetUntilEndOfTurnDynamic {{ target: TargetRef::ThisSource, power: DynamicValueDef::Fixed({power}), toughness: DynamicValueDef::Fixed({toughness}) }}").unwrap();
             }

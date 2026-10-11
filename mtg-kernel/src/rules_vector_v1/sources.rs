@@ -331,6 +331,7 @@ fn mana_ability_condition_facts(
                 AggF::Any,
             );
         }
+        crate::card_def::ManaAbilityConditionDef::ControlledLegendaryPermanentHasColor(_) => out.read(RelF::You,Some(ZoneF::Battlefield),Some(ObjF::Permanent),AggF::Count),
         crate::card_def::ManaAbilityConditionDef::SourceEnteredThisTurn => out.read(
             RelF::You,
             Some(ZoneF::Battlefield),
@@ -775,7 +776,8 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 );
             }
             match restricted.restriction {
-                crate::card_def::ManaSpendRestrictionDef::CreatureSpell => {
+                crate::card_def::ManaSpendRestrictionDef::CreatureSpell
+                | crate::card_def::ManaSpendRestrictionDef::LegendarySpell => {
                     out.control(ControlF::Conditional)
                 }
             }

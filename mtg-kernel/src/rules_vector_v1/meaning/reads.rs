@@ -408,6 +408,15 @@ pub(crate) fn dynamic_count(count: DynamicCountDef, out: &mut Collector) -> AmtF
             }
             AmtF::Dynamic
         }
+        DynamicCountDef::CreaturesAttackedThisTurn => {
+            out.read(
+                RelF::EachPlayer,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Typed(CardTypeF::Creature)),
+                AggF::EventThisTurn,
+            );
+            AmtF::Dynamic
+        }
         DynamicCountDef::ControllerDrawsThisTurn => {
             // The caster's draws this turn. Vocabulary gap: no aggregate
             // for the number of events this turn.
@@ -517,7 +526,9 @@ pub(crate) fn library_card_filter(filter: LibraryCardFilter, out: &mut Collector
             let _ = subtypes;
             ObjF::BasicLand
         }
-        LibraryCardFilter::AnyLand => ObjF::Typed(CardTypeF::Land),
+        LibraryCardFilter::AnyLand | LibraryCardFilter::LandWithBasicLandType => {
+            ObjF::Typed(CardTypeF::Land)
+        }
         LibraryCardFilter::AnyCard => ObjF::AnyCard,
     }
 }
@@ -535,6 +546,7 @@ pub(crate) fn permanent_filter(filter: PermanentFilter) -> (ObjF, Option<RelF>) 
         PermanentFilter::Artifact => (ObjF::Typed(CardTypeF::Artifact), None),
         PermanentFilter::Creature => (ObjF::Typed(CardTypeF::Creature), None),
         PermanentFilter::Land => (ObjF::Typed(CardTypeF::Land), None),
+        PermanentFilter::Token => (ObjF::Token, None),
     }
 }
 

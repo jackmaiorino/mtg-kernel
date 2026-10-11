@@ -1111,6 +1111,8 @@ pub fn stack_target_contract_is_structurally_valid(
                     | TargetSpec::OpponentControlledCreature
                     | TargetSpec::UpToOneTappedCreature
                     | TargetSpec::ControlledNoncreatureArtifactPermanent
+                    | TargetSpec::LegendaryCreature
+                    | TargetSpec::OpponentArtifactEnchantmentOrNonbasicLand
                     | TargetSpec::NoncreatureArtifactPermanent
                     | TargetSpec::Land
                     | TargetSpec::OpponentArtifactOrEnchantmentPermanent
@@ -1153,7 +1155,8 @@ pub fn stack_target_contract_is_structurally_valid(
                     | TargetSpec::CreatureCardInOwnGraveyard
                     | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_)
                     | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_)
-                    | TargetSpec::PermanentCardInOwnGraveyard,
+                    | TargetSpec::PermanentCardInOwnGraveyard
+                    | TargetSpec::CardInOwnGraveyardWithAnySubtype(_),
                 0,
                 StackTargetContractV4::Object {
                     zone: Zone::Graveyard,
@@ -1636,6 +1639,9 @@ pub struct FirstLifeGainCaptureV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GameState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creatures_attacked_turn_v1: Option<(u32, PlayerId, Vec<ObjectLinkV4>)>,
+
     pub objects: Arena<GameObject>,
     pub players: [PlayerState; 2],
     pub turn: u32,
@@ -1794,6 +1800,11 @@ impl GameState {
 /// its `EnvironmentV2` arm (explicit discriminant).
 impl Hash for GameState {
     fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(attacked) = &self.creatures_attacked_turn_v1 {
+            "creatures-attacked-turn-v1".hash(state);
+            attacked.hash(state);
+        }
+
         self.objects.hash(state);
         self.players.hash(state);
         self.turn.hash(state);
@@ -1946,6 +1957,15 @@ impl GameState {
         });
     }
 
+    pub fn creatures_attacked_this_turn_v1(&self) -> u32 {
+        self.creatures_attacked_turn_v1
+            .as_ref()
+            .filter(|(turn, active, _)| *turn == self.turn && *active == self.active_player)
+            .map_or(0, |(_, _, objects)| {
+                u32::try_from(objects.len()).unwrap_or(u32::MAX)
+            })
+    }
+
     pub fn creature_died_this_turn_v1(&self) -> bool {
         self.creature_death_turn_v1.is_some_and(|death| {
             death.turn == self.turn && death.active_player == self.active_player
@@ -2037,6 +2057,7 @@ impl GameState {
             planeswalkers_v1: None,
             trigger_uses_v1: None,
             creature_death_turn_v1: None,
+            creatures_attacked_turn_v1: None,
             london_mulligans_v1: None,
             counter_lki_v1: None,
             creature_stats_lki_v1: None,

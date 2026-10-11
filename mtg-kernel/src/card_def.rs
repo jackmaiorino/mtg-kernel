@@ -969,6 +969,9 @@ pub enum TargetSpec {
     AnotherAttackingCreature,
     UpToOneOtherCreature,
     ControlledNoncreatureArtifactPermanent,
+    CardInOwnGraveyardWithAnySubtype([Subtype; 4]),
+    OpponentArtifactEnchantmentOrNonbasicLand,
+    LegendaryCreature,
 }
 
 impl TargetSpec {
@@ -1045,6 +1048,9 @@ impl TargetSpec {
             TargetSpec::AnotherAttackingCreature => 93,
             TargetSpec::UpToOneOtherCreature => 94,
             TargetSpec::ControlledNoncreatureArtifactPermanent => 71,
+            TargetSpec::CardInOwnGraveyardWithAnySubtype(_) => 95,
+            TargetSpec::OpponentArtifactEnchantmentOrNonbasicLand => 96,
+            TargetSpec::LegendaryCreature => 97,
         }
     }
 }
@@ -1157,6 +1163,7 @@ pub enum PermanentFilter {
     /// A controlled artifact other than the ability's own source
     /// (Repurposing Bay's "Sacrifice another artifact"). Appended.
     AnotherArtifact,
+    Token,
 }
 
 /// One component of a composite cost. Composable (a real cost is `&'static
@@ -1603,10 +1610,14 @@ pub enum EntersTappedUnlessControllerDef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManaAbilityConditionDef {
     /// The verges: "Activate only if you control a [first] or a [second]."
-    ControllerControlsPermanentWithEitherSubtype { first: Subtype, second: Subtype },
+    ControllerControlsPermanentWithEitherSubtype {
+        first: Subtype,
+        second: Subtype,
+    },
     /// Mirrex: "Activate only if this land entered the battlefield this
     /// turn."
     SourceEnteredThisTurn,
+    ControlledLegendaryPermanentHasColor(ManaColor),
 }
 
 /// What a restricted mana ability's mana may pay for.
@@ -1614,6 +1625,7 @@ pub enum ManaAbilityConditionDef {
 pub enum ManaSpendRestrictionDef {
     /// "Spend this mana only to cast a creature spell."
     CreatureSpell,
+    LegendarySpell,
 }
 
 /// A `{T}: Add one mana of a listed color` ability whose mana carries a
@@ -1724,6 +1736,7 @@ pub enum DynamicCountDef {
     ControllerBattlefieldSubtype(Subtype),
     /// One iff a currently controlled permanent has the effective named subtype.
     ControllerHasPermanentSubtype(Subtype),
+    CreaturesAttackedThisTurn,
 }
 
 /// Reduces only the generic portion of a spell's mana cost, flooring at

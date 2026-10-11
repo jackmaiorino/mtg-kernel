@@ -1664,7 +1664,10 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::UpToOneCardInGraveyards
         | TargetSpec::UpToOneOtherControlledPermanent
         | TargetSpec::AttackingCreatureWithSubtype(_)
-        | TargetSpec::ControlledPermanentWithAnySubtype(_) => 1,
+        | TargetSpec::ControlledPermanentWithAnySubtype(_)
+        | TargetSpec::CardInOwnGraveyardWithAnySubtype(_)
+        | TargetSpec::OpponentArtifactEnchantmentOrNonbasicLand
+        | TargetSpec::LegendaryCreature => 1,
         TargetSpec::StandardV1(filter) => filter.counts().0,
         TargetSpec::PlayerThenTheirCreature
         | TargetSpec::UpToTwoOtherControlledCreatures
@@ -3201,6 +3204,39 @@ fn legal_targets_for_controller_from_source(
                 state.engine.combat.attackers.contains(&id)
                     && object_has_type(state, id, CardType::Creature)
                     && has_effective_subtype(state, id, subtype)
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::CardInOwnGraveyardWithAnySubtype(subtypes) => state.players[controller.index()]
+            .graveyard
+            .iter()
+            .copied()
+            .filter(|&id| {
+                subtypes
+                    .iter()
+                    .any(|&subtype| has_effective_subtype(state, id, subtype))
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::OpponentArtifactEnchantmentOrNonbasicLand => battlefield_objects(state)
+            .filter(|&id| {
+                let live = state.objects.get(id);
+                live.controller != controller
+                    && (object_has_type(state, id, CardType::Artifact)
+                        || object_has_type(state, id, CardType::Enchantment)
+                        || object_has_type(state, id, CardType::Land)
+                            && !card_def::CARD_DEFS[live.card_def as usize]
+                                .supertypes
+                                .contains(&card_def::Supertype::Basic))
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::LegendaryCreature => battlefield_objects(state)
+            .filter(|&id| {
+                object_has_type(state, id, CardType::Creature)
+                    && card_def::CARD_DEFS[state.objects.get(id).card_def as usize]
+                        .supertypes
+                        .contains(&card_def::Supertype::Legendary)
             })
             .map(Target::Object)
             .collect(),
@@ -5742,6 +5778,9 @@ pub(crate) fn permanent_matches_filter(
             object_has_type(state, id, CardType::Artifact)
                 || object_has_type(state, id, CardType::Creature)
         }
+        PermanentFilter::Token => {
+            card_def::CARD_DEFS[state.objects.get(id).card_def as usize].is_token
+        }
         PermanentFilter::Artifact => object_has_type(state, id, CardType::Artifact),
         PermanentFilter::Creature => object_has_type(state, id, CardType::Creature),
         PermanentFilter::Land => {
@@ -5955,9 +5994,9 @@ fn cost_kind_for_permanent_filter(filter: PermanentFilter) -> CostKind {
         PermanentFilter::Artifact | PermanentFilter::AnotherArtifact => {
             CostKind::SacrificeArtifacts
         }
-        PermanentFilter::ArtifactOrCreature | PermanentFilter::Creature => {
-            CostKind::SacrificePermanents
-        }
+        PermanentFilter::ArtifactOrCreature
+        | PermanentFilter::Token
+        | PermanentFilter::Creature => CostKind::SacrificePermanents,
         PermanentFilter::Land => CostKind::SacrificeLands,
     }
 }
@@ -6233,6 +6272,9 @@ fn normal_cast_reduction_count(
                 .any(|card_type| types.contains(card_type))
         })
         .count() as u32,
+        card_def::DynamicCountDef::CreaturesAttackedThisTurn => {
+            state.creatures_attacked_this_turn_v1()
+        }
         card_def::DynamicCountDef::ControllerDrawsThisTurn => {
             state.players[player.index()].draws_this_turn
         }
@@ -7261,6 +7303,14 @@ fn mana_ability_condition_holds(
                 && (has_effective_subtype(state, id, first)
                     || has_effective_subtype(state, id, second))
         }),
+        card_def::ManaAbilityConditionDef::ControlledLegendaryPermanentHasColor(color) => {
+            state.players[player.index()].battlefield.iter().any(|&id| {
+                card_def::CARD_DEFS[state.objects.get(id).card_def as usize]
+                    .supertypes
+                    .contains(&card_def::Supertype::Legendary)
+                    && object_color_mask(state, id) & card_def::mana_color_mask(color) != 0
+            })
+        }
         card_def::ManaAbilityConditionDef::SourceEnteredThisTurn => {
             state.objects.get(source).v4.entered_battlefield_this_turn
         }
@@ -7484,7 +7534,18 @@ fn activate_mana_ability_for(
         && !definition
             .additional_mana_abilities
             .iter()
-            .any(|ability| ability.colors.contains(&choice))
+            .enumerate()
+            .any(|(index, ability)| {
+                ability.colors.contains(&choice)
+                    && definition
+                        .additional_mana_ability_conditions
+                        .get(index)
+                        .copied()
+                        .flatten()
+                        .is_none_or(|condition| {
+                            mana_ability_condition_holds(player, source, condition, state)
+                        })
+            })
     {
         if let Some(restricted) = definition
             .restricted_mana_abilities
@@ -10121,7 +10182,9 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                     PermanentFilter::Artifact | PermanentFilter::AnotherArtifact => {
                         CostKind::SacrificeArtifacts
                     }
-                    PermanentFilter::ArtifactOrCreature => CostKind::SacrificePermanents,
+                    PermanentFilter::ArtifactOrCreature | PermanentFilter::Token => {
+                        CostKind::SacrificePermanents
+                    }
                     PermanentFilter::Land => CostKind::SacrificeLands,
                 },
                 remaining,
@@ -16858,6 +16921,24 @@ fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> R
 
 /// Completes a validated declaration once every attacker's target is known.
 pub(crate) fn finish_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) {
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if !attackers.is_empty() {
+        let mut objects = state
+            .creatures_attacked_turn_v1
+            .take()
+            .filter(|(turn, active, _)| *turn == state.turn && *active == state.active_player)
+            .map_or_else(Vec::new, |(_, _, objects)| objects);
+        for &object in &attackers {
+            let binding = crate::state::ObjectLinkV4 {
+                object,
+                zone_change_count: state.objects.get(object).zone_change_count,
+            };
+            if !objects.contains(&binding) {
+                objects.push(binding);
+            }
+        }
+        state.creatures_attacked_turn_v1 = Some((state.turn, state.active_player, objects));
+    }
     for &id in &attackers {
         if !has_effective_keyword(state, id, Keywords::VIGILANCE) {
             event::propose_and_commit(state, ProposedEvent::tap(id));

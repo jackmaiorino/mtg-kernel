@@ -128,7 +128,8 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::UntapObject { .. }
         | EffectOp::PumpTargetUntilEndOfTurnDynamic { .. }
         | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
-        | EffectOp::LookTopPickToHandBottomRest { .. } => effect_b::effect_op(op, env, out),
+        | EffectOp::LookTopPickToHandBottomRest { .. }
+        | EffectOp::LookTopSelectV1 { .. } => effect_b::effect_op(op, env, out),
         EffectOp::GainLifeEqualToPaidCostManaValue { .. }
         | EffectOp::MoveAllTargets { .. }
         | EffectOp::ExploreTarget { .. }
@@ -251,8 +252,13 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::RemoveTimeCounterFromSource
         | EffectOp::ReturnSourceAsEnduringEnchantment => effect_h::effect_op(op, env, out),
         EffectOp::AnimateSource
+        | EffectOp::AnimateSourcePermanentlyV1
         | EffectOp::SetTargetBasePowerToughnessUntilEndOfTurn { .. }
-        | EffectOp::BoostOtherControlledCreaturesUntilEndOfTurn { .. } => {
+        | EffectOp::BoostOtherControlledCreaturesUntilEndOfTurn { .. }
+        | EffectOp::SelectObjectsV1 { .. }
+        | EffectOp::DestroyCreaturesPowerAtMostV1 { .. }
+        | EffectOp::DestroyPermanentsSharingTargetNameV1 { .. }
+        | EffectOp::CreateTokensWithHasteUntilEndOfTurnV1 { .. } => {
             effect_i::effect_op(op, env, out)
         }
     }

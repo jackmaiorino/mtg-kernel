@@ -354,6 +354,16 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
         }
         // One permanent the targeting player controls with any of these
         // effective subtypes. Vocabulary gap: no subtype filter.
+        TargetSpec::CardInOwnGraveyardWithAnySubtype(_) => {
+            object(out, ObjF::AnyCard, Some(RelF::You), ZoneF::Graveyard)
+        }
+        TargetSpec::OpponentArtifactEnchantmentOrNonbasicLand => object(
+            out,
+            ObjF::Permanent,
+            Some(RelF::Opponent),
+            ZoneF::Battlefield,
+        ),
+        TargetSpec::LegendaryCreature => object(out, creature(), None, ZoneF::Battlefield),
         TargetSpec::ControlledPermanentWithAnySubtype(subtypes) => {
             let _ = subtypes;
             object(out, ObjF::Permanent, Some(RelF::You), ZoneF::Battlefield)
@@ -368,6 +378,9 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
 /// (the engine never resolves a slot past `target_count`).
 pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
     match spec {
+        TargetSpec::CardInOwnGraveyardWithAnySubtype(_) => ObjF::AnyCard,
+        TargetSpec::OpponentArtifactEnchantmentOrNonbasicLand => ObjF::Permanent,
+        TargetSpec::LegendaryCreature => creature(),
         // No targets are chosen, so the engine's `resolve_object` would
         // panic on any `Target(slot)`; no well-formed program refers to one.
         // The unfiltered class keeps the extractor total.

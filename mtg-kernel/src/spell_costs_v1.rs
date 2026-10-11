@@ -144,6 +144,7 @@ pub(super) struct SpellComponentChoicesV1 {
 }
 
 pub(super) struct SelectedSpellManaCostsV1 {
+    pub(super) legendary_spell: bool,
     pub(super) costs: Vec<Cost>,
     pub(super) component_groups: Vec<&'static [CostComponent]>,
     pub(super) types: &'static [CardType],
@@ -347,7 +348,7 @@ impl SelectedSpellManaCostsV1 {
         // Preserve deterministic minimum-exile, oldest-first Delve payment.
         let max_exiled = graveyard.len().min(generic as usize);
         for exiled in 0..=max_exiled {
-            if let Some(mana) = mana::plan_spell_mana_total_v1(
+            if let Some(mana) = mana::plan_spell_mana_total_with_restrictions_v1(
                 &pips,
                 generic - exiled as u32,
                 player,
@@ -355,6 +356,7 @@ impl SelectedSpellManaCostsV1 {
                 self.types.contains(&CardType::Creature),
                 reserved,
                 additional_life,
+                self.legendary_spell,
             ) {
                 return Some(SpellManaPaymentV1 {
                     mana,
@@ -419,6 +421,10 @@ pub(super) fn selected_spell_mana_costs_v1(
     state: &GameState,
 ) -> Option<SelectedSpellManaCostsV1> {
     let mut selected = SelectedSpellManaCostsV1 {
+        legendary_spell: definition
+            .supertypes
+            .contains(&card_def::Supertype::Legendary)
+            && method != CastMethodV4::Omen,
         costs: Vec::new(),
         component_groups: Vec::new(),
         types: definition.types,

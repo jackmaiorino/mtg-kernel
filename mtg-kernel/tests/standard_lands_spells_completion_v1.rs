@@ -302,7 +302,12 @@ fn otawara_channels_with_legendary_reduction_and_returns_artifacts() {
         "Adeline, Resplendent Cathar",
         Zone::Battlefield,
     );
-    let target = put(&mut state, PlayerId::P1, "Blood Token", Zone::Battlefield);
+    let target = put(
+        &mut state,
+        PlayerId::P1,
+        "Experimental Synthesizer",
+        Zone::Battlefield,
+    );
     let land = put(
         &mut state,
         PlayerId::P0,

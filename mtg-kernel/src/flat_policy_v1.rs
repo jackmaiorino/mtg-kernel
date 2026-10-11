@@ -1685,7 +1685,11 @@ impl FlatDecisionEncoderV1 {
     }
 
     fn build_globals(&mut self, observation: &ObservationV5) -> Result<(), FlatDecisionErrorV1> {
-        if observation.projection.poison_counters.is_some()
+        if observation
+            .projection
+            .creatures_attacked_this_turn
+            .is_some()
+            || observation.projection.poison_counters.is_some()
             || observation.projection.restricted_mana.is_some()
             || observation
                 .projection

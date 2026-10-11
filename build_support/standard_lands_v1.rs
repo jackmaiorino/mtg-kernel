@@ -3,7 +3,9 @@
 //! registry name and only cards in `data/standard/magezero_v1/cards_v1.json`
 //! match, so Pauper and FDN definitions are unaffected.
 
-use super::{AbilityCostRecipe, AbilityEffectRecipe, ActivatedAbilityRecipe};
+use super::{
+    AbilityCostRecipe, AbilityEffectRecipe, ActivatedAbilityRecipe, PermanentFilterRecipe,
+};
 
 /// `{T}: Add {C}` plus a separately printed damage ability per color.
 const PAINLANDS: [(&str, [&str; 2]); 10] = [
@@ -76,7 +78,15 @@ fn verge(name: &str) -> Option<(&'static str, &'static str, [&'static str; 2])> 
 pub fn overrides_primary_mana(name: &str) -> bool {
     painland(name).is_some()
         || verge(name).is_some()
-        || matches!(name, "Mirrex" | "Rockface Village" | "Starting Town")
+        || matches!(
+            name,
+            "Mirrex"
+                | "Rockface Village"
+                | "Lupinflower Village"
+                | "Mudflat Village"
+                | "Starting Town"
+                | "Plaza of Heroes"
+        )
 }
 
 pub fn primary_mana_ability_colors(name: &str) -> Vec<&'static str> {
@@ -106,6 +116,12 @@ pub fn additional_mana_abilities(name: &str) -> Option<String> {
         ));
     }
     match name {
+        "Plaza of Heroes" => Some(format!(
+            "&[{}]",
+            ["W", "U", "B", "R", "G"]
+                .map(|color| tap_for(&format!("&[ManaColor::{color}]"), "TapSelf", 0))
+                .join(", ")
+        )),
         "Mirrex" => Some(format!("&[{}]", tap_for(ANY_COLOR, "TapSelf", 0))),
         "Starting Town" => Some(format!("&[{}]", tap_for(ANY_COLOR, "TapSelfPayLife(1)", 0))),
         _ => None,
@@ -168,6 +184,10 @@ pub fn fields(name: &str, executable: bool) -> StandardLandFields {
         );
     }
     match name {
+        "Plaza of Heroes" => {
+            fields.restricted_mana_abilities = format!("&[RestrictedManaAbilityDef {{ colors: {ANY_COLOR}, restriction: ManaSpendRestrictionDef::LegendarySpell }}]");
+            fields.additional_mana_ability_conditions = format!("&[{}]", ["W","U","B","R","G"].map(|color| format!("Some(ManaAbilityConditionDef::ControlledLegendaryPermanentHasColor(ManaColor::{color}))")).join(", "));
+        }
         "Starting Town" => {
             fields.enters_tapped_unless_controller =
                 "Some(EntersTappedUnlessControllerDef::WithinOwnFirstTurns(3))".to_string();
@@ -175,6 +195,12 @@ pub fn fields(name: &str, executable: bool) -> StandardLandFields {
         "Mirrex" => {
             fields.additional_mana_ability_conditions =
                 "&[Some(ManaAbilityConditionDef::SourceEnteredThisTurn)]".to_string();
+        }
+        "Lupinflower Village" => {
+            fields.restricted_mana_abilities = "&[RestrictedManaAbilityDef { colors: &[ManaColor::W], restriction: ManaSpendRestrictionDef::CreatureSpell }]".to_string();
+        }
+        "Mudflat Village" => {
+            fields.restricted_mana_abilities = "&[RestrictedManaAbilityDef { colors: &[ManaColor::B], restriction: ManaSpendRestrictionDef::CreatureSpell }]".to_string();
         }
         "Rockface Village" => {
             fields.restricted_mana_abilities = "&[RestrictedManaAbilityDef { colors: &[ManaColor::R], restriction: ManaSpendRestrictionDef::CreatureSpell }]".to_string();
@@ -206,7 +232,11 @@ pub fn fields(name: &str, executable: bool) -> StandardLandFields {
         "Soulstone Sanctuary" => {
             fields.animation = "Some(AnimationDef { until_end_of_turn: false, power: 3, toughness: 3, artifact: false, colors: &[], subtypes: Subtype::CREATURE_TYPES, keywords: Keywords::VIGILANCE })".to_string();
         }
-        "Eiganjo, Seat of the Empire" | "Otawara, Soaring City" => {
+        "Eiganjo, Seat of the Empire"
+        | "Otawara, Soaring City"
+        | "Boseiju, Who Endures"
+        | "Takenuma, Abandoned Mire"
+        | "Sokenzan, Crucible of Defiance" => {
             fields.activated_ability_generic_reductions = "&[ActivatedAbilityGenericReductionDef { ability_index: 0, per: ActivatedAbilityReductionCountDef::ControlledLegendaryCreatures }]".to_string();
         }
         _ => {}
@@ -230,6 +260,26 @@ pub fn activated_ability_recipes(name: &str) -> Option<&'static [ActivatedAbilit
         }]);
     }
     match name {
+        "Plaza of Heroes" => Some(&[ActivatedAbilityRecipe {
+            cost:&[AbilityCostRecipe::ManaCost("{3}"),AbilityCostRecipe::Tap,AbilityCostRecipe::ExileSelf], effect:AbilityEffectRecipe::Program { name:"plaza_protection", effect:"EffectOp::GrantKeywordTargetUntilEndOfTurn { object:ObjectRef::Target(0), keyword:Keywords::HEXPROOF | Keywords::INDESTRUCTIBLE }" }, activation_zone:"Battlefield", sorcery_speed_only:false,target_spec:"LegendaryCreature",activation_target_filter:"TargetSpecOnly",max_activations_per_turn:None,
+        }]),
+        "Mudflat Village" => Some(&[ActivatedAbilityRecipe { cost: &[AbilityCostRecipe::ManaCost("{1}{B}"),AbilityCostRecipe::Tap,AbilityCostRecipe::SacrificeSelf], effect: AbilityEffectRecipe::MoveAllTargetsToHand, activation_zone: "Battlefield", sorcery_speed_only:false, target_spec:"CardInOwnGraveyardWithAnySubtype([Subtype::Bat, Subtype::Lizard, Subtype::Rat, Subtype::Squirrel])", activation_target_filter:"TargetSpecOnly", max_activations_per_turn:None }]),
+        "Boseiju, Who Endures" => Some(&[ActivatedAbilityRecipe { cost: &[AbilityCostRecipe::ManaCost("{1}{G}"),AbilityCostRecipe::DiscardSelf], effect: AbilityEffectRecipe::Program { name:"boseiju", effect:"EffectOp::Sequence(vec![EffectOp::DestroyObject { object:ObjectRef::Target(0) }, EffectOp::Choice { controller:PlayerRef::Opponent, options:vec![EffectOp::Sequence(vec![]), EffectOp::SearchLibraryCardsToDestination { player:PlayerRef::Opponent, filter:crate::effect::LibraryCardFilter::LandWithBasicLandType, max_targets:1, destination:crate::effect::LibrarySearchDestinationV1::Battlefield { tapped:false } }] }])" }, activation_zone: "Hand", sorcery_speed_only:false, target_spec:"OpponentArtifactEnchantmentOrNonbasicLand", activation_target_filter:"TargetSpecOnly", max_activations_per_turn:None }]),
+        "Takenuma, Abandoned Mire" => Some(&[ActivatedAbilityRecipe { cost: &[AbilityCostRecipe::ManaCost("{3}{B}"),AbilityCostRecipe::DiscardSelf], effect: AbilityEffectRecipe::Program { name:"takenuma", effect:"EffectOp::Sequence(vec![EffectOp::MillCards { player:PlayerRef::Controller,count:3 }, EffectOp::SelectObjectsV1 { rule:crate::effect::ObjectSelectionRuleV1 { player:PlayerRef::Controller, zone:Zone::Graveyard, any_player:false, filter:crate::effect::ObjectSelectionFilterV1::CreatureOrPlaneswalker, min:1, max:1, action:crate::effect::ObjectSelectionActionV1::MoveTo(Zone::Hand) } }])" }, activation_zone: "Hand", sorcery_speed_only:false, target_spec:"None", activation_target_filter:"TargetSpecOnly", max_activations_per_turn:None }]),
+        "Sokenzan, Crucible of Defiance" => Some(&[ActivatedAbilityRecipe { cost: &[AbilityCostRecipe::ManaCost("{3}{R}"),AbilityCostRecipe::DiscardSelf], effect: AbilityEffectRecipe::Program { name:"sokenzan", effect:"EffectOp::CreateTokensWithHasteUntilEndOfTurnV1 { token_def:crate::card_def::card_id_by_name(\"Colorless Spirit Token\").expect(\"Colorless Spirit Token exists\"),count:2 }" }, activation_zone: "Hand", sorcery_speed_only:false, target_spec:"None", activation_target_filter:"TargetSpecOnly", max_activations_per_turn:None }]),
+        "Fountainport" => Some(&[ActivatedAbilityRecipe { cost: &[AbilityCostRecipe::ManaCost("{2}"),AbilityCostRecipe::Tap,AbilityCostRecipe::SacrificeControlled { count:1,filter:PermanentFilterRecipe::Token }], effect: AbilityEffectRecipe::DrawCards(1), activation_zone: "Battlefield", sorcery_speed_only:false, target_spec:"None", activation_target_filter:"TargetSpecOnly", max_activations_per_turn:None },
+ActivatedAbilityRecipe { cost: &[AbilityCostRecipe::ManaCost("{3}"),AbilityCostRecipe::Tap,AbilityCostRecipe::PayLife(1)], effect: AbilityEffectRecipe::CreateToken("Fish Token"), activation_zone: "Battlefield", sorcery_speed_only:false, target_spec:"None", activation_target_filter:"TargetSpecOnly", max_activations_per_turn:None },
+ActivatedAbilityRecipe { cost: &[AbilityCostRecipe::ManaCost("{4}"),AbilityCostRecipe::Tap], effect: AbilityEffectRecipe::CreateToken("Treasure Token"), activation_zone: "Battlefield", sorcery_speed_only:false, target_spec:"None", activation_target_filter:"TargetSpecOnly", max_activations_per_turn:None }]),
+        "Lupinflower Village" => Some(&[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ManaCost("{1}{W}"), AbilityCostRecipe::Tap, AbilityCostRecipe::SacrificeSelf],
+            effect: AbilityEffectRecipe::Program { name: "lupinflower_selection", effect: "EffectOp::LookTopSelectV1 { player: PlayerRef::Controller, count: crate::effect::LibraryLookCount::Fixed(6), rule: crate::effect::LibraryPickRule { pick: 1, choose_rest_order: false, selection: Some(crate::effect::LibraryPickSelectionV1 { filter: crate::effect::LibraryPickFilterV1::AnySubtype([Subtype::Bat, Subtype::Bird, Subtype::Mouse, Subtype::Rabbit]), optional: true, destination: Zone::Hand, reveal_selected: true }) }, pick_x: false }" },
+            activation_zone: "Battlefield", sorcery_speed_only: false, target_spec: "None", activation_target_filter: "TargetSpecOnly", max_activations_per_turn: None,
+        }]),
+        "Fomori Vault" => Some(&[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ManaCost("{3}"), AbilityCostRecipe::Tap, AbilityCostRecipe::DiscardCards(1)],
+            effect: AbilityEffectRecipe::Program { name: "fomori_selection", effect: "EffectOp::LookTopPickToHandBottomRest { player: PlayerRef::Controller, count: crate::effect::LibraryLookCount::ControllerArtifacts, pick: 1, choose_rest_order: false }" },
+            activation_zone: "Battlefield", sorcery_speed_only: false, target_spec: "None", activation_target_filter: "TargetSpecOnly", max_activations_per_turn: None,
+        }]),
         "Restless Bivouac" => Some(&[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::ManaCost("{1}{R}{W}")],
             effect: AbilityEffectRecipe::AnimateSource,
@@ -295,7 +345,7 @@ pub fn activated_ability_recipes(name: &str) -> Option<&'static [ActivatedAbilit
         }]),
         "Soulstone Sanctuary" => Some(&[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::ManaCost("{4}")],
-            effect: AbilityEffectRecipe::AnimateSource,
+            effect: AbilityEffectRecipe::Program { name:"animate_source_permanently", effect:"EffectOp::AnimateSourcePermanentlyV1" },
             activation_zone: "Battlefield",
             sorcery_speed_only: false,
             target_spec: "None",
