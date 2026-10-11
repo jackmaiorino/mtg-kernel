@@ -186,6 +186,7 @@ mod tests {
         engine::step(&mut state, Action::DeclareAttackers(vec![attacker])).unwrap();
         state.step = Step::Main2;
         state.engine.combat = Default::default();
+        put(&mut state, actor, "Mountain", Zone::Hand);
         state
     }
 

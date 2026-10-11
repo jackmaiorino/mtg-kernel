@@ -46,7 +46,13 @@ fn fixture_states() -> Vec<(&'static str, GameState)> {
             ("actual_sire_queued_multi_p0", PlayerId::P0, 20, 2, false),
             ("actual_sire_queued_multi_p1", PlayerId::P1, 20, 2, false),
         ] {
-            states.push((name, actual_sire_state(actor, life, targeters, pending)));
+            let mut state = actual_sire_state(actor, life, targeters, pending);
+            if targeters == 0 {
+                // Keep the printed-trait fixture at an actual decision rather
+                // than auto-passing through an empty-library draw.
+                put(&mut state, actor, "Mountain", Zone::Hand);
+            }
+            states.push((name, state));
         }
     }
     #[cfg(feature = "standard-magezero-fixtures")]
@@ -185,6 +191,9 @@ fn typed_life_boundary_case(pending: bool) -> serde_json::Value {
         state.players[1].battlefield.retain(|&id| id != source);
         state.players[0].battlefield.push(source);
         state.objects.get_mut(source).controller = PlayerId::P0;
+        // A second legal action prevents the session's forced-pass collapse
+        // from advancing this queued boundary into a pending payment.
+        put(&mut state, PlayerId::P0, "Mountain", Zone::Hand);
     }
     let session = FastActorSessionV1::from_v5_fixture_state(state);
     let e = expected(&session);
@@ -435,7 +444,12 @@ fn v5_parity_fixture_export_from_actual_registered_states() {
     let mut cases = Vec::new();
     for (name, state) in fixture_states() {
         let session = FastActorSessionV1::from_v5_fixture_state(state);
-        let e = expected(&session);
+        let FastActorResponseV1::Decision(e) = session.current_response() else {
+            panic!(
+                "parity fixture {name} is terminal: {:?}",
+                session.current_response()
+            );
+        };
         let before = session.privileged_core_environment_hash();
         let output = NativeFlatPolicyEncoderV5::default()
             .encode(&session, e)
