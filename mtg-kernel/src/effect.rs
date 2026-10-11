@@ -18802,6 +18802,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                         && crate::standard_cards_v1::had_card_def(
                             state,
                             ctx.source,
+                            source_contract.zone_change_count,
                             source_contract.card_def,
                         )))
                     && source.owner == source_contract.owner
