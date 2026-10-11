@@ -5,6 +5,7 @@ use crate::effect::{EffectObjectBinding, EffectOp, ExecCtx};
 use crate::ids::ObjectId;
 use crate::state::{GameState, Target, Zone};
 use serde::{Deserialize, Serialize};
+pub mod jodah;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LegendEffectV1 {
@@ -19,6 +20,8 @@ pub enum LegendEffectV1 {
     LagrellaExileTargets,
     CountersOnReturnedPermanent(EffectObjectBinding),
     ShannaPayAndDraw,
+    BindJodahCast,
+    JodahCastSnapshot(jodah::JodahCastV1),
 }
 
 pub(crate) fn has_printed_ability(state: &GameState, object: ObjectId, name: &str) -> bool {
@@ -131,6 +134,7 @@ pub(crate) fn execute(op: LegendEffectV1, ctx: &ExecCtx, state: &mut GameState) 
                 .get_or_insert_with(Vec::new)
                 .push(SkrelvGrantV1 { color, timestamp });
         }
+        LegendEffectV1::BindJodahCast | LegendEffectV1::JodahCastSnapshot(_) => {}
         LegendEffectV1::CounterStackTargetAndDraw => {
             let Some(crate::state::StackTargetContractV4::StackItem {
                 stack_item_id,

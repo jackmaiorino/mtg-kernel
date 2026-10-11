@@ -5379,6 +5379,7 @@ fn validated_definition_owned_root_effect(
         crate::engine::validate_copy_snapshot(state, spell)?;
         return Ok(root);
     }
+    crate::standard_legends_v1::jodah::validate_effect(state, &root, pending.ctx.controller)?;
     if pending.resolving_item.kind == crate::state::StackItemKind::TriggeredAbility {
         let card_def = state
             .objects

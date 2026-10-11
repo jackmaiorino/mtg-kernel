@@ -12256,6 +12256,7 @@ fn triggered_stack_item_expected_target_spec(
             return Err("copy trigger lost its definition-owned instant or sorcery cast".into());
         }
     }
+    crate::standard_legends_v1::jodah::validate_effect(state, inline_effect, item.controller)?;
     if let EffectOp::ResolveInitiativeTrigger { binding } = inline_effect {
         let Some(source_contract) = ability_source_contract else {
             return Err("Initiative trigger lost its historical designation source".to_string());

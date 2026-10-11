@@ -1288,6 +1288,9 @@ pub(crate) fn materialize_event(
     event: &CommittedEvent,
     state: &GameState,
 ) -> Option<EffectOp> {
+    if *effect == crate::standard_legends_v1::jodah::template() {
+        return crate::standard_legends_v1::jodah::materialize(state, event);
+    }
     match (effect, event) {
         (
             EffectOp::StandardV1(StandardOpV1::BindEtaliPoison),
@@ -1318,6 +1321,9 @@ pub(crate) fn materialize_event(
 
 /// Whether `effect` is a trigger-time materialization of `template`.
 pub(crate) fn template_matches(template: &EffectOp, effect: &EffectOp) -> bool {
+    if crate::standard_legends_v1::jodah::template_matches(template, effect) {
+        return true;
+    }
     matches!(
         (template, effect),
         (
@@ -1399,6 +1405,7 @@ pub enum StandardTriggerV1 {
     /// "Whenever you cast an instant or sorcery spell, ... This ability
     /// triggers only once each turn" (`trigger_limit_per_turn`).
     YouCastInstantOrSorceryOncePerTurn,
+    YouCastLegendarySpellFromHand,
     /// "When a creature card is exiled this way" (Agatha's Soul Cauldron).
     CreatureCardExiledWithThis,
     ControllerPrecombatMain,
@@ -1548,6 +1555,9 @@ pub(crate) fn trigger_matches(
                         && (crate::engine::stack_spell_has_type(state, item, CardType::Instant)
                             || crate::engine::stack_spell_has_type(state, item, CardType::Sorcery))
                 })
+        }
+        StandardTriggerV1::YouCastLegendarySpellFromHand => {
+            crate::standard_legends_v1::jodah::trigger_matches(state, source, &events[index])
         }
         StandardTriggerV1::YouCastInstantOrSorceryAtClassLevel { level } => {
             let CommittedEvent::SpellCast { spell, controller } = events[index] else {
@@ -1842,6 +1852,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         THE_IRENCRAG => &THE_IRENCRAG_TRIGGERS,
         CLAY_FIRED_BRICKS => &CLAY_FIRED_BRICKS_TRIGGERS,
         CHANDRA => &CHANDRA_TRIGGERS,
+        "Jodah, the Unifier" => &JODAH_TRIGGERS,
         AGATHAS_SOUL_CAULDRON => &CAULDRON_TRIGGERS,
         "Otter Prowess Token" => &PROWESS_TRIGGERS,
         SEAM_RIP
@@ -3305,6 +3316,11 @@ pub(crate) fn release_untapped_locks(state: &mut GameState) {
 // ---- Chandra, Hope's Beacon ----------------------------------------------
 
 const CHANDRA: &str = "Chandra, Hope's Beacon";
+
+const JODAH_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
+    TriggerCondition::StandardV1(StandardTriggerV1::YouCastLegendarySpellFromHand),
+    crate::standard_legends_v1::jodah::template,
+)];
 
 fn chandra_copy() -> EffectOp {
     EffectOp::StandardV1(StandardOpV1::BindCopyCastSpell)

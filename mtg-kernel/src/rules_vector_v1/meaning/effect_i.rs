@@ -42,6 +42,18 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                         .obj(ObjF::Typed(CardTypeF::Creature))
                         .duration(DurF::EndOfTurn),
                 ),
+                LegendEffectV1::BindJodahCast => {
+                    out.effect(
+                        EffectAtom::moving(Some(ZoneF::Library), ZoneF::Exile).obj(ObjF::AnyCard),
+                    );
+                    out.effect(
+                        EffectAtom::moving(Some(ZoneF::Exile), ZoneF::Stack).obj(ObjF::AnyCard),
+                    );
+                    out.effect(
+                        EffectAtom::moving(Some(ZoneF::Exile), ZoneF::Library).obj(ObjF::AnyCard),
+                    );
+                }
+                LegendEffectV1::JodahCastSnapshot(_) => {}
                 LegendEffectV1::CounterStackTargetAndDraw => {
                     out.effect(
                         EffectAtom::moving(Some(ZoneF::Stack), ZoneF::Graveyard).obj(ObjF::AnyCard),
