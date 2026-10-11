@@ -6594,7 +6594,7 @@ fn attachment_for(name: &str) -> &'static str {
         "Witness Protection" => "Some(AttachmentDef::AuraCreatureOverride(CreatureCharacteristicsOverrideDef { name: \"Legitimate Businessperson\", subtype: Subtype::Citizen, colors: &[ManaColor::G, ManaColor::W], power: 1, toughness: 1, loses_abilities: true }))",
         "Twinblade Blessing" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 0, toughness: 0, keywords: Keywords::DOUBLE_STRIKE, per_controlled_subtype: None }))",
         "Monster Role Token" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 1, toughness: 1, keywords: Keywords::TRAMPLE, per_controlled_subtype: None }))",
-        "Zoetic Glyph" => "Some(AttachmentDef::AuraArtifactAnimation(AnimationDef { power:5, toughness:4, artifact:false, colors:&[], subtypes:&[Subtype::Golem], keywords:Keywords::NONE }))",
+        "Zoetic Glyph" => "Some(AttachmentDef::AuraArtifactAnimation(AnimationDef { power:5, toughness:4, artifact:false, colors:&[], subtypes:&[Subtype::Golem], keywords:Keywords::NONE, until_end_of_turn:false }))",
         "Blanchwood Armor" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 1, toughness: 1, keywords: Keywords::NONE, per_controlled_subtype: Some(Subtype::Forest) }))",
         _ => "None",
     }

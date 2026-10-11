@@ -3,10 +3,8 @@
 //! the `triggers_for` and target-spec tables.
 
 use super::{etb_trigger, TriggerCondition, TriggeredAbilityDef};
-use crate::card_def::{CardType, Subtype};
-use crate::effect::{
-    CreatureSacrificeFilter, EffectObjectBinding, EffectOp, ObjectRef, PlayerRef, TargetRef,
-};
+use crate::card_def::Subtype;
+use crate::effect::{CreatureSacrificeFilter, EffectOp, ObjectRef, PlayerRef, TargetRef};
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::{GameState, Zone};
 

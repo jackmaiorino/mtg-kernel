@@ -37,7 +37,6 @@ pub(crate) fn conditional_self_keywords(state: &GameState, id: ObjectId) -> Keyw
         return Keywords::NONE;
     };
     let controller = state.objects.get(id).controller;
-    let count = crate::standard_cards_v1::scale_counters(state, controller, 1);
     match name {
         "Djeru and Hazoret" if state.players[controller.index()].hand.len() <= 1 => {
             Keywords(Keywords::VIGILANCE.0 | Keywords::HASTE.0)
@@ -77,6 +76,7 @@ pub(crate) fn apply_conditional_entry_counters(state: &mut GameState, id: Object
         return;
     };
     let controller = state.objects.get(id).controller;
+    let count = crate::standard_cards_v1::scale_counters(state, controller, 1);
     match name {
         // "This creature enters with a +1/+1 counter on it if you control a
         // permanent with mana value 4 or greater."
