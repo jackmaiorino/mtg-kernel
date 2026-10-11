@@ -8949,9 +8949,11 @@ fn remaining_cast_payment_is_payable(
     let Some(selected) = spell_costs_v1::selected_spell_mana_costs_for_source_v1(
         pending.spell,
         def,
-        method,
-        pending.kicked == Some(true),
-        pending.mode_chosen.unwrap_or(0),
+        (
+            method,
+            pending.kicked == Some(true),
+            pending.mode_chosen.unwrap_or(0),
+        ),
         &pending.targets_chosen,
         pending.controller,
         state,
@@ -14430,25 +14432,17 @@ pub fn effective_base_toughness(state: &GameState, id: ObjectId) -> Option<i32> 
         return None;
     }
     let obj = state.objects.get(id);
-    crate::continuous_characteristics_v1::base_power_toughness(state, id)
+    let base = crate::continuous_characteristics_v1::base_power_toughness(state, id)
         .map(|(_, toughness)| i32::from(toughness))
-        .or_else(|| crate::standard_cards_v1::gnome_base_stats(state, id).map(|stats| stats.1))
-        .or_else(|| {
-            #[cfg(feature = "standard-magezero-fixtures")]
-            {
-                crate::standard_statics_v1::characteristic_defining_toughness(state, id)
-            }
-            #[cfg(not(feature = "standard-magezero-fixtures"))]
-            {
-                None
-            }
-        })
-        .or_else(|| obj.v4.face_down_v1.map(|_| 2))
-        .or_else(|| {
-            card_def::CARD_DEFS[obj.card_def as usize]
-                .toughness_for_face(obj.v4.face_index)
-                .map(i32::from)
-        })
+        .or_else(|| crate::standard_cards_v1::gnome_base_stats(state, id).map(|stats| stats.1));
+    #[cfg(feature = "standard-magezero-fixtures")]
+    let base =
+        base.or_else(|| crate::standard_statics_v1::characteristic_defining_toughness(state, id));
+    base.or_else(|| obj.v4.face_down_v1.map(|_| 2)).or_else(|| {
+        card_def::CARD_DEFS[obj.card_def as usize]
+            .toughness_for_face(obj.v4.face_index)
+            .map(i32::from)
+    })
 }
 
 pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
