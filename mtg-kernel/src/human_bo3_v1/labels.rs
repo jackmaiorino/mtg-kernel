@@ -500,6 +500,35 @@ pub(super) fn label_parts_v8(
     )
 }
 
+/// Opt-in label successor. Predecessor entry points never call this function.
+pub(super) fn label_ooze_v11(
+    action: &A,
+    observation: &crate::policy_observation_v8::ObservationV8,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    if let A::ActivateAbility {
+        source,
+        ability_index,
+        granted_ability,
+        ..
+    } = action
+    {
+        let (card_id, index) = granted_ability
+            .as_ref()
+            .map(|(donor, local)| (donor.card_db_id, *local))
+            .unwrap_or((source.card_db_id, *ability_index));
+        if crate::rules_meaning_ooze_v1::root_meaning(card_id, u32::from(index)).is_ok() {
+            if actor(action) != Some(human) || source.zone != Zone::Battlefield {
+                return Err(Error::UnsupportedPrompt);
+            }
+            let name = handles.name(source)?;
+            return Ok(format!("Activate {name}: pay {{G}}: exile one target card from either graveyard; if it was a creature card before the move, put a +1/+1 counter on this same permanent and gain 1 life. You still gain life if this permanent has left the battlefield"));
+        }
+    }
+    label_v8(action, observation, handles, human)
+}
+
 fn label_common(
     action: &A,
     observation: &LabelInput<'_>,

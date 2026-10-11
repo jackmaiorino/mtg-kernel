@@ -7,8 +7,10 @@
 
 mod labels;
 mod life_ward_v8;
+mod ooze_v11;
 mod raid_v9;
 pub mod variable_cast_v1;
+pub use ooze_v11::*;
 mod visible;
 pub use life_ward_v8::*;
 pub use raid_v9::*;
