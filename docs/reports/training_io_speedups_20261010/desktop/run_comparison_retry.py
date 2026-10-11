@@ -96,9 +96,14 @@ def admission_adapter(plan, admission, watcher_type):
         runtime = checked(request['runtime'])
         verify(runtime['binary'])
         reservations, dispatch = apis[case['variant']]
-        waited = admission.await_admission(reservations, dispatch, runtime['binary']['path'], watcher_type,
-                                          deadline if deadline is not None else time.monotonic() + 7200,
-                                          changed if changed is not None else lambda value: None)
+        try:
+            waited = admission.await_admission(reservations, dispatch, runtime['binary']['path'], watcher_type,
+                                              deadline if deadline is not None else time.monotonic() + 7200,
+                                              changed if changed is not None else lambda value: None)
+        except ValueError as error:
+            if str(error) == 'six-hour coordinator bound reached; no further launch':
+                raise ValueError('formal admission deadline reached; no further launch') from error
+            raise
         return {**waited, 'scope': 'Read-only canonical reservation and frozen busy-pattern queue; outside case timing. Public dispatch remains the final atomic guard.'}
     return wait_free
 
