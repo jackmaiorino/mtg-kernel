@@ -5,6 +5,8 @@ use super::flat_action_v4::{
     flat_visible_action_object_extension_aware_v4, frozen_pending_trigger_semantic_v4,
 };
 use super::*;
+#[cfg(test)]
+use crate::state::GameState;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FlatActionDecisionBindingV5(pub(crate) FlatActionDecisionBindingV2, pub(crate) [u8; 32]);

@@ -54,7 +54,7 @@ fn next(state: &mut GameState) -> Decision {
 }
 fn pass(state: &mut GameState) {
     assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
-    engine::step(state, Action::PassPriority).unwrap();
+    engine::step(state, Action::Pass).unwrap();
 }
 fn priority(state: &mut GameState, actor: PlayerId) {
     for _ in 0..4 {
@@ -89,7 +89,7 @@ fn main2_after_declaration(state: &mut GameState, actor: PlayerId, nonempty: boo
             {
                 return
             }
-            Decision::CastSpellOrPass { .. } => engine::step(state, Action::PassPriority).unwrap(),
+            Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
             Decision::DeclareBlockers { .. } => {
                 engine::step(state, Action::DeclareBlockers(vec![])).unwrap()
             }

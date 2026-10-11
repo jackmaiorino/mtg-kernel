@@ -4,6 +4,8 @@
 
 use super::*;
 use crate::policy_observation_v8::ObservationV8;
+#[cfg(test)]
+use crate::state::GameState;
 
 // No Debug/Serialize: executable candidates and the transport observation
 // must never become a user-facing receipt or request.
