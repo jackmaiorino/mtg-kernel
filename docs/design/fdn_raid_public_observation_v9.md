@@ -7,7 +7,9 @@ Goblin Boarders is registered. Research/experiment ownership stays with Claude.
 
 ObservationV9 preserves the V8 root and nests unchanged V8 extensions under
 predecessor. Its mandatory attacked_this_turn pair uses absolute P0/P1 order
-and current successful nonempty declaration history. Combat display, object
+and current successful nonempty declaration history in the FDN catalog.
+Standard inherits Limited primitives but selects its own catalog; recording
+is gated by Limited and the absence of Standard, preserving both legacy catalogs. Combat display, object
 survival/control and log drainage cannot erase it. Stale turn/active-seat
 history projects false. The complete public successor binds its own hash;
 no hidden identity or source handle is exposed. Predecessor bytes stay fixed.
@@ -32,8 +34,25 @@ displays. Six Sire fixtures are actual engine states; two life-boundary
 fixtures are synthetic. These results claim neither natural combat traversal
 nor model/training admission. The first V6 receipt omitted enforcement of
 complete source identity; repair exports/checks all seven identity fields,
-including live Python source, descriptor and predecessor source. Its native
-export rerun and full combined consumer qualification remain pending.
+including live Python source, descriptor and predecessor source. Native8
+passes complete seven-field identity and all13 tensor groups for four actual
+Limited declarations. Native9 also passes the prepared Standard consumer
+suite:45 definitions, four V9/five history/two trigger,21 rules (one ignored),
+14 V6,12 FlatV4 (two ignored),two NativeV4,three V8,three Human backend,
+35 Human,seven NativeV5 and three NativeV6. Its V5 export has nine fixtures,
+including two synthetic life boundaries and no actual Sire state;13 tensor
+groups match bitwise. Its V6 export also matches complete identity and13
+tensor groups. These Standard Raid results describe historical preparation:
+review found recording changed legacy post-attack hashes, and Standard must
+retain absent history. Neither prior export qualifies the repaired Standard
+Raid behavior. Its generic V5 cases remain compatible with absent history.
+
+Actual accepted a957 builds execute one post-attack regression per default
+and Standard configuration, both seats and snapshot restoration. Diagnostic
+hashes are47fb83da9cd811df/021b8dd6a3fb2f43 and primary core hashes are
+cbc2eaf4943736a8/24100b6d3bdf8d9a. The regression now pins those values and
+requires absent history in both legacy catalogs. Repaired-source execution
+and current-head CI remain pending. Frozen evidence and hash schemas stay fixed.
 
 Native7 then ran inadmissible combined live training fixtures:102 pass,
 51 InvalidLiteral failures, three existing ignores. The combined catalog has

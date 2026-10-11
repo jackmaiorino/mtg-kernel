@@ -15905,8 +15905,12 @@ fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> R
     if !state.engine.combat.attackers.is_empty() {
         let attacker = state.active_player;
         // Raid history belongs to the successor Limited rules scope. Keep
-        // historical default and Standard-only state and replay hashes intact.
-        #[cfg(feature = "limited-fdn-fixtures")]
+        // historical default and Standard state and replay hashes intact. The
+        // Standard feature inherits Limited primitives but selects its own catalog.
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
         {
             state.attack_declaration_turn_v1 = Some(crate::state::AttackDeclarationTurnV1 {
                 turn: state.turn,
@@ -15938,11 +15942,21 @@ fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> R
     Ok(())
 }
 
-#[cfg(all(test, feature = "limited-fdn-fixtures"))]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 #[path = "engine/raid_history_tests.rs"]
 mod raid_history_tests;
 
-#[cfg(all(test, not(feature = "limited-fdn-fixtures")))]
+#[cfg(all(
+    test,
+    any(
+        not(feature = "limited-fdn-fixtures"),
+        feature = "standard-magezero-fixtures"
+    )
+))]
 #[path = "engine/legacy_attack_hash_baseline_tests.rs"]
 mod legacy_attack_hash_baseline_tests;
 

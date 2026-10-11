@@ -103,7 +103,11 @@ pub fn observe_policy_v9(
     Ok(observation)
 }
 
-#[cfg(all(test, feature = "limited-fdn-fixtures"))]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 mod tests {
     use super::*;
     use crate::engine::{self, Action};

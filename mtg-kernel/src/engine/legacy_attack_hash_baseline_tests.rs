@@ -29,6 +29,13 @@ fn accepted_default_actual_attack_hash_baseline_both_seats() {
         assert_eq!(session.game_state().step, Step::DeclareAttackers);
         assert_eq!(session.game_state().engine.combat.attackers, vec![attacker]);
         let core = session.privileged_core_environment_hash();
+        let (expected_diagnostic, expected_core) = match actor {
+            PlayerId::P0 => (0x47fb83da9cd811df, 0xcbc2eaf4943736a8),
+            PlayerId::P1 => (0x021b8dd6a3fb2f43, 0x24100b6d3bdf8d9a),
+        };
+        assert_eq!(diagnostic, expected_diagnostic);
+        assert_eq!(session.diagnostic_state_hash(), expected_diagnostic);
+        assert_eq!(core, expected_core);
         let snapshot = session.snapshot_v1();
         let mut restored = session.clone();
         restored.restore_v1(&snapshot);
