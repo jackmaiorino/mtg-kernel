@@ -286,6 +286,20 @@ pub(crate) struct NativeFlatTensorizerV2 {
     digests: DigestBatchV1,
 }
 
+/// Per-tensorizer work space for the successor contracts. The pending tensor
+/// is distinct from the published output so a failed fill cannot damage the
+/// last valid decision. Successful fills exchange the two sets of buffers.
+#[derive(Default)]
+pub(crate) struct NativeFlatTensorScratchV3 {
+    pending: NativeFlatDecisionTensorV2,
+    canonical_base: Vec<u8>,
+    slot: DigestSlotV1,
+    digests: DigestBatchV1,
+}
+
+#[cfg(test)]
+mod reuse_tests;
+
 /// One decision's digest messages: its state canonical JSON and each
 /// action's canonical JSON back to back.
 #[derive(Default)]
@@ -565,6 +579,7 @@ pub(crate) struct NativeFlatActionSemanticBindingV2 {
     pub(crate) action_ref_node_indices: Vec<i64>,
 }
 
+#[derive(Default)]
 struct ActionHalfV1 {
     action_features: Vec<f32>,
     action_ref_features: Vec<f32>,
@@ -684,6 +699,7 @@ struct ObjectHalfV2 {
     node_ids: Vec<i64>,
 }
 
+#[derive(Default)]
 struct EdgeHalfV2 {
     features: Vec<f32>,
     sources: Vec<i64>,
@@ -879,6 +895,7 @@ fn finish_full_decision_v2(
 
 /// V3 owns a separate entry point and canonical observation identity. The
 /// primitive row layouts and arithmetic remain shared with V2.
+#[cfg(test)]
 pub(crate) fn fill_native_flat_decision_tensors_v3(
     view: crate::flat_policy_v3::FlatScoringDecisionViewV3<'_>,
 ) -> Result<NativeFlatDecisionTensorV2, NativeFlatTensorErrorV2> {
@@ -1168,6 +1185,125 @@ pub(crate) fn fill_native_flat_decision_tensors_v4(
         decision.action_refs().len(),
     )?;
     Ok(output)
+}
+
+/// Fills the same V3 tensors while retaining the previous work allocations.
+pub(crate) fn fill_native_flat_decision_tensors_v3_with_scratch(
+    view: crate::flat_policy_v3::FlatScoringDecisionViewV3<'_>,
+    scratch: &mut NativeFlatTensorScratchV3,
+    output: &mut NativeFlatDecisionTensorV2,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    let decision = view.common();
+    if decision.globals().acting_player != FlatRelativePlayerV1::SelfPlayer {
+        return Err(NativeFlatTensorErrorV2::ActingPlayerNotRelativeSelf);
+    }
+    validate_auxiliary_tables_v2(decision)?;
+    fill_successor_reusing_v2(
+        decision,
+        build_object_projection_v3(view)?,
+        scratch,
+        output,
+        |projection, edges| append_extension_edges_v3(view, projection, edges),
+        || canonical_extensions_v3(view),
+    )
+}
+
+/// V4 retains its own projection and canonical feature identity.
+pub(crate) fn fill_native_flat_decision_tensors_v4_with_scratch(
+    view: crate::flat_policy_v4::FlatScoringDecisionViewV4<'_>,
+    scratch: &mut NativeFlatTensorScratchV3,
+    output: &mut NativeFlatDecisionTensorV2,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    let decision = view.common();
+    if decision.globals().acting_player != FlatRelativePlayerV1::SelfPlayer {
+        return Err(NativeFlatTensorErrorV2::ActingPlayerNotRelativeSelf);
+    }
+    validate_auxiliary_tables_v2(decision)?;
+    fill_successor_reusing_v2(
+        decision,
+        build_object_projection_v4(view)?,
+        scratch,
+        output,
+        |projection, edges| append_extension_edges_v4(view, projection, edges),
+        || canonical_extensions_v4(view),
+    )
+}
+
+fn fill_successor_reusing_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    projection: ObjectProjectionV2,
+    scratch: &mut NativeFlatTensorScratchV3,
+    output: &mut NativeFlatDecisionTensorV2,
+    append_extensions: impl FnOnce(
+        &ObjectProjectionV2,
+        &mut EdgeHalfV2,
+    ) -> Result<(), NativeFlatTensorErrorV2>,
+    extensions: impl FnOnce() -> Result<Value, NativeFlatTensorErrorV2>,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    let mut buffers = std::mem::take(&mut scratch.pending);
+    let objects = encode_objects_reusing_v2(decision, projection, &mut buffers)?;
+    let mut edges = encode_edges_reusing_v2(
+        decision,
+        &objects.projection,
+        EdgeHalfV2 {
+            features: buffers.edge_features,
+            sources: buffers.edge_source_indices,
+            targets: buffers.edge_target_indices,
+        },
+    )?;
+    append_extensions(&objects.projection, &mut edges)?;
+    write_canonical_observation_with_extensions_reusing_v2(
+        decision,
+        &objects.projection,
+        &extensions()?,
+        &mut scratch.slot.state_json,
+        &mut scratch.canonical_base,
+    )?;
+    let mut state = encode_state_head_reusing_v2(decision, buffers.state)?;
+    let offsets = hash_prepared_slots_v2(std::slice::from_ref(&scratch.slot), &mut scratch.digests);
+    let head_len = state.len();
+    state.resize(head_len + NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V2, 0.0);
+    digest_block_features_v1(
+        &scratch.digests.blocks[offsets[0]..offsets[0] + ACTION_HASH_BLOCK_COUNT_V1],
+        &mut state[head_len..],
+    );
+    let actions = encode_action_half_reusing_v3(
+        decision,
+        Some(&objects.projection),
+        &mut scratch.slot.action_scratch,
+        true,
+        None,
+        ActionHalfV1 {
+            action_features: buffers.action_features,
+            action_ref_features: buffers.action_ref_features,
+            action_ref_card_ids: buffers.action_ref_card_ids,
+            action_ref_action_indices: buffers.action_ref_action_indices,
+            action_ref_node_indices: buffers.action_ref_node_indices,
+        },
+    )?;
+    let next = NativeFlatDecisionTensorV2 {
+        state,
+        object_features: objects.features,
+        object_card_ids: objects.card_ids,
+        object_groups: objects.groups,
+        object_node_ids: objects.node_ids,
+        edge_features: edges.features,
+        edge_source_indices: edges.sources,
+        edge_target_indices: edges.targets,
+        action_features: actions.action_features,
+        action_ref_features: actions.action_ref_features,
+        action_ref_card_ids: actions.action_ref_card_ids,
+        action_ref_action_indices: actions.action_ref_action_indices,
+        action_ref_node_indices: actions.action_ref_node_indices,
+    };
+    validate_full_output_v2(
+        &next,
+        objects.projection.node_to_raw.len(),
+        decision.actions().len(),
+        decision.action_refs().len(),
+    )?;
+    scratch.pending = std::mem::replace(output, next);
+    Ok(())
 }
 
 fn append_extension_edges_v4(
@@ -2198,15 +2334,42 @@ fn encode_objects_with_projection_v2(
     decision: FlatScoringDecisionViewV1<'_>,
     projection: ObjectProjectionV2,
 ) -> Result<ObjectHalfV2, NativeFlatTensorErrorV2> {
+    encode_objects_reusing_v2(
+        decision,
+        projection,
+        &mut NativeFlatDecisionTensorV2::default(),
+    )
+}
+
+fn clear_and_reserve_v2<T>(
+    values: &mut Vec<T>,
+    required: usize,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    values.clear();
+    values
+        .try_reserve_exact(required)
+        .map_err(|_| NativeFlatTensorErrorV2::AllocationFailed)
+}
+
+fn encode_objects_reusing_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    projection: ObjectProjectionV2,
+    buffers: &mut NativeFlatDecisionTensorV2,
+) -> Result<ObjectHalfV2, NativeFlatTensorErrorV2> {
     let output_count = projection.node_to_raw.len().max(1);
-    let mut features = try_vec_capacity(
+    let mut features = std::mem::take(&mut buffers.object_features);
+    let mut card_ids = std::mem::take(&mut buffers.object_card_ids);
+    let mut groups = std::mem::take(&mut buffers.object_groups);
+    let mut node_ids = std::mem::take(&mut buffers.object_node_ids);
+    clear_and_reserve_v2(
+        &mut features,
         output_count
             .checked_mul(NATIVE_FLAT_OBJECT_FEATURE_DIM_V2)
             .ok_or(NativeFlatTensorErrorV2::CheckedIntegerRange)?,
     )?;
-    let mut card_ids = try_vec_capacity(output_count)?;
-    let mut groups = try_vec_capacity(output_count)?;
-    let mut node_ids = try_vec_capacity(output_count)?;
+    clear_and_reserve_v2(&mut card_ids, output_count)?;
+    clear_and_reserve_v2(&mut groups, output_count)?;
+    clear_and_reserve_v2(&mut node_ids, output_count)?;
     for (node, &raw) in projection.node_to_raw.iter().enumerate() {
         let object = &decision.objects()[raw];
         append_object_features_v2(decision, raw, object, &mut features)?;
@@ -2854,11 +3017,17 @@ fn encode_edges_v2(
     decision: FlatScoringDecisionViewV1<'_>,
     projection: &ObjectProjectionV2,
 ) -> Result<EdgeHalfV2, NativeFlatTensorErrorV2> {
-    let mut output = EdgeHalfV2 {
-        features: Vec::new(),
-        sources: Vec::new(),
-        targets: Vec::new(),
-    };
+    encode_edges_reusing_v2(decision, projection, EdgeHalfV2::default())
+}
+
+fn encode_edges_reusing_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    projection: &ObjectProjectionV2,
+    mut output: EdgeHalfV2,
+) -> Result<EdgeHalfV2, NativeFlatTensorErrorV2> {
+    output.features.clear();
+    output.sources.clear();
+    output.targets.clear();
     for role in [
         FlatRelationRoleV2::KnownLibrary,
         FlatRelationRoleV2::KnownHand,
@@ -3286,8 +3455,15 @@ fn encode_state_v2(
 fn encode_state_head_v2(
     decision: FlatScoringDecisionViewV1<'_>,
 ) -> Result<Vec<f32>, NativeFlatTensorErrorV2> {
+    encode_state_head_reusing_v2(decision, Vec::new())
+}
+
+fn encode_state_head_reusing_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    mut state: Vec<f32>,
+) -> Result<Vec<f32>, NativeFlatTensorErrorV2> {
     let globals = decision.globals();
-    let mut state = Vec::with_capacity(NATIVE_FLAT_STATE_FEATURE_DIM_V2);
+    clear_and_reserve_v2(&mut state, NATIVE_FLAT_STATE_FEATURE_DIM_V2)?;
     append_one_hot_v2(&mut state, globals.phase as usize, 12)?;
     state.extend(relative_features_v2(globals.active_player)?);
     state.extend(relative_features_v2(globals.priority_player)?);
@@ -3498,9 +3674,24 @@ fn write_canonical_observation_with_extensions_v2(
     extensions: &Value,
     output: &mut Vec<u8>,
 ) -> Result<(), NativeFlatTensorErrorV2> {
+    write_canonical_observation_with_extensions_reusing_v2(
+        decision,
+        projection,
+        extensions,
+        output,
+        &mut Vec::new(),
+    )
+}
+
+fn write_canonical_observation_with_extensions_reusing_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    projection: &ObjectProjectionV2,
+    extensions: &Value,
+    output: &mut Vec<u8>,
+    base: &mut Vec<u8>,
+) -> Result<(), NativeFlatTensorErrorV2> {
     const HEAD: &[u8] = br#"{"acting_player":"self","#;
-    let mut base = Vec::new();
-    write_canonical_observation_v2(decision, projection, &mut base)?;
+    write_canonical_observation_v2(decision, projection, base)?;
     if !base.starts_with(HEAD) {
         return Err(NativeFlatTensorErrorV2::CanonicalJson);
     }
@@ -6263,7 +6454,25 @@ fn encode_action_half_with_projection_and_scratch_contract_v3(
     projection: Option<&ObjectProjectionV2>,
     canonical_json: &mut Vec<u8>,
     allow_chosen_creature_cost_v3: bool,
+    deferred: Option<DeferredActionJsonV1<'_>>,
+) -> Result<ActionHalfV1, NativeFlatTensorErrorV1> {
+    encode_action_half_reusing_v3(
+        decision,
+        projection,
+        canonical_json,
+        allow_chosen_creature_cost_v3,
+        deferred,
+        ActionHalfV1::default(),
+    )
+}
+
+fn encode_action_half_reusing_v3(
+    decision: FlatScoringDecisionViewV1<'_>,
+    projection: Option<&ObjectProjectionV2>,
+    canonical_json: &mut Vec<u8>,
+    allow_chosen_creature_cost_v3: bool,
     mut deferred: Option<DeferredActionJsonV1<'_>>,
+    mut out: ActionHalfV1,
 ) -> Result<ActionHalfV1, NativeFlatTensorErrorV1> {
     if decision.globals().acting_player != FlatRelativePlayerV1::SelfPlayer {
         return Err(NativeFlatTensorErrorV1::ActingPlayerNotRelativeSelf);
@@ -6281,13 +6490,11 @@ fn encode_action_half_with_projection_and_scratch_contract_v3(
         .len()
         .checked_mul(NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V1)
         .ok_or(NativeFlatTensorErrorV1::CheckedIntegerRange)?;
-    let mut out = ActionHalfV1 {
-        action_features: try_vec_capacity(action_elements)?,
-        action_ref_features: try_vec_capacity(ref_elements)?,
-        action_ref_card_ids: try_vec_capacity(refs.len())?,
-        action_ref_action_indices: try_vec_capacity(refs.len())?,
-        action_ref_node_indices: try_vec_capacity(refs.len())?,
-    };
+    clear_and_reserve_v2(&mut out.action_features, action_elements)?;
+    clear_and_reserve_v2(&mut out.action_ref_features, ref_elements)?;
+    clear_and_reserve_v2(&mut out.action_ref_card_ids, refs.len())?;
+    clear_and_reserve_v2(&mut out.action_ref_action_indices, refs.len())?;
+    clear_and_reserve_v2(&mut out.action_ref_node_indices, refs.len())?;
     let mut ref_cursor = 0usize;
     for (action_index, action) in actions.iter().enumerate() {
         let start = usize::try_from(action.ref_start)

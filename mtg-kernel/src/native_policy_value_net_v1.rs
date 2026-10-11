@@ -11,7 +11,12 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 
 pub(crate) mod public_inputs_v1;
+mod scratch_v1;
 pub(crate) mod stack_inputs_v1;
+
+pub(crate) use scratch_v1::NativePolicyValueForwardScratchV1;
+#[cfg(test)]
+use scratch_v1::NativePolicyValueOutputViewV1;
 
 /// Selects which `tanh` implementation the forward pass's activation
 /// primitive (`tanh_in_place_v1`, below) uses. `LibmTanh` is today's
@@ -2782,6 +2787,149 @@ mod tests {
         ));
         assert_eq!(logits, vec![91.0, 92.0]);
         assert_eq!(value, 93.0);
+    }
+
+    fn assert_scratch_output_bits(
+        actual: NativePolicyValueOutputViewV1<'_>,
+        expected: &NativePolicyValueOutputV1,
+    ) {
+        assert_eq!(actual.logits.len(), expected.logits.len());
+        for (actual, expected) in actual.logits.iter().zip(&expected.logits) {
+            assert_eq!(actual.to_bits(), expected.to_bits());
+        }
+        assert_eq!(actual.value.to_bits(), expected.value.to_bits());
+    }
+
+    #[test]
+    fn scratch_forward_matches_owned_bits_across_repeated_shapes_and_contracts() {
+        let fixture = fixture();
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut scratch = NativePolicyValueForwardScratchV1::default();
+        for case in &fixture.cases {
+            model
+                .forward_with_scratch_v1(view(case), &mut scratch)
+                .unwrap();
+        }
+        let warmed_allocations = scratch.allocation_layout_v1();
+        // Alternate nonempty edges/action refs with empty ones, and shrink
+        // and grow both object and action rows using the same scratch.
+        for index in [1, 0, 1, 0, 0, 1] {
+            let case = &fixture.cases[index];
+            let encoded = view(case);
+            let expected = model.forward_v1(encoded).unwrap();
+            assert_scratch_output_bits(
+                model
+                    .forward_with_scratch_v1(encoded, &mut scratch)
+                    .unwrap(),
+                &expected,
+            );
+            let v3 = NativeEncodedDecisionViewV1 {
+                schema: crate::native_flat_tensorizer_v3::schema_v3(),
+                ..encoded
+            };
+            assert_scratch_output_bits(
+                model
+                    .forward_feature_transfer_v3_with_scratch_v1(v3, &mut scratch)
+                    .unwrap(),
+                &model.forward_feature_transfer_v3(v3).unwrap(),
+            );
+            let v4 = NativeEncodedDecisionViewV1 {
+                schema: crate::native_flat_tensorizer_v4::schema_v4(),
+                ..encoded
+            };
+            assert_scratch_output_bits(
+                model
+                    .forward_feature_transfer_v4_with_scratch_v1(v4, &mut scratch)
+                    .unwrap(),
+                &model.forward_feature_transfer_v4(v4).unwrap(),
+            );
+            assert_eq!(scratch.allocation_layout_v1(), warmed_allocations);
+        }
+    }
+
+    #[test]
+    fn scratch_forward_preserves_failures_and_recovers_after_parameter_changes() {
+        let fixture = fixture();
+        let case = &fixture.cases[1];
+        let mut model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut scratch = NativePolicyValueForwardScratchV1::default();
+        model
+            .forward_with_scratch_v1(view(case), &mut scratch)
+            .unwrap();
+        let mut nonfinite = case.state.clone();
+        nonfinite[0] = f32::INFINITY;
+        let bad = NativeEncodedDecisionViewV1 {
+            state: &nonfinite,
+            ..view(case)
+        };
+        assert_eq!(
+            model
+                .forward_with_scratch_v1(bad, &mut scratch)
+                .unwrap_err(),
+            model.forward_v1(bad).unwrap_err(),
+        );
+        let mut bad_schema = NativeEncodedDecisionSchemaV1::contract_v1();
+        bad_schema.version = "wrong";
+        let bad = NativeEncodedDecisionViewV1 {
+            schema: bad_schema,
+            ..view(case)
+        };
+        assert_eq!(
+            model
+                .forward_with_scratch_v1(bad, &mut scratch)
+                .unwrap_err(),
+            model.forward_v1(bad).unwrap_err(),
+        );
+        let original = model.parameter_snapshot_v1();
+        // Exercise failure after every intermediate has been written, then
+        // restore through the real replacement API and reuse the scratch.
+        model.scorer_second.bias[0] = f32::NAN;
+        assert_eq!(
+            model
+                .forward_with_scratch_v1(view(case), &mut scratch)
+                .unwrap_err(),
+            model.forward_v1(view(case)).unwrap_err(),
+        );
+        model.replace_parameter_snapshot_v1(&original).unwrap();
+        assert_scratch_output_bits(
+            model
+                .forward_with_scratch_v1(view(case), &mut scratch)
+                .unwrap(),
+            &model.forward_v1(view(case)).unwrap(),
+        );
+        model.value_second.bias[0] = f32::NAN;
+        assert_eq!(
+            model
+                .forward_with_scratch_v1(view(case), &mut scratch)
+                .unwrap_err(),
+            model.forward_v1(view(case)).unwrap_err(),
+        );
+        let mut replacement = original;
+        for (ordinal, parameter) in replacement.iter_mut().enumerate() {
+            let position = if ordinal == 0 {
+                CARD_EMBEDDING_DIM_V1
+            } else {
+                0
+            };
+            parameter.values[position] += (ordinal + 1) as f32 / 10_000.0;
+        }
+        model.replace_parameter_snapshot_v1(&replacement).unwrap();
+        for case in fixture.cases.iter().rev() {
+            let encoded = NativeEncodedDecisionViewV1 {
+                schema: crate::native_flat_tensorizer_v4::schema_v4(),
+                ..view(case)
+            };
+            assert_scratch_output_bits(
+                model
+                    .forward_feature_transfer_v4_with_scratch_v1(encoded, &mut scratch)
+                    .unwrap(),
+                &model.forward_feature_transfer_v4(encoded).unwrap(),
+            );
+        }
     }
 
     #[test]

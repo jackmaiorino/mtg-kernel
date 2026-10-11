@@ -41,8 +41,8 @@ use crate::native_flat_tensorizer_v4::{
 };
 use crate::native_policy_train_step_v1::native_train_state_parameter_layout_v1;
 use crate::native_policy_value_net_v1::{
-    NativeNamedParameterV1, NativePolicyValueModelConfigV1, NativePolicyValueNetV1,
-    CARD_EMBEDDING_DIM_V1, CARD_VOCAB_SIZE_V1, FEATURE_CONTRACT_DIGEST_V1,
+    NativeNamedParameterV1, NativePolicyValueForwardScratchV1, NativePolicyValueModelConfigV1,
+    NativePolicyValueNetV1, CARD_EMBEDDING_DIM_V1, CARD_VOCAB_SIZE_V1, FEATURE_CONTRACT_DIGEST_V1,
     FEATURE_ENCODING_DIGEST_V1, MODEL_ARCHITECTURE_VERSION_V1, MODEL_CONFIG_FINGERPRINT_V1,
     PARAMETER_COUNT_V1,
 };
@@ -177,6 +177,7 @@ pub struct FrozenPlayDecisionScoresV1 {
 /// This type exposes immutable copied embeddings, never mutable play weights.
 pub struct FrozenPlayPolicyV1 {
     model: NativePolicyValueNetV1,
+    forward_scratch: NativePolicyValueForwardScratchV1,
     embeddings: Vec<f32>,
     identity: PlayPolicyOriginV1,
     encoder: FlatDecisionEncoderV2,
@@ -454,6 +455,7 @@ impl FrozenPlayPolicyV1 {
             identity,
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
+            forward_scratch: NativePolicyValueForwardScratchV1::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
@@ -496,6 +498,7 @@ impl FrozenPlayPolicyV1 {
             identity,
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
+            forward_scratch: NativePolicyValueForwardScratchV1::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
@@ -573,6 +576,7 @@ impl FrozenPlayPolicyV1 {
             identity: identity.into(),
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
+            forward_scratch: NativePolicyValueForwardScratchV1::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
@@ -632,6 +636,7 @@ impl FrozenPlayPolicyV1 {
             identity: PlayPolicyOriginV1::transferred_fresh_v1(identity)?,
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
+            forward_scratch: NativePolicyValueForwardScratchV1::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
@@ -691,6 +696,7 @@ impl FrozenPlayPolicyV1 {
             .into(),
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
+            forward_scratch: NativePolicyValueForwardScratchV1::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
@@ -762,6 +768,7 @@ impl FrozenPlayPolicyV1 {
             .into(),
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
+            forward_scratch: NativePolicyValueForwardScratchV1::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
@@ -938,6 +945,7 @@ impl FrozenPlayPolicyV1 {
             identity: identity.into(),
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
+            forward_scratch: NativePolicyValueForwardScratchV1::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
@@ -1002,6 +1010,7 @@ impl FrozenPlayPolicyV1 {
             identity: self.identity.clone(),
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
+            forward_scratch: NativePolicyValueForwardScratchV1::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
@@ -1414,7 +1423,10 @@ impl FrozenPlayPolicyV1 {
                 )
                 .map_err(|e| format!("V3 visible tensorization: {e:?}"))?;
             self.model
-                .forward_feature_transfer_v3(encoded_decision_view_v3(&successor.tensor))
+                .forward_feature_transfer_v3_with_scratch_v1(
+                    encoded_decision_view_v3(&successor.tensor),
+                    &mut self.forward_scratch,
+                )
                 .map_err(|e| format!("explicit V3 frozen feature transfer: {e:?}"))?
         } else if let Some(fresh) = &mut self.fresh_successor {
             fresh
@@ -1425,14 +1437,20 @@ impl FrozenPlayPolicyV1 {
                 )
                 .map_err(|e| format!("V4 visible tensorization: {e:?}"))?;
             self.model
-                .forward_feature_transfer_v4(encoded_decision_view_v4(&fresh.tensor))
+                .forward_feature_transfer_v4_with_scratch_v1(
+                    encoded_decision_view_v4(&fresh.tensor),
+                    &mut self.forward_scratch,
+                )
                 .map_err(|e| format!("explicit V4 frozen feature transfer: {e:?}"))?
         } else {
             self.tensorizer
                 .fill(self.owned.view(), &mut self.tensor)
                 .map_err(|e| format!("visible tensorization: {e:?}"))?;
             self.model
-                .forward_v1(encoded_decision_view_v1(&self.tensor))
+                .forward_with_scratch_v1(
+                    encoded_decision_view_v1(&self.tensor),
+                    &mut self.forward_scratch,
+                )
                 .map_err(|e| format!("frozen scalar inference: {e:?}"))?
         };
         require(
@@ -1443,7 +1461,7 @@ impl FrozenPlayPolicyV1 {
             "invalid frozen inference output",
         )?;
         Ok(FrozenPlayDecisionScoresV1 {
-            logits: output.logits,
+            logits: output.logits.to_vec(),
             value: output.value,
         })
     }

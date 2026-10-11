@@ -433,6 +433,7 @@ impl FrozenPlayPolicyV1 {
             identity: identity.into(),
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
+            forward_scratch: NativePolicyValueForwardScratchV1::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
