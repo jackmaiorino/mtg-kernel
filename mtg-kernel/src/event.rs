@@ -1348,6 +1348,28 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
     }
 }
 
+/// The payment caller has already validated one complete sacrifice group.
+/// Freeze only new death observers; retain the existing per-member sacrifice,
+/// replacement, zone-change and unrelated-event order exactly.
+pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[ObjectId]) {
+    let captures = chosen
+        .iter()
+        .map(|id| {
+            crate::creature_death_capture_v1::capture(
+                state,
+                &ProposedEvent::zone_change(*id, Zone::Graveyard),
+            )
+        })
+        .collect::<Vec<_>>();
+    for (&id, captures) in chosen.iter().zip(captures) {
+        log_sacrifice(state, id);
+        if let Some(event) =
+            apply_replacements(state, ProposedEvent::zone_change(id, Zone::Graveyard))
+        {
+            commit_with_ability_lki(state, event, None, Some(captures));
+        }
+    }
+}
 /// One simultaneous SBA death group. Preserve the existing direct-commit
 /// semantics while freezing death observers before any member leaves.
 pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<ObjectId>) {

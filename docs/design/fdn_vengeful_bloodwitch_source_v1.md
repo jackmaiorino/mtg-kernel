@@ -38,10 +38,14 @@ source departure, pending/stack restores and stale/duplicate refusal. A separate
 scanner case checks capture references. Compilation and gameplay are unrun by
 instruction; pinned rustfmt and diff checks supply static verification only.
 
-Two concrete admission dependencies remain: engine.rs::commit_sacrifice commits
-multi-permanent costs sequentially, losing later observers when Bloodwitch is
-sacrificed first; search_state/sampler.rs protects pending/stack source contracts
-only at current generations, requiring repair or qualified refusal when a
-historical source returns to a hidden zone. Do not admit this card until those
-paths, actual native gameplay, catalog/profile consumers and pinned Mage parity
-are qualified. This prepared source establishes no full-support or strength result.
+The two source dependencies are prepared. Multi-creature payment preflight
+freezes new death observers for the complete selected cost group while
+preserving prior sacrifice/replacement/zone-change order. Both payment orders
+have an actual generic-payment fixture, including rejected duplicate picks.
+The sampler retains only definition-owned new death-program sources in pending
+and stack ownership, including historical incarnations returned to hidden
+libraries. A both-seat restored-state case requires classified refusal on a
+disposable clone and removes that restriction when the new ownership ends.
+Predecessor payment and sampling paths are unchanged. These checks are unrun;
+admission still requires native gameplay, catalog/profile consumers and pinned
+Mage parity. Prepared source establishes no full-support or strength result.

@@ -144,3 +144,23 @@ pub(crate) fn pending(
         paid_cost_refs: Vec::new(),
     }))
 }
+
+/// A definition-owned new death program, not a predecessor or an arbitrary
+/// historical source contract. Used only to retain its physical source during
+/// hidden-state sampling after the event marker has been collected.
+pub(crate) fn owns_program(
+    source: &AbilitySourceContractV4,
+    effect: &crate::effect::EffectOp,
+) -> bool {
+    source.zone == Zone::Battlefield
+        && CARD_DEFS
+            .get(source.card_def as usize)
+            .is_some_and(|card| card.is_executable())
+        && crate::trigger::triggers_for(source.card_def)
+            .iter()
+            .any(|ability| {
+                ability.condition == TriggerCondition::ThisOrControlledCreatureDies
+                    && ability.home_zone == Zone::Battlefield
+                    && (ability.effect)() == *effect
+            })
+}

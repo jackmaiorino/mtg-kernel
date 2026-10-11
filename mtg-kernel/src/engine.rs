@@ -4982,6 +4982,10 @@ fn commit_cost_components_from_plan_v1(
 /// half of a `SacrificeLands` sub-cost, once `Decision::ChooseCostTargets`
 /// has already decided *which* permanents (`PendingCast::sacrifice_chosen`).
 fn commit_sacrifice(state: &mut GameState, chosen: &[ObjectId]) {
+    if chosen.len() > 1 && crate::creature_death_capture_v1::enabled() {
+        event::commit_sacrifice_death_group_v1(state, chosen);
+        return;
+    }
     for &id in chosen {
         event::log_sacrifice(state, id);
         event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
@@ -17803,6 +17807,83 @@ mod tests {
         assert_eq!(state.players[0].mana_pool, [0; 6]);
     }
 
+    #[cfg(feature = "limited-fdn-fixtures")]
+    #[test]
+    fn bloodwitch_multi_creature_payment_order_preserves_existing_events_and_captures() {
+        // Exercise the real generic payment preflight, not a printed-card
+        // admission hook. Printed Bloodwitch resolution has separate fixtures.
+        for player in [PlayerId::P0, PlayerId::P1] {
+            for source_first in [false, true] {
+                let mut state = ready_game_in_main1(0);
+                state.active_player = player;
+                state.priority_player = player;
+                let payer = put_on_battlefield(&mut state, player, "Forest");
+                let source = put_on_battlefield(&mut state, player, "Vengeful Bloodwitch");
+                let victim = put_on_battlefield(&mut state, player, "Llanowar Elves");
+                let components = [CostComponent::SacrificeControlled {
+                    count: 2,
+                    filter: PermanentFilter::Creature,
+                }];
+                let original = state.state_hash();
+                assert!(!pay_cost_components(
+                    &mut state,
+                    player,
+                    payer,
+                    &components,
+                    &[source, source]
+                ));
+                assert_eq!(state.state_hash(), original);
+                let chosen = if source_first {
+                    [source, victim]
+                } else {
+                    [victim, source]
+                };
+                let history_start = state.engine.event_history.len();
+                assert!(pay_cost_components(
+                    &mut state,
+                    player,
+                    payer,
+                    &components,
+                    &chosen
+                ));
+                let existing_order = state.engine.event_history[history_start..]
+                    .iter()
+                    .filter_map(|event| match event {
+                        CommittedEvent::Sacrificed { object, .. } => Some((0, *object)),
+                        CommittedEvent::ZoneChange {
+                            object,
+                            from: Zone::Battlefield,
+                            to: Zone::Graveyard,
+                            ..
+                        } => Some((1, *object)),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    existing_order,
+                    vec![
+                        (0, chosen[0]),
+                        (1, chosen[0]),
+                        (0, chosen[1]),
+                        (1, chosen[1])
+                    ]
+                );
+                let mut restored: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                let pending = trigger::collect_and_process(&mut state);
+                let restored_pending = trigger::collect_and_process(&mut restored);
+                assert_eq!(pending, restored_pending);
+                assert_eq!(pending.len(), 2);
+                assert!(pending.iter().all(|pending| pending.controller == player
+                    && pending.source == source
+                    && pending.target_spec == TargetSpec::TargetOpponent));
+                assert_eq!(
+                    state.diagnostic_state_hash(),
+                    restored.diagnostic_state_hash()
+                );
+            }
+        }
+    }
     #[test]
     fn sacrifice_other_creature_cost_uses_current_control_and_incarnation_bindings() {
         let mut state = ready_game_in_main1(0);
