@@ -228,6 +228,8 @@ pub enum TriggerCondition {
     /// This source attacks while its controller controls a creature with
     /// effective power at least four. Checked only when the event is captured.
     AttacksWhileControllerHasPowerFourCreature,
+    /// Intervening condition checked at capture and by the resolving program.
+    BeginningControllerCombatWithOtherCreaturePowerAtLeast(i32),
 }
 
 pub struct TriggeredAbilityDef {
@@ -1420,6 +1422,19 @@ const BRINEBORN_CUTTHROAT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbility
     ..etb_trigger(writhing_chrysalis_counter_marker_effect)
 }];
 
+fn nessian_hornbeetle_effect() -> EffectOp {
+    EffectOp::Conditional {
+        cond: EffectCond::ControlsOtherIncarnationCreaturePowerAtLeast(4),
+        then: Box::new(EffectOp::BindPlusOnePlusOneCounterToTriggerSource),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    }
+}
+
+const NESSIAN_HORNBEETLE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningControllerCombatWithOtherCreaturePowerAtLeast(4),
+    ..etb_trigger(nessian_hornbeetle_effect)
+}];
+
 fn ruby_daring_tracker_effect() -> EffectOp {
     EffectOp::BindTemporaryBoostToTriggerSource {
         power: 2,
@@ -1957,7 +1972,7 @@ fn graveyard_glutton_effect() -> EffectOp {
     EffectOp::ExileGraveyardTargetsDrainPerCreature { max_targets: 2 }
 }
 
-/// Ward—Discard a card (both faces). Whenever it enters or attacks, exile
+/// Wardâ€”Discard a card (both faces). Whenever it enters or attacks, exile
 /// up to one target card from a graveyard; if a creature card was exiled,
 /// drain 1. Daybound. Graveyard Glutton (4/4, nightbound): the same on
 /// entering or attacking with up to two cards, draining 1 per creature card.
@@ -1997,7 +2012,7 @@ fn remove_time_counter_effect() -> EffectOp {
     EffectOp::RemoveTimeCounterFromSource
 }
 
-/// Impending 4—{2}{W}{W}. Whenever it enters or attacks, create two 2/1
+/// Impending 4â€”{2}{W}{W}. Whenever it enters or attacks, create two 2/1
 /// white Insect creature tokens with flying.
 const OVERLORD_OF_THE_MISTMOORS_TRIGGERS: [TriggeredAbilityDef; 3] = [
     etb_trigger(overlord_of_the_mistmoors_effect),
@@ -3206,6 +3221,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Firespitter Whelp" => &FIRESPITTER_WHELP_TRIGGERS,
         "Gixian Infiltrator" => &GIXIAN_INFILTRATOR_TRIGGERS,
         "Brineborn Cutthroat" => &BRINEBORN_CUTTHROAT_TRIGGERS,
+        "Nessian Hornbeetle" => &NESSIAN_HORNBEETLE_TRIGGERS,
         "Ruby, Daring Tracker" => &RUBY_DARING_TRACKER_TRIGGERS,
         "Courageous Goblin" => &COURAGEOUS_GOBLIN_TRIGGERS,
         "Webweaver Changeling" => &WEBWEAVER_CHANGELING_TRIGGERS,
@@ -5165,6 +5181,19 @@ fn trigger_matches(
             CommittedEvent::BeginningOfCombat { active_player },
         ) => *active_player == controller,
         (
+            TriggerCondition::BeginningControllerCombatWithOtherCreaturePowerAtLeast(minimum),
+            CommittedEvent::BeginningOfCombat { active_player },
+        ) => {
+            *active_player == controller
+                && crate::effect::controls_other_incarnation_creature_power_at_least(
+                    state,
+                    controller,
+                    source,
+                    state.objects.get(source).zone_change_count,
+                    minimum,
+                )
+        }
+        (
             TriggerCondition::BeginningEndStepAfterUnearth,
             CommittedEvent::BeginningEndStep { .. },
         ) => state.objects.get(source).v4.unearthed_v1,
@@ -5437,6 +5466,97 @@ mod tests {
     use super::*;
     use crate::ids::PlayerId;
     use crate::state::GameState;
+
+    #[test]
+    fn other_power_combat_gate_uses_live_control_and_source_incarnation() {
+        let elf = crate::card_def::card_id_by_name("Llanowar Elves").unwrap();
+        for controller in [PlayerId::P0, PlayerId::P1] {
+            let mut state =
+                GameState::new_from_libraries(&[elf; 4], &[elf; 4], |_| "elf".into(), 1112);
+            let source = state.players[controller.index()].library[0];
+            let own = state.players[controller.index()].library[1];
+            let opposing = state.players[controller.opponent().index()].library[0];
+            for object in [source, own, opposing] {
+                crate::event::propose_and_commit(
+                    &mut state,
+                    crate::event::ProposedEvent::zone_change(object, Zone::Battlefield),
+                );
+            }
+            state.objects.get_mut(source).counters.plus1_plus1 = 3;
+            state.objects.get_mut(opposing).counters.plus1_plus1 = 3;
+            let event = CommittedEvent::BeginningOfCombat {
+                active_player: controller,
+            };
+            let condition =
+                TriggerCondition::BeginningControllerCombatWithOtherCreaturePowerAtLeast(4);
+            assert!(!trigger_matches(
+                condition, &event, source, controller, &state, 0
+            ));
+            state.objects.get_mut(own).counters.plus1_plus1 = 2;
+            assert!(!trigger_matches(
+                condition, &event, source, controller, &state, 0
+            ));
+            state.objects.get_mut(own).counters.plus1_plus1 = 3;
+            assert!(trigger_matches(
+                condition, &event, source, controller, &state, 0
+            ));
+            assert!(!trigger_matches(
+                condition,
+                &CommittedEvent::BeginningOfCombat {
+                    active_player: controller.opponent()
+                },
+                source,
+                controller,
+                &state,
+                0
+            ));
+            // Arena state is authoritative even when a cached battlefield list is stale.
+            state.players[controller.index()]
+                .battlefield
+                .retain(|id| *id != own);
+            assert!(trigger_matches(
+                condition, &event, source, controller, &state, 0
+            ));
+            state.objects.get_mut(own).controller = controller.opponent();
+            assert!(!trigger_matches(
+                condition, &event, source, controller, &state, 0
+            ));
+            state.objects.get_mut(own).controller = controller;
+            state.players[controller.index()].battlefield.push(own);
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(own, Zone::Graveyard),
+            );
+            assert!(!trigger_matches(
+                condition, &event, source, controller, &state, 0
+            ));
+            let generation = state.objects.get(source).zone_change_count;
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(source, Zone::Hand),
+            );
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            state.objects.get_mut(source).counters.plus1_plus1 = 3;
+            assert!(
+                crate::effect::controls_other_incarnation_creature_power_at_least(
+                    &state, controller, source, generation, 4
+                )
+            );
+            assert!(!trigger_matches(
+                condition, &event, source, controller, &state, 0
+            ));
+            let replay: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert!(
+                crate::effect::controls_other_incarnation_creature_power_at_least(
+                    &replay, controller, source, generation, 4
+                )
+            );
+        }
+    }
 
     #[test]
     fn ferocious_attack_gate_counts_live_controlled_effective_power_including_source() {

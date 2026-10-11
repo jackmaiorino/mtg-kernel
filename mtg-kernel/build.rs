@@ -6186,6 +6186,7 @@ fn delve_for(name: &str) -> bool {
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
         "Brineborn Cutthroat" => "controller_cast_spell_during_opponent_turn:plus_one_counter_on_bound_source:1",
+        "Nessian Hornbeetle" => "beginning_controller_combat_if_other_creature_effective_power_at_least:4:recheck_at_resolution:plus_one_counter_on_bound_source:1",
         "Ruby, Daring Tracker" => "source_attacks_while_controller_has_effective_power_at_least:4:bound_source_pump_until_end_of_turn:2:2",
         "Courageous Goblin" => "source_attacks_while_controller_has_effective_power_at_least:4:bound_source_pump_until_end_of_turn:1:0:menace_on_exact_trigger_source",
         "Wardens of the Cycle" => "controller_end_step:intervening_if_creature_died_this_turn:mode_at_placement:gain_controller_life:2|draw_controller:1_then_lose_controller_life:1:recheck_morbid_in_each_branch:untargeted",

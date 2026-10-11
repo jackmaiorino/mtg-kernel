@@ -12226,7 +12226,10 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
         }
         Step::BeginCombat => {
             state.engine.combat.reset_preserving_rules();
-            #[cfg(feature = "standard-magezero-fixtures")]
+            #[cfg(any(
+                feature = "standard-magezero-fixtures",
+                feature = "limited-fdn-fixtures"
+            ))]
             {
                 let marker = event::CommittedEvent::BeginningOfCombat {
                     active_player: state.active_player,

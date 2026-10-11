@@ -326,6 +326,8 @@ pub enum EffectCond {
         index: u8,
         spec: crate::card_def::TargetSpec,
     },
+    /// Exclude the captured source incarnation while checking current power.
+    ControlsOtherIncarnationCreaturePowerAtLeast(i32),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -15342,6 +15344,22 @@ pub(crate) fn controller_graveyard_card_count(state: &GameState, controller: Pla
         .count()
 }
 
+pub(crate) fn controls_other_incarnation_creature_power_at_least(
+    state: &GameState,
+    controller: PlayerId,
+    source: ObjectId,
+    source_zone_change_count: u32,
+    minimum: i32,
+) -> bool {
+    state.objects.iter().any(|(id, object)| {
+        object.zone == Zone::Battlefield
+            && object.controller == controller
+            && (id != source || object.zone_change_count != source_zone_change_count)
+            && crate::engine::object_has_type(state, id, CardType::Creature)
+            && crate::engine::effective_power(state, id) >= minimum
+    })
+}
+
 fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
     match cond {
         EffectCond::Always => true,
@@ -15511,6 +15529,19 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
             .hand
             .is_empty(),
         EffectCond::CreatureDiedThisTurn => state.creature_died_this_turn_v1(),
+        EffectCond::ControlsOtherIncarnationCreaturePowerAtLeast(minimum) => {
+            let generation = ctx.ability_source_contract.map_or_else(
+                || state.objects.get(ctx.source).zone_change_count,
+                |contract| contract.zone_change_count,
+            );
+            controls_other_incarnation_creature_power_at_least(
+                state,
+                ctx.controller,
+                ctx.source,
+                generation,
+                *minimum,
+            )
+        }
         EffectCond::ControlsCreaturePowerAtLeast(minimum) => state.players[ctx.controller.index()]
             .battlefield
             .iter()

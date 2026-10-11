@@ -250,6 +250,17 @@ pub(crate) fn effect_cond(cond: &EffectCond, env: &Env, out: &mut Collector) {
                 AggF::Characteristic,
             );
         }
+        EffectCond::ControlsOtherIncarnationCreaturePowerAtLeast(minimum) => {
+            let _ = minimum;
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Typed(CardTypeF::Creature)),
+                AggF::Characteristic,
+            );
+            // The vocabulary lacks a power threshold and source incarnation.
+            out.atoms.push(Atom::Opaque);
+        }
         EffectCond::TargetManaValueAtMost(slot, maximum) => {
             // Reads the targeted object's printed mana value before it moves.
             // Vocabulary gap: `Characteristic` carries no threshold.
