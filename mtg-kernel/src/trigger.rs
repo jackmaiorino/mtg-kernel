@@ -5468,6 +5468,40 @@ mod tests {
     use crate::state::GameState;
 
     #[test]
+    #[cfg(any(
+        feature = "standard-magezero-fixtures",
+        feature = "limited-fdn-fixtures"
+    ))]
+    fn other_power_combat_event_is_emitted_by_real_step_progression() {
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                &[forest; 40],
+                &[forest; 40],
+                |_| "Forest".into(),
+                1113,
+                player,
+            );
+            state.step = crate::state::Step::Main1;
+            for _ in 0..8 {
+                let decision = crate::engine::advance_until_decision(&mut state);
+                if state.step == crate::state::Step::BeginCombat {
+                    break;
+                }
+                assert!(matches!(
+                    decision,
+                    crate::engine::Decision::CastSpellOrPass { .. }
+                ));
+                crate::engine::step(&mut state, crate::engine::Action::Pass).unwrap();
+            }
+            assert_eq!(state.step, crate::state::Step::BeginCombat);
+            assert_eq!(state.engine.event_history.iter().filter(|event| {
+                matches!(event, CommittedEvent::BeginningOfCombat { active_player } if *active_player == player)
+            }).count(), 1);
+        }
+    }
+
+    #[test]
     fn other_power_combat_gate_uses_live_control_and_source_incarnation() {
         let elf = crate::card_def::card_id_by_name("Llanowar Elves").unwrap();
         for controller in [PlayerId::P0, PlayerId::P1] {
