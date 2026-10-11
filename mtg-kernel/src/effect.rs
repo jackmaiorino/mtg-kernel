@@ -18796,7 +18796,14 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             };
             let source_is_live = state.objects.try_get(ctx.source).is_some_and(|source| {
-                source.card_def == source_contract.card_def
+                (source.card_def == source_contract.card_def
+                    || (crate::card_def::CARD_DEFS[source_contract.card_def as usize].name
+                        == "Banishing Light"
+                        && crate::standard_cards_v1::had_card_def(
+                            state,
+                            ctx.source,
+                            source_contract.card_def,
+                        )))
                     && source.owner == source_contract.owner
                     && source.zone == Zone::Battlefield
                     && source.zone_change_count == source_contract.zone_change_count
@@ -18806,6 +18813,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             }
             let target_owner = state.objects.get(object).owner;
+            let target_generation = state.objects.get(object).zone_change_count;
             event::propose_and_commit(
                 state,
                 event::ProposedEvent::zone_change(object, Zone::Exile),
@@ -18813,6 +18821,14 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             // Read after the move: a creature that was a copy (Assimilation
             // Aegis) arrives in exile as its own card.
             let target_card_def = state.objects.get(object).card_def;
+            if crate::card_def::CARD_DEFS[source_contract.card_def as usize].name
+                == "Banishing Light"
+                && (state.objects.get(object).zone != Zone::Exile
+                    || target_generation.checked_add(1)
+                        != Some(state.objects.get(object).zone_change_count))
+            {
+                return;
+            }
             if source_is_live {
                 let exiled_zone_change_count = state.objects.get(object).zone_change_count;
                 let source = ObjectLinkV4 {
@@ -18838,6 +18854,21 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     exiled_zone_change_count,
                 });
                 state.objects.get_mut(object).v4.exiled_by = Some(source);
+                if crate::card_def::CARD_DEFS[source_contract.card_def as usize].name
+                    == "Banishing Light"
+                    && state.objects.try_get(ctx.source).is_none_or(|live| {
+                        live.zone != Zone::Battlefield
+                            || live.zone_change_count != source_contract.zone_change_count
+                    })
+                {
+                    // A transferred source can itself be a legal opponent permanent.
+                    // Its initial exile also ends this exact source duration.
+                    return_cards_exiled_until_source_leaves(
+                        state,
+                        ctx.source,
+                        source_contract.zone_change_count,
+                    );
+                }
             }
         }
         EffectOp::ReturnObjectsExiledBySource => {

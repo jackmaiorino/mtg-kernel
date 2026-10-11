@@ -530,6 +530,52 @@ fn old_source_incarnation_cannot_exile_after_physical_reentry_new_trigger_is_ind
 }
 
 #[test]
+fn transferred_source_can_target_itself_and_returns_immediately_as_a_new_entry_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let (source, _) = cast_to_trigger(&mut state, actor);
+        let original_generation = state.objects.get(source).zone_change_count;
+        // Actual physical controller substrate before the existing mandatory
+        // placement choice, not an invented printed control spell.
+        change_controller(&mut state, source, actor.opponent());
+        assert!(
+            matches!(next(&mut state), Decision::ChooseTargets { player, legal_targets, .. }
+            if player==actor && legal_targets.contains(&Target::Object(source)))
+        );
+        announce_target(&mut state, source, source);
+        for _ in 0..30 {
+            match next(&mut state) {
+                Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+                Decision::ChooseTargets { player, .. } => {
+                    assert_eq!(player, actor);
+                    assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+                    assert_eq!(state.objects.get(source).controller, actor);
+                    assert_eq!(
+                        state.objects.get(source).zone_change_count,
+                        original_generation + 2
+                    );
+                    assert!(state.engine.linked_exile_records.is_empty());
+                    let mut restored = replay(&state);
+                    assert_eq!(next(&mut state), next(&mut restored));
+                    break;
+                }
+                other => panic!("unexpected self-exile return checkpoint: {other:?}"),
+            }
+        }
+        assert_eq!(
+            state.objects.get(source).zone_change_count,
+            original_generation + 2
+        );
+    }
+}
+
+#[test]
 fn known_partial_planeswalker_is_a_nonland_recipient_primitive_not_admitted_ajani_gameplay() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
