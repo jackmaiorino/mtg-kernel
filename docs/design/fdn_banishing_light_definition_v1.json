@@ -1,0 +1,48 @@
+{
+  "schema": "mtg-kernel-prepared-card-definition/v1",
+  "name": "Banishing Light",
+  "registered": false,
+  "catalog_id": null,
+  "engine_capability": "prepared_unqualified",
+  "pinned_mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "pinned_mage_card": "Mage.Sets/src/mage/cards/b/BanishingLight.java",
+  "printed": {
+    "mana_cost": "{2}{W}",
+    "mana_value": 3,
+    "colors": [
+      "W"
+    ],
+    "types": [
+      "Enchantment"
+    ],
+    "subtypes": [],
+    "power": null,
+    "toughness": null,
+    "rules": "When Banishing Light enters the battlefield, exile target nonland permanent an opponent controls until Banishing Light leaves the battlefield."
+  },
+  "source_base": "fff6d12fbc90098ae5c896e65ff970ad77783503",
+  "recipe": {
+    "spell_effect": "ordinary_permanent_to_battlefield",
+    "spell_target_spec": "None",
+    "trigger": "Etb",
+    "trigger_target_spec": "OpponentNonlandPermanent",
+    "trigger_effect": "ExileTargetLinkedToSource(Target0)",
+    "duration_authority": "battlefield_exile_until_source_leaves",
+    "source_left_before_resolution": "no_exile",
+    "expiration": "immediate_event_commit_return_exact_exile_incarnation_to_battlefield_under_owner"
+  },
+  "qualification": {
+    "native_checks": "unrun",
+    "catalog_hash": null,
+    "profile": null,
+    "model_admission": false,
+    "full_pool_claim": false
+  },
+  "remaining": [
+    "compose current canonical source",
+    "register actual metadata and derive actual catalog identity",
+    "execute both-seat printed/restore fixtures",
+    "qualify any newly generated catalog/profile/consumer",
+    "RulesMeaning duration/source dependency representation remains incomplete"
+  ]
+}

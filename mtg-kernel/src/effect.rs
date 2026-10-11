@@ -976,6 +976,8 @@ pub enum EffectOp {
     /// Exile one exact target and link it to this resolving ability's frozen
     /// source incarnation. If that source already left before this trigger
     /// resolves, the target is still exiled but no return link is created.
+    /// Definition-owned until-leaves sources (including Banishing Light) instead
+    /// require the captured source incarnation to remain and return at expiration.
     ExileTargetLinkedToSource {
         object: ObjectRef,
     },
@@ -14713,6 +14715,7 @@ pub(crate) fn battlefield_exile_until_source_leaves(card_def: u16) -> bool {
             | "Dusk Rose Reliquary"
             | "Sheltered by Ghosts"
             | "Hardlight Containment"
+            | "Banishing Light"
     )
 }
 

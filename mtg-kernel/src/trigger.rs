@@ -2770,6 +2770,11 @@ fn journey_to_nowhere_etb_effect() -> EffectOp {
     }
 }
 
+/// Banishing Light has one ETB ability; its return is a duration expiration,
+/// committed immediately when the exact source incarnation leaves.
+const BANISHING_LIGHT_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(journey_to_nowhere_etb_effect)];
+
 fn journey_to_nowhere_ltb_effect() -> EffectOp {
     EffectOp::ReturnObjectsExiledBySource
 }
@@ -3496,6 +3501,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Saiba Cryptomancer" => &SAIBA_CRYPTOMANCER_TRIGGERS,
         "Spellstutter Sprite" => &SPELLSTUTTER_SPRITE_TRIGGERS,
         "Journey to Nowhere" => &JOURNEY_TO_NOWHERE_TRIGGERS,
+        "Banishing Light" => &BANISHING_LIGHT_TRIGGERS,
         "Lembas" => &LEMBAS_TRIGGERS,
         "Weather the Storm" => &WEATHER_THE_STORM_TRIGGERS,
         "Masked Vandal" => &MASKED_VANDAL_TRIGGERS,
@@ -3662,7 +3668,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         }
         "Humbling Elder" => TargetSpec::OpponentControlledCreature,
         "Battlesong Berserker" => TargetSpec::ControlledCreature,
-        "Meteor Golem" => TargetSpec::OpponentNonlandPermanent,
+        "Meteor Golem" | "Banishing Light" => TargetSpec::OpponentNonlandPermanent,
         "Reclamation Sage" => TargetSpec::ArtifactOrEnchantmentPermanent,
         "Saiba Cryptomancer" | "Aloe Alchemist" | "Frenzied Goblin" => TargetSpec::Creature,
         "Spellstutter Sprite" => TargetSpec::SpellManaValueAtMostControlledSubtypes {
