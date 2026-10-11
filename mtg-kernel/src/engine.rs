@@ -1706,6 +1706,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::NonblackCreature
         | TargetSpec::ArtifactOrEnchantmentPermanent
         | TargetSpec::AttackingOrBlockingCreature
+        | TargetSpec::AttackingCreature
         | TargetSpec::CreatureOrPlaneswalker
         | TargetSpec::ArtifactEnchantmentOrFlyingCreature
         | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour
@@ -1730,6 +1731,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         TargetSpec::StandardV1(filter) => filter.counts().0,
         TargetSpec::PlayerThenTheirCreature
         | TargetSpec::UpToTwoOtherCreaturesDifferentControllers
+        | TargetSpec::TwoCreaturesWithDifferentControllers
         | TargetSpec::UpToTwoOtherControlledCreatures
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
@@ -3195,6 +3197,22 @@ fn legal_targets_for_controller_from_source(
             .filter(|id| !targets_chosen.contains(&Target::Object(*id)))
             .map(Target::Object)
             .collect(),
+        TargetSpec::TwoCreaturesWithDifferentControllers => battlefield_objects(state)
+            .filter(|&id| object_has_type(state, id, CardType::Creature))
+            .filter(|&id| {
+                !targets_chosen.contains(&Target::Object(id))
+                    && targets_chosen.iter().all(|target| match target {
+                        Target::Object(other) => {
+                            state.objects.try_get(*other).is_some_and(|live| {
+                                live.zone == Zone::Battlefield
+                                    && live.controller != state.objects.get(id).controller
+                            })
+                        }
+                        Target::Player(_) => false,
+                    })
+            })
+            .map(Target::Object)
+            .collect(),
         TargetSpec::NonlegendaryCreature => battlefield_objects(state)
             .filter(|&id| {
                 object_has_type(state, id, CardType::Creature)
@@ -3406,6 +3424,13 @@ fn legal_targets_for_controller_from_source(
                             .blocked_by
                             .iter()
                             .any(|(_, blockers)| blockers.contains(&id)))
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::AttackingCreature => battlefield_objects(state)
+            .filter(|&id| {
+                object_has_type(state, id, CardType::Creature)
+                    && state.engine.combat.attackers.contains(&id)
             })
             .map(Target::Object)
             .collect(),
@@ -3711,6 +3736,61 @@ pub(crate) fn effect_target_is_legal(
         )
         .contains(target)
     })
+}
+
+/// Run Away Together checks both target relationships in one unchanged state.
+/// A stale or departed original target cannot constrain the surviving target;
+/// a still-present original permanent constrains control even if it becomes
+/// noncreature or independently untargetable. Never use the one-sided prefix
+/// check at resolution, or the first pick would bypass the controller relation.
+pub(crate) fn different_controller_creature_targets_are_legal(
+    state: &GameState,
+    source: ObjectId,
+    controller: PlayerId,
+    targets: &[Target],
+    contracts: &[StackTargetContractV4],
+) -> [bool; 2] {
+    if targets.len() != 2
+        || contracts.len() != 2
+        || targets[0] == targets[1]
+        || !contracts.iter().all(|contract| {
+            matches!(
+                contract,
+                StackTargetContractV4::Object {
+                    zone: Zone::Battlefield,
+                    ..
+                }
+            )
+        })
+        || !targets
+            .iter()
+            .all(|target| matches!(target, Target::Object(_)))
+    {
+        return [false; 2];
+    }
+    let current = std::array::from_fn::<_, 2, _>(|index| {
+        target_contract_matches_live(state, targets[index], contracts[index])
+            && match targets[index] {
+                Target::Object(object) => battlefield_objects(state).any(|live| live == object),
+                Target::Player(_) => false,
+            }
+    });
+    if current[0] && current[1] {
+        let [Target::Object(first), Target::Object(second)] = targets else {
+            return [false; 2];
+        };
+        if state.objects.get(*first).controller == state.objects.get(*second).controller {
+            return [false; 2];
+        }
+    }
+    let legal = legal_targets_for_controller_from_source(
+        TargetSpec::Creature,
+        &[],
+        controller,
+        targeting_source_for_object(state, source),
+        state,
+    );
+    std::array::from_fn(|index| current[index] && legal.contains(&targets[index]))
 }
 
 /// Per-target legality for effects whose source provenance was captured when
@@ -5661,6 +5741,10 @@ fn commit_cost_components_from_plan_v1(
 /// half of a `SacrificeLands` sub-cost, once `Decision::ChooseCostTargets`
 /// has already decided *which* permanents (`PendingCast::sacrifice_chosen`).
 fn commit_sacrifice(state: &mut GameState, chosen: &[ObjectId]) {
+    if chosen.len() > 1 && crate::creature_death_capture_v1::enabled() {
+        event::commit_sacrifice_death_group_v1(state, chosen);
+        return;
+    }
     for &id in chosen {
         event::log_sacrifice(state, id);
         event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
@@ -13026,6 +13110,17 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
     let Some(spec) = validated_stack_item_target_spec(item, state)? else {
         return Ok(true);
     };
+    if spec == TargetSpec::TwoCreaturesWithDifferentControllers {
+        return Ok(different_controller_creature_targets_are_legal(
+            state,
+            item.source,
+            item.controller,
+            &item.targets,
+            &item.v4.target_contracts,
+        )
+        .into_iter()
+        .any(|legal| legal));
+    }
     if item.targets.is_empty() {
         return Ok(true);
     }
@@ -18067,6 +18162,10 @@ pub(crate) fn finish_declare_attackers(state: &mut GameState, attackers: Vec<Obj
 #[path = "engine/raid_history_tests.rs"]
 mod raid_history_tests;
 
+#[cfg(test)]
+#[path = "engine/anytarget_planeswalker_tests.rs"]
+mod anytarget_planeswalker_tests;
+
 #[cfg(all(
     test,
     any(
@@ -20216,6 +20315,86 @@ mod tests {
         assert_eq!(state.players[0].mana_pool, [0; 6]);
     }
 
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    fn bloodwitch_multi_creature_payment_order_preserves_existing_events_and_captures() {
+        // Exercise the real generic payment preflight, not a printed-card
+        // admission hook. Printed Bloodwitch resolution has separate fixtures.
+        for player in [PlayerId::P0, PlayerId::P1] {
+            for source_first in [false, true] {
+                let mut state = ready_game_in_main1(0);
+                state.active_player = player;
+                state.priority_player = player;
+                let payer = put_on_battlefield(&mut state, player, "Forest");
+                let source = put_on_battlefield(&mut state, player, "Vengeful Bloodwitch");
+                let victim = put_on_battlefield(&mut state, player, "Llanowar Elves");
+                let components = [CostComponent::SacrificeControlled {
+                    count: 2,
+                    filter: PermanentFilter::Creature,
+                }];
+                let original = state.state_hash();
+                assert!(!pay_cost_components(
+                    &mut state,
+                    player,
+                    payer,
+                    &components,
+                    &[source, source]
+                ));
+                assert_eq!(state.state_hash(), original);
+                let chosen = if source_first {
+                    [source, victim]
+                } else {
+                    [victim, source]
+                };
+                let history_start = state.engine.event_history.len();
+                assert!(pay_cost_components(
+                    &mut state,
+                    player,
+                    payer,
+                    &components,
+                    &chosen
+                ));
+                let existing_order = state.engine.event_history[history_start..]
+                    .iter()
+                    .filter_map(|event| match event {
+                        CommittedEvent::Sacrificed { object, .. } => Some((0, *object)),
+                        CommittedEvent::ZoneChange {
+                            object,
+                            from: Zone::Battlefield,
+                            to: Zone::Graveyard,
+                            ..
+                        } => Some((1, *object)),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    existing_order,
+                    vec![
+                        (0, chosen[0]),
+                        (1, chosen[0]),
+                        (0, chosen[1]),
+                        (1, chosen[1])
+                    ]
+                );
+                let mut restored: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                let pending = trigger::collect_and_process(&mut state);
+                let restored_pending = trigger::collect_and_process(&mut restored);
+                assert_eq!(pending, restored_pending);
+                assert_eq!(pending.len(), 2);
+                assert!(pending.iter().all(|pending| pending.controller == player
+                    && pending.source == source
+                    && pending.target_spec == TargetSpec::TargetOpponent));
+                assert_eq!(
+                    state.diagnostic_state_hash(),
+                    restored.diagnostic_state_hash()
+                );
+            }
+        }
+    }
     #[test]
     fn sacrifice_other_creature_cost_uses_current_control_and_incarnation_bindings() {
         let mut state = ready_game_in_main1(0);

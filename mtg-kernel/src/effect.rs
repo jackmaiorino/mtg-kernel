@@ -1546,6 +1546,16 @@ pub enum EffectOp {
         targeting_stack_item: StackItemId,
         life: u8,
     },
+    /// Condemn: snapshot a legal attacking creature's current controller and
+    /// effective toughness before the move, put it on its OWNER's library
+    /// bottom, then its captured CONTROLLER gains that positive amount.
+    /// Appended to preserve all predecessor effect Hash identities.
+    PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness {
+        target_index: u8,
+    },
+    /// Run Away Together: freeze both current target legalities before returning
+    /// all legal original incarnations to their owners' hands in one batch.
+    ReturnTwoDifferentControllerCreaturesToOwnersHands,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -18240,6 +18250,68 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 install_temporary_boost(state, object, 0, 0, *keyword);
             }
         }
+        EffectOp::PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness {
+            target_index,
+        } => {
+            let index = usize::from(*target_index);
+            if !ctx.target_incarnation_matches(index, state)
+                || !crate::engine::effect_target_is_legal(
+                    state,
+                    ctx.source,
+                    ctx.controller,
+                    crate::card_def::TargetSpec::AttackingCreature,
+                    &ctx.targets,
+                    index,
+                )
+            {
+                return;
+            }
+            let Some(Target::Object(object)) = ctx.targets.get(index).copied() else {
+                return;
+            };
+            let controller = state.objects.get(object).controller;
+            let toughness = crate::engine::effective_toughness(state, object);
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::public_library_insert(
+                    object,
+                    event::LibraryPlacement::Bottom,
+                ),
+            );
+            // The library move resets control and battlefield characteristics.
+            // Continue from the frozen pre-move facts, including replacements.
+            if toughness > 0 {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::life_gain(controller, toughness),
+                );
+            }
+        }
+        EffectOp::ReturnTwoDifferentControllerCreaturesToOwnersHands => {
+            let legal = crate::engine::different_controller_creature_targets_are_legal(
+                state,
+                ctx.source,
+                ctx.controller,
+                &ctx.targets,
+                &ctx.target_contracts,
+            );
+            let events = legal
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, legal)| {
+                    if !legal {
+                        return None;
+                    }
+                    match ctx.targets[index] {
+                        Target::Object(object) => {
+                            Some(event::ProposedEvent::zone_change(object, Zone::Hand))
+                        }
+                        Target::Player(_) => None,
+                    }
+                })
+                .collect();
+            event::propose_and_commit_batch(state, events);
+        }
         EffectOp::DoubleTargetPowerUntilEndOfTurn { target_index } => {
             let index = usize::from(*target_index);
             if !ctx.target_incarnation_matches(index, state) {
@@ -21189,3 +21261,11 @@ mod countered_creature_draw_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "effect/condemn_tests.rs"]
+mod condemn_tests;
+
+#[cfg(test)]
+#[path = "effect/run_away_together_tests.rs"]
+mod run_away_together_tests;

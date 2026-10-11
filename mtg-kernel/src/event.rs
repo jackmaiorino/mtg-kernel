@@ -611,6 +611,20 @@ pub enum CommittedEvent {
         source: crate::state::AbilitySourceContractV4,
         face_index: u8,
     },
+    /// Appended engine-only capture. Emitted only for an executable printed
+    /// death observer, immediately after the corresponding committed death.
+    ControlledCreatureDeathCaptureV1 {
+        source: crate::state::AbilitySourceContractV4,
+        ability_index: u16,
+        died: crate::state::ObjectLinkV4,
+        controller_before: PlayerId,
+    },
+    /// Single-use collection receipt for a committed observer capture. The
+    /// index names immutable event_history authority, not a mutable log entry.
+    /// This engine-only event never enters event_log or creates a trigger.
+    ControlledCreatureDeathCaptureCollectedV1 {
+        capture_history_index: u64,
+    },
 }
 
 /// Remembers the counters of a departing permanent whose own leave ability
@@ -969,13 +983,14 @@ pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
 /// Applies the (possibly rewritten) proposal to `GameState` and appends the
 /// resulting `CommittedEvent` to the event log for this resolution.
 pub fn commit(state: &mut GameState, event: ProposedEvent) {
-    commit_with_ability_lki(state, event, None);
+    commit_with_ability_lki(state, event, None, None);
 }
 
 fn commit_with_ability_lki(
     state: &mut GameState,
     event: ProposedEvent,
     abilities_removed_before: Option<bool>,
+    frozen_death_captures: Option<Vec<CommittedEvent>>,
 ) {
     let mut event = event;
     if let ProposedEvent::ZoneChange(change) = &mut event {
@@ -991,6 +1006,17 @@ fn commit_with_ability_lki(
             change.to_zone = Zone::Exile;
         }
     }
+    // A frozen observer may outlive its source, but a rewritten destination
+    // is not a death. Finality and sacrifice replacements must not publish
+    // a capture beside a battlefield-to-exile event.
+    let death_captures = if matches!(&event, ProposedEvent::ZoneChange(change)
+        if change.to_zone == Zone::Graveyard)
+    {
+        frozen_death_captures
+            .unwrap_or_else(|| crate::creature_death_capture_v1::capture(state, &event))
+    } else {
+        Vec::new()
+    };
     let committed = match event {
         ProposedEvent::Damage(d) => {
             let source_has_deathtouch = d.amount > 0
@@ -1327,7 +1353,21 @@ fn commit_with_ability_lki(
         _ => None,
     };
     state.engine.event_log.push(committed.clone());
+    let committed_death = matches!(
+        committed,
+        CommittedEvent::ZoneChange {
+            from: Zone::Battlefield,
+            to: Zone::Graveyard,
+            ..
+        }
+    );
     state.engine.event_history.push(committed);
+    if committed_death {
+        for capture in death_captures {
+            state.engine.event_log.push(capture.clone());
+            state.engine.event_history.push(capture);
+        }
+    }
     if let Some(object) = left_battlefield {
         crate::standard_legends_v1::return_lagrella_exiles(
             state,
@@ -1406,6 +1446,13 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
             lifelink_gains.push((damage.source, player, amount));
         }
     }
+    let mut death_captures = crate::creature_death_capture_v1::enabled().then(|| {
+        survivors
+            .iter()
+            .map(|event| crate::creature_death_capture_v1::capture(state, event))
+            .collect::<Vec<_>>()
+            .into_iter()
+    });
     if cfg!(feature = "limited-fdn-fixtures") {
         let ability_removals = survivors
             .iter()
@@ -1420,16 +1467,66 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
             })
             .collect::<Vec<_>>();
         for (event, removed) in survivors.into_iter().zip(ability_removals) {
-            commit_with_ability_lki(state, event, Some(removed));
+            let captures = death_captures
+                .as_mut()
+                .map(|captures| captures.next().expect("one capture per batch member"));
+            commit_with_ability_lki(state, event, Some(removed), captures);
         }
     } else {
         for event in survivors {
-            commit(state, event);
+            let captures = death_captures
+                .as_mut()
+                .map(|captures| captures.next().expect("one capture per batch member"));
+            commit_with_ability_lki(state, event, None, captures);
         }
     }
 
     for (_, player, amount) in lifelink_gains {
         commit(state, ProposedEvent::life_gain(player, amount));
+    }
+}
+
+/// The payment caller has already validated one complete sacrifice group.
+/// Freeze only new death observers; retain the existing per-member sacrifice,
+/// replacement, zone-change and unrelated-event order exactly.
+pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[ObjectId]) {
+    let captures = chosen
+        .iter()
+        .map(|id| {
+            crate::creature_death_capture_v1::capture(
+                state,
+                &ProposedEvent::zone_change(*id, Zone::Graveyard),
+            )
+        })
+        .collect::<Vec<_>>();
+    for (&id, captures) in chosen.iter().zip(captures) {
+        log_sacrifice(state, id);
+        if let Some(event) =
+            apply_replacements(state, ProposedEvent::zone_change(id, Zone::Graveyard))
+        {
+            commit_with_ability_lki(state, event, None, Some(captures));
+        }
+    }
+}
+/// One simultaneous SBA death group. Preserve the existing direct-commit
+/// semantics while freezing death observers before any member leaves.
+pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<ObjectId>) {
+    if !crate::creature_death_capture_v1::enabled() {
+        for id in dying {
+            commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
+        }
+        return;
+    }
+    let events = dying
+        .into_iter()
+        .map(|id| ProposedEvent::zone_change(id, Zone::Graveyard))
+        .collect::<Vec<_>>();
+    let captures = events
+        .iter()
+        .map(|event| crate::creature_death_capture_v1::capture(state, event))
+        .collect::<Vec<_>>();
+    for (event, captures) in events.into_iter().zip(captures) {
+        commit_with_ability_lki(state, event, None, Some(captures));
     }
 }
 
@@ -2087,6 +2184,7 @@ mod tests {
                 &mut state,
                 ProposedEvent::zone_change(hero, Zone::Graveyard),
                 Some(abilities_removed),
+                None,
             );
             let triggers = crate::trigger::collect_and_process(&mut state);
             assert_eq!(triggers.len(), usize::from(!abilities_removed));

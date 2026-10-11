@@ -3454,6 +3454,16 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         mode2: None,
     };
     Some(match name {
+        "Run Away Together" => program(
+            "TwoCreaturesWithDifferentControllers",
+            "ReturnTwoDifferentControllerCreaturesToOwnersHands(exactlyTwo,distinctObjects,currentDifferentControllers,exactIncarnations,simultaneousLegalitySnapshot,batchOwnerHandMove,partialLegalTargets)",
+            "EffectOp::ReturnTwoDifferentControllerCreaturesToOwnersHands",
+        ),
+        "Condemn" => program(
+            "AttackingCreature",
+            "PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness(Target0,currentAttacker,exactIncarnation,captureCurrentControllerAndEffectiveToughnessBeforeMove,publicBottomInsert,positiveLifeGain)",
+            "EffectOp::PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness { target_index: 0 }",
+        ),
         "Stroke of Midnight" => program(
             "NonlandPermanent",
             "DestroyObjectThenCreateTokens(Target0,currentTargetController,captureBeforeDestruction,HumanToken,1,createEvenIfIndestructible,exactIncarnation)",
@@ -3813,6 +3823,10 @@ fn program_target_spec_src(target: &str) -> &'static str {
         }
         "NonartifactCreature" => "TargetSpec::NonartifactCreature",
         "CreatureToughnessAtLeastFour" => "TargetSpec::CreatureToughnessAtLeastFour",
+        "AttackingCreature" => "TargetSpec::AttackingCreature",
+        "TwoCreaturesWithDifferentControllers" => {
+            "TargetSpec::TwoCreaturesWithDifferentControllers"
+        }
         "CreatureEnchantmentOrPlaneswalker" => "TargetSpec::CreatureEnchantmentOrPlaneswalker",
         other => panic!("unsupported program target spec {other}"),
     }
@@ -6783,6 +6797,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Tragic Banshee" => "etb:target_opponent_controlled_creature:resolution_morbid:pump_target:-13:-13_else:-1:-1:exact_incarnation_until_cleanup",
         "Battlesong Berserker" => "controller_declares_at_least_one_attacker:once_per_declaration:target_controlled_creature:pump:1:0_then_grant_menace:exact_incarnation_until_cleanup",
         "Scrawling Crawler" => "beginning_controller_upkeep:draw_controller:1_then_opponent:1;successful_opponent_draw:untargeted_opponent_loses_life:1",
+        "Vengeful Bloodwitch" => "self_or_other_controlled_effective_creature_dies:precommit_and_simultaneous_batch_captured_controller_and_source_incarnation:target_opponent_loses_life:1_then_captured_controller_gains_life:1",
         "Grappling Kraken" => "controlled_land_enters:target_opponent_controlled_creature:tap_then_stun_counter:1:exact_incarnation",
         "Rune-Scarred Demon" => "etb:search_library_any_card_to_hand_unrevealed",
         "Elvish Regrower" => "etb:return_target_own_graveyard_permanent_card_to_hand",

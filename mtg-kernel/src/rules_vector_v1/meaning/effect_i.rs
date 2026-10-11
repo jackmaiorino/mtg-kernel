@@ -188,6 +188,43 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                     .amount(AmtF::fixed(i64::from(*count))),
             );
         }
+        EffectOp::PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness {
+            target_index,
+        } => {
+            let obj = env.target_obj(*target_index);
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Battlefield), ZoneF::Library)
+                    .player(RelF::ObjectOwner)
+                    .obj(obj),
+            );
+            out.read(
+                RelF::ObjectController,
+                Some(ZoneF::Battlefield),
+                Some(obj),
+                AggF::Characteristic,
+            );
+            out.effect(
+                EffectAtom::new(EvF::LifeGain)
+                    .player(RelF::ObjectController)
+                    .obj(ObjF::Player)
+                    .amount(AmtF::Dynamic),
+            );
+            // No frozen facet expresses bottom position, toughness specifically,
+            // or the correlation to the same captured controller/characteristic.
+            out.atoms.push(Atom::Opaque);
+        }
+        EffectOp::ReturnTwoDifferentControllerCreaturesToOwnersHands => {
+            for index in [0, 1] {
+                out.effect(
+                    EffectAtom::moving(Some(ZoneF::Battlefield), ZoneF::Hand)
+                        .player(RelF::ObjectOwner)
+                        .obj(env.target_obj(index)),
+                );
+            }
+            // Frozen vocabulary lacks pairwise controller inequality and the
+            // symmetric pre-move legality snapshot with partial target success.
+            out.atoms.push(Atom::Opaque);
+        }
         _ => unreachable!("dispatched to the wrong slice"),
     }
 }

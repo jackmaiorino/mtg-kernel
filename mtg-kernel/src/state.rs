@@ -1281,14 +1281,16 @@ pub fn stack_target_contract_is_structurally_valid(
                     | TargetSpec::AnotherControlledCreature
                     | TargetSpec::ControlledCreatureWithSubtype(_)
                     | TargetSpec::AttackingCreatureWithSubtype(_)
-                    | TargetSpec::ControlledPermanentWithAnySubtype(_),
+                    | TargetSpec::ControlledPermanentWithAnySubtype(_)
+                    | TargetSpec::AttackingCreature,
                 0,
                 StackTargetContractV4::Object {
                     zone: Zone::Battlefield,
                     ..
                 },
             ) | (
-                TargetSpec::UpToTwoCreatures
+                TargetSpec::TwoCreaturesWithDifferentControllers
+                    | TargetSpec::UpToTwoCreatures
                     | TargetSpec::UpToTwoOtherCreaturesDifferentControllers
                     | TargetSpec::UpToTwoOtherControlledCreatures
                     | TargetSpec::ExactlyTwoArtifactPermanents
