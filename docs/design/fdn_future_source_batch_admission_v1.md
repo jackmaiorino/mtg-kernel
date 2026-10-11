@@ -1,15 +1,15 @@
-# FDN future four-card qualification candidate
+# FDN future five-card qualification candidate
 
 This root-owned candidate stages actual Mild-Mannered Librarian411, Gorehorn
-Raider412, Gutless Plunderer413 and Bloom Tender414 after all411 definitions in PR229. Existing
+Raider412, Gutless Plunderer413, Bloom Tender414 and Temporal Manipulation415 after all411 definitions in PR229. Existing
 registry records, frozen286-name printing membership and24 external token
 dependencies remain identical. Candidate Full markers enable genuine printed
-fixtures; prospective210 Full/1 Partial/75 Missing is unaccepted. Accepted
+fixtures; prospective211 Full/1 Partial/74 Missing is unaccepted. Accepted
 coverage remains193 Full/1 Partial/92 Missing until default-branch verification.
 
 Reviewed Librarian9972 and Raid47d source are composed with reviewed PR229
 repairs. Existing event/mode prefixes and all distinct predecessor hooks remain.
-Three printed test bodies are grouped byte-exact with the FDN integration target.
+Four printed test bodies are grouped byte-exact with the FDN integration target.
 Librarian uses actual paid once-only activation, authenticated counter-removal,
 operation/completion and captured-controller draw. Raid uses actual entry and
 attacked-this-turn sources with independent private library ownership/consumption.
@@ -25,7 +25,10 @@ unregistered state; this candidate stages the real definition only to enable
 future printed qualification. No future native test/build/lint has run. Actual printed suites, owning consumers,
 cross-family controls, catalog/profile migration and exact-head delivery follow
 successful PR229 qualification and integration. Crystal remains unregistered
-until its remaining damage-producer support is complete. Temporal source work is separate. Actual415 catalog derivation and profile
+until its remaining damage-producer support is complete. Temporal86d9 repaired real resolved departure authority and the RlEpisode
+field-access error after independent review. Root composition preserves old
+variant/mode prefixes, prior owner hooks and both new visitor families; exact
+composition review pending. Native compilation remains unrun. Actual416 catalog derivation and profile
 migration are still pending; no Full acceptance is inferred from staging. No experiment, paid compute, formal measurement, learned
 strength, full-pool or model-runtime admission is claimed.
 

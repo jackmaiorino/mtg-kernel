@@ -6602,6 +6602,33 @@
       ],
       "sideboard_only": false,
       "complexity": "moderate"
+    },
+    {
+      "name": "Temporal Manipulation",
+      "mana_cost": "{3}{U}{U}",
+      "mana_value": 5,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/t/TemporalManipulation.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_temporal_manipulation.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "extra_turn"
+      ]
     }
   ]
 }

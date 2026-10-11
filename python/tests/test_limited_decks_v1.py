@@ -344,6 +344,14 @@ class LimitedDeckTest(unittest.TestCase):
         self.assertEqual(self.registry["Bloom Tender"].card_id, 414)
         self.assertEqual(self.registry["Gutless Plunderer"].card_id, 413)
 
+    def test_temporal_candidate_appends_after_bloom_without_reindexing(self) -> None:
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_temporal_manipulation.dck").read_text(encoding="utf-8"))
+        resolved = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(resolved[:4], [415] * 4)
+        self.assertEqual(len(resolved), 40)
+        self.assertEqual(self.registry["Temporal Manipulation"].card_id, 415)
+        self.assertEqual(self.registry["Bloom Tender"].card_id, 414)
+
     def test_unknown_partial_no_effect_and_token_are_all_rejected(self) -> None:
         registry = limited.registry_from_json({"version": 2, "cards": [
             {"name": "Supported", "engine_capability": "full"},
@@ -396,7 +404,7 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("FDN_top_*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
-        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 210)
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 211)
         self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
                              for card in report["cards"]), 0)
 
