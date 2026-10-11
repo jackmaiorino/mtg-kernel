@@ -59,6 +59,9 @@ pub(super) struct RootSpec {
     pub(super) expected_b1_tree: String,
 }
 
+/// A (parent key, parent action) link group.
+type Group = (Key, Vec<u8>);
+
 /// The root position, its selection label and identity witnesses.
 fn root_session(
     sh: &BankShared,
@@ -312,7 +315,7 @@ pub(super) fn tree_report(tree: &Tree, actor: usize) -> Value {
     let mut fanout_hist: BTreeMap<usize, usize> = BTreeMap::new();
     let mut tag_counts: BTreeMap<&'static str, usize> = BTreeMap::new();
     let mut examples = Vec::new();
-    let mut groups: Vec<(&(Key, Vec<u8>), &Vec<Key>)> = children.iter().collect();
+    let mut groups: Vec<(&Group, &Vec<Key>)> = children.iter().collect();
     groups.sort_by_key(|(k, v)| (std::cmp::Reverse(v.len()), k.0, k.1.clone()));
     for (_, kids) in &groups {
         g_groups += 1;

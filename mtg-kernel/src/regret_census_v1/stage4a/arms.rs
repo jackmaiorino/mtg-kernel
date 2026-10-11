@@ -860,10 +860,7 @@ impl Roles {
             if let Some(t) = trace.as_deref_mut() {
                 t.sim_begin(index, meter.spent);
             }
-            let mut rec = SimRecord {
-                index,
-                ..SimRecord::default()
-            };
+            let mut rec = SimRecord::default();
             let r = self.simulate(
                 ctx,
                 &tree,
@@ -1169,7 +1166,6 @@ impl Roles {
 /// selection, backup or execution).
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct SimRecord {
-    pub(crate) index: u64,
     /// 1 win, 2 natural nonwin, 3 nonnatural, 4 truncated, 5 fault.
     pub(crate) outcome: u8,
     /// Selection transitions and policy calls in this simulation.
