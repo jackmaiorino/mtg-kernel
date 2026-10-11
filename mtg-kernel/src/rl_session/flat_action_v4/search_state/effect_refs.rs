@@ -1080,6 +1080,13 @@ pub(super) fn conflicts(
             | TemporaryControlInstalledV1 { .. }
             | TemporaryControlCleanupV1 { .. }
             | TemporaryControlExpiredV1 { .. }
+            | FrenziedGoblinPublishedV1 { .. }
+            | FrenziedGoblinResolutionBoundaryV1 { .. }
+            | FrenziedGoblinPaymentV1 { .. }
+            | FrenziedGoblinCompletedV1 { .. }
+            | FrenziedGoblinRemovalV1 { .. }
+            | FrenziedGoblinInstalledV1 { .. }
+            | FrenziedGoblinExpiredV1 { .. }
             | DifferentControllerTargetDepartureV1 { .. }
             | LifeLoss { .. }
             | LifeGain { .. }

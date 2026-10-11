@@ -71,6 +71,10 @@ pub fn producer_sha256() -> String {
         ),
         ("attack_authority", include_str!("frenzied_goblin_v1.rs")),
         ("restriction", include_str!("sower_of_chaos_v1.rs")),
+        (
+            "resolution_authority",
+            include_str!("effect/frenzied_goblin_resolution_v1.rs"),
+        ),
         ("trigger", include_str!("trigger.rs")),
         ("effect", include_str!("effect.rs")),
         ("engine", include_str!("engine.rs")),

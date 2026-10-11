@@ -694,3 +694,131 @@ fn older_actual_attack_controller_does_not_authorize_current_trigger() {
         target(&mut state, current, source, recipient);
     }
 }
+
+#[test]
+fn published_payment_and_installed_authority_forgeries_refuse_readonly_after_restore() {
+    use mtg_kernel::event::CommittedEvent;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source, recipient) = fixture(actor);
+        target(&mut state, actor, source, recipient);
+        state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+        payment(&mut state, actor, source);
+        for case in 0..9 {
+            let mut corrupt = restore(&state);
+            match case {
+                0 => corrupt.engine.pending_effect = None,
+                1 => corrupt.engine.event_history.retain(|event| {
+                    !matches!(
+                        event,
+                        CommittedEvent::FrenziedGoblinResolutionBoundaryV1 { .. }
+                    )
+                }),
+                2 => {
+                    corrupt.engine.pending_effect = None;
+                    corrupt.engine.event_history.retain(|event| {
+                        !matches!(
+                            event,
+                            CommittedEvent::FrenziedGoblinResolutionBoundaryV1 { .. }
+                        )
+                    });
+                }
+                3 => corrupt.engine.event_history.retain(|event| {
+                    !matches!(event, CommittedEvent::FrenziedGoblinPublishedV1 { .. })
+                }),
+                4 => {
+                    corrupt
+                        .stack
+                        .last_mut()
+                        .unwrap()
+                        .v4
+                        .frenzied_goblin_started_v1 = Default::default()
+                }
+                5 => {
+                    corrupt
+                        .stack
+                        .last_mut()
+                        .unwrap()
+                        .v4
+                        .frenzied_goblin_publication_v1 = Default::default()
+                }
+                6 => {
+                    corrupt
+                        .engine
+                        .pending_effect
+                        .as_mut()
+                        .unwrap()
+                        .ctx
+                        .controller = actor.opponent()
+                }
+                7 => corrupt.stack.pop().map(|_| ()).unwrap(),
+                _ => {
+                    let event = corrupt
+                        .engine
+                        .event_history
+                        .iter()
+                        .find(|event| {
+                            matches!(event, CommittedEvent::FrenziedGoblinPublishedV1 { .. })
+                        })
+                        .unwrap()
+                        .clone();
+                    corrupt.engine.event_log.push(event);
+                }
+            }
+            corrupt = restore(&corrupt);
+            for action in [Action::ChooseEffectBoolean(true), Action::Pass] {
+                let before = serde_json::to_vec(&corrupt).unwrap();
+                assert!(engine::step(&mut corrupt, action).is_err(), "case {case}");
+                assert_eq!(serde_json::to_vec(&corrupt).unwrap(), before, "case {case}");
+            }
+        }
+        engine::step(&mut state, Action::ChooseEffectBoolean(true)).unwrap();
+        finish(&mut state);
+        assert!(restricted(&state, recipient));
+        for case in 0..6 {
+            let mut corrupt = restore(&state);
+            match case {
+                0 => corrupt.engine.event_history.retain(|event| {
+                    !matches!(event, CommittedEvent::FrenziedGoblinPaymentV1 { .. })
+                }),
+                1 => corrupt.engine.until_end_of_turn.retain(|effect| {
+                    !matches!(effect, UntilEndOfTurnEffect::ResolvedObjectCantBlock { .. })
+                }),
+                2 => {
+                    let duplicate = corrupt
+                        .engine
+                        .event_history
+                        .iter()
+                        .find(|event| {
+                            matches!(event, CommittedEvent::FrenziedGoblinInstalledV1 { .. })
+                        })
+                        .unwrap()
+                        .clone();
+                    corrupt.engine.event_history.push(duplicate);
+                }
+                3 => corrupt.engine.event_history.retain(|event| {
+                    !matches!(event, CommittedEvent::FrenziedGoblinCompletedV1 { .. })
+                }),
+                4 => {
+                    for event in &mut corrupt.engine.event_history {
+                        if let CommittedEvent::FrenziedGoblinInstalledV1 { capture } = event {
+                            capture.recipient.zone_change_count += 1;
+                        }
+                    }
+                }
+                _ => {
+                    for event in &mut corrupt.engine.event_history {
+                        if let CommittedEvent::FrenziedGoblinCompletedV1 { outcome, .. } = event {
+                            *outcome = mtg_kernel::effect::FrenziedGoblinOutcomeV1::Countered;
+                        }
+                    }
+                }
+            }
+            let before = serde_json::to_vec(&corrupt).unwrap();
+            assert!(
+                engine::step(&mut corrupt, Action::Pass).is_err(),
+                "installed case {case}"
+            );
+            assert_eq!(serde_json::to_vec(&corrupt).unwrap(), before);
+        }
+    }
+}

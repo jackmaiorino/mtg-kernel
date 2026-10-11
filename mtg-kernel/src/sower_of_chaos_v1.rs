@@ -51,6 +51,13 @@ pub(crate) fn install(state: &mut GameState, ctx: &ExecCtx, target_index: u8) {
     let count = state.objects.get(object).zone_change_count;
     let timestamp = engine::next_timestamp(state);
     crate::sower_restriction_capture_v1::install(state, ctx, object, timestamp);
+    if crate::effect::frenzied_goblin_resolution_v1::install(state, ctx, object, timestamp).is_err()
+    {
+        state.engine.halted = Some((
+            engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+    }
     if state.engine.halted.is_some() {
         return;
     }

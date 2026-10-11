@@ -41,6 +41,16 @@ use crate::state::{
     StackSourceContractV4, StackTargetContractV4, Target, UndercityRoomV1, Zone,
 };
 use serde::{Deserialize, Serialize};
+pub(crate) mod frenzied_goblin_resolution_v1;
+pub(crate) use frenzied_goblin_resolution_v1::{
+    acquire_owner as acquire_frenzied_goblin_resolution_owner,
+    begin_owned as begin_owned_frenzied_goblin_resolution,
+    resume_owned as resume_owned_frenzied_goblin_resolution, FrenziedGoblinResolutionOwnerV1,
+};
+pub use frenzied_goblin_resolution_v1::{
+    FrenziedGoblinOutcomeV1, FrenziedGoblinPublicationRecordV1, FrenziedGoblinResolutionReceiptV1,
+    FrenziedGoblinRestrictionV1,
+};
 mod squad_rallier_resolution_v1;
 pub(crate) use squad_rallier_resolution_v1::owned_root as squad_rallier_root_is_exact;
 pub use squad_rallier_resolution_v1::SquadRallierResolutionReceiptV1;
@@ -3007,6 +3017,8 @@ pub fn begin_resumable_resolution(
     validate_resumable_program(op)?;
     let owned_squad_look =
         squad_rallier_resolution_v1::preflight_begin(state, op, ctx, &resolving_item)?;
+    let owned_frenzied =
+        frenzied_goblin_resolution_v1::preflight_begin(state, op, ctx, &resolving_item)?;
     state.engine.pending_effect = Some(EffectContinuation {
         resolving_item,
         ctx: ctx.clone(),
@@ -3019,6 +3031,9 @@ pub fn begin_resumable_resolution(
     });
     if owned_squad_look {
         squad_rallier_resolution_v1::record_begin(state)?;
+    }
+    if owned_frenzied {
+        frenzied_goblin_resolution_v1::record_begin(state)?;
     }
     drive_resumable(state)
 }
@@ -3947,6 +3962,7 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
                     }
                 }
             }
+            frenzied_goblin_resolution_v1::record_boundary(state)?;
             Ok(())
         }
         PendingEffectChoice::ChooseOption { .. } | PendingEffectChoice::SelectTargets { .. } => {
@@ -7758,6 +7774,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::source_power_activation_v1::validate_state(state)?;
     crate::wildwood_capture_v1::validate_state(state)?;
     squad_rallier_resolution_v1::validate(state)?;
+    frenzied_goblin_resolution_v1::validate(state)?;
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(());
     };
@@ -9785,7 +9802,7 @@ pub(crate) fn validate_resolution_play_authorization(
 }
 
 fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
-    squad_rallier_resolution_v1::drive(state)
+    frenzied_goblin_resolution_v1::drive(state)
 }
 
 fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, String> {
@@ -10319,6 +10336,7 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                     if !crate::engine::pay_effect_mana(player, &colored, generic, state) {
                         return Err("accepted optional mana payment became unpayable".to_string());
                     }
+                    frenzied_goblin_resolution_v1::record_payment(state, &continuation.ctx)?;
                     continuation
                         .frames
                         .push(EffectFrame::Program { op: *then, path });

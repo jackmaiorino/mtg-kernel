@@ -9996,6 +9996,15 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
             return None;
         }
     };
+    let frenzied_owner = match effect::acquire_frenzied_goblin_resolution_owner(state, &item, false)
+    {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return None;
+        }
+    };
     let index = resolution_cast_v1::resolving_index(state, item.v4.stack_item_id);
     match index
         .filter(|&i| i < state.stack.len())
@@ -10017,6 +10026,8 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
 
     let progress = if let Some(owner) = squad_owner.as_ref() {
         effect::resume_owned_squad_rallier_resolution(state, owner)
+    } else if let Some(owner) = frenzied_owner.as_ref() {
+        effect::resume_owned_frenzied_goblin_resolution(state, owner)
     } else {
         effect::resume_resumable_resolution(state)
     };
@@ -12814,6 +12825,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
     }
     let finalized = state.stack.last().expect("trigger just published").clone();
     crate::wildwood_capture_v1::publish(state, &finalized);
+    effect::frenzied_goblin_resolution_v1::publish(state)?;
     // Same `priority_passes`/`priority_player` reset as `reset_priority`
     // (117.5: priority passes to the active player once a triggered
     // ability is put on the stack), but deliberately inlined instead of
@@ -13746,6 +13758,7 @@ pub(crate) fn counter_stack_item_by_id(
         _ => return Err("duplicate private stack-incarnation ids".to_string()),
     };
     let item = state.stack[position].clone();
+    effect::frenzied_goblin_resolution_v1::preflight_unstarted_removal(state, &item)?;
     validated_stack_item_target_spec(&item, state)?;
     if item.kind == StackItemKind::Spell
         && card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize]
@@ -13761,6 +13774,11 @@ pub(crate) fn counter_stack_item_by_id(
         None
     };
     state.stack.remove(position);
+    effect::frenzied_goblin_resolution_v1::complete_unstarted(
+        state,
+        &item,
+        effect::FrenziedGoblinOutcomeV1::Countered,
+    )?;
     crate::source_power_activation_v1::finish(state, &item);
     crate::authority_of_the_consuls_v1::record_countered(state, &item);
     crate::authority_of_the_consuls_v1::finish(state, &item);
@@ -13881,6 +13899,7 @@ fn execute_resolving_program(
     ctx: &ExecCtx,
     program: &EffectOp,
     squad_owner: Option<&effect::SquadRallierResolutionOwnerV1>,
+    frenzied_owner: Option<&effect::FrenziedGoblinResolutionOwnerV1>,
 ) -> ResolutionProgress {
     if !effect::contains_player_choice(program) {
         effect::execute(program, ctx, state);
@@ -13889,14 +13908,21 @@ fn execute_resolving_program(
 
     let progress = if let Some(owner) = squad_owner {
         effect::begin_owned_squad_rallier_resolution(state, program, ctx, owner)
+    } else if let Some(owner) = frenzied_owner {
+        effect::begin_owned_frenzied_goblin_resolution(state, program, ctx, owner)
     } else {
         effect::begin_resumable_resolution(program, ctx, item.clone(), state)
     };
     match progress {
         Ok(effect::ResumableProgress::Complete(completed))
-            if squad_owner.map_or(*completed == *item, |owner| {
-                owner.completion_matches(&completed)
-            }) =>
+            if squad_owner.map_or_else(
+                || {
+                    frenzied_owner.map_or(*completed == *item, |owner| {
+                        owner.completion_matches(&completed)
+                    })
+                },
+                |owner| owner.completion_matches(&completed),
+            ) =>
         {
             ResolutionProgress::Complete
         }
@@ -13904,7 +13930,7 @@ fn execute_resolving_program(
             // Keep the resolving item visible throughout the decision, but
             // grant no priority/SBA/trigger window until the continuation
             // completes.
-            let published = if squad_owner.is_some() {
+            let published = if squad_owner.is_some() || frenzied_owner.is_some() {
                 state
                     .engine
                     .pending_effect
@@ -13993,6 +14019,30 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    if !targets_legal
+        && effect::frenzied_goblin_resolution_v1::preflight_unstarted_removal(state, &item).is_err()
+    {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+        return ResolutionProgress::Suspended;
+    }
+    let frenzied_owner = if targets_legal {
+        match effect::acquire_frenzied_goblin_resolution_owner(
+            state,
+            state.stack.last().expect("resolving genuine item"),
+            true,
+        ) {
+            Ok(owner) => owner,
+            Err(_) => {
+                state.engine.halted = Some((
+                    UnsupportedMechanic::InvalidEffectContinuation,
+                    resolving_source,
+                ));
+                return ResolutionProgress::Suspended;
+            }
+        }
+    } else {
+        None
+    };
     if targets_legal && crate::sower_restriction_capture_v1::begin_resolution(state).is_err() {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
@@ -14059,6 +14109,18 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             }
             return ResolutionProgress::Complete;
         }
+        if effect::frenzied_goblin_resolution_v1::complete_unstarted(
+            state,
+            &item,
+            effect::FrenziedGoblinOutcomeV1::NoLegalTarget,
+        )
+        .is_err()
+        {
+            state.stack.push(item.clone());
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
         if finish_failed_stack_item(state, &item).is_err() {
             state.engine.halted =
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
@@ -14082,7 +14144,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     }
 
     if let Some(effect) = item.inline_effect.clone() {
-        let progress = execute_resolving_program(state, &item, &ctx, &effect, squad_owner.as_ref());
+        let progress = execute_resolving_program(
+            state,
+            &item,
+            &ctx,
+            &effect,
+            squad_owner.as_ref(),
+            frenzied_owner.as_ref(),
+        );
         if progress == ResolutionProgress::Complete {
             crate::source_power_activation_v1::finish(state, &item);
             crate::authority_of_the_consuls_v1::finish(state, &item);
@@ -14123,8 +14192,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         }
     }
     if let Some(program) = program {
-        if execute_resolving_program(state, &item, &ctx, &program, squad_owner.as_ref())
-            == ResolutionProgress::Suspended
+        if execute_resolving_program(
+            state,
+            &item,
+            &ctx,
+            &program,
+            squad_owner.as_ref(),
+            frenzied_owner.as_ref(),
+        ) == ResolutionProgress::Suspended
         {
             return ResolutionProgress::Suspended;
         }
@@ -14684,6 +14759,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             crate::standard_creatures_v1::cleanup(state);
             crate::sower_restriction_capture_v1::expire(state);
             crate::effect::temporary_control_v1::expire_at_cleanup(state);
+            effect::frenzied_goblin_resolution_v1::expire(state);
             state.engine.until_end_of_turn.clear();
             state.engine.active_replacements.retain(|replacement| {
                 !matches!(

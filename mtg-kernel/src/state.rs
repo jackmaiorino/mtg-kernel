@@ -1490,6 +1490,10 @@ pub struct StackStateV4 {
     /// Live ownership after the bounded paid look begins. Empty preserves old bytes and Hash.
     #[serde(default, skip_serializing_if = "SquadRallierStartedV1::is_empty")]
     pub squad_rallier_started_v1: SquadRallierStartedV1,
+    #[serde(default, skip_serializing_if = "FrenziedGoblinStartedV1::is_empty")]
+    pub frenzied_goblin_started_v1: FrenziedGoblinStartedV1,
+    #[serde(default, skip_serializing_if = "FrenziedGoblinPublicationV1::is_empty")]
+    pub frenzied_goblin_publication_v1: FrenziedGoblinPublicationV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1514,6 +1518,45 @@ impl Hash for SquadRallierStartedV1 {
         if let Some(binding) = self.0 {
             "squad-rallier-started/v1".hash(state);
             binding.hash(state);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FrenziedGoblinStartedBindingV1 {
+    pub stack_item_id: StackItemId,
+    pub source: AbilitySourceContractV4,
+    pub first_receipt_history_index: u32,
+}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct FrenziedGoblinStartedV1(pub Option<FrenziedGoblinStartedBindingV1>);
+impl FrenziedGoblinStartedV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl Hash for FrenziedGoblinStartedV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(binding) = self.0 {
+            "frenzied-goblin-started/v1".hash(state);
+            binding.hash(state);
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct FrenziedGoblinPublicationV1(pub Option<u32>);
+impl FrenziedGoblinPublicationV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl Hash for FrenziedGoblinPublicationV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(index) = self.0 {
+            "frenzied-goblin-publication/v1".hash(state);
+            index.hash(state);
         }
     }
 }

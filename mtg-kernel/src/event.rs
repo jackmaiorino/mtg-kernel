@@ -747,6 +747,30 @@ pub enum CommittedEvent {
         installation_history_index: usize,
         cleanup_history_index: usize,
     },
+    FrenziedGoblinPublishedV1 {
+        publication: Box<crate::effect::FrenziedGoblinPublicationRecordV1>,
+    },
+    FrenziedGoblinResolutionBoundaryV1 {
+        receipt: crate::effect::FrenziedGoblinResolutionReceiptV1,
+    },
+    FrenziedGoblinPaymentV1 {
+        publication_history_index: u32,
+    },
+    FrenziedGoblinRemovalV1 {
+        publication_history_index: u32,
+        item: Box<crate::state::StackItem>,
+        outcome: crate::effect::FrenziedGoblinOutcomeV1,
+    },
+    FrenziedGoblinCompletedV1 {
+        publication_history_index: u32,
+        outcome: crate::effect::FrenziedGoblinOutcomeV1,
+    },
+    FrenziedGoblinInstalledV1 {
+        capture: Box<crate::effect::FrenziedGoblinRestrictionV1>,
+    },
+    FrenziedGoblinExpiredV1 {
+        capture: Box<crate::effect::FrenziedGoblinRestrictionV1>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
