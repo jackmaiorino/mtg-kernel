@@ -2631,6 +2631,22 @@ fn validate_spell_sourced_trigger(
     {
         return Err("spell-sourced trigger carries incompatible producer metadata".to_string());
     }
+    if let Some(expected) = casualty_trigger_source_contract(
+        state,
+        item.source,
+        item.controller,
+        item.inline_effect.as_ref().expect("checked Some above"),
+    )? {
+        if contract != expected
+            || item.inline_effect.as_ref().is_some_and(|effect| {
+                matches!(effect, EffectOp::CopySpellSnapshot { spell }
+                    if item.v4.stack_item_id == spell.v4.stack_item_id)
+            })
+        {
+            return Err("casualty trigger changed its producing spell contract".into());
+        }
+        return Ok(());
+    }
     if let Some(EffectOp::CreateStormCopies { binding }) = item.inline_effect.as_ref() {
         if contract != binding.source_contract
             || item.source != binding.source_contract.source
@@ -12084,6 +12100,14 @@ fn pending_trigger_spell_source_contract(
     if pending.is_madness_offer || pending.source_contract.is_some() {
         return Ok(None);
     }
+    if let Some(contract) = casualty_trigger_source_contract(
+        state,
+        pending.source,
+        pending.controller,
+        &pending.effect,
+    )? {
+        return Ok(Some(contract));
+    }
     let source = state
         .objects
         .try_get(pending.source)
@@ -12106,6 +12130,32 @@ fn pending_trigger_spell_source_contract(
         .source_contract
         .map(Some)
         .ok_or_else(|| "pending spell-sourced trigger producer lost its contract".to_string())
+}
+
+/// Casualty is a cast trigger of the paid spell. Its frozen snapshot keeps
+/// the exact producing cast available even after that spell leaves the stack.
+fn casualty_trigger_source_contract(
+    state: &GameState,
+    source: ObjectId,
+    controller: PlayerId,
+    effect: &EffectOp,
+) -> Result<Option<StackSourceContractV4>, String> {
+    let EffectOp::CopySpellSnapshot { spell } = effect else {
+        return Ok(None);
+    };
+    if source != spell.source {
+        return Ok(None);
+    }
+    validate_copy_snapshot(state, spell)?;
+    if controller != spell.controller
+        || !matches!(
+            spell.v4.optional_additional_cost_paid,
+            Some(OptionalAdditionalCostDef::Casualty(_))
+        )
+    {
+        return Err("casualty trigger lost its paid source spell".into());
+    }
+    Ok(spell.v4.source_contract)
 }
 
 fn validate_pending_trigger_for_stack(
@@ -12516,15 +12566,15 @@ fn triggered_stack_item_expected_target_spec(
     if let EffectOp::CopySpellSnapshot { spell } = inline_effect {
         validate_copy_snapshot(state, spell)?;
         if item.source == spell.source {
-            if !matches!(
-                spell.v4.optional_additional_cost_paid,
-                Some(OptionalAdditionalCostDef::Casualty(_))
-            ) || ability_source_contract.is_none_or(|source| {
-                spell.v4.source_contract.is_none_or(|cast| {
-                    source.source != cast.source
-                        || source.zone_change_count != cast.zone_change_count
-                })
-            }) {
+            if item.v4.source_contract
+                != casualty_trigger_source_contract(
+                    state,
+                    item.source,
+                    item.controller,
+                    inline_effect,
+                )?
+                || ability_source_contract.is_some()
+            {
                 return Err("casualty trigger lost its paid source spell".into());
             }
         } else if card_def::CARD_DEFS[source_card_def as usize].name != "Chandra, Hope's Beacon"
@@ -18740,7 +18790,7 @@ fn finalize_owned_cast(
             targets: Vec::new(),
             target_contracts: Vec::new(),
             placement_ordered: false,
-            source_contract: Some(AbilitySourceContractV4::capture(state, spell.source)),
+            source_contract: None,
             optional_additional_cost_paid: None,
             paid_cost_refs: Vec::new(),
         });

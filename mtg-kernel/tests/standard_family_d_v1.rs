@@ -2128,6 +2128,15 @@ fn make_disappear_with_casualty_copies_itself() {
     assert_eq!(state.objects.get(fodder).zone, Zone::Graveyard);
     assert_eq!(state.stack.len(), 3);
     assert!(!state.stack[2].is_copy);
+    assert_eq!(state.stack[2].v4.ability_source_contract, None);
+    assert_eq!(
+        state.stack[2].v4.source_contract,
+        state.stack[1].v4.source_contract
+    );
+    let surface = mtg_kernel::surface_v2::HarnessSurfaceV2::new();
+    for observer in [PlayerId::P0, PlayerId::P1] {
+        mtg_kernel::rl::observe_v2(&state, &surface, observer, 0).unwrap();
+    }
     assert!(matches!(
         settle(&mut state),
         Some(Decision::ChooseEffectTargets { .. })
@@ -2732,6 +2741,10 @@ fn casualty_copy_survives_original_countering_and_can_retarget() {
         Some(Decision::ChooseEffectTargets { .. })
     ));
     assert_eq!(state.objects.get(original).zone, Zone::Graveyard);
+    let surface = mtg_kernel::surface_v2::HarnessSurfaceV2::new();
+    for observer in [PlayerId::P0, PlayerId::P1] {
+        mtg_kernel::rl::observe_v2(&state, &surface, observer, 0).unwrap();
+    }
     let before = serde_json::to_string(&state).unwrap();
     let mut restored: GameState = serde_json::from_str(&before).unwrap();
     for state in [&mut state, &mut restored] {
@@ -2822,6 +2835,19 @@ fn disguise_turns_face_up_as_special_action_and_chooses_both_forest_destinations
     engine::step(&mut state, Action::ActivateAbility(bloom, 255)).unwrap();
     assert!(state.objects.get(bloom).v4.face_down_v1.is_none());
     assert_eq!(state.priority_player, PlayerId::P0);
+    assert_eq!(
+        state.stack.len(),
+        original_len,
+        "the special action does not use the stack"
+    );
+    assert_eq!(state.engine.pending_triggers.len(), 1);
+    assert!(matches!(
+        next(&mut state),
+        Decision::CastSpellOrPass {
+            player: PlayerId::P0,
+            ..
+        }
+    ));
     assert_eq!(state.stack.len(), original_len + 1);
     assert_eq!(
         state.stack.last().unwrap().kind,
