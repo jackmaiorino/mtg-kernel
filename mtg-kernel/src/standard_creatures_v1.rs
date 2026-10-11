@@ -181,14 +181,14 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
         };
         if !ctx.target_contracts.first().is_some_and(|&contract| {
             crate::engine::target_contract_matches_live(state, ctx.targets[0], contract)
-        }) || !crate::engine::effect_target_is_legal(
+        }) || !ctx.ability_source_contract.is_some_and(|source| crate::engine::effect_target_is_legal_from_ability_source(
             state,
-            ctx.source,
+            source,
             ctx.controller,
             crate::card_def::TargetSpec::ControlledNoncreatureArtifactPermanent,
             &ctx.targets,
             0,
-        ) {
+        )) {
             return;
         }
         let timestamp = crate::engine::next_timestamp(state);
