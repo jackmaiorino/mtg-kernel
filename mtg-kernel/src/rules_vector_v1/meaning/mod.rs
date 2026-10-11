@@ -241,6 +241,9 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::ReturnAttackingCreaturesToOwnersHands
         | EffectOp::ReturnOwnGraveyardCreaturesManaValueAtMost { .. }
         | EffectOp::ReturnAllGraveyardCreaturesUnderController
+        | EffectOp::DoubleTargetPowerUntilEndOfTurn { .. }
+        | EffectOp::DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
+        | EffectOp::CreateTokensForOtherControlledCreaturesNamed { .. }
         | EffectOp::CounterTargetSpellThenCreateTokens { .. }
         | EffectOp::ExileGraveyardTargetsDrainPerCreature { .. }
         | EffectOp::RemoveTimeCounterFromSource

@@ -617,6 +617,11 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Ruby, Daring Tracker",
     "Courageous Goblin",
     "Brineborn Cutthroat",
+    "Nessian Hornbeetle",
+    "Needletooth Pack",
+    "Hare Apparent",
+    "Rabbit Token",
+    "Micromancer",
     "Arbiter of Woe",
     "Armasaur Guide",
     "Mischievous Pup",
@@ -822,6 +827,16 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    (
+        "effect.rs",
+        "Micromancer",
+        "definition-owned exact spell search continuation authentication",
+    ),
+    (
+        "engine.rs",
+        "Paradise Druid",
+        "read via engine::static_untapped_self_keyword_for (untapped predicate opaque)",
+    ),
     (
         "engine.rs",
         "High Fae Trickster",

@@ -99,6 +99,9 @@ impl Scan<'_> {
             | UntapObject { .. }
             | AnimateSource
             | PumpTargetUntilEndOfTurnDynamic { .. }
+            | DoubleTargetPowerUntilEndOfTurn { .. }
+            | DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
+            | CreateTokensForOtherControlledCreaturesNamed { .. }
             | LookTopSelectByTypeToHandBottomRest { .. }
             | LookTopPickToHandBottomRest { .. }
             | DrawCardsDynamic { .. }

@@ -44,27 +44,37 @@ All23 final reviewed-head checks and35 affected Python cases on the actual
 default merge pass. Accepted coverage is138 full, one partial and147 missing
 names of286; live v65 identity is42bf6f9ca62d6615.
 
-Current accepted v67 integration: PR214 merged atddff546aeac448143cd1b37193357b035ccd622e.
-All23 final CI checks pass; actual default tree769cb439397139c5bf57bad76ccb14fdf2b13c03
-matches the reviewed composition and37 affected Python cases pass there.
-Accepted coverage is171 full, one partial and114 missing of286 names, plus24
-dependencies. Live v67 identity is1b1e46ebfc30edb7. See PR214 default receipt6104156053.
-Issue110 remains open for full pool, reference comparisons and fair Limited/DraftZero.
+Current accepted v68 integration: [PR216](https://github.com/jackmaiorino/mtg-kernel/pull/216)
+merged atf7d115fa66f2f1efaa49a0d3b52912021d3a2fa1. All23 final checks in
+CI38105979002 pass. Actual default treef037d21772cb8e944efacc92ef4254da0ba325d6
+matches reviewed headbbe4968146a03f206d9dec85e5d6c22bc1680493 exactly;
+all38 affected Python cases pass there. Accepted coverage is177 full, one
+partial and108 missing of286 names, plus24 dependency records. Live v68
+identity is645f2da1b223a18f. See [default receipt6105370378](https://github.com/jackmaiorino/mtg-kernel/pull/216#issuecomment-6105370378).
 
-The six-card v68 candidate registers Brine/Ruby/Courageous/High Fae/Archdruid/
-Ghalta, IDs371-376. Actual generated identity645f2da1b223a18f is bound to the
-live profile, with historical v67 readability and stale mutation refusal.
-Original native1 passes17 of22 card cases and fails5 missing attack-trigger
-cases; that receipt and guard exit101 remain retained. Repaired source5f0bdae2
-passes all22 cases in Linux Limited CI job114364708658. Seventeen CI jobs pass,
-with the rest pending. Native2 is running on Jack16-17 under supported guard
-ff99f2e7f20b4de4a50f66a41c9d1ed3. All38 candidate Python cases pass.
+Original v68 Native1 passed17 of22 new card groups and failed5 missing
+attack-declaration cases; its101 command/guard and logs remain retained.
+Repair5f0bdae2 passed all22 groups in actual Native2, plus48 definitions,
+23 rules cases(one existing ignore),151 native records(three existing
+ignores),69 production-profile cases, Limited strict lint and combined
+all-test typecheck/strict lint. Supported guardff99f2e7f20b4de4a50f66a41c9d1ed3
+ended0 and released its cores. The composed default preserves this code and
+concurrent PR206/219 changes. Historical v67 reads and stale writes/resumes
+remain qualified. Issue110 stays open for full-pool and Limited/DraftZero work.
 
-Actual default advanced to1d240477 through PR206/219. A separate integration
-composes that accepted main with5f0bdae2 while the native source remains pinned.
-Final composed-head checks, review and default acceptance remain pending.
-Candidate177 is not accepted coverage. Source preparation for four following
-cards at365c85a1 and Inspiring Call atb668a397 is unregistered and unrun.
+Next eight-card source2b624162 contains Nessian Hornbeetle, Micromancer,
+Paradise Druid, Bulk Up, Inspiring Call, Needletooth Pack, Stroke of Midnight
+and Hare Apparent. All eight are unregistered;41 actual gameplay groups
+remain unrun. Source Native1 failed two registered Hare setup cases and
+retains its101 receipt; fixture repair2b uses live printed names and actual
+token creation. Source Native2 is queued under actual supervisor37988 and
+supported host_slots, with no successful qualification claimed. The owned
+admission branch composes source2b with accepted defaultf7, preserving all
+19 default paths and27 source paths byte-for-byte before this receipt update.
+Registration and all admission/profile checks wait for successful source
+qualification. Prepared v69 would append IDs377-384, token IDs385-386,
+387 definitions and prospective185 full/1 partial/100 missing coverage.
+The prepared scripts are unexecuted. See the eight-card admission design.
 
 The following preparation order and receipts are retained history.
 

@@ -3384,6 +3384,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         mode2: None,
     };
     Some(match name {
+        "Stroke of Midnight" => program(
+            "NonlandPermanent",
+            "DestroyObjectThenCreateTokens(Target0,currentTargetController,captureBeforeDestruction,HumanToken,1,createEvenIfIndestructible,exactIncarnation)",
+            "EffectOp::DestroyObjectThenCreateTokens { object: ObjectRef::Target(0), token_def: crate::card_def::card_id_by_name(\"Human Token\").expect(\"Human Token in CARD_DEFS\"), count: 1 }",
+        ),
         "Rise of the Dark Realms" => program(
             "None",
             "ReturnAllGraveyardCreaturesUnderController(allGraveyards,cardsOnly,simultaneous,retainOwners)",
@@ -3429,6 +3434,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
             "ReturnAttackingCreaturesToOwnersHands(currentCombat,currentCreatureType,simultaneous)",
             "EffectOp::ReturnAttackingCreaturesToOwnersHands",
         ),
+        "Bulk Up" => program(
+            "Creature",
+            "DoubleTargetPowerUntilEndOfTurn(Target0,signedCurrentPowerSample,exactIncarnation,layer7c,zeroNoEffect)",
+            "EffectOp::DoubleTargetPowerUntilEndOfTurn { target_index: 0 }",
+        ),
         "Exsanguinate" => program(
             "None",
             "LoseOpponentsLifeXThenGainLifeLost(announcedX,actualCommittedLoss)",
@@ -3443,6 +3453,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
             "None",
             "DrawCardsDynamic(Controller,DistinctManaValuesAmongControlledNonlandPermanents,resolutionSample)",
             "EffectOp::DrawCardsDynamic { player: PlayerRef::Controller, count: DynamicValueDef::DistinctManaValuesAmongControlledNonlandPermanents }",
+        ),
+        "Inspiring Call" => program(
+            "None",
+            "DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn(Controller,Creature,PlusOneCounterCountGreaterThanZero,oneDrawPerCreature,Indestructible,exactIncarnations,resolutionSnapshot)",
+            "EffectOp::DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { keyword: Keywords::INDESTRUCTIBLE }",
         ),
         "Brass's Bounty" => program(
             "None",
@@ -3651,6 +3666,7 @@ fn program_target_spec_src(target: &str) -> &'static str {
         "TargetOpponent" => "TargetSpec::TargetOpponent",
         "Creature" => "TargetSpec::Creature",
         "ControlledCreature" => "TargetSpec::ControlledCreature",
+        "NonlandPermanent" => "TargetSpec::NonlandPermanent",
         "ArtifactPermanent" => "TargetSpec::ArtifactPermanent",
         "CreatureOrPlaneswalker" => "TargetSpec::CreatureOrPlaneswalker",
         "ArtifactEnchantmentOrFlyingCreature" => "TargetSpec::ArtifactEnchantmentOrFlyingCreature",
@@ -3708,6 +3724,7 @@ fn effect_recipe_for(card: &CardJson) -> String {
                 "Mocking Sprite" | "Archmage of Runes" => ";static=controller_instant_or_sorcery_spells_cost_generic_less:1:total_cost_after_additional_and_x_before_one_floor:printed_source_abilities",
                 "Empyrean Eagle" => ";static=boost_other_live_controlled_creatures_with_effective_flying:1:1:layer7c:printed_source_abilities",
                 "High Fae Trickster" => ";static=controller_casts_nonland_spells_as_though_flash:while_live_battlefield_printed_abilities:does_not_grant_keyword_or_activate_or_play_lands",
+                "Paradise Druid" => ";static=source_has_hexproof_while_untapped:live_battlefield_front_face_printed_source_abilities",
                 "Billowing Shriekmass" => ";static=controller_graveyard_cards_at_least:7:boost_source:2:1:layer7c:printed_source_abilities",
                 "Dreadwing Scavenger" => ";static=controller_graveyard_cards_at_least:7:boost_source:1:1:layer7c:deathtouch:printed_source_abilities",
                 _ => "",
@@ -4395,6 +4412,13 @@ fn bestow_for(name: &str) -> String {
 /// substrate as alternative, additional, and activated-ability costs.
 fn flashback_for(name: &str) -> String {
     match name {
+        "Bulk Up" => {
+            let (pips, generic, x_count) = parse_cost("{4}{R}{R}");
+            format!(
+                "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})] }})",
+                pips.join(", ")
+            )
+        }
         "Faithless Looting" => {
             let (pips, generic, x_count) = parse_cost("{2}{R}");
             format!(
@@ -6186,6 +6210,8 @@ fn delve_for(name: &str) -> bool {
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
         "Brineborn Cutthroat" => "controller_cast_spell_during_opponent_turn:plus_one_counter_on_bound_source:1",
+        "Nessian Hornbeetle" => "beginning_controller_combat_if_other_creature_effective_power_at_least:4:recheck_at_resolution:plus_one_counter_on_bound_source:1",
+        "Micromancer" => "etb:may_search_library:instant_or_sorcery_mana_value:1:reveal_to_hand:shuffle:fail_to_find_allowed",
         "Ruby, Daring Tracker" => "source_attacks_while_controller_has_effective_power_at_least:4:bound_source_pump_until_end_of_turn:2:2",
         "Courageous Goblin" => "source_attacks_while_controller_has_effective_power_at_least:4:bound_source_pump_until_end_of_turn:1:0:menace_on_exact_trigger_source",
         "Wardens of the Cycle" => "controller_end_step:intervening_if_creature_died_this_turn:mode_at_placement:gain_controller_life:2|draw_controller:1_then_lose_controller_life:1:recheck_morbid_in_each_branch:untargeted",
@@ -6206,6 +6232,8 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Homunculus Horde" | "Homunculus Horde Token" => "controller_draws_nth_card_this_turn:2:create_homunculus_horde_copy_token:1",
         "Koma, World-Eater" => "source_combat_damage_to_player:create_blue_3_3_serpent_coil_tokens:4",
         "Cackling Prowler" => "beginning_controller_end_step_if_creature_died_this_turn:recheck_morbid:plus_one_counter_on_bound_source:1",
+        "Needletooth Pack" => "beginning_controller_end_step_if_creature_died_this_turn:recheck_morbid:mandatory_controlled_creature_target:exact_incarnation:plus_one_counters:2",
+        "Hare Apparent" => "etb:captured_controller:resolution_count_other_controlled_creatures_effective_name:Hare Apparent:exclude_captured_source_incarnation:create_white_1_1_Rabbit_Token:snapshot_once:untargeted:any_number_in_limited_deck",
         "Sylvan Scavenging" => "beginning_controller_end_step:mode_before_targets:controlled_creature_plus_one_counter:1|resolution_controls_creature_power_at_least:4:create_green_3_3_raccoon_token:1",
         "Kiora, the Rising Tide" => "etb:draw:2:then_discard:2;attacks_if_controller_graveyard_cards_at_least:7:recheck_threshold:optional_create_legendary_blue_8_8_octopus_scion:1",
         "Sun-Blessed Healer" => "etb_if_kicked:recheck_kicked:return_own_graveyard_nonland_permanent_mana_value_at_most:2",
@@ -9421,7 +9449,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v68\n"
+            "kernel_carddb/v69\n"
         } else {
             "kernel_carddb/v34\n"
         },
