@@ -280,6 +280,14 @@ class LimitedDeckTest(unittest.TestCase):
         self.assertEqual(self.registry["Soul-Shackled Zombie"].card_id, 397)
         self.assertEqual(self.registry["Scavenging Ooze"].card_id, 396)
 
+    def test_heartfire_reference_appends_after_zombie_without_renumbering(self) -> None:
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_heartfire_immolator.dck").read_text(encoding="utf-8"))
+        ids = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(ids), 40)
+        self.assertEqual(ids[:4], [398] * 4)
+        self.assertEqual(self.registry["Heartfire Immolator"].card_id, 398)
+        self.assertEqual(self.registry["Soul-Shackled Zombie"].card_id, 397)
+
     def test_unknown_partial_no_effect_and_token_are_all_rejected(self) -> None:
         registry = limited.registry_from_json({"version": 2, "cards": [
             {"name": "Supported", "engine_capability": "full"},
@@ -332,7 +340,7 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("FDN_top_*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
-        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 196)
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 197)
         self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
                              for card in report["cards"]), 0)
 

@@ -6128,6 +6128,39 @@
         "successful_creature_exile_conditional_drain",
         "captured_entry_controller"
       ]
+    },
+    {
+      "name": "Heartfire Immolator",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Wizard"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/h/HeartfireImmolator.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_heartfire_immolator.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "prowess",
+        "sacrifice_source_captured_power_damage",
+        "creature_or_planeswalker_target",
+        "historical_damage_color_and_keywords"
+      ]
     }
   ]
 }
