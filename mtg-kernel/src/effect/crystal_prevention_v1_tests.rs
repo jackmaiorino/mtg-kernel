@@ -209,3 +209,51 @@ fn absent_crystal_real_incinerating_keeps_legacy_optional_cost_and_replay() {
         }
     }
 }
+
+#[test]
+fn typed_nondamage_effects_preserve_their_own_dispatch_and_reject_nested_damage() {
+    let safe = vec![
+        EffectOp::MoveObject {
+            object: ObjectRef::ThisSource,
+            to_zone: Zone::Battlefield,
+        },
+        EffectOp::CreateToken {
+            token_def: 0,
+            controller: PlayerRef::Controller,
+        },
+        EffectOp::PutPlusOnePlusOneCounter {
+            object: ObjectRef::Target(0),
+        },
+        EffectOp::DestroyObject {
+            object: ObjectRef::Target(0),
+        },
+        EffectOp::GrantKeywordTargetUntilEndOfTurn {
+            object: ObjectRef::Target(0),
+            keyword: crate::card_def::Keywords::INDESTRUCTIBLE,
+        },
+    ];
+    assert!(ordinary_nondamage(&EffectOp::Sequence(safe.clone())));
+    for op in safe {
+        assert!(ordinary_nondamage(&op));
+        assert!(!ordinary_nondamage(&EffectOp::Choice {
+            controller: PlayerRef::Controller,
+            options: vec![
+                op,
+                EffectOp::DealDamage {
+                    target: TargetRef::Opponent,
+                    amount: 1
+                }
+            ],
+        }));
+    }
+    assert!(!ordinary_nondamage(&EffectOp::MayPayManaThen {
+        player: PlayerRef::Controller,
+        colored: vec![],
+        generic: 0,
+        then: Box::new(EffectOp::DealDamage {
+            target: TargetRef::Opponent,
+            amount: 1
+        }),
+    }));
+    assert!(!ordinary_nondamage(&EffectOp::BindAuthorityEntryGainLifeV1));
+}

@@ -2163,3 +2163,83 @@ fn real_fixed_and_chosen_power_damage_require_independent_positive_or_prevented_
         }
     }
 }
+
+#[test]
+fn mixed_environment_preserves_actual_permanent_pump_and_both_token_modes() {
+    use mtg_kernel::event::CommittedEvent;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for case in 0..4 {
+            let mut state = ready(actor);
+            let wall = source(&mut state, actor);
+            let target = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            shield(&mut state, wall, target, 2);
+            let old_shields = state.engine.active_replacements.clone();
+            let old_battlefield = state.players[actor.index()].battlefield.len();
+            let name = match case {
+                0 => "Shivan Dragon",
+                1 => "Giant Growth",
+                _ => "Goblin Surprise",
+            };
+            let spell = put(&mut state, actor, name, Zone::Hand);
+            state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 2;
+            state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 1;
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 4;
+            priority(&mut state, actor);
+            engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+            if case >= 2 {
+                assert!(matches!(next(&mut state), Decision::ChooseSpellMode { .. }));
+                engine::step(&mut state, Action::ChooseSpellMode((case - 2) as u8)).unwrap();
+            }
+            if case == 1 {
+                assert!(
+                    matches!(next(&mut state), Decision::ChooseTargets { legal_targets, .. }
+                    if legal_targets.contains(&Target::Object(target)))
+                );
+                engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+            }
+            let _ = next(&mut state);
+            assert!(state.stack.iter().any(|item| item.source == spell));
+            let mut replay = restore(&state);
+            for current in [&mut state, &mut replay] {
+                finish(current);
+                assert_eq!(current.engine.active_replacements, old_shields);
+                assert!(!current.engine.event_history.iter().any(|event| matches!(
+                    event,
+                    CommittedEvent::CrystalPreventionBoundaryV1 { .. }
+                )));
+                match case {
+                    0 => {
+                        assert_eq!(current.objects.get(spell).zone, Zone::Battlefield);
+                        assert_eq!(
+                            current.players[actor.index()].battlefield.len(),
+                            old_battlefield + 1
+                        );
+                    }
+                    1 => {
+                        assert_eq!(current.objects.get(spell).zone, Zone::Graveyard);
+                        assert_eq!(engine::effective_power(current, target), 4);
+                    }
+                    2 => {
+                        assert_eq!(current.objects.get(spell).zone, Zone::Graveyard);
+                        assert_eq!(engine::effective_power(current, target), 3);
+                        assert_eq!(
+                            current.players[actor.index()].battlefield.len(),
+                            old_battlefield
+                        );
+                    }
+                    _ => {
+                        assert_eq!(current.objects.get(spell).zone, Zone::Graveyard);
+                        assert_eq!(
+                            current.players[actor.index()].battlefield.len(),
+                            old_battlefield + 2
+                        );
+                    }
+                }
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&replay).unwrap()
+            );
+        }
+    }
+}

@@ -475,7 +475,65 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         EffectOp::MayPayCostThen {
             then, otherwise, ..
         } => ordinary_nondamage(then) && otherwise.as_deref().is_none_or(ordinary_nondamage),
-        EffectOp::DrawCards { .. }
+        EffectOp::MayPayManaThen { then, .. }
+        | EffectOp::MayExileFromPlayersGraveyardMatchingThen { then, .. } => {
+            ordinary_nondamage(then)
+        }
+        // These typed leaves change zones, counters, continuous effects, mana,
+        // or life without proposing damage. Any resulting trigger is separately
+        // published and must pass its own root classification when it resolves.
+        // Keep custom wrappers and unmaterialized Bind roots fail closed.
+        EffectOp::MoveObject { .. }
+        | EffectOp::MoveBoundObject { .. }
+        | EffectOp::MoveAllTargets { .. }
+        | EffectOp::Sacrifice { .. }
+        | EffectOp::SacrificeCreature { .. }
+        | EffectOp::TapObject { .. }
+        | EffectOp::UntapObject { .. }
+        | EffectOp::SkipNextUntap { .. }
+        | EffectOp::AttachSourceToTarget { .. }
+        | EffectOp::AddMana { .. }
+        | EffectOp::AddManaDynamic { .. }
+        | EffectOp::CreateToken { .. }
+        | EffectOp::CreateTokenAndAttachSource { .. }
+        | EffectOp::CreateTokensDynamic { .. }
+        | EffectOp::DestroyObject { .. }
+        | EffectOp::DestroyObjectThenCreateTokens { .. }
+        | EffectOp::DestroyAllCreatures
+        | EffectOp::AddCountersToTarget { .. }
+        | EffectOp::AddMinusOneMinusOneCounter { .. }
+        | EffectOp::PutPlusOnePlusOneCounter { .. }
+        | EffectOp::PutPlusOnePlusOneCounterOnBoundObject { .. }
+        | EffectOp::PutPlusOnePlusOneCounterOnTargetOtherThan { .. }
+        | EffectOp::PutPlusOnePlusOneCounterOnTriggerEventObject { .. }
+        | EffectOp::AddPlusOnePlusOneCounters { .. }
+        | EffectOp::AddPlusOneCounterToAbilitySource
+        | EffectOp::PumpControlled { .. }
+        | EffectOp::PumpTargetUntilEndOfTurnDynamic { .. }
+        | EffectOp::PumpTargetByControlledSubtypeCount { .. }
+        | EffectOp::PumpAllUntilEndOfTurn { .. }
+        | EffectOp::BoostControlledCreaturesUntilEndOfTurn { .. }
+        | EffectOp::BoostBoundObjectUntilEndOfTurn { .. }
+        | EffectOp::GrantKeywordTargetUntilEndOfTurn { .. }
+        | EffectOp::GrantKeywordToDeclaredTargetsUntilEndOfTurn { .. }
+        | EffectOp::PreventTargetBlockingUntilEndOfTurn { .. }
+        | EffectOp::PutSourceOntoBattlefieldAttachedToTarget { .. }
+        | EffectOp::PutSourceOntoBattlefieldWithXPlusOneCounters
+        | EffectOp::ReturnTargetPermanentToBattlefield { .. }
+        | EffectOp::ReturnTwoDifferentControllerCreaturesToOwnersHands
+        | EffectOp::ReturnOwnGraveyardCreaturesManaValueAtMost { .. }
+        | EffectOp::ReturnAllGraveyardCreaturesUnderController
+        | EffectOp::ExileTargetLinkedToSource { .. }
+        | EffectOp::ReturnObjectsExiledBySource
+        | EffectOp::ExileGraveyardTargetThenGrowSourceIfCreature
+        | EffectOp::ExileSingleGraveyardTargetsThenDrainTwoV1
+        | EffectOp::AuthorityEntryGainLifeV1 { .. }
+        | EffectOp::WildwoodCounterFromReceiptV1 { .. }
+        | EffectOp::CerberusUntapV1 { .. }
+        | EffectOp::GainControlOfTargetCreatureUntilEndOfTurn { .. }
+        | EffectOp::DrawCards { .. }
+        | EffectOp::DiscardCards { .. }
+        | EffectOp::GainLifeDynamic { .. }
         | EffectOp::GainLife { .. }
         | EffectOp::LoseLife { .. }
         | EffectOp::CounterUnlessPaysGeneric { .. }
