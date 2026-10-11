@@ -645,7 +645,8 @@ fn run_native_science_loop_with_opponents_v1(
         | NativeRunCatalogProfileV1::FdnBloodwitch
         | NativeRunCatalogProfileV1::FdnDivineResilience
         | NativeRunCatalogProfileV1::FdnScavengingOoze
-        | NativeRunCatalogProfileV1::FdnSoulShackledZombie => {}
+        | NativeRunCatalogProfileV1::FdnSoulShackledZombie
+        | NativeRunCatalogProfileV1::FdnNextSourceBatch => {}
     }
 
     if ladder_opponent.is_some() && population_opponent.is_some() {
