@@ -238,7 +238,9 @@ fn actual_printed_trigger_public_submission_restore_retry_and_completed_capture_
                 put(&mut state, seat, "Forest", Zone::Library);
             }
         }
-        let base = FastActorSessionV1::from_cerberus_v19_fixture_state(state);
+        // Inspect the actual End-step priority window before the harness's
+        // automatic passes can resolve the trigger and advance to another turn.
+        let base = FastActorSessionV1::from_cerberus_v19_engine_priority_fixture_state(state);
         let mut session = HumanCerberusSessionV19::from_session(base).unwrap();
         let current = expected(&session);
         let mut projector = HumanCerberusProjectorV19::new(current.acting_player);
