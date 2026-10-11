@@ -125,3 +125,11 @@ toml = "0.8"
 [dev-dependencies]
 semver = "1"
 toml = "0.8"
+
+[[test]]
+name = "fdn_integration"
+required-features = ["limited-fdn-fixtures"]
+
+[[test]]
+name = "standard_integration"
+required-features = ["standard-magezero-fixtures"]
