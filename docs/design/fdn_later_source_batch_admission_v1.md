@@ -23,3 +23,13 @@ under supportedhandleaa469408c208447fa2cb2c338171f41d/supervisor155588 for actua
 generator output and Limited/Standard all-test typechecks only. Runtime cases,
 lints, profiles and full consumer admission are not part of this preflight.
 Native58 actual101/101 and absent supervisor were observed before target reuse.
+
+Native59 actual generator emits409/hash45fdca1dd861b679, SHA256
+a9c9beb72d4e045ba1768b8e889a1575e6b83aada1828563a8a18182fca06208.
+Limited all-test compile found the Wildwood fixture's u8 comparison to actual
+u16 finalized stack X. Root0c1 fixes both comparisons; normal-cast choices remain
+u8 bounded. Actual source/gameplay validation remains pending. The appended
+v78 profile preserves every older literal and reader, adds a historical v77
+fixture and stale publish/resume refusals before store access. Only current
+live canaries change. Runtime deck SHA stays68e7602, with no model, weight or
+measurement identity change and no execution admission or result claim.
