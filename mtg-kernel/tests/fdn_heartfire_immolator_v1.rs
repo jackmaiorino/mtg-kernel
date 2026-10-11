@@ -289,7 +289,7 @@ fn committed_power_activation_forgeries_refuse_readonly_after_restore() {
             Zone::Battlefield,
         );
         activate(&mut valid, source, target);
-        for case in 0..7 {
+        for case in 0..10 {
             let mut state = restore(&valid);
             match case {
                 0 => state.creature_stats_lki_v1.as_mut().unwrap()[0].power = 99,
@@ -342,14 +342,44 @@ fn committed_power_activation_forgeries_refuse_readonly_after_restore() {
                         .clone();
                     state.engine.event_log.push(event);
                 }
+                7 | 8 => {
+                    state.engine.event_history.retain(|event| {
+                        !matches!(
+                            event,
+                            CommittedEvent::SourcePowerActivationCommittedV1 { .. }
+                        )
+                    });
+                    state.stack.last_mut().unwrap().inline_effect = if case == 7 {
+                        None
+                    } else {
+                        Some(mtg_kernel::effect::EffectOp::Sequence(vec![]))
+                    };
+                }
+                9 => {
+                    // Retained immutable receipt still owns this incarnation
+                    // if both mutable root selectors are erased.
+                    state.stack.last_mut().unwrap().inline_effect = None;
+                    state.stack.last_mut().unwrap().v4.ability_source_contract = None;
+                }
                 _ => unreachable!(),
             }
+            // Restore the modified authority, then retry the same retained state.
+            state = restore(&state);
             let before = serde_json::to_vec(&state).unwrap();
             assert!(
                 engine::step(&mut state, Action::Pass).is_err(),
                 "case {case}"
             );
             assert_eq!(serde_json::to_vec(&state).unwrap(), before, "case {case}");
+            assert!(
+                engine::step(&mut state, Action::Pass).is_err(),
+                "retry case {case}"
+            );
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                before,
+                "retry case {case}"
+            );
         }
         let mut stale = ready(actor);
         let source = cast_creature(&mut stale, actor);
