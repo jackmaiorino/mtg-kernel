@@ -23,6 +23,7 @@
 
 mod arms;
 mod bank;
+mod bank_trace;
 mod diag;
 mod labels;
 mod play;
@@ -51,7 +52,13 @@ use std::time::Instant;
 pub(super) fn is_mode(mode: &str) -> bool {
     matches!(
         mode,
-        "s4a-corpus" | "s4a-run" | "s4a-diag" | "s4a-bank" | "s4a-bank-parity" | "s4a-label-replay"
+        "s4a-corpus"
+            | "s4a-run"
+            | "s4a-diag"
+            | "s4a-bank"
+            | "s4a-bank-parity"
+            | "s4a-label-replay"
+            | "s4a-bank-trace"
     )
 }
 
@@ -891,6 +898,26 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         prior: world::DeckPrior::new(&cfg.decks),
         limits: parse_limits()?,
     };
+    if cfg.mode == "s4a-bank-trace" {
+        let id = std::env::var("BANK_TRACE_ID").map_err(|_| "BANK_TRACE_ID is required")?;
+        let src = sh
+            .spec
+            .sources
+            .iter()
+            .find(|s| s.id == id)
+            .ok_or("unknown BANK_TRACE_ID")?
+            .clone();
+        let mut roles = bank::bank_roles(policy, &sh.opponents)?;
+        let row = bank_trace::trace_source(&sh, &mut roles, &src)?;
+        return std::fs::write(
+            &cfg.out,
+            format!(
+                "{row}
+"
+            ),
+        )
+        .map_err(|e| e.to_string());
+    }
     bank::run_bank(cfg, policy, sh)
 }
 
@@ -935,7 +962,7 @@ fn run_bank_parity(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<
 
 pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(), String> {
     match cfg.mode.as_str() {
-        "s4a-bank" => return run_bank_mode(cfg, policy),
+        "s4a-bank" | "s4a-bank-trace" => return run_bank_mode(cfg, policy),
         "s4a-bank-parity" => return run_bank_parity(cfg, policy),
         "s4a-label-replay" => return replay_labels::run(cfg),
         _ => {}

@@ -137,7 +137,7 @@ pub(super) fn source_session(
 }
 
 /// Natural outcome for the focal player, or "nonnatural".
-fn outcome(s: &FastActorSessionV1, focal: PlayerId) -> Option<&'static str> {
+pub(super) fn outcome(s: &FastActorSessionV1, focal: PlayerId) -> Option<&'static str> {
     let FastActorResponseV1::Terminal(t) = s.current_response() else {
         return None;
     };
@@ -151,12 +151,22 @@ fn outcome(s: &FastActorSessionV1, focal: PlayerId) -> Option<&'static str> {
     })
 }
 
-fn err(e: PlayErr) -> String {
+/// The plain policy for one decision (`play::act`) with a string error.
+pub(super) fn act_plain(
+    p: &mut FrozenPlayPolicyV1,
+    s: &FastActorSessionV1,
+    d: &crate::rl_session::FastActorDecisionV1,
+    c: &mut Counters,
+) -> Result<u32, String> {
+    act(p, s, d, c).map_err(err)
+}
+
+pub(super) fn err(e: PlayErr) -> String {
     format!("{e:?}")
 }
 
 /// Plain play for both seats to the end, logging every applied action.
-fn plain_logged(
+pub(super) fn plain_logged(
     s: &mut FastActorSessionV1,
     focal: PlayerId,
     f: &mut FrozenPlayPolicyV1,
@@ -180,7 +190,7 @@ fn plain_logged(
 }
 
 /// Replays `actions` from `s`, calling `visit` before each action.
-fn walk(
+pub(super) fn walk(
     mut s: FastActorSessionV1,
     actions: &[u32],
     mut visit: impl FnMut(
