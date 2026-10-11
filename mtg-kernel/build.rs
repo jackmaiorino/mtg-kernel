@@ -6807,6 +6807,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Mischievous Mystic" => "controller_draws_nth_card_this_turn:2:create_faerie_token:1",
         "Homunculus Horde" | "Homunculus Horde Token" => "controller_draws_nth_card_this_turn:2:create_homunculus_horde_copy_token:1",
         "Koma, World-Eater" => "source_combat_damage_to_player:create_blue_3_3_serpent_coil_tokens:4",
+        "Slumbering Cerberus" => "printed_active:does_not_untap_during_current_controller_untap_step:beginning_each_end_step:intervening_if_creature_died_this_turn:recheck_morbid:untap_captured_source_owner_battlefield_incarnation:stun_replacement:untargeted",
         "Cackling Prowler" => "beginning_controller_end_step_if_creature_died_this_turn:recheck_morbid:plus_one_counter_on_bound_source:1",
         "Needletooth Pack" => "beginning_controller_end_step_if_creature_died_this_turn:recheck_morbid:mandatory_controlled_creature_target:exact_incarnation:plus_one_counters:2",
         "Hare Apparent" => "etb:captured_controller:resolution_count_other_controlled_creatures_effective_name:Hare Apparent:exclude_captured_source_incarnation:create_white_1_1_Rabbit_Token:snapshot_once:untargeted:any_number_in_limited_deck",

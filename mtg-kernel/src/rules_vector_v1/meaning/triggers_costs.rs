@@ -284,6 +284,11 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
             out.trigger(TrigF::Attacks);
             threshold(out, RelF::You, ZoneF::Graveyard, ObjF::AnyCard, minimum);
         }
+        TriggerCondition::BeginningAnyEndStepIfCreatureDied => {
+            // Exact each-end timing plus Morbid is preserved in the source payload.
+            // The new complete printed rule has no frozen full-vector admission.
+            out.atoms.push(Atom::Opaque);
+        }
         TriggerCondition::BeginningControllerEndStepIfCreatureDied => {
             // The controller's end step begins, gated on the event's flag
             // that a creature (either player's) died this turn. Same read

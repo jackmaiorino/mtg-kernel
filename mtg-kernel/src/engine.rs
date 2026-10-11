@@ -14379,7 +14379,9 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 let prevented_by_attachment = attachment_prevents_untap(state, id);
                 if state.objects.get(id).v4.skip_next_untap {
                     state.objects.get_mut(id).v4.skip_next_untap = false;
-                } else if !prevented_by_attachment {
+                } else if !prevented_by_attachment
+                    && !crate::slumbering_cerberus_v1::prevents_untap_step(state, id)
+                {
                     attempt_untap(state, id);
                 }
                 state.objects.get_mut(id).summoning_sick = false;

@@ -537,6 +537,8 @@ pub enum StandardOpV1 {
     /// Definition-owned sacrifice ability using committed departing source P/T.
     /// Appended to preserve all predecessor operation discriminants.
     SourceLastPowerDamageV1,
+    /// Untap only the captured ability-source incarnation, through stun replacement.
+    UntapCapturedSourceV1,
 }
 
 impl StandardOpV1 {
@@ -674,6 +676,9 @@ fn transform_resolving_source(ctx: &ExecCtx, state: &mut GameState) {
 
 pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        StandardOpV1::UntapCapturedSourceV1 => {
+            crate::slumbering_cerberus_v1::untap_captured_source(ctx, state);
+        }
         StandardOpV1::SourceLastPowerDamageV1 => {
             crate::source_power_activation_v1::execute(ctx, state);
         }

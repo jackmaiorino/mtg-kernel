@@ -251,6 +251,8 @@ pub enum TriggerCondition {
     ThisOrControlledCreatureDies,
     /// Controller end step with an intervening successful-declaration Raid gate.
     BeginningControllerEndStepAfterControllerAttackedThisTurn,
+    /// Each end step, with an intervening creature-death gate.
+    BeginningAnyEndStepIfCreatureDied,
 }
 
 pub struct TriggeredAbilityDef {
@@ -981,6 +983,11 @@ const KIORA_RISING_TIDE_TRIGGERS: [TriggeredAbilityDef; 2] = [
         ..etb_trigger(kiora_threshold_effect)
     },
 ];
+
+const SLUMBERING_CERBERUS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningAnyEndStepIfCreatureDied,
+    ..etb_trigger(crate::slumbering_cerberus_v1::program_v1)
+}];
 
 const CACKLING_PROWLER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::BeginningControllerEndStepIfCreatureDied,
@@ -3384,6 +3391,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Homunculus Horde" | "Homunculus Horde Token" => &HOMUNCULUS_HORDE_TRIGGERS,
         "Koma, World-Eater" => &KOMA_WORLD_EATER_TRIGGERS,
         "Kiora, the Rising Tide" => &KIORA_RISING_TIDE_TRIGGERS,
+        "Slumbering Cerberus" => &SLUMBERING_CERBERUS_TRIGGERS,
         "Cackling Prowler" => &CACKLING_PROWLER_TRIGGERS,
         "Hare Apparent" => &HARE_APPARENT_TRIGGERS,
         "Needletooth Pack" => &NEEDLETOOTH_PACK_TRIGGERS,
@@ -5623,6 +5631,13 @@ fn trigger_matches(
                 creature_died_this_turn,
             },
         ) => *active_player == controller && *creature_died_this_turn,
+        (
+            TriggerCondition::BeginningAnyEndStepIfCreatureDied,
+            CommittedEvent::BeginningEndStep {
+                creature_died_this_turn,
+                ..
+            },
+        ) => *creature_died_this_turn,
         (
             TriggerCondition::BeginningControllerEndStep,
             CommittedEvent::BeginningEndStep { active_player, .. },

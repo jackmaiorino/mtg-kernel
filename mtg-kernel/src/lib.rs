@@ -481,6 +481,7 @@ pub mod rules_meaning_soul_shackled_zombie_v1;
 pub mod runtime_decks;
 mod self_reflection_v1;
 pub mod sideboard;
+mod slumbering_cerberus_v1;
 pub mod snapshot;
 pub mod soul_shackled_zombie_public_v1;
 pub mod standard_legends_v1;

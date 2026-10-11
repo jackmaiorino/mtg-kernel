@@ -1,0 +1,30 @@
+{
+  "schema": "fdn-slumbering-cerberus-prepared/v1",
+  "disposition": "unregistered_source_only",
+  "not_generator_input": true,
+  "base_commit": "a1e4f547d95e8a3c58d572866d00ef4911322956",
+  "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "mage_source": "Mage.Sets/src/mage/cards/s/SlumberingCerberus.java",
+  "printed": {
+    "name": "Slumbering Cerberus",
+    "collector_number": "94",
+    "mana_cost": "{1}{R}",
+    "mana_value": 2,
+    "colors": [
+      "R"
+    ],
+    "types": [
+      "Creature"
+    ],
+    "subtypes": [
+      "Dog"
+    ],
+    "power": 4,
+    "toughness": 2,
+    "abilities": [
+      "This creature doesn't untap during your untap step.",
+      "Morbid -- At the beginning of each end step, if a creature died this turn, untap this creature."
+    ]
+  },
+  "qualification": "Source only. No native, registration, generated catalog hash, profile, public Human or model admission claimed."
+}
