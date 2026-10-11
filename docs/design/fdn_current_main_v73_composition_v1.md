@@ -54,4 +54,16 @@ October11,13:53UTC. All23 exact-head9c43 checks passed; actual default tree
 All60 affected Python cases pass in the actual default checkout (35 decks,
 18 V8,7 V9). Its frozen pool reports188 Full,1 Partial,97 Missing. The
 current v73 candidate merges that prerequisite with no runtime file delta;
-its own new CI cases and exact-head delivery still remain pending.
+its own new CI cases and exact-head delivery still remain pending in that
+historical checkpoint.
+
+PR226 is accepted at actual default032c007efc5d4ec864899f76ff47967d5bbe7a96.
+All25 exactee5 candidate checks pass. Concurrent PR215/227 advanced main;
+the actual merge preserves all56candidate and42accepted-parent blobs exactly,
+with no overlapping changed paths. Its tree3edbb14c differs legitimately
+from candidateb9e49271, without an FDN gameplay/catalog delta. All69 affected
+Python cases pass on the isolated clean default:38 decks,6 frozen-pool,
+18 V8 and7 V9. Actual coverage193 Full/1 Partial/92 Missing is accepted.
+Changed Run Away qualification reuses the13 reviewed compatible Native55
+passes; that batch's unrelated failures remain failures. Final acceptance:
+https://github.com/jackmaiorino/mtg-kernel/pull/226#issuecomment-6112420119 .

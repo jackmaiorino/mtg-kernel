@@ -63,9 +63,15 @@ checks pass; actual default tree9b2b8756eb38cdd8177ffe95b967716330b1844f
 equals the reviewed source. All60 affected Python cases pass on that actual
 default (35 decks,18 V8,7 V9). Frozen286-name inventory reports188 Full,
 1 Partial,97 Missing; membership and24 token dependencies remain fixed.
-The v73 candidate's five further names are pending delivery, not accepted
-default coverage. Historical failed attempts and partial receipts remain
-retained. Full gameplay, consumers and broader Limited milestones remain.
+The v73 five-card batch is now accepted in PR226 at actual default
+032c007efc5d4ec864899f76ff47967d5bbe7a96. All25 exact candidate checks pass;
+all56 candidate blobs and42 concurrent accepted-parent blobs are preserved
+exactly in the actual merge, with no overlapping changed paths. All69
+affected Python cases pass on that clean default checkout. Frozen286-name
+coverage is193 Full,1 Partial,92 Missing;24 token dependencies remain fixed.
+See [default acceptance](https://github.com/jackmaiorino/mtg-kernel/pull/226#issuecomment-6112420119).
+Historical failed attempts and partial receipts remain retained. Complete
+consumer/model and broader Limited milestones remain open.
 
 Prior accepted v68 integration: [PR216](https://github.com/jackmaiorino/mtg-kernel/pull/216)
 merged atf7d115fa66f2f1efaa49a0d3b52912021d3a2fa1. All23 final checks in
