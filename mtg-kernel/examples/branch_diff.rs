@@ -723,6 +723,10 @@ fn decision_candidates(
 /// continuation -- see `BranchOracle.java`'s doc for why.
 fn fixed_continuation_action(decision: &SurfaceDecision) -> Result<SurfaceAction, String> {
     match decision {
+        SurfaceDecision::Decision(Decision::ChooseVariableCastTargets { .. })
+        | SurfaceDecision::Decision(Decision::ChooseVariableCastKicker { .. }) => {
+            Err("continuation:unsupported-variable-cast-protocol".to_string())
+        }
         SurfaceDecision::Decision(Decision::ChooseLondonMulligan { .. })
         | SurfaceDecision::Decision(Decision::ChooseLondonBottom { .. }) => {
             Err("continuation:unsupported-london-mulligan-protocol".to_string())
