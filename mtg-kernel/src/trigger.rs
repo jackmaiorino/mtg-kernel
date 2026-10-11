@@ -3725,7 +3725,10 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
     #[cfg(feature = "standard-magezero-fixtures")]
     if matches!(
         effect,
-        EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SacrificeSourceAtEndStep)
+        EffectOp::StandardV1(
+            crate::standard_cards_v1::StandardOpV1::SacrificeSourceAtEndStep
+                | crate::standard_cards_v1::StandardOpV1::SacrificeBoundAtEndStep { .. }
+        )
     ) {
         return Some(TargetSpec::None);
     }

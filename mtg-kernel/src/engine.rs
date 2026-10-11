@@ -4918,7 +4918,7 @@ fn can_pay_components(
                 })
             }
             CostComponent::Crew(required) => {
-                crew_candidates(state, player, &[])
+                crew_candidates(state, player, source, &[])
                     .iter()
                     .map(|binding| crew_power(state, binding.object).max(0))
                     .sum::<i64>()
@@ -5032,7 +5032,7 @@ fn validate_cost_component_choices_v1(
         return None;
     }
     if let Some(required) = crew_requirement(components) {
-        let candidates = crew_candidates(state, player, &[]);
+        let candidates = crew_candidates(state, player, source, &[]);
         if object_cost_chosen.iter().enumerate().any(|(i, id)| {
             object_cost_chosen[..i].contains(id)
                 || !candidates.iter().any(|binding| binding.object == *id)
@@ -5581,13 +5581,6 @@ fn bargain_candidates(
         if object.zone != Zone::Battlefield || object.controller != player {
             return Err("Bargain permanent binding changed controller or zone".to_string());
         }
-        // Casualty reads effective types and power, which cover a
-        // transformed face; Bargain's printed-type rule does not.
-        if object.v4.face_index != 0 && !matches!(kind, OptionalAdditionalCostDef::Casualty(_)) {
-            return Err(
-                "Bargain effective card types are unavailable for a non-front face".to_string(),
-            );
-        }
         let def = card_def::CARD_DEFS
             .get(object.card_def as usize)
             .ok_or("Bargain permanent definition is missing")?;
@@ -5600,9 +5593,9 @@ fn bargain_candidates(
                     && effective_power(state, object_id) >= i32::from(minimum_power)
             }
             _ => {
-                def.is_token
-                    || def.has_type(CardType::Artifact)
-                    || def.has_type(CardType::Enchantment)
+                object.v4.is_token
+                    || object_has_type(state, object_id, CardType::Artifact)
+                    || object_has_type(state, object_id, CardType::Enchantment)
             }
         };
         if eligible {
@@ -10873,8 +10866,12 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
     }
     if let Some(required) = crew_requirement(ability.cost) {
         if !pending.crew_finished {
-            let candidates =
-                crew_candidates(state, pending.controller, &pending.object_cost_chosen);
+            let candidates = crew_candidates(
+                state,
+                pending.controller,
+                pending.source,
+                &pending.object_cost_chosen,
+            );
             return Some(Decision::ChooseEffectTargets {
                 player: pending.controller,
                 source: pending.source,
@@ -11241,7 +11238,7 @@ pub(crate) fn validate_pending_activation(
         + usize::from(crew_requirement(ability.cost).is_some())
         + usize::from(counter_cost.is_some());
     if let Some(required) = crew_requirement(ability.cost) {
-        let candidates = crew_candidates(state, pending.controller, &[]);
+        let candidates = crew_candidates(state, pending.controller, pending.source, &[]);
         if pending
             .object_cost_chosen
             .iter()
@@ -12174,6 +12171,16 @@ fn triggered_stack_item_expected_target_spec(
     }) {
         return Err("delayed sacrifice trigger lost its token copy".to_string());
     }
+    if let EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SacrificeBoundAtEndStep {
+        object,
+    }) = inline_effect
+    {
+        if ability_source_contract.is_none_or(|source| {
+            !crate::standard_cards_v1::reflection_delayed_is_valid(state, source, *object)
+        }) {
+            return Err("delayed sacrifice changed its creating source or token".into());
+        }
+    }
     if let EffectOp::IncreaseSpeed { player } = inline_effect {
         if *player != item.controller || state.speed_v1.is_none() {
             return Err("speed trigger changed player or lost the designation".into());
@@ -12462,7 +12469,12 @@ pub(crate) fn validated_stack_item_target_spec(
             } else if item.v4.hidden_ability_source.is_some() {
                 return Err("non-ninjutsu activation carries hidden source provenance".to_string());
             }
-            let expected_x = activation_x_value(ability, &item.targets, state)?;
+            let expected_x = if ability.cost.contains(&CostComponent::LoyaltyX) {
+                crate::standard_cards_v1::paid_loyalty_x(state, item.v4.stack_item_id)
+                    .ok_or("variable loyalty payment lost its paid X")?
+            } else {
+                activation_x_value(ability, &item.targets, state)?
+            };
             if item.v4.x_value != u16::from(expected_x) {
                 return Err("activated stack item X value changed".to_string());
             }
@@ -13487,14 +13499,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 if current < 0 || usize::try_from(current).unwrap_or(usize::MAX) >= chapter_count {
                     continue;
                 }
-                let chapter = {
-                    let lore = &mut state.objects.get_mut(saga).counters.lore;
-                    *lore = lore
-                        .checked_add(1)
-                        .expect("supported Saga lore counter fits i16");
-                    u8::try_from(*lore).expect("supported Saga chapter fits u8")
-                };
-                event::log_saga_chapter(state, saga, chapter);
+                event::add_lore_counters(state, saga, 1).expect("supported Saga counters fit");
             }
             collect_and_queue_triggers(state);
         }
@@ -18595,6 +18600,9 @@ fn push_paid_activation(
             .expect("validated paid activation retains its target-bound X value")
     });
     let stack_item_id = next_stack_item_id(state);
+    if ability.cost.contains(&CostComponent::LoyaltyX) {
+        crate::standard_cards_v1::record_loyalty_x(state, stack_item_id, x_value);
+    }
     state.stack.push(StackItem {
         kind: StackItemKind::ActivatedAbility,
         source: pending.source,
@@ -25162,9 +25170,10 @@ fn crew_power(state: &GameState, object: ObjectId) -> i64 {
 fn crew_candidates(
     state: &GameState,
     player: PlayerId,
+    source: ObjectId,
     selected: &[EffectObjectBinding],
 ) -> Vec<EffectObjectBinding> {
-    state.players[player.index()]
+    let candidates: Vec<_> = state.players[player.index()]
         .battlefield
         .iter()
         .filter_map(|&object| {
@@ -25174,12 +25183,44 @@ fn crew_candidates(
                 expected_zone: Zone::Battlefield,
                 expected_zone_change_count: live.zone_change_count,
             };
-            (live.controller == player
+            (object != source
+                && live.controller == player
                 && live.zone == Zone::Battlefield
                 && !live.tapped
                 && object_has_type(state, object, CardType::Creature)
                 && !selected.contains(&binding))
             .then_some(binding)
+        })
+        .collect();
+    let requirement = state
+        .engine
+        .pending_activation
+        .as_ref()
+        .filter(|p| p.source == source)
+        .and_then(|p| {
+            resolved_activated_ability(
+                state.objects.get(source).card_def,
+                p.ability_index,
+                state,
+                source,
+            )
+        })
+        .and_then(|a| crew_requirement(a.cost));
+    let Some(required) = requirement else {
+        return candidates;
+    };
+    let selected_power = selected
+        .iter()
+        .map(|b| crew_power(state, b.object))
+        .sum::<i64>();
+    let positives = candidates
+        .iter()
+        .map(|b| crew_power(state, b.object).max(0))
+        .sum::<i64>();
+    candidates
+        .into_iter()
+        .filter(|b| {
+            selected_power + positives + crew_power(state, b.object).min(0) >= i64::from(required)
         })
         .collect()
 }
@@ -25193,10 +25234,15 @@ fn choose_crew_member(state: &mut GameState, target: Target) -> Result<(), Strin
     let Target::Object(object) = target else {
         return Err("crew requires a creature".into());
     };
-    let binding = crew_candidates(state, pending.controller, &pending.object_cost_chosen)
-        .into_iter()
-        .find(|b| b.object == object)
-        .ok_or("illegal crew member")?;
+    let binding = crew_candidates(
+        state,
+        pending.controller,
+        pending.source,
+        &pending.object_cost_chosen,
+    )
+    .into_iter()
+    .find(|b| b.object == object)
+    .ok_or("illegal crew member")?;
     state
         .engine
         .pending_activation

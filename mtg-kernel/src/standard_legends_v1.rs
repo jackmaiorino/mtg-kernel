@@ -410,6 +410,8 @@ pub(crate) fn give_poison(state: &mut GameState, player: crate::ids::PlayerId, a
     if amount == 0 || state.players[player.index()].poison_prevention_v1.0 {
         return;
     }
+    let amount = crate::standard_cards_v1::scale_counters(state, player, i32::from(amount))
+        .clamp(0, i32::from(u16::MAX)) as u16;
     let melira = state.players[player.index()]
         .battlefield
         .iter()

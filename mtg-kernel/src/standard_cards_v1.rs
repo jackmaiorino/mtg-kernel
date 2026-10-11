@@ -67,7 +67,9 @@ pub struct StandardStateV1 {
     /// triggers: the permanent's exact incarnation and the player who
     /// controls the delayed trigger.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    end_step_sacrifices: Vec<(ObjectId, u32, PlayerId)>,
+    end_step_sacrifices: Vec<(ObjectId, u32, crate::state::AbilitySourceContractV4)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    reflection_delayed_bindings: Vec<(EffectObjectBinding, crate::state::AbilitySourceContractV4)>,
     /// The Irencrag incarnations that became Everflame, Heroes' Legacy.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     everflames: Vec<(ObjectId, u32)>,
@@ -99,6 +101,8 @@ pub struct StandardStateV1 {
     last_charge: Vec<(ObjectId, u32, i32)>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     ninja_emblems: Option<[u16; 2]>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    loyalty_x_paid: Vec<(crate::ids::StackItemId, u8)>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     ninjutsu_targets: Vec<(crate::ids::StackItemId, crate::state::ObjectLinkV4)>,
 }
@@ -513,6 +517,9 @@ pub enum StandardOpV1 {
     BankbusterAfterDraw,
     KaitoEmblem,
     DrawIfOpponentLostLifeThisTurn,
+    SacrificeBoundAtEndStep {
+        object: EffectObjectBinding,
+    },
     BindEtaliPoison,
     EtaliPoison {
         player: PlayerId,
@@ -540,6 +547,7 @@ impl StandardOpV1 {
     /// The exact object incarnations this leaf is bound to.
     pub(crate) fn bound_objects(&self) -> Vec<EffectObjectBinding> {
         match self {
+            Self::SacrificeBoundAtEndStep { object } => vec![*object],
             Self::ApplyChosenPermanent { chosen, .. } => vec![*chosen],
             Self::ChooseSacrificePile { pile_a, pile_b, .. } => {
                 pile_a.iter().chain(pile_b).copied().collect()
@@ -654,13 +662,22 @@ fn transform_resolving_source(ctx: &ExecCtx, state: &mut GameState) {
 
 pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        StandardOpV1::SacrificeBoundAtEndStep { object } => {
+            if state.objects.try_get(object.object).is_some_and(|live| {
+                live.zone == Zone::Battlefield
+                    && live.zone_change_count == object.expected_zone_change_count
+                    && live.controller == ctx.controller
+            }) {
+                event::log_sacrifice(state, object.object);
+                event::propose_and_commit(
+                    state,
+                    ProposedEvent::zone_change(object.object, Zone::Graveyard),
+                );
+            }
+        }
         StandardOpV1::BindEtaliPoison => {}
         StandardOpV1::EtaliPoison { player, amount } => {
-            let count = scale_counters(state, *player, i32::from(*amount)).max(0) as u16;
-            state.players[player.index()].poison_counters.0 = state.players[player.index()]
-                .poison_counters
-                .0
-                .saturating_add(count);
+            crate::standard_legends_v1::give_poison(state, *player, *amount);
         }
         StandardOpV1::KaitoEmblem => {
             let counts = state
@@ -1083,11 +1100,20 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
             if let Some(token) = create_token_copy(state, object, ctx.controller) {
                 let incarnation = (token, state.objects.get(token).zone_change_count);
+                let source = ctx.ability_source_contract.unwrap_or_else(|| {
+                    crate::state::AbilitySourceContractV4::capture(state, ctx.source)
+                });
+                let binding = EffectObjectBinding {
+                    object: token,
+                    expected_zone: Zone::Battlefield,
+                    expected_zone_change_count: incarnation.1,
+                };
                 let standard = state.standard_v1.get_or_insert_with(Default::default);
+                standard.reflection_delayed_bindings.push((binding, source));
                 standard.hasty_copies.push(incarnation);
                 standard
                     .end_step_sacrifices
-                    .push((incarnation.0, incarnation.1, ctx.controller));
+                    .push((incarnation.0, incarnation.1, source));
             }
         }
         StandardOpV1::SacrificeSourceAtEndStep => {
@@ -2285,12 +2311,7 @@ pub(crate) fn record_attackers(state: &mut GameState, count: usize) {
 }
 
 fn attackers_this_turn(state: &GameState) -> u32 {
-    state
-        .standard_v1
-        .as_ref()
-        .and_then(|standard| standard.attackers_this_turn)
-        .filter(|(turn, _)| *turn == state.turn)
-        .map_or(0, |(_, total)| total)
+    state.creatures_attacked_this_turn_v1()
 }
 
 /// "At the beginning of your end step", for a source on the battlefield
@@ -2886,13 +2907,18 @@ pub(crate) fn end_step_delayed_triggers(
             let live = state.objects.get(object);
             live.zone == Zone::Battlefield && live.zone_change_count == zone_change_count
         })
-        .map(|(object, _, controller)| {
-            let mut source_contract = crate::state::AbilitySourceContractV4::capture(state, object);
-            source_contract.controller = controller;
+        .map(|(object, generation, source_contract)| {
+            let controller = source_contract.controller;
             crate::trigger::PendingTrigger {
                 controller,
-                source: object,
-                effect: EffectOp::StandardV1(StandardOpV1::SacrificeSourceAtEndStep),
+                source: source_contract.source,
+                effect: EffectOp::StandardV1(StandardOpV1::SacrificeBoundAtEndStep {
+                    object: EffectObjectBinding {
+                        object,
+                        expected_zone: Zone::Battlefield,
+                        expected_zone_change_count: generation,
+                    },
+                }),
                 is_madness_offer: false,
                 kicked: false,
                 target_spec: crate::card_def::TargetSpec::None,
@@ -4054,4 +4080,32 @@ pub(crate) fn gnome_base_stats(state: &GameState, id: ObjectId) -> Option<(i32, 
         })
         .count() as i32;
     Some((count, count))
+}
+
+pub(crate) fn record_loyalty_x(state: &mut GameState, item: crate::ids::StackItemId, x: u8) {
+    state
+        .standard_v1
+        .get_or_insert_with(Default::default)
+        .loyalty_x_paid
+        .push((item, x));
+}
+pub(crate) fn paid_loyalty_x(state: &GameState, item: crate::ids::StackItemId) -> Option<u8> {
+    state
+        .standard_v1
+        .as_ref()?
+        .loyalty_x_paid
+        .iter()
+        .find_map(|(id, x)| (*id == item).then_some(*x))
+}
+
+pub(crate) fn reflection_delayed_is_valid(
+    state: &GameState,
+    source: crate::state::AbilitySourceContractV4,
+    object: EffectObjectBinding,
+) -> bool {
+    state.standard_v1.as_ref().is_some_and(|value| {
+        value
+            .reflection_delayed_bindings
+            .contains(&(object, source))
+    })
 }
