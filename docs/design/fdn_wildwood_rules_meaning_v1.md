@@ -27,8 +27,9 @@ source-derived producer identity. Selection checks exact printed metadata,
 existing X-entry program and sole trigger condition/home/face/gates/program,
 and commits both complete roots. The serialized descriptor specifies the
 finalized context's X, entry counters before SBA, and X0's ordinary SBA.
-Its represented X domain is 0 through 255 because the existing engine uses
-u8 X/mana. This is a finite implementation limit, not the full printed domain.
+Its normal-cast X choice domain is 0 through 255 because announcement uses
+u8 X and mana. Finalized stack X is widened to u16. The choice bound is a finite
+implementation limit, not the full printed domain.
 
 The trigger descriptor observes a positive committed PlusOneCountersAdded
 event at its exact recipient generation. Recipient effective creature/Hydra

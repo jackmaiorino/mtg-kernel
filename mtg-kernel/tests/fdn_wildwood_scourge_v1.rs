@@ -95,7 +95,7 @@ fn announce(state: &mut GameState, actor: PlayerId, x: u16) -> ObjectId {
     assert!(matches!(next(state),Decision::ChooseEffectOption{option_count,..} if option_count>x));
     engine::step(state, Action::ChooseEffectOption(x)).unwrap();
     next(state); // Actually finalizes payment, captured X and stack root.
-    assert_eq!(state.stack.last().unwrap().v4.x_value, x as u8);
+    assert_eq!(state.stack.last().unwrap().v4.x_value, x);
     source
 }
 fn scourge(state: &mut GameState, actor: PlayerId) -> ObjectId {
@@ -536,7 +536,7 @@ fn future_precise_meaning_selects_real_entry_and_counter_roots_and_refuses_forge
             let source = announce(&mut state, actor, x);
             let item = state.stack.last().unwrap();
             assert_eq!(item.source, source);
-            assert_eq!(u16::from(item.v4.x_value), x);
+            assert_eq!(item.v4.x_value, x);
             assert_eq!(item.v4.source_contract.unwrap().card_def, selected.card_id);
             let before = serde_json::to_vec(&state).unwrap();
             meaning::validate_meaning_v1(&selected).unwrap();

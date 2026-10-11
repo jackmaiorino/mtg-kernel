@@ -31,7 +31,8 @@ pub enum ErrorV1 {
 pub struct EntryV1 {
     pub spell_root_sha256: String,
     pub printed_cost: String,
-    /// Current finalized-stack representation, not an unbounded printed-X claim.
+    /// Current normal-cast choice domain. Finalized stack X is stored as u16.
+    /// This is not an unbounded printed-X claim.
     pub represented_x_minimum: u16,
     pub represented_x_maximum: u16,
     pub x_origin: String,
