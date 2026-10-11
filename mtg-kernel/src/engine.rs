@@ -3739,8 +3739,9 @@ pub(crate) fn effect_target_is_legal(
 }
 
 /// Run Away Together checks both target relationships in one unchanged state.
-/// A stale or departed original target cannot constrain the surviving target;
-/// a still-present original permanent constrains control even if it becomes
+/// A departed original target constrains the survivor through its last known
+/// controller; its new incarnation never substitutes for that information.
+/// A still-present original permanent constrains control even if it becomes
 /// noncreature or independently untargetable. Never use the one-sided prefix
 /// check at resolution, or the first pick would bypass the controller relation.
 pub(crate) fn different_controller_creature_targets_are_legal(
@@ -3775,13 +3776,33 @@ pub(crate) fn different_controller_creature_targets_are_legal(
                 Target::Player(_) | Target::StackItem(_) => false,
             }
     });
-    if current[0] && current[1] {
-        let [Target::Object(first), Target::Object(second)] = targets else {
-            return [false; 2];
-        };
-        if state.objects.get(*first).controller == state.objects.get(*second).controller {
-            return [false; 2];
+    let controllers = std::array::from_fn::<_, 2, _>(|index| {
+        if current[index] {
+            let Target::Object(object) = targets[index] else {
+                return None;
+            };
+            return Some(state.objects.get(object).controller);
         }
+        let mut departures = state
+            .engine
+            .event_history
+            .iter()
+            .filter_map(|event| match event {
+                event::CommittedEvent::DifferentControllerTargetDepartureV1 {
+                    target,
+                    controller_before,
+                } if *target == contracts[index] => Some(*controller_before),
+                _ => None,
+            });
+        let controller = departures.next()?;
+        departures.next().is_none().then_some(controller)
+    });
+    // Missing or ambiguous original-incarnation authority fails closed.
+    let [Some(first), Some(second)] = controllers else {
+        return [false; 2];
+    };
+    if first == second {
+        return [false; 2];
     }
     let legal = legal_targets_for_controller_from_source(
         TargetSpec::Creature,
@@ -3791,6 +3812,41 @@ pub(crate) fn different_controller_creature_targets_are_legal(
         state,
     );
     std::array::from_fn(|index| current[index] && legal.contains(&targets[index]))
+}
+
+/// Preserve departure LKI only while an authenticated finalized pair spell
+/// actually binds this incarnation. Existing unrelated histories stay intact.
+pub(crate) fn record_different_controller_target_departure(
+    state: &mut GameState,
+    object: ObjectId,
+) {
+    let target = Target::Object(object);
+    let mut contracts = Vec::new();
+    for item in &state.stack {
+        if validated_stack_item_target_spec(item, state)
+            != Ok(Some(TargetSpec::TwoCreaturesWithDifferentControllers))
+        {
+            continue;
+        }
+        for (&picked, &captured) in item.targets.iter().zip(&item.v4.target_contracts) {
+            // Captured controller is announcement metadata. It must not prevent
+            // an otherwise exact original incarnation from acquiring new LKI.
+            if picked == target
+                && target_contract_matches_live(state, picked, captured)
+                && !contracts.contains(&captured)
+            {
+                contracts.push(captured);
+            }
+        }
+    }
+    for contract in contracts {
+        state.engine.event_history.push(
+            event::CommittedEvent::DifferentControllerTargetDepartureV1 {
+                target: contract,
+                controller_before: state.objects.get(object).controller,
+            },
+        );
+    }
 }
 
 /// Per-target legality for effects whose source provenance was captured when

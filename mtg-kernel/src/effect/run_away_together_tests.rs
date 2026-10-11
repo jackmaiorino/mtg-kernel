@@ -152,7 +152,7 @@ fn run_away_primitive_same_current_controller_invalidates_both_without_order_bia
 }
 
 #[test]
-fn run_away_primitive_departure_and_reentry_do_not_constrain_surviving_original_target() {
+fn run_away_primitive_original_departure_lki_survives_reentry_and_restore() {
     for caster in [PlayerId::P0, PlayerId::P1] {
         for reverse in [false, true] {
             for departed_index in 0..2 {
@@ -160,6 +160,18 @@ fn run_away_primitive_departure_and_reentry_do_not_constrain_surviving_original_
                     let (mut state, objects, ctx) = fixture(caster, reverse, true);
                     let departed = objects[departed_index];
                     let survivor = objects[1 - departed_index];
+                    // This direct opcode fixture has no printed spell on the
+                    // stack. Supply its departure authority explicitly; printed
+                    // integration tests exercise actual engine emission.
+                    state.engine.event_history.push(
+                        event::CommittedEvent::DifferentControllerTargetDepartureV1 {
+                            target: StackTargetContractV4::capture(
+                                &state,
+                                Target::Object(departed),
+                            ),
+                            controller_before: state.objects.get(departed).controller,
+                        },
+                    );
                     event::propose_and_commit(
                         &mut state,
                         event::ProposedEvent::zone_change(departed, Zone::Graveyard),
@@ -242,6 +254,37 @@ fn run_away_primitive_protection_hexproof_and_malformed_pair_refusal() {
                         ctx.targets[0] = Target::Player(caster);
                         ctx.target_contracts[0] = StackTargetContractV4::Player(caster);
                     }
+                }
+                let before = serde_json::to_vec(&state).unwrap();
+                execute(
+                    &EffectOp::ReturnTwoDifferentControllerCreaturesToOwnersHands,
+                    &ctx,
+                    &mut state,
+                );
+                assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+            }
+        }
+    }
+}
+
+#[test]
+fn run_away_primitive_missing_duplicate_or_mutable_log_lki_cannot_authorize_return() {
+    for caster in [PlayerId::P0, PlayerId::P1] {
+        for reverse in [false, true] {
+            for corrupt in 0..3 {
+                let (mut state, objects, ctx) = fixture(caster, reverse, true);
+                let marker = event::CommittedEvent::DifferentControllerTargetDepartureV1 {
+                    target: StackTargetContractV4::capture(&state, Target::Object(objects[0])),
+                    controller_before: state.objects.get(objects[0]).controller,
+                };
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change(objects[0], Zone::Hand),
+                );
+                match corrupt {
+                    0 => {} // Missing immutable receipt.
+                    1 => state.engine.event_history.extend([marker.clone(), marker]),
+                    _ => state.engine.event_log.push(marker),
                 }
                 let before = serde_json::to_vec(&state).unwrap();
                 execute(
