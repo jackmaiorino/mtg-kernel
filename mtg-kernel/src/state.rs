@@ -240,6 +240,17 @@ pub struct ObjectStateV4 {
     /// enchantment" (not a creature). Every zone change clears it.
     #[serde(default, skip_serializing_if = "bool_is_false")]
     pub enduring_enchantment_v1: bool,
+    /// Timestamp of the ability that made this incarnation its
+    /// `CardDef::animation` creature (Mishra's Foundry). Cleared at cleanup
+    /// (every animation lasts until end of turn) and by every zone change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub animation_timestamp: Option<u64>,
+    /// True from this incarnation's battlefield entry until the next untap
+    /// step. `entered_battlefield_turn` is a round number shared by both
+    /// players' turns, so it cannot answer "entered this turn" (Mirrex).
+    /// Only Standard builds set it, so other catalogs keep their bytes.
+    #[serde(default, skip_serializing_if = "bool_is_false")]
+    pub entered_battlefield_this_turn: bool,
 }
 
 impl Hash for ObjectStateV4 {
@@ -287,6 +298,13 @@ impl Hash for ObjectStateV4 {
         }
         if self.enduring_enchantment_v1 {
             "enduring-enchantment/v1".hash(state);
+        }
+        if let Some(timestamp) = self.animation_timestamp {
+            "animation_timestamp/v1".hash(state);
+            timestamp.hash(state);
+        }
+        if self.entered_battlefield_this_turn {
+            "entered_battlefield_this_turn/v1".hash(state);
         }
     }
 }
@@ -344,6 +362,8 @@ impl ObjectStateV4 {
             unearthed_v1: false,
             time_counters_v1: 0,
             enduring_enchantment_v1: false,
+            animation_timestamp: None,
+            entered_battlefield_this_turn: false,
         }
     }
 
@@ -352,6 +372,7 @@ impl ObjectStateV4 {
         *self = base;
         if to_zone == Zone::Battlefield {
             self.entered_battlefield_turn = Some(turn);
+            self.entered_battlefield_this_turn = cfg!(feature = "standard-magezero-fixtures");
         }
     }
 
@@ -590,6 +611,31 @@ pub struct PlayerState {
     pub draws_this_turn: u32,
     pub spells_cast_this_turn: u16,
     pub dungeon: DungeonStateV4,
+    /// Poison counters (122.1f), given by toxic combat damage. Absent on the
+    /// wire and in hashes while zero, so states without poison keep their
+    /// bytes.
+    #[serde(default, skip_serializing_if = "PoisonCountersV1::is_zero")]
+    pub poison_counters: PoisonCountersV1,
+}
+
+/// A player's poison counter count. Hashes nothing while zero.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PoisonCountersV1(pub u16);
+
+impl PoisonCountersV1 {
+    pub fn is_zero(&self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl Hash for PoisonCountersV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if self.0 != 0 {
+            "poison_counters/v1".hash(state);
+            self.0.hash(state);
+        }
+    }
 }
 
 impl PlayerState {
@@ -607,6 +653,7 @@ impl PlayerState {
             draws_this_turn: 0,
             spells_cast_this_turn: 0,
             dungeon: DungeonStateV4::default(),
+            poison_counters: PoisonCountersV1::default(),
         }
     }
 }
@@ -980,6 +1027,7 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::ArtifactPermanent
                 | TargetSpec::EnchantmentPermanent
                 | TargetSpec::ControlledCreature
+                | TargetSpec::UpToOneOtherControlledPermanent
                 | TargetSpec::OpponentControlledCreature
                 | TargetSpec::UpToOneTappedCreature
                 | TargetSpec::NoncreatureArtifactPermanent
@@ -995,7 +1043,9 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::CreatureToughnessAtLeastFour
                 | TargetSpec::CreatureEnchantmentOrPlaneswalker
                 | TargetSpec::AnotherControlledCreature
-                | TargetSpec::ControlledCreatureWithSubtype(_),
+                | TargetSpec::ControlledCreatureWithSubtype(_)
+                | TargetSpec::AttackingCreatureWithSubtype(_)
+                | TargetSpec::ControlledPermanentWithAnySubtype(_),
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Battlefield,
@@ -1003,6 +1053,7 @@ pub fn stack_target_contract_is_structurally_valid(
             },
         ) | (
             TargetSpec::UpToTwoCreatures
+                | TargetSpec::UpToTwoOtherControlledCreatures
                 | TargetSpec::ExactlyTwoArtifactPermanents
                 | TargetSpec::ControlledCreatureThenOpponentCreature
                 | TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker,
@@ -1015,7 +1066,8 @@ pub fn stack_target_contract_is_structurally_valid(
             TargetSpec::CreatureOrLandCardInGraveyard
                 | TargetSpec::CreatureCardInOwnGraveyard
                 | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_)
-                | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_),
+                | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_)
+                | TargetSpec::PermanentCardInOwnGraveyard,
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Graveyard,
@@ -1466,6 +1518,25 @@ pub enum DayNightV1 {
     Night,
 }
 
+/// Exact history anchor for the opt-in first-life-gain trigger family.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LifeGainTurnV1 {
+    pub turn: u32,
+    pub active_player: PlayerId,
+    pub history_index: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub captures: Vec<FirstLifeGainCaptureV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FirstLifeGainCaptureV1 {
+    pub gain_history_index: usize,
+    pub ability_index: u16,
+    pub pending: crate::trigger::PendingTrigger,
+}
+
 /// `Hash` is manual (see the `impl Hash for GameState` block below this
 /// struct): it must reproduce the exact pre-existing field-hash sequence for
 /// a legacy P0-first state, the same discipline `starting_player`'s serde
@@ -1565,6 +1636,9 @@ pub struct GameState {
     /// Absent until some player first descends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub descended_v1: Option<DescendedTurnV1>,
+    /// Engine-only history. Absence preserves historical bytes and hashes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub life_gain_turn_v1: Option<LifeGainTurnV1>,
 }
 
 /// Which players lost life during one turn (Hired Claw: "only if an
@@ -1679,6 +1753,10 @@ impl Hash for GameState {
         if let Some(descended) = &self.descended_v1 {
             "descended-v1".hash(state);
             descended.hash(state);
+        }
+        if let Some(history) = &self.life_gain_turn_v1 {
+            "life-gain-turn-v1".hash(state);
+            history.hash(state);
         }
     }
 }
@@ -1824,7 +1902,7 @@ impl GameState {
         let mut player1 = PlayerState::new(STARTING_LIFE);
         player1.library = library1;
 
-        GameState {
+        let mut state = GameState {
             objects,
             players: [player0, player1],
             turn: 1,
@@ -1856,7 +1934,10 @@ impl GameState {
             speed_v1: None,
             day_night_v1: None,
             descended_v1: None,
-        }
+            life_gain_turn_v1: None,
+        };
+        crate::life_gain_turn_v1::initialize_for_pool(&mut state);
+        state
     }
 
     /// Removes the top card of `player`'s library and puts it in hand.

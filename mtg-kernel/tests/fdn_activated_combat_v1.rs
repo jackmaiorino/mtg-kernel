@@ -1,5 +1,8 @@
 //! Printed combat activations, with exact source/target incarnations.
-#![cfg(feature = "limited-fdn-fixtures")]
+#![cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 
 use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardType, Keywords, Subtype, TargetSpec, CARD_DEFS,

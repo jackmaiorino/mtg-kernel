@@ -68,12 +68,23 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
         | TargetSpec::NonOutlawCreature
         | TargetSpec::CreatureToughnessAtLeastFour
         | TargetSpec::CreatureEnchantmentOrPlaneswalker => (BATTLEFIELD, None),
-        TargetSpec::ControlledCreature | TargetSpec::AnotherControlledCreature => {
-            (BATTLEFIELD, Some(RelF::You))
-        }
+        TargetSpec::ControlledCreature
+        | TargetSpec::AnotherControlledCreature
+        | TargetSpec::UpToTwoOtherControlledCreatures
+        | TargetSpec::UpToOneOtherControlledPermanent => (BATTLEFIELD, Some(RelF::You)),
         TargetSpec::ControlledCreatureWithSubtype(subtype) => {
             // The subtype is a target legality fact (targets table).
             let _ = subtype;
+            (BATTLEFIELD, Some(RelF::You))
+        }
+        TargetSpec::AttackingCreatureWithSubtype(subtype) => {
+            // The subtype is a target legality fact (targets table).
+            let _ = subtype;
+            (BATTLEFIELD, None)
+        }
+        TargetSpec::ControlledPermanentWithAnySubtype(subtypes) => {
+            // The subtypes are a target legality fact (targets table).
+            let _ = subtypes;
             (BATTLEFIELD, Some(RelF::You))
         }
         TargetSpec::OpponentControlledCreature
@@ -98,6 +109,7 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
             let _ = mana_value;
             (GRAVEYARD, Some(RelF::You))
         }
+        TargetSpec::PermanentCardInOwnGraveyard => (GRAVEYARD, Some(RelF::You)),
         TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(mana_value) => {
             // The mana-value bound is a target legality fact (targets table).
             let _ = mana_value;

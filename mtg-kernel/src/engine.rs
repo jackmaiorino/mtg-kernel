@@ -61,6 +61,11 @@ use crate::trigger::{self, PendingTrigger};
 use serde::{Deserialize, Serialize};
 use std::hash::Hash;
 
+// Shared selected-cost collection is prepared separately from route wiring.
+#[path = "spell_costs_v1.rs"]
+#[allow(dead_code)]
+mod spell_costs_v1;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EngineState {
     /// Last allocated private stack-incarnation id. Zero remains reserved for
@@ -268,6 +273,68 @@ pub struct EngineState {
     /// ETB grant or a combat-damage transfer's attacking creature.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub monarch_source: Option<AbilitySourceContractV4>,
+    /// Opt-in runtime rules profile. Default (all off) is the historical
+    /// engine; omitted from snapshots and ignored by `Hash` while default.
+    #[serde(default, skip_serializing_if = "RuntimeRulesV1::is_default")]
+    pub runtime_rules: RuntimeRulesV1,
+}
+
+/// Opt-in rules-presentation options that change which choices the engine
+/// exposes, never the legal outcomes it allows. A session that turns one on
+/// is a new runtime identity: decision counts and random-stream use differ
+/// from the historical engine, so its trajectories are not comparable to
+/// earlier ones step for step.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeRulesV1 {
+    /// When several cards are put into one player's graveyard at once, the
+    /// owner orders them (404.3), and the engine asks one card at a time.
+    /// With this on, that ordering is never asked: the cards keep the order
+    /// the effect bound them in (library order, top first). In this engine
+    /// only Delve reads graveyard order (`mana::delve_payment_plan` exiles
+    /// the oldest cards first), so the profile is refused for any game that
+    /// contains a Delve card in any zone (`FastActorSessionV1::
+    /// set_runtime_rules_v1`). The rule is fixed for the whole game and
+    /// reads no hidden state, so whether an ordering stage appears tells the
+    /// other seat nothing about hidden cards.
+    pub auto_unobservable_graveyard_order: bool,
+}
+
+impl RuntimeRulesV1 {
+    /// The rules profile of the Spy resolution-boundary fix (collab
+    /// LANES/spy-fix-first-handoff-20261010).
+    pub const RESOLUTION_BOUNDARY_V1: Self = Self {
+        auto_unobservable_graveyard_order: true,
+    };
+
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+// Ignored by hashing so historical state fingerprints stay unchanged; the
+// profile is recorded as a runtime identity instead.
+impl Hash for RuntimeRulesV1 {
+    fn hash<H: std::hash::Hasher>(&self, _state: &mut H) {}
+}
+
+/// Whether the owner of a multi-card graveyard batch must be asked for its
+/// order (see `RuntimeRulesV1::auto_unobservable_graveyard_order`). The
+/// answer is constant for the whole game: it never reads hidden zones, so
+/// the presence of the ordering stage, which the other seat can observe,
+/// reveals nothing about anyone's hidden cards.
+pub(crate) fn graveyard_order_choice_exposed(state: &GameState, _owner: PlayerId) -> bool {
+    !state.engine.runtime_rules.auto_unobservable_graveyard_order
+}
+
+/// Whether any card in the game, in any zone and for either player, can
+/// read graveyard order (Delve, the only such reader in this engine). The
+/// profile may be enabled only when this is false.
+pub(crate) fn graveyard_order_readers_present(state: &GameState) -> bool {
+    state
+        .objects
+        .iter()
+        .any(|(_, object)| crate::card_def::CARD_DEFS[object.card_def as usize].delve)
 }
 
 fn next_stack_item_id(state: &mut GameState) -> StackItemId {
@@ -608,6 +675,9 @@ pub enum UnsupportedMechanic {
     /// interpreter's fail-closed structural contract. Supported card
     /// definitions must never reach this at runtime.
     InvalidEffectContinuation,
+    /// First-life-gain matching has missing or inconsistent turn history.
+    /// Appended to preserve prior unsupported-state discriminants.
+    InvalidFirstLifeGainHistory,
 }
 
 /// Issues the next 613.7 timestamp for a newly-created
@@ -855,6 +925,13 @@ pub enum DiscardResume {
     /// discard is chosen; `apply_discard` then removes this exact stack
     /// item. Appended after every earlier variant.
     FinishAbilityResolution { stack_item_id: StackItemId },
+    /// A discard inside a resumable sequence. Its remaining instructions
+    /// wait on the exact hand answer while the resolving item stays public.
+    FinishEffectContinuation {
+        stack_item_id: StackItemId,
+        path: Vec<u16>,
+        original_hand: Vec<effect::EffectObjectBinding>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1461,6 +1538,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::ControlledCreature
         | TargetSpec::EnchantmentPermanent
         | TargetSpec::CreatureCardInOwnGraveyard
+        | TargetSpec::PermanentCardInOwnGraveyard
         | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_)
         | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_)
         | TargetSpec::SpellYouDontControl
@@ -1484,8 +1562,12 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::CreatureEnchantmentOrPlaneswalker
         | TargetSpec::AnotherControlledCreature
         | TargetSpec::ControlledCreatureWithSubtype(_)
-        | TargetSpec::UpToOneCardInGraveyards => 1,
+        | TargetSpec::UpToOneCardInGraveyards
+        | TargetSpec::UpToOneOtherControlledPermanent
+        | TargetSpec::AttackingCreatureWithSubtype(_)
+        | TargetSpec::ControlledPermanentWithAnySubtype(_) => 1,
         TargetSpec::PlayerThenTheirCreature
+        | TargetSpec::UpToTwoOtherControlledCreatures
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
         | TargetSpec::ExactlyTwoArtifactPermanents
@@ -1503,6 +1585,8 @@ fn target_min_count(spec: TargetSpec) -> u8 {
         | TargetSpec::UpToTwoPlayers
         | TargetSpec::UpToTwoCardsInGraveyards
         | TargetSpec::UpToOneCardInGraveyards
+        | TargetSpec::UpToOneOtherControlledPermanent
+        | TargetSpec::UpToTwoOtherControlledCreatures
         | TargetSpec::UpToOneTappedCreature => 0,
         _ => target_count(spec),
     }
@@ -2533,6 +2617,8 @@ pub fn legal_targets_for(
 struct TargetingSource {
     object: ObjectId,
     card_def: u16,
+    zone: Zone,
+    zone_change_count: u32,
     /// The creature "other than that creature" names, when a trigger's
     /// target must differ from an object other than its own source.
     other_than: Option<ObjectId>,
@@ -2542,6 +2628,8 @@ fn targeting_source_for_object(state: &GameState, object: ObjectId) -> Option<Ta
     state.objects.try_get(object).map(|live| TargetingSource {
         object,
         card_def: live.card_def,
+        zone: live.zone,
+        zone_change_count: live.zone_change_count,
         other_than: None,
     })
 }
@@ -2578,6 +2666,8 @@ fn triggered_ability_targeting_source(
     source_contract.map(|contract| TargetingSource {
         object: source,
         card_def: contract.card_def,
+        zone: contract.zone,
+        zone_change_count: contract.zone_change_count,
         other_than,
     })
 }
@@ -2600,6 +2690,32 @@ fn legal_targets_for_controller_from_source(
 ) -> Vec<Target> {
     let mut targets = match spec {
         TargetSpec::None => Vec::new(),
+        TargetSpec::UpToOneOtherControlledPermanent
+        | TargetSpec::UpToTwoOtherControlledCreatures => battlefield_objects(state)
+            .filter(|&id| {
+                let object = state.objects.get(id);
+                source.is_some_and(|source| {
+                    !(source.object == id
+                        && source.zone == object.zone
+                        && source.zone_change_count == object.zone_change_count)
+                }) && object.controller == controller
+                    && !targets_chosen.contains(&Target::Object(id))
+                    && (if spec == TargetSpec::UpToTwoOtherControlledCreatures {
+                        object_has_type(state, id, CardType::Creature)
+                    } else {
+                        [
+                            CardType::Land,
+                            CardType::Creature,
+                            CardType::Artifact,
+                            CardType::Enchantment,
+                            CardType::Planeswalker,
+                        ]
+                        .into_iter()
+                        .any(|kind| object_has_type(state, id, kind))
+                    })
+            })
+            .map(Target::Object)
+            .collect(),
         TargetSpec::AnyPlayer => {
             vec![Target::Player(PlayerId::P0), Target::Player(PlayerId::P1)]
         }
@@ -2755,7 +2871,7 @@ fn legal_targets_for_controller_from_source(
             .filter_map(|(id, object)| {
                 (object.controller == controller
                     && object.zone == Zone::Battlefield
-                    && card_def::CARD_DEFS[object.card_def as usize].has_type(CardType::Creature))
+                    && object_has_type(state, id, CardType::Creature))
                 .then_some(id)
             })
             .map(Target::Object)
@@ -2857,6 +2973,29 @@ fn legal_targets_for_controller_from_source(
             })
             .map(Target::Object)
             .collect(),
+        TargetSpec::AttackingCreatureWithSubtype(subtype) => battlefield_objects(state)
+            .filter(|&id| {
+                state.engine.combat.attackers.contains(&id)
+                    && object_has_type(state, id, CardType::Creature)
+                    && has_effective_subtype(state, id, subtype)
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::ControlledPermanentWithAnySubtype(subtypes) => state.players
+            [controller.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|&id| {
+            let object = state.objects.get(id);
+            object.zone == Zone::Battlefield
+                && object.controller == controller
+                && subtypes
+                    .iter()
+                    .any(|&subtype| has_effective_subtype(state, id, subtype))
+        })
+        .map(Target::Object)
+        .collect(),
         TargetSpec::ArtifactOrEnchantmentPermanent => state
             .players
             .iter()
@@ -2875,11 +3014,10 @@ fn legal_targets_for_controller_from_source(
         .copied()
         .filter(|&id| {
             let object = state.objects.get(id);
-            let definition = &card_def::CARD_DEFS[object.card_def as usize];
             object.zone == Zone::Battlefield
                 && object.controller == controller.opponent()
-                && (definition.has_type(CardType::Artifact)
-                    || definition.has_type(CardType::Enchantment))
+                && (object_has_type(state, id, CardType::Artifact)
+                    || object_has_type(state, id, CardType::Enchantment))
         })
         .map(Target::Object)
         .collect(),
@@ -2914,8 +3052,8 @@ fn legal_targets_for_controller_from_source(
             .collect(),
         TargetSpec::NoncreatureArtifactPermanent => battlefield_objects(state)
             .filter(|&id| {
-                let definition = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
-                definition.has_type(CardType::Artifact) && !definition.has_type(CardType::Creature)
+                object_has_type(state, id, CardType::Artifact)
+                    && !object_has_type(state, id, CardType::Creature)
             })
             .map(Target::Object)
             .collect(),
@@ -2940,7 +3078,10 @@ fn legal_targets_for_controller_from_source(
                 .filter(|id| !targets_chosen.contains(&Target::Object(*id)))
                 .filter(|&id| {
                     let object = state.objects.get(id);
-                    object.zone == Zone::Graveyard && !object.v4.is_token
+                    object.zone == Zone::Graveyard
+                        && !object.v4.is_token
+                        && (spec != TargetSpec::UpToOneCardInGraveyards
+                            || object.spell_copy_origin.is_none())
                 })
                 .map(Target::Object)
                 .collect()
@@ -2987,6 +3128,29 @@ fn legal_targets_for_controller_from_source(
         })
         .map(Target::Object)
         .collect(),
+        TargetSpec::PermanentCardInOwnGraveyard => state.players[controller.index()]
+            .graveyard
+            .iter()
+            .copied()
+            .filter(|&id| {
+                let object = state.objects.get(id);
+                let definition = &card_def::CARD_DEFS[object.card_def as usize];
+                object.owner == controller
+                    && object.zone == Zone::Graveyard
+                    && !object.v4.is_token
+                    && object.spell_copy_origin.is_none()
+                    && [
+                        CardType::Land,
+                        CardType::Creature,
+                        CardType::Artifact,
+                        CardType::Enchantment,
+                        CardType::Planeswalker,
+                    ]
+                    .into_iter()
+                    .any(|kind| definition.has_type(kind))
+            })
+            .map(Target::Object)
+            .collect(),
         TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(maximum) => state.players
             [controller.index()]
         .graveyard
@@ -3046,6 +3210,34 @@ pub(crate) fn effect_target_is_legal(
             &targets[..index],
             controller,
             targeting_source_for_object(state, source),
+            state,
+        )
+        .contains(target)
+    })
+}
+
+/// Per-target legality for effects whose source provenance was captured when
+/// the ability triggered. The original incarnation remains the exclusion.
+pub(crate) fn effect_target_is_legal_from_ability_source(
+    state: &GameState,
+    source: AbilitySourceContractV4,
+    controller: PlayerId,
+    spec: TargetSpec,
+    targets: &[Target],
+    index: usize,
+) -> bool {
+    targets.get(index).is_some_and(|target| {
+        legal_targets_for_controller_from_source(
+            spec,
+            &targets[..index],
+            controller,
+            Some(TargetingSource {
+                object: source.source,
+                card_def: source.card_def,
+                zone: source.zone,
+                zone_change_count: source.zone_change_count,
+                other_than: None,
+            }),
             state,
         )
         .contains(target)
@@ -3226,6 +3418,8 @@ fn activation_legal_targets_with_source_lki(
         Some(TargetingSource {
             object: source,
             card_def: state.objects.get(source).card_def,
+            zone: state.objects.get(source).zone,
+            zone_change_count: state.objects.get(source).zone_change_count,
             other_than: None,
         }),
         state,
@@ -3377,6 +3571,7 @@ fn viable_printed_spell_modes(
 ) -> Vec<u8> {
     let mut modes =
         Vec::with_capacity(1 + usize::from(def.mode2.is_some()) + usize::from(def.mode3.is_some()));
+    let spell = source;
     let source = targeting_source_for_object(state, source);
     if target_prefix_can_complete_for_controller_and_source(
         def.target_spec,
@@ -3411,11 +3606,26 @@ fn viable_printed_spell_modes(
     }
     #[cfg(feature = "standard-magezero-fixtures")]
     if crate::standard_keywords_v1::spree_extra_generic(def.name, 0).is_some() {
-        let base = effective_normal_cast_cost(def, controller, state);
         modes.retain(|&mode| {
-            mana::can_pay(&with_spree_surcharge(def, mode, base), 0, controller, state).is_some()
+            spell_costs_v1::selected_spell_quote_v1(
+                def,
+                spell,
+                state.objects.get(spell).zone,
+                CastMethodV4::Normal,
+                false,
+                mode,
+                0,
+                &[],
+                &[],
+                controller,
+                state,
+                &[],
+            )
+            .is_some()
         });
     }
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
+    let _ = spell;
     modes
 }
 
@@ -3484,6 +3694,26 @@ pub(crate) fn evaluate_dynamic_value(
                 && card_def::CARD_DEFS[live.card_def as usize].has_type(card_type)
         })
         .count(),
+        DynamicValueDef::ControlledPermanentsWithType(card_type) => state
+            .objects
+            .iter()
+            .filter(|(id, object)| {
+                object.zone == Zone::Battlefield
+                    && object.controller == controller
+                    && object_has_type(state, *id, card_type)
+            })
+            .count(),
+        DynamicValueDef::DistinctManaValuesAmongControlledNonlandPermanents => state
+            .objects
+            .iter()
+            .filter(|(id, object)| {
+                object.zone == Zone::Battlefield
+                    && object.controller == controller
+                    && !object_has_type(state, *id, CardType::Land)
+            })
+            .map(|(_, object)| card_def::CARD_DEFS[object.card_def as usize].mana_value)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
         // UrzaTerrainValue's shape: every required conjunction must be
         // matched by at least one battlefield permanent `controller`
         // controls, and one permanent must carry both subtypes of the pair
@@ -3677,7 +3907,8 @@ fn unblocked_attacker_return_candidates(
             let definition = card_def::CARD_DEFS.get(object.card_def as usize)?;
             (object.zone == Zone::Battlefield
                 && object.controller == player
-                && definition.has_type(CardType::Creature)
+                && definition.is_executable()
+                && object_has_type(state, attacker, CardType::Creature)
                 && !already_chosen
                     .iter()
                     .any(|binding| binding.object == attacker))
@@ -3695,6 +3926,51 @@ fn activation_mana_cost(components: &[CostComponent]) -> Option<&Cost> {
         CostComponent::Mana(cost) => Some(cost),
         _ => None,
     })
+}
+
+/// `cost` net of `CardDef::activated_ability_generic_reductions` when
+/// `components` is the cost of one of `source`'s reduced activated abilities
+/// (Eiganjo's channel: `{1}` less per legendary creature its activator
+/// controls). Only generic mana is reduced, never below zero. Activated
+/// ability costs are generated `'static` slices, so the ability is identified
+/// by the identity of its cost slice.
+fn reduced_activation_mana_cost(
+    cost: &Cost,
+    components: &[CostComponent],
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+) -> Cost {
+    let def = &card_def::CARD_DEFS[state.objects.get(source).card_def as usize];
+    let mut reduced = *cost;
+    for reduction in def.activated_ability_generic_reductions {
+        let Some(ability) = def
+            .activated_abilities
+            .get(usize::from(reduction.ability_index))
+        else {
+            continue;
+        };
+        if !std::ptr::eq(ability.cost, components) {
+            continue;
+        }
+        let count = match reduction.per {
+            card_def::ActivatedAbilityReductionCountDef::ControlledLegendaryCreatures => state
+                .players[player.index()]
+            .battlefield
+            .iter()
+            .filter(|&&id| {
+                object_has_type(state, id, CardType::Creature)
+                    && card_def::CARD_DEFS[state.objects.get(id).card_def as usize]
+                        .supertypes
+                        .contains(&card_def::Supertype::Legendary)
+            })
+            .count(),
+        };
+        reduced.generic = reduced
+            .generic
+            .saturating_sub(u8::try_from(count).unwrap_or(u8::MAX));
+    }
+    reduced
 }
 
 fn payable_activation_cost_object_candidates(
@@ -3817,6 +4093,7 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                 saw_source_changing_component = true;
             }
             CostComponent::SacrificeControlled { count, .. }
+            | CostComponent::SacrificeOtherControlledCreatures(count)
             | CostComponent::TapControlled { count, .. } => {
                 if *count == 0 {
                     return false;
@@ -3948,6 +4225,7 @@ fn can_pay_activation_components_with_x(
         return !unblocked_attacker_return_candidates(player, state, &[]).is_empty();
     }
     if let Some(cost) = activation_mana_cost(components) {
+        let cost = &reduced_activation_mana_cost(cost, components, player, source, state);
         let plan = if components
             .iter()
             .any(|component| matches!(component, CostComponent::Tap))
@@ -3986,10 +4264,10 @@ fn permanent_matches_return_filter(
             definition.has_type(CardType::Land) && has_effective_subtype(state, object_id, subtype)
         }
         PermanentFilterDef::CreatureWithColor(color) => {
-            definition.has_type(CardType::Creature)
+            object_has_type(state, object_id, CardType::Creature)
                 && object_color_mask(state, object_id) & card_def::mana_color_mask(color) != 0
         }
-        PermanentFilterDef::Artifact => definition.has_type(CardType::Artifact),
+        PermanentFilterDef::Artifact => object_has_type(state, object_id, CardType::Artifact),
     }
 }
 
@@ -4061,12 +4339,12 @@ fn can_pay_components(
         let ok = match c {
             CostComponent::Tap => {
                 let obj = state.objects.get(source);
-                let def = &card_def::CARD_DEFS[obj.card_def as usize];
                 // 302.6: a *creature's* tap-cost ability needs continuous
                 // control since the turn began, unless it has haste
-                // (702.10c; Fanatical Firebrand).
+                // (702.10c; Fanatical Firebrand). That includes a land
+                // animated into a creature (Mishra's Foundry).
                 !(obj.tapped
-                    || (def.has_type(CardType::Creature)
+                    || (object_has_type(state, source, CardType::Creature)
                         && obj.summoning_sick
                         && !has_effective_keyword(state, source, Keywords::HASTE)))
             }
@@ -4086,6 +4364,10 @@ fn can_pay_components(
                 hand_other >= *n as usize
             }
             CostComponent::SacrificeLands(n) => count_controlled_lands(player, state) >= *n as u32,
+            CostComponent::SacrificeOtherControlledCreatures(count) => {
+                sacrificeable_other_controlled_creatures(player, source, state, &[]).len()
+                    >= usize::from(*count)
+            }
             CostComponent::SacrificeControlled { count, filter } => {
                 sacrificeable_controlled_permanents(player, *filter, state, &[]).len()
                     >= usize::from(*count)
@@ -4104,7 +4386,13 @@ fn can_pay_components(
             CostComponent::ReturnControlledUnblockedAttackerToOwnersHand => {
                 !unblocked_attacker_return_candidates(player, state, &[]).is_empty()
             }
-            CostComponent::Mana(cost) => mana::can_pay(cost, 0, player, state).is_some(),
+            CostComponent::Mana(cost) => mana::can_pay(
+                &reduced_activation_mana_cost(cost, components, player, source, state),
+                0,
+                player,
+                state,
+            )
+            .is_some(),
             CostComponent::PayLife(amount) => {
                 state.players[player.index()].life >= i32::from(*amount)
             }
@@ -4196,16 +4484,15 @@ fn pay_cost_components_with_x(
     .is_some()
 }
 
-/// Pays a component cost like `pay_cost_components_with_x`, returning the
-/// mana it spent on success.
-fn pay_cost_components_spending_mana(
-    state: &mut GameState,
+/// Validate selected component objects without deriving mana or changing state.
+/// Return tap-cost sources that a separate mana planner must reserve.
+fn validate_cost_component_choices_v1(
+    state: &GameState,
     player: PlayerId,
     source: ObjectId,
     components: &[CostComponent],
     object_cost_chosen: &[ObjectId],
-    x_value: u8,
-) -> Option<u16> {
+) -> Option<Vec<ObjectId>> {
     if !component_payment_shape_supported(components) {
         return None;
     }
@@ -4254,6 +4541,9 @@ fn pay_cost_components_spending_mana(
         }
     }
     let sacrifice_controlled = components.iter().find_map(|component| match component {
+        CostComponent::SacrificeOtherControlledCreatures(count) => {
+            Some((usize::from(*count), PermanentFilter::Creature))
+        }
         CostComponent::SacrificeControlled { count, filter } => {
             Some((usize::from(*count), *filter))
         }
@@ -4281,15 +4571,18 @@ fn pay_cost_components_spending_mana(
             .iter()
             .enumerate()
             .any(|(index, id)| object_cost_chosen[..index].contains(id));
+        let excludes_source = sacrifices_other_creatures(components);
+        let other_candidates = excludes_source
+            .then(|| sacrificeable_other_controlled_creatures(player, source, state, &[]));
         let invalid = object_cost_chosen.iter().any(|id| {
+            if let Some(candidates) = &other_candidates {
+                return !candidates.contains(id);
+            }
             !state.players[player.index()].battlefield.contains(id)
                 || state.objects.try_get(*id).is_none_or(|object| {
                     object.controller != player
                         || object.zone != Zone::Battlefield
-                        || !permanent_matches_filter(
-                            &card_def::CARD_DEFS[object.card_def as usize],
-                            filter,
-                        )
+                        || !permanent_matches_filter(state, *id, filter)
                 })
         });
         let aliases_source_departure = object_cost_chosen.contains(&source)
@@ -4385,10 +4678,6 @@ fn pay_cost_components_spending_mana(
         return None;
     }
 
-    // Derive the sole mana plan before applying any state-changing component.
-    // This keeps a restored or forward-generated unaffordable shape from
-    // partially paying life/discard-adjacent components before failing.
-    let mana_cost = activation_mana_cost(components);
     let mut reserved = Vec::new();
     if components
         .iter()
@@ -4402,7 +4691,27 @@ fn pay_cost_components_spending_mana(
     if tap_filter.is_some() || tap_controlled.is_some() {
         reserved.extend(object_cost_chosen.iter().copied());
     }
+    Some(reserved)
+}
+
+/// Pays a component cost like `pay_cost_components_with_x`, returning the
+/// mana it spent on success.
+fn pay_cost_components_spending_mana(
+    state: &mut GameState,
+    player: PlayerId,
+    source: ObjectId,
+    components: &[CostComponent],
+    object_cost_chosen: &[ObjectId],
+    x_value: u8,
+) -> Option<u16> {
+    let reserved =
+        validate_cost_component_choices_v1(state, player, source, components, object_cost_chosen)?;
+    // Derive the sole mana plan before applying any state-changing component.
+    // This keeps a restored or forward-generated unaffordable shape from
+    // partially paying life/discard-adjacent components before failing.
+    let mana_cost = activation_mana_cost(components);
     let mana_plan = mana_cost.map(|cost| {
+        let cost = &reduced_activation_mana_cost(cost, components, player, source, state);
         if reserved.is_empty() {
             mana::can_pay(cost, x_value, player, state)
         } else {
@@ -4413,6 +4722,27 @@ fn pay_cost_components_spending_mana(
         return None;
     }
     let mana_plan = mana_plan.flatten();
+    commit_cost_components_from_plan_v1(
+        state,
+        player,
+        source,
+        components,
+        object_cost_chosen,
+        mana_plan.as_ref(),
+    )
+}
+
+/// Commit an already validated component group using its previously determined
+/// ordinary mana plan. Spell finalization can pass only nonmana components
+/// after its combined payment; the legacy Convoke arm remains unchanged here.
+fn commit_cost_components_from_plan_v1(
+    state: &mut GameState,
+    player: PlayerId,
+    source: ObjectId,
+    components: &[CostComponent],
+    object_cost_chosen: &[ObjectId],
+    mana_plan: Option<&mana::PaymentPlan>,
+) -> Option<u16> {
     let mut mana_spent = 0;
     for c in components {
         match c {
@@ -4433,7 +4763,8 @@ fn pay_cost_components_spending_mana(
                 );
                 commit_sacrifice(state, object_cost_chosen);
             }
-            CostComponent::SacrificeControlled { count, .. } => {
+            CostComponent::SacrificeControlled { count, .. }
+            | CostComponent::SacrificeOtherControlledCreatures(count) => {
                 debug_assert_eq!(object_cost_chosen.len(), usize::from(*count));
                 commit_sacrifice(state, object_cost_chosen);
             }
@@ -4503,7 +4834,7 @@ fn pay_cost_components_spending_mana(
                 mana_spent = pay_plan(
                     state,
                     player,
-                    mana_plan.as_ref().expect(
+                    mana_plan.expect(
                         "a supported component slice has at most one preflighted mana cost",
                     ),
                 );
@@ -4529,11 +4860,8 @@ fn pay_cost_components_spending_mana(
             CostComponent::ConvokeMana(cost) => {
                 #[cfg(feature = "standard-magezero-fixtures")]
                 {
-                    let Some((creatures, plan)) =
-                        crate::standard_keywords_v1::convoke_plan(cost, player, state)
-                    else {
-                        return None;
-                    };
+                    let (creatures, plan) =
+                        crate::standard_keywords_v1::convoke_plan(cost, player, state)?;
                     for &creature in &creatures {
                         event::propose_and_commit(state, ProposedEvent::tap(creature));
                     }
@@ -4963,14 +5291,21 @@ fn sacrificeable_lands(
 /// `pub(crate)` so `effect::execute` (`EffectOp::PumpAllUntilEndOfTurn`) can
 /// reuse the identical type-matching predicate a `SacrificeControlled` cost
 /// uses to find candidates, rather than duplicating it.
-pub(crate) fn permanent_matches_filter(def: &card_def::CardDef, filter: PermanentFilter) -> bool {
+pub(crate) fn permanent_matches_filter(
+    state: &GameState,
+    id: ObjectId,
+    filter: PermanentFilter,
+) -> bool {
     match filter {
         PermanentFilter::ArtifactOrCreature => {
-            def.has_type(CardType::Artifact) || def.has_type(CardType::Creature)
+            object_has_type(state, id, CardType::Artifact)
+                || object_has_type(state, id, CardType::Creature)
         }
-        PermanentFilter::Artifact => def.has_type(CardType::Artifact),
-        PermanentFilter::Creature => def.has_type(CardType::Creature),
-        PermanentFilter::Land => def.is_land,
+        PermanentFilter::Artifact => object_has_type(state, id, CardType::Artifact),
+        PermanentFilter::Creature => object_has_type(state, id, CardType::Creature),
+        PermanentFilter::Land => {
+            card_def::CARD_DEFS[state.objects.get(id).card_def as usize].is_land
+        }
     }
 }
 
@@ -4993,7 +5328,38 @@ fn sacrificeable_controlled_permanents(
             let object = state.objects.get(id);
             object.zone == Zone::Battlefield
                 && object.controller == player
-                && permanent_matches_filter(&card_def::CARD_DEFS[object.card_def as usize], filter)
+                && permanent_matches_filter(state, id, filter)
+        })
+        .collect()
+}
+
+fn sacrifices_other_creatures(components: &[CostComponent]) -> bool {
+    components.iter().any(|component| {
+        matches!(
+            component,
+            CostComponent::SacrificeOtherControlledCreatures(_)
+        )
+    })
+}
+
+/// Current control and effective type, regardless of ownership. Tokens qualify;
+/// neither tapping nor summoning sickness prevents sacrificing a creature.
+fn sacrificeable_other_controlled_creatures(
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+    already_chosen: &[ObjectId],
+) -> Vec<ObjectId> {
+    state
+        .objects
+        .iter()
+        .filter_map(|(id, object)| {
+            (id != source
+                && !already_chosen.contains(&id)
+                && object.zone == Zone::Battlefield
+                && object.controller == player
+                && object_has_type(state, id, CardType::Creature))
+            .then_some(id)
         })
         .collect()
 }
@@ -5003,6 +5369,7 @@ fn sacrificeable_controlled_permanents(
 /// while an activation must reject a selected permanent that left and later
 /// returned before payment.
 fn activation_controlled_cost_candidates(
+    excluded_source: Option<ObjectId>,
     player: PlayerId,
     filter: PermanentFilter,
     tap: bool,
@@ -5013,7 +5380,9 @@ fn activation_controlled_cost_candidates(
         .iter()
         .map(|binding| binding.object)
         .collect::<Vec<_>>();
-    let candidates = if tap {
+    let candidates = if let Some(source) = excluded_source {
+        sacrificeable_other_controlled_creatures(player, source, state, &already_chosen_ids)
+    } else if tap {
         tappable_controlled_permanents(player, filter, state, &already_chosen_ids)
     } else {
         sacrificeable_controlled_permanents(player, filter, state, &already_chosen_ids)
@@ -5051,6 +5420,9 @@ fn controlled_permanent_sacrifice_in(
 ) -> Option<(u8, PermanentFilter)> {
     components.iter().find_map(|component| match component {
         CostComponent::SacrificeControlled { count, filter } => Some((*count, *filter)),
+        CostComponent::SacrificeOtherControlledCreatures(count) => {
+            Some((*count, PermanentFilter::Creature))
+        }
         _ => None,
     })
 }
@@ -5069,6 +5441,9 @@ fn activation_controlled_object_cost(
 ) -> Option<(u8, PermanentFilter, bool)> {
     components.iter().find_map(|component| match component {
         CostComponent::SacrificeControlled { count, filter } => Some((*count, *filter, false)),
+        CostComponent::SacrificeOtherControlledCreatures(count) => {
+            Some((*count, PermanentFilter::Creature, false))
+        }
         CostComponent::TapControlled { count, filter } => Some((*count, *filter, true)),
         _ => None,
     })
@@ -5219,6 +5594,7 @@ fn checked_graveyard_exile_candidates(
 /// cost calculation for this certified shape. A future reducer paired with
 /// Kicker or another generic additional cost must deliberately extend this
 /// helper across the combined total rather than silently reusing it.
+#[cfg(test)]
 fn effective_normal_cast_cost(
     def: &card_def::CardDef,
     player: PlayerId,
@@ -5233,12 +5609,7 @@ fn effective_normal_cast_cost_with_targets(
     targets: &[Target],
     state: &GameState,
 ) -> Cost {
-    static_adjusted_spell_cost(
-        printed_normal_cast_cost_with_targets(def, player, targets, state),
-        def.types,
-        player,
-        state,
-    )
+    printed_normal_cast_cost_with_targets(def, player, targets, state)
 }
 
 /// Applies permanents' statics that make spells cost more or less (Thalia,
@@ -5268,16 +5639,84 @@ fn static_adjusted_spell_cost(
     cost
 }
 
+pub(crate) fn static_instant_sorcery_reduction_for_v1(name: &str) -> Option<u32> {
+    if !cfg!(feature = "limited-fdn-fixtures") {
+        return None;
+    }
+    match name {
+        "Mocking Sprite" | "Archmage of Runes" => Some(1),
+        _ => None,
+    }
+}
+
+// Selected-cost collection precedes casting-route integration.
+#[allow(dead_code)]
+fn spell_cost_generic_modifiers_v1(
+    state: &GameState,
+    types: &[CardType],
+    caster: PlayerId,
+) -> (u32, u32) {
+    #[cfg(feature = "standard-magezero-fixtures")]
+    let (increase, reduction) = {
+        let (increase, reduction) =
+            crate::standard_statics_v1::spell_cost_generic_modifiers(state, types, caster);
+        (u32::from(increase), u32::from(reduction))
+    };
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
+    let (increase, reduction) = (0, 0);
+    if !(types.contains(&CardType::Instant) || types.contains(&CardType::Sorcery)) {
+        return (increase, reduction);
+    }
+    let reduction = state
+        .objects
+        .iter()
+        .fold(reduction, |total, (source, object)| {
+            if object.zone != Zone::Battlefield
+                || object.controller != caster
+                || object.v4.face_index != 0
+                || !crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+            {
+                return total;
+            }
+            let definition = &card_def::CARD_DEFS[object.card_def as usize];
+            if !definition.is_executable() {
+                return total;
+            }
+            total.saturating_add(
+                static_instant_sorcery_reduction_for_v1(definition.name).unwrap_or(0),
+            )
+        });
+    (increase, reduction)
+}
+
 fn printed_normal_cast_cost_with_targets(
     def: &card_def::CardDef,
     player: PlayerId,
     targets: &[Target],
     state: &GameState,
 ) -> Cost {
+    // Increases precede every reduction. Floor after applying both battlefield
+    // modifiers and this spell's own reducer, rather than flooring the own
+    // reducer before a later tax can consume its excess.
+    let mut cost = static_adjusted_spell_cost(def.cost, def.types, player, state);
     let Some(reducer) = def.generic_cost_reduction else {
-        return def.cost;
+        return cost;
     };
-    let count = match reducer.count {
+    let count = normal_cast_reduction_count(reducer.count, player, targets, state);
+    let reduction = count.saturating_mul(u32::from(reducer.generic_per_count));
+    cost.generic = cost
+        .generic
+        .saturating_sub(reduction.min(u32::from(u8::MAX)) as u8);
+    cost
+}
+
+fn normal_cast_reduction_count(
+    count: card_def::DynamicCountDef,
+    player: PlayerId,
+    targets: &[Target],
+    state: &GameState,
+) -> u32 {
+    match count {
         card_def::DynamicCountDef::ControllerBattlefieldAnyType(types) => state.players
             [player.index()]
         .battlefield
@@ -5312,10 +5751,9 @@ fn printed_normal_cast_cost_with_targets(
             let mut lacks_subtype = false;
             for &object_id in &state.players[player.index()].battlefield {
                 let object = state.objects.get(object_id);
-                let def = &card_def::CARD_DEFS[object.card_def as usize];
                 if object.zone != Zone::Battlefield
                     || object.controller != player
-                    || !def.has_type(CardType::Creature)
+                    || !object_has_type(state, object_id, CardType::Creature)
                 {
                     continue;
                 }
@@ -5341,13 +5779,23 @@ fn printed_normal_cast_cost_with_targets(
                 })
             }))
         }
-    };
-    let reduction = count.saturating_mul(u32::from(reducer.generic_per_count));
-    let mut cost = def.cost;
-    cost.generic = cost
-        .generic
-        .saturating_sub(reduction.min(u32::from(u8::MAX)) as u8);
-    cost
+        card_def::DynamicCountDef::ControllerBattlefieldSubtype(subtype)
+        | card_def::DynamicCountDef::ControllerHasPermanentSubtype(subtype) => {
+            let matches = state.objects.iter().filter(|(id, object)| {
+                object.zone == Zone::Battlefield
+                    && object.controller == player
+                    && has_effective_subtype(state, *id, subtype)
+            });
+            if matches!(
+                count,
+                card_def::DynamicCountDef::ControllerHasPermanentSubtype(_)
+            ) {
+                u32::from(matches.take(1).count() != 0)
+            } else {
+                matches.count() as u32
+            }
+        }
+    }
 }
 
 fn normal_cast_cost_depends_on_targets(def: &card_def::CardDef) -> bool {
@@ -5370,8 +5818,21 @@ fn normal_cast_target_prefix_is_payable(
     state: &GameState,
 ) -> bool {
     if !normal_cast_cost_depends_on_targets(def) {
-        let cost = effective_normal_cast_cost(def, controller, state);
-        return normal_cost_is_payable(def, &cost, 0, controller, state);
+        return spell_costs_v1::selected_spell_quote_v1(
+            def,
+            spell,
+            state.objects.get(spell).zone,
+            CastMethodV4::Normal,
+            false,
+            0,
+            0,
+            targets,
+            &[],
+            controller,
+            state,
+            &[],
+        )
+        .is_some();
     }
     let source = targeting_source_for_object(state, spell);
     if !target_prefix_can_complete_for_controller_and_source(
@@ -5379,8 +5840,22 @@ fn normal_cast_target_prefix_is_payable(
     ) {
         return false;
     }
-    let cost = effective_normal_cast_cost_with_targets(def, controller, targets, state);
-    if normal_cost_is_payable(def, &cost, 0, controller, state) {
+    if spell_costs_v1::selected_spell_quote_v1(
+        def,
+        spell,
+        state.objects.get(spell).zone,
+        CastMethodV4::Normal,
+        false,
+        0,
+        0,
+        targets,
+        &[],
+        controller,
+        state,
+        &[],
+    )
+    .is_some()
+    {
         return true;
     }
     completable_next_targets_for_controller_and_source(spec, targets, controller, source, state)
@@ -5423,29 +5898,6 @@ fn completable_next_cast_targets(
             )
         })
         .collect()
-}
-
-/// Whether a spell's normal-mode total cost (`effective_normal_cast_cost`'s
-/// output: colored/hybrid/phyrexian pips plus generic, already net of any
-/// `generic_cost_reduction`) is currently payable, accounting for Delve
-/// (`CardDef::delve`) when present. Centralizes the "ordinary `mana::
-/// can_pay`, or `mana::delve_payment_plan` for a delve spell" branch so
-/// every payability check (`is_castable_now`'s offer,
-/// `remaining_cast_payment_is_payable`'s mid-cast re-check) agrees with
-/// `finalize_cast`'s actual payment about what "payable" means for a delve
-/// spell -- see `mana::delve_payment_plan`'s doc for the plan itself.
-fn normal_cost_is_payable(
-    def: &card_def::CardDef,
-    normal_cost: &Cost,
-    x_value: u8,
-    player: PlayerId,
-    state: &GameState,
-) -> bool {
-    if def.delve {
-        mana::delve_payment_plan(normal_cost, x_value, player, state).is_some()
-    } else {
-        mana::can_pay(normal_cost, x_value, player, state).is_some()
-    }
 }
 
 /// Returns the supported Omen definition for the current cast pipeline.
@@ -5603,131 +6055,63 @@ fn viable_pending_spell_forms(
     pending: &PendingCast,
     state: &GameState,
 ) -> Vec<u8> {
-    if let Some(bestow) = supported_bestow(def) {
+    let alternative = if supported_bestow(def).is_some() {
+        Some((CastMethodV4::Bestow, &[CardType::Enchantment][..]))
+    } else if let Some(adventure) = supported_adventure(def) {
+        (pending.origin_zone == Zone::Hand).then_some((CastMethodV4::Omen, adventure.types))
+    } else {
+        supported_omen(def).map(|omen| (CastMethodV4::Omen, omen.types))
+    };
+    if supported_bestow(def).is_some()
+        || supported_adventure(def).is_some()
+        || supported_omen(def).is_some()
+    {
         let mut forms = Vec::with_capacity(2);
-        if target_prefix_can_complete_for_controller_and_source(
-            def.target_spec,
-            &pending.targets_chosen,
-            pending.controller,
-            targeting_source_for_object(state, pending.spell),
-            state,
-        ) && pending_cast_form_timing_ok(def.types, def.keywords, pending, state)
-            && mana::can_pay(&def.cost, 0, pending.controller, state).is_some()
+        let source = targeting_source_for_object(state, pending.spell);
+        for (form, method, types, keywords) in
+            std::iter::once((0, CastMethodV4::Normal, def.types, def.keywords))
+                .chain(alternative.map(|(method, types)| (1, method, types, Keywords::NONE)))
         {
-            forms.push(0);
-        }
-        if target_prefix_can_complete_for_controller_and_source(
-            bestow.target_spec,
-            &pending.targets_chosen,
-            pending.controller,
-            targeting_source_for_object(state, pending.spell),
-            state,
-        ) && pending_cast_form_timing_ok(
-            &[CardType::Enchantment],
-            Keywords::NONE,
-            pending,
-            state,
-        ) && mana::can_pay(
-            &static_adjusted_spell_cost(
-                bestow.cost,
-                &[CardType::Enchantment],
+            let spec = spell_form_target_spec(def, form).expect("supported form owns target spec");
+            if target_prefix_can_complete_for_controller_and_source(
+                spec,
+                &pending.targets_chosen,
                 pending.controller,
+                source,
                 state,
-            ),
-            0,
-            pending.controller,
-            state,
-        )
-        .is_some()
-        {
-            forms.push(1);
+            ) && pending_cast_form_timing_ok(types, keywords, pending, state)
+                && pending_cast_quote_v1(
+                    def,
+                    pending,
+                    method,
+                    pending.kicked == Some(true),
+                    0,
+                    state,
+                )
+                .is_some()
+            {
+                forms.push(form);
+            }
         }
         return forms;
     }
-    if let Some(adventure) = supported_adventure(def) {
-        let mut forms = Vec::with_capacity(2);
-        let normal_cost = effective_normal_cast_cost(def, pending.controller, state);
-        if target_prefix_can_complete_for_controller_and_source(
-            def.target_spec,
-            &pending.targets_chosen,
-            pending.controller,
-            targeting_source_for_object(state, pending.spell),
-            state,
-        ) && pending_cast_form_timing_ok(def.types, def.keywords, pending, state)
-            && mana::can_pay(&normal_cost, 0, pending.controller, state).is_some()
-        {
-            forms.push(0);
-        }
-        // The Adventure side is only ever a Hand-zone cast: a card sitting
-        // in Exile can only be castable via `ObjectStateV4::on_adventure`
-        // (the creature face only), never modally re-offered as the
-        // Adventure again.
-        let cast_from_hand = state
-            .objects
-            .get(pending.spell)
-            .v4
-            .spell_cast_origin
-            .is_some_and(|origin| origin.origin_zone == Zone::Hand);
-        if cast_from_hand
-            && target_prefix_can_complete_for_controller_and_source(
-                adventure.target_spec,
-                &pending.targets_chosen,
-                pending.controller,
-                targeting_source_for_object(state, pending.spell),
-                state,
-            )
-            && pending_cast_form_timing_ok(adventure.types, Keywords::NONE, pending, state)
-            && mana::can_pay(
-                &static_adjusted_spell_cost(
-                    adventure.cost,
-                    adventure.types,
-                    pending.controller,
-                    state,
-                ),
+    let mut modes = viable_printed_spell_modes(def, pending.spell, pending.controller, state);
+    if def.mode2.is_some() || def.mode3.is_some() {
+        modes.retain(|&mode| {
+            let mut selected = pending.clone();
+            selected.mode_chosen = Some(mode);
+            pending_cast_quote_v1(
+                def,
+                &selected,
+                CastMethodV4::Normal,
+                pending.kicked == Some(true),
                 0,
-                pending.controller,
                 state,
             )
             .is_some()
-        {
-            forms.push(1);
-        }
-        return forms;
+        });
     }
-    let Some(omen) = supported_omen(def) else {
-        return viable_printed_spell_modes(def, pending.spell, pending.controller, state);
-    };
-    let mut forms = Vec::with_capacity(2);
-    let normal_cost = effective_normal_cast_cost(def, pending.controller, state);
-    if target_prefix_can_complete_for_controller_and_source(
-        def.target_spec,
-        &pending.targets_chosen,
-        pending.controller,
-        targeting_source_for_object(state, pending.spell),
-        state,
-    ) && pending_cast_form_timing_ok(def.types, def.keywords, pending, state)
-        && mana::can_pay(&normal_cost, 0, pending.controller, state).is_some()
-    {
-        forms.push(0);
-    }
-    if target_prefix_can_complete_for_controller_and_source(
-        omen.target_spec,
-        &pending.targets_chosen,
-        pending.controller,
-        targeting_source_for_object(state, pending.spell),
-        state,
-    ) && pending_cast_form_timing_ok(omen.types, Keywords::NONE, pending, state)
-        && mana::can_pay(
-            &static_adjusted_spell_cost(omen.cost, omen.types, pending.controller, state),
-            0,
-            pending.controller,
-            state,
-        )
-        .is_some()
-    {
-        forms.push(1);
-    }
-    forms
+    modes
 }
 
 fn payable_cast_modes(
@@ -5736,30 +6120,29 @@ fn payable_cast_modes(
     state: &GameState,
 ) -> Vec<CastMode> {
     let mut modes = Vec::new();
-    let normal = with_spree_surcharge(
-        def,
-        pending.mode_chosen.unwrap_or(0),
-        effective_normal_cast_cost_with_targets(
-            def,
-            pending.controller,
-            &pending.targets_chosen,
-            state,
-        ),
-    );
     if pending_cast_form_timing_ok(def.types, def.keywords, pending, state)
-        && mana::can_pay(&normal, 0, pending.controller, state).is_some()
+        && pending_cast_quote_v1(
+            def,
+            pending,
+            CastMethodV4::Normal,
+            pending.kicked == Some(true),
+            0,
+            state,
+        )
+        .is_some()
     {
         modes.push(CastMode::Normal);
     }
     if pending_cast_form_timing_ok(def.types, def.keywords, pending, state)
-        && def.alt_cost.is_some_and(|alt| {
-            alt_cost_condition_met(
-                alt.condition,
-                pending.controller,
-                pending.origin_zone,
-                state,
-            ) && can_pay_components(alt.components, pending.controller, pending.spell, state)
-        })
+        && pending_cast_quote_v1(
+            def,
+            pending,
+            CastMethodV4::Alternative,
+            pending.kicked == Some(true),
+            0,
+            state,
+        )
+        .is_some()
     {
         modes.push(CastMode::Alternative);
     }
@@ -5793,10 +6176,53 @@ fn pending_cast_selected_mana_cost(
     }
 }
 
-fn maximum_payable_x(cost: &Cost, player: PlayerId, state: &GameState) -> Option<u8> {
-    (0..=u8::MAX)
-        .rev()
-        .find(|&x| mana::can_pay(cost, x, player, state).is_some())
+fn pending_cast_quote_v1(
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    method: CastMethodV4,
+    kicked: bool,
+    x: u8,
+    state: &GameState,
+) -> Option<spell_costs_v1::SpellManaPaymentV1> {
+    let reserved_graveyard = if pending.optional_additional_cost_paid == Some(true)
+        && matches!(
+            def.optional_additional_cost,
+            Some(OptionalAdditionalCostDef::CollectEvidence { .. })
+        ) {
+        pending
+            .optional_additional_cost_chosen
+            .iter()
+            .map(|binding| binding.object)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    spell_costs_v1::selected_spell_quote_v1(
+        def,
+        pending.spell,
+        pending.origin_zone,
+        method,
+        kicked,
+        pending.mode_chosen.unwrap_or(0),
+        x,
+        &pending.targets_chosen,
+        &pending.sacrifice_chosen,
+        pending.controller,
+        state,
+        &reserved_graveyard,
+    )
+}
+
+fn maximum_payable_x(
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    state: &GameState,
+) -> Option<u8> {
+    let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
+    (0..=u8::MAX).rev().find(|&x| {
+        pending_cast_quote_v1(def, pending, method, pending.kicked == Some(true), x, state)
+            .is_some()
+    })
 }
 
 /// Returns the one graveyard cast method this definition can expose through
@@ -5857,36 +6283,96 @@ fn is_castable_now(
     }
 
     match cast_method {
-        CastMethodV4::Flashback => def.flashback.as_ref().is_some_and(|flashback| {
-            can_pay_components(flashback.cost, player, id, state)
-                && def
-                    .additional_cost
-                    .is_none_or(|cost| can_pay_components(cost, player, id, state))
-        }),
-        CastMethodV4::Escape => def.escape.as_ref().is_some_and(|escape| {
+        CastMethodV4::Flashback => spell_costs_v1::selected_spell_quote_v1(
+            def,
+            id,
+            state.objects.get(id).zone,
+            cast_method,
+            false,
+            0,
+            0,
+            &[],
+            &[],
+            player,
+            state,
+            &[],
+        )
+        .is_some(),
+        CastMethodV4::Escape => def.escape.as_ref().is_some_and(|_escape| {
             def.additional_cost.is_none()
                 && def.kicker_cost.is_none()
                 && def.generic_cost_reduction.is_none()
-                && can_pay_components(escape.cost, player, id, state)
+                && spell_costs_v1::selected_spell_quote_v1(
+                    def,
+                    id,
+                    state.objects.get(id).zone,
+                    cast_method,
+                    false,
+                    0,
+                    0,
+                    &[],
+                    &[],
+                    player,
+                    state,
+                    &[],
+                )
+                .is_some()
         }),
         CastMethodV4::Normal => {
             // Every check below is a pure read of `state`, so they are
             // ordered cheapest-first and short-circuit: a spell outside its
             // timing window never pays for target or mana enumeration.
             let normal_ok = || {
-                normal_cast_target_prefix_is_payable(def, id, def.target_spec, player, &[], state)
+                if normal_cast_cost_depends_on_targets(def) {
+                    normal_cast_target_prefix_is_payable(
+                        def,
+                        id,
+                        def.target_spec,
+                        player,
+                        &[],
+                        state,
+                    )
+                } else {
+                    viable_printed_spell_modes(def, id, player, state)
+                        .into_iter()
+                        .any(|mode| {
+                            spell_costs_v1::selected_spell_quote_v1(
+                                def,
+                                id,
+                                state.objects.get(id).zone,
+                                CastMethodV4::Normal,
+                                false,
+                                mode,
+                                0,
+                                &[],
+                                &[],
+                                player,
+                                state,
+                                &[],
+                            )
+                            .is_some()
+                        })
+                }
             };
             let alt_ok = || {
-                def.alt_cost.is_some_and(|alt| {
-                    alt_cost_condition_met(alt.condition, player, state.objects.get(id).zone, state)
-                        && can_pay_components(alt.components, player, id, state)
-                })
+                spell_costs_v1::selected_spell_quote_v1(
+                    def,
+                    id,
+                    state.objects.get(id).zone,
+                    CastMethodV4::Alternative,
+                    false,
+                    0,
+                    0,
+                    &[],
+                    &[],
+                    player,
+                    state,
+                    &[],
+                )
+                .is_some()
             };
             let main_ok = main_timing_ok
                 && (normal_ok() || alt_ok())
-                && def
-                    .additional_cost
-                    .is_none_or(|add| can_pay_components(add, player, id, state))
                 && !viable_printed_spell_modes(def, id, player, state).is_empty();
             let omen_ok = || {
                 supported_omen(def).is_some_and(|omen| {
@@ -5899,11 +6385,19 @@ fn is_castable_now(
                             targeting_source_for_object(state, id),
                             state,
                         )
-                        && mana::can_pay(
-                            &static_adjusted_spell_cost(omen.cost, omen.types, player, state),
+                        && spell_costs_v1::selected_spell_quote_v1(
+                            def,
+                            id,
+                            state.objects.get(id).zone,
+                            CastMethodV4::Omen,
+                            false,
+                            1,
                             0,
+                            &[],
+                            &[],
                             player,
                             state,
+                            &[],
                         )
                         .is_some()
                 })
@@ -5924,16 +6418,19 @@ fn is_castable_now(
                             targeting_source_for_object(state, id),
                             state,
                         )
-                        && mana::can_pay(
-                            &static_adjusted_spell_cost(
-                                bestow.cost,
-                                &[CardType::Enchantment],
-                                player,
-                                state,
-                            ),
+                        && spell_costs_v1::selected_spell_quote_v1(
+                            def,
+                            id,
+                            state.objects.get(id).zone,
+                            CastMethodV4::Bestow,
+                            false,
+                            1,
                             0,
+                            &[],
+                            &[],
                             player,
                             state,
+                            &[],
                         )
                         .is_some()
                 })
@@ -5954,16 +6451,19 @@ fn is_castable_now(
                             targeting_source_for_object(state, id),
                             state,
                         )
-                        && mana::can_pay(
-                            &static_adjusted_spell_cost(
-                                adventure.cost,
-                                adventure.types,
-                                player,
-                                state,
-                            ),
+                        && spell_costs_v1::selected_spell_quote_v1(
+                            def,
+                            id,
+                            state.objects.get(id).zone,
+                            CastMethodV4::Omen,
+                            false,
+                            1,
                             0,
+                            &[],
+                            &[],
                             player,
                             state,
+                            &[],
                         )
                         .is_some()
                 })
@@ -6088,6 +6588,25 @@ fn is_plotted_castable_now(player: PlayerId, id: ObjectId, state: &GameState) ->
         && def.is_castable()
         && !viable_printed_spell_modes(def, id, player, state).is_empty()
         && sorcery_speed_timing_ok(player, state)
+        && viable_printed_spell_modes(def, id, player, state)
+            .into_iter()
+            .any(|mode| {
+                spell_costs_v1::selected_spell_quote_v1(
+                    def,
+                    id,
+                    Zone::Exile,
+                    CastMethodV4::Plotted,
+                    false,
+                    mode,
+                    0,
+                    &[],
+                    &[],
+                    player,
+                    state,
+                    &[],
+                )
+                .is_some()
+            })
 }
 
 /// Hand cards `player` can currently afford to Plot (`CardDef::plot_cost`).
@@ -6127,7 +6646,6 @@ fn rich_mana_ability_is_payable(
     state: &GameState,
 ) -> bool {
     let object = state.objects.get(source);
-    let def = &card_def::CARD_DEFS[object.card_def as usize];
     if rich.max_activations_per_turn.is_some_and(|limit| {
         mana_ability_use_count(state, source, ability_index) >= u16::from(limit)
     }) {
@@ -6140,7 +6658,16 @@ fn rich_mana_ability_is_payable(
     }
     match rich.cost {
         ManaAbilityCostDef::TapSelf | ManaAbilityCostDef::TapAndSacrificeSelf => {
-            !(object.tapped || def.has_type(CardType::Creature) && object.summoning_sick)
+            !(object.tapped
+                || object_has_type(state, source, CardType::Creature) && object.summoning_sick)
+        }
+        ManaAbilityCostDef::TapSelfPayLife(life) => {
+            !(object.tapped
+                || object_has_type(state, source, CardType::Creature) && object.summoning_sick)
+                && mana::life_payment_affordable(
+                    i32::from(life),
+                    state.players[player.index()].life,
+                )
         }
         ManaAbilityCostDef::SacrificeSelf
         | ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf
@@ -6150,8 +6677,31 @@ fn rich_mana_ability_is_payable(
             // cheap checks: the flat-encode zero-allocation contract counts
             // on the short-circuit (tests/flat_action_allocation.rs).
             !(object.tapped
-                || def.has_type(CardType::Creature) && object.summoning_sick
+                || object_has_type(state, source, CardType::Creature) && object.summoning_sick
                 || mana_ability_cost_targets(player, source, state).is_empty())
+        }
+    }
+}
+
+/// Whether an additional mana ability's printed activation condition holds.
+/// Non-allocating: flat-action validation reaches it.
+fn mana_ability_condition_holds(
+    player: PlayerId,
+    source: ObjectId,
+    condition: card_def::ManaAbilityConditionDef,
+    state: &GameState,
+) -> bool {
+    match condition {
+        card_def::ManaAbilityConditionDef::ControllerControlsPermanentWithEitherSubtype {
+            first,
+            second,
+        } => state.players[player.index()].battlefield.iter().any(|&id| {
+            state.objects.get(id).zone == Zone::Battlefield
+                && (has_effective_subtype(state, id, first)
+                    || has_effective_subtype(state, id, second))
+        }),
+        card_def::ManaAbilityConditionDef::SourceEnteredThisTurn => {
+            state.objects.get(source).v4.entered_battlefield_this_turn
         }
     }
 }
@@ -6190,7 +6740,8 @@ pub(crate) fn available_mana_ability_choices_into(
     let primary_payable = if let Some(rich) = def.mana_ability_def {
         rich_mana_ability_is_payable(player, source, 0, rich, None, state)
     } else {
-        !(object.tapped || def.has_type(CardType::Creature) && object.summoning_sick)
+        !(object.tapped
+            || object_has_type(state, source, CardType::Creature) && object.summoning_sick)
     };
     if primary_payable {
         for &color in primary.as_slice() {
@@ -6215,14 +6766,22 @@ pub(crate) fn available_mana_ability_choices_into(
             *out = ManaColorSetV1::new();
             return;
         };
-        if rich_mana_ability_is_payable(
-            player,
-            source,
-            primary_ability_count + index,
-            additional.ability,
-            Some(additional.mana_cost),
-            state,
-        ) {
+        let condition_holds = def
+            .additional_mana_ability_conditions
+            .get(usize::from(index))
+            .copied()
+            .flatten()
+            .is_none_or(|condition| mana_ability_condition_holds(player, source, condition, state));
+        if condition_holds
+            && rich_mana_ability_is_payable(
+                player,
+                source,
+                primary_ability_count + index,
+                additional.ability,
+                Some(additional.mana_cost),
+                state,
+            )
+        {
             for &color in additional.colors {
                 if out.contains(color) {
                     *out = ManaColorSetV1::new();
@@ -6304,7 +6863,7 @@ pub(crate) fn mana_ability_cost_targets(
             object.controller == player
                 && object.zone == Zone::Battlefield
                 && !object.tapped
-                && card_def::CARD_DEFS[object.card_def as usize].has_type(CardType::Creature)
+                && object_has_type(state, candidate, CardType::Creature)
         })
         .collect()
 }
@@ -6383,8 +6942,7 @@ fn activate_mana_ability_for(
             .battlefield
             .iter()
             .filter(|&&candidate| {
-                let object = state.objects.get(candidate);
-                card_def::CARD_DEFS[object.card_def as usize].has_type(CardType::Creature)
+                object_has_type(state, candidate, CardType::Creature)
                     && has_effective_keyword(state, candidate, keyword)
             })
             .count()
@@ -6422,6 +6980,10 @@ fn activate_mana_ability_for(
             ManaAbilityCostDef::TapAndSacrificeSelf => {
                 event::propose_and_commit(state, ProposedEvent::tap(source));
                 commit_sacrifice(state, &[source]);
+            }
+            ManaAbilityCostDef::TapSelfPayLife(life) => {
+                event::propose_and_commit(state, ProposedEvent::tap(source));
+                event::propose_and_commit(state, ProposedEvent::life_loss(player, i32::from(life)));
             }
             ManaAbilityCostDef::None => {}
         }
@@ -6601,7 +7163,7 @@ fn can_attack(state: &GameState, id: ObjectId) -> bool {
         return false;
     }
     def.is_executable()
-        && def.has_type(CardType::Creature)
+        && object_has_type(state, id, CardType::Creature)
         && !obj.tapped
         && !has_effective_keyword(state, id, Keywords::DEFENDER)
         && (!obj.summoning_sick || has_effective_keyword(state, id, Keywords::HASTE))
@@ -6700,6 +7262,9 @@ fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
             }
             let def = &card_def::CARD_DEFS[obj.card_def as usize];
             if !def.is_executable() || !object_has_type(state, id, CardType::Creature) {
+                return false;
+            }
+            if crate::continuous_characteristics_v1::printed_cant_block(state, id) {
                 return false;
             }
             #[cfg(feature = "standard-magezero-fixtures")]
@@ -7096,97 +7661,71 @@ fn remaining_cast_payment_is_payable(
     staged_method: CastMethodV4,
 ) -> bool {
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-    let cast_method = finalized_cast_method(pending, staged_method, def);
-    let x_value = pending.x_value.unwrap_or(0);
-    let base_payable = match cast_method {
-        CastMethodV4::Normal => {
-            let normal = with_spree_surcharge(
-                def,
-                pending.mode_chosen.unwrap_or(0),
-                effective_normal_cast_cost_with_targets(
-                    def,
-                    pending.controller,
-                    &pending.targets_chosen,
-                    state,
-                ),
-            );
-            if pending.kicked == Some(true) {
-                def.kicker_cost.is_some_and(|kicker| {
-                    mana::can_pay_combined(&[&normal, &kicker], 0, pending.controller, state)
-                        .is_some()
-                })
-            } else {
-                normal_cost_is_payable(def, &normal, x_value, pending.controller, state)
-            }
-        }
-        CastMethodV4::Alternative => def.alt_cost.is_some_and(|alt| {
+    let method = finalized_cast_method(pending, staged_method, def);
+    if method == CastMethodV4::Alternative
+        && !def.alt_cost.is_some_and(|alt| {
             alt_cost_condition_met(
                 alt.condition,
                 pending.controller,
                 pending.origin_zone,
                 state,
-            ) && can_pay_components(alt.components, pending.controller, pending.spell, state)
-        }),
-        CastMethodV4::Flashback => def.flashback.as_ref().is_some_and(|flashback| {
-            can_pay_components(flashback.cost, pending.controller, pending.spell, state)
-        }),
-        CastMethodV4::Escape => def.escape.as_ref().is_some_and(|escape| {
-            can_pay_components(escape.cost, pending.controller, pending.spell, state)
-        }),
-        CastMethodV4::Madness => def
-            .madness_cost
-            .is_some_and(|cost| mana::can_pay(&cost, 0, pending.controller, state).is_some()),
-        CastMethodV4::Plotted => true,
-        CastMethodV4::Omen => {
-            if let Some(adventure) = supported_adventure(def) {
-                mana::can_pay(
-                    &static_adjusted_spell_cost(
-                        adventure.cost,
-                        adventure.types,
-                        pending.controller,
-                        state,
-                    ),
-                    x_value,
-                    pending.controller,
-                    state,
-                )
-                .is_some()
-            } else {
-                supported_omen(def).is_some_and(|omen| {
-                    mana::can_pay(
-                        &static_adjusted_spell_cost(
-                            omen.cost,
-                            omen.types,
-                            pending.controller,
-                            state,
-                        ),
-                        x_value,
-                        pending.controller,
-                        state,
-                    )
-                    .is_some()
-                })
-            }
-        }
-        CastMethodV4::Bestow => supported_bestow(def).is_some_and(|bestow| {
-            mana::can_pay(
-                &static_adjusted_spell_cost(
-                    bestow.cost,
-                    &[CardType::Enchantment],
-                    pending.controller,
-                    state,
-                ),
-                x_value,
-                pending.controller,
-                state,
             )
-            .is_some()
-        }),
-    };
-    base_payable
-        && def.additional_cost.is_none_or(|components| {
-            can_pay_components(components, pending.controller, pending.spell, state)
         })
+    {
+        return false;
+    }
+    let Some(selected) = spell_costs_v1::selected_spell_mana_costs_v1(
+        def,
+        method,
+        pending.kicked == Some(true),
+        pending.mode_chosen.unwrap_or(0),
+        &pending.targets_chosen,
+        pending.controller,
+        state,
+    ) else {
+        return false;
+    };
+    let Some(choices) = selected.component_choices_v1(
+        def,
+        method,
+        pending.controller,
+        state,
+        &pending.sacrifice_chosen,
+    ) else {
+        return false;
+    };
+    let groups = choices
+        .chosen_by_group
+        .iter()
+        .map(Vec::as_slice)
+        .collect::<Vec<_>>();
+    let reserved_graveyard = if pending.optional_additional_cost_paid == Some(true)
+        && matches!(
+            def.optional_additional_cost,
+            Some(OptionalAdditionalCostDef::CollectEvidence { .. })
+        ) {
+        pending
+            .optional_additional_cost_chosen
+            .iter()
+            .map(|binding| binding.object)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let modifiers = spell_cost_generic_modifiers_v1(state, selected.types, pending.controller);
+    // This is the pre-discard binding check. Final preparation separately
+    // projects the exact answered discard before any real card is moved.
+    selected
+        .payment_plan_with_component_choices_v1(
+            pending.x_value.unwrap_or(0),
+            pending.controller,
+            pending.spell,
+            state,
+            modifiers,
+            &groups,
+            &reserved_graveyard,
+        )
+        .is_some()
 }
 
 fn finalized_cast_method(
@@ -7219,7 +7758,23 @@ pub(crate) fn validate_pending_discard_binding(
     state: &GameState,
     pending_discard: &PendingDiscard,
 ) -> Result<(), (ObjectId, String)> {
+    // A resumable discard cannot be relabelled as a legacy standalone stage.
+    // The common validator derives that boundary from the owning definition.
+    effect::validate_pending_effect_choice(state).map_err(|message| {
+        (
+            state.stack.last().map_or(ObjectId(0), |item| item.source),
+            message,
+        )
+    })?;
     match &pending_discard.resume {
+        DiscardResume::FinishEffectContinuation { .. } => {
+            effect::validate_resumable_discard(state, pending_discard).map_err(|message| {
+                (
+                    state.stack.last().map_or(ObjectId(0), |item| item.source),
+                    message,
+                )
+            })
+        }
         DiscardResume::FinishCast {
             source_contract,
             controller,
@@ -7358,6 +7913,50 @@ fn drain_pending_discard_or_decide(state: &mut GameState) -> Option<Decision> {
     })
 }
 
+/// Commit one already-validated hand discard through the shared Madness
+/// replacement and ordinary owner-controlled trigger queue. Choice-bearing
+/// discard callers retain their own authentication and completion stages.
+pub(crate) fn commit_discarded_card(state: &mut GameState, id: ObjectId) {
+    let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
+    if def.is_castable() && def.madness_cost.is_some() {
+        // 702.83b: a discarded Madness card is exiled instead of
+        // graveyarded, and "as that card is exiled this way" a real
+        // triggered ability fires offering its owner the chance to
+        // cast it for its madness cost -- queued into
+        // `pending_triggers` exactly like any other triggered ability
+        // (`trigger::collect_and_process`'s Guttersnipe/Voldaren
+        // Epicure triggers), not a special-cased side channel: it
+        // goes through the same APNAP grouping/`Decision::
+        // OrderTriggers` machinery if it happens to coincide with
+        // another simultaneous trigger, and (`push_trigger_onto_stack`)
+        // becomes a real `StackItem` that sits through normal priority
+        // like anything else on the stack -- see that function's
+        // `is_madness_offer` doc, and `advance_until_decision`'s
+        // `top.madness_offer` check for where the actual `Decision::
+        // ChooseMadnessCast` gets asked (at *resolution* time, not
+        // discard time).
+        event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Exile));
+        let owner = state.objects.get(id).owner;
+        state.engine.pending_triggers.push(PendingTrigger {
+            controller: owner,
+            source: id,
+            source_contract: Some(AbilitySourceContractV4::capture(state, id)),
+            granted_by: None,
+            effect: EffectOp::Sequence(vec![]),
+            is_madness_offer: true,
+            kicked: false,
+            target_spec: TargetSpec::None,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
+            optional_additional_cost_paid: None,
+            paid_cost_refs: Vec::new(),
+        });
+    } else {
+        event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
+    }
+}
+
 fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: PendingDiscard) {
     if let Err((source, _message)) = validate_pending_discard_binding(state, &pending_discard) {
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
@@ -7396,59 +7995,49 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
             .last()
             .and_then(|item| item.v4.cast_method)
             .expect("validated FinishCast retains its exact top placeholder method");
+        let staged = state
+            .engine
+            .pending_cast
+            .as_ref()
+            .expect("validated FinishCast retains its pending cast");
+        let def = &card_def::CARD_DEFS[state.objects.get(staged.spell).card_def as usize];
+        let cast_method = finalized_cast_method(staged, staged_method, def);
+        let payment =
+            spell_costs_v1::prepare_final_spell_payment_v1(state, staged, cast_method, &chosen);
         let pending = state
             .engine
             .pending_cast
             .take()
-            .expect("validated FinishCast retains its pending cast");
-        let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-        let cast_method = finalized_cast_method(&pending, staged_method, def);
-        Some((pending, cast_method))
+            .expect("validated cast remains pending");
+        let Some(payment) = payment else {
+            // No selected card or mana resource has changed on refusal.
+            state.engine.pending_discard = None;
+            abort_cast(state, pending, cast_method);
+            return;
+        };
+        Some((pending, cast_method, payment))
     } else {
         None
     };
     state.engine.pending_discard = None;
     for &id in &chosen {
-        let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
-        if def.is_castable() && def.madness_cost.is_some() {
-            // 702.83b: a discarded Madness card is exiled instead of
-            // graveyarded, and "as that card is exiled this way" a real
-            // triggered ability fires offering its owner the chance to
-            // cast it for its madness cost -- queued into
-            // `pending_triggers` exactly like any other triggered ability
-            // (`trigger::collect_and_process`'s Guttersnipe/Voldaren
-            // Epicure triggers), not a special-cased side channel: it
-            // goes through the same APNAP grouping/`Decision::
-            // OrderTriggers` machinery if it happens to coincide with
-            // another simultaneous trigger, and (`push_trigger_onto_stack`)
-            // becomes a real `StackItem` that sits through normal priority
-            // like anything else on the stack -- see that function's
-            // `is_madness_offer` doc, and `advance_until_decision`'s
-            // `top.madness_offer` check for where the actual `Decision::
-            // ChooseMadnessCast` gets asked (at *resolution* time, not
-            // discard time).
-            event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Exile));
-            let owner = state.objects.get(id).owner;
-            state.engine.pending_triggers.push(PendingTrigger {
-                controller: owner,
-                source: id,
-                source_contract: Some(AbilitySourceContractV4::capture(state, id)),
-                granted_by: None,
-                effect: EffectOp::Sequence(vec![]),
-                is_madness_offer: true,
-                kicked: false,
-                target_spec: TargetSpec::None,
-                targets: Vec::new(),
-                target_contracts: Vec::new(),
-                placement_ordered: false,
-                optional_additional_cost_paid: None,
-                paid_cost_refs: Vec::new(),
-            });
-        } else {
-            event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
-        }
+        commit_discarded_card(state, id);
     }
     match pending_discard.resume {
+        DiscardResume::FinishEffectContinuation { .. } => {
+            // Validation before any card moved authenticated the saved discard
+            // leaf and every remaining frame. Remove only that paid leaf and
+            // resume inside the same uninterrupted resolution. No answered
+            // payment attestation is exposed in a later snapshot.
+            state
+                .engine
+                .pending_effect
+                .as_mut()
+                .expect("validated resumable discard retains its continuation")
+                .frames
+                .pop();
+            let _ = resume_owned_pending_effect(state);
+        }
         DiscardResume::None => collect_and_queue_triggers(state),
         DiscardResume::FinishAbilityResolution { stack_item_id } => {
             // The ability's resolution is over only now (608.2).
@@ -7458,10 +8047,10 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
             collect_and_queue_triggers(state);
         }
         DiscardResume::FinishCast { .. } => {
-            let (pending, cast_method) =
+            let (pending, cast_method, payment) =
                 owned_cast.expect("validated FinishCast owns its removed pending cast");
             let source = pending.spell;
-            if finalize_owned_cast(state, pending, cast_method, chosen).is_err() {
+            if finalize_owned_cast(state, pending, cast_method, chosen, payment).is_err() {
                 state.engine.halted =
                     Some((UnsupportedMechanic::InvalidEffectContinuation, source));
             }
@@ -7662,6 +8251,19 @@ pub(crate) fn pending_effect_targets_decision_v2(
 /// resolution path's pop-before-effects invariant.
 fn drain_pending_effect_or_decide(state: &mut GameState) -> Option<Decision> {
     state.engine.pending_effect.as_ref()?;
+    if state
+        .engine
+        .pending_discard
+        .as_ref()
+        .is_some_and(|discard| {
+            matches!(
+                discard.resume,
+                DiscardResume::FinishEffectContinuation { .. }
+            )
+        })
+    {
+        return drain_pending_discard_or_decide(state);
+    }
     if effect::validate_pending_effect_choice(state).is_err() {
         let source = state
             .engine
@@ -7709,6 +8311,12 @@ fn drain_pending_effect_or_decide(state: &mut GameState) -> Option<Decision> {
         });
     }
 
+    resume_owned_pending_effect(state)
+}
+
+/// Execute a locally owned remainder after common-boundary validation or an
+/// authenticated discard, before another snapshot or action can intervene.
+fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
     let pending = state.engine.pending_effect.as_ref().unwrap();
     let item = pending.resolving_item.clone();
     match state.stack.pop() {
@@ -8199,7 +8807,17 @@ pub(crate) fn validate_pending_cast(
         } else if cost.x_count != 1 {
             return Err("pending cast has an unsupported number of X symbols".to_string());
         } else if let Some(x_value) = pending.x_value {
-            if mana::can_pay(&cost, x_value, pending.controller, state).is_none() {
+            let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
+            if pending_cast_quote_v1(
+                def,
+                pending,
+                method,
+                pending.kicked == Some(true),
+                x_value,
+                state,
+            )
+            .is_none()
+            {
                 return Err("pending cast chose an unaffordable X value".to_string());
             }
             if active_spec.is_none_or(|spec| !pending_cast_targeting_is_complete(pending, spec))
@@ -8563,21 +9181,17 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     // card in this pool with `kicker_cost` has no `alt_cost`, so checking
     // against the effective normal cost (never `def.alt_cost`) is exhaustive
     // here.
-    if let Some(kicker_cost) = def.kicker_cost {
-        if pending.kicked.is_none() {
-            let normal_cost = effective_normal_cast_cost(def, pending.controller, state);
-            let payable =
-                mana::can_pay_combined(&[&normal_cost, &kicker_cost], 0, pending.controller, state)
-                    .is_some();
-            if payable {
-                return Some(Decision::ChooseKicker {
-                    player: pending.controller,
-                    spell: pending.spell,
-                });
-            }
-            state.engine.pending_cast.as_mut().unwrap().kicked = Some(false);
-            return drain_pending_cast_or_decide(state);
+    if def.kicker_cost.is_some() && pending.kicked.is_none() {
+        let payable =
+            pending_cast_quote_v1(def, &pending, CastMethodV4::Normal, true, 0, state).is_some();
+        if payable {
+            return Some(Decision::ChooseKicker {
+                player: pending.controller,
+                spell: pending.spell,
+            });
         }
+        state.engine.pending_cast.as_mut().unwrap().kicked = Some(false);
+        return drain_pending_cast_or_decide(state);
     }
 
     if let Some(kind) = def.optional_additional_cost {
@@ -9039,14 +9653,14 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     }
 
     if pending.x_value.is_none() {
-        let Some(cost) = pending_cast_selected_mana_cost(def, &pending, state) else {
+        let Some(_) = pending_cast_selected_mana_cost(def, &pending, state) else {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 pending.spell,
             ));
             return None;
         };
-        let Some(maximum) = maximum_payable_x(&cost, pending.controller, state) else {
+        let Some(maximum) = maximum_payable_x(def, &pending, state) else {
             let cast_method = finalized_cast_method(&pending, staged_method, def);
             let pending = state.engine.pending_cast.take().unwrap();
             abort_cast(state, pending, cast_method);
@@ -9194,6 +9808,7 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
     } else if let Some((needed, filter, tap)) = activation_controlled_object_cost(ability.cost) {
         if pending.object_cost_chosen.len() < usize::from(needed) {
             let candidates = activation_controlled_cost_candidates(
+                sacrifices_other_creatures(ability.cost).then_some(pending.source),
                 pending.controller,
                 filter,
                 tap,
@@ -9459,7 +10074,16 @@ pub(crate) fn validate_pending_activation(
         if duplicate {
             return Err("pending activation repeats an object-cost selection".to_string());
         }
+        let other_candidates = sacrifices_other_creatures(ability.cost).then(|| {
+            sacrificeable_other_controlled_creatures(pending.controller, pending.source, state, &[])
+        });
         if pending.object_cost_chosen.iter().any(|binding| {
+            if let Some(candidates) = &other_candidates {
+                return binding.expected_zone != Zone::Battlefield
+                    || !candidates.contains(&binding.object)
+                    || state.objects.get(binding.object).zone_change_count
+                        != binding.expected_zone_change_count;
+            }
             binding.expected_zone != Zone::Battlefield
                 || state.objects.try_get(binding.object).is_none_or(|live| {
                     live.zone_change_count != binding.expected_zone_change_count
@@ -9468,16 +10092,14 @@ pub(crate) fn validate_pending_activation(
                         || !state.players[pending.controller.index()]
                             .battlefield
                             .contains(&binding.object)
-                        || !permanent_matches_filter(
-                            &card_def::CARD_DEFS[live.card_def as usize],
-                            filter,
-                        )
+                        || !permanent_matches_filter(state, binding.object, filter)
                         || (tap && live.tapped)
                 })
         }) {
             return Err("pending activation carries an illegal object-cost selection".to_string());
         }
         let remaining = activation_controlled_cost_candidates(
+            sacrifices_other_creatures(ability.cost).then_some(pending.source),
             pending.controller,
             filter,
             tap,
@@ -9781,9 +10403,22 @@ fn validate_pending_trigger(state: &GameState, pending: &PendingTrigger) -> Resu
     }
     let mut prefix = Vec::new();
     for &target in &pending.targets {
-        if !completable_next_targets_for_controller(expected, &prefix, pending.controller, state)
-            .contains(&target)
-        {
+        let legal = if matches!(
+            expected,
+            TargetSpec::UpToOneOtherControlledPermanent
+                | TargetSpec::UpToTwoOtherControlledCreatures
+        ) {
+            completable_next_targets_for_controller_and_source(
+                expected,
+                &prefix,
+                pending.controller,
+                pending_trigger_targeting_source(pending),
+                state,
+            )
+        } else {
+            completable_next_targets_for_controller(expected, &prefix, pending.controller, state)
+        };
+        if !legal.contains(&target) {
             return Err("pending trigger carries an illegal target prefix".to_string());
         }
         prefix.push(target);
@@ -10662,6 +11297,8 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
                     StackItemKind::Spell => Some(TargetingSource {
                         object: item.source,
                         card_def: state.objects.get(item.source).card_def,
+                        zone: state.objects.get(item.source).zone,
+                        zone_change_count: state.objects.get(item.source).zone_change_count,
                         other_than: None,
                     }),
                     StackItemKind::TriggeredAbility => {
@@ -11379,10 +12016,12 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             state.players[1].draws_this_turn = 0;
             #[cfg(feature = "standard-magezero-fixtures")]
             crate::standard_keywords_v1::advance_day_night(state, p.opponent());
+            crate::life_gain_turn_v1::reset_at_untap(state);
             state.players[0].spells_cast_this_turn = 0;
             state.players[1].spells_cast_this_turn = 0;
             for (_, object) in state.objects.iter_mut() {
                 object.v4.ability_uses_this_turn.clear();
+                object.v4.entered_battlefield_this_turn = false;
             }
             state.trigger_uses_v1 = None;
             #[cfg(feature = "limited-fdn-fixtures")]
@@ -11545,6 +12184,8 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             for (_, obj) in state.objects.iter_mut() {
                 obj.damage = 0;
                 obj.v4.deathtouch_damage = false;
+                // 514.2: every land animation lasts until end of turn.
+                obj.v4.animation_timestamp = None;
             }
             state.engine.until_end_of_turn.clear();
             state.engine.active_replacements.retain(|replacement| {
@@ -11601,6 +12242,7 @@ pub struct StaticSelfBoostDef {
     pub power: i32,
     pub toughness: i32,
     pub grant_haste: bool,
+    pub battlefield_only: bool,
 }
 
 /// A continuously recomputed bonus from a controlled subtype lord.
@@ -11664,13 +12306,92 @@ fn controlled_subtype_boost(state: &GameState, recipient: ObjectId) -> (i32, i32
         })
 }
 
+/// A layer-7c team bonus whose recipient predicate reads layer-6 keywords.
+/// Kept separate from the historical subtype-lord binding and its catalog token.
+#[derive(Debug)]
+pub(crate) enum StaticControlledCreatureFilterV1 {
+    All,
+    WithKeyword(Keywords),
+}
+
+pub(crate) struct StaticControlledCreatureBoostDefV1 {
+    pub(crate) filter: StaticControlledCreatureFilterV1,
+    pub(crate) exclude_source: bool,
+    pub(crate) power: i32,
+    pub(crate) toughness: i32,
+}
+
+pub(crate) fn static_controlled_creature_boost_for_v1(
+    name: &str,
+) -> Option<StaticControlledCreatureBoostDefV1> {
+    if !cfg!(feature = "limited-fdn-fixtures") {
+        return None;
+    }
+    let (filter, exclude_source) = match name {
+        "Anthem of Champions" => (StaticControlledCreatureFilterV1::All, false),
+        "Empyrean Eagle" => (
+            StaticControlledCreatureFilterV1::WithKeyword(Keywords::FLYING),
+            true,
+        ),
+        _ => return None,
+    };
+    Some(StaticControlledCreatureBoostDefV1 {
+        filter,
+        exclude_source,
+        power: 1,
+        toughness: 1,
+    })
+}
+
+fn controlled_creature_boost_v1(state: &GameState, recipient: ObjectId) -> (i32, i32) {
+    if !cfg!(feature = "limited-fdn-fixtures") {
+        return (0, 0);
+    }
+    let object = state.objects.get(recipient);
+    if object.zone != Zone::Battlefield || !object_has_type(state, recipient, CardType::Creature) {
+        return (0, 0);
+    }
+    state
+        .objects
+        .iter()
+        .filter_map(|(source, source_object)| {
+            if source_object.zone != Zone::Battlefield
+                || source_object.controller != object.controller
+                || source_object.v4.face_index != 0
+                || !crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+            {
+                return None;
+            }
+            let definition = &card_def::CARD_DEFS[source_object.card_def as usize];
+            if !definition.is_executable() {
+                return None;
+            }
+            let boost = static_controlled_creature_boost_for_v1(definition.name)?;
+            if boost.exclude_source && source == recipient {
+                return None;
+            }
+            let matches = match boost.filter {
+                StaticControlledCreatureFilterV1::All => true,
+                // Keyword evaluation never reads P/T or this bonus table, so
+                // the layer-6 predicate cannot recurse into layer 7c here.
+                StaticControlledCreatureFilterV1::WithKeyword(keyword) => {
+                    has_effective_keyword(state, recipient, keyword)
+                }
+            };
+            matches.then_some((boost.power, boost.toughness))
+        })
+        .fold((0, 0), |(power, toughness), (p, t)| {
+            (power + p, toughness + t)
+        })
+}
+
 fn controls_an_artifact(controller: PlayerId, state: &GameState) -> bool {
     state.players[controller.index()]
         .battlefield
         .iter()
         .any(|&id| {
             let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
-            def.is_executable() && def.has_type(CardType::Artifact)
+            def.is_executable() && object_has_type(state, id, CardType::Artifact)
         })
 }
 
@@ -11681,9 +12402,28 @@ pub(crate) fn static_self_boost_for(name: &str) -> Option<StaticSelfBoostDef> {
             power: 1,
             toughness: 0,
             grant_haste: true,
+            battlefield_only: false,
+        }),
+        "Billowing Shriekmass" => Some(StaticSelfBoostDef {
+            condition: controller_has_threshold_v1,
+            power: 2,
+            toughness: 1,
+            grant_haste: false,
+            battlefield_only: true,
+        }),
+        "Dreadwing Scavenger" => Some(StaticSelfBoostDef {
+            condition: controller_has_threshold_v1,
+            power: 1,
+            toughness: 1,
+            grant_haste: false,
+            battlefield_only: true,
         }),
         _ => None,
     }
+}
+
+fn controller_has_threshold_v1(controller: PlayerId, state: &GameState) -> bool {
+    crate::effect::controller_graveyard_card_count(state, controller) >= 7
 }
 
 fn valid_bestow_attachment_host(state: &GameState, aura: ObjectId) -> Option<ObjectId> {
@@ -11732,6 +12472,15 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
     if crate::continuous_characteristics_v1::creature_override(state, id).is_some() {
         return card_type == CardType::Creature;
     }
+    // An animated land keeps its printed types and gains Creature (and
+    // Artifact for Mishra's Foundry).
+    if let Some((animation, _)) = crate::continuous_characteristics_v1::animation(state, id) {
+        if card_type == CardType::Creature
+            || (animation.artifact && card_type == CardType::Artifact)
+        {
+            return true;
+        }
+    }
     state.objects.try_get(id).is_some_and(|object| {
         card_def::CARD_DEFS
             .get(object.card_def as usize)
@@ -11752,6 +12501,13 @@ pub fn object_color_mask(state: &GameState, id: ObjectId) -> u8 {
         crate::continuous_characteristics_v1::creature_override(state, id)
     {
         return card_def::mana_colors_mask(characteristics.colors);
+    }
+    // An animation with listed colors sets them; one without leaves the
+    // object's colors unchanged (XMage only sets a colored token's color).
+    if let Some((animation, _)) = crate::continuous_characteristics_v1::animation(state, id) {
+        if !animation.colors.is_empty() {
+            return card_def::mana_colors_mask(animation.colors);
+        }
     }
     state
         .objects
@@ -11802,6 +12558,10 @@ pub fn effective_base_power(state: &GameState, id: ObjectId) -> Option<i32> {
         .map(|(characteristics, _)| i32::from(characteristics.power))
         .or_else(characteristic_power)
         .or_else(|| {
+            crate::continuous_characteristics_v1::animation(state, id)
+                .map(|(animation, _)| i32::from(animation.power))
+        })
+        .or_else(|| {
             card_def::CARD_DEFS[obj.card_def as usize]
                 .power_for_face(obj.v4.face_index)
                 .map(i32::from)
@@ -11812,6 +12572,10 @@ pub fn effective_base_toughness(state: &GameState, id: ObjectId) -> Option<i32> 
     let obj = state.objects.get(id);
     crate::continuous_characteristics_v1::creature_override(state, id)
         .map(|(characteristics, _)| i32::from(characteristics.toughness))
+        .or_else(|| {
+            crate::continuous_characteristics_v1::animation(state, id)
+                .map(|(animation, _)| i32::from(animation.toughness))
+        })
         .or_else(|| {
             card_def::CARD_DEFS[obj.card_def as usize]
                 .toughness_for_face(obj.v4.face_index)
@@ -11831,11 +12595,14 @@ pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
         power += crate::standard_keywords_v1::controlled_forest_boost(state, id);
         power += crate::standard_statics_v1::self_counter_boost(state, id).0;
     }
+    power += controlled_creature_boost_v1(state, id).0;
     if def.is_executable()
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     {
         if let Some(boost) = static_self_boost_for(def.name) {
-            if (boost.condition)(obj.controller, state) {
+            if (!boost.battlefield_only || obj.zone == Zone::Battlefield)
+                && (boost.condition)(obj.controller, state)
+            {
                 power += boost.power;
             }
         }
@@ -11890,11 +12657,14 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
         toughness += crate::standard_keywords_v1::controlled_forest_boost(state, id);
         toughness += crate::standard_statics_v1::self_counter_boost(state, id).1;
     }
+    toughness += controlled_creature_boost_v1(state, id).1;
     if def.is_executable()
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     {
         if let Some(boost) = static_self_boost_for(def.name) {
-            if (boost.condition)(obj.controller, state) {
+            if (!boost.battlefield_only || obj.zone == Zone::Battlefield)
+                && (boost.condition)(obj.controller, state)
+            {
                 toughness += boost.toughness;
             }
         }
@@ -11933,6 +12703,7 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
 pub(crate) fn static_graveyard_threshold_keyword_for(name: &str) -> Option<(u16, Keywords)> {
     match name {
         "Cephalid Inkmage" => Some((7, Keywords::CANT_BE_BLOCKED)),
+        "Dreadwing Scavenger" => Some((7, Keywords::DEATHTOUCH)),
         _ => None,
     }
 }
@@ -11970,6 +12741,11 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
         return true;
     }
     if printed_active && def.keywords_for_face(obj.v4.face_index).has(kw) {
+        return true;
+    }
+    if crate::continuous_characteristics_v1::animation(state, id)
+        .is_some_and(|(animation, _)| animation.keywords.has(kw))
+    {
         return true;
     }
     #[cfg(feature = "standard-magezero-fixtures")]
@@ -12086,7 +12862,11 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     }
     if kw.has(Keywords::HASTE) {
         if let Some(boost) = static_self_boost_for(def.name) {
-            if printed_active && boost.grant_haste && (boost.condition)(obj.controller, state) {
+            if printed_active
+                && boost.grant_haste
+                && (!boost.battlefield_only || obj.zone == Zone::Battlefield)
+                && (boost.condition)(obj.controller, state)
+            {
                 return true;
             }
         }
@@ -12375,6 +13155,9 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
         || object.v4.effective_subtype_ids.clone(),
         |(characteristics, _)| vec![characteristics.subtype.stable_id()],
     );
+    if let Some((animation, _)) = crate::continuous_characteristics_v1::animation(state, id) {
+        subtype_ids.extend(animation.subtypes.iter().map(|subtype| subtype.stable_id()));
+    }
     subtype_ids.extend(
         attached_equipment_profiles(state, id)
             .filter(|(equipment_id, _)| {
@@ -12405,6 +13188,14 @@ pub fn has_effective_subtype(state: &GameState, id: ObjectId, subtype: card_def:
         |(characteristics, _)| characteristics.subtype.same_subtype_as(subtype),
     );
     base_has_subtype
+        || crate::continuous_characteristics_v1::animation(state, id).is_some_and(
+            |(animation, _)| {
+                animation
+                    .subtypes
+                    .iter()
+                    .any(|&added| added.same_subtype_as(subtype))
+            },
+        )
         || attached_equipment_profiles(state, id).any(|(equipment_id, equipment)| {
             override_effect.is_none_or(|(_, timestamp)| {
                 state
@@ -12562,6 +13353,13 @@ pub(crate) fn commit_combat_damage_events(state: &mut GameState, events: Vec<Pro
         .collect::<Vec<_>>();
     for (source, source_zone_change_count, player, amount) in combat_player_damage {
         event::log_combat_damage_to_player(state, source, source_zone_change_count, player, amount);
+        // 702.164c: combat damage a creature with toxic N deals to a player
+        // also gives that player N poison counters.
+        #[cfg(feature = "standard-magezero-fixtures")]
+        if has_effective_keyword(state, source, Keywords::TOXIC_1) {
+            let poison = &mut state.players[player.index()].poison_counters;
+            poison.0 = poison.0.saturating_add(1);
+        }
     }
     if let Some(holder) = state.initiative {
         let transfer_player = state.engine.event_log[event_start..]
@@ -13006,6 +13804,9 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    // A restored continuation must be valid before any action can mutate
+    // state, including when its separately saved discard slot was removed.
+    effect::validate_pending_effect_choice(state)?;
     if crate::london_mulligan_v1::has_pending(state) {
         return crate::london_mulligan_v1::answer(state, action);
     }
@@ -13232,11 +14033,11 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
                 return Err("this cast's kicker has already been chosen".to_string());
             }
             let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-            let kicker = def
+            def
                 .kicker_cost
                 .ok_or("this spell has no kicker choice")?;
-            let normal = effective_normal_cast_cost(def, pending.controller, state);
-            if mana::can_pay_combined(&[&normal, &kicker], 0, pending.controller, state).is_none() {
+            if pending_cast_quote_v1(def, &pending, CastMethodV4::Normal, true, 0, state).is_none()
+            {
                 return Err("the kicker choice is no longer payable".to_string());
             }
             state
@@ -13977,6 +14778,7 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
         {
             if pending.object_cost_chosen.len() < usize::from(needed) {
                 let candidates = activation_controlled_cost_candidates(
+                    sacrifices_other_creatures(ability.cost).then_some(pending.source),
                     pending.controller,
                     filter,
                     tap,
@@ -14922,6 +15724,7 @@ fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> R
                     def.condition,
                     trigger::TriggerCondition::ControllerAttacks
                         | trigger::TriggerCondition::ControllerAttacksWithSubtype(_)
+                        | trigger::TriggerCondition::ControllerAttacksWithAtLeastCreatures(_)
                 )
             }) {
                 let event = CommittedEvent::ControllerAttacked {
@@ -15161,9 +15964,9 @@ fn apply_pending_cast_effect_option(
             Ok(())
         }
         PendingCastActionStage::ChooseXValue => {
-            let cost = pending_cast_selected_mana_cost(def, &pending, state)
+            pending_cast_selected_mana_cost(def, &pending, state)
                 .ok_or("pending X choice lost its selected spell form")?;
-            let maximum = maximum_payable_x(&cost, pending.controller, state)
+            let maximum = maximum_payable_x(def, &pending, state)
                 .ok_or("pending X choice has no payable value")?;
             let x_value = u8::try_from(option_index)
                 .map_err(|_| "chosen X exceeds the supported u8 range".to_string())?;
@@ -15471,14 +16274,20 @@ fn finalize_cast(state: &mut GameState, discarded: Vec<ObjectId>) -> Result<(), 
         .last()
         .and_then(|item| item.v4.cast_method)
         .ok_or("validated cast placeholder lost its cast method")?;
+    let def = &card_def::CARD_DEFS[state.objects.get(staged.spell).card_def as usize];
+    let cast_method = finalized_cast_method(staged, staged_method, def);
+    let payment =
+        spell_costs_v1::prepare_final_spell_payment_v1(state, staged, cast_method, &discarded);
     let pending = state
         .engine
         .pending_cast
         .take()
         .expect("finalize_cast requires a pending cast");
-    let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-    let cast_method = finalized_cast_method(&pending, staged_method, def);
-    finalize_owned_cast(state, pending, cast_method, discarded)
+    let Some(payment) = payment else {
+        abort_cast(state, pending, cast_method);
+        return Ok(());
+    };
+    finalize_owned_cast(state, pending, cast_method, discarded, payment)
 }
 
 /// Commits a cast whose complete staged record was already validated and
@@ -15490,249 +16299,24 @@ fn finalize_owned_cast(
     pending: PendingCast,
     cast_method: CastMethodV4,
     discarded: Vec<ObjectId>,
+    payment: spell_costs_v1::PreparedSpellPaymentV1,
 ) -> Result<(), String> {
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
     let x_value = pending.x_value.unwrap_or(0);
-    let mut was_kicked = false;
-    // Escape choices are intentionally absent from the frozen public
-    // sacrifice feature. Canonicalize the selected set by the controller's
-    // graveyard-vector order before it can affect payment events or immutable
-    // stack provenance, so two public-equivalent pick orders have identical
-    // future behavior. Other object costs preserve their established order.
-    let object_cost_chosen = if cast_method == CastMethodV4::Escape {
-        let ordered: Vec<_> = state.players[pending.controller.index()]
-            .graveyard
-            .iter()
-            .copied()
-            .filter(|object| pending.sacrifice_chosen.contains(object))
-            .collect();
-        debug_assert_eq!(ordered.len(), pending.sacrifice_chosen.len());
-        ordered
-    } else {
-        pending.sacrifice_chosen.clone()
-    };
-    let additional_owns_object_cost = def.additional_cost.is_some_and(|components| {
-        controlled_permanent_sacrifice_in(components).is_some()
-            || tap_permanent_filter_in(components).is_some()
-    });
-    let base_object_cost_chosen: &[ObjectId] = if additional_owns_object_cost {
-        &[]
-    } else {
-        &object_cost_chosen
-    };
-    let additional_object_cost_chosen: &[ObjectId] = if additional_owns_object_cost {
-        &object_cost_chosen
-    } else {
-        &[]
-    };
-
-    // Mana spent to cast this spell (CR 601.2h), recorded on the stack item
-    // only for definitions that read it.
-    let mut mana_spent: u16 = 0;
-    match cast_method {
-        CastMethodV4::Plotted => {}
-        CastMethodV4::Madness => {
-            let cost = def
-                .madness_cost
-                .expect("validated Madness cast has a definition-owned cost");
-            let Some(plan) = mana::can_pay(&cost, 0, pending.controller, state) else {
-                abort_cast(state, pending, cast_method);
-                return Ok(());
-            };
-            mana_spent = pay_plan(state, pending.controller, &plan);
-        }
-        CastMethodV4::Flashback => {
-            let fb = def
-                .flashback
-                .as_ref()
-                .expect("validated Flashback cast has a definition-owned cost");
-            let Some(spent) = pay_cost_components_spending_mana(
-                state,
-                pending.controller,
-                pending.spell,
-                fb.cost,
-                base_object_cost_chosen,
-                0,
-            ) else {
-                abort_cast(state, pending, cast_method);
-                return Ok(());
-            };
-            mana_spent = spent;
-        }
-        CastMethodV4::Escape => {
-            let escape = def
-                .escape
-                .as_ref()
-                .expect("validated Escape cast has a definition-owned cost");
-            let Some(spent) = pay_cost_components_spending_mana(
-                state,
-                pending.controller,
-                pending.spell,
-                escape.cost,
-                base_object_cost_chosen,
-                0,
-            ) else {
-                abort_cast(state, pending, cast_method);
-                return Ok(());
-            };
-            mana_spent = spent;
-        }
-        CastMethodV4::Normal => {
-            let kicked = pending.kicked == Some(true);
-            let normal_cost = with_spree_surcharge(
-                def,
-                pending.mode_chosen.unwrap_or(0),
-                effective_normal_cast_cost_with_targets(
-                    def,
-                    pending.controller,
-                    &pending.targets_chosen,
-                    state,
-                ),
-            );
-            if def.delve {
-                // Delve is never combined with Kicker in this pool (Gurmag
-                // Angler has no `kicker_cost`); `kicked` stays false and
-                // `delve_payment_plan` re-derives, at payment time, the same
-                // "smallest k that's affordable, oldest cards first" plan
-                // `normal_cost_is_payable` already checked at offer time.
-                let Some((plan, exiled)) =
-                    mana::delve_payment_plan(&normal_cost, x_value, pending.controller, state)
-                else {
-                    abort_cast(state, pending, cast_method);
-                    return Ok(());
-                };
-                mana_spent = pay_plan(state, pending.controller, &plan);
-                commit_graveyard_exile(state, &exiled);
-            } else {
-                let plan = if kicked {
-                    let kicker_cost = def
-                        .kicker_cost
-                        .expect("validated kicked cast has a definition-owned kicker cost");
-                    mana::can_pay_combined(
-                        &[&normal_cost, &kicker_cost],
-                        x_value,
-                        pending.controller,
-                        state,
-                    )
-                } else {
-                    mana::can_pay(&normal_cost, x_value, pending.controller, state)
-                };
-                let Some(plan) = plan else {
-                    abort_cast(state, pending, cast_method);
-                    return Ok(());
-                };
-                mana_spent = pay_plan(state, pending.controller, &plan);
-            }
-            was_kicked = kicked;
-        }
-        CastMethodV4::Alternative => {
-            let alt = def
-                .alt_cost
-                .expect("validated alternative cast has a definition-owned cost");
-            let Some(spent) = pay_cost_components_spending_mana(
-                state,
-                pending.controller,
-                pending.spell,
-                alt.components,
-                base_object_cost_chosen,
-                0,
-            ) else {
-                abort_cast(state, pending, cast_method);
-                return Ok(());
-            };
-            mana_spent = spent;
-        }
-        CastMethodV4::Omen => {
-            let (cost, types) = if let Some(adventure) = supported_adventure(def) {
-                (adventure.cost, adventure.types)
-            } else {
-                let omen = supported_omen(def)
-                    .expect("validated Omen cast has definition-owned spell characteristics");
-                (omen.cost, omen.types)
-            };
-            let cost = static_adjusted_spell_cost(cost, types, pending.controller, state);
-            let Some(plan) = mana::can_pay(&cost, x_value, pending.controller, state) else {
-                abort_cast(state, pending, cast_method);
-                return Ok(());
-            };
-            mana_spent = pay_plan(state, pending.controller, &plan);
-        }
-        CastMethodV4::Bestow => {
-            let bestow = supported_bestow(def)
-                .expect("validated Bestow cast has definition-owned characteristics");
-            let Some(plan) = mana::can_pay(
-                &static_adjusted_spell_cost(
-                    bestow.cost,
-                    &[CardType::Enchantment],
-                    pending.controller,
-                    state,
-                ),
-                x_value,
-                pending.controller,
-                state,
-            ) else {
-                abort_cast(state, pending, cast_method);
-                return Ok(());
-            };
-            mana_spent = pay_plan(state, pending.controller, &plan);
-        }
-    }
-    if let Some(binding) = pending.chosen_creature_cost {
-        let zone = pending
-            .chosen_creature_cost_zone
-            .expect("validated chosen-creature cost retains its zone");
-        if !chosen_creature_cost_candidates(pending.controller, zone, state).contains(&binding) {
-            abort_cast(state, pending, cast_method);
-            return Ok(());
-        }
-        if zone == ChosenCreatureCostZoneV1::Hand {
-            for observer in [PlayerId::P0, PlayerId::P1] {
-                if state
-                    .reveal_hand_card(observer, pending.controller, binding.object)
-                    .is_err()
-                {
-                    abort_cast(state, pending, cast_method);
-                    return Ok(());
-                }
-            }
-        }
-    }
-    if let Some(add) = def.additional_cost {
-        let Some(spent) = pay_cost_components_spending_mana(
-            state,
-            pending.controller,
-            pending.spell,
-            add,
-            additional_object_cost_chosen,
-            0,
-        ) else {
-            abort_cast(state, pending, cast_method);
-            return Ok(());
-        };
-        mana_spent = mana_spent.saturating_add(spent);
-    }
-
+    // The complete local plan was prepared before any real discard or mana
+    // payment. Capture provenance inputs before consuming it exactly once.
+    let object_cost_chosen = payment.ordered_objects.clone();
+    let chosen_power_lki = payment.chosen_power_lki;
+    let was_kicked = pending.kicked == Some(true);
     let paid_optional_additional_cost = if pending.optional_additional_cost_paid == Some(true) {
-        let kind = def
-            .optional_additional_cost
-            .expect("validated paid optional additional cost remains definition-owned");
-        let chosen = pending
-            .optional_additional_cost_chosen
-            .iter()
-            .map(|binding| binding.object)
-            .collect::<Vec<_>>();
-        match kind {
-            OptionalAdditionalCostDef::CollectEvidence { .. } => {
-                commit_graveyard_exile(state, &chosen)
-            }
-            OptionalAdditionalCostDef::Bargain | OptionalAdditionalCostDef::Casualty(_) => {
-                commit_sacrifice(state, &chosen)
-            }
-        }
-        Some(kind)
+        Some(
+            def.optional_additional_cost
+                .expect("prepared optional cost remains definition-owned"),
+        )
     } else {
         None
     };
+    let mana_spent = payment.commit(state, pending.controller, pending.spell);
 
     let mut paid_cost_objects = object_cost_chosen;
     paid_cost_objects.extend(discarded.iter().copied());
@@ -15753,24 +16337,12 @@ fn finalize_owned_cast(
         .map(|object| PaidCostRefV4::capture(state, object))
         .collect();
     if let Some(binding) = pending.chosen_creature_cost {
-        let power = match state.objects.get(binding.object).zone {
-            Zone::Battlefield => effective_power(state, binding.object),
-            Zone::Hand => card_def::CARD_DEFS[state.objects.get(binding.object).card_def as usize]
-                .power
-                .map(i32::from)
-                .unwrap_or(0),
-            _ => {
-                abort_cast(state, pending, cast_method);
-                return Ok(());
-            }
-        };
-        let Some(reference) = paid_cost_refs
+        let power =
+            chosen_power_lki.expect("complete preparation captured payment-time chosen power");
+        let reference = paid_cost_refs
             .iter_mut()
             .find(|reference| reference.object == binding.object)
-        else {
-            abort_cast(state, pending, cast_method);
-            return Ok(());
-        };
+            .expect("chosen creature is included in its paid provenance");
         reference.power_lki = Some(power);
     }
     let selected_target_spec = if cast_method == CastMethodV4::Omen {
@@ -16290,6 +16862,243 @@ mod tests {
         GameState::new_from_libraries(&[], &[], |c| format!("card-{c}"), 1)
     }
 
+    #[test]
+    fn other_controlled_permanent_targets_use_captured_source_incarnation() {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = empty_game();
+            let source = put_on_battlefield(&mut state, player, "Voldaren Epicure");
+            let land = put_on_battlefield(&mut state, player, "Forest");
+            let token = put_on_battlefield(&mut state, player, "Forest");
+            state.objects.get_mut(token).v4.is_token = true;
+            let borrowed = put_on_battlefield(&mut state, player.opponent(), "Great Furnace");
+            state.players[player.opponent().index()]
+                .battlefield
+                .retain(|&id| id != borrowed);
+            state.players[player.index()].battlefield.push(borrowed);
+            state.objects.get_mut(borrowed).controller = player;
+            let theirs = put_on_battlefield(&mut state, player.opponent(), "Forest");
+            let protected = put_on_battlefield(&mut state, player, "Guardian of the Guildpact");
+            let hand = put_in_hand(&mut state, player, "Forest");
+            let grave = put_in_graveyard(&mut state, player, "Forest");
+            let contract = AbilitySourceContractV4::capture(&state, source);
+            let captured = triggered_ability_targeting_source(
+                source,
+                Some(contract),
+                &EffectOp::MoveAllTargets {
+                    to_zone: Zone::Hand,
+                },
+            );
+            let spec = TargetSpec::UpToOneOtherControlledPermanent;
+            let legal =
+                legal_targets_for_controller_from_source(spec, &[], player, captured, &state);
+            for wanted in [land, token, borrowed] {
+                assert!(legal.contains(&Target::Object(wanted)));
+            }
+            for excluded in [source, theirs, protected, hand, grave] {
+                assert!(!legal.contains(&Target::Object(excluded)));
+            }
+            assert!(
+                legal_targets_for_controller_from_source(spec, &[], player, None, &state)
+                    .is_empty()
+            );
+            assert!(!legal_targets_for_controller_from_source(
+                spec,
+                &[Target::Object(land)],
+                player,
+                captured,
+                &state,
+            )
+            .contains(&Target::Object(land)));
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Exile));
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            assert!(
+                legal_targets_for_controller_from_source(spec, &[], player, captured, &state)
+                    .contains(&Target::Object(source))
+            );
+            assert!(!legal_targets_for_controller_from_source(
+                spec,
+                &[],
+                player,
+                targeting_source_for_object(&state, source),
+                &state,
+            )
+            .contains(&Target::Object(source)));
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(
+                legal_targets_for_controller_from_source(spec, &[], player, captured, &state),
+                legal_targets_for_controller_from_source(spec, &[], player, captured, &restored),
+            );
+            state.objects.get_mut(borrowed).controller = player.opponent();
+            state.players[player.index()]
+                .battlefield
+                .retain(|&id| id != borrowed);
+            state.players[player.opponent().index()]
+                .battlefield
+                .push(borrowed);
+            assert!(
+                !legal_targets_for_controller_from_source(spec, &[], player, captured, &state)
+                    .contains(&Target::Object(borrowed))
+            );
+        }
+    }
+
+    #[test]
+    fn subtype_cost_count_tracks_control_zone_tokens_changeling_and_type_changes() {
+        use card_def::{DynamicCountDef, Subtype};
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = empty_game();
+            let cat = put_on_battlefield(&mut state, player, "Masked Meower");
+            let token = put_on_battlefield(&mut state, player, "Masked Meower");
+            state.objects.get_mut(token).v4.is_token = true;
+            let borrowed =
+                put_on_battlefield(&mut state, player.opponent(), "Webweaver Changeling");
+            state.objects.get_mut(borrowed).controller = player;
+            put_on_battlefield(&mut state, player.opponent(), "Masked Meower");
+            put_in_hand(&mut state, player, "Masked Meower");
+            put_in_graveyard(&mut state, player, "Masked Meower");
+            let count = DynamicCountDef::ControllerBattlefieldSubtype(Subtype::Cat);
+            let present = DynamicCountDef::ControllerHasPermanentSubtype(Subtype::Wizard);
+            assert_eq!(normal_cast_reduction_count(count, player, &[], &state), 3);
+            assert_eq!(normal_cast_reduction_count(present, player, &[], &state), 1);
+            let second = put_on_battlefield(&mut state, player, "Webweaver Changeling");
+            assert_eq!(normal_cast_reduction_count(present, player, &[], &state), 1);
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(second, Zone::Exile));
+            state.objects.get_mut(borrowed).controller = player.opponent();
+            assert_eq!(normal_cast_reduction_count(count, player, &[], &state), 2);
+            assert_eq!(normal_cast_reduction_count(present, player, &[], &state), 0);
+            state.objects.get_mut(cat).v4.effective_subtype_ids = vec![Subtype::Wizard.stable_id()];
+            assert_eq!(normal_cast_reduction_count(count, player, &[], &state), 1);
+            assert_eq!(normal_cast_reduction_count(present, player, &[], &state), 1);
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(token, Zone::Exile));
+            assert_eq!(normal_cast_reduction_count(count, player, &[], &state), 0);
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(
+                normal_cast_reduction_count(present, player, &[], &restored),
+                1
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "standard-magezero-fixtures")]
+    fn subtype_cost_reduction_order_floors_after_tax_and_preserves_colored_pips() {
+        // Existing Affinity is a registered consumer of the same cost path.
+        // Six artifacts exceed Thoughtcast's printed four plus Thalia's one.
+        let mut state = empty_game();
+        put_on_battlefield(&mut state, PlayerId::P1, "Thalia, Guardian of Thraben");
+        for _ in 0..6 {
+            put_on_battlefield(&mut state, PlayerId::P0, "Great Furnace");
+        }
+        let def = &card_def::CARD_DEFS[card_id_by_name("Thoughtcast").unwrap() as usize];
+        let cost = effective_normal_cast_cost(def, PlayerId::P0, &state);
+        assert_eq!(cost.generic, 0);
+        assert_eq!(cost.pips, &[mana::Pip::Colored(ManaColor::U)]);
+        for _ in 0..3 {
+            let object = state.players[0].battlefield.last().copied().unwrap();
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(object, Zone::Exile));
+        }
+        assert_eq!(
+            effective_normal_cast_cost(def, PlayerId::P0, &state).generic,
+            2
+        );
+    }
+
+    #[test]
+    fn controlled_type_value_counts_current_control_and_zone_including_tokens() {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = empty_game();
+            put_on_battlefield(&mut state, player, "Forest");
+            let token = put_on_battlefield(&mut state, player, "Forest");
+            state.objects.get_mut(token).v4.is_token = true;
+            let borrowed = put_on_battlefield(&mut state, player.opponent(), "Great Furnace");
+            state.objects.get_mut(borrowed).controller = player;
+            put_on_battlefield(&mut state, player.opponent(), "Forest");
+            put_in_hand(&mut state, player, "Forest");
+            put_in_graveyard(&mut state, player, "Forest");
+            put_on_battlefield(&mut state, player, "Faerie Miscreant");
+            assert_eq!(
+                evaluate_dynamic_value(
+                    &state,
+                    DynamicValueDef::ControlledPermanentsWithType(CardType::Land),
+                    player,
+                ),
+                3
+            );
+            assert_eq!(
+                evaluate_dynamic_value(
+                    &state,
+                    DynamicValueDef::ControlledPermanentsWithType(CardType::Artifact),
+                    player,
+                ),
+                1,
+                "an artifact land counts for both types"
+            );
+            assert_eq!(
+                evaluate_dynamic_value(
+                    &state,
+                    DynamicValueDef::ControlledPermanentsWithType(CardType::Creature),
+                    player,
+                ),
+                1
+            );
+            state.objects.get_mut(borrowed).controller = player.opponent();
+            assert_eq!(
+                evaluate_dynamic_value(
+                    &state,
+                    DynamicValueDef::ControlledPermanentsWithType(CardType::Land),
+                    player,
+                ),
+                2
+            );
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(
+                evaluate_dynamic_value(
+                    &restored,
+                    DynamicValueDef::ControlledPermanentsWithType(CardType::Land),
+                    player,
+                ),
+                2
+            );
+        }
+    }
+
+    #[test]
+    fn distinct_nonland_mana_value_counts_current_control_and_zone() {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = empty_game();
+            put_on_battlefield(&mut state, player, "Forest");
+            put_on_battlefield(&mut state, player, "Great Furnace");
+            put_on_battlefield(&mut state, player, "Faerie Miscreant");
+            put_on_battlefield(&mut state, player, "Faerie Miscreant");
+            let token = put_on_battlefield(&mut state, player, "Treasure Token");
+            state.objects.get_mut(token).v4.is_token = true;
+            let borrowed = put_on_battlefield(&mut state, player.opponent(), "Tolarian Terror");
+            state.objects.get_mut(borrowed).controller = player;
+            put_on_battlefield(&mut state, player.opponent(), "Troll of Khazad-dum");
+            put_in_hand(&mut state, player, "Troll of Khazad-dum");
+            put_in_graveyard(&mut state, player, "Troll of Khazad-dum");
+            let value = DynamicValueDef::DistinctManaValuesAmongControlledNonlandPermanents;
+            assert_eq!(evaluate_dynamic_value(&state, value, player), 3);
+            state.objects.get_mut(borrowed).controller = player.opponent();
+            assert_eq!(evaluate_dynamic_value(&state, value, player), 2);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(token, Zone::Graveyard),
+            );
+            assert_eq!(evaluate_dynamic_value(&state, value, player), 1);
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(evaluate_dynamic_value(&restored, value, player), 1);
+            assert_eq!(restored.state_hash(), state.state_hash());
+        }
+    }
+
     // ---- starting-player authority (P1-METAMORPHIC-AUDIT-DESIGN-V4.md
     // ---- Section 1.2): construction, first-turn draw-skip, and round
     // ---- wraparound, exercised in both P0-first and P1-first orientations.
@@ -16507,6 +17316,153 @@ mod tests {
             &chosen,
         ));
         assert_eq!(state, before, "failed payment must be exactly nonmutating");
+    }
+
+    #[test]
+    fn sacrifice_other_creature_cost_rejects_source_opponent_and_noncreature_atomically() {
+        let mut state = ready_game_in_main1(0);
+        let source = put_on_battlefield(&mut state, PlayerId::P0, "Faerie Miscreant");
+        let opponent = put_on_battlefield(&mut state, PlayerId::P1, "Faerie Seer");
+        let artifact = put_on_battlefield(&mut state, PlayerId::P0, "Blood Token");
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 1;
+        let components = [
+            CostComponent::Mana(Cost {
+                pips: &[],
+                generic: 1,
+                x_count: 0,
+            }),
+            CostComponent::SacrificeOtherControlledCreatures(1),
+        ];
+        assert!(!can_pay_activation_components(
+            &components,
+            PlayerId::P0,
+            source,
+            &state
+        ));
+        for invalid in [source, opponent, artifact] {
+            let before = state.clone();
+            assert!(!pay_cost_components(
+                &mut state,
+                PlayerId::P0,
+                source,
+                &components,
+                &[invalid]
+            ));
+            assert_eq!(state, before);
+        }
+        let donor = put_on_battlefield(&mut state, PlayerId::P0, "Faerie Seer");
+        state.objects.get_mut(donor).tapped = true;
+        state.objects.get_mut(donor).summoning_sick = true;
+        assert!(can_pay_activation_components(
+            &components,
+            PlayerId::P0,
+            source,
+            &state
+        ));
+        state.players[0].mana_pool = [0; 6];
+        let before = state.clone();
+        assert!(!pay_cost_components(
+            &mut state,
+            PlayerId::P0,
+            source,
+            &components,
+            &[donor]
+        ));
+        assert_eq!(state, before, "mana failure cannot sacrifice the donor");
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 1;
+        assert!(pay_cost_components(
+            &mut state,
+            PlayerId::P0,
+            source,
+            &components,
+            &[donor]
+        ));
+        assert_eq!(state.objects.get(donor).zone, Zone::Graveyard);
+        assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+        assert_eq!(state.players[0].mana_pool, [0; 6]);
+    }
+
+    #[test]
+    fn sacrifice_other_creature_cost_uses_current_control_and_incarnation_bindings() {
+        let mut state = ready_game_in_main1(0);
+        let source = put_on_battlefield(&mut state, PlayerId::P0, "Faerie Miscreant");
+        let borrowed = put_on_battlefield(&mut state, PlayerId::P1, "Faerie Seer");
+        state.objects.get_mut(borrowed).controller = PlayerId::P0;
+        let components = [CostComponent::SacrificeOtherControlledCreatures(1)];
+        let bindings = activation_controlled_cost_candidates(
+            Some(source),
+            PlayerId::P0,
+            PermanentFilter::Creature,
+            false,
+            &state,
+            &[],
+        );
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0].object, borrowed);
+        let old = bindings[0];
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(borrowed, Zone::Hand));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(borrowed, Zone::Battlefield),
+        );
+        state.objects.get_mut(borrowed).controller = PlayerId::P0;
+        let fresh = activation_controlled_cost_candidates(
+            Some(source),
+            PlayerId::P0,
+            PermanentFilter::Creature,
+            false,
+            &state,
+            &[],
+        );
+        assert_eq!(fresh[0].object, old.object);
+        assert_ne!(
+            fresh[0].expected_zone_change_count,
+            old.expected_zone_change_count
+        );
+        assert!(pay_cost_components(
+            &mut state,
+            PlayerId::P0,
+            source,
+            &components,
+            &[borrowed]
+        ));
+        assert!(
+            state.players[1].graveyard.contains(&borrowed),
+            "owner's graveyard receives the card"
+        );
+    }
+
+    #[test]
+    fn sacrifice_other_creature_cost_rejects_zero_count_duplicates_and_wrong_count() {
+        let mut state = ready_game_in_main1(0);
+        let source = put_on_battlefield(&mut state, PlayerId::P0, "Faerie Miscreant");
+        let first = put_on_battlefield(&mut state, PlayerId::P0, "Faerie Seer");
+        let second = put_on_battlefield(&mut state, PlayerId::P0, "Faerie Seer");
+        let before = state.clone();
+        for (count, chosen) in [
+            (0, vec![]),
+            (2, vec![first]),
+            (2, vec![first, first]),
+            (1, vec![first, second]),
+        ] {
+            assert!(!pay_cost_components(
+                &mut state,
+                PlayerId::P0,
+                source,
+                &[CostComponent::SacrificeOtherControlledCreatures(count)],
+                &chosen
+            ));
+            assert_eq!(state, before);
+        }
+        assert!(pay_cost_components(
+            &mut state,
+            PlayerId::P0,
+            source,
+            &[CostComponent::SacrificeOtherControlledCreatures(2)],
+            &[first, second]
+        ));
+        assert_eq!(state.objects.get(first).zone, Zone::Graveyard);
+        assert_eq!(state.objects.get(second).zone, Zone::Graveyard);
     }
 
     #[test]
@@ -19196,7 +20152,10 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "limited-fdn-fixtures")]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn koma_spell_protection_preserves_copies_but_not_abilities_or_ordinary_departure() {
         let mut state = empty_game();
         let physical = put_on_stack(&mut state, PlayerId::P0, "Koma, World-Eater");

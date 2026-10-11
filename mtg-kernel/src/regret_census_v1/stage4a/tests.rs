@@ -1,8 +1,153 @@
 use super::arms::{Limits, Roles, RootCtx};
 use super::play::{Meter, PlayErr};
 use super::*;
+
+#[test]
+fn selection_setting_refuses_invalid_encoding_unknown_rule_and_formal_modes() {
+    use std::env::VarError;
+    assert_eq!(
+        parse_select_rule("s4a-diag", Err(VarError::NotPresent)).unwrap(),
+        None
+    );
+    for alias in ["", "untried-first"] {
+        assert_eq!(parse_select_rule("s4a", Ok(alias.into())).unwrap(), None);
+    }
+    assert_eq!(
+        parse_select_rule("s4a-diag", Ok("fpu-1.5".into())).unwrap(),
+        Some(1.5)
+    );
+    for mode in ["s4a", "corpus", "s4a-duel"] {
+        assert!(parse_select_rule(mode, Ok("fpu-1.5".into())).is_err());
+    }
+    assert!(parse_select_rule("s4a-diag", Ok("unknown".into())).is_err());
+    assert!(parse_select_rule("s4a-diag", Err(VarError::NotUnicode("opaque".into()))).is_err());
+}
+
+#[test]
+fn selection_resume_requires_typed_identity_for_both_runtime_profiles() {
+    let boundary = Some(crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1);
+    for runtime in [None, boundary] {
+        for selection in [None, Some("fpu-1.5")] {
+            let row = json!({"kind":"s4a_diag_root","root_id":"fixture",
+                "runtime_rules":runtime.map(|_| "resolution-boundary-v1"),
+                "select_rule":selection});
+            let bytes = format!("{row}\n");
+            let done =
+                completed_identity_roots(bytes.as_bytes(), "s4a_diag_root", runtime, selection)
+                    .unwrap();
+            assert!(done.contains("fixture"));
+            let other = if selection.is_none() {
+                Some("fpu-1.5")
+            } else {
+                None
+            };
+            assert!(
+                completed_identity_roots(bytes.as_bytes(), "s4a_diag_root", runtime, other)
+                    .is_err()
+            );
+            for bad in [
+                json!(false),
+                json!(17),
+                json!({}),
+                json!([]),
+                json!("unknown"),
+            ] {
+                let mut invalid = row.clone();
+                invalid["select_rule"] = bad;
+                let bad_bytes = format!("{invalid}\n");
+                assert!(completed_identity_roots(
+                    bad_bytes.as_bytes(),
+                    "s4a_diag_root",
+                    runtime,
+                    selection
+                )
+                .is_err());
+            }
+        }
+    }
+}
+
+#[test]
+fn selection_resume_preserves_legacy_rows_and_ignores_only_incomplete_tail() {
+    let bytes = b"{\"kind\":\"s4a_diag_root\",\"root_id\":\"old\"}\n{\"kind\":\"error\",\"select_rule\":true}\n\xff";
+    let done = completed_identity_roots(bytes, "s4a_diag_root", None, None).unwrap();
+    assert!(done.contains("old"));
+    assert!(completed_identity_roots(bytes, "s4a_diag_root", None, Some("fpu-1.5")).is_err());
+    let malformed = b"{\"kind\":\"s4a_diag_root\",\"root_id\":\"old\",\"select_rule\":true}\n\xff";
+    assert!(completed_identity_roots(malformed, "s4a_diag_root", None, None).is_err());
+}
 use crate::ids::PlayerId;
 use std::collections::BTreeMap;
+
+#[test]
+fn runtime_resume_requires_matching_identity_and_preserves_legacy_rows() {
+    let kind = "s4a_diag_root";
+    let active = Some(crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1);
+    let legacy = b"{\"kind\":\"s4a_diag_root\",\"root_id\":\"a\"}\n";
+    let historical = b"{\"kind\":\"s4a_diag_root\",\"root_id\":\"b\",\"runtime_rules\":null}\n";
+    let current = b"{\"kind\":\"s4a_diag_root\",\"root_id\":\"c\",\"runtime_rules\":\"resolution-boundary-v1\"}\n";
+    assert!(completed_runtime_roots(legacy, kind, None)
+        .unwrap()
+        .contains("a"));
+    assert!(completed_runtime_roots(historical, kind, None)
+        .unwrap()
+        .contains("b"));
+    assert!(completed_runtime_roots(current, kind, active)
+        .unwrap()
+        .contains("c"));
+    assert!(completed_runtime_roots(legacy, kind, active).is_err());
+    assert!(completed_runtime_roots(historical, kind, active).is_err());
+    assert!(completed_runtime_roots(current, kind, None).is_err());
+    let mixed = [legacy.as_slice(), current.as_slice()].concat();
+    assert!(completed_runtime_roots(&mixed, kind, None).is_err());
+    assert!(completed_runtime_roots(&mixed, kind, active).is_err());
+    for invalid in ["true", "12", "\"future-runtime\""] {
+        let row = format!(
+            "{{\"kind\":\"s4a_diag_root\",\"root_id\":\"d\",\"runtime_rules\":{invalid}}}\n"
+        );
+        assert!(completed_runtime_roots(row.as_bytes(), kind, None).is_err());
+    }
+}
+
+#[test]
+fn runtime_resume_ignores_only_partial_tail_and_other_row_kinds() {
+    let mut bytes = b"{\"kind\":\"s4a_diag_root\",\"root_id\":\"a\"}\n".to_vec();
+    bytes.extend_from_slice(b"{\"runtime_rules\":\"resolution-boundary-v1\",\"unfinished\":\"");
+    bytes.push(0xf0);
+    assert!(completed_runtime_roots(&bytes, "s4a_diag_root", None)
+        .unwrap()
+        .contains("a"));
+    assert!(completed_runtime_roots(
+        &bytes,
+        "s4a_diag_root",
+        Some(crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1)
+    )
+    .is_err());
+    bytes.push(b'\n');
+    assert!(completed_runtime_roots(&bytes, "s4a_diag_root", None).is_err());
+    assert!(completed_runtime_roots(b"{broken completed row}\n", "s4a_diag_root", None).is_err());
+    let other = b"{\"kind\":\"error\",\"root_id\":\"a\",\"runtime_rules\":true}\n";
+    assert!(completed_runtime_roots(other, "s4a_diag_root", None)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn runtime_setting_refuses_unknown_identity_and_unsupported_modes() {
+    for setting in [None, Some(""), Some("historical")] {
+        for mode in ["s4a-corpus", "s4a-run", "s4a-diag"] {
+            assert_eq!(parse_runtime_rules(mode, setting).unwrap(), None);
+        }
+    }
+    assert_eq!(
+        parse_runtime_rules("s4a-diag", Some("resolution-boundary-v1")).unwrap(),
+        Some(crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1)
+    );
+    for mode in ["s4a-corpus", "s4a-run"] {
+        assert!(parse_runtime_rules(mode, Some("resolution-boundary-v1")).is_err());
+    }
+    assert!(parse_runtime_rules("s4a-diag", Some("unknown")).is_err());
+}
 
 fn test_cfg() -> CensusConfigV1 {
     CensusConfigV1 {
@@ -249,6 +394,7 @@ fn small_root_package_is_deterministic_and_within_ceilings() {
                 eval_worlds: 2,
                 eval_cap: 4_000,
             },
+            urgency: None,
         };
         let (e, tree) = roles.select_e(&ctx);
         assert!(e.transitions <= 6_000);
@@ -594,11 +740,13 @@ fn resume_refuses_mixed_forward_activation_modes() {
         .is_empty());
     let mut interrupted = fast.as_bytes().to_vec();
     interrupted.extend_from_slice(&[0xe2, 0x82]);
-    assert!(completed_roots_from_bytes(&interrupted, false, "s4a_root").is_err());
-    assert!(completed_roots_from_bytes(&interrupted, true, "s4a_root")
-        .unwrap()
-        .contains("fast"));
-    assert!(completed_roots_from_bytes(&[0xff, b'\n'], false, "s4a_root").is_err());
+    assert!(completed_roots_from_bytes(&interrupted, false, "s4a_root", None, None).is_err());
+    assert!(
+        completed_roots_from_bytes(&interrupted, true, "s4a_root", None, None)
+            .unwrap()
+            .contains("fast")
+    );
+    assert!(completed_roots_from_bytes(&[0xff, b'\n'], false, "s4a_root", None, None).is_err());
 }
 
 #[test]
@@ -606,12 +754,12 @@ fn diagnostic_resume_preserves_row_kind_and_ordinary_activation() {
     let diag =
         json!({"kind":"s4a_diag_root","root_id":"diagnostic","config":{}}).to_string() + "\n";
     assert!(
-        completed_roots_from_bytes(diag.as_bytes(), false, "s4a_diag_root")
+        completed_roots_from_bytes(diag.as_bytes(), false, "s4a_diag_root", None, None)
             .unwrap()
             .contains("diagnostic")
     );
     assert!(
-        completed_roots_from_bytes(diag.as_bytes(), false, "s4a_root")
+        completed_roots_from_bytes(diag.as_bytes(), false, "s4a_root", None, None)
             .unwrap()
             .is_empty()
     );
@@ -619,9 +767,36 @@ fn diagnostic_resume_preserves_row_kind_and_ordinary_activation() {
         json!({"kind":"s4a_diag_root","root_id":"invalid","config":{"fast_search_forward":true}})
             .to_string()
             + "\n";
-    assert!(completed_roots_from_bytes(mixed.as_bytes(), false, "s4a_diag_root").is_err());
+    assert!(
+        completed_roots_from_bytes(mixed.as_bytes(), false, "s4a_diag_root", None, None).is_err()
+    );
     assert!(validate_fast_forward_mode("s4a-diag", true).is_err());
     assert!(validate_fast_forward_mode("s4a-diag", false).is_ok());
+}
+
+#[test]
+fn resume_binds_runtime_selection_and_forward_mode_together() {
+    use crate::engine::RuntimeRulesV1;
+    let runtime = Some(RuntimeRulesV1::RESOLUTION_BOUNDARY_V1);
+    let row = json!({"kind":"s4a_diag_root","root_id":"retained",
+        "runtime_rules":"resolution-boundary-v1","select_rule":"fpu-1.5","config":{}});
+    let mut bytes = (row.to_string() + "\n").into_bytes();
+    // Disposable interrupted UTF8 must not hide any identity mismatch.
+    bytes.extend_from_slice(&[0xe2, 0x82]);
+    assert!(
+        completed_roots_from_bytes(&bytes, false, "s4a_diag_root", runtime, Some("fpu-1.5"))
+            .unwrap()
+            .contains("retained")
+    );
+    for (fast, rules, select) in [
+        (true, runtime, Some("fpu-1.5")),
+        (false, None, Some("fpu-1.5")),
+        (false, runtime, None),
+    ] {
+        assert!(completed_roots_from_bytes(&bytes, fast, "s4a_diag_root", rules, select).is_err());
+    }
+    let malformed = b"{\"kind\":\"s4a_diag_root\",\"root_id\":\"retained\"}\ninvalid\n";
+    assert!(completed_roots_from_bytes(malformed, false, "s4a_diag_root", None, None).is_err());
 }
 
 #[test]
@@ -758,6 +933,7 @@ fn diagnostic_trace_is_passive_and_reconstructs_backups() {
                 eval_worlds: 3,
                 eval_cap: 4_000,
             },
+            urgency: None,
         };
         let mut trace = traced.then(diag::Trace::default);
         let (e, tree) = roles.select_e_traced(&ctx, trace.as_mut());
@@ -878,4 +1054,445 @@ fn diagnostic_trace_is_passive_and_reconstructs_backups() {
         }
         assert_eq!(decs[0]["root"], true);
     }
+}
+
+/// Resolution-boundary profile (engine::RuntimeRulesV1): plays a scripted
+/// cast of `spell` by P0 (self-targeting, choosing the first option at every
+/// other P0 decision, passing for P1) until the stack is empty again, and
+/// returns every P0 multi-option decision's semantics plus the final state.
+fn scripted_cast(
+    rules: crate::engine::RuntimeRulesV1,
+    spell: &str,
+    library: &[&str],
+) -> (
+    Vec<Vec<crate::rl::ActionSemanticV1>>,
+    crate::state::GameState,
+) {
+    scripted_cast_with(rules, spell, library, &[], false).0
+}
+
+/// `scripted_cast` with extra hand cards; with `stop_at_suspension`, also
+/// returns the state at the first suspended effect after the cast.
+fn scripted_cast_with(
+    rules: crate::engine::RuntimeRulesV1,
+    spell: &str,
+    library: &[&str],
+    hand: &[&str],
+    stop_at_suspension: bool,
+) -> (
+    (
+        Vec<Vec<crate::rl::ActionSemanticV1>>,
+        crate::state::GameState,
+    ),
+    Option<crate::state::GameState>,
+) {
+    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::rl::{ActionSemanticV1, PlayerSeatV1, TargetRefV1};
+    use crate::state::Zone;
+    let mut st = ready_state();
+    let me = PlayerId::P0;
+    put(&mut st, me, spell, Zone::Hand);
+    for name in hand {
+        put(&mut st, me, name, Zone::Hand);
+    }
+    for c in [
+        crate::mana::ManaColor::B,
+        crate::mana::ManaColor::U,
+        crate::mana::ManaColor::G,
+    ] {
+        st.players[0].mana_pool[c.pool_index()] = 4;
+    }
+    for name in library {
+        put(&mut st, me, name, Zone::Library);
+    }
+    for _ in 0..10 {
+        put(&mut st, me.opponent(), "Swamp", Zone::Library);
+    }
+    let mut s = crate::rl_session::FastActorSessionV1::from_v3_fixture_state(st);
+    s.set_runtime_rules_v1(rules).unwrap();
+    let spell_id = crate::card_def::card_id_by_name(spell).unwrap();
+    let mut menus = Vec::new();
+    let mut cast = false;
+    let mut suspended = None;
+    for _ in 0..400 {
+        let Some(d) = play::decision(&s) else { break };
+        let g = s.game_state();
+        if stop_at_suspension && cast && suspended.is_none() && g.engine.pending_effect.is_some() {
+            suspended = Some(g.clone());
+        }
+        if cast
+            && g.stack.is_empty()
+            && g.engine.pending_effect.is_none()
+            && g.engine.pending_triggers.is_empty()
+            && g.engine.pending_cast.is_none()
+        {
+            break;
+        }
+        let sem = s.diagnostic_current_action_semantics().unwrap();
+        let a = if play::acting(&d) == me {
+            if d.legal_action_count >= 2 {
+                menus.push(sem.clone());
+            }
+            let pos = |f: &dyn Fn(&ActionSemanticV1) -> bool| sem.iter().position(f);
+            pos(&|x| {
+                !cast
+                    && matches!(x, ActionSemanticV1::CastSpell { source, .. } if source.card_db_id == spell_id)
+            })
+            .or_else(|| {
+                pos(&|x| {
+                    matches!(x, ActionSemanticV1::ChooseTarget { target: TargetRefV1::Player { player }, .. } if *player == PlayerSeatV1::P0)
+                })
+            })
+            .or_else(|| {
+                pos(&|x| {
+                    cast && !matches!(
+                        x,
+                        ActionSemanticV1::Pass { .. }
+                            | ActionSemanticV1::CastSpell { .. }
+                            | ActionSemanticV1::ActivateAbility { .. }
+                            | ActionSemanticV1::PlayLand { .. }
+                    )
+                })
+            })
+            .or_else(|| pos(&|x| matches!(x, ActionSemanticV1::Pass { .. })))
+            .unwrap_or(0)
+        } else {
+            sem.iter()
+                .position(|x| matches!(x, ActionSemanticV1::Pass { .. }))
+                .unwrap_or(0)
+        };
+        if matches!(&sem[a], ActionSemanticV1::CastSpell { source, .. } if source.card_db_id == spell_id)
+        {
+            cast = true;
+        }
+        s.step(d.episode_id, d.step, a as u32).unwrap();
+    }
+    assert!(cast, "{spell} was never cast");
+    ((menus, s.game_state().clone()), suspended)
+}
+
+fn order_menus(menus: &[Vec<crate::rl::ActionSemanticV1>]) -> usize {
+    menus
+        .iter()
+        .filter(|m| {
+            m.iter()
+                .all(|x| matches!(x, crate::rl::ActionSemanticV1::ChooseEffectTarget { .. }))
+        })
+        .count()
+}
+
+fn zone_names(
+    st: &crate::state::GameState,
+    ids: &[crate::ids::ObjectId],
+    sorted: bool,
+) -> Vec<String> {
+    let mut v: Vec<String> = ids
+        .iter()
+        .map(|&i| st.objects.get(i).name.to_string())
+        .collect();
+    if sorted {
+        v.sort();
+    }
+    v
+}
+
+#[test]
+fn resolution_boundary_mills_a_landless_library_without_ordering_choices() {
+    use crate::engine::RuntimeRulesV1;
+    let lib = [
+        "Dread Return",
+        "Lotleth Giant",
+        "Balustrade Spy",
+        "Dread Return",
+    ];
+    let (old_menus, old) = scripted_cast(RuntimeRulesV1::default(), "Balustrade Spy", &lib);
+    let (new_menus, new) = scripted_cast(
+        RuntimeRulesV1::RESOLUTION_BOUNDARY_V1,
+        "Balustrade Spy",
+        &lib,
+    );
+    // The historical engine asks the owner to order the milled cards.
+    assert!(order_menus(&old_menus) >= 3, "{old_menus:?}");
+    assert_eq!(order_menus(&new_menus), 0, "{new_menus:?}");
+    // Exactly-one-of-many targeting stays a real choice.
+    let targets = |m: &[Vec<crate::rl::ActionSemanticV1>]| {
+        m.iter().any(|x| {
+            x.len() >= 2
+                && x.iter()
+                    .all(|y| matches!(y, crate::rl::ActionSemanticV1::ChooseTarget { .. }))
+        })
+    };
+    assert!(targets(&old_menus) && targets(&new_menus));
+    // Same legal outcome: the whole library is in the graveyard either way;
+    // the profile keeps the bound (library) order.
+    for st in [&old, &new] {
+        assert!(st.players[0].library.is_empty());
+    }
+    assert_eq!(
+        zone_names(&old, &old.players[0].graveyard, true),
+        zone_names(&new, &new.players[0].graveyard, true)
+    );
+    assert_eq!(old.players[1].graveyard, new.players[1].graveyard);
+}
+
+#[test]
+fn resolution_boundary_stops_at_the_first_land_like_the_historical_engine() {
+    use crate::engine::RuntimeRulesV1;
+    let lib = [
+        "Lotleth Giant",
+        "Swamp",
+        "Dread Return",
+        "Balustrade Spy",
+        "Dread Return",
+    ];
+    let (_, old) = scripted_cast(RuntimeRulesV1::default(), "Balustrade Spy", &lib);
+    let (new_menus, new) = scripted_cast(
+        RuntimeRulesV1::RESOLUTION_BOUNDARY_V1,
+        "Balustrade Spy",
+        &lib,
+    );
+    assert_eq!(order_menus(&new_menus), 0, "{new_menus:?}");
+    assert!(
+        !new.players[0].library.is_empty(),
+        "the land stops the reveal"
+    );
+    assert!(
+        new.players[0].graveyard.len() >= 2,
+        "the prefix through the land is milled"
+    );
+    assert_eq!(
+        zone_names(&old, &old.players[0].library, false),
+        zone_names(&new, &new.players[0].library, false)
+    );
+    assert_eq!(
+        zone_names(&old, &old.players[0].graveyard, true),
+        zone_names(&new, &new.players[0].graveyard, true)
+    );
+    // The reveal stays public under the profile.
+    assert_eq!(old.library_knowledge, new.library_knowledge);
+}
+
+#[test]
+fn resolution_boundary_keeps_ordered_library_placement() {
+    use crate::engine::RuntimeRulesV1;
+    let lib = ["Island", "Swamp", "Lotleth Giant", "Dread Return"];
+    let (menus, _) = scripted_cast(RuntimeRulesV1::RESOLUTION_BOUNDARY_V1, "Ponder", &lib);
+    assert!(
+        order_menus(&menus) >= 1,
+        "Ponder's top-of-library order must stay a choice: {menus:?}"
+    );
+}
+
+#[test]
+fn resolution_boundary_profile_survives_world_sampling_and_is_hash_neutral() {
+    use crate::engine::RuntimeRulesV1;
+    let cfg = test_cfg();
+    let spy = spy_index();
+    let setup = game_setup(&cfg, 1, spy as u64 + 9 * 3);
+    let focal_id = PlayerId(setup.focal as u8);
+    let (mut a, mut b) = (fixture(), fixture());
+    let mut root = None;
+    drive(&setup, &mut a, &mut b, |s, d, _| {
+        if play::acting(d) == focal_id && d.legal_action_count >= 3 && s.game_state().turn >= 3 {
+            root = Some(s.clone());
+            return Ok(true);
+        }
+        Ok(false)
+    })
+    .unwrap();
+    let mut s = root.unwrap();
+    let h = |st: &crate::state::GameState| (st.state_hash(), st.diagnostic_state_hash());
+    let json = |st: &crate::state::GameState| serde_json::to_string(st).unwrap();
+    let before = (h(s.game_state()), json(s.game_state()));
+    s.set_runtime_rules_v1(RuntimeRulesV1::default()).unwrap();
+    assert_eq!(before, (h(s.game_state()), json(s.game_state())));
+    s.set_runtime_rules_v1(RuntimeRulesV1::RESOLUTION_BOUNDARY_V1)
+        .unwrap();
+    // Hash-neutral for the runtime state hash; the audit hash and snapshot
+    // record the profile once it is on.
+    assert_eq!(before.0 .0, h(s.game_state()).0);
+    assert_ne!(before.1, json(s.game_state()));
+    let prior = world::DeckPrior::new(&cfg.decks);
+    let w = world::sample(&s, 7, &prior).unwrap();
+    assert_eq!(
+        w.world.game_state().engine.runtime_rules,
+        RuntimeRulesV1::RESOLUTION_BOUNDARY_V1
+    );
+}
+
+/// Zone-change and trigger events of a scripted run, order-free (the
+/// profile may only change the order in which a batch is committed).
+fn event_multiset(st: &crate::state::GameState) -> Vec<String> {
+    let mut v: Vec<String> = st
+        .engine
+        .event_history
+        .iter()
+        .map(|e| format!("{e:?}"))
+        .collect();
+    v.sort();
+    v
+}
+
+#[test]
+fn resolution_boundary_preserves_events_and_bound_order_for_spy() {
+    use crate::engine::RuntimeRulesV1;
+    let lib = [
+        "Dread Return",
+        "Lotleth Giant",
+        "Balustrade Spy",
+        "Dread Return",
+    ];
+    let (_, old) = scripted_cast(RuntimeRulesV1::default(), "Balustrade Spy", &lib);
+    let (_, new) = scripted_cast(
+        RuntimeRulesV1::RESOLUTION_BOUNDARY_V1,
+        "Balustrade Spy",
+        &lib,
+    );
+    assert_eq!(event_multiset(&old), event_multiset(&new));
+    assert_eq!(
+        old.engine.pending_triggers.len(),
+        new.engine.pending_triggers.len()
+    );
+    // The profile keeps the order the effect bound: library order, which the
+    // fixture pushed bottom to top, so the graveyard reads it either way.
+    let gy = zone_names(&new, &new.players[0].graveyard, false);
+    let milled: Vec<String> = gy
+        .iter()
+        .filter(|n| lib.contains(&n.as_str()))
+        .cloned()
+        .collect();
+    let fwd: Vec<String> = lib.iter().map(|s| s.to_string()).collect();
+    let rev: Vec<String> = fwd.iter().rev().cloned().collect();
+    // Library index 0 is the top; the batch keeps that bound order.
+    let _ = rev;
+    assert_eq!(milled, fwd, "{gy:?}");
+}
+
+#[test]
+fn resolution_boundary_covers_plain_mills() {
+    use crate::engine::RuntimeRulesV1;
+    let lib = ["Lotleth Giant", "Dread Return", "Swamp", "Balustrade Spy"];
+    let (old_menus, old) = scripted_cast(RuntimeRulesV1::default(), "Thought Scour", &lib);
+    let (new_menus, new) = scripted_cast(
+        RuntimeRulesV1::RESOLUTION_BOUNDARY_V1,
+        "Thought Scour",
+        &lib,
+    );
+    assert!(order_menus(&old_menus) >= 1, "{old_menus:?}");
+    assert_eq!(order_menus(&new_menus), 0, "{new_menus:?}");
+    assert_eq!(
+        zone_names(&old, &old.players[0].graveyard, true),
+        zone_names(&new, &new.players[0].graveyard, true)
+    );
+    assert_eq!(
+        zone_names(&old, &old.players[0].hand, true),
+        zone_names(&new, &new.players[0].hand, true)
+    );
+    assert_eq!(event_multiset(&old), event_multiset(&new));
+}
+
+#[test]
+fn resolution_boundary_covers_reveal_and_partition() {
+    use crate::engine::RuntimeRulesV1;
+    let lib = ["Lotleth Giant", "Dread Return", "Masked Vandal", "Swamp"];
+    let ((old_menus, old), _) =
+        scripted_cast_with(RuntimeRulesV1::default(), "Winding Way", &lib, &[], false);
+    let ((new_menus, new), _) = scripted_cast_with(
+        RuntimeRulesV1::RESOLUTION_BOUNDARY_V1,
+        "Winding Way",
+        &lib,
+        &[],
+        false,
+    );
+    assert!(order_menus(&old_menus) >= 1, "{old_menus:?}");
+    assert_eq!(order_menus(&new_menus), 0, "{new_menus:?}");
+    assert_eq!(
+        zone_names(&old, &old.players[0].graveyard, true),
+        zone_names(&new, &new.players[0].graveyard, true)
+    );
+    assert_eq!(
+        zone_names(&old, &old.players[0].hand, true),
+        zone_names(&new, &new.players[0].hand, true)
+    );
+    assert_eq!(event_multiset(&old), event_multiset(&new));
+    assert_eq!(old.library_knowledge, new.library_knowledge);
+}
+
+/// A graveyard batch whose binding no longer exists is an error, never a
+/// panic, under either profile.
+#[test]
+fn resolution_boundary_rejects_a_missing_binding_without_panicking() {
+    use crate::effect::{EffectFrame, EffectObjectBinding};
+    use crate::engine::RuntimeRulesV1;
+    use crate::state::Zone;
+    let lib = ["Lotleth Giant", "Dread Return", "Masked Vandal", "Swamp"];
+    for rules in [
+        RuntimeRulesV1::default(),
+        RuntimeRulesV1::RESOLUTION_BOUNDARY_V1,
+    ] {
+        let (_, suspended) = scripted_cast_with(rules, "Winding Way", &lib, &[], true);
+        let mut st = suspended.expect("Winding Way suspends on its type choice");
+        let mut cont = st.engine.pending_effect.take().unwrap();
+        let top = st.players[0].library[0];
+        cont.frames.push(EffectFrame::MoveObjectsBatch {
+            objects: vec![
+                EffectObjectBinding {
+                    object: crate::ids::ObjectId(60_000),
+                    expected_zone: Zone::Library,
+                    expected_zone_change_count: 0,
+                },
+                EffectObjectBinding {
+                    object: top,
+                    expected_zone: Zone::Library,
+                    expected_zone_change_count: st.objects.get(top).zone_change_count,
+                },
+            ],
+            to_zone: Zone::Graveyard,
+            preserve_known_identity: false,
+            order_resolved: false,
+            path: Vec::new(),
+        });
+        cont.choice = None;
+        cont.answered_choice_guard = None;
+        st.engine.pending_effect = Some(cont);
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::effect::resume_resumable_resolution(&mut st)
+        }));
+        assert!(matches!(r, Ok(Err(_))), "{rules:?}");
+    }
+}
+
+/// The profile is a game-level rule: refused whenever any card in the game,
+/// in any zone and for either player, reads graveyard order (Delve), so the
+/// ordering stage's presence never depends on hidden cards. Without the
+/// profile the Delve owner is still asked.
+#[test]
+fn resolution_boundary_is_refused_when_any_card_reads_graveyard_order() {
+    use crate::engine::RuntimeRulesV1;
+    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::state::Zone;
+    let me = PlayerId::P0;
+    for (owner, zone) in [
+        (me, Zone::Library),
+        (me, Zone::Hand),
+        (me.opponent(), Zone::Library),
+    ] {
+        let mut st = ready_state();
+        put(&mut st, me, "Balustrade Spy", Zone::Hand);
+        put(&mut st, owner, "Gurmag Angler", zone);
+        put(&mut st, me.opponent(), "Swamp", Zone::Library);
+        let mut s = crate::rl_session::FastActorSessionV1::from_v3_fixture_state(st);
+        assert!(s
+            .set_runtime_rules_v1(RuntimeRulesV1::RESOLUTION_BOUNDARY_V1)
+            .is_err());
+        assert!(s.set_runtime_rules_v1(RuntimeRulesV1::default()).is_ok());
+    }
+    let lib = [
+        "Dread Return",
+        "Lotleth Giant",
+        "Gurmag Angler",
+        "Dread Return",
+    ];
+    let (menus, _) = scripted_cast(RuntimeRulesV1::default(), "Balustrade Spy", &lib);
+    assert!(order_menus(&menus) >= 3, "{menus:?}");
 }

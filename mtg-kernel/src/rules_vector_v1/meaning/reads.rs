@@ -37,6 +37,17 @@ pub(crate) fn effect_cond(cond: &EffectCond, env: &Env, out: &mut Collector) {
     match cond {
         // Constant conditions read nothing.
         EffectCond::Always => {}
+        EffectCond::TargetPlayerLifeTotalEquals { index, life } => {
+            out.read(
+                player_ref(PlayerRef::Target(*index)),
+                None,
+                Some(ObjF::Player),
+                AggF::Characteristic,
+            );
+            // Exact life-total equality has no predicate facet in v1.
+            let _ = life;
+            out.atoms.push(Atom::Opaque);
+        }
         EffectCond::Never => {}
         EffectCond::DiscardedNonLandForCost => {
             // Reads the cards this cast's additional cost discarded
@@ -250,6 +261,17 @@ pub(crate) fn effect_cond(cond: &EffectCond, env: &Env, out: &mut Collector) {
                 AggF::Characteristic,
             );
         }
+        EffectCond::TargetIsLegalForAbility { index, spec } => {
+            let _ = spec;
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(env.target_obj(*index)),
+                AggF::Characteristic,
+            );
+            // Full legality also includes captured incarnation and protection.
+            out.atoms.push(Atom::Opaque);
+        }
     }
 }
 
@@ -274,6 +296,27 @@ pub(crate) fn dynamic_value(value: DynamicValueDef, out: &mut Collector) -> AmtF
             AmtF::Dynamic
         }
         DynamicValueDef::Fixed(n) => AmtF::fixed(i64::from(n)),
+        DynamicValueDef::DistinctManaValuesAmongControlledNonlandPermanents => {
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Permanent),
+                AggF::Characteristic,
+            );
+            // The fixed vocabulary has no nonland exclusion or distinct
+            // mana-value grouping. Preserve that limitation explicitly.
+            out.atoms.push(Atom::Opaque);
+            AmtF::Dynamic
+        }
+        DynamicValueDef::ControlledPermanentsWithType(card_type) => {
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::from(card_type)),
+                AggF::Count,
+            );
+            AmtF::Dynamic
+        }
         DynamicValueDef::ControllerGraveyardCardsWithType(card_type) => {
             // Nontoken cards of the type the controller owns in their
             // graveyard.
@@ -388,6 +431,22 @@ pub(crate) fn dynamic_count(count: DynamicCountDef, out: &mut Collector) -> AmtF
                 Some(ZoneF::Battlefield),
                 Some(ObjF::Typed(CardTypeF::Creature)),
                 AggF::Characteristic,
+            );
+            AmtF::Dynamic
+        }
+        DynamicCountDef::ControllerBattlefieldSubtype(_)
+        | DynamicCountDef::ControllerHasPermanentSubtype(_) => {
+            // Vocabulary gap: ObjF has no subtype class. Preserve the actual
+            // controller, zone and count-versus-presence aggregate.
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Permanent),
+                if matches!(count, DynamicCountDef::ControllerHasPermanentSubtype(_)) {
+                    at_least(1)
+                } else {
+                    AggF::Count
+                },
             );
             AmtF::Dynamic
         }

@@ -1,0 +1,60 @@
+{
+  "schema": "training-speedup-haley-transport-sample/v1",
+  "complete": true,
+  "samples": [
+    {
+      "source": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-baseline-w1\\native-0.zip",
+        "sha256": "2903ea7fd716cf66f780c4124eb91936b10cb52cd4d68bec7dd6c36f66d55597"
+      },
+      "local": "D:\\training-speedups-20261009\\haley-evidence\\measure\\cold\\qual-baseline-w1\\native-0.zip",
+      "bytes": 9897164,
+      "scp_seconds": 0.4489301000139676,
+      "d_verify_seconds": 0.005378399975597858,
+      "e_copy_fsync_seconds": 0.579830700007733,
+      "e_verify_seconds": 0.012900799978524446,
+      "destination": {
+        "path": "E:\\training-speedups-20261009\\haley-transport-sample-20261010\\native-0.zip",
+        "sha256": "2903ea7fd716cf66f780c4124eb91936b10cb52cd4d68bec7dd6c36f66d55597"
+      }
+    },
+    {
+      "source": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-baseline-w1\\native-1.zip",
+        "sha256": "33858719c450d6102857765f8081056fa7c1b247b085dde0c325e247f05f98b4"
+      },
+      "local": "D:\\training-speedups-20261009\\haley-evidence\\measure\\cold\\qual-baseline-w1\\native-1.zip",
+      "bytes": 17327985,
+      "scp_seconds": 0.5366924999980256,
+      "d_verify_seconds": 0.00918160000583157,
+      "e_copy_fsync_seconds": 0.40371529999538325,
+      "e_verify_seconds": 0.01852159999543801,
+      "destination": {
+        "path": "E:\\training-speedups-20261009\\haley-transport-sample-20261010\\native-1.zip",
+        "sha256": "33858719c450d6102857765f8081056fa7c1b247b085dde0c325e247f05f98b4"
+      }
+    }
+  ],
+  "bytes": 27225149,
+  "seconds": 2.0151509999705013,
+  "projected_recovery_bytes": 34359738368,
+  "projected_transport_seconds": 2543.239015184086,
+  "source_device": {
+    "drive": "D:",
+    "partition_guid": "{507839e9-c960-4c6f-955d-cc0868365902}",
+    "disk_number": 2,
+    "disk_unique_id": "500253F854700348",
+    "disk_serial": "S75BNL0X700842B",
+    "host": "DESKTOP-DJ1C40R"
+  },
+  "destination_device": {
+    "drive": "E:",
+    "partition_guid": "{fbe9f6b7-5078-431f-a1a2-daf1a384af79}",
+    "disk_number": 1,
+    "disk_unique_id": "5000C500FD4D0B65",
+    "disk_serial": "ZFN5T2LG",
+    "host": "DESKTOP-DJ1C40R"
+  },
+  "projection_method": "linear32GiB logical upper bound from actual archive SCP+D SHA+E fsync copy+E SHA",
+  "limitation": "bounded qualification archives, SCP fixed overhead and cache/full-block scaling may differ; actual full recovery timed separately"
+}

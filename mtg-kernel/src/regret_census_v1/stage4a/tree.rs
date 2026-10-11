@@ -376,7 +376,34 @@ impl Node {
 
     /// Selection rule: the first untried action in the seeded order; once
     /// all are tried, maximum UCB, ties to the seeded order.
+    #[cfg(test)]
     pub(crate) fn select(&self) -> usize {
+        self.select_with(None)
+    }
+
+    /// `select`, or with `Some(u)` the finite-urgency candidate (collab
+    /// LANES/spy-history-support-plan-20261010/FPU-CANDIDATE.md): an action
+    /// with no natural terminal backup scores `u`, every other action its
+    /// UCB score, and the maximum wins, ties to the seeded order.
+    pub(crate) fn select_with(&self, urgency: Option<f64>) -> usize {
+        if let Some(u) = urgency {
+            let ln = (self.visits.max(2) as f64).ln();
+            let mut best = self.perm[0];
+            let mut best_v = f64::NEG_INFINITY;
+            for &a in &self.perm {
+                let v = if self.n[a] == 0 {
+                    u
+                } else {
+                    let n = self.n[a] as f64;
+                    self.wins[a] as f64 / n + (UCB_C2 * ln / n).sqrt()
+                };
+                if v > best_v {
+                    best_v = v;
+                    best = a;
+                }
+            }
+            return best;
+        }
         if let Some(&a) = self.perm.iter().find(|&&a| self.n[a] == 0) {
             return a;
         }
@@ -537,6 +564,52 @@ mod tests {
         }
         assert!(revisits > 50, "{revisits}");
         assert_eq!(n.frozen_choice(), Some(first));
+    }
+
+    fn visit(n: &mut Node, a: usize, win: bool) {
+        n.visits += 1;
+        n.n[a] += 1;
+        n.wins[a] += u64::from(win);
+    }
+
+    #[test]
+    fn finite_urgency_repeats_a_win_explores_after_losses_and_breaks_ties_by_seed() {
+        let u = Some(1.5);
+        // A first win is repeated on the next visit.
+        let mut n = node(5);
+        let first = n.select_with(u);
+        assert_eq!(first, n.perm[0], "untried actions tie at 1.5; seeded order");
+        visit(&mut n, first, true);
+        assert_eq!(n.select_with(u), first);
+        // A lucky win followed by a loss gives way to untried actions.
+        visit(&mut n, first, false);
+        assert_ne!(n.select_with(u), first);
+        // A loss alone gives way to untried actions.
+        let mut m = node(4);
+        let a = m.select_with(u);
+        visit(&mut m, a, false);
+        assert_ne!(m.select_with(u), a);
+        // Two 1/1 actions tie; the seeded order decides.
+        let mut t = node(3);
+        let (x, y) = (t.perm[0], t.perm[1]);
+        visit(&mut t, x, true);
+        visit(&mut t, y, true);
+        assert_eq!(t.select_with(u), x);
+        // An always-winning action still lets every action be tried.
+        let mut e = node(6);
+        let best = e.perm[0];
+        for _ in 0..400 {
+            let a = e.select_with(u);
+            visit(&mut e, a, a == best);
+        }
+        assert!(e.n.iter().all(|&c| c > 0), "{:?}", e.n);
+        // Frozen eligibility is unchanged by the selection rule.
+        assert_eq!(e.frozen_choice(), Some(best));
+        // The default rule is untouched.
+        let mut d = node(3);
+        let a = d.select();
+        visit(&mut d, a, true);
+        assert_ne!(d.select(), a, "baseline tries every action first");
     }
 
     #[test]

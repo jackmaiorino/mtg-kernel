@@ -81,9 +81,12 @@ struct Shared {
     model: String,
     limits: Limits,
     prior: world::DeckPrior,
-    /// `S4A_FAST_FORWARD=1`: every role scores with the search-only fast
-    /// forward. Rows then record it; without it rows are unchanged.
+    /// Explicit search-only activation, recorded in rows.
     fast_forward: bool,
+    runtime_rules: Option<crate::engine::RuntimeRulesV1>,
+    /// E's selection rule (`S4A_SELECT`): None is the formal untried-first
+    /// rule; `fpu-1.5` the finite-urgency candidate.
+    select_urgency: Option<f64>,
 }
 
 fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
@@ -93,6 +96,13 @@ fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
         Ok(v) => return Err(format!("S4A_FAST_FORWARD must be 0 or 1, not {v}")),
     };
     validate_fast_forward_mode(&cfg.mode, fast_forward)?;
+    let runtime_setting = match std::env::var("S4A_RUNTIME") {
+        Ok(value) => Some(value),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(error) => return Err(format!("invalid S4A_RUNTIME: {error}")),
+    };
+    let runtime_rules = parse_runtime_rules(&cfg.mode, runtime_setting.as_deref())?;
+    let select_urgency = parse_select_rule(&cfg.mode, std::env::var("S4A_SELECT"))?;
     let entries: Vec<(String, String)> = std::env::var("OPPONENTS")
         .map_err(|_| "OPPONENTS is required")?
         .split(',')
@@ -146,7 +156,103 @@ fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
         limits,
         prior: world::DeckPrior::new(&cfg.decks),
         fast_forward,
+        runtime_rules,
+        select_urgency,
     })
+}
+
+fn parse_select_rule(
+    mode: &str,
+    setting: Result<String, std::env::VarError>,
+) -> Result<Option<f64>, String> {
+    let value = match setting {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) => return Ok(None),
+        Err(error) => return Err(format!("invalid S4A_SELECT: {error}")),
+    };
+    match value.as_str() {
+        "" | "untried-first" => Ok(None),
+        "fpu-1.5" if mode == "s4a-diag" => Ok(Some(1.5)),
+        other => Err(format!("unsupported S4A_SELECT {other} for {mode}")),
+    }
+}
+
+fn parse_runtime_rules(
+    mode: &str,
+    setting: Option<&str>,
+) -> Result<Option<crate::engine::RuntimeRulesV1>, String> {
+    match setting {
+        None | Some("") | Some("historical") => Ok(None),
+        Some("resolution-boundary-v1") if mode == "s4a-diag" => {
+            Ok(Some(crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1))
+        }
+        Some("resolution-boundary-v1") => {
+            Err("S4A_RUNTIME=resolution-boundary-v1 is supported only for s4a-diag".into())
+        }
+        Some(other) => Err(format!("unknown S4A_RUNTIME {other}")),
+    }
+}
+
+/// Admit only completed rows of this runtime before truncation or append.
+/// Missing/null identity is historical; an interrupted final row is disposable.
+#[cfg(test)]
+fn completed_runtime_roots(
+    bytes: &[u8],
+    row_kind: &str,
+    runtime_rules: Option<crate::engine::RuntimeRulesV1>,
+) -> Result<HashSet<String>, String> {
+    completed_identity_roots(bytes, row_kind, runtime_rules, None)
+}
+
+/// `completed_runtime_roots` that also binds the selection rule identity.
+fn completed_identity_roots(
+    bytes: &[u8],
+    row_kind: &str,
+    runtime_rules: Option<crate::engine::RuntimeRulesV1>,
+    select_rule: Option<&str>,
+) -> Result<HashSet<String>, String> {
+    let keep = bytes
+        .iter()
+        .rposition(|&byte| byte == b'\n')
+        .map_or(0, |i| i + 1);
+    let rows = std::str::from_utf8(&bytes[..keep])
+        .map_err(|error| format!("invalid retained Stage4a UTF8: {error}"))?;
+    let mut done = HashSet::new();
+    for line in rows.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let row = serde_json::from_str::<Value>(line)
+            .map_err(|error| format!("invalid retained Stage4a JSON: {error}"))?;
+        if row["kind"] != row_kind {
+            continue;
+        }
+        let recorded = match row.get("runtime_rules") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(value)) if value == "resolution-boundary-v1" => {
+                Some(crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1)
+            }
+            _ => return Err("invalid resumed runtime rules identity".into()),
+        };
+        if recorded != runtime_rules {
+            return Err("resume refused: runtime rules identity differs; preserve output and use a fresh path".into());
+        }
+        let recorded_select = match row.get("select_rule") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(value)) if value == "fpu-1.5" => Some("fpu-1.5"),
+            _ => return Err("invalid resumed selection rule identity".into()),
+        };
+        if recorded_select != select_rule {
+            return Err(
+                "resume refused: selection rule differs; preserve output and use a fresh path"
+                    .into(),
+            );
+        }
+        if let Some(id) = row["root_id"].as_str() {
+            done.insert(id.to_owned());
+        }
+    }
+    Ok(done)
 }
 
 fn validate_fast_forward_mode(mode: &str, fast_forward: bool) -> Result<(), String> {
@@ -197,6 +303,8 @@ fn completed_roots_from_bytes(
     bytes: &[u8],
     fast_forward: bool,
     row_kind: &str,
+    runtime_rules: Option<crate::engine::RuntimeRulesV1>,
+    select_rule: Option<&str>,
 ) -> Result<HashSet<String>, String> {
     // An interrupted UTF-8 character in the disposable last line must not
     // hide completed rows from activation-mode validation.
@@ -205,7 +313,9 @@ fn completed_roots_from_bytes(
         .rposition(|&byte| byte == b'\n')
         .map_or(0, |index| index + 1);
     let retained = std::str::from_utf8(&bytes[..keep]).map_err(|error| error.to_string())?;
-    completed_roots(retained, fast_forward, row_kind)
+    let done = completed_identity_roots(bytes, row_kind, runtime_rules, select_rule)?;
+    completed_roots(retained, fast_forward, row_kind)?;
+    Ok(done)
 }
 
 fn set_replay_forward(roles: &mut Roles, fast_forward: bool) {
@@ -433,6 +543,7 @@ fn run_root(
         cast_root,
         probs: probs.clone(),
         limits: shared.limits,
+        urgency: None,
     };
     let (e_sel, e_tree) = roles.select_e(&ctx);
     let a_cands = arms::a_candidates(&probs);
@@ -552,7 +663,13 @@ fn run_root_diag(
         .as_str()
         .ok_or("root has no root_id")?
         .to_owned();
-    let (setup, session) = replay(cfg, shared, roles, root)?;
+    let (setup, mut session) = replay(cfg, shared, roles, root)?;
+    // `S4A_RUNTIME=resolution-boundary-v1`: continue from the replayed root
+    // under the opt-in rules profile (a new runtime identity).
+    let runtime = shared.runtime_rules;
+    if let Some(r) = runtime {
+        session.set_runtime_rules_v1(r)?;
+    }
     let replay_secs = started.elapsed().as_secs_f64();
     let d = decision(&session).ok_or("root is terminal")?;
     let seeds = RootSeeds {
@@ -576,9 +693,15 @@ fn run_root_diag(
         cast_root,
         probs: probs.clone(),
         limits: shared.limits,
+        urgency: shared.select_urgency,
     };
     let trace_dir = std::env::var("S4A_TRACE").ok();
     let mut trace = trace_dir.as_ref().map(|_| diag::Trace::default());
+    if let (Some(t), Ok(n)) = (trace.as_mut(), std::env::var("S4A_MILLOBS")) {
+        t.millobs = Some(diag::MillObs::new(
+            n.parse().map_err(|_| format!("bad S4A_MILLOBS {n}"))?,
+        ));
+    }
     if let Some(t) = trace.as_mut() {
         t.meta_line(json!({"r":"meta","schema":"s4a-diag-trace/v1","root_id":root_id,
             "model":shared.model,"stratum":root["stratum"],"cast_root":cast_root,"focal_seat":setup.focal,
@@ -650,7 +773,7 @@ fn run_root_diag(
         "config":{"limits":shared.limits.json(),"sampler":world::SAMPLER_VERSION,
             "prior_decks":shared.prior.ids(),"opponents":shared.labels,"seed_namespace":seeds::NAMESPACE},
         "arms":arms_json,"eval_worlds":worlds,"rejected_eval_worlds":rejected_worlds,
-        "eval_sampler":eval_sampler.json(),"invalid":invalid,
+        "eval_sampler":eval_sampler.json(),"invalid":invalid,"runtime_rules":runtime.map(|_| "resolution-boundary-v1"),"select_rule":shared.select_urgency.map(|_| "fpu-1.5"),
         "cost":{"selection_transitions":e_sel.transitions,"selection_inference_calls":e_sel.inference,
             "eval_transitions":summary.4},
         "timing":{"replay":replay_secs,"selection_wall":{"E":e_sel.wall},
@@ -715,7 +838,13 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(error) => return Err(error.to_string()),
         };
-        completed_roots_from_bytes(&bytes, shared.fast_forward, row_kind)?
+        completed_roots_from_bytes(
+            &bytes,
+            shared.fast_forward,
+            row_kind,
+            shared.runtime_rules,
+            shared.select_urgency.map(|_| "fpu-1.5"),
+        )?
     } else {
         HashSet::new()
     };

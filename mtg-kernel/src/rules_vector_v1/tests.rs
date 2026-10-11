@@ -105,7 +105,10 @@ fn event_time_programs_keep_their_owning_trigger_without_duplicate_inventory() {
 }
 
 #[test]
-#[cfg(feature = "limited-fdn-fixtures")]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn equipment_noncreature_spell_trigger_matches_the_ordinary_trigger_class() {
     let rod = atoms(&rules("Black Mage's Rod"));
     let archer = atoms(&rules("Firebrand Archer"));
@@ -231,7 +234,10 @@ fn multi_card_surveil_includes_library_reordering() {
 }
 
 #[test]
-#[cfg(feature = "limited-fdn-fixtures")]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn inkmage_threshold_static_is_extracted_from_engine_data() {
     let facts = rules("Cephalid Inkmage");
     assert!(facts.opaque_rules.is_empty());
@@ -607,6 +613,27 @@ fn power_toughness_changes_keep_their_sign() {
 /// or `event_time_trigger_programs`; token names are reached through
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
+    "Archmage of Runes",
+    "Arbiter of Woe",
+    "Armasaur Guide",
+    "Mischievous Pup",
+    "Felidar Savior",
+    "Dreadwing Scavenger",
+    "Wardens of the Cycle",
+    "Tragic Banshee",
+    "Grappling Kraken",
+    "Battlesong Berserker",
+    "Scrawling Crawler",
+    "Affectionate Indrik",
+    "Vampire Soulcaller",
+    "Billowing Shriekmass",
+    "Apothecary Stomper",
+    "Balmor, Battlemage Captain",
+    "Firespitter Whelp",
+    "Elvish Regrower",
+    "Ambush Wolf",
+    "Vanguard Seraph",
+    "Cat Collector",
     "Cephalid Inkmage",
     "Lightshell Duo",
     "Adeline, Resplendent Cathar",
@@ -659,6 +686,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Dwynen, Gilt-Leaf Daen",
     "Eager Trufflesnout",
     "Eldrazi Spawn Token",
+    "Elegant Parlor",
     "Elementalist Adept",
     "Elf Warrior Token",
     "Elfsworn Giant",
@@ -717,6 +745,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Koma, World-Eater",
     "Lembas",
     "Lotleth Giant",
+    "Lush Portico",
     "Manifold Mouse",
     "Manifold Mouse Offspring Token",
     "Map Token",
@@ -774,6 +803,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Tranquil Cove",
     "Treasure Token",
     "Troublemaker Ouphe",
+    "Underground Mortuary",
     "Unstoppable Slasher",
     "Vitu-Ghazi Inspector",
     "Voldaren Epicure",
@@ -789,6 +819,36 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    (
+        "engine.rs",
+        "Mocking Sprite",
+        "read via engine::static_instant_sorcery_reduction_for_v1",
+    ),
+    (
+        "engine.rs",
+        "Archmage of Runes",
+        "read via engine::static_instant_sorcery_reduction_for_v1",
+    ),
+    (
+        "engine.rs",
+        "Dreadwing Scavenger",
+        "read via static_self_boost_for and static_graveyard_threshold_keyword_for",
+    ),
+    (
+        "engine.rs",
+        "Billowing Shriekmass",
+        "read via engine::static_self_boost_for",
+    ),
+    (
+        "engine.rs",
+        "Anthem of Champions",
+        "read via engine::static_controlled_creature_boost_for_v1",
+    ),
+    (
+        "engine.rs",
+        "Empyrean Eagle",
+        "read via engine::static_controlled_creature_boost_for_v1 (predicate opaque)",
+    ),
     (
         "engine.rs",
         "Cephalid Inkmage",
@@ -905,6 +965,11 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
         "bookkeeping: records the last-known counters its dies trigger reads",
     ),
     (
+        "continuous_characteristics_v1.rs",
+        "Vampire Soulcaller",
+        "read via continuous_characteristics_v1::has_printed_cant_block, exact/opaque static record",
+    ),
+    (
         "standard_keywords_v1.rs",
         "Burnout Bashtronaut",
         "read via standard_keywords_v1::rules_vector_statics",
@@ -912,6 +977,11 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
     (
         "standard_keywords_v1.rs",
         "Forsaken Miner",
+        "read via standard_keywords_v1::rules_vector_statics",
+    ),
+    (
+        "standard_keywords_v1.rs",
+        "Phyrexian Mite Token",
         "read via standard_keywords_v1::rules_vector_statics",
     ),
     (

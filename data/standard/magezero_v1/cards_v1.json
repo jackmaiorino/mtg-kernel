@@ -2402,6 +2402,1358 @@
         "disguise_not_modeled"
       ],
       "java_file": "Mage.Sets/src/mage/cards/f/FlourishingBloomKin.java"
+    },
+    {
+      "name": "Mishra's Foundry",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C"
+      ],
+      "decks": [
+        "Standard-MonoW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "mana_ability",
+        "colorless_mana",
+        "land_animation",
+        "activated_ability",
+        "pump_target"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MishrasFoundry.java"
+    },
+    {
+      "name": "Eiganjo, Seat of the Empire",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "W"
+      ],
+      "decks": [
+        "Standard-MonoW.dck",
+        "Standard16-5C.dck",
+        "Standard16-RW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "mana_ability",
+        "channel",
+        "discard_self_cost",
+        "cost_reduction",
+        "damage_target"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/EiganjoSeatOfTheEmpire.java"
+    },
+    {
+      "name": "Mirrex",
+      "engine_capability": "partial",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [
+        "Sphere"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C",
+        "W",
+        "U",
+        "B",
+        "R",
+        "G"
+      ],
+      "decks": [
+        "Standard-MonoW.dck",
+        "Standard16-RW.dck",
+        "Standard16-UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "mana_ability",
+        "conditional_mana",
+        "activated_ability",
+        "token_creation"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/Mirrex.java"
+    },
+    {
+      "name": "Rockface Village",
+      "engine_capability": "partial",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C",
+        "R"
+      ],
+      "decks": [
+        "Standard-MonoR.dck",
+        "Standard16-RG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "mana_ability",
+        "restricted_mana",
+        "activated_ability",
+        "pump_target",
+        "grant_haste"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RockfaceVillage.java"
+    },
+    {
+      "name": "Phyrexian Mite Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Phyrexian",
+        "Mite"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "is_token": true,
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "toxic",
+        "cant_block"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/PhyrexianMiteToken.java"
+    },
+    {
+      "name": "Adarkar Wastes",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C",
+        "W",
+        "U"
+      ],
+      "decks": [
+        "Standard16-5C.dck",
+        "Standard16-UW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "colorless_mana",
+        "dual_land",
+        "painland",
+        "damage_controller"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AdarkarWastes.java"
+    },
+    {
+      "name": "Battlefield Forge",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C",
+        "R",
+        "W"
+      ],
+      "decks": [
+        "Standard16-RW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "colorless_mana",
+        "dual_land",
+        "painland",
+        "damage_controller"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BattlefieldForge.java"
+    },
+    {
+      "name": "Brushland",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C",
+        "G",
+        "W"
+      ],
+      "decks": [
+        "Standard16-5C.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "colorless_mana",
+        "dual_land",
+        "painland",
+        "damage_controller"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/Brushland.java"
+    },
+    {
+      "name": "Caves of Koilos",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C",
+        "W",
+        "B"
+      ],
+      "decks": [
+        "Standard16-5C.dck",
+        "Standard16-BW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "colorless_mana",
+        "dual_land",
+        "painland",
+        "damage_controller"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CavesOfKoilos.java"
+    },
+    {
+      "name": "Karplusan Forest",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C",
+        "R",
+        "G"
+      ],
+      "decks": [
+        "Standard16-5C.dck",
+        "Standard16-RG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "colorless_mana",
+        "dual_land",
+        "painland",
+        "damage_controller"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/k/KarplusanForest.java"
+    },
+    {
+      "name": "Llanowar Wastes",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C",
+        "B",
+        "G"
+      ],
+      "decks": [
+        "Standard16-5C.dck",
+        "Standard16-GB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "colorless_mana",
+        "dual_land",
+        "painland",
+        "damage_controller"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LlanowarWastes.java"
+    },
+    {
+      "name": "Shivan Reef",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C",
+        "U",
+        "R"
+      ],
+      "decks": [
+        "Standard16-UR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "colorless_mana",
+        "dual_land",
+        "painland",
+        "damage_controller"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/ShivanReef.java"
+    },
+    {
+      "name": "Sulfurous Springs",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C",
+        "B",
+        "R"
+      ],
+      "decks": [
+        "Standard16-RB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "colorless_mana",
+        "dual_land",
+        "painland",
+        "damage_controller"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SulfurousSprings.java"
+    },
+    {
+      "name": "Underground River",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C",
+        "U",
+        "B"
+      ],
+      "decks": [
+        "Standard16-UB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "colorless_mana",
+        "dual_land",
+        "painland",
+        "damage_controller"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/u/UndergroundRiver.java"
+    },
+    {
+      "name": "Yavimaya Coast",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C",
+        "G",
+        "U"
+      ],
+      "decks": [
+        "Standard16-5C.dck",
+        "Standard16-UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "colorless_mana",
+        "dual_land",
+        "painland",
+        "damage_controller"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/y/YavimayaCoast.java"
+    },
+    {
+      "name": "Blackcleave Cliffs",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "B",
+        "R"
+      ],
+      "decks": [
+        "Standard16-RB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "mana_ability",
+        "dual_land",
+        "enters_tapped_unless"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BlackcleaveCliffs.java"
+    },
+    {
+      "name": "Blooming Marsh",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "B",
+        "G"
+      ],
+      "decks": [
+        "Standard16-GB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "mana_ability",
+        "dual_land",
+        "enters_tapped_unless"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BloomingMarsh.java"
+    },
+    {
+      "name": "Concealed Courtyard",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "W",
+        "B"
+      ],
+      "decks": [
+        "Standard16-BW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "mana_ability",
+        "dual_land",
+        "enters_tapped_unless"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/ConcealedCourtyard.java"
+    },
+    {
+      "name": "Copperline Gorge",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "R",
+        "G"
+      ],
+      "decks": [
+        "Standard16-5C.dck",
+        "Standard16-RG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "mana_ability",
+        "dual_land",
+        "enters_tapped_unless"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CopperlineGorge.java"
+    },
+    {
+      "name": "Darkslick Shores",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "U",
+        "B"
+      ],
+      "decks": [
+        "Standard16-UB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "mana_ability",
+        "dual_land",
+        "enters_tapped_unless"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DarkslickShores.java"
+    },
+    {
+      "name": "Inspiring Vantage",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "R",
+        "W"
+      ],
+      "decks": [
+        "Standard16-RW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "mana_ability",
+        "dual_land",
+        "enters_tapped_unless"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/i/InspiringVantage.java"
+    },
+    {
+      "name": "Razorverge Thicket",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "G",
+        "W"
+      ],
+      "decks": [
+        "Standard16-5C.dck",
+        "Standard16-GW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "mana_ability",
+        "dual_land",
+        "enters_tapped_unless"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RazorvergeThicket.java"
+    },
+    {
+      "name": "Seachrome Coast",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "W",
+        "U"
+      ],
+      "decks": [
+        "Standard16-UW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "mana_ability",
+        "dual_land",
+        "enters_tapped_unless"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SeachromeCoast.java"
+    },
+    {
+      "name": "Spirebluff Canal",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "U",
+        "R"
+      ],
+      "decks": [
+        "Standard16-UR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "mana_ability",
+        "dual_land",
+        "enters_tapped_unless"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SpirebluffCanal.java"
+    },
+    {
+      "name": "Deserted Beach",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "W",
+        "U"
+      ],
+      "decks": [
+        "Standard16-5C.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "mana_ability",
+        "dual_land",
+        "enters_tapped_unless"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DesertedBeach.java"
+    },
+    {
+      "name": "Dreamroot Cascade",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "G",
+        "U"
+      ],
+      "decks": [
+        "Standard16-5C.dck",
+        "Standard16-UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "mana_ability",
+        "dual_land",
+        "enters_tapped_unless"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DreamrootCascade.java"
+    },
+    {
+      "name": "Haunted Ridge",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "B",
+        "R"
+      ],
+      "decks": [
+        "Standard16-RB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "mana_ability",
+        "dual_land",
+        "enters_tapped_unless"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HauntedRidge.java"
+    },
+    {
+      "name": "Overgrown Farmland",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "G",
+        "W"
+      ],
+      "decks": [
+        "Standard16-5C.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "mana_ability",
+        "dual_land",
+        "enters_tapped_unless"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/o/OvergrownFarmland.java"
+    },
+    {
+      "name": "Rockfall Vale",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "R",
+        "G"
+      ],
+      "decks": [
+        "Standard16-5C.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "mana_ability",
+        "dual_land",
+        "enters_tapped_unless"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RockfallVale.java"
+    },
+    {
+      "name": "Floodfarm Verge",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "W",
+        "U"
+      ],
+      "decks": [
+        "Standard16-UW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "dual_land",
+        "conditional_mana"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FloodfarmVerge.java"
+    },
+    {
+      "name": "Gloomlake Verge",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "U",
+        "B"
+      ],
+      "decks": [
+        "Standard16-UB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "dual_land",
+        "conditional_mana"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GloomlakeVerge.java"
+    },
+    {
+      "name": "Hushwood Verge",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "G",
+        "W"
+      ],
+      "decks": [
+        "Standard16-GW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "dual_land",
+        "conditional_mana"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HushwoodVerge.java"
+    },
+    {
+      "name": "Riverpyre Verge",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "R",
+        "U"
+      ],
+      "decks": [
+        "Standard16-UR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "dual_land",
+        "conditional_mana"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RiverpyreVerge.java"
+    },
+    {
+      "name": "Thornspire Verge",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "R",
+        "G"
+      ],
+      "decks": [
+        "Standard16-RG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "dual_land",
+        "conditional_mana"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/ThornspireVerge.java"
+    },
+    {
+      "name": "Wastewood Verge",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "G",
+        "B"
+      ],
+      "decks": [
+        "Standard16-GB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "dual_land",
+        "conditional_mana"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/w/WastewoodVerge.java"
+    },
+    {
+      "name": "Elegant Parlor",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [
+        "Mountain",
+        "Plains"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "R",
+        "W"
+      ],
+      "decks": [
+        "Standard16-RW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "dual_land",
+        "enters_tapped",
+        "etb_trigger",
+        "surveil"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/ElegantParlor.java"
+    },
+    {
+      "name": "Lush Portico",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [
+        "Forest",
+        "Plains"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "G",
+        "W"
+      ],
+      "decks": [
+        "Standard16-GW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "dual_land",
+        "enters_tapped",
+        "etb_trigger",
+        "surveil"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LushPortico.java"
+    },
+    {
+      "name": "Underground Mortuary",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [
+        "Swamp",
+        "Forest"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "B",
+        "G"
+      ],
+      "decks": [
+        "Standard16-GB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "dual_land",
+        "enters_tapped",
+        "etb_trigger",
+        "surveil"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/u/UndergroundMortuary.java"
+    },
+    {
+      "name": "Jetmir's Garden",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [
+        "Mountain",
+        "Forest",
+        "Plains"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "R",
+        "G",
+        "W"
+      ],
+      "decks": [
+        "Standard16-5C.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "enters_tapped",
+        "cycling"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/j/JetmirsGarden.java"
+    },
+    {
+      "name": "Spara's Headquarters",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [
+        "Forest",
+        "Plains",
+        "Island"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "G",
+        "W",
+        "U"
+      ],
+      "decks": [
+        "Standard16-5C.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "enters_tapped",
+        "cycling"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SparasHeadquarters.java"
+    },
+    {
+      "name": "Ziatora's Proving Ground",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [
+        "Swamp",
+        "Mountain",
+        "Forest"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "B",
+        "R",
+        "G"
+      ],
+      "decks": [
+        "Standard16-RB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "enters_tapped",
+        "cycling"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/z/ZiatorasProvingGround.java"
+    },
+    {
+      "name": "Starting Town",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [
+        "Town"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C",
+        "W",
+        "U",
+        "B",
+        "R",
+        "G"
+      ],
+      "decks": [
+        "Standard16-GW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "colorless_mana",
+        "enters_tapped_unless",
+        "pay_life_cost"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/StartingTown.java"
     }
   ]
 }

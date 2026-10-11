@@ -169,7 +169,7 @@ pub(crate) fn cant_block(state: &GameState, id: ObjectId) -> bool {
     not_a_creature(state, id)
         || CARD_DEFS
             .get(usize::from(state.objects.get(id).card_def))
-            .is_some_and(|def| def.name == "Forsaken Miner")
+            .is_some_and(|def| matches!(def.name, "Forsaken Miner" | "Phyrexian Mite Token"))
             && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
 }
 
@@ -516,7 +516,7 @@ pub(crate) enum StandardKeywordStaticV1 {
 pub(crate) fn rules_vector_statics(name: &str) -> &'static [StandardKeywordStaticV1] {
     match name {
         "Burnout Bashtronaut" => &[StandardKeywordStaticV1::StartYourEnginesMaxSpeedDoubleStrike],
-        "Forsaken Miner" => &[StandardKeywordStaticV1::CantBlock],
+        "Forsaken Miner" | "Phyrexian Mite Token" => &[StandardKeywordStaticV1::CantBlock],
         "Brutal Cathar" | "Graveyard Trespasser" => &[StandardKeywordStaticV1::DayboundNightbound],
         "Flourishing Bloom-Kin" => &[StandardKeywordStaticV1::PlusOnePerControlledForest],
         _ => &[],

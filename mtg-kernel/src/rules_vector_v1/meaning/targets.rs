@@ -19,6 +19,18 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
     match spec {
         // Target count 0: nothing is announced.
         TargetSpec::None => {}
+        TargetSpec::UpToOneOtherControlledPermanent => {
+            object(out, ObjF::Permanent, Some(RelF::You), ZoneF::Battlefield);
+            out.target(TargetAtom::UpTo);
+            // Vocabulary has no exact-source-incarnation exclusion facet.
+            out.atoms.push(Atom::Opaque);
+        }
+        TargetSpec::UpToTwoOtherControlledCreatures => {
+            object(out, creature(), Some(RelF::You), ZoneF::Battlefield);
+            out.target(TargetAtom::MultipleTargets);
+            out.target(TargetAtom::UpTo);
+            out.atoms.push(Atom::Opaque);
+        }
         // Both players, plus every creature on either battlefield (creatures
         // only: planeswalkers are not in the engine's "any target" pool).
         TargetSpec::AnyTarget => {
@@ -227,6 +239,9 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
         // A nontoken, nonland permanent card (creature, artifact,
         // enchantment or planeswalker) the targeting player owns, in that
         // player's graveyard, with printed mana value at most `maximum`.
+        TargetSpec::PermanentCardInOwnGraveyard => {
+            object(out, ObjF::Permanent, Some(RelF::You), ZoneF::Graveyard);
+        }
         TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(maximum) => {
             out.target(TargetAtom::Object {
                 obj: ObjF::NonlandPermanent,
@@ -309,6 +324,18 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
         TargetSpec::UpToOneCardInGraveyards => {
             object(out, ObjF::AnyCard, None, ZoneF::Graveyard);
             out.target(TargetAtom::UpTo);
+        }
+        // One attacking creature with this effective subtype, either
+        // controller. Vocabulary gap: no attacking or subtype filter.
+        TargetSpec::AttackingCreatureWithSubtype(subtype) => {
+            let _ = subtype;
+            object(out, creature(), None, ZoneF::Battlefield)
+        }
+        // One permanent the targeting player controls with any of these
+        // effective subtypes. Vocabulary gap: no subtype filter.
+        TargetSpec::ControlledPermanentWithAnySubtype(subtypes) => {
+            let _ = subtypes;
+            object(out, ObjF::Permanent, Some(RelF::You), ZoneF::Battlefield)
         }
     }
 }
@@ -397,12 +424,17 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
             let _ = slot; // One target slot.
             ObjF::NonlandPermanent
         }
+        TargetSpec::PermanentCardInOwnGraveyard | TargetSpec::UpToOneOtherControlledPermanent => {
+            let _ = slot;
+            ObjF::Permanent
+        }
         TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(maximum) => {
             // The bound restricts which cards qualify, not their class.
             let _ = (maximum, slot);
             ObjF::NonlandPermanent
         }
-        TargetSpec::Creature
+        TargetSpec::UpToTwoOtherControlledCreatures
+        | TargetSpec::Creature
         | TargetSpec::NonlegendaryCreature
         | TargetSpec::ControlledCreature
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
@@ -449,6 +481,16 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
             // The subtype restricts which creatures qualify, not their class.
             let _ = (subtype, slot);
             creature()
+        }
+        TargetSpec::AttackingCreatureWithSubtype(subtype) => {
+            // The subtype restricts which creatures qualify, not their class.
+            let _ = (subtype, slot);
+            creature()
+        }
+        TargetSpec::ControlledPermanentWithAnySubtype(subtypes) => {
+            // Any permanent with a listed subtype; one target slot.
+            let _ = (subtypes, slot);
+            ObjF::Permanent
         }
     }
 }

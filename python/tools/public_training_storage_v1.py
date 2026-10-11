@@ -21,27 +21,52 @@ def storage(snapshot, drive):
                 free_bytes=volume["SizeRemaining"])
 
 
-def archive_native(native, root):
+def archive_native(native, root, validated_files=None):
     before = time.monotonic()
     files = sorted(p for p in native.rglob("*") if p.is_file())
     def shard(index):
         path = root/f"native-{index}.zip"
         hashes = {}
+        sizes = {}
+        write_started = time.monotonic()
         with zipfile.ZipFile(path, "x", compression=zipfile.ZIP_DEFLATED, compresslevel=1, allowZip64=True) as archive:
             for source in files[index::2]:
                 name = source.relative_to(native).as_posix()
-                hashes[name] = pin(source)["sha256"]
-                archive.write(source, name)
+                expected = (validated_files or {}).get(str(source.resolve()))
+                if expected is None:
+                    expected = pin(source)["sha256"]
+                # Hash exactly the bytes supplied to ZIP, in one source pass.
+                # Keep ZipFile.write's metadata and compression settings.
+                info = zipfile.ZipInfo.from_file(source, name)
+                info.compress_type = archive.compression
+                info._compresslevel = archive.compresslevel
+                digest = hashlib.sha256()
+                count = 0
+                with source.open("rb") as stream, archive.open(info, "w", force_zip64=info.file_size * 1.05 > zipfile.ZIP64_LIMIT) as destination:
+                    while chunk := stream.read(1024 * 1024):
+                        digest.update(chunk)
+                        destination.write(chunk)
+                        count += len(chunk)
+                hashes[name] = digest.hexdigest()
+                assert hashes[name] == expected, "source changed before or during archive: " + str(source)
+                sizes[name] = count
         with path.open("r+b") as stream: os.fsync(stream.fileno())
+        write_seconds = time.monotonic() - write_started
+        readback_started = time.monotonic()
         with zipfile.ZipFile(path) as archive:
             assert set(archive.namelist()) == set(hashes)
             for name, digest in hashes.items():
                 with archive.open(name) as stream:
                     assert hashlib.file_digest(stream, "sha256").hexdigest() == digest
-        return dict(archive=pin(path), files=hashes)
+        readback_seconds = time.monotonic() - readback_started
+        pin_started = time.monotonic()
+        archive_pin = pin(path)
+        return dict(archive=archive_pin, files=hashes, source_bytes=sum(sizes.values()),
+                    timing=dict(write_fsync_seconds=write_seconds, full_readback_seconds=readback_seconds,
+                                archive_pin_seconds=time.monotonic()-pin_started))
     with ThreadPoolExecutor(max_workers=2) as pool: shards = list(pool.map(shard, [0, 1]))
     result = dict(scheme=ARCHIVE, native_root=str(native), seconds=time.monotonic()-before,
-        source_files=len(files), source_bytes=sum(p.stat().st_size for p in files),
+        source_files=len(files), source_bytes=sum(s["source_bytes"] for s in shards),
         compressed_bytes=sum(Path(s["archive"]["path"]).stat().st_size for s in shards),
         shards=shards, mismatches=0, raw_native_files_retained=True)
     write(root/"archive.json", result)

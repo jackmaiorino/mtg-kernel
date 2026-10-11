@@ -295,6 +295,19 @@ pub enum Subtype {
     Sheep,
     /// Appended for Lightshell Duo without changing existing subtype ids.
     Otter,
+    /// MageZero Standard lands batch; existing ids remain fixed.
+    AssemblyWorker,
+    Mite,
+    /// Mirrex's land subtype. Not a creature type.
+    Sphere,
+    /// Starting Town's land subtype. Not a creature type.
+    Town,
+    /// Appended for unregistered Apothecary Stomper after accepted Standard ids.
+    Elephant,
+    /// Appended for unregistered Scrawling Crawler, preserving accepted ids.
+    Construct,
+    /// Appended for unregistered Mischievous Pup, preserving existing ids.
+    Dog,
 }
 
 impl Subtype {
@@ -412,6 +425,12 @@ impl Subtype {
         Subtype::Berserker,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Otter,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Elephant,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Construct,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Dog,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Scout,
         #[cfg(feature = "standard-magezero-fixtures")]
@@ -420,7 +439,10 @@ impl Subtype {
         Subtype::Mercenary,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Assassin,
-        #[cfg(feature = "standard-magezero-fixtures")]
+        #[cfg(any(
+            feature = "standard-magezero-fixtures",
+            feature = "limited-fdn-fixtures"
+        ))]
         Subtype::Wolf,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Kraken,
@@ -438,6 +460,10 @@ impl Subtype {
         Subtype::Glimmer,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Sheep,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::AssemblyWorker,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Mite,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -573,6 +599,9 @@ impl Subtype {
                 | Subtype::Merfolk
                 | Subtype::Octopus
                 | Subtype::Otter
+                | Subtype::Elephant
+                | Subtype::Construct
+                | Subtype::Dog
                 | Subtype::Hyena
                 | Subtype::Raccoon
                 | Subtype::Citizen
@@ -601,6 +630,8 @@ impl Subtype {
                 | Subtype::Avatar
                 | Subtype::Glimmer
                 | Subtype::Sheep
+                | Subtype::AssemblyWorker
+                | Subtype::Mite
         )
     }
 }
@@ -788,6 +819,21 @@ pub enum TargetSpec {
     ControlledCreatureWithSubtype(Subtype),
     /// Zero or one nontoken card in either graveyard.
     UpToOneCardInGraveyards,
+    // MageZero Standard lands batch (stable ids 55-56).
+    /// Exactly one attacking creature with the named effective subtype
+    /// (Mishra's Foundry's "target attacking Assembly-Worker").
+    AttackingCreatureWithSubtype(Subtype),
+    /// Exactly one permanent the announcing player controls with any of the
+    /// named effective subtypes (Rockface Village's "target Lizard, Mouse,
+    /// Otter, or Raccoon you control").
+    ControlledPermanentWithAnySubtype([Subtype; 4]),
+    /// One permanent card from the controller's graveyard, including a land.
+    PermanentCardInOwnGraveyard,
+    /// Zero or one controlled battlefield permanent other than the exact
+    /// source incarnation captured by this ability.
+    UpToOneOtherControlledPermanent,
+    /// Zero to two controlled creatures other than the captured source incarnation.
+    UpToTwoOtherControlledCreatures,
 }
 
 impl TargetSpec {
@@ -851,6 +897,11 @@ impl TargetSpec {
             TargetSpec::AnotherControlledCreature => 52,
             TargetSpec::ControlledCreatureWithSubtype(_) => 53,
             TargetSpec::UpToOneCardInGraveyards => 54,
+            TargetSpec::AttackingCreatureWithSubtype(_) => 55,
+            TargetSpec::ControlledPermanentWithAnySubtype(_) => 56,
+            TargetSpec::PermanentCardInOwnGraveyard => 57,
+            TargetSpec::UpToOneOtherControlledPermanent => 58,
+            TargetSpec::UpToTwoOtherControlledCreatures => 59,
         }
     }
 }
@@ -890,6 +941,10 @@ impl Keywords {
     /// first consumer -- see `engine::legal_blockers_for`'s `ISLANDWALK`
     /// check, which this sits beside.
     pub const CANT_BE_BLOCKED: Keywords = Keywords(1 << 16);
+    /// Toxic 1 (702.164): combat damage this creature deals to a player also
+    /// gives that player a poison counter. The Phyrexian Mite token is the
+    /// first consumer.
+    pub const TOXIC_1: Keywords = Keywords(1 << 17);
 
     pub const fn has(self, other: Keywords) -> bool {
         self.0 & other.0 != 0
@@ -1046,6 +1101,10 @@ pub enum CostComponent {
     /// deterministically; whether to convoke at all is the ordinary cast
     /// mode choice.
     ConvokeMana(crate::mana::Cost),
+    /// Sacrifice `count` other creatures the payer currently controls.
+    /// The source is excluded from both selection and atomic payment.
+    /// Appended for Hungry Ghoul, preserving all older cost variants.
+    SacrificeOtherControlledCreatures(u8),
 }
 
 /// Optional additional costs chosen while announcing a spell. The selected
@@ -1229,6 +1288,10 @@ pub enum ManaAbilityCostDef {
     /// Appended for pauper meta wave 2 Task 3; existing discriminants remain
     /// fixed.
     None,
+    /// `{T}, Pay N life` (Starting Town). Paying life is not damage, and
+    /// needs at least N life (119.4). Appended; existing discriminants
+    /// remain fixed.
+    TapSelfPayLife(u8),
 }
 
 /// Amount of the chosen color added by a mana ability.
@@ -1271,6 +1334,12 @@ pub enum DynamicValueDef {
     /// effective subtypes include the named subtype (Flow of Knowledge's
     /// "each Island you control").
     ControlledPermanentsWithSubtype(Subtype),
+    /// Count battlefield permanents currently controlled by the evaluating
+    /// player with this effective card type, including tokens and copies.
+    ControlledPermanentsWithType(CardType),
+    /// Count distinct mana values among currently controlled nonland
+    /// battlefield permanents. Tokens participate, and X is zero off-stack.
+    DistinctManaValuesAmongControlledNonlandPermanents,
 }
 
 /// Two subtypes a *single* permanent must carry at once, e.g. the Urza's
@@ -1313,6 +1382,81 @@ pub struct AdditionalManaAbilityDef {
 pub struct EntersBattlefieldTappedUnlessDef {
     pub controller_controls_other_subtype: Subtype,
     pub minimum_count: u8,
+}
+
+/// Untapped-entry conditions on the entering permanent's controller, kept
+/// beside `EntersBattlefieldTappedUnlessDef` so that definition's generated
+/// identity is unchanged. "Other lands" excludes the entering permanent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntersTappedUnlessControllerDef {
+    /// Fastlands: "unless you control two or fewer other lands".
+    ControlsAtMostOtherLands(u8),
+    /// Slowlands: "unless you control two or more other lands".
+    ControlsAtLeastOtherLands(u8),
+    /// Starting Town: "unless it's your first, second, or third turn of the
+    /// game" -- the controller is the active player and `GameState::turn`
+    /// (each player's own turn count in this two-player kernel) is at most
+    /// this value.
+    WithinOwnFirstTurns(u8),
+}
+
+/// An activation restriction on one additional printed mana ability
+/// (XMage `ActivateIfConditionManaAbility`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManaAbilityConditionDef {
+    /// The verges: "Activate only if you control a [first] or a [second]."
+    ControllerControlsPermanentWithEitherSubtype { first: Subtype, second: Subtype },
+    /// Mirrex: "Activate only if this land entered the battlefield this
+    /// turn."
+    SourceEnteredThisTurn,
+}
+
+/// What a restricted mana ability's mana may pay for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManaSpendRestrictionDef {
+    /// "Spend this mana only to cast a creature spell."
+    CreatureSpell,
+}
+
+/// A `{T}: Add one mana of a listed color` ability whose mana carries a
+/// spending restriction. It is never an explicit action: the payment
+/// planner offers these colors from the source only while paying the total
+/// cost of a spell the restriction allows, so restricted mana never floats.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RestrictedManaAbilityDef {
+    pub colors: &'static [ManaColor],
+    pub restriction: ManaSpendRestrictionDef,
+}
+
+/// "This permanent becomes a [power]/[toughness] [colors] [subtypes]
+/// creature [with keywords] until end of turn. It's still a land."
+/// (XMage `BecomesCreatureSourceEffect` over a `CreatureToken`). The source
+/// keeps its printed types and gains Creature, plus Artifact when
+/// `artifact` is set; its base power and toughness, colors and creature
+/// subtypes become the listed ones; the keywords are added.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AnimationDef {
+    pub power: i16,
+    pub toughness: i16,
+    pub artifact: bool,
+    pub colors: &'static [ManaColor],
+    pub subtypes: &'static [Subtype],
+    pub keywords: Keywords,
+}
+
+/// Reduces the generic mana of one printed activated ability, by
+/// `activated_abilities` index, by one for each permanent its controller
+/// controls matching `per` (XMage `LegendaryCreatureCostAdjuster` for the
+/// Kamigawa channel lands).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ActivatedAbilityGenericReductionDef {
+    pub ability_index: u8,
+    pub per: ActivatedAbilityReductionCountDef,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivatedAbilityReductionCountDef {
+    ControlledLegendaryCreatures,
 }
 
 /// One alternative mode of a spell, with its own target shape and resolution
@@ -1376,6 +1520,10 @@ pub enum DynamicCountDef {
     ControllerHasCreatureWithAndWithoutSubtype(Subtype),
     /// One iff a chosen spell target is a tapped battlefield creature.
     SpellTargetsTappedCreature,
+    /// Count currently controlled permanents with the effective named subtype.
+    ControllerBattlefieldSubtype(Subtype),
+    /// One iff a currently controlled permanent has the effective named subtype.
+    ControllerHasPermanentSubtype(Subtype),
 }
 
 /// Reduces only the generic portion of a spell's mana cost, flooring at
@@ -1698,6 +1846,20 @@ pub struct CardDef {
     /// `mana::ManaSource::yield_per_tap`. Appended so every earlier
     /// generated field identity remains stable.
     pub conditional_tap_yield: Option<DynamicValueDef>,
+    /// Controller-relative untapped-entry condition (fastlands, slowlands,
+    /// Starting Town). `None` for every other card. Appended so every
+    /// earlier generated field identity remains stable.
+    pub enters_tapped_unless_controller: Option<EntersTappedUnlessControllerDef>,
+    /// Activation conditions for `additional_mana_abilities`, by index.
+    /// Empty, or one entry per additional ability.
+    pub additional_mana_ability_conditions: &'static [Option<ManaAbilityConditionDef>],
+    /// Tap-for-one mana abilities whose mana is restricted to certain
+    /// spells; see `RestrictedManaAbilityDef`.
+    pub restricted_mana_abilities: &'static [RestrictedManaAbilityDef],
+    /// What this permanent becomes when one of its abilities animates it.
+    pub animation: Option<AnimationDef>,
+    /// Generic-cost reducers for printed activated abilities.
+    pub activated_ability_generic_reductions: &'static [ActivatedAbilityGenericReductionDef],
 }
 
 impl CardDef {
@@ -2040,11 +2202,11 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 331 (surveil creatures).
+        // batches append through id 370 (instant/sorcery cost reducers).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                332
+                371
             } else {
                 192
             }
@@ -2121,6 +2283,22 @@ mod tests {
                 53,
             ),
             (TargetSpec::UpToOneCardInGraveyards, 54),
+            (
+                TargetSpec::AttackingCreatureWithSubtype(Subtype::AssemblyWorker),
+                55,
+            ),
+            (
+                TargetSpec::ControlledPermanentWithAnySubtype([
+                    Subtype::Lizard,
+                    Subtype::Mouse,
+                    Subtype::Otter,
+                    Subtype::Raccoon,
+                ]),
+                56,
+            ),
+            (TargetSpec::PermanentCardInOwnGraveyard, 57),
+            (TargetSpec::UpToOneOtherControlledPermanent, 58),
+            (TargetSpec::UpToTwoOtherControlledCreatures, 59),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);
@@ -2150,8 +2328,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v62_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x1742_7afa_c1e9_5f8e;
+    fn card_db_hash_v67_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x1b1e_46eb_fc30_edb7;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

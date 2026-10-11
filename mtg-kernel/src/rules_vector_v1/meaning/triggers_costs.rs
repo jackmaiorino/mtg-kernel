@@ -104,6 +104,14 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
                 obj: ObjF::Spell,
             });
         }
+        TriggerCondition::CastNoncreatureOrSubtype(_) => {
+            out.trigger(TrigF::SpellCast {
+                by: RelF::You,
+                obj: ObjF::Spell,
+            });
+            // The v1 object facets cannot express this union predicate.
+            out.atoms.push(Atom::Opaque);
+        }
         TriggerCondition::CastSelf => {
             // The cast event's spell is the source itself, cast by its
             // controller. The stack home zone is emitted by the caller.
@@ -189,6 +197,15 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
             // A positive life gain event for the controller.
             out.trigger(TrigF::LifeGained { by: RelF::You });
         }
+        TriggerCondition::ControllerFirstLifeGain { own_turn_only } => {
+            // The record retains the global first-event ordinal and own-turn
+            // restriction. The feature vocabulary cannot express either.
+            let _ = own_turn_only;
+            out.trigger(TrigF::LifeGained { by: RelF::You });
+            out.control(ControlF::Conditional);
+            out.read(RelF::You, None, None, AggF::EventThisTurn);
+            out.atoms.push(Atom::Opaque);
+        }
         TriggerCondition::ControllerAddedPlusOneCountersToSelf { max_per_turn } => {
             // The controller put one or more +1/+1 counters on the source's
             // current incarnation. `max_per_turn` caps how many times the
@@ -247,6 +264,20 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
             // subtype class.
             let _ = subtype;
             out.trigger(TrigF::Attacks);
+        }
+        TriggerCondition::ControllerAttacksWithAtLeastCreatures(minimum) => {
+            let _ = minimum;
+            out.trigger(TrigF::Attacks);
+            out.control(ControlF::Conditional);
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Typed(CardTypeF::Creature)),
+                AggF::Count,
+            );
+            // Vocabulary cannot distinguish declared attackers from other
+            // battlefield creatures or encode this numeric threshold.
+            out.atoms.push(Atom::Opaque);
         }
         TriggerCondition::CastCreatureSpell => {
             // A spell the controller casts whose selected types include
@@ -506,6 +537,16 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
             // class.
             let _ = (count, filter);
             out.cost(CostAtom::TapOthers);
+        }
+        CostComponent::SacrificeOtherControlledCreatures(count) => {
+            move_cost(
+                out,
+                ZoneF::Battlefield,
+                ZoneF::Graveyard,
+                ObjF::Typed(CardTypeF::Creature),
+                count,
+            );
+            out.atoms.push(Atom::Opaque);
         }
         CostComponent::SacrificeControlled { count, filter } => {
             // The component itself restricts candidates to the payer's

@@ -50,6 +50,42 @@ pub(crate) fn printed_abilities_active(state: &GameState, source: ObjectId) -> b
     removal_timestamp(state, source).is_none()
 }
 
+pub(crate) fn has_printed_cant_block(name: &str) -> bool {
+    cfg!(feature = "limited-fdn-fixtures") && name == "Vampire Soulcaller"
+}
+
+pub(crate) fn printed_cant_block(state: &GameState, source: ObjectId) -> bool {
+    state.objects.try_get(source).is_some_and(|object| {
+        object.zone == Zone::Battlefield
+            && CARD_DEFS
+                .get(usize::from(object.card_def))
+                .is_some_and(|def| has_printed_cant_block(def.name))
+            && printed_abilities_active(state, source)
+    })
+}
+
 pub(crate) fn grant_survives(state: &GameState, host: ObjectId, timestamp: u64) -> bool {
     removal_timestamp(state, host).is_none_or(|removed_at| timestamp > removed_at)
+}
+
+/// The active `CardDef::animation` of a battlefield incarnation and the
+/// timestamp of the ability that applied it (Mishra's Foundry). An Aura
+/// creature override replaces it entirely while one applies.
+pub(crate) fn animation(
+    state: &GameState,
+    id: ObjectId,
+) -> Option<(crate::card_def::AnimationDef, u64)> {
+    if !cfg!(feature = "standard-magezero-fixtures") {
+        return None;
+    }
+    let object = state.objects.try_get(id)?;
+    let timestamp = object.v4.animation_timestamp?;
+    if object.zone != Zone::Battlefield {
+        return None;
+    }
+    let definition = CARD_DEFS.get(object.card_def as usize)?;
+    if !definition.is_executable() || creature_override(state, id).is_some() {
+        return None;
+    }
+    definition.animation.map(|animation| (animation, timestamp))
 }

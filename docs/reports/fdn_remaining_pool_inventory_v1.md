@@ -30,23 +30,67 @@ Merged batches take one catalog version each: keyword creatures and gainlands (n
 The v61 activated-combat batch merged in [PR #195](https://github.com/jackmaiorino/mtg-kernel/pull/195).
 Its default-branch inventory is 130 full, one partial and 155 missing names.
 
-Current integration owner: Codex issue #110 goal, branch `codex/fdn-issue110`.
-The next catalog is v62, Lightshell Duo and Cephalid Inkmage, IDs 330-331,
-with private multi-card surveil and threshold. Its source registry resolves
-132 names, but those two additions remain pending gameplay and hosted
-qualification before that number counts as accepted default-branch coverage.
-The preparation commits on `codex/limited-surveil-batch-20261009` are retained
-and integrated into the owner's branch.
+Current integration owner: Codex issue #110 goal. The v62 surveil batch
+merged in [PR #204](https://github.com/jackmaiorino/mtg-kernel/pull/204), and
+v63 Vanguard Seraph/Cat Collector merged in
+[PR #208](https://github.com/jackmaiorino/mtg-kernel/pull/208) at `bc23a8da`.
+V64 Elvish Regrower/Ambush Wolf, IDs334-335, is now accepted in
+[PR #210](https://github.com/jackmaiorino/mtg-kernel/pull/210) at53fab604.
+All23 reviewed-head checks passed, its actual merge tree matches the reviewed
+composition, and34 affected Python cases pass on that default commit.
+V65 Anthem/Eagle, IDs336-337, is accepted in
+[PR #212](https://github.com/jackmaiorino/mtg-kernel/pull/212) at32080f84878da6224ab5a04522a3086a5963a115.
+All23 final reviewed-head checks and35 affected Python cases on the actual
+default merge pass. Accepted coverage is138 full, one partial and147 missing
+names of286; live v65 identity is42bf6f9ca62d6615.
 
-Later prepared families remain retained in their original worktrees: v63
-Vanguard Seraph/Cat Collector (IDs 332-333), v64 Elvish Regrower/Ambush Wolf
-(334-335), v65 Anthem of Champions/Empyrean Eagle (336-337), and v66
-Balmor/Firespitter Whelp (338-339). They require serial registration, generated
+Current accepted v66 integration: PR213 merged atb3bd1c1c0d7b5b6766359a3901549de768bcc175.
+All23 final CI checks passed; the actual default tree matches the reviewed
+composition and all36 affected Python cases pass there. The31-card batch has
+113 passing focused native games across25 targets. Accepted coverage is169
+full, one partial and116 missing of286 names; live identitye8e2bba9d9071e80.
+See PR213 default receipt6103422141. Issue110 remains open for full pool,
+reference comparisons and broader fair Limited/DraftZero requirements.
+
+The next candidate admits Mocking Sprite369/Archmage of Runes370 into371
+card definitions after accepted v66. All37 affected Python cases pass.
+Native20 passed all seven actual games and observed v67 identity1b1e46ebfc30edb7;
+its supported guard ended0. Draft PR214 has no outstanding source-review
+findings. Native21 is running current-source profile and cross-family checks;
+CI and default acceptance remain required.
+Brine's four fixture groups compiled but are unexecuted and unregistered.
+Ferocious source for Ruby/Courageous has six unregistered gameplay groups,
+Native15 passed the Limited regressions, then failed a combined-catalog Koma
+test guard. Repairbded94c1 preserves the Limited case and passes all140
+combined engine cases; Native16's remaining checks and fixture compilation
+are running. All prepared names remain unaccepted.
+The following preparation order and receipts are retained history.
+
+Later prepared families remain retained in their original worktrees: v65
+Anthem of Champions/Empyrean Eagle (336-337), then one coherent admission
+for prepared IDs338-368, beginning with Balmor/Firespitter Whelp. The later
+preparations include Wardens of the Cycle, Arcane Epiphany, Claws Out,
+Dreadwing Scavenger, Mischievous Pup, Felidar Savior, Armasaur Guide and
+Arbiter of Woe.
+They require serial registration, generated
 catalog identities, gameplay verification and integration. Source review
 identified Vanguard Seraph's missing flying mapping and the graveyard batch's
-pending-trigger hash compatibility requirement; these must be repaired at
-integration. Existing Standard Wolf subtype support must be preserved when
-integrating Ambush Wolf. Prepared source does not establish supported gameplay.
+pending-trigger hash compatibility requirement; both were repaired before
+their accepted integration. Standard Wolf subtype support is preserved.
+Prepared source does not establish supported gameplay.
+
+The31 prepared names share one later catalog admission after v65 integrates.
+Their original tentative version labels describe preparation order, not frozen
+catalog identities. Every card still needs focused gameplay/restore execution,
+with one generated catalog/profile publication for the coherent batch.
+The source port incorporates accepted v65 static-team extraction, live profile
+and repaired fixtures. Candidate662b8343 registers all31 new names and passes36
+affected Python cases. Its first generator build failed and is retained;
+reviewed repaira0032541 generates observed v66 identitye8e2bba9d9071e80.
+Reviewed migration97bed882 binds that identity and preserves historical v65
+readability and stale-write refusals. Card games, live profile execution, CI
+and actual default integration remain pending. Candidate169 is not accepted
+coverage. See `docs/design/fdn_prepared_admission_order_v1.md`.
 
 Leyline Axe (game-start leyline step) and Electroduplicate (token copies)
 remain unclaimed engine work. Full coverage, fair Limited search and DraftZero

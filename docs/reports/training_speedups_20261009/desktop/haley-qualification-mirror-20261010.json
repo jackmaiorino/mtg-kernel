@@ -1,0 +1,288 @@
+{
+  "schema": "training-speedup-haley-qualification-mirror/v1",
+  "complete": true,
+  "cases": [
+    {
+      "label": "qual-baseline-w1",
+      "variant": "baseline",
+      "workers": 1,
+      "report": {
+        "path": "D:\\training-speedups-20261009\\haley-evidence\\measure\\hot\\qual-baseline-w1\\report.json",
+        "sha256": "3197d31d62eaa0ad7d0f927c73f3b35c892f38172313d8c7da5cff83af32ff81"
+      },
+      "path_mappings": [
+        {
+          "source_root": "C:\\mtg-node\\training-speedups-20261009",
+          "local_root": "D:\\training-speedups-20261009\\haley-evidence"
+        }
+      ]
+    },
+    {
+      "label": "qual-baseline-w2",
+      "variant": "baseline",
+      "workers": 2,
+      "report": {
+        "path": "D:\\training-speedups-20261009\\haley-evidence\\measure\\hot\\qual-baseline-w2\\report.json",
+        "sha256": "c02b527b4f507a29e130e304921d86c50d2c62ea8b95eb893451eaf49ec92ad5"
+      },
+      "path_mappings": [
+        {
+          "source_root": "C:\\mtg-node\\training-speedups-20261009",
+          "local_root": "D:\\training-speedups-20261009\\haley-evidence"
+        }
+      ]
+    },
+    {
+      "label": "qual-baseline-w4",
+      "variant": "baseline",
+      "workers": 4,
+      "report": {
+        "path": "D:\\training-speedups-20261009\\haley-evidence\\measure\\hot\\qual-baseline-w4\\report.json",
+        "sha256": "9d6600937603ac18bac2363faa19e02ff216a8396ccadea1ab9a600713143b88"
+      },
+      "path_mappings": [
+        {
+          "source_root": "C:\\mtg-node\\training-speedups-20261009",
+          "local_root": "D:\\training-speedups-20261009\\haley-evidence"
+        }
+      ]
+    },
+    {
+      "label": "qual-baseline-w8",
+      "variant": "baseline",
+      "workers": 8,
+      "report": {
+        "path": "D:\\training-speedups-20261009\\haley-evidence\\measure\\hot\\qual-baseline-w8\\report.json",
+        "sha256": "fc39fba69926bec08a259f7063af48b32ab2d5aed3c4552972122468e9a62f34"
+      },
+      "path_mappings": [
+        {
+          "source_root": "C:\\mtg-node\\training-speedups-20261009",
+          "local_root": "D:\\training-speedups-20261009\\haley-evidence"
+        }
+      ]
+    },
+    {
+      "label": "qual-candidate-w1",
+      "variant": "candidate",
+      "workers": 1,
+      "report": {
+        "path": "D:\\training-speedups-20261009\\haley-evidence\\measure\\hot\\qual-candidate-w1\\report.json",
+        "sha256": "5224eca1c62a53dfe0b7c2a0cb9383499a940e138461626a851039b3136612ac"
+      },
+      "path_mappings": [
+        {
+          "source_root": "C:\\mtg-node\\training-speedups-20261009",
+          "local_root": "D:\\training-speedups-20261009\\haley-evidence"
+        }
+      ]
+    },
+    {
+      "label": "qual-candidate-w2",
+      "variant": "candidate",
+      "workers": 2,
+      "report": {
+        "path": "D:\\training-speedups-20261009\\haley-evidence\\measure\\hot\\qual-candidate-w2\\report.json",
+        "sha256": "736b7993a5b6eba5350ab230082f0a189adffed13031e710ab559d644bfa9c73"
+      },
+      "path_mappings": [
+        {
+          "source_root": "C:\\mtg-node\\training-speedups-20261009",
+          "local_root": "D:\\training-speedups-20261009\\haley-evidence"
+        }
+      ]
+    },
+    {
+      "label": "qual-candidate-w4",
+      "variant": "candidate",
+      "workers": 4,
+      "report": {
+        "path": "D:\\training-speedups-20261009\\haley-evidence\\measure\\hot\\qual-candidate-w4\\report.json",
+        "sha256": "d149ae7a02b52207e27f59e482654a576b190361ce4e51de5aeb99ce3026c752"
+      },
+      "path_mappings": [
+        {
+          "source_root": "C:\\mtg-node\\training-speedups-20261009",
+          "local_root": "D:\\training-speedups-20261009\\haley-evidence"
+        }
+      ]
+    },
+    {
+      "label": "qual-candidate-w8",
+      "variant": "candidate",
+      "workers": 8,
+      "report": {
+        "path": "D:\\training-speedups-20261009\\haley-evidence\\measure\\hot\\qual-candidate-w8\\report.json",
+        "sha256": "cf3c79c1363d1ee8026df21c5a64adb46d3af55a79d6e88443eba244edc5ecdc"
+      },
+      "path_mappings": [
+        {
+          "source_root": "C:\\mtg-node\\training-speedups-20261009",
+          "local_root": "D:\\training-speedups-20261009\\haley-evidence"
+        }
+      ]
+    }
+  ],
+  "archive_transfer_samples": [
+    {
+      "source": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-baseline-w1\\native-0.zip",
+        "sha256": "2903ea7fd716cf66f780c4124eb91936b10cb52cd4d68bec7dd6c36f66d55597"
+      },
+      "local": "D:\\training-speedups-20261009\\haley-evidence\\measure\\cold\\qual-baseline-w1\\native-0.zip",
+      "bytes": 9897164,
+      "scp_seconds": 0.4489301000139676,
+      "d_verify_seconds": 0.005378399975597858
+    },
+    {
+      "source": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-baseline-w1\\native-1.zip",
+        "sha256": "33858719c450d6102857765f8081056fa7c1b247b085dde0c325e247f05f98b4"
+      },
+      "local": "D:\\training-speedups-20261009\\haley-evidence\\measure\\cold\\qual-baseline-w1\\native-1.zip",
+      "bytes": 17327985,
+      "scp_seconds": 0.5366924999980256,
+      "d_verify_seconds": 0.00918160000583157
+    },
+    {
+      "source": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-baseline-w2\\native-0.zip",
+        "sha256": "746c539bc7a2abacf7b929ca691d0f8fbe1640ca4fde81a22f81c2fc80422847"
+      },
+      "local": "D:\\training-speedups-20261009\\haley-evidence\\measure\\cold\\qual-baseline-w2\\native-0.zip",
+      "bytes": 9897946,
+      "scp_seconds": 0.4476372000062838,
+      "d_verify_seconds": 0.006127200002083555
+    },
+    {
+      "source": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-baseline-w2\\native-1.zip",
+        "sha256": "04c0456f2f200e962f36bba073bb14cef7f229c08bc2316c62becb9a215957e9"
+      },
+      "local": "D:\\training-speedups-20261009\\haley-evidence\\measure\\cold\\qual-baseline-w2\\native-1.zip",
+      "bytes": 17328006,
+      "scp_seconds": 0.5578799999784678,
+      "d_verify_seconds": 0.010298200009856373
+    },
+    {
+      "source": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-baseline-w4\\native-0.zip",
+        "sha256": "c095237f073a40538a18489dda345bc150f3114ad93a219f7700cb1e81774594"
+      },
+      "local": "D:\\training-speedups-20261009\\haley-evidence\\measure\\cold\\qual-baseline-w4\\native-0.zip",
+      "bytes": 9898020,
+      "scp_seconds": 0.4781543999852147,
+      "d_verify_seconds": 0.006187399994814768
+    },
+    {
+      "source": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-baseline-w4\\native-1.zip",
+        "sha256": "6aa011d705e4ccd44518e0523169115506b4564ed46b25acd83d1620ea5413cd"
+      },
+      "local": "D:\\training-speedups-20261009\\haley-evidence\\measure\\cold\\qual-baseline-w4\\native-1.zip",
+      "bytes": 17328008,
+      "scp_seconds": 0.563606699986849,
+      "d_verify_seconds": 0.009890600020298734
+    },
+    {
+      "source": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-baseline-w8\\native-0.zip",
+        "sha256": "7fa4d84a334c4f5b5ce286ec8f5b2e024e5f19169f55d1e8f3ea6ed28bf99106"
+      },
+      "local": "D:\\training-speedups-20261009\\haley-evidence\\measure\\cold\\qual-baseline-w8\\native-0.zip",
+      "bytes": 9898120,
+      "scp_seconds": 0.4484953999926802,
+      "d_verify_seconds": 0.0065119999926537275
+    },
+    {
+      "source": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-baseline-w8\\native-1.zip",
+        "sha256": "8fe8151d8b693da3a8e96c5238521774402791df6537d44dfbfbb02a9cc2c23d"
+      },
+      "local": "D:\\training-speedups-20261009\\haley-evidence\\measure\\cold\\qual-baseline-w8\\native-1.zip",
+      "bytes": 17328010,
+      "scp_seconds": 0.6862088999769185,
+      "d_verify_seconds": 0.009886000014375895
+    },
+    {
+      "source": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-candidate-w1\\native-0.zip",
+        "sha256": "45ce5b1b291b8160937a6425c34319415bd08c6d6a742c89d53572bf190a3eca"
+      },
+      "local": "D:\\training-speedups-20261009\\haley-evidence\\measure\\cold\\qual-candidate-w1\\native-0.zip",
+      "bytes": 9897177,
+      "scp_seconds": 0.44745829998282716,
+      "d_verify_seconds": 0.006617900013225153
+    },
+    {
+      "source": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-candidate-w1\\native-1.zip",
+        "sha256": "e4cbcddc6c1a5b37b9e8c5d5219e6936b9e63253bb33ae7ac8d2fd0e62f3efcf"
+      },
+      "local": "D:\\training-speedups-20261009\\haley-evidence\\measure\\cold\\qual-candidate-w1\\native-1.zip",
+      "bytes": 17327995,
+      "scp_seconds": 0.6070415999856777,
+      "d_verify_seconds": 0.010764700011350214
+    },
+    {
+      "source": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-candidate-w2\\native-0.zip",
+        "sha256": "d8dd5c811e59acb7d7ba8cf8393d07127e80581264ec0ee7268d36675bf59fa9"
+      },
+      "local": "D:\\training-speedups-20261009\\haley-evidence\\measure\\cold\\qual-candidate-w2\\native-0.zip",
+      "bytes": 9898061,
+      "scp_seconds": 0.6045762999856379,
+      "d_verify_seconds": 0.006074500008253381
+    },
+    {
+      "source": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-candidate-w2\\native-1.zip",
+        "sha256": "cffcec26989d3652aab3b8e6876527942a4451daadd35a9e215b49c8d983e302"
+      },
+      "local": "D:\\training-speedups-20261009\\haley-evidence\\measure\\cold\\qual-candidate-w2\\native-1.zip",
+      "bytes": 17328017,
+      "scp_seconds": 0.7129705999977887,
+      "d_verify_seconds": 0.010664000001270324
+    },
+    {
+      "source": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-candidate-w4\\native-0.zip",
+        "sha256": "2a5aa591f7775ed2bc4f9041de87b0bc9e4e67366c934922320f0c43f7229798"
+      },
+      "local": "D:\\training-speedups-20261009\\haley-evidence\\measure\\cold\\qual-candidate-w4\\native-0.zip",
+      "bytes": 9898119,
+      "scp_seconds": 0.5445690999913495,
+      "d_verify_seconds": 0.006193799985339865
+    },
+    {
+      "source": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-candidate-w4\\native-1.zip",
+        "sha256": "777987309e454925ef5f3d268bcb1a505aa5ddd69f555a2185b9deb4ea03966a"
+      },
+      "local": "D:\\training-speedups-20261009\\haley-evidence\\measure\\cold\\qual-candidate-w4\\native-1.zip",
+      "bytes": 17328019,
+      "scp_seconds": 0.8991393999895081,
+      "d_verify_seconds": 0.010537599999224767
+    },
+    {
+      "source": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-candidate-w8\\native-0.zip",
+        "sha256": "3aa6c2b0b6465660bc22abeab1b52dc834c286ded302a592ac9091f4e877823d"
+      },
+      "local": "D:\\training-speedups-20261009\\haley-evidence\\measure\\cold\\qual-candidate-w8\\native-0.zip",
+      "bytes": 9898227,
+      "scp_seconds": 0.5586003999924287,
+      "d_verify_seconds": 0.006343900022329763
+    },
+    {
+      "source": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-candidate-w8\\native-1.zip",
+        "sha256": "a0f3035d576be5a5f9008ae559c4501b95de6a36244e29fb8e8dcd6bb29025e0"
+      },
+      "local": "D:\\training-speedups-20261009\\haley-evidence\\measure\\cold\\qual-candidate-w8\\native-1.zip",
+      "bytes": 17328019,
+      "scp_seconds": 0.6927235000184737,
+      "d_verify_seconds": 0.010832999978447333
+    }
+  ]
+}

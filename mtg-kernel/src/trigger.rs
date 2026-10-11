@@ -212,6 +212,16 @@ pub enum TriggerCondition {
     /// "Whenever one or more other creatures you control with power N or
     /// less enter ... This ability triggers only once each turn."
     OtherControlledCreatureWithPowerAtMostEntersOncePerTurn(i32),
+    /// Global first actual gain, independent of this permanent's entry time.
+    ControllerFirstLifeGain {
+        own_turn_only: bool,
+    },
+    /// One cast trigger for the controller's noncreature spell OR a spell
+    /// with the named subtype. A spell satisfying both still triggers once.
+    CastNoncreatureOrSubtype(Subtype),
+    /// One declaration by the controller containing at least this many
+    /// creatures. The observing source need not attack.
+    ControllerAttacksWithAtLeastCreatures(u8),
 }
 
 pub struct TriggeredAbilityDef {
@@ -466,6 +476,82 @@ const HELPFUL_HUNTER_TRIGGERS: [TriggeredAbilityDef; 1] =
 const PRIDEFUL_PARENT_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(prideful_parent_effect)];
 const ICEWIND_ELEMENTAL_TRIGGERS: [TriggeredAbilityDef; 1] =
     [etb_trigger(icewind_elemental_effect)];
+
+const DREADWING_SCAVENGER_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    etb_trigger(icewind_elemental_effect),
+    TriggeredAbilityDef {
+        condition: TriggerCondition::Attacks,
+        ..etb_trigger(icewind_elemental_effect)
+    },
+];
+
+const MISCHIEVOUS_PUP_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(mischievous_pup_effect)];
+
+fn mischievous_pup_effect() -> EffectOp {
+    EffectOp::MoveAllTargets {
+        to_zone: Zone::Hand,
+    }
+}
+
+const FELIDAR_SAVIOR_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(felidar_savior_effect)];
+
+const ARMASAUR_GUIDE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControllerAttacksWithAtLeastCreatures(3),
+    ..etb_trigger(armasaur_guide_effect)
+}];
+
+const ARBITER_OF_WOE_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(arbiter_of_woe_effect)];
+
+const ARCHMAGE_OF_RUNES_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastInstantOrSorcery,
+    ..etb_trigger(draw_one_effect)
+}];
+
+fn arbiter_of_woe_effect() -> EffectOp {
+    EffectOp::Sequence(vec![
+        burglar_rat_effect(),
+        EffectOp::LoseLife {
+            player: PlayerRef::Opponent,
+            amount: 2,
+        },
+        ichor_wellspring_draw_effect(),
+        EffectOp::GainLife {
+            player: PlayerRef::Controller,
+            amount: 2,
+        },
+    ])
+}
+
+fn armasaur_guide_effect() -> EffectOp {
+    EffectOp::AddCountersToTarget {
+        target_index: 0,
+        optional: false,
+        plus1_plus1: 1,
+        lifelink: 0,
+        stun: 0,
+    }
+}
+
+fn felidar_savior_effect() -> EffectOp {
+    EffectOp::Sequence(
+        (0..2)
+            .map(|target_index| EffectOp::Conditional {
+                cond: EffectCond::TargetIsLegalForAbility {
+                    index: target_index,
+                    spec: TargetSpec::UpToTwoOtherControlledCreatures,
+                },
+                then: Box::new(EffectOp::AddCountersToTarget {
+                    target_index,
+                    optional: true,
+                    plus1_plus1: 1,
+                    lifelink: 0,
+                    stun: 0,
+                }),
+                else_: Box::new(EffectOp::Sequence(vec![])),
+            })
+            .collect(),
+    )
+}
 const BURGLAR_RAT_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(burglar_rat_effect)];
 const INFESTATION_SAGE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::LeftBattlefieldToGraveyard,
@@ -497,6 +583,46 @@ const LIGHTSHELL_DUO_TRIGGERS: [TriggeredAbilityDef; 2] = [
 ];
 const CEPHALID_INKMAGE_TRIGGERS: [TriggeredAbilityDef; 1] =
     [etb_trigger(cephalid_inkmage_etb_effect)];
+const BILLOWING_SHRIEKMASS_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(billowing_shriekmass_effect)];
+const APOTHECARY_STOMPER_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(apothecary_stomper_effect)];
+
+fn billowing_shriekmass_effect() -> EffectOp {
+    EffectOp::MillCards {
+        player: PlayerRef::Controller,
+        count: 3,
+    }
+}
+
+fn apothecary_stomper_modes() -> Vec<(TargetSpec, EffectOp)> {
+    vec![
+        (
+            TargetSpec::ControlledCreature,
+            EffectOp::AddPlusOnePlusOneCounters {
+                object: ObjectRef::Target(0),
+                count: 2,
+            },
+        ),
+        (
+            TargetSpec::None,
+            EffectOp::GainLife {
+                player: PlayerRef::Controller,
+                amount: 4,
+            },
+        ),
+    ]
+}
+
+fn apothecary_stomper_effect() -> EffectOp {
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: apothecary_stomper_modes()
+            .into_iter()
+            .map(|(_, effect)| effect)
+            .collect(),
+    }
+}
 const CRYPT_FEASTER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::AttacksWithControllerGraveyardCardCountAtLeast(7),
     ..etb_trigger(crypt_feaster_threshold_effect)
@@ -517,6 +643,27 @@ const GLEAMING_BARRIER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef
     ..etb_trigger(gleaming_barrier_effect)
 }];
 const BIGFIN_BOUNCER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(bigfin_bouncer_effect)];
+const TRAGIC_BANSHEE_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(tragic_banshee_effect)];
+const BATTLESONG_BERSERKER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControllerAttacks,
+    ..etb_trigger(battlesong_berserker_effect)
+}];
+const SCRAWLING_CRAWLER_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::BeginningOfUpkeep {
+            controller_only: true,
+        },
+        ..etb_trigger(scrawling_crawler_upkeep_effect)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::OpponentDraws,
+        ..etb_trigger(scrawling_crawler_draw_effect)
+    },
+];
+const GRAPPLING_KRAKEN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControlledLandEnters,
+    ..etb_trigger(grappling_kraken_effect)
+}];
 const RUNE_SCARRED_DEMON_TRIGGERS: [TriggeredAbilityDef; 1] =
     [etb_trigger(rune_scarred_demon_effect)];
 const TATYOVA_BENTHIC_DRUID_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
@@ -583,6 +730,70 @@ fn bigfin_bouncer_effect() -> EffectOp {
     EffectOp::MoveObject {
         object: ObjectRef::Target(0),
         to_zone: Zone::Hand,
+    }
+}
+
+fn tragic_banshee_effect() -> EffectOp {
+    let boost = |amount| EffectOp::PumpTargetUntilEndOfTurnDynamic {
+        target: TargetRef::Target(0),
+        power: DynamicValueDef::Fixed(amount),
+        toughness: DynamicValueDef::Fixed(amount),
+    };
+    EffectOp::Conditional {
+        cond: EffectCond::CreatureDiedThisTurn,
+        then: Box::new(boost(-13)),
+        else_: Box::new(boost(-1)),
+    }
+}
+
+fn grappling_kraken_effect() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::TapObject {
+            object: ObjectRef::Target(0),
+        },
+        EffectOp::AddCountersToTarget {
+            target_index: 0,
+            optional: false,
+            plus1_plus1: 0,
+            lifelink: 0,
+            stun: 1,
+        },
+    ])
+}
+
+fn battlesong_berserker_effect() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::PumpTargetUntilEndOfTurnDynamic {
+            target: TargetRef::Target(0),
+            power: DynamicValueDef::Fixed(1),
+            toughness: DynamicValueDef::Fixed(0),
+        },
+        EffectOp::GrantKeywordTargetUntilEndOfTurn {
+            object: ObjectRef::Target(0),
+            keyword: Keywords::MENACE,
+        },
+    ])
+}
+
+fn scrawling_crawler_upkeep_effect() -> EffectOp {
+    // The trigger's controller is the active player for this upkeep.
+    // Sequential drawing therefore follows active-player, nonactive-player order.
+    EffectOp::Sequence(vec![
+        EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        },
+        EffectOp::DrawCards {
+            player: PlayerRef::Opponent,
+            count: 1,
+        },
+    ])
+}
+
+fn scrawling_crawler_draw_effect() -> EffectOp {
+    EffectOp::LoseLife {
+        player: PlayerRef::Opponent,
+        amount: 1,
     }
 }
 
@@ -710,6 +921,51 @@ const CACKLING_PROWLER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef
     condition: TriggerCondition::BeginningControllerEndStepIfCreatureDied,
     ..etb_trigger(prowler_morbid_effect)
 }];
+const WARDENS_OF_THE_CYCLE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningControllerEndStepIfCreatureDied,
+    ..etb_trigger(wardens_of_the_cycle_effect)
+}];
+
+fn wardens_of_the_cycle_modes() -> Vec<(TargetSpec, EffectOp)> {
+    [
+        EffectOp::GainLife {
+            player: PlayerRef::Controller,
+            amount: 2,
+        },
+        EffectOp::Sequence(vec![
+            EffectOp::DrawCards {
+                player: PlayerRef::Controller,
+                count: 1,
+            },
+            EffectOp::LoseLife {
+                player: PlayerRef::Controller,
+                amount: 1,
+            },
+        ]),
+    ]
+    .into_iter()
+    .map(|branch| {
+        (
+            TargetSpec::None,
+            EffectOp::Conditional {
+                cond: EffectCond::CreatureDiedThisTurn,
+                then: Box::new(branch),
+                else_: Box::new(EffectOp::Sequence(vec![])),
+            },
+        )
+    })
+    .collect()
+}
+
+fn wardens_of_the_cycle_effect() -> EffectOp {
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: wardens_of_the_cycle_modes()
+            .into_iter()
+            .map(|(_, effect)| effect)
+            .collect(),
+    }
+}
 
 const SYLVAN_SCAVENGING_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::BeginningControllerEndStep,
@@ -820,6 +1076,12 @@ pub fn unselected_trigger_modes(
     effect: &EffectOp,
 ) -> Option<Vec<(TargetSpec, EffectOp)>> {
     let card = crate::card_def::CARD_DEFS.get(card_def as usize)?;
+    if card.name == "Apothecary Stomper" && *effect == apothecary_stomper_effect() {
+        return Some(apothecary_stomper_modes());
+    }
+    if card.name == "Wardens of the Cycle" && *effect == wardens_of_the_cycle_effect() {
+        return Some(wardens_of_the_cycle_modes());
+    }
     #[cfg(feature = "standard-magezero-fixtures")]
     if card.name == "Hullbreaker Horror"
         && *effect == standard_family_g_v1::hullbreaker_horror_effect()
@@ -945,6 +1207,30 @@ const SUN_BLESSED_HEALER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityD
     ..etb_trigger(sun_blessed_healer_effect)
 }];
 
+const VANGUARD_SERAPH_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControllerFirstLifeGain {
+        own_turn_only: false,
+    },
+    ..etb_trigger(vanguard_seraph_effect)
+}];
+
+const CAT_COLLECTOR_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    etb_trigger(generous_ent_effect),
+    TriggeredAbilityDef {
+        condition: TriggerCondition::ControllerFirstLifeGain {
+            own_turn_only: true,
+        },
+        ..etb_trigger(prideful_parent_effect)
+    },
+];
+
+fn vanguard_seraph_effect() -> EffectOp {
+    EffectOp::Surveil {
+        player: PlayerRef::Controller,
+        count: 1,
+    }
+}
+
 fn sun_blessed_healer_effect() -> EffectOp {
     EffectOp::Conditional {
         cond: EffectCond::WasKicked,
@@ -953,9 +1239,39 @@ fn sun_blessed_healer_effect() -> EffectOp {
     }
 }
 
+const ELVISH_REGROWER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(elvish_regrower_effect)];
+const VAMPIRE_SOULCALLER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(elvish_regrower_effect)];
+const AFFECTIONATE_INDRIK_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(affectionate_indrik_effect)];
+fn affectionate_indrik_effect() -> EffectOp {
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: vec![
+            EffectOp::Sequence(vec![]),
+            EffectOp::FightObjects {
+                first: ObjectRef::ThisSource,
+                second: ObjectRef::Target(0),
+                target_spec: TargetSpec::OpponentControlledCreature,
+            },
+        ],
+    }
+}
+fn elvish_regrower_effect() -> EffectOp {
+    EffectOp::MoveAllTargets {
+        to_zone: Zone::Hand,
+    }
+}
+const AMBUSH_WOLF_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(ambush_wolf_effect)];
+fn ambush_wolf_effect() -> EffectOp {
+    EffectOp::MoveAllTargets {
+        to_zone: Zone::Exile,
+    }
+}
+
 fn double_counter_marker_effect() -> EffectOp {
     EffectOp::BindDoublePlusOneCountersToTriggerSource
 }
+
 const DWYNEN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Attacks,
     ..etb_trigger(dwynen_attack_effect)
@@ -1815,6 +2131,24 @@ const KESSIG_FLAMEBREATHER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilit
     intervening_if_controls_another_source_card: false,
     face_index: 0,
     effect: kessig_flamebreather_effect,
+}];
+
+fn balmor_cast_effect() -> EffectOp {
+    EffectOp::BoostControlledCreaturesUntilEndOfTurn {
+        power: 1,
+        toughness: 0,
+        keywords: Keywords::TRAMPLE,
+    }
+}
+
+const BALMOR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastInstantOrSorcery,
+    ..etb_trigger(balmor_cast_effect)
+}];
+
+const FIRESPITTER_WHELP_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastNoncreatureOrSubtype(Subtype::Dragon),
+    ..etb_trigger(kessig_flamebreather_effect)
 }];
 const GIXIAN_INFILTRATOR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::SacrificeAnotherPermanent,
@@ -2748,6 +3082,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
     match card.name {
         "Celestial Armor" => &CELESTIAL_ARMOR_TRIGGERS,
         "Exemplar of Light" => &EXEMPLAR_OF_LIGHT_TRIGGERS,
+        "Vanguard Seraph" => &VANGUARD_SERAPH_TRIGGERS,
+        "Cat Collector" => &CAT_COLLECTOR_TRIGGERS,
         "Sun-Blessed Healer" => &SUN_BLESSED_HEALER_TRIGGERS,
         "Mossborn Hydra" => &MOSSBORN_HYDRA_TRIGGERS,
         "Beast-Kin Ranger" => &BEAST_KIN_RANGER_TRIGGERS,
@@ -2761,6 +3097,12 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Helpful Hunter" => &HELPFUL_HUNTER_TRIGGERS,
         "Prideful Parent" => &PRIDEFUL_PARENT_TRIGGERS,
         "Icewind Elemental" => &ICEWIND_ELEMENTAL_TRIGGERS,
+        "Dreadwing Scavenger" => &DREADWING_SCAVENGER_TRIGGERS,
+        "Mischievous Pup" => &MISCHIEVOUS_PUP_TRIGGERS,
+        "Felidar Savior" => &FELIDAR_SAVIOR_TRIGGERS,
+        "Armasaur Guide" => &ARMASAUR_GUIDE_TRIGGERS,
+        "Arbiter of Woe" => &ARBITER_OF_WOE_TRIGGERS,
+        "Archmage of Runes" => &ARCHMAGE_OF_RUNES_TRIGGERS,
         "Burglar Rat" => &BURGLAR_RAT_TRIGGERS,
         "Infestation Sage" => &INFESTATION_SAGE_TRIGGERS,
         "Wary Thespian" => &WARY_THESPIAN_TRIGGERS,
@@ -2774,13 +3116,24 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Elementalist Adept" => &ELEMENTALIST_ADEPT_TRIGGERS,
         "Lightshell Duo" => &LIGHTSHELL_DUO_TRIGGERS,
         "Cephalid Inkmage" => &CEPHALID_INKMAGE_TRIGGERS,
+        "Billowing Shriekmass" => &BILLOWING_SHRIEKMASS_TRIGGERS,
+        "Apothecary Stomper" => &APOTHECARY_STOMPER_TRIGGERS,
+        "Wardens of the Cycle" => &WARDENS_OF_THE_CYCLE_TRIGGERS,
         "Crypt Feaster" => &CRYPT_FEASTER_TRIGGERS,
         "Erudite Wizard" => &ERUDITE_WIZARD_TRIGGERS,
         "Phyrexian Arena" => &PHYREXIAN_ARENA_TRIGGERS,
         "Gleaming Barrier" => &GLEAMING_BARRIER_TRIGGERS,
         "Angel of Finality" => &BOJUKA_BOG_TRIGGERS,
         "Bigfin Bouncer" => &BIGFIN_BOUNCER_TRIGGERS,
+        "Tragic Banshee" => &TRAGIC_BANSHEE_TRIGGERS,
+        "Battlesong Berserker" => &BATTLESONG_BERSERKER_TRIGGERS,
+        "Scrawling Crawler" => &SCRAWLING_CRAWLER_TRIGGERS,
+        "Grappling Kraken" => &GRAPPLING_KRAKEN_TRIGGERS,
         "Rune-Scarred Demon" => &RUNE_SCARRED_DEMON_TRIGGERS,
+        "Elvish Regrower" => &ELVISH_REGROWER_TRIGGERS,
+        "Vampire Soulcaller" => &VAMPIRE_SOULCALLER_TRIGGERS,
+        "Affectionate Indrik" => &AFFECTIONATE_INDRIK_TRIGGERS,
+        "Ambush Wolf" => &AMBUSH_WOLF_TRIGGERS,
         "Tatyova, Benthic Druid" => &TATYOVA_BENTHIC_DRUID_TRIGGERS,
         "Dazzling Angel" => &DAZZLING_ANGEL_TRIGGERS,
         "Clinquant Skymage" => &CLINQUANT_SKYMAGE_TRIGGERS,
@@ -2803,6 +3156,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Blood Fountain" => &BLOOD_FOUNTAIN_TRIGGERS,
         "Sagu Wildling" => &SAGU_WILDLING_TRIGGERS,
         "Kessig Flamebreather" => &KESSIG_FLAMEBREATHER_TRIGGERS,
+        "Balmor, Battlemage Captain" => &BALMOR_TRIGGERS,
+        "Firespitter Whelp" => &FIRESPITTER_WHELP_TRIGGERS,
         "Gixian Infiltrator" => &GIXIAN_INFILTRATOR_TRIGGERS,
         "Webweaver Changeling" => &WEBWEAVER_CHANGELING_TRIGGERS,
         "Glint Hawk" => &GLINT_HAWK_TRIGGERS,
@@ -2832,6 +3187,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Harrier Strix" => &HARRIER_STRIX_TRIGGERS,
         "Bojuka Bog" => &BOJUKA_BOG_TRIGGERS,
         "Conduit Pylons" => &CONDUIT_PYLONS_TRIGGERS,
+        "Elegant Parlor" | "Lush Portico" | "Underground Mortuary" => &CONDUIT_PYLONS_TRIGGERS,
         "Humbling Elder" => &HUMBLING_ELDER_TRIGGERS,
         "Meteor Golem" => &METEOR_GOLEM_TRIGGERS,
         "Dauntless Veteran" => &DAUNTLESS_VETERAN_TRIGGERS,
@@ -2920,12 +3276,22 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
     match card.name {
         "Celestial Armor" => TargetSpec::ControlledCreature,
         "Sun-Blessed Healer" => TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(2),
+        "Elvish Regrower" => TargetSpec::PermanentCardInOwnGraveyard,
+        "Mischievous Pup" => TargetSpec::UpToOneOtherControlledPermanent,
+        "Felidar Savior" => TargetSpec::UpToTwoOtherControlledCreatures,
+        "Armasaur Guide" => TargetSpec::ControlledCreature,
+        "Vampire Soulcaller" => TargetSpec::CreatureCardInOwnGraveyard,
+        "Affectionate Indrik" => TargetSpec::OpponentControlledCreature,
+        "Ambush Wolf" => TargetSpec::UpToOneCardInGraveyards,
         "Balustrade Spy" => TargetSpec::AnyPlayer,
         "Lotleth Giant" => TargetSpec::TargetOpponent,
         "Harrier Strix" => TargetSpec::AnyPermanent,
         "Bojuka Bog" | "Angel of Finality" => TargetSpec::AnyPlayer,
-        "Bigfin Bouncer" | "Nova Hellkite" => TargetSpec::OpponentControlledCreature,
+        "Bigfin Bouncer" | "Nova Hellkite" | "Tragic Banshee" | "Grappling Kraken" => {
+            TargetSpec::OpponentControlledCreature
+        }
         "Humbling Elder" => TargetSpec::OpponentControlledCreature,
+        "Battlesong Berserker" => TargetSpec::ControlledCreature,
         "Meteor Golem" => TargetSpec::OpponentNonlandPermanent,
         "Reclamation Sage" => TargetSpec::ArtifactOrEnchantmentPermanent,
         "Saiba Cryptomancer" | "Aloe Alchemist" => TargetSpec::Creature,
@@ -3105,6 +3471,20 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
     let Some(card) = crate::card_def::CARD_DEFS.get(card_def as usize) else {
         return false;
     };
+    if card.name == "Wardens of the Cycle"
+        && wardens_of_the_cycle_modes()
+            .iter()
+            .any(|(_, branch)| branch == effect)
+    {
+        return true;
+    }
+    if card.name == "Apothecary Stomper"
+        && apothecary_stomper_modes()
+            .iter()
+            .any(|(_, branch)| branch == effect)
+    {
+        return true;
+    }
     if card.name == "Sylvan Scavenging"
         && sylvan_scavenging_modes()
             .iter()
@@ -3180,6 +3560,14 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
         return Some(TargetSpec::None);
     }
     let card = crate::card_def::CARD_DEFS.get(card_def as usize)?;
+    if card.name == "Apothecary Stomper" {
+        return Some(
+            apothecary_stomper_modes()
+                .iter()
+                .find(|(_, branch)| branch == effect)
+                .map_or(TargetSpec::None, |(spec, _)| *spec),
+        );
+    }
     #[cfg(feature = "standard-magezero-fixtures")]
     if card.name == "Hullbreaker Horror" {
         return Some(
@@ -3485,11 +3873,12 @@ fn sba_fixed_point_with_protected_triggers(
             changed = true;
         }
 
-        // 704.5a: a player with 0 or less life loses. 704.5c: a player who
-        // attempted to draw from an empty library loses.
+        // 704.5a: a player with 0 or less life loses. 704.5b: a player who
+        // attempted to draw from an empty library loses. 704.5c: a player
+        // with ten or more poison counters loses.
         for p in [PlayerId::P0, PlayerId::P1] {
             let ps = &mut state.players[p.index()];
-            if !ps.has_lost && (ps.life <= 0 || ps.drew_from_empty) {
+            if !ps.has_lost && (ps.life <= 0 || ps.drew_from_empty || ps.poison_counters.0 >= 10) {
                 ps.has_lost = true;
                 changed = true;
             }
@@ -3535,6 +3924,16 @@ pub(crate) fn collect_and_process_with_waiting(
 ) -> Vec<PendingTrigger> {
     if state.pending_legend_rule_v1.is_some() {
         return Vec::new();
+    }
+    match crate::life_gain_turn_v1::take_captures(state) {
+        Ok(captures) => waiting.extend(captures),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidFirstLifeGainHistory,
+                source,
+            ));
+            return Vec::new();
+        }
     }
     let events: Vec<CommittedEvent> = state.engine.event_log.drain(..).collect();
     // Single-shot: `engine::resolve_top_of_stack` set this immediately
@@ -3686,6 +4085,14 @@ fn triggers_from_events(
             }
         }
         for (ability_index, def) in triggers_for(obj.card_def).iter().enumerate() {
+            // These abilities were captured at the actual life-gain commit,
+            // before later operations can change battlefield membership.
+            if matches!(
+                def.condition,
+                TriggerCondition::ControllerFirstLifeGain { .. }
+            ) {
+                continue;
+            }
             let uses_leave_lki = matches!(
                 def.condition,
                 TriggerCondition::LeftBattlefieldToGraveyard
@@ -4019,8 +4426,7 @@ fn triggers_from_events(
         for (host, host_live) in state.objects.iter() {
             if host_live.controller != *caster
                 || host_live.zone != Zone::Battlefield
-                || !crate::card_def::CARD_DEFS[host_live.card_def as usize]
-                    .has_type(CardType::Creature)
+                || !crate::engine::object_has_type(state, host, CardType::Creature)
             {
                 continue;
             }
@@ -4140,6 +4546,22 @@ fn selected_spell_types(state: &GameState, spell: ObjectId) -> &'static [CardTyp
             .unwrap_or(&[])
     } else {
         definition.types
+    }
+}
+
+fn selected_spell_has_subtype(state: &GameState, spell: ObjectId, subtype: Subtype) -> bool {
+    let object = state.objects.get(spell);
+    if object
+        .v4
+        .spell_cast_origin
+        .and_then(|origin| origin.finalized_method)
+        == Some(crate::state::CastMethodV4::Omen)
+    {
+        // Supported Adventure/Omen spell faces have no subtypes. Their
+        // printed creature face must not supply subtype authority.
+        false
+    } else {
+        subtype.is_in_subtype_ids(&crate::engine::effective_subtype_ids(state, spell))
     }
 }
 
@@ -4399,6 +4821,19 @@ fn trigger_matches(
                 && state.objects.get(source).zone_change_count == *source_zone_change_count
         }
         (
+            TriggerCondition::ControllerAttacksWithAtLeastCreatures(minimum),
+            CommittedEvent::ControllerAttacked {
+                source: event_source,
+                source_zone_change_count,
+                controller: event_controller,
+            },
+        ) => {
+            *event_source == source
+                && *event_controller == controller
+                && state.objects.get(source).zone_change_count == *source_zone_change_count
+                && state.engine.combat.attackers.len() >= usize::from(minimum)
+        }
+        (
             TriggerCondition::ControllerAttacksWithSubtype(subtype),
             CommittedEvent::ControllerAttacked {
                 source: event_source,
@@ -4491,6 +4926,17 @@ fn trigger_matches(
             *caster == controller
                 && !selected_spell_types(state, *spell)
                     .contains(&crate::card_def::CardType::Creature)
+        }
+        (
+            TriggerCondition::CastNoncreatureOrSubtype(subtype),
+            CommittedEvent::SpellCast {
+                spell,
+                controller: caster,
+            },
+        ) => {
+            *caster == controller
+                && (!selected_spell_types(state, *spell).contains(&CardType::Creature)
+                    || selected_spell_has_subtype(state, *spell, subtype))
         }
         (
             TriggerCondition::CastSelf,
@@ -4913,6 +5359,106 @@ mod tests {
     use super::*;
     use crate::ids::PlayerId;
     use crate::state::GameState;
+
+    #[test]
+    fn attack_count_condition_uses_declaration_and_source_incarnation() {
+        let elf = crate::card_def::card_id_by_name("Llanowar Elves").unwrap();
+        for controller in [PlayerId::P0, PlayerId::P1] {
+            let mut state =
+                GameState::new_from_libraries(&[elf; 5], &[elf; 5], |_| "elf".into(), 1);
+            let objects = state.players[controller.index()].library.clone();
+            let source = objects[0];
+            state.objects.get_mut(source).zone_change_count = 7;
+            let marker = CommittedEvent::ControllerAttacked {
+                source,
+                source_zone_change_count: 7,
+                controller,
+            };
+            let condition = TriggerCondition::ControllerAttacksWithAtLeastCreatures(3);
+            // The source is deliberately absent from the declared set.
+            for count in 0..=4 {
+                state.engine.combat.attackers = objects[1..1 + count].to_vec();
+                assert_eq!(
+                    trigger_matches(condition, &marker, source, controller, &state, 0),
+                    count >= 3
+                );
+            }
+            assert!(!trigger_matches(
+                condition,
+                &marker,
+                source,
+                controller.opponent(),
+                &state,
+                0
+            ));
+            state.objects.get_mut(source).zone_change_count = 8;
+            assert!(!trigger_matches(
+                condition, &marker, source, controller, &state, 0
+            ));
+            state.objects.get_mut(source).zone_change_count = 7;
+            // Being put into combat alone supplies no declaration marker.
+            assert!(!trigger_matches(
+                condition,
+                &CommittedEvent::DeclaredAttacker {
+                    source,
+                    source_zone_change_count: 7,
+                    controller
+                },
+                source,
+                controller,
+                &state,
+                0
+            ));
+            let replay: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert!(trigger_matches(
+                condition, &marker, source, controller, &replay, 0
+            ));
+        }
+    }
+
+    #[test]
+    fn cast_union_is_one_predicate_and_selected_face_does_not_inherit_subtypes() {
+        let note = crate::card_def::card_id_by_name("Mental Note").unwrap();
+        let fang = crate::card_def::card_id_by_name("Fang Dragon").unwrap();
+        let mut state = GameState::new_from_libraries(
+            &[note, fang],
+            &[note],
+            |id| crate::card_def::CARD_DEFS[id as usize].name.into(),
+            1,
+        );
+        let note_object = state.players[0].library[0];
+        let dragon = state.players[0].library[1];
+        // A synthetic noncreature Dragon deliberately satisfies both terms.
+        state.objects.get_mut(note_object).v4.effective_subtype_ids =
+            vec![Subtype::Dragon.stable_id()];
+        assert!(selected_spell_has_subtype(
+            &state,
+            note_object,
+            Subtype::Dragon
+        ));
+        assert!(trigger_matches(
+            TriggerCondition::CastNoncreatureOrSubtype(Subtype::Dragon),
+            &CommittedEvent::SpellCast {
+                spell: note_object,
+                controller: PlayerId::P0
+            },
+            dragon,
+            PlayerId::P0,
+            &state,
+            0,
+        ));
+        assert!(selected_spell_has_subtype(&state, dragon, Subtype::Dragon));
+        state.objects.get_mut(dragon).v4.spell_cast_origin =
+            Some(crate::state::SpellCastOriginV4 {
+                origin_zone: Zone::Hand,
+                origin_zone_change_count: 0,
+                route: crate::state::SpellCastRouteV4::Hand,
+                finalized_method: Some(crate::state::CastMethodV4::Omen),
+            });
+        assert!(!selected_spell_has_subtype(&state, dragon, Subtype::Dragon));
+        assert_eq!(selected_spell_types(&state, dragon), &[CardType::Sorcery]);
+    }
 
     // Lethal-damage creature death is exercised end-to-end in
     // `engine::tests::lethal_damage_kills_creature_via_sba`, using a real

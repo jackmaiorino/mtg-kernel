@@ -274,6 +274,10 @@ fn mana_ability_facts(def: &ManaAbilityDef, out: &mut Collector) {
                 amount: AmtF::Unit,
             });
         }
+        ManaAbilityCostDef::TapSelfPayLife(life) => {
+            out.cost(CostAtom::Tap);
+            out.cost(CostAtom::PayLife(life));
+        }
         ManaAbilityCostDef::None => {}
     }
     let amount = match amount {
@@ -307,6 +311,35 @@ fn mana_ability_facts(def: &ManaAbilityDef, out: &mut Collector) {
     }
 }
 
+/// The condition gating one additional mana ability.
+fn mana_ability_condition_facts(
+    condition: crate::card_def::ManaAbilityConditionDef,
+    out: &mut Collector,
+) {
+    out.control(ControlF::Conditional);
+    match condition {
+        crate::card_def::ManaAbilityConditionDef::ControllerControlsPermanentWithEitherSubtype {
+            first,
+            second,
+        } => {
+            // Vocabulary gap: ObjF has no subtype class.
+            let _ = (first, second);
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Permanent),
+                AggF::Any,
+            );
+        }
+        crate::card_def::ManaAbilityConditionDef::SourceEnteredThisTurn => out.read(
+            RelF::You,
+            Some(ZoneF::Battlefield),
+            Some(ObjF::ThisObject),
+            AggF::EventThisTurn,
+        ),
+    }
+}
+
 fn activated(walk: &mut Walk, ctx: CtxF, key: &str, ability: &ActivatedAbilityDef) {
     let ActivatedAbilityDef {
         cost,
@@ -330,6 +363,14 @@ fn activated(walk: &mut Walk, ctx: CtxF, key: &str, ability: &ActivatedAbilityDe
             "max_per_turn": max_activations_per_turn,
         }),
     );
+    if cost.iter().any(|component| {
+        matches!(
+            component,
+            CostComponent::SacrificeOtherControlledCreatures(_)
+        )
+    }) {
+        walk.opaque.push("sacrifice cost excludes its source");
+    }
     let env = Env { target_spec };
     walk.ability(ctx, |out| {
         for &component in cost {
@@ -421,6 +462,11 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         adventure,
         cant_be_blocked_by_monarchs_creatures,
         conditional_tap_yield,
+        enters_tapped_unless_controller,
+        additional_mana_ability_conditions,
+        restricted_mana_abilities,
+        animation,
+        activated_ability_generic_reductions,
         // Cast bookkeeping for a program's `ManaSpentToCast` count, which
         // the program's own facets already carry.
         records_mana_spent: _,
@@ -693,17 +739,118 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         walk.rec("mana_ability_def", Value::String(format!("{rich:?}")));
         walk.ability(CtxF::Mana, |out| mana_ability_facts(rich, out));
     }
-    for additional in additional_mana_abilities.iter() {
+    for (index, additional) in additional_mana_abilities.iter().enumerate() {
         walk.rec("additional_mana", Value::String(format!("{additional:?}")));
+        let condition = additional_mana_ability_conditions
+            .get(index)
+            .copied()
+            .flatten();
+        if let Some(condition) = condition {
+            walk.rec(
+                "additional_mana_condition",
+                Value::String(format!("{condition:?}")),
+            );
+        }
         walk.ability(CtxF::Mana, |out| {
             out.cost(CostAtom::Mana);
             mana_ability_facts(&additional.ability, out);
+            if let Some(condition) = condition {
+                mana_ability_condition_facts(condition, out);
+            }
+        });
+    }
+    for restricted in restricted_mana_abilities.iter() {
+        walk.rec("restricted_mana", Value::String(format!("{restricted:?}")));
+        walk.ability(CtxF::Mana, |out| {
+            // `{T}: Add one of these colors`, spendable only while paying a
+            // creature spell's total cost. Vocabulary gap: no spending
+            // restriction; it is marked conditional.
+            out.cost(CostAtom::Tap);
+            for &color in restricted.colors {
+                out.effect(
+                    EffectAtom::new(EvF::AddMana)
+                        .player(RelF::You)
+                        .amount(AmtF::fixed(1))
+                        .color(color.into()),
+                );
+            }
+            match restricted.restriction {
+                crate::card_def::ManaSpendRestrictionDef::CreatureSpell => {
+                    out.control(ControlF::Conditional)
+                }
+            }
         });
     }
     if let Some(amount) = conditional_tap_yield {
         walk.rec(
             "conditional_tap_yield",
             Value::String(format!("{amount:?}")),
+        );
+    }
+    for reduction in activated_ability_generic_reductions.iter() {
+        walk.rec(
+            "activated_ability_generic_reduction",
+            Value::String(format!("{reduction:?}")),
+        );
+        walk.ability(CtxF::Static, |out| {
+            out.cost(CostAtom::Reduced);
+            match reduction.per {
+                crate::card_def::ActivatedAbilityReductionCountDef::ControlledLegendaryCreatures => {
+                    // Vocabulary gap: no legendary filter.
+                    out.read(
+                        RelF::You,
+                        Some(ZoneF::Battlefield),
+                        Some(ObjF::Typed(CardTypeF::Creature)),
+                        AggF::Count,
+                    )
+                }
+            }
+        });
+    }
+    if let Some(rule) = enters_tapped_unless_controller {
+        walk.rec(
+            "enters_tapped_unless_controller",
+            Value::String(format!("{rule:?}")),
+        );
+        walk.ability(CtxF::Static, |out| {
+            out.control(ControlF::Conditional);
+            match *rule {
+                crate::card_def::EntersTappedUnlessControllerDef::ControlsAtMostOtherLands(n)
+                | crate::card_def::EntersTappedUnlessControllerDef::ControlsAtLeastOtherLands(n) => {
+                    out.read(
+                        RelF::You,
+                        Some(ZoneF::Battlefield),
+                        Some(ObjF::Typed(CardTypeF::Land)),
+                        AggF::AtLeast(bucket(i64::from(n))),
+                    )
+                }
+                crate::card_def::EntersTappedUnlessControllerDef::WithinOwnFirstTurns(_) => {
+                    // Vocabulary gap: no turn-number read.
+                    out.atoms.push(Atom::Opaque)
+                }
+            }
+            out.effect(EffectAtom::new(EvF::Tap).obj(ObjF::ThisObject));
+        });
+    }
+    if let Some(animation) = animation {
+        let crate::card_def::AnimationDef {
+            power,
+            toughness,
+            artifact,
+            colors,
+            subtypes,
+            keywords,
+        } = *animation;
+        walk.rec(
+            "animation",
+            json!({
+                "power": power,
+                "toughness": toughness,
+                "artifact": artifact,
+                "colors": colors.iter().map(|c| format!("{c:?}")).collect::<Vec<_>>(),
+                "subtypes": subtypes.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>(),
+                "keywords": keywords.0,
+            }),
         );
     }
 
@@ -744,7 +891,21 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 // A transform back face's own trigger.
                 walk.rec("trigger_face_index", json!(face_index));
             }
+            if matches!(
+                condition,
+                crate::trigger::TriggerCondition::ControllerFirstLifeGain { .. }
+            ) {
+                walk.opaque
+                    .push("global first life gain ordinal and optional own-turn gate");
+            }
             let env = Env { target_spec: spec };
+            if matches!(
+                condition,
+                crate::trigger::TriggerCondition::CastNoncreatureOrSubtype(_)
+            ) {
+                walk.opaque
+                    .push("noncreature spell or selected subtype cast union predicate");
+            }
             walk.ability(CtxF::Trigger, |out| {
                 triggers_costs::trigger_condition(condition, out);
                 if home_zone != Zone::Battlefield {
@@ -830,7 +991,11 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
             power,
             toughness,
             grant_haste,
+            battlefield_only,
         } = boost;
+        if battlefield_only {
+            walk.rec("static_self_boost_home_zone", json!(Zone::Battlefield));
+        }
         walk.opaque
             .push("static self boost gated on an engine predicate");
         walk.rec(
@@ -882,6 +1047,65 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         });
     }
 
+    if let Some(reduction) = crate::engine::static_instant_sorcery_reduction_for_v1(name) {
+        walk.rec(
+            "static_instant_sorcery_generic_reduction",
+            json!({"generic": reduction}),
+        );
+        walk.ability(CtxF::Static, |out| {
+            for card_type in [CardTypeF::Instant, CardTypeF::Sorcery] {
+                out.effect(
+                    EffectAtom::new(EvF::CostChange)
+                        .player(RelF::You)
+                        .obj(ObjF::Typed(card_type))
+                        .amount(AmtF::fixed(-i64::from(reduction)))
+                        .duration(DurF::WhileOnBattlefield),
+                );
+            }
+        });
+    }
+
+    if let Some(boost) = crate::engine::static_controlled_creature_boost_for_v1(name) {
+        let keyword = match boost.filter {
+            crate::engine::StaticControlledCreatureFilterV1::All => None,
+            crate::engine::StaticControlledCreatureFilterV1::WithKeyword(keyword) => {
+                Some(keyword.0)
+            }
+        };
+        walk.rec(
+            "static_controlled_creature_boost",
+            json!({"keyword": keyword, "exclude_source": boost.exclude_source, "power": boost.power, "toughness": boost.toughness}),
+        );
+        if keyword.is_some() || boost.exclude_source {
+            walk.opaque
+                .push("static team predicate: effective keyword or exact source exclusion");
+        }
+        walk.ability(CtxF::Static, |out| {
+            if keyword.is_some() {
+                out.control(ControlF::Conditional);
+                out.read(
+                    RelF::You,
+                    Some(ZoneF::Battlefield),
+                    Some(ObjF::Typed(CardTypeF::Creature)),
+                    AggF::Characteristic,
+                );
+            }
+            if keyword.is_some() || boost.exclude_source {
+                out.atoms.push(Atom::Opaque);
+            }
+            out.effect(
+                EffectAtom::new(EvF::StatChange)
+                    .player(RelF::You)
+                    .obj(ObjF::Typed(CardTypeF::Creature))
+                    .amount(AmtF::stat(
+                        i64::from(boost.power),
+                        i64::from(boost.toughness),
+                    ))
+                    .duration(DurF::WhileOnBattlefield),
+            );
+        });
+    }
+
     if let Some((minimum, keywords)) = crate::engine::static_graveyard_threshold_keyword_for(name) {
         walk.rec(
             "static_graveyard_threshold_keyword",
@@ -904,6 +1128,23 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 );
             }
         });
+    }
+
+    if crate::continuous_characteristics_v1::has_printed_cant_block(name) {
+        walk.rec(
+            "static_cant_block",
+            json!({"printed_source_abilities": true}),
+        );
+        walk.ability(CtxF::Static, |out| {
+            out.effect(
+                EffectAtom::new(EvF::Restrict)
+                    .obj(ObjF::ThisObject)
+                    .duration(DurF::WhileOnBattlefield),
+            );
+            // Restrict has no predicate distinguishing blocking from other actions.
+            out.atoms.push(Atom::Opaque);
+        });
+        walk.opaque.push("printed source cannot block");
     }
 
     #[cfg(feature = "standard-magezero-fixtures")]

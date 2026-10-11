@@ -1,0 +1,493 @@
+{
+  "schema": "training-speedups-desktop-one-update-qualification-analysis/v1",
+  "finished_utc": "2026-10-10T12:22:06.920868+00:00",
+  "all_eight_complete": true,
+  "completed_updates": 8,
+  "completed_games": 80,
+  "all_full_fingerprints_equal": true,
+  "canonical_fingerprint_sha256": "bbefb6d1d8f790812d95bcd22df0bd7c0e996043167ee544292c23cae659c9a8",
+  "haley_fingerprint_equal": true,
+  "haley_analysis": {
+    "path": "D:\\training-speedups-20261009\\qualification-analysis-20261010.json",
+    "sha256": "8aa0d13a37ee9828477917a84aedd7422ac1e2f394aef21a0a680f31717194df"
+  },
+  "batch": {
+    "path": "D:\\training-speedups-20261009\\desktop\\qualification.batch.json",
+    "sha256": "cb64131264c06b5656059c19f4b43bbcb266294a9c995fc5ba518cc002e234a3"
+  },
+  "rows": [
+    {
+      "label": "qual-baseline-w1",
+      "variant": "baseline",
+      "workers": 1,
+      "dispatch_seconds": 12.053413099987665,
+      "child_seconds": 8.998314600001322,
+      "execution_seconds": 9.529237299982924,
+      "archive_seconds": 0.8531239000149071,
+      "controller_seconds_including_observation": 13.4375859000138,
+      "runtime": {
+        "engine_commit": "5242a984c2bd8d878c9a5fbc4b3cacab9798d08b",
+        "tracked_tree_sha256": "cfce89a142c40a00c6a355ff61d71054cc77f0cff2a5920bad5c91a179117612",
+        "binary": {
+          "path": "E:\\pinned-binaries\\f252f0867338ab5731612957fbaee94c4b7dcd03ea1d7478fb5f0efd7b51925d\\native_expanded_training_run_v1.exe",
+          "sha256": "f252f0867338ab5731612957fbaee94c4b7dcd03ea1d7478fb5f0efd7b51925d"
+        }
+      },
+      "pins": {
+        "controller": {
+          "path": "D:\\training-speedups-20261009\\desktop\\controllers\\qual-baseline-w1.json",
+          "sha256": "3816859ea93b70f4cfa3eb3fa9dd7842e3e99e28f4319f6a8f96dc5bab56121c"
+        },
+        "report": {
+          "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\qual-baseline-w1\\report.json",
+          "sha256": "12d7fbf2c748392079b40f86e868d3bfa75dc34a9c0d17197aef59fda16bf962"
+        },
+        "execution": {
+          "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\qual-baseline-w1\\execution.json",
+          "sha256": "ff126c79e0ac5133fc2a720fcf0056f2f141f1a1087f06c2cfe2a96e36b27667"
+        },
+        "archive": {
+          "path": "D:\\training-speedups-20261009\\desktop\\measure\\cold\\qual-baseline-w1\\archive.json",
+          "sha256": "3e71bb67305b4202a016ffadb6c26f8ffbb78b54694cae4c9d43687185e1a343"
+        }
+      },
+      "native_files_verified": 20
+    },
+    {
+      "label": "qual-baseline-w2",
+      "variant": "baseline",
+      "workers": 2,
+      "dispatch_seconds": 10.113848500011954,
+      "child_seconds": 7.041468200011877,
+      "execution_seconds": 7.559999200020684,
+      "archive_seconds": 0.8483291000011377,
+      "controller_seconds_including_observation": 11.418230000010226,
+      "runtime": {
+        "engine_commit": "5242a984c2bd8d878c9a5fbc4b3cacab9798d08b",
+        "tracked_tree_sha256": "cfce89a142c40a00c6a355ff61d71054cc77f0cff2a5920bad5c91a179117612",
+        "binary": {
+          "path": "E:\\pinned-binaries\\f252f0867338ab5731612957fbaee94c4b7dcd03ea1d7478fb5f0efd7b51925d\\native_expanded_training_run_v1.exe",
+          "sha256": "f252f0867338ab5731612957fbaee94c4b7dcd03ea1d7478fb5f0efd7b51925d"
+        }
+      },
+      "pins": {
+        "controller": {
+          "path": "D:\\training-speedups-20261009\\desktop\\controllers\\qual-baseline-w2.json",
+          "sha256": "18105d21cd86f57c573c5fe0856229401826d40e0f6adbb2457b2efb641c937c"
+        },
+        "report": {
+          "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\qual-baseline-w2\\report.json",
+          "sha256": "b9a22d7e72b61605c95b788221e6c0245c9084b5b7d81ebd3ede2ac985697ea6"
+        },
+        "execution": {
+          "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\qual-baseline-w2\\execution.json",
+          "sha256": "b71b5aa572546e822699f09c3406c9779298da8f214a540cbe72fb4dc1244f08"
+        },
+        "archive": {
+          "path": "D:\\training-speedups-20261009\\desktop\\measure\\cold\\qual-baseline-w2\\archive.json",
+          "sha256": "8587002b66d16ad798af566adb75d0db5f414ffe1694efa228414d15289776d8"
+        }
+      },
+      "native_files_verified": 20
+    },
+    {
+      "label": "qual-baseline-w4",
+      "variant": "baseline",
+      "workers": 4,
+      "dispatch_seconds": 9.532578400016064,
+      "child_seconds": 6.543533700023545,
+      "execution_seconds": 7.058142099995166,
+      "archive_seconds": 0.8262053999933414,
+      "controller_seconds_including_observation": 10.888041500002146,
+      "runtime": {
+        "engine_commit": "5242a984c2bd8d878c9a5fbc4b3cacab9798d08b",
+        "tracked_tree_sha256": "cfce89a142c40a00c6a355ff61d71054cc77f0cff2a5920bad5c91a179117612",
+        "binary": {
+          "path": "E:\\pinned-binaries\\f252f0867338ab5731612957fbaee94c4b7dcd03ea1d7478fb5f0efd7b51925d\\native_expanded_training_run_v1.exe",
+          "sha256": "f252f0867338ab5731612957fbaee94c4b7dcd03ea1d7478fb5f0efd7b51925d"
+        }
+      },
+      "pins": {
+        "controller": {
+          "path": "D:\\training-speedups-20261009\\desktop\\controllers\\qual-baseline-w4.json",
+          "sha256": "fe4b621dcac70ef1f0d110ada3620b5416c498d2acbe032dc6c19a03ccfd51f8"
+        },
+        "report": {
+          "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\qual-baseline-w4\\report.json",
+          "sha256": "0acf71758d49c11cc8b4f2e5da2d8dffacee0a9fb5d07a5a85ada3ba269bab30"
+        },
+        "execution": {
+          "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\qual-baseline-w4\\execution.json",
+          "sha256": "29699de03a5761d334207558b33fc0bf2881e84ebe7e877b606bc8264a2677a3"
+        },
+        "archive": {
+          "path": "D:\\training-speedups-20261009\\desktop\\measure\\cold\\qual-baseline-w4\\archive.json",
+          "sha256": "af4a76d240768493b5e29dbeb069ae543b56718f6b37172c22c18298a8c80cab"
+        }
+      },
+      "native_files_verified": 20
+    },
+    {
+      "label": "qual-baseline-w8",
+      "variant": "baseline",
+      "workers": 8,
+      "dispatch_seconds": 9.311614999984158,
+      "child_seconds": 6.327658900001552,
+      "execution_seconds": 6.81630320000113,
+      "archive_seconds": 0.8471304000122473,
+      "controller_seconds_including_observation": 10.608177900023293,
+      "runtime": {
+        "engine_commit": "5242a984c2bd8d878c9a5fbc4b3cacab9798d08b",
+        "tracked_tree_sha256": "cfce89a142c40a00c6a355ff61d71054cc77f0cff2a5920bad5c91a179117612",
+        "binary": {
+          "path": "E:\\pinned-binaries\\f252f0867338ab5731612957fbaee94c4b7dcd03ea1d7478fb5f0efd7b51925d\\native_expanded_training_run_v1.exe",
+          "sha256": "f252f0867338ab5731612957fbaee94c4b7dcd03ea1d7478fb5f0efd7b51925d"
+        }
+      },
+      "pins": {
+        "controller": {
+          "path": "D:\\training-speedups-20261009\\desktop\\controllers\\qual-baseline-w8.json",
+          "sha256": "1f2431bfdb748a668a97563fa7896a59156bcbdde4c1844cbbe73b9074cbe47a"
+        },
+        "report": {
+          "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\qual-baseline-w8\\report.json",
+          "sha256": "75c0a8a76aee128b192614231bbb687e8ebf1650025713bbb5a4d22bff118b05"
+        },
+        "execution": {
+          "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\qual-baseline-w8\\execution.json",
+          "sha256": "dc9c758d4a6f7f397ccb26ed96245f6819c44e21688ea6f9cb40e6a80bd2f3c2"
+        },
+        "archive": {
+          "path": "D:\\training-speedups-20261009\\desktop\\measure\\cold\\qual-baseline-w8\\archive.json",
+          "sha256": "ff8fe1a906294e4410b72da6b6e5f159b4c3d92ec9fc0689afa8fa260edeabe2"
+        }
+      },
+      "native_files_verified": 20
+    },
+    {
+      "label": "qual-candidate-w1",
+      "variant": "candidate",
+      "workers": 1,
+      "dispatch_seconds": 15.89551110001048,
+      "child_seconds": 12.923333700018702,
+      "execution_seconds": 13.421286900003906,
+      "archive_seconds": 0.8074823999777436,
+      "controller_seconds_including_observation": 17.192600000009406,
+      "runtime": {
+        "engine_commit": "e6e1cf8cf239f2f98ab4eba89b4e994ea717b69b",
+        "tracked_tree_sha256": "2b3e38329ec3620083db13360aacab97f1b5c6a3b1e3cd2f9c81958a2c6bba95",
+        "binary": {
+          "path": "E:\\pinned-binaries\\770289efe1437f5fae50f57bf087173e4d0770a240f943c66a6f51fd4ccb0f4c\\native_expanded_training_run_v1.exe",
+          "sha256": "770289efe1437f5fae50f57bf087173e4d0770a240f943c66a6f51fd4ccb0f4c"
+        }
+      },
+      "pins": {
+        "controller": {
+          "path": "D:\\training-speedups-20261009\\desktop\\controllers\\qual-candidate-w1.json",
+          "sha256": "9ceab4763b0e59639aafca425a4ec0e7f689bbd901359342662e480c9cf719aa"
+        },
+        "report": {
+          "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\qual-candidate-w1\\report.json",
+          "sha256": "30c0d5c3020847b13eb2907f5c6283edf2319c62f85648eb82968ea066ca6cbe"
+        },
+        "execution": {
+          "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\qual-candidate-w1\\execution.json",
+          "sha256": "5e44304543362e3d81c4d97fb900604c3ee90c64b174814bd33809d3ec2d9dfb"
+        },
+        "archive": {
+          "path": "D:\\training-speedups-20261009\\desktop\\measure\\cold\\qual-candidate-w1\\archive.json",
+          "sha256": "aef10e9dc6c690d24d4d07f1f7f89c8a23cbb4d5ae85c6625bb896520a440b73"
+        }
+      },
+      "native_files_verified": 20
+    },
+    {
+      "label": "qual-candidate-w2",
+      "variant": "candidate",
+      "workers": 2,
+      "dispatch_seconds": 7.654318000015337,
+      "child_seconds": 4.642606100009289,
+      "execution_seconds": 5.141004300006898,
+      "archive_seconds": 0.8085663999954704,
+      "controller_seconds_including_observation": 8.935433700011345,
+      "runtime": {
+        "engine_commit": "e6e1cf8cf239f2f98ab4eba89b4e994ea717b69b",
+        "tracked_tree_sha256": "2b3e38329ec3620083db13360aacab97f1b5c6a3b1e3cd2f9c81958a2c6bba95",
+        "binary": {
+          "path": "E:\\pinned-binaries\\770289efe1437f5fae50f57bf087173e4d0770a240f943c66a6f51fd4ccb0f4c\\native_expanded_training_run_v1.exe",
+          "sha256": "770289efe1437f5fae50f57bf087173e4d0770a240f943c66a6f51fd4ccb0f4c"
+        }
+      },
+      "pins": {
+        "controller": {
+          "path": "D:\\training-speedups-20261009\\desktop\\controllers\\qual-candidate-w2.json",
+          "sha256": "094e0b97fde2f61b5b382ff406f55a5131669b88ce3cfad6b33f44653f3efd97"
+        },
+        "report": {
+          "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\qual-candidate-w2\\report.json",
+          "sha256": "ced4e72154a7dae1dfb88458d35ddfab92504434b6008ddcd962103fd863dc1c"
+        },
+        "execution": {
+          "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\qual-candidate-w2\\execution.json",
+          "sha256": "8ae844d96e258d14f3203d90ce3bac78dc947ffe3ef38358575e8fc59e8dd500"
+        },
+        "archive": {
+          "path": "D:\\training-speedups-20261009\\desktop\\measure\\cold\\qual-candidate-w2\\archive.json",
+          "sha256": "75519d47ea22791730a7948453ab88512683f650fd1a8aa1bdf45e7d3f8067bb"
+        }
+      },
+      "native_files_verified": 20
+    },
+    {
+      "label": "qual-candidate-w4",
+      "variant": "candidate",
+      "workers": 4,
+      "dispatch_seconds": 7.181211899995105,
+      "child_seconds": 4.170612900023116,
+      "execution_seconds": 4.70690079999622,
+      "archive_seconds": 0.7909989000181668,
+      "controller_seconds_including_observation": 8.46980849999818,
+      "runtime": {
+        "engine_commit": "e6e1cf8cf239f2f98ab4eba89b4e994ea717b69b",
+        "tracked_tree_sha256": "2b3e38329ec3620083db13360aacab97f1b5c6a3b1e3cd2f9c81958a2c6bba95",
+        "binary": {
+          "path": "E:\\pinned-binaries\\770289efe1437f5fae50f57bf087173e4d0770a240f943c66a6f51fd4ccb0f4c\\native_expanded_training_run_v1.exe",
+          "sha256": "770289efe1437f5fae50f57bf087173e4d0770a240f943c66a6f51fd4ccb0f4c"
+        }
+      },
+      "pins": {
+        "controller": {
+          "path": "D:\\training-speedups-20261009\\desktop\\controllers\\qual-candidate-w4.json",
+          "sha256": "6db8d2030c2e7de2f395ea09e64ea0bf0d3b2e545af2dc1f63a9ad1f86303449"
+        },
+        "report": {
+          "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\qual-candidate-w4\\report.json",
+          "sha256": "8773d468da269a7a6114735bf61de29a77efbf6df9754c4a228af35cf99881da"
+        },
+        "execution": {
+          "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\qual-candidate-w4\\execution.json",
+          "sha256": "0af704c66a979784db898ff66def4c3fd332f3d0bf1428cfce430139f214da33"
+        },
+        "archive": {
+          "path": "D:\\training-speedups-20261009\\desktop\\measure\\cold\\qual-candidate-w4\\archive.json",
+          "sha256": "f4ba68376ec44b3b2021b4f190f069f531b26dbdf487ecd01e8c9d60bcac4ed1"
+        }
+      },
+      "native_files_verified": 20
+    },
+    {
+      "label": "qual-candidate-w8",
+      "variant": "candidate",
+      "workers": 8,
+      "dispatch_seconds": 7.264876400004141,
+      "child_seconds": 4.171060799999395,
+      "execution_seconds": 4.68496410001535,
+      "archive_seconds": 0.8135325000039302,
+      "controller_seconds_including_observation": 8.57736290001776,
+      "runtime": {
+        "engine_commit": "e6e1cf8cf239f2f98ab4eba89b4e994ea717b69b",
+        "tracked_tree_sha256": "2b3e38329ec3620083db13360aacab97f1b5c6a3b1e3cd2f9c81958a2c6bba95",
+        "binary": {
+          "path": "E:\\pinned-binaries\\770289efe1437f5fae50f57bf087173e4d0770a240f943c66a6f51fd4ccb0f4c\\native_expanded_training_run_v1.exe",
+          "sha256": "770289efe1437f5fae50f57bf087173e4d0770a240f943c66a6f51fd4ccb0f4c"
+        }
+      },
+      "pins": {
+        "controller": {
+          "path": "D:\\training-speedups-20261009\\desktop\\controllers\\qual-candidate-w8.json",
+          "sha256": "48988547232d6218df77e724c11126cf41d1db738ec38ebb260cb82668d566b9"
+        },
+        "report": {
+          "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\qual-candidate-w8\\report.json",
+          "sha256": "f104c0c0e01ddb37f23ba69f5d6189357c697b34a5c71dbd5157e949a823c197"
+        },
+        "execution": {
+          "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\qual-candidate-w8\\execution.json",
+          "sha256": "a072252fb387c68795f83ec6b84ae6df3adabea3e083450a54101217ee3aef4b"
+        },
+        "archive": {
+          "path": "D:\\training-speedups-20261009\\desktop\\measure\\cold\\qual-candidate-w8\\archive.json",
+          "sha256": "3aaf55634732a0e3cd16120fff2f75bdf53a1e13faea6692d487b6214437c1c8"
+        }
+      },
+      "native_files_verified": 20
+    }
+  ],
+  "allocations": {
+    "baseline": {
+      "receipt": {
+        "path": "D:\\training-speedups-20261009\\desktop\\baseline-qualification-allocation.json",
+        "sha256": "d5ea9b6ffd63350092b4c2b70b6b61b4086c9e7ca8cc93b0fdbde2fcdf2fe3eb"
+      },
+      "measurement": {
+        "classes": {
+          "raw_native": {
+            "files": 160,
+            "logical_bytes": 979360688,
+            "allocated_bytes": 425059410,
+            "compressed_files": 160,
+            "uncompressed_files": 0
+          },
+          "zip": {
+            "files": 16,
+            "logical_bytes": 217807199,
+            "allocated_bytes": 217693324,
+            "compressed_files": 16,
+            "uncompressed_files": 0
+          },
+          "receipts": {
+            "files": 139,
+            "logical_bytes": 179244663,
+            "allocated_bytes": 88766803,
+            "compressed_files": 101,
+            "uncompressed_files": 38
+          },
+          "other": {
+            "files": 699,
+            "logical_bytes": 18442334,
+            "allocated_bytes": 18441597,
+            "compressed_files": 6,
+            "uncompressed_files": 693
+          }
+        },
+        "representative_native": {
+          "files": 20,
+          "logical_bytes": 122418491,
+          "allocated_bytes": 53132015
+        },
+        "skipped_reparse_points": [],
+        "errors": [],
+        "complete": true,
+        "metadata_snapshot_sha256": "0cbd54d2a9b707483461db0015cc5edfaa6ffd22552eadcdb513c605c3e4a034",
+        "metadata_snapshot_semantics": "Digest of paths, logical/allocation sizes, mtimes and compression attributes; not content integrity.",
+        "schema": "training-speedups-allocation-calibration/v1",
+        "root": "D:\\training-speedups-20261009\\desktop",
+        "native_root": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\qual-baseline-w1\\native",
+        "observed_updates": 1,
+        "observed_games": 10,
+        "projected_games": 1620,
+        "volume": {
+          "drive": "D:",
+          "free_bytes": 320688467968,
+          "total_bytes": 1000186310656,
+          "reserve_bytes": 64424509440,
+          "free_above_reserve_bytes": 256263958528
+        },
+        "physical_projection": {
+          "raw_extrapolated_bytes": 8607386430,
+          "historical_zip_assumed_incompressible_bytes": 3498824608,
+          "base_bytes": 12106211038,
+          "margin_fraction": 0.25,
+          "extra_bytes": 536870912,
+          "projected_peak_additional_bytes": 15669634710
+        },
+        "logical_projection": {
+          "raw_extrapolated_bytes": 19831795542,
+          "historical_zip_assumed_incompressible_bytes": 3498824608,
+          "base_bytes": 23330620150,
+          "margin_fraction": 0.25,
+          "extra_bytes": 536870912,
+          "projected_peak_additional_bytes": 29700146100
+        },
+        "empirical_physical_headroom_admits_projection": true,
+        "projection_kind": "Empirical first-update extrapolation with 25 percent margin plus 512 MiB, not an exact bound.",
+        "limitations": [
+          "Later trajectory lengths and checkpoint sizes can differ from update one.",
+          "ZIP projection uses observed historical whole-block ZIP bytes as incompressible.",
+          "Existing retained files reduce current free space; no files are removed.",
+          "Win32 file allocation excludes directory metadata and unrelated concurrent writes.",
+          "Skipped reparse entries or measurement errors prevent an affirmative admission result.",
+          "A physical fit does not satisfy or change the supported launcher's conservative projection guard."
+        ]
+      }
+    },
+    "candidate": {
+      "receipt": {
+        "path": "D:\\training-speedups-20261009\\desktop\\candidate-qualification-allocation.json",
+        "sha256": "41172c6b378a261b92eee2ae3be4d85a33bfc03aab1769cbd27e5a2448a98e7e"
+      },
+      "measurement": {
+        "classes": {
+          "raw_native": {
+            "files": 160,
+            "logical_bytes": 979360688,
+            "allocated_bytes": 425059410,
+            "compressed_files": 160,
+            "uncompressed_files": 0
+          },
+          "zip": {
+            "files": 16,
+            "logical_bytes": 217807199,
+            "allocated_bytes": 217693324,
+            "compressed_files": 16,
+            "uncompressed_files": 0
+          },
+          "receipts": {
+            "files": 140,
+            "logical_bytes": 179554089,
+            "allocated_bytes": 89076229,
+            "compressed_files": 102,
+            "uncompressed_files": 38
+          },
+          "other": {
+            "files": 699,
+            "logical_bytes": 18442334,
+            "allocated_bytes": 18441597,
+            "compressed_files": 6,
+            "uncompressed_files": 693
+          }
+        },
+        "representative_native": {
+          "files": 20,
+          "logical_bytes": 122418532,
+          "allocated_bytes": 53132033
+        },
+        "skipped_reparse_points": [],
+        "errors": [],
+        "complete": true,
+        "metadata_snapshot_sha256": "249f1fae20b3624ba633c8e965ae37133f3e18316beb378274a42465a463658d",
+        "metadata_snapshot_semantics": "Digest of paths, logical/allocation sizes, mtimes and compression attributes; not content integrity.",
+        "schema": "training-speedups-allocation-calibration/v1",
+        "root": "D:\\training-speedups-20261009\\desktop",
+        "native_root": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\qual-candidate-w1\\native",
+        "observed_updates": 1,
+        "observed_games": 10,
+        "projected_games": 1620,
+        "volume": {
+          "drive": "D:",
+          "free_bytes": 320687828992,
+          "total_bytes": 1000186310656,
+          "reserve_bytes": 64424509440,
+          "free_above_reserve_bytes": 256263319552
+        },
+        "physical_projection": {
+          "raw_extrapolated_bytes": 8607389346,
+          "historical_zip_assumed_incompressible_bytes": 3498824608,
+          "base_bytes": 12106213954,
+          "margin_fraction": 0.25,
+          "extra_bytes": 536870912,
+          "projected_peak_additional_bytes": 15669638355
+        },
+        "logical_projection": {
+          "raw_extrapolated_bytes": 19831802184,
+          "historical_zip_assumed_incompressible_bytes": 3498824608,
+          "base_bytes": 23330626792,
+          "margin_fraction": 0.25,
+          "extra_bytes": 536870912,
+          "projected_peak_additional_bytes": 29700154402
+        },
+        "empirical_physical_headroom_admits_projection": true,
+        "projection_kind": "Empirical first-update extrapolation with 25 percent margin plus 512 MiB, not an exact bound.",
+        "limitations": [
+          "Later trajectory lengths and checkpoint sizes can differ from update one.",
+          "ZIP projection uses observed historical whole-block ZIP bytes as incompressible.",
+          "Existing retained files reduce current free space; no files are removed.",
+          "Win32 file allocation excludes directory metadata and unrelated concurrent writes.",
+          "Skipped reparse entries or measurement errors prevent an affirmative admission result.",
+          "A physical fit does not satisfy or change the supported launcher's conservative projection guard."
+        ]
+      }
+    }
+  },
+  "scope": "Initial-update qualifications only. No full-block speedup established. Child, execution and archive timers are nested in dispatch."
+}

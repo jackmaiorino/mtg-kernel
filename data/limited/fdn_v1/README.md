@@ -120,3 +120,31 @@ Bite Down's planeswalker recipient. Ajani has entry loyalty and damage
 handling but no loyalty abilities or combat defender support. It is marked
 partial and refused by deck admission. It is excluded from original-deck
 coverage counts.
+
+`FDN_reference_casting_triggers.dck` prepares Balmor and Firespitter Whelp
+with noncreature cast support. Serial catalog v66 qualification is pending;
+see `docs/design/fdn_casting_triggers_v1.md` for the source-preparation scope.
+
+`FDN_reference_first_lifegain.dck` is a synthetic 40-card fixture containing
+Vanguard Seraph, Cat Collector and 38 Plains. It resolves the candidate v63
+registry; gameplay and store-profile qualification are accepted in PR208. See
+`docs/design/fdn_first_lifegain_v1.md`.
+
+`FDN_reference_graveyard_triggers.dck` is a synthetic 40-card candidate v64
+fixture for Elvish Regrower/Ambush Wolf. Gameplay and generated identity/store
+profile qualification are accepted in PR210 at default53fab604;
+see `docs/design/fdn_graveyard_triggers_v1.md`.
+
+`FDN_reference_static_team.dck` is a synthetic 40-card candidate v65
+fixture containing Anthem of Champions, Empyrean Eagle, flying and grounded
+creatures, temporary flying, ability suppression and three basic lands.
+Gameplay and generated identity/store-profile qualification are accepted in
+PR212 at default32080f8;
+see `docs/design/fdn_static_team_boosts_v1.md`.
+
+`FDN_reference_prepared_families.dck` covers the31 candidate names in IDs338-368.
+It resolves fully against the development v66 registry. The observed generated
+identity is e8e2bba9d9071e80, with the live profile migration committed.
+Card gameplay, live profile execution, CI and default integration remain required
+before accepted coverage increases from138 to169 full booster names. See
+`docs/design/fdn_prepared_admission_order_v1.md`.

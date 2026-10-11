@@ -1,0 +1,13 @@
+{
+  "schema": "training-affinity-stop/v1",
+  "observed_utc": "2026-10-10T13:44:29.695774+00:00",
+  "process": {
+    "pid": 34836,
+    "creation_time": 134361131491963973,
+    "image": "E:\\pinned-binaries\\f252f0867338ab5731612957fbaee94c4b7dcd03ea1d7478fb5f0efd7b51925d\\native_expanded_training_run_v1.exe"
+  },
+  "actual_affinity_mask": 65535,
+  "qualified_affinity_mask": 21845,
+  "reason": "Windows timed job reset child affinity beyond qualified native CPU set; exclude timing, preserve prefix; restore previously qualified guard for next attempt",
+  "action": "terminate only this identity-checked native child; dispatcher and supervisor record failure and release normally"
+}

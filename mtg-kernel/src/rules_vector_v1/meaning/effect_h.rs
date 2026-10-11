@@ -213,6 +213,16 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
             // meaning is emitted there.
             let _ = other_than; // engine-internal object id
         }
+        EffectOp::ReturnAbilitySourceFromGraveyard { tapped } => {
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Graveyard), ZoneF::Battlefield)
+                    .player(RelF::You)
+                    .obj(ObjF::ThisObject),
+            );
+            if *tapped {
+                out.effect(EffectAtom::new(EvF::Tap).obj(ObjF::ThisObject));
+            }
+        }
         EffectOp::ReturnSourceFromGraveyardUnearthed => {
             // Unearth: the source returns from the graveyard to the
             // battlefield, marked to be exiled at the next end step or if
@@ -228,6 +238,101 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                     .obj(ObjF::ThisObject)
                     .duration(DurF::WhileOnBattlefield),
             );
+        }
+        EffectOp::CounterTargetSpellThenCreateTokens {
+            target_index,
+            token_def,
+            count,
+        } => {
+            let _ = target_index; // the target filter owns slot legality
+            out.control(ControlF::Conditional);
+            out.effect(
+                EffectAtom::new(EvF::CounterSpell)
+                    .player(RelF::ObjectOwner)
+                    .obj(ObjF::Spell),
+            );
+            // Nominal counter departure; the executor preserves the shared
+            // flashback exile and virtual-copy cease exceptions.
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Stack), ZoneF::Graveyard)
+                    .player(RelF::ObjectOwner)
+                    .obj(ObjF::Spell),
+            );
+            out.effect(
+                EffectAtom::new(EvF::CreateToken)
+                    .player(RelF::ObjectController)
+                    .obj(ObjF::Token)
+                    .amount(AmtF::fixed(i64::from(*count))),
+            );
+            out.created_tokens.push(*token_def);
+        }
+        EffectOp::ReturnAllGraveyardCreaturesUnderController => {
+            let creature = ObjF::Typed(CardTypeF::Creature);
+            out.read(
+                RelF::EachPlayer,
+                Some(ZoneF::Graveyard),
+                Some(creature),
+                AggF::Characteristic,
+            );
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Graveyard), ZoneF::Battlefield)
+                    .player(RelF::EachPlayer)
+                    .obj(creature)
+                    .amount(AmtF::All),
+            );
+            out.effect(
+                EffectAtom::new(EvF::GainControl)
+                    .player(RelF::You)
+                    .obj(creature)
+                    .amount(AmtF::All),
+            );
+            // Card/token filtering and simultaneous entry have no fixed predicate facets.
+            out.atoms.push(Atom::Opaque);
+        }
+        EffectOp::ReturnOwnGraveyardCreaturesManaValueAtMost { max_mana_value } => {
+            let creature = ObjF::Typed(CardTypeF::Creature);
+            out.read(
+                RelF::You,
+                Some(ZoneF::Graveyard),
+                Some(creature),
+                AggF::Characteristic,
+            );
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Graveyard), ZoneF::Battlefield)
+                    .player(RelF::You)
+                    .obj(creature)
+                    .amount(AmtF::All),
+            );
+            // The fixed vocabulary lacks the mana-value bound and card/token distinction.
+            let _ = max_mana_value;
+            out.atoms.push(Atom::Opaque);
+        }
+        EffectOp::ReturnAttackingCreaturesToOwnersHands => {
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Battlefield), ZoneF::Hand)
+                    .player(RelF::ObjectOwner)
+                    .obj(ObjF::Typed(CardTypeF::Creature))
+                    .amount(AmtF::All),
+            );
+            // Attacking is absent from the fixed object facet vocabulary.
+            out.atoms.push(Atom::Opaque);
+        }
+        EffectOp::LoseOpponentsLifeXThenGainLifeLost => {
+            out.effect(
+                EffectAtom::new(EvF::LifeLoss)
+                    .player(RelF::EachOpponent)
+                    .obj(ObjF::Player)
+                    .amount(AmtF::Dynamic),
+            );
+            out.effect(
+                EffectAtom::new(EvF::LifeGain)
+                    .player(RelF::You)
+                    .obj(ObjF::Player)
+                    .amount(AmtF::Dynamic),
+            );
+            // The exact program records X and the replaced life-loss dependency.
+            // The fixed facet vocabulary has no term for that binding.
+            out.atoms.push(Atom::Opaque);
         }
         EffectOp::ExileGraveyardTargetsDrainPerCreature { max_targets } => {
             // Each still-legal graveyard card target is exiled; per creature

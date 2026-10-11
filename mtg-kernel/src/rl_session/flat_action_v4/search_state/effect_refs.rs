@@ -97,6 +97,7 @@ impl Scan<'_> {
             | CounterTargetUnlessPaysGeneric { .. }
             | GainLifeDynamic { .. }
             | UntapObject { .. }
+            | AnimateSource
             | PumpTargetUntilEndOfTurnDynamic { .. }
             | LookTopSelectByTypeToHandBottomRest { .. }
             | LookTopPickToHandBottomRest { .. }
@@ -144,6 +145,13 @@ impl Scan<'_> {
             | Incubate { .. }
             | BindPlusOneCounterOnAnotherTargetToTriggerTarget
             | ReturnSourceFromGraveyardUnearthed
+            | ReturnAbilitySourceFromGraveyard { .. }
+            | LoseOpponentsLifeXThenGainLifeLost
+            | ReturnAttackingCreaturesToOwnersHands
+            | ReturnOwnGraveyardCreaturesManaValueAtMost { .. }
+            | ReturnAllGraveyardCreaturesUnderController
+            | CounterTargetSpellThenCreateTokens { .. }
+            | BoostPlayerCreaturesUntilEndOfTurn { .. }
             | ExileGraveyardTargetsDrainPerCreature { .. }
             | RemoveTimeCounterFromSource
             | ReturnSourceAsEnduringEnchantment
@@ -155,6 +163,8 @@ impl Scan<'_> {
             | DestroyTargetLandThenMaySearchBasicTapped { .. }
             | SearchLibraryToBattlefieldTapped { .. }
             | RevealTargetHandChooseNoncreatureNonlandDiscard { .. }
+            | RevealTargetHandChooseNonlandDiscard { .. }
+            | FightObjects { .. }
             | ShuffleTriggerSourceIntoOwnersLibrary
             | LoseHalfLifeRoundedUp { .. }
             | CreateTokenTappedAndAttacking { .. }
@@ -594,6 +604,15 @@ pub(super) fn conflicts(
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
     let s = Scan { state, pool };
+    if let Some(crate::engine::PendingDiscard {
+        resume: crate::engine::DiscardResume::FinishEffectContinuation { original_hand, .. },
+        ..
+    }) = state.engine.pending_discard.as_ref()
+    {
+        if s.bs(original_hand) {
+            return true;
+        }
+    }
     if let Some(p) = &state.engine.pending_effect {
         if s.fs(&p.frames)
             || p.choice.as_ref().is_some_and(|c| {
@@ -700,6 +719,7 @@ pub(super) fn conflicts(
             MonarchTrigger { binding } => s.raw(binding.source.source),
             LifeLoss { .. }
             | LifeGain { .. }
+            | LifeGainTurnBeganV1 { .. }
             | ManaAdded { .. }
             | UpkeepBegan { .. }
             | CrimeCommitted { .. }

@@ -1,0 +1,322 @@
+{
+  "schema": "training-speedups-one-update-qualification-analysis/v1",
+  "all_eight_complete": true,
+  "completed_updates": 8,
+  "completed_games": 80,
+  "all_ordered_trajectory_full_optimizer_and_ledger_fingerprints_equal": true,
+  "canonical_fingerprint_sha256": "bbefb6d1d8f790812d95bcd22df0bd7c0e996043167ee544292c23cae659c9a8",
+  "rows": [
+    {
+      "label": "qual-baseline-w1",
+      "variant": "baseline",
+      "workers": 1,
+      "preparation_workers": 1,
+      "dispatch_seconds": 18.945130900014192,
+      "child_seconds": 14.351107600028627,
+      "execution_seconds": 15.21990490006283,
+      "archive_seconds": 1.2032385999336839,
+      "controller_seconds_including_observation": 20.51907839998603,
+      "runtime_engine_commit": "5242a984c2bd8d878c9a5fbc4b3cacab9798d08b",
+      "binary_sha256": "f252f0867338ab5731612957fbaee94c4b7dcd03ea1d7478fb5f0efd7b51925d",
+      "pins": {
+        "report": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\hot\\qual-baseline-w1\\report.json",
+          "sha256": "3197d31d62eaa0ad7d0f927c73f3b35c892f38172313d8c7da5cff83af32ff81"
+        },
+        "execution": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\hot\\qual-baseline-w1\\execution.json",
+          "sha256": "c07154a38676862f6cee7f030bffcc72ab4b4fdf88d7bbdf236101aa59fafd6a"
+        },
+        "archive": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-baseline-w1\\archive.json",
+          "sha256": "f153450a59fc880ea027720b5f351350154a643687a66b0add419b7782e81ad0"
+        }
+      },
+      "controller_log_pin": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\qual-baseline-w1.controller.attempt2.log",
+        "sha256": "d152adf5cf772c0c9c949a184e9311ec9ec87baca82d8c91099a743b41a80437"
+      }
+    },
+    {
+      "label": "qual-baseline-w2",
+      "variant": "baseline",
+      "workers": 2,
+      "preparation_workers": 2,
+      "dispatch_seconds": 15.942983100074343,
+      "child_seconds": 11.35732799989637,
+      "execution_seconds": 12.22029810003005,
+      "archive_seconds": 1.1852607000619173,
+      "controller_seconds_including_observation": 17.5209390000673,
+      "runtime_engine_commit": "5242a984c2bd8d878c9a5fbc4b3cacab9798d08b",
+      "binary_sha256": "f252f0867338ab5731612957fbaee94c4b7dcd03ea1d7478fb5f0efd7b51925d",
+      "pins": {
+        "report": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\hot\\qual-baseline-w2\\report.json",
+          "sha256": "c02b527b4f507a29e130e304921d86c50d2c62ea8b95eb893451eaf49ec92ad5"
+        },
+        "execution": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\hot\\qual-baseline-w2\\execution.json",
+          "sha256": "d986572adb776276f9f92c4453ea2123c6e256d83489ecc543732cbb72618aa2"
+        },
+        "archive": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-baseline-w2\\archive.json",
+          "sha256": "7e15e67be1b281933179a92bf636782ae0ee08f2e10feee7b45ca292f381478e"
+        }
+      },
+      "controller_log_pin": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\qual-baseline-w2.controller.log",
+        "sha256": "1a2d51682664dbadb15335f929412dd3a7ccd67aa029d3a253a1228b6a160d09"
+      }
+    },
+    {
+      "label": "qual-baseline-w4",
+      "variant": "baseline",
+      "workers": 4,
+      "preparation_workers": 4,
+      "dispatch_seconds": 15.38501319999341,
+      "child_seconds": 10.787936399923638,
+      "execution_seconds": 11.64852729998529,
+      "archive_seconds": 1.2009281000355259,
+      "controller_seconds_including_observation": 16.98674339998979,
+      "runtime_engine_commit": "5242a984c2bd8d878c9a5fbc4b3cacab9798d08b",
+      "binary_sha256": "f252f0867338ab5731612957fbaee94c4b7dcd03ea1d7478fb5f0efd7b51925d",
+      "pins": {
+        "report": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\hot\\qual-baseline-w4\\report.json",
+          "sha256": "9d6600937603ac18bac2363faa19e02ff216a8396ccadea1ab9a600713143b88"
+        },
+        "execution": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\hot\\qual-baseline-w4\\execution.json",
+          "sha256": "52fa61f7fb919a3bb05e40715e16436a3fc14037524368ad39b0894a2042fba6"
+        },
+        "archive": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-baseline-w4\\archive.json",
+          "sha256": "f573ae802364073690f2bbf923369dea914a014eda878fa3e0fc7b529b22e419"
+        }
+      },
+      "controller_log_pin": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\qual-baseline-w4.controller.log",
+        "sha256": "c31655ebebd89166406f8e0482fa0b419d99e1f6c323e24221e76dc7ace1cae4"
+      }
+    },
+    {
+      "label": "qual-baseline-w8",
+      "variant": "baseline",
+      "workers": 8,
+      "preparation_workers": 8,
+      "dispatch_seconds": 15.289639400085434,
+      "child_seconds": 10.63186200009659,
+      "execution_seconds": 11.533457500045188,
+      "archive_seconds": 1.2171529000625014,
+      "controller_seconds_including_observation": 16.85886759997811,
+      "runtime_engine_commit": "5242a984c2bd8d878c9a5fbc4b3cacab9798d08b",
+      "binary_sha256": "f252f0867338ab5731612957fbaee94c4b7dcd03ea1d7478fb5f0efd7b51925d",
+      "pins": {
+        "report": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\hot\\qual-baseline-w8\\report.json",
+          "sha256": "fc39fba69926bec08a259f7063af48b32ab2d5aed3c4552972122468e9a62f34"
+        },
+        "execution": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\hot\\qual-baseline-w8\\execution.json",
+          "sha256": "7fe27aef54a5e0e3b769d2788183a26b2a29cf0581ca578891090cf4eb21ae29"
+        },
+        "archive": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-baseline-w8\\archive.json",
+          "sha256": "5ba1042a647ff8b06b5d2097d9d04cede8429e024ac12500eec09e224a5749c8"
+        }
+      },
+      "controller_log_pin": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\qual-baseline-w8.controller.log",
+        "sha256": "27d9bc83c703d5c1d259f419bdc8e8bed997bce8c76f725384556bc1d76eab2c"
+      }
+    },
+    {
+      "label": "qual-candidate-w1",
+      "variant": "candidate",
+      "workers": 1,
+      "preparation_workers": 1,
+      "dispatch_seconds": 14.291313700028695,
+      "child_seconds": 9.729864199995063,
+      "execution_seconds": 10.618786399951205,
+      "archive_seconds": 1.1260467000538483,
+      "controller_seconds_including_observation": 15.953365700086579,
+      "runtime_engine_commit": "e6e1cf8cf239f2f98ab4eba89b4e994ea717b69b",
+      "binary_sha256": "770289efe1437f5fae50f57bf087173e4d0770a240f943c66a6f51fd4ccb0f4c",
+      "pins": {
+        "report": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\hot\\qual-candidate-w1\\report.json",
+          "sha256": "5224eca1c62a53dfe0b7c2a0cb9383499a940e138461626a851039b3136612ac"
+        },
+        "execution": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\hot\\qual-candidate-w1\\execution.json",
+          "sha256": "33ce25d7fcb0063ee5e7ed180ad2cb8a0964f663dc71dd7412e55183ada09db8"
+        },
+        "archive": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-candidate-w1\\archive.json",
+          "sha256": "48f5497e6264e4c9fd129cdc1c90662e1db6668147c4e0f596eb5ea849deb67f"
+        }
+      },
+      "controller_log_pin": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\qual-candidate-w1.controller.log",
+        "sha256": "f9b981443026411bba9f41bb9f82edd48d4ae80a10a12c72ae979e8edd93e029"
+      }
+    },
+    {
+      "label": "qual-candidate-w2",
+      "variant": "candidate",
+      "workers": 2,
+      "preparation_workers": 2,
+      "dispatch_seconds": 11.715738500002772,
+      "child_seconds": 7.124406799906865,
+      "execution_seconds": 8.015589000075124,
+      "archive_seconds": 1.1300798000302166,
+      "controller_seconds_including_observation": 13.315324899973348,
+      "runtime_engine_commit": "e6e1cf8cf239f2f98ab4eba89b4e994ea717b69b",
+      "binary_sha256": "770289efe1437f5fae50f57bf087173e4d0770a240f943c66a6f51fd4ccb0f4c",
+      "pins": {
+        "report": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\hot\\qual-candidate-w2\\report.json",
+          "sha256": "736b7993a5b6eba5350ab230082f0a189adffed13031e710ab559d644bfa9c73"
+        },
+        "execution": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\hot\\qual-candidate-w2\\execution.json",
+          "sha256": "ff625f3e0c19827653454e60c72a582d8f363734369d9961050d27dea726e4ad"
+        },
+        "archive": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-candidate-w2\\archive.json",
+          "sha256": "b43b79026c08675e1a7b7a8aedcbf126e1db9850358d157f5f386cd20209ea62"
+        }
+      },
+      "controller_log_pin": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\qual-candidate-w2.controller.log",
+        "sha256": "ddced1ff7173bdf96e83a5763d6163ef5409980a8d0f443091528fc09a0c49de"
+      }
+    },
+    {
+      "label": "qual-candidate-w4",
+      "variant": "candidate",
+      "workers": 4,
+      "preparation_workers": 4,
+      "dispatch_seconds": 12.27584759995807,
+      "child_seconds": 7.164732999983244,
+      "execution_seconds": 8.06836779997684,
+      "archive_seconds": 1.2501581999240443,
+      "controller_seconds_including_observation": 13.954008300090209,
+      "runtime_engine_commit": "e6e1cf8cf239f2f98ab4eba89b4e994ea717b69b",
+      "binary_sha256": "770289efe1437f5fae50f57bf087173e4d0770a240f943c66a6f51fd4ccb0f4c",
+      "pins": {
+        "report": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\hot\\qual-candidate-w4\\report.json",
+          "sha256": "d149ae7a02b52207e27f59e482654a576b190361ce4e51de5aeb99ce3026c752"
+        },
+        "execution": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\hot\\qual-candidate-w4\\execution.json",
+          "sha256": "6e746385e37ae2b47054c7515df1ff1c889396311e2720ec98aa782a7357256c"
+        },
+        "archive": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-candidate-w4\\archive.json",
+          "sha256": "636de0b4093175cac66a63c6c50f76812c80a920f7e31c24f9c62911a1e44793"
+        }
+      },
+      "controller_log_pin": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\qual-candidate-w4.controller.log",
+        "sha256": "b69f6c791caaf3c315e31eefc618a01af2c47edce2a7d0009ecd2effb5544699"
+      }
+    },
+    {
+      "label": "qual-candidate-w8",
+      "variant": "candidate",
+      "workers": 8,
+      "preparation_workers": 8,
+      "dispatch_seconds": 12.899492600001395,
+      "child_seconds": 7.445446300087497,
+      "execution_seconds": 8.513102299999446,
+      "archive_seconds": 1.2764519000193104,
+      "controller_seconds_including_observation": 14.856633999967016,
+      "runtime_engine_commit": "e6e1cf8cf239f2f98ab4eba89b4e994ea717b69b",
+      "binary_sha256": "770289efe1437f5fae50f57bf087173e4d0770a240f943c66a6f51fd4ccb0f4c",
+      "pins": {
+        "report": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\hot\\qual-candidate-w8\\report.json",
+          "sha256": "cf3c79c1363d1ee8026df21c5a64adb46d3af55a79d6e88443eba244edc5ecdc"
+        },
+        "execution": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\hot\\qual-candidate-w8\\execution.json",
+          "sha256": "9486570e45e1c7f811dbac250cf5708c20c303ab99445e7b1bc368b1fbf4e3c5"
+        },
+        "archive": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-candidate-w8\\archive.json",
+          "sha256": "fadf7d5283c62beaa8f53b683ab1b124aa1378b54e35d7f931503b808dc1538a"
+        }
+      },
+      "controller_log_pin": {
+        "path": "C:\\mtg-node\\training-speedups-20261009\\qual-candidate-w8.controller.log",
+        "sha256": "c4caa342ed6b9217f6b313f3a8236cafea336f13349a82b82a3d6adc6ddcbec1"
+      }
+    }
+  ],
+  "fastest_by_guarded_dispatch_seconds": {
+    "baseline": {
+      "label": "qual-baseline-w8",
+      "workers": 8,
+      "preparation_workers": 8,
+      "dispatch_seconds": 15.289639400085434,
+      "pins": {
+        "report": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\hot\\qual-baseline-w8\\report.json",
+          "sha256": "fc39fba69926bec08a259f7063af48b32ab2d5aed3c4552972122468e9a62f34"
+        },
+        "execution": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\hot\\qual-baseline-w8\\execution.json",
+          "sha256": "7fe27aef54a5e0e3b769d2788183a26b2a29cf0581ca578891090cf4eb21ae29"
+        },
+        "archive": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-baseline-w8\\archive.json",
+          "sha256": "5ba1042a647ff8b06b5d2097d9d04cede8429e024ac12500eec09e224a5749c8"
+        }
+      }
+    },
+    "candidate": {
+      "label": "qual-candidate-w2",
+      "workers": 2,
+      "preparation_workers": 2,
+      "dispatch_seconds": 11.715738500002772,
+      "pins": {
+        "report": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\hot\\qual-candidate-w2\\report.json",
+          "sha256": "736b7993a5b6eba5350ab230082f0a189adffed13031e710ab559d644bfa9c73"
+        },
+        "execution": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\hot\\qual-candidate-w2\\execution.json",
+          "sha256": "ff625f3e0c19827653454e60c72a582d8f363734369d9961050d27dea726e4ad"
+        },
+        "archive": {
+          "path": "C:\\mtg-node\\training-speedups-20261009\\measure\\cold\\qual-candidate-w2\\archive.json",
+          "sha256": "b43b79026c08675e1a7b7a8aedcbf126e1db9850358d157f5f386cd20209ea62"
+        }
+      }
+    }
+  },
+  "preserved_original_failed_controller_pins": [
+    {
+      "path": "C:\\mtg-node\\training-speedups-20261009\\qual-baseline-w1.controller.log",
+      "sha256": "d609f62c4bb46ed3c78326e44456610ed6a874915cf2cf254f073e1596c76bec"
+    }
+  ],
+  "accounting": "Dispatch includes child/execution/archive; these nested times are displayed separately, never added. Controller includes observation overhead.",
+  "scope": "One initial update of the unchanged162-update schedule per worker allocation. No actual full-block or complete-maintenance speedup measured.",
+  "source_files": [
+    {
+      "path": "D:\\training-speedups-20261009\\qualification-receipts-20261010.json",
+      "sha256": "b36167e378a16fb8abc754e20e626e7df4e169e002548a036c6dc4e40baed981"
+    },
+    {
+      "path": "D:\\training-speedups-20261009\\qualification-controller-logs-20261010.json",
+      "sha256": "1eb9578e2193d86968d1021dbfa3ce537b9d1d22c6acf0959189e5f547fa4bad"
+    },
+    {
+      "path": "D:\\training-speedups-20261009\\qualification-controller-receipts-20261010.json",
+      "sha256": "6359d9b7eb0a6b41959098d09828e8eb34d5e51c630c3bfc84c977fca307726b"
+    }
+  ]
+}
