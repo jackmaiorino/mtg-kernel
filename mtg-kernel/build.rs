@@ -3936,7 +3936,6 @@ fn keywords_for(card: &CardJson) -> String {
         "Masked Meower" | "Clockwork Percussionist" => keywords.push("Keywords::HASTE"),
         "Balmor, Battlemage Captain"
         | "Mocking Sprite"
-        | "High Fae Trickster"
         | "Firespitter Whelp"
         | "Sneaky Snacker"
         | "Healer's Hawk"
@@ -3989,7 +3988,11 @@ fn keywords_for(card: &CardJson) -> String {
         "Resolute Reinforcements" | "Twinblade Blessing" | "Ambush Wolf" => {
             keywords.push("Keywords::FLASH")
         }
-        "Mischievous Pup" | "High Fae Trickster" => keywords.push("Keywords::FLASH"),
+        "Mischievous Pup" => keywords.push("Keywords::FLASH"),
+        "High Fae Trickster" => {
+            keywords.push("Keywords::FLYING");
+            keywords.push("Keywords::FLASH");
+        }
         "Elfsworn Giant" => keywords.push("Keywords::REACH"),
         "Eager Trufflesnout" => keywords.push("Keywords::TRAMPLE"),
         _ => {}
