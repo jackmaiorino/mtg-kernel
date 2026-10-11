@@ -988,7 +988,7 @@ pub(super) fn conflicts(
             }
             SingleGraveyardEntryV1 {
                 source_contract, ..
-            } => s.a(*source_contract),
+            } => s.a(source_contract),
             LeftBattlefieldCopyV1 { source, .. } => s.raw(source.source),
             ZoneChange { object, .. }
             | Tap { object }
