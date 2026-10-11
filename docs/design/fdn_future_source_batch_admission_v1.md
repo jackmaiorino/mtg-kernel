@@ -1,10 +1,10 @@
-# FDN future three-card qualification candidate
+# FDN future four-card qualification candidate
 
 This root-owned candidate stages actual Mild-Mannered Librarian411, Gorehorn
-Raider412 and Gutless Plunderer413 after all411 definitions in PR229. Existing
+Raider412, Gutless Plunderer413 and Bloom Tender414 after all411 definitions in PR229. Existing
 registry records, frozen286-name printing membership and24 external token
 dependencies remain identical. Candidate Full markers enable genuine printed
-fixtures; prospective209 Full/1 Partial/76 Missing is unaccepted. Accepted
+fixtures; prospective210 Full/1 Partial/75 Missing is unaccepted. Accepted
 coverage remains193 Full/1 Partial/92 Missing until default-branch verification.
 
 Reviewed Librarian9972 and Raid47d source are composed with reviewed PR229
@@ -18,11 +18,15 @@ Precise/Public/Human V20/V21 remain separate from model/sampler admission.
 Actual generator output must derive the next catalog/profile identity. No hash
 is guessed: the current v79 assertion/profile is deliberately retained pending
 that preflight, and is not a compatible future assertion or accepted publication.
-No future native test/build/lint has run. Actual printed suites, owning consumers,
+Bloom2c375 source is cleanly composed with root and independent scoped reviews
+of atomic output capacity, actual current colors/control, complete input ownership
+and owning V24 restore. The prepared source template records its original
+unregistered state; this candidate stages the real definition only to enable
+future printed qualification. No future native test/build/lint has run. Actual printed suites, owning consumers,
 cross-family controls, catalog/profile migration and exact-head delivery follow
 successful PR229 qualification and integration. Crystal remains unregistered
-until its remaining damage-producer support is complete. Temporal/Bloom source
-work is separate. No experiment, paid compute, formal measurement, learned
+until its remaining damage-producer support is complete. Temporal source work is separate. Actual415 catalog derivation and profile
+migration are still pending; no Full acceptance is inferred from staging. No experiment, paid compute, formal measurement, learned
 strength, full-pool or model-runtime admission is claimed.
 
 Source inspection found four Librarian journal variants missing from the

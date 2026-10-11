@@ -2600,7 +2600,7 @@ mod tests {
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                414
+                415
             } else {
                 192
             }
