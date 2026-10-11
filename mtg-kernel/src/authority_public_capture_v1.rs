@@ -5,6 +5,27 @@ use crate::rl::CardStableRefV1;
 use crate::state::{GameObject, GameState, Zone};
 use serde::{Deserialize, Serialize};
 
+/// Private original entry visibility, owned by the observer journal rather
+/// than by the later public-facts receipt. It carries no hidden object links.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EntryVisibilityV1 {
+    card_def: u16,
+    owner: crate::ids::PlayerId,
+    face_index: u8,
+    face_down_disguised: Option<bool>,
+}
+impl EntryVisibilityV1 {
+    pub(crate) fn capture(object: &GameObject) -> Self {
+        Self {
+            card_def: object.card_def,
+            owner: object.owner,
+            face_index: object.v4.face_index,
+            face_down_disguised: object.v4.face_down_v1.map(|face| face.disguised),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EntryPublicFactsV1 {
     pub(crate) observer_authority_index: u64,
@@ -45,6 +66,7 @@ pub(crate) fn facts_at(
     let Some(CommittedEvent::AuthorityEntryObserversV1 {
         entrant,
         entrant_controller,
+        visibility,
         ..
     }) = state.engine.event_history.get(index)
     else {
@@ -62,7 +84,8 @@ pub(crate) fn facts_at(
     }).count() != 1 { return Err("public entrant snapshot repeated or redirected".into()) }
     let snapshot: GameObject = serde_json::from_str(&capture.entrant_snapshot)
         .map_err(|_| "invalid private entrant snapshot")?;
-    if snapshot.zone != Zone::Battlefield
+    if EntryVisibilityV1::capture(&snapshot) != *visibility
+        || snapshot.zone != Zone::Battlefield
         || snapshot.zone_change_count != entrant.zone_change_count
         || snapshot.controller != *entrant_controller
         || snapshot.card_def as usize >= crate::card_def::CARD_DEFS.len()

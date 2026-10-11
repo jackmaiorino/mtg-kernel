@@ -140,6 +140,7 @@ pub(crate) fn record_entry(state: &mut GameState, entry_history_index: usize) {
     }
     let entrant = state.objects.get(object);
     let entrant_controller = entrant.controller;
+    let visibility = crate::authority_public_capture_v1::EntryVisibilityV1::capture(entrant);
     let entrant = ObjectLinkV4 {
         object,
         zone_change_count: entrant.zone_change_count,
@@ -162,6 +163,7 @@ pub(crate) fn record_entry(state: &mut GameState, entry_history_index: usize) {
             entry_history_index: u64::try_from(entry_history_index).expect("bounded history"),
             entrant,
             entrant_controller,
+            visibility,
             sources: sources.clone(),
         });
     crate::authority_public_capture_v1::record_entry(state, observer_authority_index);
@@ -197,6 +199,7 @@ fn capture_at(state: &GameState, index: u64) -> Result<&AuthorityEntryCaptureV1,
         entrant,
         entrant_controller,
         sources,
+        ..
     }) = state.engine.event_history.get(observer_index)
     else {
         return Err("opponent entry capture lost its independent observer authority".into());
@@ -828,6 +831,7 @@ fn validate_observed_entries(state: &GameState) -> Result<(), ObjectId> {
             entrant,
             entrant_controller,
             sources,
+            ..
         } = event
         else {
             continue;

@@ -687,6 +687,7 @@ pub enum CommittedEvent {
         entry_history_index: u64,
         entrant: crate::state::ObjectLinkV4,
         entrant_controller: PlayerId,
+        visibility: crate::authority_public_capture_v1::EntryVisibilityV1,
         sources: Vec<crate::state::AbilitySourceContractV4>,
     },
     AuthorityEntryCompletedV1 {
@@ -2911,5 +2912,136 @@ mod tests {
             plotted_turn: None,
             zone_change_count: 0,
         })
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod authority_visibility_tests {
+    use super::*;
+    use crate::policy_observation_v6::tests::{put, ready_state};
+
+    #[test]
+    fn original_entry_visibility_rejects_coherent_public_mask_rewrite_live_and_departed_both_seats()
+    {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for disguised in [false, true] {
+                let mut state = ready_state();
+                state.active_player = actor;
+                state.priority_player = actor;
+                put(
+                    &mut state,
+                    actor,
+                    "Authority of the Consuls",
+                    Zone::Battlefield,
+                );
+                let entrant = put(&mut state, actor.opponent(), "Llanowar Elves", Zone::Hand);
+                let mut batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(&state)
+                    .expect("actual Authority definition");
+                commit_with_ability_lki_and_entry_batch(
+                    &mut state,
+                    ProposedEvent::zone_change(entrant, Zone::Battlefield),
+                    None,
+                    None,
+                    Some(&mut batch),
+                );
+                // A typed physical hidden-characteristic boundary before
+                // deferred entry capture, not an admitted FDN disguise card.
+                // The ZoneChange, original observer and dispatch journals are
+                // all emitted by their genuine engine producers.
+                state.objects.get_mut(entrant).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
+                    disguised,
+                    lookers: 1 << actor.opponent().index(),
+                    hidden_by: None,
+                    hidden_by_source: None,
+                });
+                batch.finish(&mut state);
+                crate::authority_public_capture_v1::validate_state(&state).unwrap();
+                let index = state
+                    .engine
+                    .event_history
+                    .iter()
+                    .position(|event| {
+                        matches!(event, CommittedEvent::AuthorityEntryPublicFactsV1 { .. })
+                    })
+                    .unwrap();
+                let surface = crate::policy_surface_v5::PolicySurfaceV5::new_for_session();
+                let neutral = crate::card_def::card_id_by_name(if disguised {
+                    "Face-down creature"
+                } else {
+                    "Face-down card"
+                });
+                for departed in [false, true] {
+                    let mut original = state.clone();
+                    if departed {
+                        propose_and_commit(
+                            &mut original,
+                            ProposedEvent::zone_change(entrant, Zone::Hand),
+                        );
+                    }
+                    let receipt =
+                        crate::authority_public_capture_v1::facts_at(&original, (index - 1) as u64)
+                            .unwrap();
+                    assert_eq!(
+                        receipt
+                            .entrant
+                            .as_ref()
+                            .map(|reference| reference.card_db_id),
+                        neutral
+                    );
+                    for viewer in [actor, actor.opponent()] {
+                        let public = crate::authority_public_v1::observe_v1(
+                            &original, &surface, viewer, 0, 0, 0, 1,
+                        );
+                        if let Some(neutral) = neutral {
+                            assert_eq!(
+                                public.unwrap().entry_occurrences[0]
+                                    .entrant_at_entry
+                                    .card_db_id,
+                                neutral
+                            );
+                        } else {
+                            assert!(public.is_err());
+                        }
+                    }
+                    let independent = original.engine.event_history[index - 1].clone();
+                    let CommittedEvent::AuthorityEntryPublicFactsV1 { capture } =
+                        &mut original.engine.event_history[index]
+                    else {
+                        unreachable!()
+                    };
+                    let mut snapshot: crate::state::GameObject =
+                        serde_json::from_str(&capture.entrant_snapshot).unwrap();
+                    snapshot.v4.face_down_v1 = None;
+                    capture.entrant =
+                        crate::sower_restriction_capture_v1::masked_ref(entrant, &snapshot).ok();
+                    capture.entrant_snapshot = serde_json::to_string(&snapshot).unwrap();
+                    assert_eq!(original.engine.event_history[index - 1], independent);
+                    let bytes = serde_json::to_vec(&original).unwrap();
+                    let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
+                    for viewer in [actor, actor.opponent()] {
+                        assert!(crate::authority_public_v1::observe_v1(
+                            &restored, &surface, viewer, 0, 0, 0, 1
+                        )
+                        .is_err());
+                    }
+                    assert!(
+                        crate::engine::step(&mut restored, crate::engine::Action::Pass).is_err()
+                    );
+                    assert_eq!(serde_json::to_vec(&restored).unwrap(), bytes);
+                    let session =
+                        crate::rl_session::FastActorSessionV1::from_authority_v17_fixture_state(
+                            restored,
+                        );
+                    assert!(matches!(
+                        session.current_response(),
+                        crate::rl_session::FastActorResponseV1::Terminal(_)
+                    ));
+                }
+            }
+        }
     }
 }
