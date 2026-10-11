@@ -4,7 +4,7 @@ use super::visible::{self, Handles};
 use super::*;
 use crate::policy_observation_v8::ObservationV8;
 use crate::rl::ActionSemanticV1;
-use crate::rl_session::human_v8::HumanDecisionBindingV8;
+use crate::rl_session::heartfire_v12::HeartfireDecisionBindingV12;
 use crate::rl_session::{FastActorResponseV1, FastActorSessionSnapshotV1};
 use std::collections::BTreeMap;
 type Error = HumanDecisionErrorV1;
@@ -30,7 +30,7 @@ pub struct HumanHeartfireSnapshotV12(FastActorSessionSnapshotV1);
 impl HumanHeartfireSessionV12 {
     pub fn from_session(session: FastActorSessionV1) -> Result<Self, crate::rl::RlContractError> {
         Ok(Self {
-            inner: session.into_human_v8()?,
+            inner: session.into_heartfire_v12()?,
             authority: AuthorityV12 {
                 owner: std::sync::Arc::new(()),
                 generation: 0,
@@ -253,7 +253,7 @@ fn project_base(
 struct BoundHeartfireV12 {
     authority: AuthorityV12,
     expected: FastActorDecisionV1,
-    binding: HumanDecisionBindingV8,
+    binding: HeartfireDecisionBindingV12,
     public: crate::heartfire_public_v1::HeartfirePublicObservationV1,
     visible: HumanDecisionHeartfireV12,
     engine_indexes: Vec<u32>,
@@ -283,7 +283,7 @@ impl HumanHeartfireProjectorV12 {
         }
         let (observation, actions, binding) = session
             .inner
-            .human_current_decision_input_v8(expected, self.human_seat)
+            .heartfire_current_decision_input_v12(expected, self.human_seat)
             .map_err(|_| Error::StaleDecision)?;
         let public = session
             .public_observation(expected)
@@ -353,7 +353,11 @@ impl HumanHeartfireProjectorV12 {
             .ok_or(Error::InvalidAction)?;
         session
             .inner
-            .human_validate_bound_decision_v8(pending.expected, self.human_seat, &pending.binding)
+            .heartfire_validate_bound_decision_v12(
+                pending.expected,
+                self.human_seat,
+                &pending.binding,
+            )
             .map_err(|_| Error::StaleDecision)?;
         if session
             .public_observation(pending.expected)

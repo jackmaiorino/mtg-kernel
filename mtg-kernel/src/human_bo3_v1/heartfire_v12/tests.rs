@@ -487,8 +487,8 @@ mod printed {
                     assert_eq!(
                         HumanDecisionProjectorV9::new(actor.into())
                             .project_current(&predecessor, e),
-                        // V9 maps its unsupported planeswalker observation to
-                        // StaleDecision before action-label projection occurs.
+                        // V9 maps its frozen expected-state guard's planeswalker
+                        // refusal to StaleDecision before observation/labels.
                         Err(if walker {
                             Error::StaleDecision
                         } else {

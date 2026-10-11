@@ -137,3 +137,61 @@ pub(crate) fn add_loyalty_counters(state: &mut GameState, object: ObjectId, amou
     }
     change_loyalty(state, object, amount);
 }
+
+/// Scoped Human V12 recipient facts, not printed planeswalker admission.
+/// Inspect every stored ledger row so stale/hidden/foreign recipients cannot
+/// be silently omitted from the public observation.
+pub(crate) fn validate_heartfire_recipients_v12(state: &GameState) -> Result<(), String> {
+    let recipient_ids = || {
+        state
+            .objects
+            .iter()
+            .filter(|(id, object)| {
+                object.zone == Zone::Battlefield
+                    && engine::object_has_type(state, *id, CardType::Planeswalker)
+            })
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>()
+    };
+    let Some(ledger) = &state.planeswalkers_v1 else {
+        return if recipient_ids().is_empty() {
+            Ok(())
+        } else {
+            Err("Heartfire V12 missing loyalty recipient ledger".into())
+        };
+    };
+    if !cfg!(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    )) || ledger.loyalty.is_empty()
+    {
+        return Err("Heartfire V12 unsupported planeswalker recipient catalog".into());
+    }
+    for (id, entry) in &ledger.loyalty {
+        let live = state
+            .objects
+            .try_get(*id)
+            .ok_or("Heartfire V12 missing loyalty recipient")?;
+        let definition = CARD_DEFS
+            .get(usize::from(live.card_def))
+            .ok_or("Heartfire V12 unknown loyalty recipient definition")?;
+        if live.zone != Zone::Battlefield
+            || live.v4.face_index != 0
+            || entry.permanent.object != *id
+            || entry.permanent.zone_change_count != live.zone_change_count
+            || definition.name != "Ajani, Caller of the Pride"
+            || definition.capability != crate::card_def::CardCapability::Partial
+            || definition.starting_loyalty != Some(4)
+            || !engine::object_has_type(state, *id, CardType::Planeswalker)
+        {
+            return Err("Heartfire V12 unsupported or stale loyalty recipient".into());
+        }
+    }
+    let recipients = recipient_ids();
+    if recipients.len() != ledger.loyalty.len()
+        || recipients.iter().any(|id| !ledger.loyalty.contains_key(id))
+    {
+        return Err("Heartfire V12 incomplete loyalty recipient ledger".into());
+    }
+    Ok(())
+}

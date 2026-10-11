@@ -43,6 +43,8 @@ pub fn source_sha256() -> String {
         include_str!("rl_session/human_v8.rs"),
         include_str!("rl_session/raid_v9.rs"),
         include_str!("rl_session/heartfire_v12.rs"),
+        include_str!("rl_session.rs"),
+        include_str!("planeswalker_v1.rs"),
     ] {
         hash.update([0]);
         hash.update(source.as_bytes());
