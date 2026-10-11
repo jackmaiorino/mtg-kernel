@@ -229,6 +229,7 @@ fn materialize_validated_copy_snapshot(
     validate_spell_source_contract_fields(state, &copy)?;
     state.stack.push(copy);
     log_final_targeting_events(state, id)?;
+    crate::extra_turn_v1::record_publication(state, id);
     Ok(())
 }
 

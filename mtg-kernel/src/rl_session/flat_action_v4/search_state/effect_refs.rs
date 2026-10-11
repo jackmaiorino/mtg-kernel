@@ -167,6 +167,7 @@ impl Scan<'_> {
             | BindAuthorityEntryGainLifeV1
             | AuthorityEntryGainLifeV1 { .. }
             | CerberusUntapV1 { .. }
+            | TakeExtraTurnAfterThisOneV1
             | CreateControlledCreatureTargetCopyV1
             | DoubleTargetPowerUntilEndOfTurn { .. }
             | DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
@@ -1070,6 +1071,12 @@ pub(super) fn conflicts(
             }
             InitiativeTrigger { binding } => s.raw(binding.source.source),
             MonarchTrigger { binding } => s.raw(binding.source.source),
+            ExtraTurnOwnerPublishedV1 { .. }
+            | ExtraTurnOwnerRemovedV1 { .. }
+            | ExtraTurnVirtualCeasedV1 { .. }
+            | ExtraTurnScheduledV1 { .. }
+            | ExtraTurnStartedV1 { .. }
+            | ExtraTurnBeganV1 { .. } => true,
             ControlledCreatureDeathCaptureCollectedV1 { .. }
             | AuthorityEntryCollectedV1 { .. }
             | AuthorityEntryCompletedV1 { .. }

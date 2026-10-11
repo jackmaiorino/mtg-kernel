@@ -84,6 +84,7 @@ pub mod event;
 pub mod expanded_deck_training_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 mod experimental_burn_net8_packed_v1;
+pub mod extra_turn_v1;
 mod fdn_raid_v1;
 pub mod frenzied_public_v1;
 pub mod human_opening_v1;
@@ -545,3 +546,6 @@ pub mod cauldron_grants_v1;
 mod crystal_barricade_v1;
 pub mod rules_meaning_cerberus_v1;
 pub mod rules_meaning_employment_v1;
+
+pub mod extra_turn_public_v1;
+pub mod rules_meaning_extra_turn_v1;
