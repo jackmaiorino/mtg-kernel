@@ -464,9 +464,11 @@ pub(crate) mod private_physical_trajectory_v2;
 pub mod regret_census_v1;
 pub mod rl;
 pub mod rl_session;
+pub mod rules_meaning_soul_shackled_zombie_v1;
 pub mod runtime_decks;
 pub mod sideboard;
 pub mod snapshot;
+pub mod soul_shackled_zombie_public_v1;
 pub mod standard_legends_v1;
 pub mod state;
 #[cfg(test)]

@@ -11960,6 +11960,20 @@ fn legal_pending_trigger_modes(
         .collect()
 }
 
+pub(crate) fn validate_single_graveyard_public_pending(
+    state: &GameState,
+    pending: &PendingTrigger,
+) -> Result<(), String> {
+    if pending.effect != EffectOp::ExileSingleGraveyardTargetsThenDrainTwoV1 {
+        return Err("public single-graveyard context has an unrelated root".into());
+    }
+    validate_pending_trigger_identity(state, pending)?;
+    if pending.placement_ordered {
+        validate_pending_trigger(state, pending)?;
+    }
+    Ok(())
+}
+
 fn validate_pending_trigger(state: &GameState, pending: &PendingTrigger) -> Result<(), String> {
     if !pending.placement_ordered {
         return Err("pending trigger has not completed placement ordering".to_string());
