@@ -37,3 +37,14 @@ generic Ward fields and historical source identities retain their meanings.
 This transport is not admitted to the frozen V3/V4 tensor encodings. Their
 Python schemas reject schema8; tensor/Human successors and actual life-Ward
 projection fixtures remain pending. No existing frozen schema pin is changed.
+
+Public source qualification at2856f689 completed with command and actual guard
+exit0, guarde7e81fc3a22446b88c871c96a3a048bb, Jack cores16-17 BelowNormal.
+Both feature configurations pass all-test type checking, strict all-target
+Clippy,14 V6 observation cases and one V8 predecessor-projection case. The
+Limited configuration also passes43 existing Koma/Prowler/Rebuke card cases.
+Pinned Rust1.94.1/MSVC19.50.35725/14.50.35717, symbols and incremental data
+disabled, assertions preserved. Logs are E:/storage-records/fdn110/
+fdn110-life-ward-public-native1.log and its .guard.log. Source3 on Haley was
+queued behind Claude's full reservation and canceled before execution; it adds
+no qualification result. The five new Sire fixture groups remain unexecuted.
