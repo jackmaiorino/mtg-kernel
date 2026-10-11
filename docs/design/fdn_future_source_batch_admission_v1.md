@@ -28,7 +28,9 @@ successful PR229 qualification and integration. Crystal remains unregistered
 until its remaining damage-producer support is complete. Temporal86d9 repaired real resolved departure authority and the RlEpisode
 field-access error after independent review. Root composition preserves old
 variant/mode prefixes, prior owner hooks and both new visitor families; exact
-composition review pending. Native compilation remains unrun. Actual416 catalog derivation and profile
+composition review CLEAR at820403, retaining both independent owners and actual
+physical/virtual departure checks. The current branch also composes reviewed
+ea957831 test repairs and the honest Native67 receipt checkpoint. Native compilation remains unrun. Actual416 catalog derivation and profile
 migration are still pending; no Full acceptance is inferred from staging. No experiment, paid compute, formal measurement, learned
 strength, full-pool or model-runtime admission is claimed.
 
