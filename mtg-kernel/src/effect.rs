@@ -1407,6 +1407,12 @@ pub enum EffectOp {
     DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn {
         keyword: Keywords,
     },
+    /// Sample other currently controlled creatures with this effective name.
+    /// The captured trigger source incarnation is excluded even after it moves.
+    CreateTokensForOtherControlledCreaturesNamed {
+        name: String,
+        token_def: u16,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -14728,6 +14734,36 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 event::ProposedEvent::damage(ctx.source, Target::Player(controller), *amount),
             );
         }
+        EffectOp::CreateTokensForOtherControlledCreaturesNamed { name, token_def } => {
+            let Some(source) = ctx.ability_source_contract.filter(|source| {
+                source.source == ctx.source
+                    && source.controller == ctx.controller
+                    && source.zone == Zone::Battlefield
+            }) else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            if crate::card_def::CARD_DEFS
+                .get(usize::from(*token_def))
+                .is_none_or(|token| !token.is_token || !token.has_full_support())
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
+            let count = other_controlled_creatures_named_count(state, source, name);
+            for _ in 0..count {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::create_token(*token_def, ctx.controller),
+                );
+            }
+        }
         EffectOp::DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { keyword } => {
             let objects: Vec<_> = state
                 .objects
@@ -15512,6 +15548,24 @@ pub(crate) fn controller_graveyard_card_count(state: &GameState, controller: Pla
                 && !crate::card_def::CARD_DEFS[object.card_def as usize].is_token
                 && !object.v4.is_token
                 && object.spell_copy_origin.is_none()
+        })
+        .count()
+}
+
+fn other_controlled_creatures_named_count(
+    state: &GameState,
+    source: crate::state::AbilitySourceContractV4,
+    name: &str,
+) -> usize {
+    state
+        .objects
+        .iter()
+        .filter(|(id, object)| {
+            object.zone == Zone::Battlefield
+                && object.controller == source.controller
+                && (*id != source.source || object.zone_change_count != source.zone_change_count)
+                && crate::engine::object_has_type(state, *id, CardType::Creature)
+                && crate::engine::effective_name(state, *id) == name
         })
         .count()
 }
@@ -17387,6 +17441,131 @@ mod sampled_target_power_tests {
                     serde_json::to_value(replay).unwrap()
                 );
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod named_other_creature_token_tests {
+    use super::*;
+
+    #[test]
+    fn live_creature_name_controller_and_exact_source_incarnation_determine_count() {
+        let elf = crate::card_def::card_id_by_name("Llanowar Elves").unwrap();
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        let library = [elf, elf, elf, elf, forest];
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state =
+                GameState::new_from_libraries(&library, &library, |_| "Hare Apparent".into(), 1111);
+            let ids = state.players[player.index()].library.clone();
+            for &id in &ids {
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change(id, Zone::Battlefield),
+                );
+            }
+            let source = crate::state::AbilitySourceContractV4::capture(&state, ids[0]);
+            let opponent = state.players[player.opponent().index()].library[0];
+            event::propose_and_commit(
+                &mut state,
+                event::ProposedEvent::zone_change(opponent, Zone::Battlefield),
+            );
+            assert_eq!(
+                other_controlled_creatures_named_count(&state, source, "Hare Apparent"),
+                3
+            );
+            // Arena ownership is authoritative even with an obsolete list membership.
+            state.objects.get_mut(ids[1]).controller = player.opponent();
+            state.objects.get_mut(ids[2]).name = "Different name".into();
+            assert_eq!(
+                other_controlled_creatures_named_count(&state, source, "Hare Apparent"),
+                1
+            );
+            event::propose_and_commit(
+                &mut state,
+                event::ProposedEvent::zone_change(ids[0], Zone::Hand),
+            );
+            assert_eq!(
+                other_controlled_creatures_named_count(&state, source, "Hare Apparent"),
+                1
+            );
+            event::propose_and_commit(
+                &mut state,
+                event::ProposedEvent::zone_change(ids[0], Zone::Battlefield),
+            );
+            assert_eq!(
+                other_controlled_creatures_named_count(&state, source, "Hare Apparent"),
+                2
+            );
+            let replay: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(
+                other_controlled_creatures_named_count(&replay, source, "Hare Apparent"),
+                2
+            );
+        }
+    }
+
+    #[test]
+    fn token_count_is_sampled_once_and_missing_or_mismatched_source_refuses_execution() {
+        let elf = crate::card_def::card_id_by_name("Llanowar Elves").unwrap();
+        let token = crate::card_def::card_id_by_name("Human Soldier Token").unwrap();
+        let name = crate::card_def::CARD_DEFS[token as usize].object_name;
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state =
+                GameState::new_from_libraries(&[elf; 3], &[elf; 3], |_| name.into(), 1112);
+            let ids = state.players[player.index()].library.clone();
+            for &id in &ids {
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change(id, Zone::Battlefield),
+                );
+            }
+            let mut ctx = ExecCtx::no_targets(ids[0], player);
+            let contract = crate::state::AbilitySourceContractV4::capture(&state, ids[0]);
+            let effect = EffectOp::CreateTokensForOtherControlledCreaturesNamed {
+                name: name.into(),
+                token_def: token,
+            };
+            for mismatch in [false, true] {
+                let mut rejected = state.clone();
+                if mismatch {
+                    ctx.ability_source_contract = Some(crate::state::AbilitySourceContractV4 {
+                        controller: player.opponent(),
+                        ..contract
+                    });
+                }
+                execute(&effect, &ctx, &mut rejected);
+                assert!(rejected.engine.halted.is_some());
+                assert_eq!(
+                    rejected.objects.iter().count(),
+                    state.objects.iter().count()
+                );
+            }
+            ctx.ability_source_contract = Some(contract);
+            let mut replay: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for current in [&mut state, &mut replay] {
+                execute(&effect, &ctx, current);
+                assert!(current.engine.halted.is_none());
+                assert_eq!(
+                    current.players[player.index()]
+                        .battlefield
+                        .iter()
+                        .filter(|&&id| current.objects.get(id).card_def == token)
+                        .count(),
+                    2
+                );
+                // Newly created matching creatures did not grow the in-flight count.
+                assert_eq!(
+                    other_controlled_creatures_named_count(current, contract, name),
+                    4
+                );
+            }
+            assert_eq!(
+                serde_json::to_value(&state).unwrap(),
+                serde_json::to_value(&replay).unwrap()
+            );
         }
     }
 }

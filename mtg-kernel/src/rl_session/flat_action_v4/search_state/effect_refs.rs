@@ -101,6 +101,7 @@ impl Scan<'_> {
             | PumpTargetUntilEndOfTurnDynamic { .. }
             | DoubleTargetPowerUntilEndOfTurn { .. }
             | DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
+            | CreateTokensForOtherControlledCreaturesNamed { .. }
             | LookTopSelectByTypeToHandBottomRest { .. }
             | LookTopPickToHandBottomRest { .. }
             | DrawCardsDynamic { .. }

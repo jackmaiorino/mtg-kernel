@@ -33,6 +33,24 @@ fn exile_self(out: &mut Collector) {
 pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     let _ = env;
     match op {
+        EffectOp::CreateTokensForOtherControlledCreaturesNamed { name: _, token_def } => {
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Typed(CardTypeF::Creature)),
+                AggF::Count,
+            );
+            out.effect(
+                EffectAtom::new(EvF::CreateToken)
+                    .player(RelF::You)
+                    .obj(ObjF::Token)
+                    .amount(AmtF::Dynamic),
+            );
+            out.created_tokens.push(*token_def);
+            // The fixed facets cannot express the name predicate or the
+            // captured source incarnation excluded from the live count.
+            out.atoms.push(Atom::Opaque);
+        }
         EffectOp::DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { keyword } => {
             let creatures = ObjF::Typed(CardTypeF::Creature);
             out.read(

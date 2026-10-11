@@ -243,6 +243,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::ReturnAllGraveyardCreaturesUnderController
         | EffectOp::DoubleTargetPowerUntilEndOfTurn { .. }
         | EffectOp::DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
+        | EffectOp::CreateTokensForOtherControlledCreaturesNamed { .. }
         | EffectOp::CounterTargetSpellThenCreateTokens { .. }
         | EffectOp::ExileGraveyardTargetsDrainPerCreature { .. }
         | EffectOp::RemoveTimeCounterFromSource

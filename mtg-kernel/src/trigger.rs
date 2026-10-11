@@ -482,6 +482,15 @@ const SANGUINE_SYPHONER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
 const HELPFUL_HUNTER_TRIGGERS: [TriggeredAbilityDef; 1] =
     [etb_trigger(ichor_wellspring_draw_effect)];
 const PRIDEFUL_PARENT_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(prideful_parent_effect)];
+const HARE_APPARENT_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(hare_apparent_effect)];
+
+fn hare_apparent_effect() -> EffectOp {
+    EffectOp::CreateTokensForOtherControlledCreaturesNamed {
+        name: "Hare Apparent".into(),
+        token_def: crate::card_def::card_id_by_name("Rabbit Token")
+            .expect("Rabbit Token in CARD_DEFS"),
+    }
+}
 const ICEWIND_ELEMENTAL_TRIGGERS: [TriggeredAbilityDef; 1] =
     [etb_trigger(icewind_elemental_effect)];
 
@@ -3233,6 +3242,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Koma, World-Eater" => &KOMA_WORLD_EATER_TRIGGERS,
         "Kiora, the Rising Tide" => &KIORA_RISING_TIDE_TRIGGERS,
         "Cackling Prowler" => &CACKLING_PROWLER_TRIGGERS,
+        "Hare Apparent" => &HARE_APPARENT_TRIGGERS,
         "Needletooth Pack" => &NEEDLETOOTH_PACK_TRIGGERS,
         "Sylvan Scavenging" => &SYLVAN_SCAVENGING_TRIGGERS,
         "Dwynen's Elite" => &DWYNENS_ELITE_TRIGGERS,

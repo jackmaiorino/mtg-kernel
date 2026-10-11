@@ -619,6 +619,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Brineborn Cutthroat",
     "Nessian Hornbeetle",
     "Needletooth Pack",
+    "Hare Apparent",
     "Micromancer",
     "Arbiter of Woe",
     "Armasaur Guide",
