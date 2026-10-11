@@ -278,13 +278,10 @@ fn actual_future_printed_human_cast_target_restore_resolution_and_expiry() {
             .is_err());
         let mut projector = HumanEmploymentProjectorV18::new(actor.into());
         let prompt = projector.project_current(&session, current).unwrap();
-        let cast = request(
-            &prompt,
-            "Begin casting Involuntary Employment (printed cost {3}{R})",
-        );
+        let cast = request(&prompt, "Begin casting Involuntary Employment");
         assert!(prompt.actions[cast.action_index as usize]
             .label
-            .contains("{3}{R}"));
+            .contains("(printed cost {3}{R})"));
         projector.submit(&mut session, cast).unwrap();
         let prompt = projector
             .project_current(&session, expected(&session))
