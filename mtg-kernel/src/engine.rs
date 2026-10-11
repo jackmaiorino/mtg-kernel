@@ -14251,6 +14251,12 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
             return ResolutionProgress::Suspended;
         }
+        if item.is_copy {
+            // The private pre-pop owner authenticated this exact virtual row.
+            // Restore it only for the immediately following actual cease;
+            // no decision or priority window intervenes.
+            state.stack.push(item.clone());
+        }
     } else if let Some(program) = program {
         if execute_resolving_program(
             state,

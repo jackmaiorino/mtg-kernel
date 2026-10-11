@@ -5390,9 +5390,7 @@ impl RlEpisodeSessionV1 {
         mut profile: Option<&mut RlPhaseProfileV1>,
     ) {
         self.current = None;
-        if self.state.extra_turn_v1.is_some()
-            && self.flat_action_contract_mode != FlatActionContractModeV1::ExtraTurnV23
-        {
+        if self.state.extra_turn_v1.is_some() {
             self.terminal = Some(halted_terminal(
                 &self.deck_ids,
                 self.deck_hashes,
@@ -7103,6 +7101,19 @@ impl FastActorSessionV1 {
 
     fn advance_to_decision_or_terminal(&mut self) {
         self.current = None;
+        if self.state.extra_turn_v1.is_some()
+            && self.flat_action_contract_mode != FlatActionContractModeV1::ExtraTurnV23
+        {
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:extra turns require V23 owning transport".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         let surfaced = match self
             .surface
             .next_decision_owned(&mut self.state, self.environment_revision)

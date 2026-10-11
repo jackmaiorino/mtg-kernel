@@ -209,6 +209,24 @@ pub(crate) mod future_printed {
             let (copy_source, copy_id) =
                 engine::copy_spell_for(&mut state, original.source, actor.opponent()).unwrap();
             resolve(&mut state);
+            validate(&state).unwrap();
+            for mutation in 0..2 {
+                let mut corrupt = restore(&state);
+                match mutation {
+                    0 => corrupt.engine.event_history.retain(|event| !matches!(event,
+                        CommittedEvent::ExtraTurnVirtualCeasedV1 {stack_item_id,..} if *stack_item_id==copy_id)),
+                    1 => {
+                        let cease = corrupt.engine.event_history.iter().find(|event|matches!(event,
+                            CommittedEvent::ExtraTurnVirtualCeasedV1 {stack_item_id,..} if *stack_item_id==copy_id)).unwrap().clone();
+                        corrupt.engine.event_history.push(cease);
+                    }
+                    _ => unreachable!(),
+                }
+                let mut restored = restore(&corrupt);
+                let before = serde_json::to_vec(&restored).unwrap();
+                assert!(engine::step(&mut restored, Action::Pass).is_err());
+                assert_eq!(serde_json::to_vec(&restored).unwrap(), before);
+            }
             let queued = &state.extra_turn_v1.as_ref().unwrap().queued;
             assert_eq!(
                 queued
@@ -339,6 +357,52 @@ pub(crate) mod future_printed {
                 .engine
                 .event_history
                 .retain(|event| !matches!(event, CommittedEvent::ExtraTurnOwnerPublishedV1 { .. }));
+            let before = erased.state_hash();
+            assert!(engine::step(&mut erased, Action::Pass).is_err());
+            assert_eq!(erased.state_hash(), before);
+        }
+    }
+
+    #[test]
+    fn manufactured_resolved_schedule_without_actual_stack_departure_refuses_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut paid = ready(actor);
+            let original = cast(&mut paid, actor);
+            let mut resolved = restore(&paid);
+            resolve(&mut resolved);
+            validate(&resolved).unwrap();
+            // Keep the original genuine publication. Copy only the mutable
+            // claimed resolution/scheduler records, omitting the actual
+            // physical Stack departure performed by genuine resolution.
+            let mut forged = restore(&paid);
+            forged.stack.clear();
+            forged.extra_turn_v1 = resolved.extra_turn_v1.clone();
+            forged.engine.event_history.extend(
+                resolved
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter(|event| {
+                        matches!(event,
+                            CommittedEvent::ExtraTurnOwnerRemovedV1 {item,..}
+                                | CommittedEvent::ExtraTurnScheduledV1 {item}
+                                if item.v4.stack_item_id==original.v4.stack_item_id
+                        ) || matches!(event, CommittedEvent::ExtraTurnStartedV1 { .. })
+                    })
+                    .cloned(),
+            );
+            for _ in 0..2 {
+                let mut restored = restore(&forged);
+                let before = serde_json::to_vec(&restored).unwrap();
+                assert!(validate(&restored).is_err());
+                assert!(engine::step(&mut restored, Action::Pass).is_err());
+                assert_eq!(serde_json::to_vec(&restored).unwrap(), before);
+            }
+            let mut erased = restore(&resolved);
+            erased.engine.event_history.retain(|event| {
+                !matches!(event,
+                CommittedEvent::ZoneChange {object,from:Zone::Stack,..} if *object==original.source)
+            });
             let before = erased.state_hash();
             assert!(engine::step(&mut erased, Action::Pass).is_err());
             assert_eq!(erased.state_hash(), before);

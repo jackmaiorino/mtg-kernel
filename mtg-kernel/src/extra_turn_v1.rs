@@ -475,23 +475,29 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                                     .into(),
                             );
                         }
-                        if **outcome != RemovalV1::Resolved {
-                            let actual_departure=state.engine.event_history.iter().enumerate().any(|(at,event)| {
-                                let ordered=match outcome {
-                                    RemovalV1::Countered if !item.is_copy=>at>*i,
-                                    _=>at>index && at<*i,
-                                };
-                                ordered && if item.is_copy {
-                                    matches!(event,CommittedEvent::ExtraTurnVirtualCeasedV1 {source,stack_item_id}
-                                        if Some(*source)==item.v4.source_contract && *stack_item_id==item.v4.stack_item_id)
-                                } else {
-                                    matches!(event,CommittedEvent::ZoneChange {object,from:crate::state::Zone::Stack,controller_before,..}
-                                        if *object==item.source && *controller_before==item.controller)
-                                }
-                            });
-                            if !actual_departure {
-                                return Err("removed Temporal spell lacks its independent actual Stack departure".into());
+                        let scheduled_at = state.engine.event_history.iter().position(|event| matches!(event,
+                            CommittedEvent::ExtraTurnScheduledV1 {item:scheduled} if scheduled.v4.stack_item_id==item.v4.stack_item_id));
+                        // A subsequent publication of this same physical card bounds
+                        // the departure occurrence to the original spell incarnation.
+                        let end = state.engine.event_history.iter().enumerate().find_map(|(at,event)|
+                            (at > *i && matches!(event,CommittedEvent::ExtraTurnOwnerPublishedV1 {item:later}
+                                if later.source==item.source)).then_some(at)).unwrap_or(state.engine.event_history.len());
+                        let departures = state.engine.event_history.iter().enumerate().filter(|(at,event)| {
+                            let ordered=match outcome {
+                                RemovalV1::Resolved=>scheduled_at.is_some_and(|scheduled| *at>scheduled && *at<end),
+                                RemovalV1::Countered if !item.is_copy=>*at>*i && *at<end,
+                                _=>*at>index && *at<*i,
+                            };
+                            ordered && if item.is_copy {
+                                matches!(event,CommittedEvent::ExtraTurnVirtualCeasedV1 {source,stack_item_id}
+                                    if Some(*source)==item.v4.source_contract && *stack_item_id==item.v4.stack_item_id)
+                            } else {
+                                matches!(event,CommittedEvent::ZoneChange {object,from:crate::state::Zone::Stack,controller_before,..}
+                                    if *object==item.source && *controller_before==item.controller)
                             }
+                        }).count();
+                        if departures != 1 {
+                            return Err("removed Temporal spell lacks its unique independent actual Stack departure".into());
                         }
                     }
                     _ => return Err("extra turn paid owner was erased, changed or replayed".into()),
@@ -518,6 +524,8 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                     })
                     .collect();
                 if !matches!(owners.as_slice(),[(at,item)] if *at<index && item.is_copy && item.v4.source_contract==Some(*source))
+                    || state.engine.event_history.iter().filter(|event|matches!(event,CommittedEvent::ExtraTurnVirtualCeasedV1 {stack_item_id:id,..} if id==stack_item_id)).count()!=1
+                    || state.stack.iter().any(|item|item.v4.stack_item_id==*stack_item_id)
                 {
                     return Err(
                         "virtual Temporal departure has no independent original copy publication"
