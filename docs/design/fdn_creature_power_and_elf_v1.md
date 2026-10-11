@@ -43,3 +43,13 @@ subtype vocabulary. It now uses existing Goblin to exercise loss of Elf.
 No new primitive or gameplay result was reached. Guard1901f23e520f4bd490191245dd331a9d
 ended101 after removing only its verified idle compiler helper49580. Logs remain
 in E:/storage-records/fdn110/fdn110-six-creatures-source-native1.*.
+
+Composed native source2 at bbe6aeb2 passed all-test typechecks and strict
+all-target lint under Limited and combined Limited/Standard. The affected
+checks passed engine 141, ferocious 2 and mana 7 in each configuration, plus
+Limited rules 23 (one ignored) and combined rules 21 (one ignored). The actual
+guard 34bd02d6d2b44601b119ae0b4d336e8a ended with code 0 after releasing its
+completed compiler helper. The earlier Frog-subtype compilation failure is
+retained. All six prepared names remain unregistered; the 22 actual fixture
+groups are typechecked but unexecuted. Registration and gameplay acceptance
+remain gated on the prior catalog's actual default integration.
