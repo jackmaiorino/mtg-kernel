@@ -16,3 +16,11 @@ gameplay, consumers, snapshots, default/Standard compatibility and delivery.
 Use actual generated hash for a separate next immutable profile, preserving
 all historical readers and stale-write guards. No model, research run,
 formal measurement, strength or full-pool completion is claimed.
+
+Native43 actual generation emits398 definitions/hasha0d5d4a32275d739
+before two API compile failures. Source fixes4b2effac/bf3fec19 are being
+qualified in Native44. This v76 candidate derives from retained actual
+generator bytes, preserves immutable Oozev75 and all older readers, and
+rejects stale v75 writes before store access. Profile/type/lint checks remain
+pending, as do full gameplay/consumer/default acceptance. No model or formal
+measurement repin or strength claim occurs.
