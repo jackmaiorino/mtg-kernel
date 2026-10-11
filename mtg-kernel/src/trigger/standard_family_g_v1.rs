@@ -346,3 +346,38 @@ pub(super) const SHEOLDRED_TRIGGERS: [TriggeredAbilityDef; 2] = [
         ..etb_trigger(opponent_loses_two_life)
     },
 ];
+
+fn surveil_one_effect() -> EffectOp {
+    EffectOp::Surveil {
+        player: PlayerRef::Controller,
+        count: 1,
+    }
+}
+pub(super) const FAERIE_DREAMTHIEF_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(surveil_one_effect)];
+
+fn wurmlet_effect() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::GainLife {
+            player: PlayerRef::Controller,
+            amount: 1,
+        },
+        EffectOp::CreatureUpgrade(
+            crate::standard_creatures_v1::CreatureEffectV1::WurmletCounterIfFirstResolution,
+        ),
+    ])
+}
+pub(super) const TEETHING_WURMLET_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControlledArtifactEnters,
+    ..etb_trigger(wurmlet_effect)
+}];
+fn draw_one_effect() -> EffectOp {
+    EffectOp::DrawCards {
+        player: PlayerRef::Controller,
+        count: 1,
+    }
+}
+pub(super) const SURRAK_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControlledCreatureOrCreatureSpellBecomesTargetOfOpponent,
+    ..etb_trigger(draw_one_effect)
+}];

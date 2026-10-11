@@ -11337,13 +11337,18 @@ fn log_final_targeting_events(
     for contract in &item.v4.target_contracts {
         let StackTargetContractV4::Object {
             object,
-            zone: Zone::Battlefield,
+            zone,
             zone_change_count,
             ..
         } = *contract
         else {
             continue;
         };
+        if zone != Zone::Battlefield
+            && !(cfg!(feature = "standard-magezero-fixtures") && zone == Zone::Stack)
+        {
+            continue;
+        }
         if seen.contains(&(object, zone_change_count)) {
             continue;
         }

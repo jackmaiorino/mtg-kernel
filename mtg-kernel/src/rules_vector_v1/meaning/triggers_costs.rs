@@ -173,6 +173,11 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
                 nth: 0,
             });
         }
+        TriggerCondition::ControlledArtifactEnters => {
+            out.trigger(TrigF::OtherEnters {
+                obj: ObjF::Typed(CardTypeF::Artifact),
+            });
+        }
         TriggerCondition::OtherControlledCreatureEnters { subtype } => {
             // A creature other than the source enters under the controller's
             // control. Vocabulary gap: ObjF has no subtype class, so the
@@ -399,7 +404,8 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
                 AggF::EventThisTurn,
             );
         }
-        TriggerCondition::ControlledCreatureBecomesTargetOfOpponent => {
+        TriggerCondition::ControlledCreatureOrCreatureSpellBecomesTargetOfOpponent
+        | TriggerCondition::ControlledCreatureBecomesTargetOfOpponent => {
             // A creature the controller controls becomes the target of a
             // spell or ability an opponent controls. Vocabulary gap: no
             // "becomes the target" event; the gate is marked conditional.

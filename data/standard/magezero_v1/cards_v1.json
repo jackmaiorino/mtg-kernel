@@ -6123,6 +6123,103 @@
         "food"
       ],
       "java_file": "Mage.Sets/src/mage/cards/t/ToughCookie.java"
+    },
+    {
+      "name": "Faerie Dreamthief",
+      "engine_capability": "full",
+      "mana_cost": "{B}",
+      "mana_value": 1,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Faerie",
+        "Warlock"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "medium",
+      "mechanics": [
+        "flying",
+        "surveil",
+        "graveyard_activation"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FaerieDreamthief.java"
+    },
+    {
+      "name": "Teething Wurmlet",
+      "engine_capability": "full",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Wurm"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "medium",
+      "mechanics": [
+        "conditional_deathtouch",
+        "artifact_etb",
+        "resolution_first_each_turn"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/TeethingWurmlet.java"
+    },
+    {
+      "name": "Surrak, Elusive Hunter",
+      "engine_capability": "full",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Warrior"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 4,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "medium",
+      "mechanics": [
+        "trample",
+        "cant_be_countered",
+        "opponent_targets_creature_or_spell"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SurrakElusiveHunter.java"
     }
   ]
 }

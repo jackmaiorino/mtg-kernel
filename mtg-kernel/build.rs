@@ -3165,6 +3165,10 @@ enum AbilityEffectRecipe {
     /// Foundry and the Restless lands).
     AnimateSource,
     CreatureUpgrade(&'static str),
+    DrawThenLoseLife {
+        draw: u8,
+        life: u8,
+    },
     /// Target(0) gets a fixed +power/+toughness until end of turn.
     PumpTargetUntilEndOfTurn {
         power: i8,
@@ -4039,6 +4043,8 @@ fn keywords_for(card: &CardJson) -> String {
         keywords.push("Keywords::DEFENDER");
     }
     match card.name.as_str() {
+        "Faerie Dreamthief" => keywords.push("Keywords::FLYING"),
+        "Surrak, Elusive Hunter" => keywords.push("Keywords::TRAMPLE"),
         "Gingerbrute" => keywords.push("Keywords::HASTE"),
         "Surge Engine" => keywords.push("Keywords::DEFENDER"),
         "Spyglass Siren" => keywords.push("Keywords::FLYING"),
@@ -5462,6 +5468,18 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             },
         ],
         // MageZero Standard family G.
+        "Faerie Dreamthief" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::ManaCost("{2}{B}"),
+                AbilityCostRecipe::ExileSelf,
+            ],
+            effect: AbilityEffectRecipe::DrawThenLoseLife { draw: 1, life: 1 },
+            activation_zone: "Graveyard",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Gingerbrute" => &[
             ActivatedAbilityRecipe {
                 cost: &[AbilityCostRecipe::ManaCost("{1}")],
@@ -5822,6 +5840,7 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::EachPlayerControllingNamedPermanentDrawsCard(name) => {
             format!("each_player_controlling_named_permanent_draws_card:{name}")
         }
+        AbilityEffectRecipe::DrawThenLoseLife { draw, life } => format!("draw_then_lose_life:{draw}:{life}"),
         AbilityEffectRecipe::CreatureUpgrade(kind) => format!("creature_upgrade:{kind}"),
         AbilityEffectRecipe::AnimateSource => "animate_source".to_string(),
         AbilityEffectRecipe::PumpTargetUntilEndOfTurn { power, toughness } => {
@@ -6039,6 +6058,9 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
                     })
                     .collect::<String>()
             )
+        }
+        AbilityEffectRecipe::DrawThenLoseLife { draw, life } => {
+            format!("ability_effect_draw_{draw}_lose_life_{life}")
         }
         AbilityEffectRecipe::CreatureUpgrade(kind) => {
             format!("ability_effect_creature_upgrade_{kind}")
@@ -6492,6 +6514,9 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Spitfire Lagac" => "controlled_land_enters:damage_opponent:1",
         "Dragon Trainer" => "etb:create_red_4_4_flying_dragon:1",
         "Resolute Reinforcements" => "etb:create_white_1_1_soldier:1",
+        "Faerie Dreamthief" => "etb:surveil:1",
+        "Teething Wurmlet" => "controlled_artifact_enters:gain_life:1;first_resolution_each_turn:source_counter:1",
+        "Surrak, Elusive Hunter" => "opponent_targets_controlled_creature_or_creature_spell:draw:1",
         "Tough Cookie" => "etb:create_food_token:1",
         "Kellan, Planar Trailblazer" => "granted_combat_damage_player:impulse:1:end_of_turn",
         "Spyglass Siren" => "etb:create_map_token:1",
@@ -7378,6 +7403,9 @@ fn codegen(cards: &[CardJson]) -> String {
                     "    EffectOp::EachPlayerControllingDefinitionDrawsCard {{ card_def: named }}"
                 )
                 .unwrap();
+            }
+            AbilityEffectRecipe::DrawThenLoseLife { draw, life } => {
+                writeln!(out, "    EffectOp::Sequence(vec![EffectOp::DrawCards {{ player: PlayerRef::Controller, count: {draw} }}, EffectOp::LoseLife {{ player: PlayerRef::Controller, amount: {life} }}])").unwrap();
             }
             AbilityEffectRecipe::CreatureUpgrade(kind) => {
                 writeln!(out, "    EffectOp::CreatureUpgrade(crate::standard_creatures_v1::CreatureEffectV1::{kind})").unwrap();

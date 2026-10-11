@@ -19,6 +19,7 @@ pub struct CreatureUpgradeV1 {
     pub keyword_losses: Vec<(Keywords, u64)>,
     pub combat_impulse: Option<u64>,
     pub once_activated: Vec<u16>,
+    pub wurmlet_resolved_turn: Option<(u32, crate::ids::PlayerId)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -29,6 +30,7 @@ pub enum CreatureEffectV1 {
     SurgeBlue,
     GingerEvasion,
     ToughCookieAnimate,
+    WurmletCounterIfFirstResolution,
 }
 
 fn upgrade(state: &GameState, id: ObjectId) -> Option<&CreatureUpgradeV1> {
@@ -181,14 +183,16 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
         };
         if !ctx.target_contracts.first().is_some_and(|&contract| {
             crate::engine::target_contract_matches_live(state, ctx.targets[0], contract)
-        }) || !ctx.ability_source_contract.is_some_and(|source| crate::engine::effect_target_is_legal_from_ability_source(
-            state,
-            source,
-            ctx.controller,
-            crate::card_def::TargetSpec::ControlledNoncreatureArtifactPermanent,
-            &ctx.targets,
-            0,
-        )) {
+        }) || !ctx.ability_source_contract.is_some_and(|source| {
+            crate::engine::effect_target_is_legal_from_ability_source(
+                state,
+                source,
+                ctx.controller,
+                crate::card_def::TargetSpec::ControlledNoncreatureArtifactPermanent,
+                &ctx.targets,
+                0,
+            )
+        }) {
             return;
         }
         let timestamp = crate::engine::next_timestamp(state);
@@ -210,6 +214,26 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
     if object.zone != Zone::Battlefield || object.zone_change_count != contract.zone_change_count {
         return;
     }
+    if effect == CreatureEffectV1::WurmletCounterIfFirstResolution {
+        let turn = (state.turn, state.active_player);
+        let value = state
+            .objects
+            .get_mut(ctx.source)
+            .v4
+            .creature_upgrade
+            .get_or_insert_with(Default::default);
+        if value.wurmlet_resolved_turn == Some(turn) {
+            return;
+        }
+        value.wurmlet_resolved_turn = Some(turn);
+        if crate::event::add_plus_one_counters(state, ctx.source, ctx.controller, 1).is_err() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        return;
+    }
     let prerequisite = match effect {
         CreatureEffectV1::KellanDetective => Some(Subtype::Scout),
         CreatureEffectV1::KellanRogue => Some(Subtype::Detective),
@@ -228,6 +252,9 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
         .creature_upgrade
         .get_or_insert_with(Default::default);
     match effect {
+        CreatureEffectV1::WurmletCounterIfFirstResolution => {
+            unreachable!("resolution marker handled above")
+        }
         CreatureEffectV1::ToughCookieAnimate => unreachable!("targeted animation handled above"),
         CreatureEffectV1::GingerEvasion => value.haste_blockers_only = true,
         CreatureEffectV1::KellanDetective => {

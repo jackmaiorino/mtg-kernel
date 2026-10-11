@@ -32,6 +32,10 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         EffectOp::CreatureUpgrade(effect) => {
             use crate::standard_creatures_v1::CreatureEffectV1;
             out.control(ControlF::Conditional);
+            if matches!(effect, CreatureEffectV1::WurmletCounterIfFirstResolution) {
+                plain_counter(RelF::You, ObjF::ThisObject, AmtF::fixed(1), out);
+                out.read(RelF::You, None, Some(ObjF::ThisObject), AggF::EventThisTurn);
+            }
             out.read(
                 RelF::You,
                 Some(ZoneF::Battlefield),
@@ -66,11 +70,16 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                 _ => None,
             };
             if let Some(keyword) = keyword {
+                let duration = if matches!(effect, CreatureEffectV1::GingerEvasion) {
+                    DurF::EndOfTurn
+                } else {
+                    DurF::Permanent
+                };
                 out.effect(
                     EffectAtom::new(EvF::GrantKeyword)
                         .player(RelF::You)
                         .obj(ObjF::ThisObject)
-                        .duration(DurF::Permanent)
+                        .duration(duration)
                         .keyword(keyword_bits(keyword)[0]),
                 );
             }

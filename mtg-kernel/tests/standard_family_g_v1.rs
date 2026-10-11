@@ -1699,6 +1699,128 @@ fn tough_cookie_does_not_animate_a_target_that_has_changed_controller() {
 }
 
 #[test]
+fn faerie_dreamthief_surveils_privately_then_draws_and_loses_life_from_graveyard() {
+    let mut state = ready(Step::Main1);
+    let faerie = put(&mut state, PlayerId::P0, "Faerie Dreamthief", Zone::Hand);
+    let top = state.players[0].library[0];
+    move_to(&mut state, faerie, Zone::Battlefield);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectOption {
+            option_count: 2,
+            ..
+        })
+    ));
+    state = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+    engine::step(&mut state, Action::ChooseEffectOption(1)).unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(top).zone, Zone::Graveyard);
+    assert!(engine::has_effective_keyword(
+        &state,
+        faerie,
+        Keywords::FLYING
+    ));
+    move_to(&mut state, faerie, Zone::Graveyard);
+    state.players[0].mana_pool = pool(&[(ManaColor::B, 1)], 2);
+    let hand = state.players[0].hand.len();
+    engine::step(&mut state, Action::ActivateAbility(faerie, 0)).unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(faerie).zone, Zone::Exile);
+    assert_eq!(state.players[0].hand.len(), hand + 1);
+    assert_eq!(state.players[0].life, 19);
+}
+
+fn make_food(state: &mut GameState) {
+    let food = card_id_by_name("Food Token").unwrap();
+    event::propose_and_commit(state, ProposedEvent::create_token(food, PlayerId::P0));
+    let pending = trigger::collect_and_process(state);
+    state.engine.pending_triggers.extend(pending);
+}
+
+#[test]
+fn wurmlet_counts_first_resolution_not_first_trigger_and_resets_between_player_turns() {
+    let mut state = ready(Step::Main1);
+    let wurmlet = put(
+        &mut state,
+        PlayerId::P0,
+        "Teething Wurmlet",
+        Zone::Battlefield,
+    );
+    make_food(&mut state);
+    make_food(&mut state);
+    let Decision::OrderTriggers { pending, .. } = next(&mut state) else {
+        panic!("order triggers");
+    };
+    assert_eq!(pending.len(), 2);
+    engine::step(&mut state, Action::OrderTriggers(vec![0, 1])).unwrap();
+    next(&mut state);
+    assert_eq!(state.stack.len(), 2);
+    state.stack.pop();
+    settled(&mut state);
+    assert_eq!(state.players[0].life, 21);
+    assert_eq!(state.objects.get(wurmlet).counters.plus1_plus1, 1);
+    assert!(!engine::has_effective_keyword(
+        &state,
+        wurmlet,
+        Keywords::DEATHTOUCH
+    ));
+    make_food(&mut state);
+    settled(&mut state);
+    assert_eq!(state.players[0].life, 22);
+    assert_eq!(state.objects.get(wurmlet).counters.plus1_plus1, 1);
+    assert!(engine::has_effective_keyword(
+        &state,
+        wurmlet,
+        Keywords::DEATHTOUCH
+    ));
+    // GameState.turn is a round, so the opponent's turn has the same number.
+    state.active_player = PlayerId::P1;
+    state.priority_player = PlayerId::P1;
+    make_food(&mut state);
+    settled(&mut state);
+    assert_eq!(state.objects.get(wurmlet).counters.plus1_plus1, 2);
+    make_food(&mut state);
+    move_to(&mut state, wurmlet, Zone::Graveyard);
+    settled(&mut state);
+    assert_eq!(state.players[0].life, 24);
+}
+
+#[test]
+fn surrak_draws_for_opponent_targeting_creature_spells_and_battlefield_creatures() {
+    let mut state = ready(Step::Main1);
+    let surrak = put(
+        &mut state,
+        PlayerId::P0,
+        "Surrak, Elusive Hunter",
+        Zone::Battlefield,
+    );
+    let definition = &CARD_DEFS[state.objects.get(surrak).card_def as usize];
+    assert!(definition.spell_cannot_be_countered);
+    assert!(engine::has_effective_keyword(
+        &state,
+        surrak,
+        Keywords::TRAMPLE
+    ));
+    let creature = cast_creature(&mut state, "Novice Inspector");
+    next(&mut state);
+    engine::step(&mut state, Action::Pass).unwrap();
+    let counter = put(&mut state, PlayerId::P1, "Counterspell", Zone::Hand);
+    state.players[1].mana_pool = pool(&[(ManaColor::U, 2)], 0);
+    let before = state.players[0].hand.len();
+    cast(&mut state, counter, &[Target::Object(creature)]);
+    settled(&mut state);
+    assert_eq!(state.players[0].hand.len(), before + 1);
+    assert_eq!(state.objects.get(creature).zone, Zone::Graveyard);
+    engine::step(&mut state, Action::Pass).unwrap();
+    let shock = put(&mut state, PlayerId::P1, "Shock", Zone::Hand);
+    state.players[1].mana_pool = pool(&[(ManaColor::R, 1)], 0);
+    cast(&mut state, shock, &[Target::Object(surrak)]);
+    settled(&mut state);
+    assert_eq!(state.players[0].hand.len(), before + 2);
+    assert_eq!(state.objects.get(surrak).damage, 2);
+}
+
+#[test]
 fn hired_claw_pings_when_lizards_attack() {
     let mut state = ready(Step::DeclareAttackers);
     put(&mut state, PlayerId::P0, "Hired Claw", Zone::Battlefield);

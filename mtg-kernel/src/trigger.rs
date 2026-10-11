@@ -226,6 +226,8 @@ pub enum TriggerCondition {
     ControllerAttacksWithAtLeastCreatures(u8),
     /// Conditions owned by the Standard catalog's card module.
     StandardV1(crate::standard_cards_v1::StandardTriggerV1),
+    ControlledArtifactEnters,
+    ControlledCreatureOrCreatureSpellBecomesTargetOfOpponent,
 }
 
 pub struct TriggeredAbilityDef {
@@ -3236,6 +3238,12 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Monk Token" => &MONASTERY_SWIFTSPEAR_TRIGGERS,
         "Kellan, Planar Trailblazer" => &KELLAN_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
+        "Faerie Dreamthief" => &standard_family_g_v1::FAERIE_DREAMTHIEF_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Teething Wurmlet" => &standard_family_g_v1::TEETHING_WURMLET_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Surrak, Elusive Hunter" => &standard_family_g_v1::SURRAK_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
         "Spyglass Siren" => &standard_family_g_v1::SPYGLASS_SIREN_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Dark Confidant" => &standard_family_g_v1::DARK_CONFIDANT_TRIGGERS,
@@ -4862,6 +4870,11 @@ fn trigger_matches(
                         crate::engine::stack_spell_mana_value(state, item) >= minimum
                     })
         }
+        (TriggerCondition::ControlledArtifactEnters, event) => battlefield_entry_object(event)
+            .is_some_and(|object| {
+                state.objects.get(object).controller == controller
+                    && crate::engine::object_has_type(state, object, CardType::Artifact)
+            }),
         (TriggerCondition::ControlledCreatureEntersOutgrowingSource { another }, event) => {
             let Some(object) = battlefield_entry_object(event) else {
                 return false;
@@ -5170,6 +5183,30 @@ fn trigger_matches(
             TriggerCondition::ControllerCommitsCrime,
             CommittedEvent::CrimeCommitted { player, .. },
         ) => *player == controller,
+        (
+            TriggerCondition::ControlledCreatureOrCreatureSpellBecomesTargetOfOpponent,
+            CommittedEvent::Targeted {
+                target,
+                target_zone_change_count,
+                targeting_controller,
+                ..
+            },
+        ) => {
+            *targeting_controller != controller
+                && state.objects.try_get(*target).is_some_and(|object| {
+                    object.controller == controller
+                        && object.zone_change_count == *target_zone_change_count
+                        && match object.zone {
+                            Zone::Battlefield => {
+                                crate::engine::object_has_type(state, *target, CardType::Creature)
+                            }
+                            Zone::Stack => {
+                                selected_spell_types(state, *target).contains(&CardType::Creature)
+                            }
+                            _ => false,
+                        }
+                })
+        }
         (
             TriggerCondition::ControlledCreatureBecomesTargetOfOpponent,
             CommittedEvent::Targeted {
