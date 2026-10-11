@@ -6161,6 +6161,149 @@
         "creature_or_planeswalker_target",
         "historical_damage_color_and_keywords"
       ]
+    },
+    {
+      "name": "Searslicer Goblin",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Goblin",
+        "Warrior"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/s/SearslicerGoblin.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_searslicer_goblin.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "raid",
+        "captured_controller_end_step"
+      ]
+    },
+    {
+      "name": "Self-Reflection",
+      "mana_cost": "{4}{U}{U}",
+      "mana_value": 6,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/s/SelfReflection.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_self_reflection.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "flashback",
+        "controlled_creature_copiable_token",
+        "neutral_face_down_copy"
+      ]
+    },
+    {
+      "name": "Nameless Creature Copy Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/util/functions/CopyTokenFunction.java",
+      "is_token": true
+    },
+    {
+      "name": "Squad Rallier",
+      "mana_cost": "{3}{W}",
+      "mana_value": 4,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Scout"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/s/SquadRallier.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_squad_rallier.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "private_look_four",
+        "optional_reveal_creature_power_at_most_two",
+        "random_bottom_rest"
+      ]
+    },
+    {
+      "name": "Sower of Chaos",
+      "mana_cost": "{3}{R}",
+      "mana_value": 4,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Devil"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/s/SowerOfChaos.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_sower_of_chaos.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "incarnation_bound_cannot_block_until_cleanup"
+      ]
     }
   ]
 }

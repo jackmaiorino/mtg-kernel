@@ -288,6 +288,21 @@ class LimitedDeckTest(unittest.TestCase):
         self.assertEqual(self.registry["Heartfire Immolator"].card_id, 398)
         self.assertEqual(self.registry["Soul-Shackled Zombie"].card_id, 397)
 
+    def test_next_source_batch_appends_and_internal_copy_is_not_a_booster(self) -> None:
+        for slug, name, ident in [("searslicer_goblin", "Searslicer Goblin", 399),
+                                  ("self_reflection", "Self-Reflection", 400),
+                                  ("squad_rallier", "Squad Rallier", 402),
+                                  ("sower_of_chaos", "Sower of Chaos", 403)]:
+            deck = limited.parse_dck((FIXTURES / f"FDN_reference_{slug}.dck").read_text(encoding="utf-8"))
+            ids = limited.resolve_mainboard(deck, self.registry)
+            self.assertEqual(len(ids), 40)
+            self.assertEqual(ids[:4], [ident] * 4)
+            self.assertEqual(self.registry[name].card_id, ident)
+        self.assertEqual(self.registry["Nameless Creature Copy Token"].card_id, 401)
+        self.assertEqual(limited.card_status("Nameless Creature Copy Token", self.registry), "token")
+        frozen_names = json.loads((FIXTURES / "booster_pool_v1.json").read_text(encoding="utf-8"))["cards"]
+        self.assertNotIn("Nameless Creature Copy Token", [card["name"] for card in frozen_names])
+
     def test_unknown_partial_no_effect_and_token_are_all_rejected(self) -> None:
         registry = limited.registry_from_json({"version": 2, "cards": [
             {"name": "Supported", "engine_capability": "full"},
@@ -340,7 +355,7 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("FDN_top_*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
-        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 197)
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 201)
         self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
                              for card in report["cards"]), 0)
 

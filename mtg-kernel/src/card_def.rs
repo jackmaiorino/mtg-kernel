@@ -2580,12 +2580,12 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 398 (Heartfire Immolator after Soul-Shackled Zombie,
+        // batches append through id 403 (Sower of Chaos after Squad, neutral copy, Self and Searslicer,
         // Run Away Together, Raid, Skyknight and Sire).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                399
+                404
             } else {
                 192
             }
