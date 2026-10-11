@@ -233,11 +233,11 @@ fn opponent_targeting_excludes_untapped_source_and_own_targeting_remains_legal()
         let mut state = ready(player.opponent());
         let source = put(&mut state, player, "Paradise Druid", Zone::Battlefield);
         let other = put(&mut state, player, "Llanowar Elves", Zone::Battlefield);
-        let terror = put(&mut state, player.opponent(), "Terror", Zone::Hand);
+        let removal = put(&mut state, player.opponent(), "Cast Down", Zone::Hand);
         state.players[player.opponent().index()].mana_pool[2] = 1;
         state.players[player.opponent().index()].mana_pool[5] = 1;
         priority(&mut state, player.opponent());
-        engine::step(&mut state, Action::CastSpell(terror)).unwrap();
+        engine::step(&mut state, Action::CastSpell(removal)).unwrap();
         let Decision::ChooseTargets { legal_targets, .. } = next(&mut state) else {
             panic!("target prompt")
         };
@@ -279,11 +279,11 @@ fn actual_targeted_spell_rechecks_hexproof_after_untap_and_restore() {
             let mut state = ready(player.opponent());
             let source = put(&mut state, player, "Paradise Druid", Zone::Battlefield);
             event::propose_and_commit(&mut state, ProposedEvent::tap(source));
-            let terror = put(&mut state, player.opponent(), "Terror", Zone::Hand);
+            let removal = put(&mut state, player.opponent(), "Cast Down", Zone::Hand);
             state.players[player.opponent().index()].mana_pool[2] = 1;
             state.players[player.opponent().index()].mana_pool[5] = 1;
             priority(&mut state, player.opponent());
-            cast(&mut state, terror, Some(Target::Object(source)));
+            cast(&mut state, removal, Some(Target::Object(source)));
             let mut replay = restored(&state);
             for current in [&mut state, &mut replay] {
                 if untap {
@@ -309,7 +309,7 @@ fn actual_targeted_spell_rechecks_hexproof_after_untap_and_restore() {
                         Zone::Graveyard
                     }
                 );
-                assert_eq!(current.objects.get(terror).zone, Zone::Graveyard);
+                assert_eq!(current.objects.get(removal).zone, Zone::Graveyard);
             }
             same(&state, &replay);
         }
