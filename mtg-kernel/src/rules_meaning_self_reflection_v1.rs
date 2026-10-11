@@ -39,7 +39,7 @@ pub struct MeaningV1 {
     pub mana_cost: String,
     pub cast_from_own_graveyard: bool,
     pub flashback_exiles_when_leaving_stack: bool,
-    pub sorcery_timing: bool,
+    pub ordinary_sorcery_timing_subject_to_cast_permission_effects: bool,
     pub target_count: u8,
     pub target_creature_controlled_by_spell_controller: bool,
     pub target_owner_unrestricted: bool,
@@ -166,7 +166,7 @@ pub fn meaning(
         mana_cost: if flashback { "{3}{U}" } else { "{4}{U}{U}" }.into(),
         cast_from_own_graveyard: flashback,
         flashback_exiles_when_leaving_stack: flashback,
-        sorcery_timing: true,
+        ordinary_sorcery_timing_subject_to_cast_permission_effects: true,
         target_count: 1,
         target_creature_controlled_by_spell_controller: true,
         target_owner_unrestricted: true,
@@ -281,5 +281,20 @@ mod tests {
             .unwrap()
             .insert("hidden_underlying_definition".into(), 42.into());
         assert!(serde_json::from_value::<MeaningV1>(unknown).is_err());
+    }
+    #[test]
+    fn frozen_vector_does_not_treat_the_selected_meaning_as_an_admitted_copy_feature() {
+        use crate::rules_vector_v1::facets::{Atom, Collector};
+        use crate::rules_vector_v1::meaning::{effect_op, Env};
+        let mut out = Collector::default();
+        effect_op(
+            &EffectOp::CreateControlledCreatureTargetCopyV1,
+            &Env {
+                target_spec: TargetSpec::ControlledCreature,
+            },
+            &mut out,
+        );
+        assert_eq!(out.atoms, vec![Atom::Opaque]);
+        assert!(out.created_tokens.is_empty() && out.referenced_cards.is_empty());
     }
 }
