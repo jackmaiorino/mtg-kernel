@@ -1,4 +1,4 @@
-//! Actual printed fixtures require future serial FDN registration.
+//! Actual registered Squad Rallier fixtures on the current Limited catalog.
 #![cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
@@ -121,6 +121,10 @@ fn activate(state: &mut GameState, actor: PlayerId, source: ObjectId) {
         mtg_kernel::state::StackItemKind::ActivatedAbility
     );
     assert_eq!((item.source, item.controller), (source, actor));
+    assert!(
+        item.v4.squad_rallier_started_v1.is_empty(),
+        "genuine unstarted activation remains unmarked"
+    );
     assert_eq!(
         state.players[actor.index()].mana_pool[ManaColor::W.pool_index()],
         0
@@ -390,7 +394,7 @@ fn restored_private_stage_erasure_restart_controller_filter_and_prefix_forgery_r
         let root = (CARD_DEFS[state.objects.get(source).card_def as usize].activated_abilities[0]
             .effect)();
         let top = state.players[actor.index()].library[0];
-        for failure in 0..7 {
+        for failure in 0..12 {
             let mut forged = restore(&state);
             match failure {
                 0 => {
@@ -427,10 +431,62 @@ fn restored_private_stage_erasure_restart_controller_filter_and_prefix_forgery_r
                 5 => {
                     forged.players[actor.index()].library.swap(0, 1);
                 }
-                _ => {
+                6 => {
                     forged.objects.get_mut(top).zone_change_count += 1;
                 }
+                7 => {
+                    forged.engine.pending_effect = None;
+                    forged.engine.event_history.retain(|event| {
+                        !matches!(
+                            event,
+                            CommittedEvent::SquadRallierResolutionBoundaryV1 { .. }
+                        )
+                    });
+                }
+                8 => {
+                    forged
+                        .stack
+                        .last_mut()
+                        .unwrap()
+                        .v4
+                        .squad_rallier_started_v1
+                        .0 = None;
+                }
+                9 => {
+                    forged
+                        .stack
+                        .last_mut()
+                        .unwrap()
+                        .v4
+                        .squad_rallier_started_v1
+                        .0
+                        .as_mut()
+                        .unwrap()
+                        .first_receipt_history_index += 1;
+                }
+                10 => {
+                    forged
+                        .stack
+                        .last_mut()
+                        .unwrap()
+                        .v4
+                        .squad_rallier_started_v1
+                        .0
+                        .as_mut()
+                        .unwrap()
+                        .source
+                        .controller = actor.opponent();
+                }
+                _ => {
+                    forged.engine.event_history.retain(|event| {
+                        !matches!(
+                            event,
+                            CommittedEvent::SquadRallierResolutionBoundaryV1 { .. }
+                        )
+                    });
+                }
             }
+            forged = restore(&restore(&forged));
             assert!(mtg_kernel::effect::validate_pending_effect_choice(&forged).is_err());
             readonly(&mut forged, Action::FinishEffectSelection);
             readonly(&mut forged, Action::Pass);
@@ -440,6 +496,64 @@ fn restored_private_stage_erasure_restart_controller_filter_and_prefix_forgery_r
                 Decision::Halted { .. }
             ));
             assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
+        }
+    }
+}
+
+#[test]
+fn real_registered_begin_answer_resume_retains_owned_mark_after_repeated_restore() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for take in [false, true] {
+            let mut state = ready(
+                actor,
+                &[
+                    "Llanowar Elves",
+                    "Forest",
+                    "Forest",
+                    "Forest",
+                    "Counterspell",
+                ],
+            );
+            let source = cast(&mut state, actor);
+            activate(&mut state, actor, source);
+            state = restore(&restore(&state));
+            until_pick(&mut state);
+            let pending = state.engine.pending_effect.as_ref().unwrap();
+            let started = pending.resolving_item.v4.squad_rallier_started_v1;
+            assert!(!started.is_empty());
+            let id = started.0.unwrap().stack_item_id;
+            assert_eq!(state.stack.last().unwrap(), &pending.resolving_item);
+            assert_eq!(started.0.unwrap().source.controller, actor);
+            let selected = state.players[actor.index()].library[0];
+            let action = if take {
+                Action::ChooseEffectTarget(Target::Object(selected))
+            } else {
+                Action::FinishEffectSelection
+            };
+            engine::step(&mut state, action).unwrap();
+            state = restore(&restore(&state));
+            let mut missing_live = restore(&state);
+            missing_live
+                .stack
+                .retain(|item| item.v4.stack_item_id != id);
+            let before = serde_json::to_vec(&missing_live).unwrap();
+            assert!(mtg_kernel::effect::resume_resumable_resolution(&mut missing_live).is_err());
+            assert_eq!(serde_json::to_vec(&missing_live).unwrap(), before);
+            readonly(&mut missing_live, Action::Pass);
+            let mut replay = restore(&state);
+            settle(&mut state);
+            settle(&mut replay);
+            assert_eq!(state.players[actor.index()].hand.contains(&selected), take);
+            assert!(state.stack.is_empty() && state.engine.pending_effect.is_none());
+            assert!(state.engine.event_history.iter().any(
+                |event| matches!(event, CommittedEvent::SquadRallierResolutionBoundaryV1 { receipt }
+                    if receipt.stack_item_id == id && receipt.pending.is_none())
+            ));
+            readonly(&mut state, Action::FinishEffectSelection);
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&replay).unwrap()
+            );
         }
     }
 }

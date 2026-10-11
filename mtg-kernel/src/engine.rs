@@ -9962,6 +9962,14 @@ fn drain_pending_effect_or_decide(state: &mut GameState) -> Option<Decision> {
 fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
     let pending = state.engine.pending_effect.as_ref().unwrap();
     let item = pending.resolving_item.clone();
+    let squad_owner = match effect::acquire_squad_rallier_resolution_owner(state, &item, false) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return None;
+        }
+    };
     let index = resolution_cast_v1::resolving_index(state, item.v4.stack_item_id);
     match index
         .filter(|&i| i < state.stack.len())
@@ -9981,7 +9989,12 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
         }
     }
 
-    match effect::resume_resumable_resolution(state) {
+    let progress = if let Some(owner) = squad_owner.as_ref() {
+        effect::resume_owned_squad_rallier_resolution(state, owner)
+    } else {
+        effect::resume_resumable_resolution(state)
+    };
+    match progress {
         Ok(effect::ResumableProgress::Complete(completed)) => {
             if *completed != item {
                 state.engine.halted =
@@ -13798,21 +13811,42 @@ fn execute_resolving_program(
     item: &StackItem,
     ctx: &ExecCtx,
     program: &EffectOp,
+    squad_owner: Option<&effect::SquadRallierResolutionOwnerV1>,
 ) -> ResolutionProgress {
     if !effect::contains_player_choice(program) {
         effect::execute(program, ctx, state);
         return ResolutionProgress::Complete;
     }
 
-    match effect::begin_resumable_resolution(program, ctx, item.clone(), state) {
-        Ok(effect::ResumableProgress::Complete(completed)) if *completed == *item => {
+    let progress = if let Some(owner) = squad_owner {
+        effect::begin_owned_squad_rallier_resolution(state, program, ctx, owner)
+    } else {
+        effect::begin_resumable_resolution(program, ctx, item.clone(), state)
+    };
+    match progress {
+        Ok(effect::ResumableProgress::Complete(completed))
+            if squad_owner.map_or(*completed == *item, |owner| {
+                owner.completion_matches(&completed)
+            }) =>
+        {
             ResolutionProgress::Complete
         }
         Ok(effect::ResumableProgress::Suspended) => {
             // Keep the resolving item visible throughout the decision, but
             // grant no priority/SBA/trigger window until the continuation
             // completes.
-            resolution_cast_v1::restore_parent(state, item.clone());
+            let published = if squad_owner.is_some() {
+                state
+                    .engine
+                    .pending_effect
+                    .as_ref()
+                    .expect("owned suspension publishes pending")
+                    .resolving_item
+                    .clone()
+            } else {
+                item.clone()
+            };
+            resolution_cast_v1::restore_parent(state, published);
             ResolutionProgress::Suspended
         }
         Ok(effect::ResumableProgress::Complete(_)) | Err(_) => {
@@ -13868,6 +13902,20 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     let resolving_source = item.source;
     let targets_legal = match stack_targets_still_legal(item, state) {
         Ok(legal) => legal,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
+    let squad_owner = match effect::acquire_squad_rallier_resolution_owner(
+        state,
+        state.stack.last().expect("resolving genuine stack item"),
+        true,
+    ) {
+        Ok(owner) => owner,
         Err(_) => {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
@@ -13937,7 +13985,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     }
 
     if let Some(effect) = item.inline_effect.clone() {
-        let progress = execute_resolving_program(state, &item, &ctx, &effect);
+        let progress = execute_resolving_program(state, &item, &ctx, &effect, squad_owner.as_ref());
         if progress == ResolutionProgress::Complete {
             crate::source_power_activation_v1::finish(state, &item);
             keep_ability_on_stack_until_discarded(state, &item);
@@ -13976,7 +14024,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         }
     }
     if let Some(program) = program {
-        if execute_resolving_program(state, &item, &ctx, &program) == ResolutionProgress::Suspended
+        if execute_resolving_program(state, &item, &ctx, &program, squad_owner.as_ref())
+            == ResolutionProgress::Suspended
         {
             return ResolutionProgress::Suspended;
         }

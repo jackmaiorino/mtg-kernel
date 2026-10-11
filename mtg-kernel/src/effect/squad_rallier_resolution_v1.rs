@@ -3,7 +3,7 @@
 use super::*;
 use crate::card_def::CARD_DEFS;
 use crate::event::CommittedEvent;
-use crate::state::AbilitySourceContractV4;
+use crate::state::{AbilitySourceContractV4, SquadRallierStartedBindingV1};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SquadRallierResolutionReceiptV1 {
@@ -40,6 +40,124 @@ fn source_owns_root(source: AbilitySourceContractV4, root: &EffectOp) -> bool {
                     .any(|ability| (ability.effect)() == *root)
                 && owned_root(root)
         })
+}
+/// A synchronous, nonserializable loan of an actually indexed stack item.
+/// Only this module constructs it, before engine removal; external restore
+/// validation cannot manufacture an absent-live resolution from pending data.
+pub(crate) struct SquadRallierResolutionOwnerV1 {
+    original: StackItem,
+    expected: StackItem,
+    initial: bool,
+}
+impl SquadRallierResolutionOwnerV1 {
+    pub(crate) fn completion_matches(&self, item: &StackItem) -> bool {
+        *item == self.expected
+    }
+}
+pub(crate) fn acquire_owner(
+    state: &GameState,
+    item: &StackItem,
+    initial: bool,
+) -> Result<Option<SquadRallierResolutionOwnerV1>, String> {
+    let owns = item.kind == crate::state::StackItemKind::ActivatedAbility
+        && item.v4.ability_source_contract.is_some_and(|source| {
+            item.inline_effect
+                .as_ref()
+                .is_some_and(|root| source_owns_root(source, root))
+        });
+    if !owns {
+        return Ok(None);
+    }
+    validate(state)?;
+    crate::engine::validated_stack_item_target_spec(item, state)?;
+    if state
+        .stack
+        .iter()
+        .filter(|live| live.v4.stack_item_id == item.v4.stack_item_id)
+        .count()
+        != 1
+        || !state.stack.iter().any(|live| live == item)
+    {
+        return Err("paid look owner did not acquire the genuine live stack item".into());
+    }
+    let mut expected = item.clone();
+    if initial {
+        if state.engine.pending_effect.is_some()
+            || !item.v4.squad_rallier_started_v1.is_empty()
+            || history(state)?
+                .iter()
+                .any(|r| r.stack_item_id == item.v4.stack_item_id)
+        {
+            return Err("paid look initial owner cannot restart".into());
+        }
+        expected.v4.squad_rallier_started_v1.0 = Some(SquadRallierStartedBindingV1 {
+            stack_item_id: item.v4.stack_item_id,
+            source: item.v4.ability_source_contract.unwrap(),
+            first_receipt_history_index: u32::try_from(state.engine.event_history.len())
+                .map_err(|_| "resolution history exceeds u32")?,
+        });
+    } else if state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_none_or(|pending| pending.resolving_item != *item)
+    {
+        return Err("paid look resumed owner changed its published item".into());
+    }
+    Ok(Some(SquadRallierResolutionOwnerV1 {
+        original: item.clone(),
+        expected,
+        initial,
+    }))
+}
+
+pub(crate) fn begin_owned(
+    state: &mut GameState,
+    op: &EffectOp,
+    ctx: &ExecCtx,
+    owner: &SquadRallierResolutionOwnerV1,
+) -> Result<ResumableProgress, String> {
+    if !owner.initial
+        || state.engine.pending_effect.is_some()
+        || state
+            .stack
+            .iter()
+            .any(|item| item.v4.stack_item_id == owner.original.v4.stack_item_id)
+        || owner.original.inline_effect.as_ref() != Some(op)
+        || ctx.stack_item_id != Some(owner.original.v4.stack_item_id)
+        || ctx.source != owner.original.source
+        || ctx.controller != owner.original.controller
+        || ctx.ability_source_contract != owner.original.v4.ability_source_contract
+    {
+        return Err("paid look initial removed-item ownership changed".into());
+    }
+    super::validate_resumable_program(op)?;
+    let pending = EffectContinuation {
+        resolving_item: owner.expected.clone(),
+        ctx: ctx.clone(),
+        frames: vec![EffectFrame::Program {
+            op: op.clone(),
+            path: Vec::new(),
+        }],
+        choice: None,
+        answered_choice_guard: None,
+    };
+    if *super::validated_definition_owned_root_effect(state, &pending)? != *op {
+        return Err("paid look removed owner lost its definition-owned context".into());
+    }
+    state.engine.pending_effect = Some(pending);
+    record_begin(state)?;
+    drive_owned(state, owner)
+}
+
+pub(crate) fn resume_owned(
+    state: &mut GameState,
+    owner: &SquadRallierResolutionOwnerV1,
+) -> Result<ResumableProgress, String> {
+    if owner.initial {
+        return Err("initial owner cannot resume a published selection".into());
+    }
+    drive_owned(state, owner)
 }
 fn tracked(state: &GameState) -> Result<bool, String> {
     let Some(pending) = state.engine.pending_effect.as_ref() else {
@@ -127,6 +245,12 @@ fn history(state: &GameState) -> Result<Vec<&SquadRallierResolutionReceiptV1>, S
 }
 
 pub(super) fn validate(state: &GameState) -> Result<(), String> {
+    validate_with_owner(state, None)
+}
+fn validate_with_owner(
+    state: &GameState,
+    owner: Option<&SquadRallierResolutionOwnerV1>,
+) -> Result<(), String> {
     if state.engine.event_log.iter().any(|event| {
         matches!(
             event,
@@ -136,6 +260,47 @@ pub(super) fn validate(state: &GameState) -> Result<(), String> {
         return Err("paid look receipt cannot enter the public trigger event log".into());
     }
     let receipts = history(state)?;
+    // A started live root must retain its independent stack-owned marker.
+    // Erasing pending_effect and every progress receipt cannot turn it back
+    // into a genuinely unstarted stack item.
+    for item in &state.stack {
+        let Some(started) = item.v4.squad_rallier_started_v1.0 else {
+            continue;
+        };
+        if started.stack_item_id != item.v4.stack_item_id
+            || item.kind != crate::state::StackItemKind::ActivatedAbility
+            || item.v4.ability_source_contract != Some(started.source)
+            || item
+                .inline_effect
+                .as_ref()
+                .is_none_or(|root| !source_owns_root(started.source, root))
+            || receipts
+                .iter()
+                .find(|r| r.stack_item_id == started.stack_item_id)
+                .is_none_or(|r| {
+                    r.history_index != started.first_receipt_history_index
+                        || r.source != started.source
+                })
+        {
+            return Err("started paid look root lost its independent authority".into());
+        }
+    }
+    for receipt in &receipts {
+        if let Some(pending) = receipt.pending.as_ref() {
+            let first = receipts
+                .iter()
+                .find(|r| r.stack_item_id == receipt.stack_item_id)
+                .ok_or("paid look first receipt absent")?;
+            let expected = SquadRallierStartedBindingV1 {
+                stack_item_id: receipt.stack_item_id,
+                source: receipt.source,
+                first_receipt_history_index: first.history_index,
+            };
+            if pending.resolving_item.v4.squad_rallier_started_v1.0 != Some(expected) {
+                return Err("paid look receipt lost its started stack binding".into());
+            }
+        }
+    }
     let mut latest = Vec::new();
     for receipt in receipts.iter().rev() {
         if !latest
@@ -154,6 +319,21 @@ pub(super) fn validate(state: &GameState) -> Result<(), String> {
             return Err("paid look resolution lost or rewrote its committed boundary".into());
         }
         let pending = state.engine.pending_effect.as_ref().unwrap();
+        let live = state
+            .stack
+            .iter()
+            .find(|item| item.v4.stack_item_id == receipt.stack_item_id);
+        let removed = owner.filter(|owner| {
+            owner.expected == pending.resolving_item
+                && owner.expected.v4.stack_item_id == receipt.stack_item_id
+        });
+        if match (live, removed) {
+            (Some(live), None) => live != &pending.resolving_item,
+            (None, Some(_)) => false,
+            _ => true,
+        } {
+            return Err("paid look live and pending start authority differ".into());
+        }
         if pending.resolving_item.v4.ability_source_contract != Some(receipt.source) {
             return Err("paid look original source contract changed".into());
         }
@@ -181,6 +361,9 @@ pub(super) fn preflight_begin(
         return Ok(false);
     }
     validate(state)?;
+    if !item.v4.squad_rallier_started_v1.is_empty() {
+        return Err("started paid look stack resolution cannot restart".into());
+    }
     let tentative = EffectContinuation {
         resolving_item: item.clone(),
         ctx: ctx.clone(),
@@ -220,9 +403,34 @@ pub(super) fn record_begin(state: &mut GameState) -> Result<(), String> {
         .pending_effect
         .as_ref()
         .ok_or("initial resolution is absent")?;
+    let history_index = u32::try_from(state.engine.event_history.len())
+        .map_err(|_| "resolution history exceeds u32")?;
+    let stack_item_id = pending.resolving_item.v4.stack_item_id;
+    let source = pending
+        .resolving_item
+        .v4
+        .ability_source_contract
+        .ok_or("paid look source contract absent")?;
+    let started = SquadRallierStartedBindingV1 {
+        stack_item_id,
+        source,
+        first_receipt_history_index: history_index,
+    };
+    if pending.resolving_item.v4.squad_rallier_started_v1.0 != Some(started) {
+        let live = state
+            .stack
+            .iter_mut()
+            .find(|item| item.v4.stack_item_id == stack_item_id)
+            .ok_or("paid look initial publication lacks removed-item ownership")?;
+        if live != &pending.resolving_item {
+            return Err("paid look initial live item changed".into());
+        }
+        live.v4.squad_rallier_started_v1.0 = Some(started);
+    }
+    let pending = state.engine.pending_effect.as_mut().unwrap();
+    pending.resolving_item.v4.squad_rallier_started_v1.0 = Some(started);
     let receipt = SquadRallierResolutionReceiptV1 {
-        history_index: u32::try_from(state.engine.event_history.len())
-            .map_err(|_| "resolution history exceeds u32")?,
+        history_index,
         previous_history_index: None,
         ordinal: 0,
         stack_item_id: pending.resolving_item.v4.stack_item_id,
@@ -281,6 +489,22 @@ pub(super) fn drive(state: &mut GameState) -> Result<ResumableProgress, String> 
     }
     result
 }
+
+fn drive_owned(
+    state: &mut GameState,
+    owner: &SquadRallierResolutionOwnerV1,
+) -> Result<ResumableProgress, String> {
+    validate_with_owner(state, Some(owner))?;
+    let result = super::drive_resumable_inner(state);
+    if result.is_ok() {
+        record_boundary(state)?;
+    }
+    result
+}
+
+#[cfg(test)]
+#[path = "squad_rallier_legacy_tests.rs"]
+mod legacy_tests;
 
 #[cfg(test)]
 mod tests {

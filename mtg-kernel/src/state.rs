@@ -1487,6 +1487,35 @@ pub struct StackStateV4 {
     /// serialized state, for every other stack item.
     #[serde(default, skip_serializing_if = "ManaSpentV1::is_zero")]
     pub mana_spent: ManaSpentV1,
+    /// Live ownership after the bounded paid look begins. Empty preserves old bytes and Hash.
+    #[serde(default, skip_serializing_if = "SquadRallierStartedV1::is_empty")]
+    pub squad_rallier_started_v1: SquadRallierStartedV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SquadRallierStartedBindingV1 {
+    pub stack_item_id: StackItemId,
+    pub source: AbilitySourceContractV4,
+    pub first_receipt_history_index: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SquadRallierStartedV1(pub Option<SquadRallierStartedBindingV1>);
+
+impl SquadRallierStartedV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+
+impl Hash for SquadRallierStartedV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(binding) = self.0 {
+            "squad-rallier-started/v1".hash(state);
+            binding.hash(state);
+        }
+    }
 }
 
 /// Mana spent to cast a spell. Zero contributes nothing to the in-process
