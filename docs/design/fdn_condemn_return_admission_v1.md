@@ -35,3 +35,15 @@ The next profile must use the actual generated Windows catalog/source and
 runtime identity, then append historical-read/current-write guards. No new
 hash is guessed or repinned from source metadata. Native compilation and
 gameplay qualification must precede claiming support.
+
+Actual Windows source `ce5e696dbad3d9e18e9d689803f84c8935a04c85`
+passes all-test typecheck, three Condemn primitive/four Run Away Together
+primitive groups and six printed groups for each card. Native17 command0
+is observed; actual guard release is recorded separately before target reuse.
+Generated catalog `64eaa61fc6523632` has394 definitions; source SHA256
+`d6074a3271d2987bd33371a96b5f44f74ca5576ac2ae08c25d9ee72862c63f81`.
+Runtime catalog remains `68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851`.
+The appended v72 tuple preserves v71 and earlier historical identities.
+Current canaries move to actual v72; stale v71 publisher/resume guards precede
+store access. Full profile/consumer/lint and legacy qualification remain pending.
+This candidate remains unaccepted on default and admits no model/training run.
