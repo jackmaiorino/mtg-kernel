@@ -40,7 +40,7 @@ fn mana(cost: Cost) -> String {
         text.push_str(&match pip {
             Pip::Colored(c) => format!("{{{}}}", color(*c)),
             Pip::Hybrid(a, b) => format!("{{{}/{}}}", color(*a), color(*b)),
-            Pip::Phyrexian(c) => format!("{{{}/P}}", color(*c)),
+            Pip::Phyrexian(c) | Pip::PhyrexianAnyColor(c) => format!("{{{}/P}}", color(*c)),
         });
     }
     if text.is_empty() {

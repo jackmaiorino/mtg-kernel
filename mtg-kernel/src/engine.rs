@@ -4734,9 +4734,12 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
 
     !(pay_life_count == 1
         && mana.is_some_and(|cost| {
-            cost.pips
-                .iter()
-                .any(|pip| matches!(pip, mana::Pip::Phyrexian(_)))
+            cost.pips.iter().any(|pip| {
+                matches!(
+                    pip,
+                    mana::Pip::Phyrexian(_) | mana::Pip::PhyrexianAnyColor(_)
+                )
+            })
         }))
 }
 
@@ -14011,9 +14014,9 @@ pub fn object_color_mask(state: &GameState, id: ObjectId) -> u8 {
                         }
                     };
                     mask | match *pip {
-                        mana::Pip::Colored(color) | mana::Pip::Phyrexian(color) => {
-                            color_mask(color)
-                        }
+                        mana::Pip::Colored(color)
+                        | mana::Pip::Phyrexian(color)
+                        | mana::Pip::PhyrexianAnyColor(color) => color_mask(color),
                         mana::Pip::Hybrid(first, second) => color_mask(first) | color_mask(second),
                     }
                 });

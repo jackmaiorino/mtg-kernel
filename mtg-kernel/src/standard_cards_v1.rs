@@ -3740,20 +3740,15 @@ pub(crate) fn cauldron_granted_abilities(
 /// "You may spend mana as though it were mana of any color to activate
 /// abilities of creatures you control": with an Agatha's Soul Cauldron, a
 /// creature's activation cost asks for generic mana in place of its colored
-/// and hybrid symbols. Costs with Phyrexian symbols are left as printed.
+/// and hybrid symbols. Phyrexian symbols retain their two-life alternative;
+/// a printed colorless symbol still requires colorless mana.
 pub(crate) fn spend_as_any_color(
     state: &GameState,
     player: PlayerId,
     source: ObjectId,
     cost: crate::mana::Cost,
 ) -> crate::mana::Cost {
-    if cost.pips.is_empty()
-        || cost
-            .pips
-            .iter()
-            .any(|pip| matches!(pip, crate::mana::Pip::Phyrexian(_)))
-        || !controls_cauldron(state, player)
-    {
+    if cost.pips.is_empty() || !controls_cauldron(state, player) {
         return cost;
     }
     let live = state.objects.get(source);
@@ -3763,13 +3758,40 @@ pub(crate) fn spend_as_any_color(
     {
         return cost;
     }
-    crate::mana::Cost {
-        pips: &[],
-        generic: cost
-            .generic
-            .saturating_add(u8::try_from(cost.pips.len()).unwrap_or(u8::MAX)),
-        x_count: cost.x_count,
-    }
+    // Cost holds registry-lifetime slices. Intern each finite printed recipe
+    // once, rather than leaking a new slice at every legality query.
+    static COSTS: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<crate::mana::Cost, crate::mana::Cost>>,
+    > = std::sync::OnceLock::new();
+    let mut costs = COSTS
+        .get_or_init(Default::default)
+        .lock()
+        .expect("Cauldron cost cache");
+    *costs.entry(cost).or_insert_with(|| {
+        use crate::mana::Pip;
+        let mut generic = cost.generic;
+        let pips = cost
+            .pips
+            .iter()
+            .filter_map(|pip| match *pip {
+                Pip::Colored(ManaColor::C) => Some(*pip),
+                Pip::Colored(_) | Pip::Hybrid(_, _) => {
+                    generic = generic
+                        .checked_add(1)
+                        .expect("printed activation cost fits u8");
+                    None
+                }
+                Pip::Phyrexian(color) | Pip::PhyrexianAnyColor(color) => {
+                    Some(Pip::PhyrexianAnyColor(color))
+                }
+            })
+            .collect::<Vec<_>>();
+        crate::mana::Cost {
+            pips: Box::leak(pips.into_boxed_slice()),
+            generic,
+            x_count: cost.x_count,
+        }
+    })
 }
 
 fn cauldron_card_def() -> Option<u16> {
@@ -4194,5 +4216,62 @@ impl StandardStateV1 {
                 .iter()
                 .any(|&(id, generation, _)| same(id, generation))
             || self.ninjutsu_targets.iter().any(|(_, target)| link(target))
+    }
+}
+
+#[cfg(all(test, feature = "standard-magezero-fixtures"))]
+mod cauldron_payment_tests {
+    use super::*;
+    use crate::mana::{Cost, Pip};
+
+    #[test]
+    fn permission_retains_phyrexian_life_choice_and_exact_colorless_requirement() {
+        let cauldron = crate::card_def::card_id_by_name("Agatha's Soul Cauldron").unwrap();
+        let creature = crate::card_def::card_id_by_name("Gingerbrute").unwrap();
+        let mut state = GameState::new_from_libraries(
+            &[cauldron, creature],
+            &[creature; 8],
+            |id| CARD_DEFS[id as usize].object_name.into(),
+            43,
+        );
+        for _ in 0..2 {
+            let card = state.draw_card(PlayerId::P0).unwrap();
+            state.move_hand_to_battlefield(PlayerId::P0, card);
+        }
+        let source = *state.players[0]
+            .battlefield
+            .iter()
+            .find(|id| state.objects.get(**id).card_def == creature)
+            .unwrap();
+        let cost = Cost {
+            pips: &[
+                Pip::Colored(ManaColor::W),
+                Pip::Phyrexian(ManaColor::G),
+                Pip::Colored(ManaColor::C),
+            ],
+            generic: 0,
+            x_count: 0,
+        };
+        let transformed = spend_as_any_color(&state, PlayerId::P0, source, cost);
+        assert_eq!(transformed.generic, 1);
+        assert_eq!(
+            transformed.pips,
+            &[
+                Pip::PhyrexianAnyColor(ManaColor::G),
+                Pip::Colored(ManaColor::C)
+            ]
+        );
+        state.players[0].mana_pool[ManaColor::R.pool_index()] = 3;
+        assert!(crate::mana::can_pay(&transformed, 0, PlayerId::P0, &state).is_none());
+        state.players[0].mana_pool[ManaColor::R.pool_index()] = 2;
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 1;
+        let plan = crate::mana::can_pay(&transformed, 0, PlayerId::P0, &state).unwrap();
+        assert_eq!(plan.life_paid, 0);
+        state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+        state.players[0].life = 2;
+        let plan = crate::mana::can_pay(&transformed, 0, PlayerId::P0, &state).unwrap();
+        assert_eq!(plan.life_paid, 2);
+        state.players[0].life = 1;
+        assert!(crate::mana::can_pay(&transformed, 0, PlayerId::P0, &state).is_none());
     }
 }

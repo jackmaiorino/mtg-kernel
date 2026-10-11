@@ -128,6 +128,9 @@ pub enum Pip {
     Colored(ManaColor),
     Hybrid(ManaColor, ManaColor),
     Phyrexian(ManaColor),
+    /// Runtime payment permission: retain the printed Phyrexian color and
+    /// the two-life alternative, but any color of mana may pay the pip.
+    PhyrexianAnyColor(ManaColor),
 }
 
 /// A spell/ability's mana requirement. `pips` is `'static` because every
@@ -913,6 +916,7 @@ fn solve_pips_with_life_budget_v1(
         Pip::Colored(c) => vec![c],
         Pip::Hybrid(a, b) => vec![a, b],
         Pip::Phyrexian(c) => vec![c],
+        Pip::PhyrexianAnyColor(_) => GENERIC_POOL_PAYMENT_ORDER.to_vec(),
     };
 
     // Prefer floating mana, but backtrack if Phyrexian life payment must
@@ -985,7 +989,9 @@ fn solve_pips_with_life_budget_v1(
     }
 
     // Phyrexian pips may also be paid with 2 life instead of mana.
-    if matches!(pip, Pip::Phyrexian(_)) && i64::from(plan.life_paid) + 2 <= max_life_payment {
+    if matches!(pip, Pip::Phyrexian(_) | Pip::PhyrexianAnyColor(_))
+        && i64::from(plan.life_paid) + 2 <= max_life_payment
+    {
         plan.life_paid += 2;
         if solve_pips_with_life_budget_v1(
             pips,

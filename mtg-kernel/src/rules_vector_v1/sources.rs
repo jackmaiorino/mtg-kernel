@@ -126,7 +126,7 @@ fn printed_cost(cost: &Cost, out: &mut Vec<PrintedF>) {
         match *pip {
             Pip::Colored(color) => per_color[color as usize] += 1,
             Pip::Hybrid(_, _) => out.push(PrintedF::HybridPip),
-            Pip::Phyrexian(_) => out.push(PrintedF::PhyrexianPip),
+            Pip::Phyrexian(_) | Pip::PhyrexianAnyColor(_) => out.push(PrintedF::PhyrexianPip),
         }
     }
     for color in ManaColor::ALL {
