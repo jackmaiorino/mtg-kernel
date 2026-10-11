@@ -1688,6 +1688,9 @@ impl FlatDecisionEncoderV1 {
     }
 
     fn build_globals(&mut self, observation: &ObservationV5) -> Result<(), FlatDecisionErrorV1> {
+        if !observation.known_face_down_cards.is_empty() {
+            return Err(FlatDecisionErrorV1::ObservationContract);
+        }
         if observation
             .projection
             .creatures_attacked_this_turn
@@ -3994,6 +3997,33 @@ mod tests {
         encoder.build_relations(observation)?;
         encoder.validate_cached_tables()?;
         Ok(encoder)
+    }
+
+    #[test]
+    fn frozen_encoder_rejects_private_face_down_knowledge() {
+        let session = FastActorSessionV1::reset_with_limits(90_120, 127, 128, 16_384);
+        let base = session
+            .flat_policy_observation_v1(expected(&session))
+            .unwrap();
+        assert!(base.known_face_down_cards.is_empty());
+        assert_eq!(
+            FlatDecisionEncoderV1::default().build_globals(&base),
+            Ok(())
+        );
+        for owner in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+            let mut observation = base.clone();
+            observation
+                .known_face_down_cards
+                .push(crate::rl::FaceDownCardKnowledgeV1 {
+                    object: synthetic_stable(98_121, 1, owner, owner, Zone::Battlefield),
+                    card_db_id: 2,
+                    card_name: String::from("Known hidden identity"),
+                });
+            assert_eq!(
+                FlatDecisionEncoderV1::default().build_globals(&observation),
+                Err(FlatDecisionErrorV1::ObservationContract)
+            );
+        }
     }
 
     #[test]

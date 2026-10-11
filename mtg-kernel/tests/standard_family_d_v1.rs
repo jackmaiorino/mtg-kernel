@@ -2937,6 +2937,65 @@ fn discover_resumes_its_parent_after_either_kicker_choice_before_child_priority(
     }
 }
 #[test]
+fn restored_discover_child_refuses_missing_or_mismatched_parent_before_payment() {
+    let mut state = ready();
+    library_card(&mut state, 0, "Mountain");
+    let hit = library_card(&mut state, 1, "Burst Lightning");
+    let glyph = glyph_on_clue(&mut state);
+    add_mana(&mut state, PlayerId::P0, &[], 4);
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::zone_change(glyph, Zone::Graveyard),
+    );
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectBoolean { .. })
+    ));
+    engine::step(&mut state, Action::ChooseEffectBoolean(true)).unwrap();
+    assert!(matches!(next(&mut state), Decision::ChooseKicker { spell, .. } if spell == hit));
+    for corruption in 0..5 {
+        let mut restored: GameState =
+            serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+        let context = restored
+            .standard_v1
+            .as_mut()
+            .unwrap()
+            .resolution_play
+            .as_mut()
+            .unwrap();
+        match corruption {
+            0 => context.suspended = None,
+            1 => context.parent = mtg_kernel::ids::StackItemId::default(),
+            2 => context.parent_index = usize::MAX,
+            3 => context.suspended.as_mut().unwrap().ctx.stack_item_id = None,
+            4 => {
+                context
+                    .suspended
+                    .as_mut()
+                    .unwrap()
+                    .resolving_item
+                    .controller = PlayerId::P1
+            }
+            _ => unreachable!(),
+        }
+        let mana = restored.players[0].mana_pool;
+        let library = restored.players[0].library.clone();
+        let exile = restored.exile.clone();
+        assert!(
+            matches!(
+                engine::advance_until_decision(&mut restored),
+                Decision::Halted { .. }
+            ),
+            "corruption {corruption}"
+        );
+        assert_eq!(restored.players[0].mana_pool, mana);
+        assert_eq!(restored.players[0].library, library);
+        assert_eq!(restored.exile, exile);
+        assert!(restored.engine.pending_cast.is_some());
+    }
+}
+
+#[test]
 fn cage_hideaway_is_private_and_can_play_a_land_after_the_counter_creates_coven() {
     let mut state = ready();
     let hidden = library_card(&mut state, 1, "Forest");
