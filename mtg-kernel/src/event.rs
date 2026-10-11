@@ -2028,11 +2028,36 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
         ));
         return;
     }
-    let mut authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
+    let authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
     let survivors: Vec<ProposedEvent> = events
         .into_iter()
         .filter_map(|e| apply_replacements(state, e))
         .collect();
+    commit_batch_survivors(state, survivors, authority_batch);
+}
+/// The private owning driver has already finished every replacement choice.
+/// It cannot submit a foreign root, owner, source or recipient packet.
+pub(crate) fn commit_crystal_prepared_batch(
+    state: &mut GameState,
+    survivors: Vec<ProposedEvent>,
+    capture: &crate::effect::crystal_prevention_v1::BatchCaptureV2,
+    owner: &crate::effect::crystal_prevention_v1::OwnerV1,
+) {
+    if !owner.permits_batch(state, capture, &survivors) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            capture.ctx.source,
+        ));
+        return;
+    }
+    let authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
+    commit_batch_survivors(state, survivors, authority_batch);
+}
+fn commit_batch_survivors(
+    state: &mut GameState,
+    survivors: Vec<ProposedEvent>,
+    mut authority_batch: Option<crate::authority_of_the_consuls_v1::EntryBatchV1>,
+) {
     #[cfg(feature = "standard-magezero-fixtures")]
     for event in &survivors {
         if let ProposedEvent::ZoneChange(change) = event {

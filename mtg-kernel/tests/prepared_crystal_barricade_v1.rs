@@ -1055,3 +1055,286 @@ fn answered_real_bolt_cannot_forge_closed_boundary_without_owned_execution() {
                 if execution.item.source == bolt && execution.after.is_none())));
     }
 }
+
+fn announce_batch(state: &mut GameState, actor: PlayerId, name: &str) -> ObjectId {
+    let spell = put(state, actor, name, Zone::Hand);
+    state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 2;
+    state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 2;
+    priority(state, actor);
+    engine::step(state, Action::CastSpell(spell)).unwrap();
+    if name == "Slagstorm" {
+        assert!(
+            matches!(next(state), Decision::ChooseSpellMode { legal_modes, .. } if legal_modes.contains(&0))
+        );
+        engine::step(state, Action::ChooseSpellMode(0)).unwrap();
+    }
+    let _ = next(state);
+    assert!(state.stack.iter().any(|item| item.source == spell));
+    spell
+}
+fn batch_fixture(
+    actor: PlayerId,
+    name: &str,
+) -> (GameState, [ObjectId; 2], [ObjectId; 2], ObjectId) {
+    let mut state = ready(actor);
+    let wall = source(&mut state, actor);
+    let other_wall = put(
+        &mut state,
+        actor.opponent(),
+        "Crystal Barricade",
+        Zone::Battlefield,
+    );
+    let own = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+    let opposing = put(
+        &mut state,
+        actor.opponent(),
+        "Llanowar Elves",
+        Zone::Battlefield,
+    );
+    // Real prior damage makes each single wall lethal in Slagstorm's batch.
+    damage_primitive(&mut state, own, wall, false);
+    damage_primitive(&mut state, opposing, other_wall, false);
+    shield(&mut state, wall, own, 1);
+    shield(&mut state, other_wall, opposing, 1);
+    let spell = announce_batch(&mut state, actor, name);
+    (state, [wall, other_wall], [own, opposing], spell)
+}
+#[test]
+fn real_all_creature_batches_choose_apnap_before_any_damage_and_restore_each_menu() {
+    use mtg_kernel::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for name in ["Slagstorm", "Seismic Rupture"] {
+            for shield_first in [false, true] {
+                let (mut state, walls, recipients, spell) = batch_fixture(actor, name);
+                assert!(
+                    matches!(mixed_menu(&mut state), Decision::ChooseEffectOption { player, .. } if player == actor)
+                );
+                let before_damage = state
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter(|e| {
+                        matches!(e,
+                    event::CommittedEvent::Damage { source, .. } if *source == spell)
+                    })
+                    .count();
+                assert_eq!(before_damage, 0);
+                let mut replay = restore(&state);
+                for current in [&mut state, &mut replay] {
+                    for (ordinal, chooser) in [actor, actor.opponent()].into_iter().enumerate() {
+                        assert!(
+                            matches!(next(current), Decision::ChooseEffectOption { player, .. } if player == chooser)
+                        );
+                        let Some(PendingEffectChoice::ChooseOption {
+                            purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                            ..
+                        }) = current
+                            .engine
+                            .pending_effect
+                            .as_ref()
+                            .and_then(|p| p.choice.as_ref())
+                        else {
+                            panic!("real simultaneous menu");
+                        };
+                        assert_eq!(choice.target, Target::Object(recipients[ordinal]));
+                        assert_eq!(choice.batch.as_ref().unwrap().cursor, ordinal);
+                        let public = mtg_kernel::crystal_public_v1::observe_v1(
+                            current,
+                            &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+                            chooser,
+                            0,
+                            0,
+                            0,
+                            1,
+                        )
+                        .unwrap();
+                        let public_menu = public.prevention_menu.unwrap();
+                        assert_eq!(public_menu.chooser, chooser.into());
+                        assert_eq!(
+                            public_menu.simultaneous_choices_remaining,
+                            Some(2 - ordinal)
+                        );
+                        assert_eq!(public_menu.recipient.zone, Zone::Battlefield);
+                        assert!(public_menu.source_history.is_none());
+                        assert_eq!(current.objects.get(walls[0]).damage, 1);
+                        assert_eq!(current.objects.get(walls[1]).damage, 1);
+                        let snapshot = restore(current);
+                        assert_eq!(
+                            snapshot.engine.pending_effect,
+                            current.engine.pending_effect
+                        );
+                        if shield_first {
+                            let chosen = option(current, true);
+                            engine::step(current, Action::ChooseEffectOption(chosen)).unwrap();
+                            assert!(
+                                matches!(next(current), Decision::ChooseEffectOption { player, .. } if player == chooser)
+                            );
+                            assert_eq!(current.objects.get(walls[0]).damage, 1);
+                            assert_eq!(current.objects.get(walls[1]).damage, 1);
+                        }
+                        let chosen = option(current, false);
+                        engine::step(current, Action::ChooseEffectOption(chosen)).unwrap();
+                        if ordinal == 0 {
+                            assert!(!current.engine.event_history.iter().any(|e| matches!(e,
+                                event::CommittedEvent::Damage { source, .. } if *source == spell)));
+                        }
+                    }
+                    finish(current);
+                    for recipient in recipients {
+                        assert_eq!(current.objects.get(recipient).zone, Zone::Battlefield);
+                        assert_eq!(current.objects.get(recipient).damage, 0);
+                    }
+                    for wall in walls {
+                        if name == "Slagstorm" {
+                            assert_eq!(current.objects.get(wall).zone, Zone::Graveyard);
+                        } else {
+                            assert_eq!(current.objects.get(wall).zone, Zone::Battlefield);
+                            assert_eq!(current.objects.get(wall).damage, 3);
+                        }
+                    }
+                    assert_eq!(current.objects.get(spell).zone, Zone::Graveyard);
+                    assert_eq!(
+                        current.engine.active_replacements.len(),
+                        if shield_first { 0 } else { 2 }
+                    );
+                    assert_eq!(
+                        current
+                            .engine
+                            .event_history
+                            .iter()
+                            .filter(|e| matches!(e,
+                        event::CommittedEvent::Damage { source, .. } if *source == spell))
+                            .count(),
+                        2
+                    );
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&replay).unwrap()
+                );
+            }
+        }
+    }
+}
+#[test]
+fn real_batch_progress_capture_and_early_commit_forgeries_refuse_readonly() {
+    use mtg_kernel::effect::crystal_prevention_v1::BatchOutcomeV2;
+    use mtg_kernel::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut original, _, _, _) = batch_fixture(actor, "Slagstorm");
+        mixed_menu(&mut original);
+        for mode in 0..6 {
+            let mut state = restore(&original);
+            match mode {
+                0 | 1 => {
+                    let Some(PendingEffectChoice::ChooseOption {
+                        purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                        ..
+                    }) = state
+                        .engine
+                        .pending_effect
+                        .as_mut()
+                        .and_then(|p| p.choice.as_mut())
+                    else {
+                        unreachable!()
+                    };
+                    let progress = choice.batch.as_mut().unwrap();
+                    if mode == 0 {
+                        progress.cursor = 1;
+                    } else {
+                        progress.outcomes[0] = BatchOutcomeV2::Prevented;
+                    }
+                }
+                2 | 3 => {
+                    for event in &mut state.engine.event_history {
+                        if let event::CommittedEvent::CrystalExecutionV1 { execution } = event {
+                            if let Some(capture) = execution
+                                .steps
+                                .iter_mut()
+                                .find_map(|step| step.batch_capture.as_mut())
+                            {
+                                if mode == 2 {
+                                    capture.choice_order.reverse();
+                                } else {
+                                    capture.proposals.pop();
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+                4 => {
+                    state.engine.pending_effect = None;
+                }
+                5 => {
+                    // Keep the real captured scene and receipt, but erase the remaining owner.
+                    state.stack.clear();
+                    state.engine.pending_effect = None;
+                }
+                _ => unreachable!(),
+            }
+            let bytes = serde_json::to_vec(&state).unwrap();
+            assert!(engine::step(&mut state, Action::Pass).is_err());
+            assert_eq!(serde_json::to_vec(&state).unwrap(), bytes);
+            let rejected = engine::advance_until_decision(&mut state);
+            assert!(matches!(rejected, Decision::Halted { .. }));
+            let mut expected: GameState = serde_json::from_slice(&bytes).unwrap();
+            expected.engine.halted = state.engine.halted.clone();
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&expected).unwrap()
+            );
+        }
+    }
+}
+
+#[test]
+fn real_seismic_batch_uses_effective_flying_at_resolution_before_prevention_choices() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, walls, recipients, spell) = batch_fixture(actor, "Seismic Rupture");
+        // Accepted typed temporary keyword setup, not a claimed printed flash spell.
+        let timestamp = state.engine.next_effect_timestamp;
+        state.engine.next_effect_timestamp += 1;
+        state.engine.until_end_of_turn.push(
+            engine::UntilEndOfTurnEffect::ResolvedObjectKeywordEffect {
+                object_id: walls[0],
+                object_zone_change_count: state.objects.get(walls[0]).zone_change_count,
+                layer: engine::Layers::ABILITY_ADDING,
+                timestamp,
+                duration: engine::EffectDuration::EndOfTurn,
+                keywords: Keywords::FLYING,
+            },
+        );
+        mixed_menu(&mut state);
+        let mut replay = restore(&state);
+        for current in [&mut state, &mut replay] {
+            for chooser in [actor, actor.opponent()] {
+                assert!(
+                    matches!(next(current), Decision::ChooseEffectOption { player, .. } if player == chooser)
+                );
+                let chosen = option(current, false);
+                engine::step(current, Action::ChooseEffectOption(chosen)).unwrap();
+            }
+            finish(current);
+            assert_eq!(current.objects.get(walls[0]).damage, 1);
+            assert_eq!(current.objects.get(walls[1]).damage, 3);
+            for recipient in recipients {
+                assert_eq!(current.objects.get(recipient).damage, 0);
+            }
+            assert_eq!(
+                current
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter(|e| matches!(e,
+                event::CommittedEvent::Damage { source, .. } if *source == spell))
+                    .count(),
+                1
+            );
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+    }
+}

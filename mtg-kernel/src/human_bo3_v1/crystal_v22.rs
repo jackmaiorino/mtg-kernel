@@ -97,6 +97,8 @@ pub struct HumanCrystalMenuV22 {
     pub chooser: PlayerSeatV1,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_history: Option<crate::crystal_public_v1::SavedDamageSourceV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub simultaneous_choices_remaining: Option<usize>,
     pub source: HumanCardRefV1,
     pub recipient: HumanCardRefV1,
     pub remaining_damage: i32,
@@ -153,6 +155,7 @@ fn state(
             Ok::<_, Error>(HumanCrystalMenuV22 {
                 chooser: row.chooser,
                 source_history: row.source_history.clone(),
+                simultaneous_choices_remaining: row.simultaneous_choices_remaining,
                 source: handles.get(&row.source)?.clone(),
                 recipient: handles.get(&row.recipient)?.clone(),
                 remaining_damage: row.remaining_damage,

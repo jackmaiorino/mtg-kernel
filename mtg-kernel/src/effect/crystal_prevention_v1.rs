@@ -16,6 +16,8 @@ pub struct ChoiceV1 {
     /// Only the authenticated finalized source-power receipt may supply LKI.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub historical_source: Option<StackItemId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch: Option<BatchProgressV2>,
     pub target: Target,
     pub original_amount: i32,
     pub remaining_amount: i32,
@@ -67,6 +69,8 @@ pub struct ExecutionV1 {
     pub before: Box<EffectContinuation>,
     pub after: Option<Box<EffectContinuation>>,
     pub steps: Vec<ExecutionStepV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch_commit: Option<BatchCommitV2>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ExecutionStepV1 {
@@ -76,6 +80,66 @@ pub struct ExecutionStepV1 {
     pub damage_history: Vec<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub nondamage_history: Vec<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch_capture: Option<BatchCaptureV2>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct BatchDamageV2 {
+    pub source: ObjectId,
+    pub target: Target,
+    pub amount: i32,
+    pub touched: Vec<u32>,
+}
+impl BatchDamageV2 {
+    fn proposed(&self) -> DamageProposed {
+        DamageProposed {
+            source: self.source,
+            target: self.target,
+            amount: self.amount,
+            touched_by: self.touched.clone(),
+            is_combat: false,
+            historical_source: None,
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum BatchOutcomeV2 {
+    Waiting,
+    Prevented,
+    Damage(BatchDamageV2),
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct BatchRecipientV2 {
+    pub object: EffectObjectBinding,
+    pub owner: PlayerId,
+    pub controller: PlayerId,
+    pub card_def: u16,
+    pub selected: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct BatchCaptureV2 {
+    pub ctx: ExecCtx,
+    pub op: EffectOp,
+    pub path: Vec<u16>,
+    pub roster: Vec<BatchRecipientV2>,
+    pub proposals: Vec<BatchDamageV2>,
+    pub options: Vec<Option<Vec<PreventionV1>>>,
+    pub initial_outcomes: Vec<BatchOutcomeV2>,
+    pub choice_order: Vec<usize>,
+    pub active_player: PlayerId,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct BatchProgressV2 {
+    /// Exact independent owning-execution occurrence, not a pending digest.
+    pub capture: u32,
+    pub cursor: usize,
+    pub outcomes: Vec<BatchOutcomeV2>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct BatchCommitV2 {
+    pub capture: u32,
+    pub outcomes: Vec<BatchOutcomeV2>,
+    pub damage_history: Vec<u32>,
 }
 pub(crate) fn shield_operation(
     state: &mut GameState,
@@ -217,6 +281,38 @@ impl OwnerV1 {
                 .iter()
                 .any(|i| i.v4.stack_item_id == self.expected.v4.stack_item_id)
             && state.engine.pending_effect.is_none()
+    }
+    pub(crate) fn permits_batch(
+        &self,
+        state: &GameState,
+        capture: &BatchCaptureV2,
+        events: &[crate::event::ProposedEvent],
+    ) -> bool {
+        let removed = !state
+            .stack
+            .iter()
+            .any(|i| i.v4.stack_item_id == self.expected.v4.stack_item_id)
+            && state.engine.pending_effect.is_none();
+        let live = state
+            .stack
+            .iter()
+            .filter(|i| i.v4.stack_item_id == self.expected.v4.stack_item_id)
+            .collect::<Vec<_>>();
+        let waiting = live.as_slice() == [&self.expected]
+            && state.engine.pending_effect.as_ref().is_some_and(|p| {
+                p.resolving_item == self.expected
+                    && last(state, &self.expected).and_then(|b| b.pending.as_deref()) == Some(p)
+            });
+        (removed || waiting)
+            && capture.ctx == context(&self.expected)
+            && effect_op_at_structural_path(&self.root, &capture.path) == Some(&capture.op)
+            && matches!(capture.op, EffectOp::DamageAllCreatures { .. })
+            && events.iter().all(|e| {
+                matches!(e, crate::event::ProposedEvent::Damage(d)
+                if !d.is_combat && d.historical_source.is_none() && d.source == self.expected.source
+                    && capture.proposals.iter().any(|original| original.target == d.target
+                        && d.amount > 0 && d.amount <= original.amount))
+            })
     }
     pub(crate) fn controller(&self) -> PlayerId {
         self.expected.controller
@@ -374,6 +470,7 @@ pub(crate) fn source_power_payment_matches(
 fn has_damage(op: &EffectOp) -> bool {
     match op {
         EffectOp::DealDamage { .. }
+        | EffectOp::DamageAllCreatures { .. }
         | EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1) => {
             true
         }
@@ -389,6 +486,7 @@ fn supported(op: &EffectOp) -> bool {
             ..
         } => true,
         EffectOp::DealDamage { .. }
+        | EffectOp::DamageAllCreatures { .. }
         | EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1) => {
             true
         }
@@ -635,7 +733,25 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
                 |o| !matches!(o, PreventionV1::Replacement(r) if expected.touched.contains(&r.id)),
             );
             let mut next = old.clone();
-            next.choice = (expected.remaining_amount > 0).then(|| menu(expected));
+            if expected.remaining_amount > 0 {
+                next.choice = Some(menu(expected));
+            } else if expected.batch.is_some() {
+                let (_, next_choice) = advance_batch_choice(state, &expected)?;
+                next.choice = next_choice.map(menu);
+                if next.choice.is_none()
+                    && !matches!(state.engine.event_history.get(index - 1),
+                    Some(CommittedEvent::CrystalExecutionV1 { execution })
+                        if execution.batch_commit.is_some() && execution.previous == previous.history_index
+                            && execution.before.as_ref() == old && execution.after.as_deref() == Some(&next))
+                {
+                    return Err(
+                        "Crystal final batch answer lost its independent simultaneous commit"
+                            .into(),
+                    );
+                }
+            } else {
+                next.choice = None;
+            }
             if b.pending.as_deref() != Some(&next) {
                 return Err("Crystal answer receipt lost its exact prevention/remainder".into());
             }
@@ -660,25 +776,29 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
                 ..
             }) = p.choice.as_ref()
             {
-                let op = effect_op_at_structural_path(&b.root, &choice.path)
-                    .ok_or("Crystal historical menu lost its printed instruction")?;
-                let damage = original_damage(state, &p.ctx, op)?;
-                let mut frames = Vec::new();
-                remaining(&b.root, &choice.path, &[], &mut frames)?;
-                if p.choice.as_ref() != Some(&menu((**choice).clone()))
-                    || choice.source != damage.source
-                    || choice.historical_source != damage.historical_source
-                    || choice.target != damage.target
-                    || choice.original_amount != damage.amount
-                    || choice.remaining_amount <= 0
-                    || choice.remaining_amount > damage.amount
-                    || p.frames != frames
-                    || choice.remaining_frames != frames
-                    || p.answered_choice_guard.is_some()
-                {
-                    return Err(
-                        "Crystal historical menu changed its captured root/remainder".into(),
-                    );
+                if choice.batch.is_some() {
+                    validate_batch_choice_record(state, p, &b.root, choice)?;
+                } else {
+                    let op = effect_op_at_structural_path(&b.root, &choice.path)
+                        .ok_or("Crystal historical menu lost its printed instruction")?;
+                    let damage = original_damage(state, &p.ctx, op)?;
+                    let mut frames = Vec::new();
+                    remaining(&b.root, &choice.path, &[], &mut frames)?;
+                    if p.choice.as_ref() != Some(&menu((**choice).clone()))
+                        || choice.source != damage.source
+                        || choice.historical_source != damage.historical_source
+                        || choice.target != damage.target
+                        || choice.original_amount != damage.amount
+                        || choice.remaining_amount <= 0
+                        || choice.remaining_amount > damage.amount
+                        || p.frames != frames
+                        || choice.remaining_frames != frames
+                        || p.answered_choice_guard.is_some()
+                    {
+                        return Err(
+                            "Crystal historical menu changed its captured root/remainder".into(),
+                        );
+                    }
                 }
             }
             if p.resolving_item != *b.item || p.ctx != context(&b.item) {
@@ -798,6 +918,7 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
             offered_menu: None,
             damage_history: Vec::new(),
             nondamage_history: Vec::new(),
+            batch_capture: None,
         };
         match op {
             EffectOp::Sequence(ops) => {
@@ -857,6 +978,42 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                     }
                 }
             }
+            EffectOp::DamageAllCreatures { .. } => {
+                let capture = capture_batch(state, owner, &pending.ctx, op, path)?;
+                if !capture.choice_order.is_empty() {
+                    let progress = BatchProgressV2 {
+                        capture: u32::try_from(state.engine.event_history.len())
+                            .map_err(|_| "Crystal batch capture exceeds u32")?,
+                        cursor: 0,
+                        outcomes: capture.initial_outcomes.clone(),
+                    };
+                    pending.choice = Some(menu(batch_choice(
+                        &capture,
+                        progress,
+                        pending.frames.clone(),
+                    )?));
+                    step.offered_menu = pending.choice.clone();
+                    step.batch_capture = Some(capture);
+                    steps.push(step);
+                    break;
+                }
+                let start = state.engine.event_history.len();
+                let survivors = batch_survivors(&capture.initial_outcomes)?;
+                crate::event::commit_crystal_prepared_batch(state, survivors, &capture, owner);
+                if state.engine.halted.is_some() {
+                    state.engine.pending_effect = Some(pending);
+                    return Err("Crystal complete batch commit halted".into());
+                }
+                for (offset, event) in state.engine.event_history[start..].iter().enumerate() {
+                    if matches!(event, CommittedEvent::Damage { .. }) {
+                        step.damage_history.push(
+                            u32::try_from(start + offset)
+                                .map_err(|_| "Crystal batch damage occurrence exceeds u32")?,
+                        );
+                    }
+                }
+                step.batch_capture = Some(capture);
+            }
             EffectOp::GainLife {
                 player: player @ (PlayerRef::Controller | PlayerRef::Opponent),
                 amount,
@@ -893,6 +1050,7 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
         before: Box::new(before),
         after,
         steps,
+        batch_commit: None,
     };
     state
         .engine
@@ -912,6 +1070,10 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
         let CommittedEvent::CrystalExecutionV1 { execution } = event else {
             continue;
         };
+        if execution.batch_commit.is_some() {
+            validate_batch_commit_execution(state, index, execution)?;
+            continue;
+        }
         let previous_index =
             usize::try_from(execution.previous).map_err(|_| "Crystal previous index")?;
         let Some(CommittedEvent::CrystalPreventionBoundaryV1 { boundary: previous }) =
@@ -948,6 +1110,9 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
             let EffectFrame::Program { op, path } = &step.frame else {
                 return Err("Crystal execution committed a foreign frame".into());
             };
+            if !matches!(op, EffectOp::DamageAllCreatures { .. }) && step.batch_capture.is_some() {
+                return Err("Crystal nonbatch instruction carries foreign batch authority".into());
+            }
             if !matches!(op, EffectOp::GainLife { .. }) && !step.nondamage_history.is_empty() {
                 return Err(
                     "Crystal damage/structural instruction carries foreign life gain".into(),
@@ -1053,6 +1218,51 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                         }
                     }
                 }
+                EffectOp::DamageAllCreatures { .. } => {
+                    let capture = step
+                        .batch_capture
+                        .as_ref()
+                        .ok_or("Crystal simultaneous damage lost its capture")?;
+                    validate_batch_capture(capture, &pending.ctx, op, path)?;
+                    if step.conditional_result.is_some() {
+                        return Err("Crystal batch carries foreign branch".into());
+                    }
+                    if let Some(offered) = step.offered_menu.as_ref() {
+                        if capture.choice_order.is_empty()
+                            || step_index + 1 != execution.steps.len()
+                            || !step.damage_history.is_empty()
+                        {
+                            return Err(
+                                "Crystal batch committed damage before all affected choices".into(),
+                            );
+                        }
+                        let progress = BatchProgressV2 {
+                            capture: execution.history_index,
+                            cursor: 0,
+                            outcomes: capture.initial_outcomes.clone(),
+                        };
+                        let expected =
+                            menu(batch_choice(capture, progress, pending.frames.clone())?);
+                        if *offered != expected {
+                            return Err("Crystal batch first menu lost exact captured scene".into());
+                        }
+                        pending.choice = Some(expected);
+                    } else {
+                        if !capture.choice_order.is_empty() {
+                            return Err("Crystal batch erased affected choices".into());
+                        }
+                        validate_batch_damage_occurrences(
+                            state,
+                            &capture.initial_outcomes,
+                            &step.damage_history,
+                            last_damage,
+                            index,
+                        )?;
+                        if let Some(at) = step.damage_history.last() {
+                            last_damage = *at as usize;
+                        }
+                    }
+                }
                 EffectOp::GainLife {
                     player: player @ (PlayerRef::Controller | PlayerRef::Opponent),
                     amount,
@@ -1101,6 +1311,513 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
         }
     }
     Ok(())
+}
+fn batch_capture_at<'a>(
+    state: &'a GameState,
+    index: u32,
+    path: &[u16],
+) -> Result<&'a BatchCaptureV2, String> {
+    let Some(CommittedEvent::CrystalExecutionV1 { execution }) =
+        state.engine.event_history.get(index as usize)
+    else {
+        return Err("Crystal batch lost independent owning execution".into());
+    };
+    let mut captures = execution
+        .steps
+        .iter()
+        .filter_map(|step| step.batch_capture.as_ref())
+        .filter(|capture| capture.path == path);
+    let capture = captures.next().ok_or("Crystal batch lost captured leaf")?;
+    if captures.next().is_some() {
+        return Err("Crystal batch repeated captured leaf".into());
+    }
+    Ok(capture)
+}
+fn batch_choice(
+    capture: &BatchCaptureV2,
+    progress: BatchProgressV2,
+    frames: Vec<EffectFrame>,
+) -> Result<ChoiceV1, String> {
+    let at = *capture
+        .choice_order
+        .get(progress.cursor)
+        .ok_or("Crystal batch cursor exceeds choices")?;
+    let damage = capture
+        .proposals
+        .get(at)
+        .ok_or("Crystal batch choice lost proposal")?;
+    let Target::Object(id) = damage.target else {
+        return Err("Crystal creature batch lost recipient".into());
+    };
+    let recipient = capture
+        .roster
+        .iter()
+        .find(|r| r.object.object == id)
+        .ok_or("Crystal batch choice lost recipient capture")?;
+    let options = capture
+        .options
+        .get(at)
+        .and_then(|o| o.clone())
+        .ok_or("Crystal batch choice lost original options")?;
+    u16::try_from(options.len()).map_err(|_| "Crystal batch menu exceeds u16")?;
+    Ok(ChoiceV1 {
+        source: damage.source,
+        historical_source: None,
+        batch: Some(progress),
+        target: damage.target,
+        original_amount: damage.amount,
+        remaining_amount: damage.amount,
+        touched: Vec::new(),
+        chooser: recipient.controller,
+        path: capture.path.clone(),
+        options,
+        remaining_frames: frames,
+    })
+}
+fn capture_batch(
+    state: &mut GameState,
+    owner: &OwnerV1,
+    ctx: &ExecCtx,
+    op: &EffectOp,
+    path: &[u16],
+) -> Result<BatchCaptureV2, String> {
+    let EffectOp::DamageAllCreatures { filter, amount } = op else {
+        return Err("Crystal batch is not a supported printed recipe".into());
+    };
+    let roster = [PlayerId::P0, PlayerId::P1]
+        .into_iter()
+        .flat_map(|p| state.players[p.index()].battlefield.iter().copied())
+        .map(|id| {
+            let object = state.objects.get(id);
+            BatchRecipientV2 {
+                object: EffectObjectBinding {
+                    object: id,
+                    expected_zone: Zone::Battlefield,
+                    expected_zone_change_count: object.zone_change_count,
+                },
+                owner: object.owner,
+                controller: object.controller,
+                card_def: object.card_def,
+                selected: creature_matches_filter(state, id, filter, ctx.controller),
+            }
+        })
+        .collect::<Vec<_>>();
+    let mut unique = std::collections::BTreeSet::new();
+    if roster.iter().any(|r| !unique.insert(r.object.object)) {
+        return Err("Crystal prebatch battlefield has duplicate physical recipients".into());
+    }
+    let proposals = roster
+        .iter()
+        .filter(|r| r.selected)
+        .map(|r| BatchDamageV2 {
+            source: ctx.source,
+            target: Target::Object(r.object.object),
+            amount: *amount,
+            touched: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    // Determine every menu before consuming any shield. With the current
+    // replacement algebra each shield has one fixed recipient, so the distinct
+    // creature recipients cannot consume one another's shield.
+    let options = proposals
+        .iter()
+        .map(|p| {
+            let d = p.proposed();
+            needs_choice(state, &d).then(|| applicable(state, &d))
+        })
+        .collect::<Vec<_>>();
+    for menu in options.iter().flatten() {
+        u16::try_from(menu.len()).map_err(|_| "Crystal batch menu exceeds u16")?;
+    }
+    let mut choice_order = options
+        .iter()
+        .enumerate()
+        .filter_map(|(i, o)| o.as_ref().map(|_| i))
+        .collect::<Vec<_>>();
+    choice_order.sort_by_key(|at| {
+        let Target::Object(id) = proposals[*at].target else {
+            unreachable!()
+        };
+        usize::from(state.objects.get(id).controller != state.active_player)
+    });
+    let mut initial_outcomes = Vec::with_capacity(proposals.len());
+    for (proposal, options) in proposals.iter().zip(&options) {
+        let event = crate::event::ProposedEvent::Damage(proposal.proposed());
+        if !owner.permits_damage(state, &event) {
+            return Err("Crystal batch lost pre-pop loan".into());
+        }
+        if options.is_some() {
+            initial_outcomes.push(BatchOutcomeV2::Waiting);
+        } else if proposal.amount <= 0 {
+            initial_outcomes.push(BatchOutcomeV2::Prevented);
+        } else {
+            let outcome = crate::event::apply_replacements(state, event);
+            if state.engine.halted.is_some() {
+                return Err("Crystal batch replacement preparation halted".into());
+            }
+            initial_outcomes.push(match outcome {
+                Some(crate::event::ProposedEvent::Damage(d)) => {
+                    BatchOutcomeV2::Damage(BatchDamageV2 {
+                        source: d.source,
+                        target: d.target,
+                        amount: d.amount,
+                        touched: d.touched_by,
+                    })
+                }
+                None => BatchOutcomeV2::Prevented,
+                _ => return Err("Crystal batch changed proposal kind".into()),
+            });
+        }
+    }
+    Ok(BatchCaptureV2 {
+        ctx: ctx.clone(),
+        op: op.clone(),
+        path: path.to_vec(),
+        roster,
+        proposals,
+        options,
+        initial_outcomes,
+        choice_order,
+        active_player: state.active_player,
+    })
+}
+fn validate_batch_capture(
+    capture: &BatchCaptureV2,
+    ctx: &ExecCtx,
+    op: &EffectOp,
+    path: &[u16],
+) -> Result<(), String> {
+    let EffectOp::DamageAllCreatures { amount, .. } = op else {
+        return Err("Crystal captured a foreign batch recipe".into());
+    };
+    if capture.ctx != *ctx
+        || capture.op != *op
+        || capture.path != path
+        || capture.proposals.len() != capture.options.len()
+        || capture.proposals.len() != capture.initial_outcomes.len()
+        || capture
+            .roster
+            .iter()
+            .any(|r| r.object.expected_zone != Zone::Battlefield)
+    {
+        return Err("Crystal batch changed captured recipe/context".into());
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    if capture.roster.iter().any(|r| !ids.insert(r.object.object)) {
+        return Err("Crystal batch repeated battlefield recipient".into());
+    }
+    let expected = capture
+        .roster
+        .iter()
+        .filter(|r| r.selected)
+        .map(|r| BatchDamageV2 {
+            source: ctx.source,
+            target: Target::Object(r.object.object),
+            amount: *amount,
+            touched: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    if expected != capture.proposals {
+        return Err("Crystal batch changed complete ordered proposals".into());
+    }
+    let mut choices = capture
+        .options
+        .iter()
+        .enumerate()
+        .filter_map(|(i, o)| o.as_ref().map(|_| i))
+        .collect::<Vec<_>>();
+    choices.sort_by_key(|at| {
+        let Target::Object(id) = capture.proposals[*at].target else {
+            unreachable!()
+        };
+        usize::from(
+            capture
+                .roster
+                .iter()
+                .find(|r| r.object.object == id)
+                .unwrap()
+                .controller
+                != capture.active_player,
+        )
+    });
+    if choices != capture.choice_order {
+        return Err("Crystal batch changed APNAP choice order".into());
+    }
+    for ((proposal, options), outcome) in capture
+        .proposals
+        .iter()
+        .zip(&capture.options)
+        .zip(&capture.initial_outcomes)
+    {
+        match (options, outcome) {
+            (Some(options), BatchOutcomeV2::Waiting)
+                if !options.is_empty()
+                    && options
+                        .iter()
+                        .any(|o| matches!(o, PreventionV1::Barricade(_)))
+                    && options.iter().any(|o| {
+                        matches!(o, PreventionV1::Replacement(r)
+                    if matches!(r.kind, ReplacementEffectKind::PreventNextDamage { .. }))
+                    }) => {}
+            (None, BatchOutcomeV2::Prevented) => {}
+            (None, BatchOutcomeV2::Damage(d))
+                if d.source == proposal.source
+                    && d.target == proposal.target
+                    && d.amount > 0
+                    && d.amount <= proposal.amount => {}
+            _ => return Err("Crystal batch changed genuine initial replacement outcomes".into()),
+        }
+    }
+    Ok(())
+}
+fn validate_live_batch(state: &GameState, capture: &BatchCaptureV2) -> Result<(), String> {
+    let EffectOp::DamageAllCreatures { filter, .. } = &capture.op else {
+        return Err("foreign batch".into());
+    };
+    let ids = [PlayerId::P0, PlayerId::P1]
+        .into_iter()
+        .flat_map(|p| state.players[p.index()].battlefield.iter().copied())
+        .collect::<Vec<_>>();
+    if state.active_player != capture.active_player
+        || ids
+            != capture
+                .roster
+                .iter()
+                .map(|r| r.object.object)
+                .collect::<Vec<_>>()
+        || capture.roster.iter().any(|r| {
+            state.objects.try_get(r.object.object).is_none_or(|live| {
+                live.zone != r.object.expected_zone
+                    || live.zone_change_count != r.object.expected_zone_change_count
+                    || live.owner != r.owner
+                    || live.controller != r.controller
+                    || live.card_def != r.card_def
+                    || creature_matches_filter(
+                        state,
+                        r.object.object,
+                        filter,
+                        capture.ctx.controller,
+                    ) != r.selected
+            })
+        })
+    {
+        return Err("Crystal waiting batch changed prebatch battlefield".into());
+    }
+    Ok(())
+}
+fn advance_batch_choice(
+    state: &GameState,
+    choice: &ChoiceV1,
+) -> Result<(BatchProgressV2, Option<ChoiceV1>), String> {
+    let mut progress = choice
+        .batch
+        .clone()
+        .ok_or("Crystal batch progress absent")?;
+    let capture = batch_capture_at(state, progress.capture, &choice.path)?;
+    let at = *capture
+        .choice_order
+        .get(progress.cursor)
+        .ok_or("Crystal batch cursor changed")?;
+    if progress.outcomes.len() != capture.proposals.len()
+        || progress.outcomes.get(at) != Some(&BatchOutcomeV2::Waiting)
+    {
+        return Err("Crystal batch repeated a completed recipient".into());
+    }
+    progress.outcomes[at] = BatchOutcomeV2::Prevented;
+    progress.cursor = progress
+        .cursor
+        .checked_add(1)
+        .ok_or("Crystal batch cursor overflow")?;
+    let next = if progress.cursor < capture.choice_order.len() {
+        Some(batch_choice(
+            capture,
+            progress.clone(),
+            choice.remaining_frames.clone(),
+        )?)
+    } else {
+        None
+    };
+    Ok((progress, next))
+}
+fn batch_survivors(
+    outcomes: &[BatchOutcomeV2],
+) -> Result<Vec<crate::event::ProposedEvent>, String> {
+    outcomes
+        .iter()
+        .filter_map(|o| match o {
+            BatchOutcomeV2::Waiting => Some(Err(
+                "Crystal batch committed before all affected choices".into(),
+            )),
+            BatchOutcomeV2::Prevented => None,
+            BatchOutcomeV2::Damage(d) => {
+                Some(Ok(crate::event::ProposedEvent::Damage(d.proposed())))
+            }
+        })
+        .collect()
+}
+fn validate_batch_choice_record(
+    state: &GameState,
+    pending: &EffectContinuation,
+    root: &EffectOp,
+    choice: &ChoiceV1,
+) -> Result<(), String> {
+    let progress = choice
+        .batch
+        .as_ref()
+        .ok_or("Crystal batch choice lost progress")?;
+    let capture = batch_capture_at(state, progress.capture, &choice.path)?;
+    let op = effect_op_at_structural_path(root, &choice.path)
+        .ok_or("Crystal batch lost printed leaf")?;
+    validate_batch_capture(capture, &pending.ctx, op, &choice.path)?;
+    let Some(CommittedEvent::CrystalExecutionV1 { execution }) =
+        state.engine.event_history.get(progress.capture as usize)
+    else {
+        unreachable!()
+    };
+    if execution.item.as_ref() != &pending.resolving_item {
+        return Err("Crystal batch borrowed another stack incarnation".into());
+    }
+    let mut expected_outcomes = capture.initial_outcomes.clone();
+    if progress.cursor >= capture.choice_order.len() {
+        return Err("Crystal batch cursor reached closure inside menu".into());
+    }
+    for at in capture.choice_order.iter().take(progress.cursor) {
+        expected_outcomes[*at] = BatchOutcomeV2::Prevented;
+    }
+    if progress.outcomes != expected_outcomes {
+        return Err("Crystal batch erased or rewrote prior recipient outcomes".into());
+    }
+    let original = batch_choice(capture, progress.clone(), pending.frames.clone())?;
+    let mut frames = Vec::new();
+    remaining(root, &choice.path, &[], &mut frames)?;
+    let mut expected_options = original.options.clone();
+    let mut touched = std::collections::BTreeSet::new();
+    for id in &choice.touched {
+        if !touched.insert(*id)
+            || !original
+                .options
+                .iter()
+                .any(|o| matches!(o, PreventionV1::Replacement(r) if r.id == *id))
+        {
+            return Err("Crystal batch changed applied replacement identities".into());
+        }
+    }
+    expected_options
+        .retain(|o| !matches!(o, PreventionV1::Replacement(r) if touched.contains(&r.id)));
+    if choice.source != original.source
+        || choice.target != original.target
+        || choice.historical_source.is_some()
+        || choice.original_amount != original.original_amount
+        || choice.remaining_amount <= 0
+        || choice.remaining_amount > choice.original_amount
+        || choice.chooser != original.chooser
+        || choice.options != expected_options
+        || choice.remaining_frames != frames
+        || pending.frames != frames
+        || pending.answered_choice_guard.is_some()
+        || pending.choice.as_ref() != Some(&menu(choice.clone()))
+    {
+        return Err("Crystal batch changed its captured menu or printed remainder".into());
+    }
+    Ok(())
+}
+fn validate_batch_damage_occurrences(
+    state: &GameState,
+    outcomes: &[BatchOutcomeV2],
+    saved: &[u32],
+    previous: usize,
+    until: usize,
+) -> Result<(), String> {
+    let expected = outcomes
+        .iter()
+        .filter_map(|o| match o {
+            BatchOutcomeV2::Damage(d) => Some(d),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if expected.len() != saved.len()
+        || outcomes
+            .iter()
+            .any(|o| matches!(o, BatchOutcomeV2::Waiting))
+    {
+        return Err("Crystal batch changed simultaneous survivor count".into());
+    }
+    let mut last = previous;
+    for (damage, index) in expected.into_iter().zip(saved) {
+        let at = usize::try_from(*index).map_err(|_| "Crystal batch damage index")?;
+        if at <= last
+            || at >= until
+            || !matches!(state.engine.event_history.get(at),
+            Some(CommittedEvent::Damage { source, target, amount, .. })
+                if *source == damage.source && *target == damage.target && *amount == damage.amount)
+        {
+            return Err("Crystal batch lost exact ordered simultaneous damage occurrences".into());
+        }
+        last = at;
+    }
+    Ok(())
+}
+fn validate_batch_commit_execution(
+    state: &GameState,
+    index: usize,
+    execution: &ExecutionV1,
+) -> Result<(), String> {
+    let commit = execution
+        .batch_commit
+        .as_ref()
+        .ok_or("Crystal batch commit absent")?;
+    let previous_index = execution.previous as usize;
+    let Some(CommittedEvent::CrystalPreventionBoundaryV1 { boundary: previous }) =
+        state.engine.event_history.get(previous_index)
+    else {
+        return Err("Crystal batch commit lost prior boundary".into());
+    };
+    let Some(CommittedEvent::CrystalPreventionBoundaryV1 { boundary: next }) =
+        state.engine.event_history.get(index + 1)
+    else {
+        return Err("Crystal batch commit lost immediate answered boundary".into());
+    };
+    let answer = next
+        .answer
+        .as_ref()
+        .ok_or("Crystal batch completion is not an actual answer")?;
+    let old = previous
+        .pending
+        .as_deref()
+        .ok_or("Crystal batch commit follows closure")?;
+    if execution.history_index as usize != index
+        || previous_index >= index
+        || previous.item != execution.item
+        || next.item != execution.item
+        || next.root != previous.root
+        || next.previous != Some(execution.previous)
+        || execution.before.as_ref() != old
+        || next.pending != execution.after
+        || !execution.steps.is_empty()
+        || old.choice.as_ref() != Some(&menu(answer.before.clone()))
+    {
+        return Err("Crystal batch commit changed complete owning continuation".into());
+    }
+    validate_batch_choice_record(state, old, &previous.root, &answer.before)?;
+    let (progress, next_choice) = advance_batch_choice(state, &answer.before)?;
+    if next_choice.is_some()
+        || progress.capture != commit.capture
+        || progress.outcomes != commit.outcomes
+    {
+        return Err("Crystal batch committed before its final affected choice".into());
+    }
+    let mut expected = old.clone();
+    expected.choice = None;
+    if execution.after.as_deref() != Some(&expected) {
+        return Err("Crystal batch commit skipped printed remainder".into());
+    }
+    validate_batch_damage_occurrences(
+        state,
+        &commit.outcomes,
+        &commit.damage_history,
+        previous_index,
+        index,
+    )
 }
 fn cannot_prevent(state: &GameState) -> bool {
     state.engine.until_end_of_turn.iter().any(|e| {
@@ -1200,6 +1917,7 @@ pub(crate) fn offer(
     let choice = ChoiceV1 {
         source: damage.source,
         historical_source: damage.historical_source,
+        batch: None,
         target: damage.target,
         original_amount: damage.amount,
         remaining_amount: damage.amount,
@@ -1259,6 +1977,15 @@ fn validate_choice(state: &GameState, pending: &EffectContinuation) -> Result<()
         return Ok(());
     };
     let root = validated_definition_owned_root_effect(state, pending)?;
+    if let Some(progress) = choice.batch.as_ref() {
+        validate_batch_choice_record(state, pending, &root, choice)?;
+        let capture = batch_capture_at(state, progress.capture, &choice.path)?;
+        validate_live_batch(state, capture)?;
+        if choice.options != applicable(state, &choice.damage()) {
+            return Err("Crystal simultaneous menu changed applicable prevention".into());
+        }
+        return Ok(());
+    }
     let op = effect_op_at_structural_path(&root, &choice.path)
         .ok_or("Crystal choice lost its actual damage instruction")?;
     let damage = original_damage(state, &pending.ctx, op)?;
@@ -1318,6 +2045,7 @@ pub(crate) fn answer(state: &mut GameState, index: u16) -> Result<(), String> {
     else {
         return Err("not a Crystal choice".into());
     };
+    let before = pending.clone();
     let mut choice = (**choice).clone();
     let selected = choice
         .options
@@ -1363,6 +2091,53 @@ pub(crate) fn answer(state: &mut GameState, index: u16) -> Result<(), String> {
             return Err("Crystal static prevention disappeared during resolution".into());
         }
         Some(menu(choice))
+    } else if choice.batch.is_some() {
+        let (progress, next_choice) = advance_batch_choice(state, &choice)?;
+        if next_choice.is_none() {
+            let capture = batch_capture_at(state, progress.capture, &choice.path)?.clone();
+            let previous = last(state, &owner.expected)
+                .ok_or("Crystal batch answer lost prior boundary")?
+                .history_index;
+            let start = state.engine.event_history.len();
+            let survivors = batch_survivors(&progress.outcomes)?;
+            crate::event::commit_crystal_prepared_batch(state, survivors, &capture, &owner);
+            if state.engine.halted.is_some() {
+                return Err("Crystal answered simultaneous batch halted".into());
+            }
+            let damage_history = state.engine.event_history[start..]
+                .iter()
+                .enumerate()
+                .filter_map(|(offset, event)| {
+                    matches!(event, CommittedEvent::Damage { .. }).then_some(start + offset)
+                })
+                .map(|at| {
+                    u32::try_from(at).map_err(|_| "Crystal simultaneous damage history exceeds u32")
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut after = before.clone();
+            after.choice = None;
+            let execution = ExecutionV1 {
+                history_index: u32::try_from(state.engine.event_history.len())
+                    .map_err(|_| "Crystal history exceeds u32")?,
+                previous,
+                item: Box::new(owner.expected.clone()),
+                before: Box::new(before),
+                after: Some(Box::new(after)),
+                steps: Vec::new(),
+                batch_commit: Some(BatchCommitV2 {
+                    capture: progress.capture,
+                    outcomes: progress.outcomes,
+                    damage_history,
+                }),
+            };
+            state
+                .engine
+                .event_history
+                .push(CommittedEvent::CrystalExecutionV1 {
+                    execution: Box::new(execution),
+                });
+        }
+        next_choice.map(menu)
     } else {
         None
     };

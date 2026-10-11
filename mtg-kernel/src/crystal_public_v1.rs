@@ -31,6 +31,9 @@ pub struct MenuV1 {
     /// damage. In that case source describes the captured incarnation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_history: Option<SavedDamageSourceV1>,
+    /// Includes the current affected recipient. No hidden roster or raw IDs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub simultaneous_choices_remaining: Option<usize>,
     pub source: CardStableRefV1,
     pub recipient: CardStableRefV1,
     pub remaining_damage: i32,
@@ -256,6 +259,18 @@ fn menu(state: &GameState) -> Result<Option<MenuV1>, RlContractError> {
         chooser: choice.chooser.into(),
         source,
         source_history,
+        simultaneous_choices_remaining: choice.batch.as_ref().map(|progress| {
+            progress
+                .outcomes
+                .iter()
+                .filter(|o| {
+                    matches!(
+                        o,
+                        crate::effect::crystal_prevention_v1::BatchOutcomeV2::Waiting
+                    )
+                })
+                .count()
+        }),
         recipient: public_ref(state, recipient)?,
         remaining_damage: choice.remaining_amount,
         options,
