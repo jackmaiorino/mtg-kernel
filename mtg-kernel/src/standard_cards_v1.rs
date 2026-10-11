@@ -19,6 +19,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StandardStateV1 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) resolution_play: Option<crate::engine::resolution_cast_v1::ResolutionPlayV1>,
     /// Turn number and, per player, the noncombat damage dealt that turn by
     /// red sources they controlled (Temple of Power's activation condition).
     #[serde(default, skip_serializing_if = "Option::is_none")]

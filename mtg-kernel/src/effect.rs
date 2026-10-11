@@ -1433,6 +1433,13 @@ pub enum EffectOp {
     IncreaseSpeed {
         player: PlayerId,
     },
+    CastExiledWithoutMana {
+        card: EffectObjectBinding,
+        maximum_mana_value: Option<u16>,
+    },
+    PlayExiledLand {
+        card: EffectObjectBinding,
+    },
     CopySpellSnapshot {
         spell: Box<StackItem>,
     },
@@ -2666,6 +2673,8 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::PutObjectInOwnersLibraryTopOrBottom { .. }
         | EffectOp::SurveilOne { .. }
         | EffectOp::CounterUnlessPaysGeneric { .. }
+        | EffectOp::CastExiledWithoutMana { .. }
+        | EffectOp::PlayExiledLand { .. }
         | EffectOp::CopySpellSnapshot { .. }
         | EffectOp::CounterUnlessPaysLife { .. }
         | EffectOp::CounterUnlessDiscardsCard { .. }
@@ -6981,7 +6990,13 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
             "effect continuation context no longer mirrors its resolving stack item".to_string(),
         );
     }
-    if state.stack.last() != Some(&pending.resolving_item) {
+    if crate::engine::resolution_cast_v1::resolving_index(
+        state,
+        pending.resolving_item.v4.stack_item_id,
+    )
+    .and_then(|i| state.stack.get(i))
+        != Some(&pending.resolving_item)
+    {
         return Err(
             "effect continuation resolving item no longer exactly matches the public stack top"
                 .to_string(),
@@ -10668,6 +10683,14 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     state.engine.pending_effect = Some(continuation);
                     return Ok(ResumableProgress::Suspended);
                 }
+            }
+            EffectOp::CastExiledWithoutMana { card, maximum_mana_value } => {
+                crate::engine::resolution_cast_v1::stage(state, continuation, card, maximum_mana_value, false)?;
+                return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::PlayExiledLand { card } => {
+                crate::engine::resolution_cast_v1::stage(state, continuation, card, None, true)?;
+                return Ok(ResumableProgress::Suspended);
             }
             EffectOp::CopySpellSnapshot { spell } => {
                 let choice = CopyTargetChoice {
@@ -15011,7 +15034,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 state,
             );
         }
-        EffectOp::CopySpellSnapshot { .. } => {
+        EffectOp::CastExiledWithoutMana { .. }
+        | EffectOp::PlayExiledLand { .. }
+        | EffectOp::CopySpellSnapshot { .. } => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,

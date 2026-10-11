@@ -792,6 +792,10 @@ pub enum SpellCastRouteV4 {
         holder: PlayerId,
         permission_zone_change_count: u32,
     },
+    ResolvingEffectV1 {
+        holder: PlayerId,
+        maximum_mana_value: Option<u16>,
+    },
 }
 
 /// Incarnation-local cast provenance stored on the physical source object

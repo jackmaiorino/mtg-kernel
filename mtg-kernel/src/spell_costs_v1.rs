@@ -475,6 +475,27 @@ pub(super) fn selected_spell_mana_costs_v1(
     Some(selected)
 }
 
+pub(super) fn selected_spell_mana_costs_for_source_v1(
+    source: ObjectId,
+    definition: &card_def::CardDef,
+    method: CastMethodV4,
+    kicked: bool,
+    mode: u8,
+    targets: &[Target],
+    player: PlayerId,
+    state: &GameState,
+) -> Option<SelectedSpellManaCostsV1> {
+    let mut selected =
+        selected_spell_mana_costs_v1(definition, method, kicked, mode, targets, player, state)?;
+    if super::resolution_cast_v1::free_cast(state, source) {
+        if !super::resolution_cast_v1::form_allowed(state, source, method) {
+            return None;
+        }
+        selected.costs.remove(0);
+    }
+    Some(selected)
+}
+
 /// Quote a selected total before all interactive cost objects are picked.
 /// Complete the current pipeline's single supported object family without
 /// changing state. Tap picks reserve mana sources; sacrifices may use their
@@ -504,8 +525,9 @@ pub(super) fn selected_spell_quote_v1(
     {
         return None;
     }
-    let selected =
-        selected_spell_mana_costs_v1(definition, method, kicked, mode, targets, player, state)?;
+    let selected = selected_spell_mana_costs_for_source_v1(
+        source, definition, method, kicked, mode, targets, player, state,
+    )?;
     let modifiers = super::spell_cost_generic_modifiers_v1(state, selected.types, player);
     let mut family = None;
     let mut discard_count = 0usize;
@@ -716,7 +738,8 @@ pub(super) fn prepare_final_spell_payment_v1(
     let definition = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
     let player = pending.controller;
     let source = pending.spell;
-    let selected = selected_spell_mana_costs_v1(
+    let selected = selected_spell_mana_costs_for_source_v1(
+        source,
         definition,
         method,
         pending.kicked == Some(true),

@@ -61,6 +61,10 @@ use crate::trigger::{self, PendingTrigger};
 use serde::{Deserialize, Serialize};
 use std::hash::Hash;
 
+#[path = "resolution_cast_v1.rs"]
+pub(crate) mod resolution_cast_v1;
+pub(crate) use resolution_cast_v1::{can_cast_exiled_without_mana, can_play_exiled_land};
+
 // Shared selected-cost collection is prepared separately from route wiring.
 #[path = "counter_distribution_v1.rs"]
 mod counter_distribution_v1;
@@ -1895,6 +1899,24 @@ fn validate_physical_spell_cast_origin(
         (false, None) => {}
     }
     let route_supports_method = match origin.route {
+        SpellCastRouteV4::ResolvingEffectV1 { holder, .. } => {
+            origin.origin_zone == Zone::Exile
+                && holder == item.controller
+                && item.v4.x_value == 0
+                && (resolution_cast_v1::form_allowed(state, item.source, cast_method)
+                    || (is_pending_placeholder
+                        && resolution_cast_v1::form_allowed(
+                            state,
+                            item.source,
+                            CastMethodV4::Omen,
+                        )))
+                && (!is_pending_placeholder
+                    || resolution_cast_v1::permit(state, item.source).is_some_and(|p| {
+                        !p.land
+                            && p.controller == item.controller
+                            && p.card.expected_zone_change_count == origin.origin_zone_change_count
+                    }))
+        }
         SpellCastRouteV4::Hand => {
             origin.origin_zone == Zone::Hand
                 && source.owner == item.controller
@@ -2256,6 +2278,9 @@ fn storm_source_contract_is_structurally_valid(
         return false;
     };
     let route_is_valid = match origin.route {
+        SpellCastRouteV4::ResolvingEffectV1 { holder, .. } => {
+            origin.origin_zone == Zone::Exile && holder == contract.controller
+        }
         SpellCastRouteV4::Hand => {
             origin.origin_zone == Zone::Hand && contract.owner == contract.controller
         }
@@ -6495,7 +6520,8 @@ fn cast_form_timing_ok(
     player: PlayerId,
     state: &GameState,
 ) -> bool {
-    spell_types_have_instant(types)
+    resolution_cast_v1::free_cast(state, pending.spell)
+        || spell_types_have_instant(types)
         || keywords.has(Keywords::FLASH)
         || sorcery_speed_timing_ok(player, state)
 }
@@ -6526,10 +6552,11 @@ fn viable_pending_spell_forms(
     pending: &PendingCast,
     state: &GameState,
 ) -> Vec<u8> {
-    let alternative = if supported_bestow(def).is_some() {
+    let free = resolution_cast_v1::free_cast(state, pending.spell);
+    let alternative = if supported_bestow(def).is_some() && !free {
         Some((CastMethodV4::Bestow, &[CardType::Enchantment][..]))
     } else if let Some(adventure) = supported_adventure(def) {
-        (pending.origin_zone == Zone::Hand).then_some((CastMethodV4::Omen, adventure.types))
+        (pending.origin_zone == Zone::Hand || free).then_some((CastMethodV4::Omen, adventure.types))
     } else {
         supported_omen(def).map(|omen| (CastMethodV4::Omen, omen.types))
     };
@@ -6550,7 +6577,8 @@ fn viable_pending_spell_forms(
                 pending.controller,
                 source,
                 state,
-            ) && pending_cast_form_timing_ok(types, keywords, pending, state)
+            ) && resolution_cast_v1::form_allowed(state, pending.spell, method)
+                && pending_cast_form_timing_ok(types, keywords, pending, state)
                 && pending_cast_quote_v1(
                     def,
                     pending,
@@ -6582,6 +6610,7 @@ fn viable_pending_spell_forms(
             .is_some()
         });
     }
+    modes.retain(|_| resolution_cast_v1::form_allowed(state, pending.spell, CastMethodV4::Normal));
     modes
 }
 
@@ -6625,6 +6654,9 @@ fn pending_cast_selected_mana_cost(
     pending: &PendingCast,
     state: &GameState,
 ) -> Option<Cost> {
+    if resolution_cast_v1::free_cast(state, pending.spell) {
+        return pending.mode_chosen.map(|_| Cost::zero());
+    }
     match pending.mode_chosen {
         Some(1) if supported_bestow(def).is_some() => supported_bestow(def).map(|b| {
             static_adjusted_spell_cost(b.cost, &[CardType::Enchantment], pending.controller, state)
@@ -8283,6 +8315,9 @@ fn reset_priority(state: &mut GameState) {
 }
 
 fn collect_and_queue_triggers(state: &mut GameState) {
+    if resolution_cast_v1::defer_triggers(state) {
+        return;
+    }
     let triggers = trigger::collect_and_process(state);
     state.engine.pending_triggers.extend(triggers);
 }
@@ -8306,7 +8341,8 @@ fn remaining_cast_payment_is_payable(
     {
         return false;
     }
-    let Some(selected) = spell_costs_v1::selected_spell_mana_costs_v1(
+    let Some(selected) = spell_costs_v1::selected_spell_mana_costs_for_source_v1(
+        pending.spell,
         def,
         method,
         pending.kicked == Some(true),
@@ -8955,7 +8991,11 @@ fn drain_pending_effect_or_decide(state: &mut GameState) -> Option<Decision> {
 fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
     let pending = state.engine.pending_effect.as_ref().unwrap();
     let item = pending.resolving_item.clone();
-    match state.stack.pop() {
+    let index = resolution_cast_v1::resolving_index(state, item.v4.stack_item_id);
+    match index
+        .filter(|&i| i < state.stack.len())
+        .map(|i| state.stack.remove(i))
+    {
         Some(public_item) if public_item == item => {}
         Some(public_item) => {
             state.stack.push(public_item);
@@ -8983,11 +9023,12 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
                 return None;
             }
             keep_ability_on_stack_until_discarded(state, &item);
+            resolution_cast_v1::finish_parent(state, item.v4.stack_item_id);
             collect_and_queue_triggers(state);
             reset_priority(state);
         }
         Ok(effect::ResumableProgress::Suspended) => {
-            state.stack.push(item);
+            resolution_cast_v1::restore_parent(state, item);
         }
         Err(_) => {
             state.stack.push(item.clone());
@@ -9176,22 +9217,23 @@ pub(crate) fn validate_pending_cast(
     }
 
     let has_prior_exile_permission = || {
-        pending
-            .source_contract
-            .zone_change_count
-            .checked_sub(1)
-            .is_some_and(|generation| {
-                state
-                    .engine
-                    .exile_play_permissions
-                    .iter()
-                    .any(|permission| {
-                        permission.object == pending.spell
-                            && permission.holder == pending.controller
-                            && permission.zone_change_generation == generation
-                            && permission.play_or_cast == PlayOrCast::Cast
-                    })
-            })
+        resolution_cast_v1::free_cast(state, pending.spell)
+            || pending
+                .source_contract
+                .zone_change_count
+                .checked_sub(1)
+                .is_some_and(|generation| {
+                    state
+                        .engine
+                        .exile_play_permissions
+                        .iter()
+                        .any(|permission| {
+                            permission.object == pending.spell
+                                && permission.holder == pending.controller
+                                && permission.zone_change_generation == generation
+                                && permission.play_or_cast == PlayOrCast::Cast
+                        })
+                })
     };
     match method {
         CastMethodV4::Normal => {
@@ -9443,8 +9485,9 @@ pub(crate) fn validate_pending_cast(
 
     let selected_cost =
         active_spec.and_then(|_| pending_cast_selected_mana_cost(def, pending, state));
-    let expected_seed_x = if def.cost.x_count == 0
-        && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)
+    let expected_seed_x = if resolution_cast_v1::free_cast(state, pending.spell)
+        || (def.cost.x_count == 0
+            && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0))
     {
         Some(0)
     } else {
@@ -9618,7 +9661,8 @@ pub(crate) fn validate_pending_cast(
     } else {
         Some(0)
     };
-    let has_cast_mode_choice = def.alt_cost.is_some();
+    let has_cast_mode_choice =
+        def.alt_cost.is_some() && !resolution_cast_v1::free_cast(state, pending.spell);
     let seeded_cast_mode = if method == CastMethodV4::Normal && has_cast_mode_choice {
         None
     } else {
@@ -12453,7 +12497,7 @@ fn execute_resolving_program(
             // Keep the resolving item visible throughout the decision, but
             // grant no priority/SBA/trigger window until the continuation
             // completes.
-            state.stack.push(item.clone());
+            resolution_cast_v1::restore_parent(state, item.clone());
             ResolutionProgress::Suspended
         }
         Ok(effect::ResumableProgress::Complete(_)) | Err(_) => {
@@ -16965,7 +17009,8 @@ pub(crate) fn validate_pending_land_play(
         .ok_or("pending land source is missing")?;
     if object.zone_change_count != pending.source_zone_change_count
         || object.zone != pending.origin_zone
-        || object.owner != pending.controller
+        || (object.owner != pending.controller
+            && !resolution_cast_v1::permit(state, pending.source).is_some_and(|p| p.land))
         || !matches!(pending.origin_zone, Zone::Hand | Zone::Exile)
     {
         return Err("pending land source incarnation or ownership changed".to_string());
@@ -16979,7 +17024,10 @@ pub(crate) fn validate_pending_land_play(
     {
         return Err("pending land color-choice definition changed".to_string());
     }
-    if !land_drop_candidates(pending.controller, state).contains(&pending.source) {
+    if !resolution_cast_v1::permit(state, pending.source)
+        .is_some_and(|p| p.land && can_play_exiled_land(state, p.controller, p.card))
+        && !land_drop_candidates(pending.controller, state).contains(&pending.source)
+    {
         return Err("pending land is no longer a legal land drop".to_string());
     }
     if state.engine.pending_cast.is_some()
@@ -17098,16 +17146,26 @@ fn play_land(
     chosen_color: Option<ManaColor>,
 ) {
     let ctx = ExecCtx::no_targets(id, player);
-    effect::execute(
-        &EffectOp::MoveObject {
-            object: ObjectRef::ThisSource,
-            to_zone: Zone::Battlefield,
-        },
-        &ctx,
-        state,
-    );
+    if resolution_cast_v1::permit(state, id).is_some_and(|p| p.land) {
+        event::propose_and_commit(
+            state,
+            ProposedEvent::zone_change_to_battlefield_under_controller(id, player),
+        );
+    } else {
+        effect::execute(
+            &EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            },
+            &ctx,
+            state,
+        );
+    }
     state.objects.get_mut(id).v4.chosen_color = chosen_color;
     state.players[player.index()].lands_played_this_turn += 1;
+    if resolution_cast_v1::finish_child(state) {
+        return;
+    }
     collect_and_queue_triggers(state);
     state.engine.priority_passes = [false, false];
     state.priority_player = player;
@@ -17164,7 +17222,7 @@ fn begin_cast_ex(
     let plotted_turn = state.objects.get(spell_id).plotted_turn;
     debug_assert!(matches!(
         forced_cast_method,
-        None | Some(CastMethodV4::Madness)
+        None | Some(CastMethodV4::Madness) | Some(CastMethodV4::Normal)
     ));
     // A card sitting in Exile isn't necessarily Plotted any more: an
     // impulse-draw effect (`effect::EffectOp::ImpulseDraw`) also exiles
@@ -17209,7 +17267,15 @@ fn begin_cast_ex(
         }
     });
     let is_flashback = cast_method == CastMethodV4::Flashback;
+    let resolution_permission = resolution_cast_v1::permit(state, spell_id).filter(|p| !p.land);
     let cast_route = match cast_method {
+        CastMethodV4::Normal if resolution_permission.is_some() => {
+            let permission = resolution_permission.unwrap();
+            SpellCastRouteV4::ResolvingEffectV1 {
+                holder: player,
+                maximum_mana_value: permission.maximum_mana_value,
+            }
+        }
         CastMethodV4::Flashback => SpellCastRouteV4::GraveyardFlashback,
         CastMethodV4::Escape => SpellCastRouteV4::GraveyardEscape,
         CastMethodV4::Plotted => SpellCastRouteV4::Plotted {
@@ -17245,7 +17311,10 @@ fn begin_cast_ex(
         route: cast_route,
         finalized_method: None,
     };
-    let cast_mode = if cast_method != CastMethodV4::Normal || def.alt_cost.is_none() {
+    let cast_mode = if resolution_permission.is_some()
+        || cast_method != CastMethodV4::Normal
+        || def.alt_cost.is_none()
+    {
         Some(CastMode::Normal)
     } else {
         None
@@ -17336,8 +17405,9 @@ fn begin_cast_ex(
         optional_additional_cost_paid,
         optional_additional_cost_chosen: vec![],
         optional_additional_cost_selection_finished: false,
-        x_value: if def.cost.x_count == 0
-            && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)
+        x_value: if resolution_permission.is_some()
+            || (def.cost.x_count == 0
+                && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0))
         {
             Some(0)
         } else {
@@ -17570,6 +17640,9 @@ fn finalize_owned_cast(
         });
     }
     crate::standard_cards_v1::note_spell_cast(state, pending.spell);
+    if resolution_cast_v1::finish_child(state) {
+        return Ok(());
+    }
 
     // 601.2i/603.3: casting is complete the instant costs are paid --
     // triggered abilities that saw it happen (Guttersnipe) go on the stack
@@ -17680,6 +17753,9 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
             // incarnation it started from and must retain its permission.
             object.v4.on_adventure = true;
         }
+    }
+    if resolution_cast_v1::finish_child(state) {
+        return;
     }
     if to_zone == Zone::Hand {
         for observer in [PlayerId::P0, PlayerId::P1] {
