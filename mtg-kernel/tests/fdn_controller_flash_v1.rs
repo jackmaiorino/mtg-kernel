@@ -1,4 +1,4 @@
-//! Unregistered controller-flash fixtures; actual gameplay admission remains pending.
+//! Registered v68 candidate; receipts are in fdn_conditional_flash_power_admission_v1.md.
 #![cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")

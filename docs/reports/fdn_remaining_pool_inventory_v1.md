@@ -51,14 +51,21 @@ Accepted coverage is171 full, one partial and114 missing of286 names, plus24
 dependencies. Live v67 identity is1b1e46ebfc30edb7. See PR214 default receipt6104156053.
 Issue110 remains open for full pool, reference comparisons and fair Limited/DraftZero.
 
-The six-card candidate registers Brine/Ruby/Courageous/High Fae/Archdruid/Ghalta,
-IDs371-376, after the actual accepted v67 parent. Its source qualification atbbe6aeb2
-passes both feature typechecks/strict lint, engine141, ferocious2 and mana7 per
-configuration, plus rules23 Limited/21 combined with one existing ignore each.
-Actual guard34bd02d6d2b44601b119ae0b4d336e8a ended0. The22 new card groups compiled
-but remain unexecuted. All38 candidate Python cases pass. Generated v68 identity,
-production profile, card games, CI, review and default acceptance remain pending.
-Candidate177 is not accepted coverage. Original failed attempts remain retained.
+The six-card v68 candidate registers Brine/Ruby/Courageous/High Fae/Archdruid/
+Ghalta, IDs371-376. Actual generated identity645f2da1b223a18f is bound to the
+live profile, with historical v67 readability and stale mutation refusal.
+Original native1 passes17 of22 card cases and fails5 missing attack-trigger
+cases; that receipt and guard exit101 remain retained. Repaired source5f0bdae2
+passes all22 cases in Linux Limited CI job114364708658. Seventeen CI jobs pass,
+with the rest pending. Native2 is running on Jack16-17 under supported guard
+ff99f2e7f20b4de4a50f66a41c9d1ed3. All38 candidate Python cases pass.
+
+Actual default advanced to1d240477 through PR206/219. A separate integration
+composes that accepted main with5f0bdae2 while the native source remains pinned.
+Final composed-head checks, review and default acceptance remain pending.
+Candidate177 is not accepted coverage. Source preparation for four following
+cards at365c85a1 and Inspiring Call atb668a397 is unregistered and unrun.
+
 The following preparation order and receipts are retained history.
 
 Later prepared families remain retained in their original worktrees: v65

@@ -33,7 +33,16 @@ real attacker declaration omitted the new condition and emitted no trigger.
 The declaration match now includes it. Guard1f0ecb81d52740aab996cb500b172283
 ended101; the failed receipt remains retained. The live profile now uses the
 generated hash and preserves historical v67 readability/stale mutator refusal.
-Rerunning22 card games and qualifying the profile, strict native checks, CI,
-exact-head review and default acceptance remain pending. Current
+Linux Limited CI job114364708658 at repaired source5f0bdae2 passes all22 new
+card cases, including all6 ferocious cases, and the generated frozen-literal
+check. Native2 guardff99f2e7f20b4de4a50f66a41c9d1ed3 acquired Jack16-17 and
+is running against pinned5f0bdae2. Current-head CI38103703197 remains pending;
+17 jobs have passed. The actual failed native1 receipt is not overwritten.
+
+Default advanced to1d240477 through PR206 and PR219. Separate owned integration
+459bd759 composes both parents without conflicts; the13 accepted default paths
+do not overlap the FDN diff. The running source/target remain pinned. Source
+review, final CI, native/profile qualification and actual default acceptance
+remain required for the composed head. Current
 accepted coverage remains171; candidate177 is engineering preparation, with
 no strength, search, evaluation or training result.
