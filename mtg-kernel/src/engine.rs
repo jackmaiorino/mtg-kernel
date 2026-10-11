@@ -2054,6 +2054,9 @@ fn validate_physical_spell_cast_origin(
             origin.origin_zone == Zone::Exile
                 && holder == item.controller
                 && permission_zone_change_count == origin.origin_zone_change_count
+                && (!matches!(origin.route, SpellCastRouteV4::ExileFreePermission { .. })
+                    || (item.v4.x_value == 0
+                        && matches!(cast_method, CastMethodV4::Normal | CastMethodV4::Omen)))
                 && matches!(
                     cast_method,
                     CastMethodV4::Normal
@@ -6844,7 +6847,7 @@ fn pending_cast_form_timing_ok(
     pending: &PendingCast,
     state: &GameState,
 ) -> bool {
-    resolution_cast_v1::free_cast(state, pending.spell)
+    resolution_cast_v1::timing_override(state, pending.spell)
         || spell_types_have_instant(types)
         || keywords.has(Keywords::FLASH)
         || (pending.controller == state.active_player
@@ -6865,6 +6868,18 @@ fn viable_pending_spell_forms(
     pending: &PendingCast,
     state: &GameState,
 ) -> Vec<u8> {
+    if resolution_cast_v1::free_cast(state, pending.spell) {
+        return (0..printed_spell_form_count(def))
+            .filter(|&form| {
+                resolution_cast_v1::form_completable(
+                    state,
+                    pending,
+                    form,
+                    pending.kicked == Some(true),
+                )
+            })
+            .collect();
+    }
     if def.kicked_target_spec.is_some() && pending.kicked.is_some() {
         return if kicker_targets_complete(state, def, pending, pending.kicked == Some(true))
             && pending_cast_quote_v1(
@@ -18023,14 +18038,14 @@ fn begin_cast_ex(
         route: cast_route,
         finalized_method: None,
     };
-    let cast_mode = if resolution_permission.is_some()
-        || cast_method != CastMethodV4::Normal
-        || def.alt_cost.is_none()
-    {
-        Some(CastMode::Normal)
-    } else {
-        None
-    };
+    let without_mana_cost = resolution_permission.is_some()
+        || resolution_cast_v1::free_cast_for(state, spell_id, player);
+    let cast_mode =
+        if without_mana_cost || cast_method != CastMethodV4::Normal || def.alt_cost.is_none() {
+            Some(CastMode::Normal)
+        } else {
+            None
+        };
     let additional_cost_discarded = if def.additional_cost.is_none() {
         Some(vec![])
     } else {
@@ -18138,7 +18153,7 @@ fn begin_cast_ex(
         optional_additional_cost_paid,
         optional_additional_cost_chosen: vec![],
         optional_additional_cost_selection_finished: false,
-        x_value: if resolution_permission.is_some()
+        x_value: if without_mana_cost
             || (def.cost.x_count == 0
                 && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0))
         {

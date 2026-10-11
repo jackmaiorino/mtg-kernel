@@ -493,8 +493,8 @@ pub(super) fn selected_spell_mana_costs_for_source_v1(
 ) -> Option<SelectedSpellManaCostsV1> {
     let mut selected =
         selected_spell_mana_costs_v1(definition, method, kicked, mode, targets, player, state)?;
-    if super::resolution_cast_v1::free_cast(state, source) {
-        if !super::resolution_cast_v1::form_allowed(state, source, method) {
+    if super::resolution_cast_v1::free_cast_for(state, source, player) {
+        if !super::resolution_cast_v1::form_allowed_for(state, source, method, player) {
             return None;
         }
         selected.costs.remove(0);
@@ -521,6 +521,9 @@ pub(super) fn selected_spell_quote_v1(
     state: &GameState,
     reserved_graveyard: &[ObjectId],
 ) -> Option<SpellManaPaymentV1> {
+    if x != 0 && super::resolution_cast_v1::free_cast_for(state, source, player) {
+        return None;
+    }
     if method == CastMethodV4::Alternative
         && !super::alt_cost_condition_met(
             definition.alt_cost?.condition,

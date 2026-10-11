@@ -2887,6 +2887,46 @@ fn zoetic_discover_can_decline_or_cast_without_changing_the_unseen_library_tail(
     }
 }
 #[test]
+fn discover_resumes_its_parent_after_either_kicker_choice_before_child_priority() {
+    for kicked in [false, true] {
+        let mut state = ready();
+        let skipped = library_card(&mut state, 0, "Mountain");
+        let hit = library_card(&mut state, 1, "Burst Lightning");
+        let tail = state.players[0].library[2..].to_vec();
+        let glyph = glyph_on_clue(&mut state);
+        add_mana(&mut state, PlayerId::P0, &[], 4);
+        mtg_kernel::event::propose_and_commit(
+            &mut state,
+            mtg_kernel::event::ProposedEvent::zone_change(glyph, Zone::Graveyard),
+        );
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectBoolean { .. })
+        ));
+        engine::step(&mut state, Action::ChooseEffectBoolean(true)).unwrap();
+        assert!(matches!(next(&mut state), Decision::ChooseKicker { spell, .. } if spell == hit));
+        let mut restored: GameState =
+            serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+        for state in [&mut state, &mut restored] {
+            engine::step(state, Action::ChooseKicker(kicked)).unwrap();
+            assert!(matches!(next(state), Decision::ChooseTargets { .. }));
+            engine::step(state, Action::ChooseTarget(Target::Player(PlayerId::P1))).unwrap();
+            assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
+            // Discover completes its random-bottom instruction before the
+            // child spell receives priority, with its mana cost still waived.
+            assert_eq!(state.objects.get(hit).zone, Zone::Stack);
+            assert!(state.engine.pending_effect.is_none());
+            assert_eq!(&state.players[0].library[..tail.len()], tail.as_slice());
+            assert_eq!(state.players[0].library.last(), Some(&skipped));
+            assert_eq!(state.players[0].mana_pool[5], if kicked { 0 } else { 4 });
+            settled(state);
+            assert_eq!(state.players[1].life, if kicked { 16 } else { 18 });
+            assert_eq!(state.objects.get(hit).zone, Zone::Graveyard);
+        }
+        assert_eq!(state, restored);
+    }
+}
+#[test]
 fn cage_hideaway_is_private_and_can_play_a_land_after_the_counter_creates_coven() {
     let mut state = ready();
     let hidden = library_card(&mut state, 1, "Forest");

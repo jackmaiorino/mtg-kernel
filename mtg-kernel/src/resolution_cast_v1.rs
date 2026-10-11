@@ -35,10 +35,55 @@ pub(super) fn permit(state: &GameState, object: ObjectId) -> Option<ResolutionPe
         .filter(|p| p.card.object == object)
 }
 pub(crate) fn free_cast(state: &GameState, source: ObjectId) -> bool {
-    state.objects.try_get(source).is_some_and(|o| {
-        o.v4.spell_cast_origin.is_some_and(|origin| {
-            matches!(origin.route, SpellCastRouteV4::ResolvingEffectV1 { .. })
-        })
+    let Some(object) = state.objects.try_get(source) else {
+        return false;
+    };
+    free_cast_for(
+        state,
+        source,
+        if object.zone == Zone::Stack {
+            object.controller
+        } else {
+            state.priority_player
+        },
+    )
+}
+pub(super) fn free_cast_for(state: &GameState, source: ObjectId, controller: PlayerId) -> bool {
+    let Some(object) = state.objects.try_get(source) else {
+        return false;
+    };
+    match object.zone {
+        Zone::Exile => {
+            state.exile.contains(&source)
+                && active_permission_for(controller, source, state).is_some_and(|permission| {
+                    permission.play_or_cast == PlayOrCast::Cast && permission.without_mana_cost.0
+                })
+        }
+        Zone::Stack => object.v4.spell_cast_origin.is_some_and(|origin| {
+            origin.origin_zone == Zone::Exile
+                && origin.origin_zone_change_count.checked_add(1) == Some(object.zone_change_count)
+                && match origin.route {
+                    SpellCastRouteV4::ResolvingEffectV1 { holder, .. } => holder == controller,
+                    SpellCastRouteV4::ExileFreePermission {
+                        holder,
+                        permission_zone_change_count,
+                    } => {
+                        holder == controller
+                            && permission_zone_change_count == origin.origin_zone_change_count
+                    }
+                    _ => false,
+                }
+        }),
+        _ => false,
+    }
+}
+/// Only an instruction during resolution waives ordinary casting timing.
+pub(super) fn timing_override(state: &GameState, source: ObjectId) -> bool {
+    state.objects.try_get(source).is_some_and(|object| {
+        object.zone == Zone::Stack
+            && object.v4.spell_cast_origin.is_some_and(|origin| {
+                matches!(origin.route, SpellCastRouteV4::ResolvingEffectV1 { .. })
+            })
     })
 }
 fn live(state: &GameState, binding: EffectObjectBinding) -> bool {
@@ -52,15 +97,35 @@ pub(super) fn form_allowed(state: &GameState, source: ObjectId, method: CastMeth
     let Some(o) = state.objects.try_get(source) else {
         return false;
     };
-    let Some(origin) = o.v4.spell_cast_origin else {
+    form_allowed_for(
+        state,
+        source,
+        method,
+        if o.zone == Zone::Stack {
+            o.controller
+        } else {
+            state.priority_player
+        },
+    )
+}
+pub(super) fn form_allowed_for(
+    state: &GameState,
+    source: ObjectId,
+    method: CastMethodV4,
+    controller: PlayerId,
+) -> bool {
+    if !free_cast_for(state, source, controller) {
         return true;
-    };
-    let SpellCastRouteV4::ResolvingEffectV1 {
-        maximum_mana_value, ..
-    } = origin.route
-    else {
-        return true;
-    };
+    }
+    let o = state.objects.get(source);
+    let maximum_mana_value =
+        o.v4.spell_cast_origin
+            .and_then(|origin| match origin.route {
+                SpellCastRouteV4::ResolvingEffectV1 {
+                    maximum_mana_value, ..
+                } => maximum_mana_value,
+                _ => None,
+            });
     let def = &card_def::CARD_DEFS[o.card_def as usize];
     let value = match method {
         CastMethodV4::Normal => def.mana_value,
@@ -77,6 +142,68 @@ pub(super) fn form_allowed(state: &GameState, source: ObjectId, method: CastMeth
         _ => return false,
     };
     maximum_mana_value.is_none_or(|limit| value <= limit)
+}
+
+/// Complete legal targets before quoting all mandatory payments. The same
+/// predicate filters actual free-cast form choices, so an offer cannot lead
+/// into a form whose remaining mandatory choices are impossible.
+pub(super) fn form_completable(
+    state: &GameState,
+    pending: &PendingCast,
+    form: u8,
+    kicked: bool,
+) -> bool {
+    let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    let (method, types, keywords) =
+        if form == 1 && (supported_adventure(def).is_some() || supported_omen(def).is_some()) {
+            let types = supported_adventure(def)
+                .map(|a| a.types)
+                .or_else(|| supported_omen(def).map(|o| o.types))
+                .unwrap();
+            (CastMethodV4::Omen, types, Keywords::NONE)
+        } else if form == 1 && supported_bestow(def).is_some() {
+            return false;
+        } else {
+            (CastMethodV4::Normal, def.types, def.keywords)
+        };
+    if !form_allowed(state, pending.spell, method)
+        || !pending_cast_form_timing_ok(types, keywords, pending, state)
+    {
+        return false;
+    }
+    let Some(spec) = selected_spell_target_spec(def, form, kicked) else {
+        return false;
+    };
+    let mut selected = pending.clone();
+    selected.mode_chosen = Some(form);
+    selected.kicked = Some(kicked);
+    fn complete(
+        state: &GameState,
+        def: &card_def::CardDef,
+        pending: &mut PendingCast,
+        method: CastMethodV4,
+        spec: TargetSpec,
+    ) -> bool {
+        if pending.targets_chosen.len() >= usize::from(target_min_count(spec))
+            && pending_cast_quote_v1(def, pending, method, pending.kicked == Some(true), 0, state)
+                .is_some()
+        {
+            return true;
+        }
+        if pending.targets_chosen.len() >= usize::from(target_count(spec)) {
+            return false;
+        }
+        for target in completable_next_cast_targets(def, pending, spec, state) {
+            pending.targets_chosen.push(target);
+            let payable = complete(state, def, pending, method, spec);
+            pending.targets_chosen.pop();
+            if payable {
+                return true;
+            }
+        }
+        false
+    }
+    complete(state, def, &mut selected, method, spec)
 }
 
 pub(crate) fn can_cast_exiled_without_mana(
@@ -118,24 +245,15 @@ pub(crate) fn can_cast_exiled_without_mana(
         card.object,
         Some(CastMethodV4::Normal),
     );
-    let mut pending = projected.engine.pending_cast.as_ref().unwrap().clone();
+    let Some(pending) = projected.engine.pending_cast.as_ref() else {
+        return false;
+    };
     for kicked in [false, true] {
         if kicked && def.kicker_cost.is_none() {
             continue;
         }
-        pending.kicked = Some(kicked);
-        for form in viable_pending_spell_forms(def, &pending, &projected) {
-            pending.mode_chosen = Some(form);
-            let method = if form == 1
-                && (supported_adventure(def).is_some() || supported_omen(def).is_some())
-            {
-                CastMethodV4::Omen
-            } else {
-                CastMethodV4::Normal
-            };
-            if form_allowed(&projected, card.object, method)
-                && pending_cast_quote_v1(def, &pending, method, kicked, 0, &projected).is_some()
-            {
+        for form in 0..printed_spell_form_count(def) {
+            if form_completable(&projected, pending, form, kicked) {
                 return true;
             }
         }
@@ -274,4 +392,221 @@ pub(super) fn restore_parent(state: &mut GameState, item: StackItem) {
         .filter(|c| c.parent == item.v4.stack_item_id)
         .map_or(state.stack.len(), |c| c.parent_index);
     state.stack.insert(index.min(state.stack.len()), item);
+}
+
+#[cfg(all(test, feature = "standard-magezero-fixtures"))]
+mod tests {
+    use super::*;
+
+    fn ready() -> GameState {
+        let forest = card_def::card_id_by_name("Forest").unwrap();
+        let mut state = GameState::new_from_libraries(
+            &[forest; 12],
+            &[forest; 12],
+            |_| "Forest".into(),
+            0x6082,
+        );
+        state.step = Step::Main1;
+        state
+    }
+    fn put(state: &mut GameState, name: &str, zone: Zone) -> ObjectId {
+        let def = card_def::card_id_by_name(name).unwrap();
+        let object = state.objects.push(crate::state::GameObject {
+            card_def: def,
+            name: card_def::CARD_DEFS[def as usize].object_name.into(),
+            owner: PlayerId::P0,
+            controller: PlayerId::P0,
+            zone,
+            tapped: false,
+            summoning_sick: false,
+            damage: 0,
+            counters: Default::default(),
+            attachments: vec![],
+            v4: ObjectStateV4::from_card_def(def),
+            spell_copy_origin: None,
+            plotted_turn: None,
+            zone_change_count: 0,
+        });
+        match zone {
+            Zone::Exile => state.exile.push(object),
+            Zone::Battlefield => state.players[0].battlefield.push(object),
+            Zone::Hand => state.players[0].hand.push(object),
+            _ => panic!("helper zone"),
+        }
+        object
+    }
+    fn grant(state: &mut GameState, source: ObjectId) {
+        state.engine.exile_play_permissions.push(PlayPermission {
+            object: source,
+            holder: PlayerId::P0,
+            zone_change_generation: state.objects.get(source).zone_change_count,
+            play_or_cast: PlayOrCast::Cast,
+            expiry: PlayPermissionExpiry::EndOfTurn,
+            without_mana_cost: FreeCastV1(true),
+        });
+    }
+    fn bind(state: &GameState, source: ObjectId) -> EffectObjectBinding {
+        EffectObjectBinding {
+            object: source,
+            expected_zone: Zone::Exile,
+            expected_zone_change_count: state.objects.get(source).zone_change_count,
+        }
+    }
+
+    #[test]
+    fn persistent_permission_is_free_with_exact_holder_and_generation_but_ordinary_timing() {
+        let mut state = ready();
+        let hajar = put(&mut state, "Hajar, Loyal Bodyguard", Zone::Exile);
+        grant(&mut state, hajar);
+        assert!(free_cast_for(&state, hajar, PlayerId::P0));
+        assert!(!free_cast_for(&state, hajar, PlayerId::P1));
+        state.engine.exile_play_permissions[0].zone_change_generation += 1;
+        assert!(!free_cast_for(&state, hajar, PlayerId::P0));
+        state.engine.exile_play_permissions[0].zone_change_generation -= 1;
+        state.step = Step::DeclareAttackers;
+        assert!(!is_castable_now(
+            PlayerId::P0,
+            hajar,
+            CastMethodV4::Normal,
+            &state
+        ));
+        state.step = Step::Main2;
+        assert!(is_castable_now(
+            PlayerId::P0,
+            hajar,
+            CastMethodV4::Normal,
+            &state
+        ));
+        begin_cast_ex(&mut state, PlayerId::P0, hajar, Some(CastMethodV4::Normal));
+        assert!(free_cast(&state, hajar));
+        assert!(!timing_override(&state, hajar));
+        let mut restored: GameState =
+            serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+        assert_eq!(
+            advance_until_decision(&mut state),
+            advance_until_decision(&mut restored)
+        );
+        assert_eq!(state, restored);
+        assert!(state.engine.pending_cast.is_none());
+        assert!(matches!(
+            state
+                .stack
+                .last()
+                .unwrap()
+                .v4
+                .source_contract
+                .unwrap()
+                .spell_cast_origin
+                .unwrap()
+                .route,
+            SpellCastRouteV4::ExileFreePermission { .. }
+        ));
+        assert_eq!(state.players[0].mana_pool, [0; 6]);
+    }
+
+    #[test]
+    fn persistent_free_cast_keeps_only_the_instant_adventure_form_at_instant_timing() {
+        let mut state = ready();
+        state.step = Step::End;
+        let druid = put(&mut state, "Questing Druid", Zone::Exile);
+        grant(&mut state, druid);
+        assert!(is_castable_now(
+            PlayerId::P0,
+            druid,
+            CastMethodV4::Normal,
+            &state
+        ));
+        begin_cast_ex(&mut state, PlayerId::P0, druid, Some(CastMethodV4::Normal));
+        let pending = state.engine.pending_cast.as_ref().unwrap();
+        let def = &card_def::CARD_DEFS[state.objects.get(druid).card_def as usize];
+        assert_eq!(viable_pending_spell_forms(def, pending, &state), vec![1]);
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(
+            state.stack.last().unwrap().v4.cast_method,
+            Some(CastMethodV4::Omen)
+        );
+    }
+
+    #[test]
+    fn free_cast_fixes_x_at_zero_and_disallows_bestow_even_with_spare_mana() {
+        let mut state = ready();
+        let hydra = put(&mut state, "Nyxborn Hydra", Zone::Exile);
+        grant(&mut state, hydra);
+        state.players[0].mana_pool = [0, 0, 0, 0, 3, 9];
+        assert!(!form_allowed_for(
+            &state,
+            hydra,
+            CastMethodV4::Bestow,
+            PlayerId::P0
+        ));
+        begin_cast_ex(&mut state, PlayerId::P0, hydra, Some(CastMethodV4::Normal));
+        let pending = state.engine.pending_cast.as_ref().unwrap();
+        let def = &card_def::CARD_DEFS[state.objects.get(hydra).card_def as usize];
+        assert_eq!(pending.x_value, Some(0));
+        assert_eq!(viable_pending_spell_forms(def, pending, &state), vec![0]);
+        assert!(
+            pending_cast_quote_v1(def, pending, CastMethodV4::Normal, false, 1, &state).is_none()
+        );
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(state.stack.last().unwrap().v4.x_value, 0);
+        assert_eq!(state.players[0].mana_pool, [0, 0, 0, 0, 3, 9]);
+    }
+
+    #[test]
+    fn resolution_preflight_requires_mandatory_targets_sacrifices_and_discards() {
+        let mut state = ready();
+        state.step = Step::DeclareBlockers;
+        let fatal = put(&mut state, "Fatal Push", Zone::Exile);
+        let fling = put(&mut state, "Fling", Zone::Exile);
+        let thrill = put(&mut state, "Thrill of Possibility", Zone::Exile);
+        for source in [fatal, fling, thrill] {
+            assert!(!can_cast_exiled_without_mana(
+                &state,
+                PlayerId::P0,
+                bind(&state, source),
+                None
+            ));
+        }
+        put(&mut state, "Llanowar Elves", Zone::Battlefield);
+        put(&mut state, "Forest", Zone::Hand);
+        for source in [fatal, fling, thrill] {
+            assert!(can_cast_exiled_without_mana(
+                &state,
+                PlayerId::P0,
+                bind(&state, source),
+                None
+            ));
+        }
+    }
+
+    #[test]
+    fn resolution_preflight_requires_spree_surcharges_and_respects_discover_spell_value() {
+        let mut state = ready();
+        let raid = put(&mut state, "Requisition Raid", Zone::Exile);
+        assert!(!can_cast_exiled_without_mana(
+            &state,
+            PlayerId::P0,
+            bind(&state, raid),
+            None
+        ));
+        state.players[0].mana_pool[5] = 1;
+        assert!(can_cast_exiled_without_mana(
+            &state,
+            PlayerId::P0,
+            bind(&state, raid),
+            Some(1)
+        ));
+        assert!(!can_cast_exiled_without_mana(
+            &state,
+            PlayerId::P0,
+            bind(&state, raid),
+            Some(0)
+        ));
+    }
 }
