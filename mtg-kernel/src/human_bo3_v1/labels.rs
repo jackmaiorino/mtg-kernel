@@ -194,6 +194,15 @@ fn effect_condition(condition: &EffectCond) -> Result<String, Error> {
     })
 }
 
+#[cfg(test)]
+#[test]
+fn frozen_human_labels_refuse_ooze_atomic_program() {
+    assert!(matches!(
+        describe_effect(&EffectOp::ExileGraveyardTargetThenGrowSourceIfCreature),
+        Err(Error::UnsupportedPrompt)
+    ));
+}
+
 fn describe_effect(effect: &EffectOp) -> Result<String, Error> {
     Ok(match effect {
         EffectOp::StandardLegendV1(crate::standard_legends_v1::LegendEffectV1::GwennaMana(first,second)) => format!("add {{{}}}{{{}}}; spend only on creature spells or abilities of creatures",color(*first),color(*second)),

@@ -131,7 +131,8 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
         }
         TargetSpec::CreatureOrLandCardInGraveyard
         | TargetSpec::UpToTwoCardsInGraveyards
-        | TargetSpec::UpToOneCardInGraveyards => (GRAVEYARD, None),
+        | TargetSpec::UpToOneCardInGraveyards
+        | TargetSpec::CardInGraveyards => (GRAVEYARD, None),
         TargetSpec::UpToTwoCreatureCardsInOwnGraveyard | TargetSpec::CreatureCardInOwnGraveyard => {
             (GRAVEYARD, Some(RelF::You))
         }

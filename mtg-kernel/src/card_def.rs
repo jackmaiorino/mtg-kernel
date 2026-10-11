@@ -334,6 +334,11 @@ pub enum Subtype {
     Wurm,
     Artificer,
     Orc,
+    /// Current-main append reservations 147-148; historical old-base IDs are superseded.
+    Juggernaut,
+    Minotaur,
+    /// Prepared Scavenging Ooze; choice-array admission remains separate.
+    Ooze,
 }
 
 impl Subtype {
@@ -796,6 +801,9 @@ impl Subtype {
                 | Subtype::Siren
                 | Subtype::Praetor
                 | Subtype::Elder
+                | Subtype::Juggernaut
+                | Subtype::Minotaur
+                | Subtype::Ooze
         )
     }
 }
@@ -1028,6 +1036,8 @@ pub enum TargetSpec {
     /// Unkicked exactly one controlled creature; kicked any finite number.
     /// Appended after composed Condemn60 and Run Away Together61.
     KickerControlledCreatures,
+    /// Exactly one nontoken card in either player's graveyard.
+    CardInGraveyards,
 }
 
 impl TargetSpec {
@@ -1118,6 +1128,7 @@ impl TargetSpec {
             TargetSpec::AttackingCreature => 61,
             TargetSpec::TwoCreaturesWithDifferentControllers => 62,
             TargetSpec::KickerControlledCreatures => 63,
+            TargetSpec::CardInGraveyards => 65,
         }
     }
 }

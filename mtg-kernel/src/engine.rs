@@ -1771,6 +1771,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::AnotherControlledCreature
         | TargetSpec::ControlledCreatureWithSubtype(_)
         | TargetSpec::UpToOneCardInGraveyards
+        | TargetSpec::CardInGraveyards
         | TargetSpec::UpToOneOtherControlledPermanent
         | TargetSpec::AttackingCreatureWithSubtype(_)
         | TargetSpec::ControlledPermanentWithAnySubtype(_)
@@ -3682,7 +3683,7 @@ fn legal_targets_for_controller_from_source(
             })
             .map(Target::Object)
             .collect(),
-        TargetSpec::UpToTwoCardsInGraveyards | TargetSpec::UpToOneCardInGraveyards => {
+        TargetSpec::UpToTwoCardsInGraveyards | TargetSpec::UpToOneCardInGraveyards | TargetSpec::CardInGraveyards => {
             [PlayerId::P0, PlayerId::P1]
                 .into_iter()
                 .flat_map(|player| state.players[player.index()].graveyard.iter().copied())
@@ -3691,7 +3692,7 @@ fn legal_targets_for_controller_from_source(
                     let object = state.objects.get(id);
                     object.zone == Zone::Graveyard
                         && !object.v4.is_token
-                        && (spec != TargetSpec::UpToOneCardInGraveyards
+                        && (!matches!(spec, TargetSpec::UpToOneCardInGraveyards | TargetSpec::CardInGraveyards)
                             || object.spell_copy_origin.is_none())
                 })
                 .map(Target::Object)

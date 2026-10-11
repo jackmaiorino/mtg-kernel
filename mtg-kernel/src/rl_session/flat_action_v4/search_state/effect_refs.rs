@@ -218,6 +218,7 @@ impl Scan<'_> {
             | CounterTargetSpellThenCreateTokens { .. }
             | BoostPlayerCreaturesUntilEndOfTurn { .. }
             | ExileGraveyardTargetsDrainPerCreature { .. }
+            | ExileGraveyardTargetThenGrowSourceIfCreature
             | RemoveTimeCounterFromSource
             | ReturnSourceAsEnduringEnchantment
             | SearchLibraryCardsToDestination { .. }

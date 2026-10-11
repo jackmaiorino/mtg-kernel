@@ -23,6 +23,7 @@ mod standard_copy;
 use standard_copy::CopyTargetChoice;
 mod standard_discard;
 use standard_discard::DiscardDrawChoice;
+mod scavenging_ooze_v1;
 mod standard_exile;
 use standard_exile::{ExileBatchChoice, ExilePlayChoice, HideawayChoice};
 
@@ -1561,6 +1562,9 @@ pub enum EffectOp {
         target_spec: crate::card_def::TargetSpec,
         keyword: Keywords,
     },
+    /// Resolve Ooze's single graveyard target, preserving its pre-move type;
+    /// a creature card grants one counter to the exact source and one life.
+    ExileGraveyardTargetThenGrowSourceIfCreature,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -16515,6 +16519,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     ctx.source,
                 ));
             }
+        }
+        EffectOp::ExileGraveyardTargetThenGrowSourceIfCreature => {
+            crate::effect::scavenging_ooze_v1::execute(ctx, state);
         }
         EffectOp::ExileGraveyardTargetsDrainPerCreature { max_targets } => {
             let mut creatures = 0;

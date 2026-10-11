@@ -84,6 +84,10 @@ pub(crate) fn target_ref(target: TargetRef, env: &Env) -> (Option<RelF>, ObjF) {
 /// Facets of one resolution program. Recurses through nested programs.
 pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
+        EffectOp::ExileGraveyardTargetThenGrowSourceIfCreature => {
+            // Pre-move creature type and exact source identity have no v1 facets.
+            out.atoms.push(Atom::Opaque);
+        }
         EffectOp::StandardV1(_) => {
             // Preserve the exact serialized payload in the source record.
             // Do not invent ordinary facets for new histories, counters,
@@ -344,6 +348,24 @@ mod standard_completion_tests {
                         && *actual == controller && *zone == ZoneF::Battlefield)));
             assert!(out.atoms.contains(&Atom::Opaque));
         }
+    }
+
+    #[test]
+    fn ooze_atomic_effect_is_opaque_and_graveyard_target_is_mandatory() {
+        let env = Env {
+            target_spec: TargetSpec::CardInGraveyards,
+        };
+        let mut effect = Collector::default();
+        effect_op(
+            &EffectOp::ExileGraveyardTargetThenGrowSourceIfCreature,
+            &env,
+            &mut effect,
+        );
+        assert_eq!(effect.atoms, [Atom::Opaque]);
+        let mut target = Collector::default();
+        targets::target_spec(TargetSpec::CardInGraveyards, &mut target);
+        assert!(!target.atoms.contains(&Atom::Target(TargetAtom::UpTo)));
+        assert_eq!(TargetSpec::CardInGraveyards.stable_id(), 65);
     }
 
     #[test]

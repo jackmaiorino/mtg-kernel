@@ -4734,6 +4734,18 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
         return recipes;
     }
     match name {
+        "Scavenging Ooze" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana { colored: Some("G"), generic: 0 }],
+            effect: AbilityEffectRecipe::Program {
+                name: "scavenging_ooze_exile_grow",
+                effect: "EffectOp::ExileGraveyardTargetThenGrowSourceIfCreature",
+            },
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "CardInGraveyards",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Reassembling Skeleton" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Mana {
                 colored: Some("B"),
@@ -10419,6 +10431,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Gremlin" => "Subtype::Gremlin",
         "Dinosaur" => "Subtype::Dinosaur",
         "Elder" => "Subtype::Elder",
+        "Ooze" => "Subtype::Ooze",
         "Warlock" => "Subtype::Warlock",
         "Insect" => "Subtype::Insect",
         "Archer" => "Subtype::Archer",

@@ -374,6 +374,9 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
             object(out, creature(), Some(RelF::You), ZoneF::Battlefield)
         }
         // Zero or one nontoken card in either graveyard.
+        TargetSpec::CardInGraveyards => {
+            object(out, ObjF::AnyCard, None, ZoneF::Graveyard);
+        }
         TargetSpec::UpToOneCardInGraveyards => {
             object(out, ObjF::AnyCard, None, ZoneF::Graveyard);
             out.target(TargetAtom::UpTo);
@@ -568,7 +571,9 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
             let _ = slot; // One target slot.
             ObjF::Permanent
         }
-        TargetSpec::UpToTwoCardsInGraveyards | TargetSpec::UpToOneCardInGraveyards => {
+        TargetSpec::UpToTwoCardsInGraveyards
+        | TargetSpec::UpToOneCardInGraveyards
+        | TargetSpec::CardInGraveyards => {
             let _ = slot; // Every slot is an unfiltered graveyard card.
             ObjF::AnyCard
         }

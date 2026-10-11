@@ -1360,7 +1360,7 @@ pub fn stack_target_contract_is_structurally_valid(
                     ..
                 },
             ) | (
-                TargetSpec::UpToOneCardInGraveyards,
+                TargetSpec::UpToOneCardInGraveyards | TargetSpec::CardInGraveyards,
                 0,
                 StackTargetContractV4::Object {
                     zone: Zone::Graveyard,
