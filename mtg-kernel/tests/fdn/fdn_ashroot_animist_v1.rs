@@ -103,7 +103,7 @@ fn source(state: &mut GameState, actor: PlayerId) -> ObjectId {
     state.objects.get_mut(id).summoning_sick = false;
     id
 }
-fn attack(state: &mut GameState, source: ObjectId, target: ObjectId) {
+fn declare_attack(state: &mut GameState, source: ObjectId) {
     for _ in 0..30 {
         let d = next(state);
         match d {
@@ -116,6 +116,9 @@ fn attack(state: &mut GameState, source: ObjectId, target: ObjectId) {
         }
     }
     engine::step(state, Action::DeclareAttackers(vec![source])).unwrap();
+}
+fn attack(state: &mut GameState, source: ObjectId, target: ObjectId) {
+    declare_attack(state, source);
     let d = next(state);
     let Decision::ChooseTargets {
         legal_targets,
@@ -425,6 +428,41 @@ fn actual_target_control_change_fizzles_and_original_controller_remains_bound() 
         assert_eq!(
             state.diagnostic_state_hash(),
             replay.diagnostic_state_hash()
+        );
+    }
+}
+
+#[test]
+fn actual_attack_public_power_and_root_manifest_follow_live_then_departed_source() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let source = source(&mut state, actor);
+        let target = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        attack(&mut state, source, target);
+        let surface = mtg_kernel::policy_surface_v5::PolicySurfaceV5::new();
+        let before = serde_json::to_vec(&state).unwrap();
+        let public =
+            mtg_kernel::ashroot_public_v1::observe_v1(&state, &surface, actor, 0, 0, 0, 1).unwrap();
+        assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+        assert_eq!(public.roots.len(), 1);
+        assert_eq!(public.power_contexts.len(), 1);
+        assert_eq!(public.power_contexts[0].power_if_resolved_now, 4);
+        assert!(!public.power_contexts[0].uses_actual_departure_power);
+        public.validate_artifact().unwrap();
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(source, Zone::Battlefield),
+        );
+        let replay = restore(&state);
+        let public =
+            mtg_kernel::ashroot_public_v1::observe_v1(&state, &surface, actor, 0, 0, 0, 1).unwrap();
+        assert_eq!(public.power_contexts[0].power_if_resolved_now, 4);
+        assert!(public.power_contexts[0].uses_actual_departure_power);
+        assert_eq!(
+            public,
+            mtg_kernel::ashroot_public_v1::observe_v1(&replay, &surface, actor, 0, 0, 0, 1)
+                .unwrap()
         );
     }
 }
