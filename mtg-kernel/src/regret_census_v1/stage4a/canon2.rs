@@ -545,7 +545,11 @@ impl<'s> Keyer<'s> {
     }
 
     /// `step` on a raw actor-visible observation and menu.
-    pub(crate) fn key_raw(&mut self, raw_obs: Value, raw_menu: Vec<Value>) -> Result<Step, PlayErr> {
+    pub(crate) fn key_raw(
+        &mut self,
+        raw_obs: Value,
+        raw_menu: Vec<Value>,
+    ) -> Result<Step, PlayErr> {
         let t0 = Instant::now();
         let (obs, menu) = prepare(raw_obs, raw_menu);
         let (legacy, _) = canon_prepared(obs.clone(), menu.clone(), None)?;
@@ -794,7 +798,10 @@ mod tests {
             seen.push(e.clone());
         }
         seen.sort();
-        assert_eq!(seen, cb.edges, "one edge per live candidate, duplicates kept");
+        assert_eq!(
+            seen, cb.edges,
+            "one edge per live candidate, duplicates kept"
+        );
         assert_eq!(cb.edges.len(), 4);
     }
 
@@ -822,8 +829,16 @@ mod tests {
         let stale = view(bf.clone(), vec![obj(11, 19, 3)], vec![]);
         assert_ne!(k(cur), k(stale));
         // Ordered stack and target slots.
-        let a = view(vec![x(), y(), cr(13, 7, 0, 0, false, vec![])], vec![obj(11, 19, 3), obj(13, 7, 0)], vec![]);
-        let b = view(vec![x(), y(), cr(13, 7, 0, 0, false, vec![])], vec![obj(13, 7, 0), obj(11, 19, 3)], vec![]);
+        let a = view(
+            vec![x(), y(), cr(13, 7, 0, 0, false, vec![])],
+            vec![obj(11, 19, 3), obj(13, 7, 0)],
+            vec![],
+        );
+        let b = view(
+            vec![x(), y(), cr(13, 7, 0, 0, false, vec![])],
+            vec![obj(13, 7, 0), obj(11, 19, 3)],
+            vec![],
+        );
         assert_ne!(k(a), k(b));
     }
 
@@ -834,11 +849,16 @@ mod tests {
         let run = |first_action: usize, target: u64| {
             let mut s = KeyStats::default();
             let mut kr = keyer(KeyMode::Repaired, &mut s);
-            let f1 = kr.key_raw(view(vec![x(), y()], vec![], vec![]), menu(&[11, 12])).unwrap();
+            let f1 = kr
+                .key_raw(view(vec![x(), y()], vec![], vec![]), menu(&[11, 12]))
+                .unwrap();
             // Live index of the chosen action in the frame-1 menu.
             kr.advance(f1, first_action as u32);
             let f2 = kr
-                .key_raw(view(vec![x(), y()], vec![obj(target, 19, 3)], vec![]), menu(&[]))
+                .key_raw(
+                    view(vec![x(), y()], vec![obj(target, 19, 3)], vec![]),
+                    menu(&[]),
+                )
                 .unwrap();
             let fb = s.fallbacks.clone();
             (f2.repaired_key, fb)
@@ -866,13 +886,20 @@ mod tests {
             let f1 = kr.key_raw(frame1, menu(&[])).unwrap();
             kr.advance(f1, 0);
             let _ = kr
-                .key_raw(view(vec![x(), y()], vec![obj(11, 19, 3)], vec![]), menu(&[]))
+                .key_raw(
+                    view(vec![x(), y()], vec![obj(11, 19, 3)], vec![]),
+                    menu(&[]),
+                )
                 .unwrap();
             s.fallbacks.clone()
         };
         let absent = run(view(vec![x()], vec![], vec![]));
         assert_eq!(absent.get("member_absent"), Some(&1));
-        let moved = run(view(vec![x(), cr(12, 19, 2, 0, false, vec![])], vec![], vec![]));
+        let moved = run(view(
+            vec![x(), cr(12, 19, 2, 0, false, vec![])],
+            vec![],
+            vec![],
+        ));
         assert_eq!(moved.get("continuity_broken"), Some(&1));
     }
 
@@ -885,19 +912,45 @@ mod tests {
     /// bound both fall back (no merge); with an exact search they differ.
     #[test]
     fn regular_relations_are_not_merged() {
-        let bf: Vec<Value> = (1..=6).map(|i| cr(10 + i, 19, 3, 0, false, vec![])).collect();
-        let tri = vec![rel(11, 12), rel(12, 13), rel(13, 11), rel(14, 15), rel(15, 16), rel(16, 14)];
-        let hex = vec![rel(11, 12), rel(12, 13), rel(13, 14), rel(14, 15), rel(15, 16), rel(16, 11)];
+        let bf: Vec<Value> = (1..=6)
+            .map(|i| cr(10 + i, 19, 3, 0, false, vec![]))
+            .collect();
+        let tri = vec![
+            rel(11, 12),
+            rel(12, 13),
+            rel(13, 11),
+            rel(14, 15),
+            rel(15, 16),
+            rel(16, 14),
+        ];
+        let hex = vec![
+            rel(11, 12),
+            rel(12, 13),
+            rel(13, 14),
+            rel(14, 15),
+            rel(15, 16),
+            rel(16, 11),
+        ];
         let (kt, _, ft) = root_key(view(bf.clone(), vec![], tri.clone()), menu(&[]));
         let (kh, _, fh) = root_key(view(bf.clone(), vec![], hex.clone()), menu(&[]));
         assert_eq!((ft, fh), (1, 1), "720 orders exceed the bound");
         assert_ne!(kt, kh);
+        // Four objects as two 2-cycles or one 4-cycle (same per-object
+        // counts): 24 x 24 orders fit an exact search, which separates them.
+        let bf4: Vec<Value> = (1..=4)
+            .map(|i| cr(10 + i, 19, 3, 0, false, vec![]))
+            .collect();
         let exact = |r: Vec<Value>| {
-            let (o, m) = prepare(view(bf.clone(), vec![], r), menu(&[]));
+            let (o, m) = prepare(view(bf4.clone(), vec![], r), menu(&[]));
             let (l, _) = canon_prepared(o.clone(), m.clone(), None).unwrap();
             repaired_view(&o, &m, &l, &[], 1000).unwrap().0.unwrap()
         };
-        assert_ne!(exact(tri), exact(hex));
+        let pairs = vec![rel(11, 12), rel(12, 11), rel(13, 14), rel(14, 13)];
+        let cycle = vec![rel(11, 12), rel(12, 13), rel(13, 14), rel(14, 11)];
+        assert_ne!(exact(pairs.clone()), exact(cycle));
+        // And the exact form is order-free: relabel and permute the pairs.
+        let swapped = vec![rel(13, 14), rel(11, 12), rel(14, 13), rel(12, 11)];
+        assert_eq!(exact(pairs), exact(swapped));
     }
 
     /// A repaired merge followed by an unresolved frame: the fallback keys
@@ -908,14 +961,20 @@ mod tests {
             let mut s = KeyStats::default();
             let mut kr = keyer(KeyMode::Repaired, &mut s);
             let f1 = kr
-                .key_raw(view(vec![x(), y()], vec![obj(target, 19, 3)], vec![]), menu(&[]))
+                .key_raw(
+                    view(vec![x(), y()], vec![obj(target, 19, 3)], vec![]),
+                    menu(&[]),
+                )
                 .unwrap();
             let r1 = f1.repaired_key;
             kr.advance(f1, 0);
             // Frame 2 still shows the target on the stack: the copies are
             // asymmetric in frame 1, so a tie that matters cannot resolve.
             let f2 = kr
-                .key_raw(view(vec![x(), y()], vec![obj(target, 19, 3)], vec![]), menu(&[]))
+                .key_raw(
+                    view(vec![x(), y()], vec![obj(target, 19, 3)], vec![]),
+                    menu(&[]),
+                )
                 .unwrap();
             (r1, f2.repaired_key, f2.legacy_key, s.fallbacks.clone())
         };
@@ -948,11 +1007,24 @@ mod tests {
         let pr = re.perm(&b, &seeds).unwrap();
         assert_eq!(ps.len(), pr.len());
         for (es, er) in ps.iter().zip(&pr) {
-            let ls = a.legacy.menu.iter().position(|x| *x == a.legacy.edges[*es]).unwrap();
-            let lr = b.repaired.menu.iter().position(|x| *x == b.repaired.edges[*er]).unwrap();
+            let ls = a
+                .legacy
+                .menu
+                .iter()
+                .position(|x| *x == a.legacy.edges[*es])
+                .unwrap();
+            let lr = b
+                .repaired
+                .menu
+                .iter()
+                .position(|x| *x == b.repaired.edges[*er])
+                .unwrap();
             // Duplicate canonical actions bind to either duplicate; compare
             // the semantic action.
-            assert_eq!(a.legacy.menu[ls], a.legacy.menu[lr], "same live action class");
+            assert_eq!(
+                a.legacy.menu[ls], a.legacy.menu[lr],
+                "same live action class"
+            );
         }
         // Legacy mode keys equal the legacy chain.
         let mut s3 = KeyStats::default();

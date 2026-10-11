@@ -800,6 +800,72 @@ pub(super) fn support_report(tree: &Tree, records: &[SimRecord], diag: &SearchDi
             "per_attempt":per_attempt}})
 }
 
+/// Repaired keys of captured nodes from their captured visible prefix
+/// (offline; collab LANES/search-canonical-repair-plan-20261011). Each
+/// capture row's chain names its ancestors; every ancestor must itself be
+/// captured (raw view, raw menu, canonical menu in live order). Returns one
+/// row per captured node with its legacy and repaired keys and the fallback
+/// reason, if any.
+pub(super) fn offline_keys(dump: &str) -> Result<Vec<Value>, String> {
+    use super::canon2::{KeyStats, Keyer};
+    let rows: Vec<Value> = dump
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).map_err(|e| e.to_string()))
+        .collect::<Result<_, _>>()?;
+    let caps: HashMap<String, &Value> = rows
+        .iter()
+        .filter(|r| r["kind"] == "capture")
+        .map(|r| (r["key"].as_str().unwrap_or_default().to_owned(), r))
+        .collect();
+    let raw = |r: &Value| -> (Value, Vec<Value>) {
+        (
+            r["raw_obs"].clone(),
+            r["raw_menu"].as_array().cloned().unwrap_or_default(),
+        )
+    };
+    let mut out = Vec::new();
+    let mut keys: Vec<&String> = caps.keys().collect();
+    keys.sort();
+    for k in keys {
+        let r = caps[k];
+        let chain = r["chain"].as_array().cloned().unwrap_or_default();
+        let mut stats = KeyStats::default();
+        let mut kr = Keyer::new(KeyMode::Repaired, &mut stats);
+        let mut missing = None;
+        for h in &chain {
+            let hk = h["key"].as_str().unwrap_or_default();
+            let Some(a) = caps.get(hk) else {
+                missing = Some(format!("ancestor {hk} not captured"));
+                break;
+            };
+            let (o, m) = raw(a);
+            let st = kr.key_raw(o, m).map_err(|e| format!("{e:?}"))?;
+            let edge = h["edge"].as_str().unwrap_or_default();
+            let live = a["canon_menu"]
+                .as_array()
+                .and_then(|v| v.iter().position(|x| x.as_str() == Some(edge)));
+            let Some(live) = live else {
+                missing = Some(format!("ancestor {hk} edge not in its live menu"));
+                break;
+            };
+            kr.advance(st, live as u32);
+        }
+        if let Some(why) = missing {
+            out.push(json!({"key":k,"evaluable":false,"why":why}));
+            continue;
+        }
+        let (o, m) = raw(r);
+        let st = kr.key_raw(o, m).map_err(|e| format!("{e:?}"))?;
+        let legacy_ok = key_hex(&st.legacy_key) == *k;
+        out.push(json!({"key":k,"evaluable":true,"physical_depth":r["physical_depth"],
+            "legacy_key_reproduced":legacy_ok,"repaired_key":key_hex(&st.repaired_key),
+            "fallbacks":stats.fallbacks,"frames_with_mattering_ties":stats.frames_with_mattering_ties,
+            "exact_resolved":stats.exact_resolved}));
+    }
+    Ok(out)
+}
+
 /// Row schema of `root_arm` (v1 rows: no `schema` field).
 pub(super) const ROW_SCHEMA: &str = "branch-root-v2";
 
@@ -1369,6 +1435,58 @@ mod tests {
             assert_eq!(
                 records.iter().map(|x| x.new_nodes).sum::<usize>(),
                 tree.nodes.len()
+            );
+        }
+    }
+
+    /// Shadow and repaired keys on a real fixture search: accounting
+    /// reconciles, and frozen execution with the same key version finds the
+    /// selection tree's root. Small (2 x 5,000 selection transitions).
+    #[test]
+    #[ignore = "native qualification: fixture game and two small searches"]
+    fn non_legacy_selection_and_frozen_execution_agree() {
+        use super::super::canon2::KeyMode;
+        let policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let mut roles = bank_roles(&policy, std::slice::from_ref(&policy)).unwrap();
+        let s = root();
+        let prior = DeckPrior::new(&(0..RUNTIME_DECKS.len()).collect::<Vec<_>>());
+        let seeds = RootSeeds {
+            model: "test".into(),
+            root: "canon".into(),
+        };
+        let limits = Limits {
+            select_cap: 5_000,
+            ..Limits::FORMAL
+        };
+        for mode in [KeyMode::Shadow, KeyMode::Repaired] {
+            let mut ctx = guide_ctx(&s, PlayerId(0), 0, &seeds, &prior, limits).unwrap();
+            ctx.key_mode = mode;
+            let mut records = Vec::new();
+            let mut diag = SearchDiag::default();
+            let (sel, tree) =
+                roles.select_e_diagnosed(&ctx, None, 1, Some(&mut records), None, Some(&mut diag));
+            assert!(sel.faults.is_empty(), "{:?}", sel.faults);
+            let r = sim_report(
+                &records,
+                1,
+                sel.transitions,
+                sel.inference,
+                sel.attempted,
+                sel.sampler.rejected,
+            );
+            for (k, v) in r["reconciles"].as_object().unwrap() {
+                assert_eq!(*v, true, "{k} {mode:?}");
+            }
+            assert!(diag.keys.frames > 0);
+            let seed = seeds.get(Purpose::EvalWorld, "", 0, b"world");
+            let w = sample(&s, seed, &prior).expect("world");
+            let mut sampler = SamplerStats::default();
+            let out = roles.evaluate(&ctx, "E", &w.world, 0, None, Some(&tree), &mut sampler);
+            assert!(out.fault.is_none(), "{:?}", out.fault);
+            assert!(
+                out.e["max_hit_depth"].as_u64().unwrap_or(0) >= 1,
+                "{mode:?}: {}",
+                out.e
             );
         }
     }
