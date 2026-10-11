@@ -179,6 +179,19 @@ fn actual_copy_of_hidden_creature_uses_neutral_pre_entry_definition_and_public_n
                     "hidden printed Healer ETB must not be copied"
                 );
                 assert_eq!(current.objects.get(source).zone, Zone::Graveyard);
+                // The FDN registry has no printed face-down producer or its
+                // public sentinels. A live hidden original must refuse the
+                // predecessor projection without leaking its definition.
+                let before = serde_json::to_vec(current).unwrap();
+                for viewer in [actor, actor.opponent()] {
+                    let refusal = mtg_kernel::rl::observe_v1(current, viewer, 0).unwrap_err();
+                    assert!(refusal.to_string().contains("neutral sentinel"));
+                    assert!(!refusal.to_string().contains(hidden_name));
+                }
+                assert_eq!(serde_json::to_vec(current).unwrap(), before);
+                event::propose_and_commit(current, ProposedEvent::zone_change(target, Zone::Hand));
+                // Departure reveals the original and clears its face-down
+                // state. Both viewers can now inspect the actual neutral copy.
                 for viewer in [actor, actor.opponent()] {
                     let observation = mtg_kernel::rl::observe_v1(current, viewer, 0).unwrap();
                     let public = observation.projection.battlefield[actor.index()]

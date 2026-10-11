@@ -7733,6 +7733,7 @@ fn validate_standard_choose_permanent_origin(
 }
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
+    crate::self_reflection_v1::validate_live_stack(state)?;
     crate::soul_shackled_zombie_v1::validate_state(state)?;
     crate::source_power_activation_v1::validate_state(state)?;
     squad_rallier_resolution_v1::validate(state)?;

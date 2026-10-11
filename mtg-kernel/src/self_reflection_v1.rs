@@ -96,9 +96,25 @@ pub(crate) fn owns_spell(state: &GameState, item: &StackItem) -> bool {
     item.kind == StackItemKind::Spell
         && item.inline_effect.is_none()
         && state.objects.try_get(item.source).is_some_and(|source| {
-            (CARD_DEFS[source.card_def as usize].spell_effect)()
-                == Some(EffectOp::CreateControlledCreatureTargetCopyV1)
+            CARD_DEFS[source.card_def as usize].name == "Self-Reflection"
+                && (CARD_DEFS[source.card_def as usize].spell_effect)()
+                    == Some(EffectOp::CreateControlledCreatureTargetCopyV1)
         })
+}
+/// Reject corrupted finalized metadata before an ordinary priority action.
+/// Pending placeholders use the same existing validator and retain its staged
+/// cast semantics; departed target incarnations remain valid stale targets.
+pub(crate) fn validate_live_stack(state: &GameState) -> Result<(), String> {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ENABLED.get_or_init(|| CARD_DEFS.iter().any(|def| def.name == "Self-Reflection")) {
+        return Ok(());
+    }
+    for item in &state.stack {
+        if owns_spell(state, item) {
+            crate::engine::validated_stack_item_target_spec(item, state)?;
+        }
+    }
+    Ok(())
 }
 /// Copy layers change definition, not physical incarnation. Only this new
 /// root accepts the existing exact-generation historical-definition authority.

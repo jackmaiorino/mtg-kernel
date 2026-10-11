@@ -5498,14 +5498,7 @@ fn trigger_matches(
                     subtype.is_in_subtype_ids(&crate::engine::effective_subtype_ids(state, object))
                 })
         }
-        (
-            TriggerCondition::Etb,
-            CommittedEvent::ZoneChange {
-                object,
-                to: Zone::Battlefield,
-                ..
-            },
-        ) => *object == source,
+        (TriggerCondition::Etb, event) => battlefield_entry_object(event) == Some(source),
         (
             TriggerCondition::EtbControlsOtherSubtypeCount {
                 subtype,

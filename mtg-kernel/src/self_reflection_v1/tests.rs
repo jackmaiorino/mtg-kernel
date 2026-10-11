@@ -112,6 +112,126 @@ fn anonymous_copy_values_contain_no_hidden_identity_before_any_entry_event() {
         }
     }
 }
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[test]
+fn registered_zonechange_and_copy_token_etb_capture_exact_source_then_survive_departure() {
+    use crate::engine::{self, Action, Decision};
+    use crate::state::StackItemKind;
+    fn settle(state: &mut GameState) {
+        for _ in 0..40 {
+            match engine::advance_until_decision(state) {
+                Decision::CastSpellOrPass { .. } if state.stack.is_empty() => return,
+                Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
+                other => panic!("unexpected actual ETB decision: {other:?}"),
+            }
+        }
+        panic!("ETB did not finish");
+    }
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for token_copy in [false, true] {
+            let mut state = ready_state();
+            state.active_player = actor;
+            state.priority_player = actor;
+            let original = put(&mut state, actor, "Healer of the Glade", Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(original, Zone::Battlefield),
+            );
+            let entrant = if token_copy {
+                settle(&mut state);
+                crate::standard_cards_v1::create_token_copy(&mut state, original, actor).unwrap()
+            } else {
+                original
+            };
+            let generation = state.objects.get(entrant).zone_change_count;
+            let life = state.players[actor.index()].life;
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
+            let item = state.stack.last().expect("real entry must publish its ETB");
+            assert_eq!(item.kind, StackItemKind::TriggeredAbility);
+            assert_eq!(item.source, entrant);
+            assert_eq!(item.controller, actor);
+            let captured = item.v4.ability_source_contract.unwrap();
+            assert_eq!(captured.source, entrant);
+            assert_eq!(captured.zone, Zone::Battlefield);
+            assert_eq!(captured.zone_change_count, generation);
+            assert_eq!(captured.controller, actor);
+            assert_eq!(state.players[actor.index()].life, life);
+            assert!(state.engine.event_history.iter().any(|entry| match entry {
+                crate::event::CommittedEvent::CreateToken {
+                    object, controller, ..
+                } => token_copy && *object == entrant && *controller == actor,
+                crate::event::CommittedEvent::ZoneChange {
+                    object,
+                    to: Zone::Battlefield,
+                    ..
+                } => !token_copy && *object == entrant,
+                _ => false,
+            }));
+            crate::standard_cards_v1::gain_control(&mut state, entrant, actor.opponent());
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(entrant, Zone::Hand));
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for current in [&mut state, &mut restored] {
+                settle(current);
+                assert_eq!(current.players[actor.index()].life, life + 3);
+                assert_eq!(current.players[actor.opponent().index()].life, 20);
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&restored).unwrap()
+            );
+        }
+    }
+}
+
+#[test]
+fn registered_hidden_reference_refuses_missing_sentinel_without_underlying_identity() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, creature, _) = fixture(actor);
+        for disguised in [false, true] {
+            state.objects.get_mut(creature).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
+                disguised,
+                lookers: 1 << actor.index(),
+                hidden_by: None,
+                hidden_by_source: None,
+            });
+            let before = serde_json::to_vec(&state).unwrap();
+            if card_id_by_name(if disguised {
+                "Face-down creature"
+            } else {
+                "Face-down card"
+            })
+            .is_none()
+            {
+                for viewer in [actor, actor.opponent()] {
+                    let error = crate::rl::observe_v1(&state, viewer, 0).unwrap_err();
+                    assert!(error.to_string().contains("neutral sentinel"));
+                    assert!(!error.to_string().contains("Llanowar Elves"));
+                }
+            } else {
+                for viewer in [actor, actor.opponent()] {
+                    let obs = crate::rl::observe_v1(&state, viewer, 0).unwrap();
+                    let card = obs.projection.battlefield[actor.index()]
+                        .iter()
+                        .find(|c| c.stable.arena_id == creature.0)
+                        .unwrap();
+                    assert_ne!(card.stable.card_db_id, state.objects.get(creature).card_def);
+                    assert!(!serde_json::to_string(card)
+                        .unwrap()
+                        .contains("Llanowar Elves"));
+                }
+            }
+            assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+        }
+    }
+}
 #[test]
 fn exact_target_departure_reentry_control_change_and_monocolored_protection_refuse_before_copy() {
     for actor in [PlayerId::P0, PlayerId::P1] {

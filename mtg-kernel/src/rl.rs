@@ -5732,6 +5732,18 @@ pub(crate) fn card_ref(state: &GameState, id: ObjectId) -> Result<CardStableRefV
         .objects
         .try_get(id)
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
+    if let Some(face) = object.v4.face_down_v1 {
+        let sentinel = if face.disguised {
+            "Face-down creature"
+        } else {
+            "Face-down card"
+        };
+        if crate::card_def::card_id_by_name(sentinel).is_none() {
+            return Err(RlContractError(
+                "face-down public reference requires its registered neutral sentinel".into(),
+            ));
+        }
+    }
     Ok(CardStableRefV1 {
         arena_id: id.0,
         card_db_id: projected_card_def(state, id, object.zone_change_count),
