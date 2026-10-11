@@ -231,13 +231,19 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
             );
             out.target(TargetAtom::MultipleTargets);
         }
-        // A creature among the attackers or blockers of the current combat.
-        // No combat-status facet exists; the nearest class is "a creature".
+        TargetSpec::TwoCreaturesWithDifferentControllers => {
+            object(out, creature(), None, ZoneF::Battlefield);
+            out.target(TargetAtom::MultipleTargets);
+            // No frozen relation expresses exactly two distinct objects whose
+            // current controllers differ, including symmetric resolution checks.
+            out.atoms.push(Atom::Opaque);
+        }
         TargetSpec::AttackingCreature => {
             object(out, creature(), None, ZoneF::Battlefield);
             // Frozen vocabulary lacks a predicate for current attacking status.
             out.atoms.push(Atom::Opaque);
         }
+        // No combat-status facet exists; the nearest class is "a creature".
         TargetSpec::AttackingOrBlockingCreature => {
             object(out, creature(), None, ZoneF::Battlefield)
         }
@@ -452,6 +458,7 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
         | TargetSpec::ControlledCreatureThenOpponentCreature
         | TargetSpec::AttackingOrBlockingCreature
         | TargetSpec::AttackingCreature
+        | TargetSpec::TwoCreaturesWithDifferentControllers
         | TargetSpec::NonOutlawCreature
         | TargetSpec::CreatureToughnessAtLeastFour => {
             let _ = slot; // Every slot is a creature.

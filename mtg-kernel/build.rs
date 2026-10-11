@@ -3384,6 +3384,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         mode2: None,
     };
     Some(match name {
+        "Run Away Together" => program(
+            "TwoCreaturesWithDifferentControllers",
+            "ReturnTwoDifferentControllerCreaturesToOwnersHands(exactlyTwo,distinctObjects,currentDifferentControllers,exactIncarnations,simultaneousLegalitySnapshot,batchOwnerHandMove,partialLegalTargets)",
+            "EffectOp::ReturnTwoDifferentControllerCreaturesToOwnersHands",
+        ),
         "Condemn" => program(
             "AttackingCreature",
             "PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness(Target0,currentAttacker,exactIncarnation,captureCurrentControllerAndEffectiveToughnessBeforeMove,publicBottomInsert,positiveLifeGain)",
@@ -3690,6 +3695,9 @@ fn program_target_spec_src(target: &str) -> &'static str {
         "NonOutlawCreature" => "TargetSpec::NonOutlawCreature",
         "CreatureToughnessAtLeastFour" => "TargetSpec::CreatureToughnessAtLeastFour",
         "AttackingCreature" => "TargetSpec::AttackingCreature",
+        "TwoCreaturesWithDifferentControllers" => {
+            "TargetSpec::TwoCreaturesWithDifferentControllers"
+        }
         "CreatureEnchantmentOrPlaneswalker" => "TargetSpec::CreatureEnchantmentOrPlaneswalker",
         other => panic!("unsupported program target spec {other}"),
     }

@@ -101,6 +101,7 @@ impl Scan<'_> {
             | AnimateSource
             | PumpTargetUntilEndOfTurnDynamic { .. }
             | PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness { .. }
+            | ReturnTwoDifferentControllerCreaturesToOwnersHands
             | DoubleTargetPowerUntilEndOfTurn { .. }
             | DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
             | CreateTokensForOtherControlledCreaturesNamed { .. }

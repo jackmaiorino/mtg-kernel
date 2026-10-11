@@ -841,6 +841,8 @@ pub enum TargetSpec {
     UpToTwoOtherControlledCreatures,
     /// One currently attacking effective creature. Condemn is the first consumer.
     AttackingCreature,
+    /// Exactly two distinct effective creatures with different current controllers.
+    TwoCreaturesWithDifferentControllers,
 }
 
 impl TargetSpec {
@@ -910,6 +912,7 @@ impl TargetSpec {
             TargetSpec::UpToOneOtherControlledPermanent => 58,
             TargetSpec::UpToTwoOtherControlledCreatures => 59,
             TargetSpec::AttackingCreature => 60,
+            TargetSpec::TwoCreaturesWithDifferentControllers => 61,
         }
     }
 }
@@ -2347,6 +2350,7 @@ mod tests {
             (TargetSpec::UpToOneOtherControlledPermanent, 58),
             (TargetSpec::UpToTwoOtherControlledCreatures, 59),
             (TargetSpec::AttackingCreature, 60),
+            (TargetSpec::TwoCreaturesWithDifferentControllers, 61),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);

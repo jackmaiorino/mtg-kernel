@@ -1568,6 +1568,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::AttackingCreatureWithSubtype(_)
         | TargetSpec::ControlledPermanentWithAnySubtype(_) => 1,
         TargetSpec::PlayerThenTheirCreature
+        | TargetSpec::TwoCreaturesWithDifferentControllers
         | TargetSpec::UpToTwoOtherControlledCreatures
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
@@ -2807,6 +2808,22 @@ fn legal_targets_for_controller_from_source(
             .filter(|id| !targets_chosen.contains(&Target::Object(*id)))
             .map(Target::Object)
             .collect(),
+        TargetSpec::TwoCreaturesWithDifferentControllers => battlefield_objects(state)
+            .filter(|&id| object_has_type(state, id, CardType::Creature))
+            .filter(|&id| {
+                !targets_chosen.contains(&Target::Object(id))
+                    && targets_chosen.iter().all(|target| match target {
+                        Target::Object(other) => {
+                            state.objects.try_get(*other).is_some_and(|live| {
+                                live.zone == Zone::Battlefield
+                                    && live.controller != state.objects.get(id).controller
+                            })
+                        }
+                        Target::Player(_) => false,
+                    })
+            })
+            .map(Target::Object)
+            .collect(),
         TargetSpec::NonlegendaryCreature => battlefield_objects(state)
             .filter(|&id| {
                 let def_idx = state.objects.get(id).card_def;
@@ -3222,6 +3239,61 @@ pub(crate) fn effect_target_is_legal(
         )
         .contains(target)
     })
+}
+
+/// Run Away Together checks both target relationships in one unchanged state.
+/// A stale or departed original target cannot constrain the surviving target;
+/// a still-present original permanent constrains control even if it becomes
+/// noncreature or independently untargetable. Never use the one-sided prefix
+/// check at resolution, or the first pick would bypass the controller relation.
+pub(crate) fn different_controller_creature_targets_are_legal(
+    state: &GameState,
+    source: ObjectId,
+    controller: PlayerId,
+    targets: &[Target],
+    contracts: &[StackTargetContractV4],
+) -> [bool; 2] {
+    if targets.len() != 2
+        || contracts.len() != 2
+        || targets[0] == targets[1]
+        || !contracts.iter().all(|contract| {
+            matches!(
+                contract,
+                StackTargetContractV4::Object {
+                    zone: Zone::Battlefield,
+                    ..
+                }
+            )
+        })
+        || !targets
+            .iter()
+            .all(|target| matches!(target, Target::Object(_)))
+    {
+        return [false; 2];
+    }
+    let current = std::array::from_fn::<_, 2, _>(|index| {
+        target_contract_matches_live(state, targets[index], contracts[index])
+            && match targets[index] {
+                Target::Object(object) => battlefield_objects(state).any(|live| live == object),
+                Target::Player(_) => false,
+            }
+    });
+    if current[0] && current[1] {
+        let [Target::Object(first), Target::Object(second)] = targets else {
+            return [false; 2];
+        };
+        if state.objects.get(*first).controller == state.objects.get(*second).controller {
+            return [false; 2];
+        }
+    }
+    let legal = legal_targets_for_controller_from_source(
+        TargetSpec::Creature,
+        &[],
+        controller,
+        targeting_source_for_object(state, source),
+        state,
+    );
+    std::array::from_fn(|index| current[index] && legal.contains(&targets[index]))
 }
 
 /// Per-target legality for effects whose source provenance was captured when
@@ -11370,6 +11442,17 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
     let Some(spec) = validated_stack_item_target_spec(item, state)? else {
         return Ok(true);
     };
+    if spec == TargetSpec::TwoCreaturesWithDifferentControllers {
+        return Ok(different_controller_creature_targets_are_legal(
+            state,
+            item.source,
+            item.controller,
+            &item.targets,
+            &item.v4.target_contracts,
+        )
+        .into_iter()
+        .any(|legal| legal));
+    }
     if item.targets.is_empty() {
         return Ok(true);
     }

@@ -1427,6 +1427,9 @@ pub enum EffectOp {
     PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness {
         target_index: u8,
     },
+    /// Run Away Together: freeze both current target legalities before returning
+    /// all legal original incarnations to their owners' hands in one batch.
+    ReturnTwoDifferentControllerCreaturesToOwnersHands,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -15249,6 +15252,31 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 );
             }
         }
+        EffectOp::ReturnTwoDifferentControllerCreaturesToOwnersHands => {
+            let legal = crate::engine::different_controller_creature_targets_are_legal(
+                state,
+                ctx.source,
+                ctx.controller,
+                &ctx.targets,
+                &ctx.target_contracts,
+            );
+            let events = legal
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, legal)| {
+                    if !legal {
+                        return None;
+                    }
+                    match ctx.targets[index] {
+                        Target::Object(object) => {
+                            Some(event::ProposedEvent::zone_change(object, Zone::Hand))
+                        }
+                        Target::Player(_) => None,
+                    }
+                })
+                .collect();
+            event::propose_and_commit_batch(state, events);
+        }
         EffectOp::DoubleTargetPowerUntilEndOfTurn { target_index } => {
             let index = usize::from(*target_index);
             if !ctx.target_incarnation_matches(index, state) {
@@ -18130,3 +18158,7 @@ mod countered_creature_draw_tests {
 #[cfg(test)]
 #[path = "effect/condemn_tests.rs"]
 mod condemn_tests;
+
+#[cfg(test)]
+#[path = "effect/run_away_together_tests.rs"]
+mod run_away_together_tests;
