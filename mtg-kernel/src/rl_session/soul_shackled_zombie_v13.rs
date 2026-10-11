@@ -41,11 +41,19 @@ fn selected_ref(c: &StackTargetContractV4) -> Result<CardStableRefV1, RlContract
     })
 }
 impl FastActorSessionV1 {
-    #[cfg(test)]
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     pub(crate) fn zombie_fixture_state(&self) -> &crate::state::GameState {
         &self.state
     }
-    #[cfg(test)]
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     pub(crate) fn zombie_fixture_state_mut(&mut self) -> &mut crate::state::GameState {
         &mut self.state
     }
