@@ -198,7 +198,8 @@ fn both_seat_actual_activations_exile_either_owners_cards_and_grow_only_for_crea
                 for branch in [&mut state, &mut pending, &mut announced] {
                     settle(branch);
                     assert_eq!(branch.objects.get(target).zone, Zone::Exile);
-                    assert!(branch.players[owner.index()].exile.contains(&target));
+                    assert!(branch.exile.contains(&target));
+                    assert_eq!(branch.objects.get(target).owner, owner);
                     assert_eq!(
                         branch.objects.get(source).counters.plus1_plus1,
                         i32::from(grows)

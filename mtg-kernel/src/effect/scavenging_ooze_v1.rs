@@ -140,7 +140,8 @@ mod tests {
                             branch,
                         );
                         assert_eq!(branch.objects.get(card).zone, Zone::Exile);
-                        assert!(branch.players[owner.index()].exile.contains(&card));
+                        assert!(branch.exile.contains(&card));
+                        assert_eq!(branch.objects.get(card).owner, owner);
                         assert_eq!(
                             branch.objects.get(ctx.source).counters.plus1_plus1,
                             i32::from(grows)
