@@ -109,6 +109,17 @@ fn activate(state: &mut GameState, actor: PlayerId, source: ObjectId) {
     state.players[actor.index()].mana_pool[ManaColor::W.pool_index()] = 3;
     next(state);
     engine::step(state, Action::ActivateAbility(source, 0)).unwrap();
+    assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
+    assert!(state.engine.pending_activation.is_none());
+    let item = state
+        .stack
+        .last()
+        .expect("actual finalized paid activation");
+    assert_eq!(
+        item.kind,
+        mtg_kernel::state::StackItemKind::ActivatedAbility
+    );
+    assert_eq!((item.source, item.controller), (source, actor));
     assert_eq!(
         state.players[actor.index()].mana_pool[ManaColor::W.pool_index()],
         0
