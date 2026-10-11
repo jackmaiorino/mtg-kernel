@@ -44,26 +44,28 @@ All23 final reviewed-head checks and35 affected Python cases on the actual
 default merge pass. Accepted coverage is138 full, one partial and147 missing
 names of286; live v65 identity is42bf6f9ca62d6615.
 
-Current accepted v66 integration: PR213 merged atb3bd1c1c0d7b5b6766359a3901549de768bcc175.
-All23 final CI checks passed; the actual default tree matches the reviewed
-composition and all36 affected Python cases pass there. The31-card batch has
-113 passing focused native games across25 targets. Accepted coverage is169
-full, one partial and116 missing of286 names; live identitye8e2bba9d9071e80.
-See PR213 default receipt6103422141. Issue110 remains open for full pool,
-reference comparisons and broader fair Limited/DraftZero requirements.
+Current accepted v67 integration: PR214 merged atddff546aeac448143cd1b37193357b035ccd622e.
+All23 final CI checks pass; actual default tree769cb439397139c5bf57bad76ccb14fdf2b13c03
+matches the reviewed composition and37 affected Python cases pass there.
+Accepted coverage is171 full, one partial and114 missing of286 names, plus24
+dependencies. Live v67 identity is1b1e46ebfc30edb7. See PR214 default receipt6104156053.
+Issue110 remains open for full pool, reference comparisons and fair Limited/DraftZero.
 
-The next candidate admits Mocking Sprite369/Archmage of Runes370 into371
-card definitions after accepted v66. All37 affected Python cases pass.
-Native20 passed all seven actual games and observed v67 identity1b1e46ebfc30edb7;
-its supported guard ended0. Draft PR214 has no outstanding source-review
-findings. Native21 is running current-source profile and cross-family checks;
-CI and default acceptance remain required.
-Brine's four fixture groups compiled but are unexecuted and unregistered.
-Ferocious source for Ruby/Courageous has six unregistered gameplay groups,
-Native15 passed the Limited regressions, then failed a combined-catalog Koma
-test guard. Repairbded94c1 preserves the Limited case and passes all140
-combined engine cases; Native16's remaining checks and fixture compilation
-are running. All prepared names remain unaccepted.
+The six-card v68 candidate registers Brine/Ruby/Courageous/High Fae/Archdruid/
+Ghalta, IDs371-376. Actual generated identity645f2da1b223a18f is bound to the
+live profile, with historical v67 readability and stale mutation refusal.
+Original native1 passes17 of22 card cases and fails5 missing attack-trigger
+cases; that receipt and guard exit101 remain retained. Repaired source5f0bdae2
+passes all22 cases in Linux Limited CI job114364708658. Seventeen CI jobs pass,
+with the rest pending. Native2 is running on Jack16-17 under supported guard
+ff99f2e7f20b4de4a50f66a41c9d1ed3. All38 candidate Python cases pass.
+
+Actual default advanced to1d240477 through PR206/219. A separate integration
+composes that accepted main with5f0bdae2 while the native source remains pinned.
+Final composed-head checks, review and default acceptance remain pending.
+Candidate177 is not accepted coverage. Source preparation for four following
+cards at365c85a1 and Inspiring Call atb668a397 is unregistered and unrun.
+
 The following preparation order and receipts are retained history.
 
 Later prepared families remain retained in their original worktrees: v65

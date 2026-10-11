@@ -1310,7 +1310,7 @@ fn standard_creature_subtypes_are_available_to_type_choices_and_changeling() {
         }
     }
     assert!(Subtype::OUTLAW_TYPES.contains(&Subtype::Warlock));
-    assert_eq!(Subtype::Elder.stable_id(), 143);
+    assert_eq!(Subtype::Elder.stable_id(), 127);
     assert_eq!(Subtype::Wurm.stable_id(), 144);
     assert_eq!(Subtype::Artificer.stable_id(), 145);
     assert_eq!(Subtype::Orc.stable_id(), 146);

@@ -1071,6 +1071,18 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         });
     }
 
+    if crate::engine::static_controller_casts_with_flash_for_v1(name) {
+        walk.rec(
+            "static_controller_casts_as_though_flash",
+            json!({"nonland_spells": true, "grants_keyword": false}),
+        );
+        walk.opaque
+            .push("casting timing permission: controller nonland spells as though flash");
+        walk.ability(CtxF::Static, |out| {
+            out.atoms.push(Atom::Opaque);
+        });
+    }
+
     if let Some(reduction) = crate::engine::static_instant_sorcery_reduction_for_v1(name) {
         walk.rec(
             "static_instant_sorcery_generic_reduction",

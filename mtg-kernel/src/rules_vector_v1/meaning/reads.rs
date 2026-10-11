@@ -473,6 +473,17 @@ pub(crate) fn dynamic_count(count: DynamicCountDef, out: &mut Collector) -> AmtF
             );
             AmtF::Dynamic
         }
+        DynamicCountDef::ControllerCreatureTotalPower => {
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Typed(CardTypeF::Creature)),
+                AggF::Characteristic,
+            );
+            // Vocabulary gap: no sum-of-power aggregate or floor operation.
+            out.atoms.push(Atom::Opaque);
+            AmtF::Dynamic
+        }
     }
 }
 

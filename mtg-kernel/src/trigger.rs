@@ -226,6 +226,12 @@ pub enum TriggerCondition {
     /// One declaration by the controller containing at least this many
     /// creatures. The observing source need not attack.
     ControllerAttacksWithAtLeastCreatures(u8),
+    /// The controller casts any spell during another player's turn. This is
+    /// a trigger-time restriction, not an intervening-if resolution gate.
+    CastSpellDuringOpponentsTurn,
+    /// This source attacks while its controller controls a creature with
+    /// effective power at least four. Checked only when the event is captured.
+    AttacksWhileControllerHasPowerFourCreature,
     /// Conditions owned by the Standard catalog's card module.
     StandardV1(crate::standard_cards_v1::StandardTriggerV1),
     ControlledArtifactEnters,
@@ -1434,6 +1440,46 @@ fn writhing_chrysalis_cast_effect() -> EffectOp {
 fn writhing_chrysalis_counter_marker_effect() -> EffectOp {
     EffectOp::BindPlusOnePlusOneCounterToTriggerSource
 }
+
+const BRINEBORN_CUTTHROAT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastSpellDuringOpponentsTurn,
+    ..etb_trigger(writhing_chrysalis_counter_marker_effect)
+}];
+
+fn ruby_daring_tracker_effect() -> EffectOp {
+    EffectOp::BindTemporaryBoostToTriggerSource {
+        power: 2,
+        toughness: 2,
+    }
+}
+
+fn courageous_goblin_effect() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::BindTemporaryBoostToTriggerSource {
+            power: 1,
+            toughness: 0,
+        },
+        // The captured trigger contract supplies the same exact battlefield
+        // incarnation as the boost binding. Control changes do not cancel it.
+        EffectOp::Conditional {
+            cond: EffectCond::SourceStillInTriggerZone,
+            then: Box::new(EffectOp::GrantKeywordTargetUntilEndOfTurn {
+                object: ObjectRef::ThisSource,
+                keyword: Keywords::MENACE,
+            }),
+            else_: Box::new(EffectOp::Sequence(vec![])),
+        },
+    ])
+}
+
+const RUBY_DARING_TRACKER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::AttacksWhileControllerHasPowerFourCreature,
+    ..etb_trigger(ruby_daring_tracker_effect)
+}];
+const COURAGEOUS_GOBLIN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::AttacksWhileControllerHasPowerFourCreature,
+    ..etb_trigger(courageous_goblin_effect)
+}];
 
 fn blood_fountain_effect() -> EffectOp {
     let blood = crate::card_def::card_id_by_name("Blood Token").expect("Blood Token in CARD_DEFS");
@@ -3230,6 +3276,9 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Balmor, Battlemage Captain" => &BALMOR_TRIGGERS,
         "Firespitter Whelp" => &FIRESPITTER_WHELP_TRIGGERS,
         "Gixian Infiltrator" => &GIXIAN_INFILTRATOR_TRIGGERS,
+        "Brineborn Cutthroat" => &BRINEBORN_CUTTHROAT_TRIGGERS,
+        "Ruby, Daring Tracker" => &RUBY_DARING_TRACKER_TRIGGERS,
+        "Courageous Goblin" => &COURAGEOUS_GOBLIN_TRIGGERS,
         "Webweaver Changeling" => &WEBWEAVER_CHANGELING_TRIGGERS,
         "Glint Hawk" => &GLINT_HAWK_TRIGGERS,
         "Gatecreeper Vine" => &GATECREEPER_VINE_TRIGGERS,
@@ -5150,6 +5199,12 @@ fn trigger_matches(
             },
         ) => *caster == controller && crate::engine::object_color_mask(state, *spell) & mask != 0,
         (
+            TriggerCondition::CastSpellDuringOpponentsTurn,
+            CommittedEvent::SpellCast {
+                controller: caster, ..
+            },
+        ) => *caster == controller && state.active_player != controller,
+        (
             TriggerCondition::CastSpellManaValueAtLeast(minimum),
             CommittedEvent::SpellCast {
                 spell,
@@ -5381,6 +5436,29 @@ fn trigger_matches(
                 && state.objects.get(source).zone_change_count == *source_zone_change_count
                 && crate::effect::controller_graveyard_card_count(state, controller)
                     >= usize::from(minimum)
+        }
+        (
+            TriggerCondition::AttacksWhileControllerHasPowerFourCreature,
+            CommittedEvent::DeclaredAttacker {
+                source: event_source,
+                source_zone_change_count,
+                controller: event_controller,
+            },
+        ) => {
+            *event_source == source
+                && *event_controller == controller
+                && state.objects.get(source).zone_change_count == *source_zone_change_count
+                && state.players[controller.index()]
+                    .battlefield
+                    .iter()
+                    .copied()
+                    .any(|object| {
+                        let live = state.objects.get(object);
+                        live.zone == Zone::Battlefield
+                            && live.controller == controller
+                            && crate::engine::object_has_type(state, object, CardType::Creature)
+                            && crate::engine::effective_power(state, object) >= 4
+                    })
         }
         (
             TriggerCondition::DealsCombatDamageToPlayer,
@@ -5901,6 +5979,306 @@ mod tests {
     use super::*;
     use crate::ids::PlayerId;
     use crate::state::GameState;
+
+    #[test]
+    fn ferocious_attack_gate_counts_live_controlled_effective_power_including_source() {
+        let elf = crate::card_def::card_id_by_name("Llanowar Elves").unwrap();
+        for controller in [PlayerId::P0, PlayerId::P1] {
+            let mut state =
+                GameState::new_from_libraries(&[elf; 4], &[elf; 4], |_| "elf".into(), 1110);
+            let source = state.players[controller.index()].library[0];
+            let own = state.players[controller.index()].library[1];
+            let opposing = state.players[controller.opponent().index()].library[0];
+            for object in [source, own, opposing] {
+                crate::event::propose_and_commit(
+                    &mut state,
+                    crate::event::ProposedEvent::zone_change(object, Zone::Battlefield),
+                );
+            }
+            let event = CommittedEvent::DeclaredAttacker {
+                source,
+                source_zone_change_count: state.objects.get(source).zone_change_count,
+                controller,
+            };
+            state.objects.get_mut(opposing).counters.plus1_plus1 = 3;
+            for (source_counters, own_counters, expected) in
+                [(0, 0, false), (0, 2, false), (0, 3, true), (3, 0, true)]
+            {
+                state.objects.get_mut(source).counters.plus1_plus1 = source_counters;
+                state.objects.get_mut(own).counters.plus1_plus1 = own_counters;
+                let replay: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                for candidate in [&state, &replay] {
+                    assert_eq!(
+                        trigger_matches(
+                            TriggerCondition::AttacksWhileControllerHasPowerFourCreature,
+                            &event,
+                            source,
+                            controller,
+                            candidate,
+                            0
+                        ),
+                        expected
+                    );
+                    assert!(!trigger_matches(
+                        TriggerCondition::AttacksWhileControllerHasPowerFourCreature,
+                        &event,
+                        own,
+                        controller,
+                        candidate,
+                        0
+                    ));
+                    assert!(!trigger_matches(
+                        TriggerCondition::AttacksWhileControllerHasPowerFourCreature,
+                        &event,
+                        source,
+                        controller.opponent(),
+                        candidate,
+                        0
+                    ));
+                }
+            }
+            state.objects.get_mut(source).counters.plus1_plus1 = 0;
+            state.objects.get_mut(own).counters.plus1_plus1 = 3;
+            // Control changes are represented in both physical battlefield vectors.
+            state.players[controller.index()]
+                .battlefield
+                .retain(|id| *id != own);
+            state.players[controller.opponent().index()]
+                .battlefield
+                .push(own);
+            state.objects.get_mut(own).controller = controller.opponent();
+            assert!(!trigger_matches(
+                TriggerCondition::AttacksWhileControllerHasPowerFourCreature,
+                &event,
+                source,
+                controller,
+                &state,
+                0
+            ));
+            state.objects.get_mut(source).counters.plus1_plus1 = 3;
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(source, Zone::Hand),
+            );
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            state.objects.get_mut(source).counters.plus1_plus1 = 3;
+            assert!(!trigger_matches(
+                TriggerCondition::AttacksWhileControllerHasPowerFourCreature,
+                &event,
+                source,
+                controller,
+                &state,
+                0
+            ));
+        }
+    }
+
+    #[test]
+    fn ferocious_attack_effects_keep_trigger_time_gate_and_original_source_after_restore() {
+        let elf = crate::card_def::card_id_by_name("Llanowar Elves").unwrap();
+        for controller in [PlayerId::P0, PlayerId::P1] {
+            for (recipe, power, toughness, menace) in [
+                (ruby_daring_tracker_effect as fn() -> EffectOp, 2, 2, false),
+                (courageous_goblin_effect as fn() -> EffectOp, 1, 0, true),
+            ] {
+                let mut state =
+                    GameState::new_from_libraries(&[elf; 4], &[elf; 4], |_| "elf".into(), 1111);
+                let source = state.players[controller.index()].library[0];
+                let qualifier = state.players[controller.index()].library[1];
+                for object in [source, qualifier] {
+                    crate::event::propose_and_commit(
+                        &mut state,
+                        crate::event::ProposedEvent::zone_change(object, Zone::Battlefield),
+                    );
+                }
+                state.objects.get_mut(qualifier).counters.plus1_plus1 = 3;
+                let event = CommittedEvent::DeclaredAttacker {
+                    source,
+                    source_zone_change_count: state.objects.get(source).zone_change_count,
+                    controller,
+                };
+                assert!(trigger_matches(
+                    TriggerCondition::AttacksWhileControllerHasPowerFourCreature,
+                    &event,
+                    source,
+                    controller,
+                    &state,
+                    0
+                ));
+                let effect = materialize_trigger_source_program(recipe(), source, &state);
+                let mut ctx = crate::effect::ExecCtx::no_targets(source, controller);
+                ctx.ability_source_contract =
+                    Some(AbilitySourceContractV4::capture(&state, source));
+                crate::event::propose_and_commit(
+                    &mut state,
+                    crate::event::ProposedEvent::zone_change(qualifier, Zone::Graveyard),
+                );
+                state.objects.get_mut(source).controller = controller.opponent();
+                state.players[controller.index()]
+                    .battlefield
+                    .retain(|id| *id != source);
+                state.players[controller.opponent().index()]
+                    .battlefield
+                    .push(source);
+                let mut replay: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                for current in [&mut state, &mut replay] {
+                    crate::effect::execute(&effect, &ctx, current);
+                    assert!(current.engine.halted.is_none());
+                    assert_eq!(crate::engine::effective_power(current, source), 1 + power);
+                    assert_eq!(
+                        crate::engine::effective_toughness(current, source),
+                        1 + toughness
+                    );
+                    assert_eq!(
+                        crate::engine::has_effective_keyword(current, source, Keywords::MENACE),
+                        menace
+                    );
+                    crate::event::propose_and_commit(
+                        current,
+                        crate::event::ProposedEvent::zone_change(source, Zone::Hand),
+                    );
+                    crate::event::propose_and_commit(
+                        current,
+                        crate::event::ProposedEvent::zone_change(source, Zone::Battlefield),
+                    );
+                    crate::effect::execute(&effect, &ctx, current);
+                    assert!(current.engine.halted.is_none());
+                    assert_eq!(crate::engine::effective_power(current, source), 1);
+                    assert!(!crate::engine::has_effective_keyword(
+                        current,
+                        source,
+                        Keywords::MENACE
+                    ));
+                }
+                assert_eq!(
+                    serde_json::to_value(&state).unwrap(),
+                    serde_json::to_value(&replay).unwrap()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn opponent_turn_cast_condition_counts_all_spell_types_for_both_seats() {
+        let elf = crate::card_def::card_id_by_name("Llanowar Elves").unwrap();
+        let instant = crate::card_def::CARD_DEFS
+            .iter()
+            .position(|definition| definition.has_type(CardType::Instant))
+            .unwrap() as u16;
+        for controller in [PlayerId::P0, PlayerId::P1] {
+            let mut state = GameState::new_from_libraries(
+                &[elf, instant],
+                &[elf, instant],
+                |id| crate::card_def::CARD_DEFS[id as usize].name.into(),
+                958,
+            );
+            let source = state.players[controller.index()].library[0];
+            for active_player in [PlayerId::P0, PlayerId::P1] {
+                state.active_player = active_player;
+                for caster in [PlayerId::P0, PlayerId::P1] {
+                    for spell in state.players[caster.index()].library.iter().copied() {
+                        let event = CommittedEvent::SpellCast {
+                            spell,
+                            controller: caster,
+                        };
+                        let replay: GameState =
+                            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                        for candidate in [&state, &replay] {
+                            assert_eq!(
+                                trigger_matches(
+                                    TriggerCondition::CastSpellDuringOpponentsTurn,
+                                    &event,
+                                    source,
+                                    controller,
+                                    candidate,
+                                    0,
+                                ),
+                                caster == controller && active_player != controller,
+                            );
+                        }
+                    }
+                }
+            }
+            assert!(!trigger_matches(
+                TriggerCondition::CastSpellDuringOpponentsTurn,
+                &CommittedEvent::LifeGain {
+                    player: controller,
+                    amount: 1
+                },
+                source,
+                controller,
+                &state,
+                0,
+            ));
+        }
+    }
+
+    #[test]
+    fn opponent_turn_counter_keeps_original_source_after_restore_and_zone_change() {
+        let elf = crate::card_def::card_id_by_name("Llanowar Elves").unwrap();
+        for controller in [PlayerId::P0, PlayerId::P1] {
+            let mut state =
+                GameState::new_from_libraries(&[elf; 4], &[elf; 4], |_| "elf".into(), 959);
+            let source = state.players[controller.index()].library[0];
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            let effect = materialize_trigger_source_program(
+                (BRINEBORN_CUTTHROAT_TRIGGERS[0].effect)(),
+                source,
+                &state,
+            );
+            let ctx = crate::effect::ExecCtx::no_targets(source, controller);
+            let mut replay: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            // The turn restriction has already been evaluated. Neither a
+            // subsequent control change nor a turn change cancels the counter.
+            state.active_player = controller;
+            state.objects.get_mut(source).controller = controller.opponent();
+            replay.active_player = state.active_player;
+            replay.objects.get_mut(source).controller = controller.opponent();
+            for candidate in [&mut state, &mut replay] {
+                candidate.players[controller.index()]
+                    .battlefield
+                    .retain(|object| *object != source);
+                candidate.players[controller.opponent().index()]
+                    .battlefield
+                    .push(source);
+            }
+            crate::effect::execute(&effect, &ctx, &mut state);
+            crate::effect::execute(&effect, &ctx, &mut replay);
+            assert_eq!(state.objects.get(source).counters.plus1_plus1, 1);
+            assert_eq!(
+                serde_json::to_value(&state).unwrap(),
+                serde_json::to_value(&replay).unwrap()
+            );
+            for candidate in [&mut state, &mut replay] {
+                crate::event::propose_and_commit(
+                    candidate,
+                    crate::event::ProposedEvent::zone_change(source, Zone::Hand),
+                );
+                crate::effect::execute(&effect, &ctx, candidate);
+                assert_eq!(candidate.objects.get(source).counters.plus1_plus1, 0);
+                crate::event::propose_and_commit(
+                    candidate,
+                    crate::event::ProposedEvent::zone_change(source, Zone::Battlefield),
+                );
+                crate::effect::execute(&effect, &ctx, candidate);
+                assert_eq!(candidate.objects.get(source).counters.plus1_plus1, 0);
+                assert!(candidate.engine.halted.is_none());
+            }
+            assert_eq!(
+                serde_json::to_value(&state).unwrap(),
+                serde_json::to_value(&replay).unwrap()
+            );
+        }
+    }
 
     #[test]
     fn attack_count_condition_uses_declaration_and_source_incarnation() {
