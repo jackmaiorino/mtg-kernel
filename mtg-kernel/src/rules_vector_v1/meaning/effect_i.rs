@@ -134,6 +134,16 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         EffectOp::SelectObjectsV1 { rule } => {
             out.control(ControlF::ChooseObjects);
             match rule.action {
+                crate::effect::ObjectSelectionActionV1::TapFiveThenTransformSource => {
+                    out.control(ControlF::Conditional);
+                    out.effect(
+                        EffectAtom::new(EvF::Tap)
+                            .player(player_ref(rule.player))
+                            .obj(ObjF::Permanent)
+                            .amount(AmtF::fixed(5)),
+                    );
+                    out.effect(EffectAtom::new(EvF::Transform).obj(ObjF::ThisObject));
+                }
                 crate::effect::ObjectSelectionActionV1::MoveTo(zone) => out.effect(
                     EffectAtom::moving(Some(rule.zone.into()), zone.into())
                         .player(player_ref(rule.player))
