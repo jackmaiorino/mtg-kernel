@@ -52,8 +52,12 @@ planeswalkers, Rooms, Vehicles, craft, copying and transforming cards; and the f
 legends. Generic observations represent the added public state and decision boundaries.
 
 **Runtime verification is pending.** The integration lead still owns the combined
-compile, affected executable tests, final untap/granted-trigger repairs,
-terminal public-session/replay execution, source review and delivery. The native v7 build generator reports `0x020d7a9c4c45b4e2`, now bound by the catalog test. Full flags and Python admission alone are
+affected executable tests, terminal public-session/replay execution,
+source review and delivery. Copied abilities are frozen before paying costs;
+borrowed upgrade triggers retain their actual donors. Free-cast triggers are
+captured after each child cast while placement and state-based actions wait
+for the parent resolution. Human observations project new mechanics through
+typed public handles and preserve the absent-extension JSON contract. The native v7 build generator reports `0x020d7a9c4c45b4e2`, now bound by the catalog test. Full flags and Python admission alone are
 not a verified support result. No training, benchmark campaign, paid compute or
 playing-strength claim is part of this assignment.
 
@@ -74,4 +78,4 @@ drop it. Training a new Standard policy is a separate research task.
 
 The first combined check failed in the build script on duplicated cost/program
 variants and a stale helper call. Those integration defects are fixed in source.
-The local verification core is now admitted. Subsequent checks exposed and repaired missing token/subtype generation, feature guards, new enum matches and stale policy source digests. The generated policy checks pass (15 Python tests); the deck importer checks pass (8 tests). Formatting and diff checks pass. The next native check is running; executable regressions, frozen identity checks, public-session acceptance and current-head CI remain pending.
+The local verification core is now admitted. Subsequent checks exposed and repaired missing token/subtype generation, feature guards, new enum matches and stale policy source digests. The generated policy checks pass (15 Python tests); the deck importer checks pass (8 tests). Formatting and diff checks pass. The Standard library compiled. The first full suite build exposed two stale observation paths in its tests; both are repaired. A second guarded suite is queued. Executable regressions, frozen identity checks, public-session acceptance and current-head CI remain pending.
