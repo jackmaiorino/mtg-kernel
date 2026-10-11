@@ -438,11 +438,16 @@ impl std::hash::Hash for PoisonPreventionV1 {
         }
     }
 }
-pub(crate) fn give_poison(state: &mut GameState, player: crate::ids::PlayerId, amount: u16) {
+pub(crate) fn give_poison(
+    state: &mut GameState,
+    placer: crate::ids::PlayerId,
+    player: crate::ids::PlayerId,
+    amount: u16,
+) {
     if amount == 0 || state.players[player.index()].poison_prevention_v1.0 {
         return;
     }
-    let amount = crate::standard_cards_v1::scale_counters(state, player, i32::from(amount))
+    let amount = crate::standard_cards_v1::scale_counters(state, placer, i32::from(amount))
         .clamp(0, i32::from(u16::MAX)) as u16;
     let melira = state.players[player.index()]
         .battlefield
@@ -638,17 +643,17 @@ mod tests {
             zone_change_count: 0,
         });
         state.players[0].battlefield.push(melira);
-        give_poison(&mut state, PlayerId::P0, 3);
+        give_poison(&mut state, PlayerId::P1, PlayerId::P0, 3);
         assert_eq!(state.players[0].poison_counters.0, 1);
         assert!(state.players[0].poison_prevention_v1.0);
         crate::event::propose_and_commit(
             &mut state,
             crate::event::ProposedEvent::zone_change(melira, Zone::Graveyard),
         );
-        give_poison(&mut state, PlayerId::P0, 4);
+        give_poison(&mut state, PlayerId::P1, PlayerId::P0, 4);
         assert_eq!(state.players[0].poison_counters.0, 1);
         state.players[0].poison_prevention_v1.0 = false;
-        give_poison(&mut state, PlayerId::P0, 2);
+        give_poison(&mut state, PlayerId::P1, PlayerId::P0, 2);
         assert_eq!(state.players[0].poison_counters.0, 3);
     }
 }

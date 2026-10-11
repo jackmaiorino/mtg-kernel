@@ -13258,6 +13258,13 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         if let Some(card_def::AltCostCondition::ImpendingFromHand { time_counters }) =
             def.alt_cost.map(|alt| alt.condition)
         {
+            #[cfg(feature = "standard-magezero-fixtures")]
+            let time_counters = u8::try_from(crate::standard_cards_v1::scale_counters(
+                state,
+                item.controller,
+                i32::from(time_counters),
+            ))
+            .unwrap_or(u8::MAX);
             state.objects.get_mut(item.source).v4.time_counters_v1 = time_counters;
         }
     }
@@ -15049,7 +15056,12 @@ pub(crate) fn commit_combat_damage_events(state: &mut GameState, events: Vec<Pro
         // also gives that player N poison counters.
         #[cfg(feature = "standard-magezero-fixtures")]
         if let Some(characteristics) = crate::standard_legends_v1::characteristics(state, source) {
-            crate::standard_legends_v1::give_poison(state, player, characteristics.toxic);
+            crate::standard_legends_v1::give_poison(
+                state,
+                state.objects.get(source).controller,
+                player,
+                characteristics.toxic,
+            );
         }
     }
     if let Some(holder) = state.initiative {

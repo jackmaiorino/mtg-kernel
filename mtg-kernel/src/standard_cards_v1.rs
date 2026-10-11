@@ -676,7 +676,7 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
         }
         StandardOpV1::BindEtaliPoison => {}
         StandardOpV1::EtaliPoison { player, amount } => {
-            crate::standard_legends_v1::give_poison(state, *player, *amount);
+            crate::standard_legends_v1::give_poison(state, ctx.controller, *player, *amount);
         }
         StandardOpV1::KaitoEmblem => {
             let counts = state

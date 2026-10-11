@@ -16379,9 +16379,18 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 state,
                 event::ProposedEvent::zone_change_to_battlefield_tapped(contract.source),
             );
+            #[cfg(feature = "standard-magezero-fixtures")]
+            let placed_stun = i16::try_from(crate::standard_cards_v1::scale_counters(
+                state,
+                ctx.controller,
+                i32::from(*stun),
+            ))
+            .unwrap_or(i16::MAX);
+            #[cfg(not(feature = "standard-magezero-fixtures"))]
+            let placed_stun = *stun;
             let returned = state.objects.get_mut(contract.source);
             if returned.zone == Zone::Battlefield {
-                returned.counters.stun = returned.counters.stun.saturating_add(*stun);
+                returned.counters.stun = returned.counters.stun.saturating_add(placed_stun);
             }
         }
         EffectOp::PutOilCounterOnBoundObject { object } => {
@@ -16390,8 +16399,17 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             {
                 return;
             }
+            #[cfg(feature = "standard-magezero-fixtures")]
+            let placed = i16::try_from(crate::standard_cards_v1::scale_counters(
+                state,
+                ctx.controller,
+                1,
+            ))
+            .unwrap_or(i16::MAX);
+            #[cfg(not(feature = "standard-magezero-fixtures"))]
+            let placed = 1;
             let oil = &mut state.objects.get_mut(object.object).counters.oil;
-            match oil.checked_add(1) {
+            match oil.checked_add(placed) {
                 Some(next) => *oil = next,
                 None => {
                     state.engine.halted = Some((

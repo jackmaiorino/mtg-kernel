@@ -37,6 +37,7 @@ pub(crate) fn conditional_self_keywords(state: &GameState, id: ObjectId) -> Keyw
         return Keywords::NONE;
     };
     let controller = state.objects.get(id).controller;
+    let count = crate::standard_cards_v1::scale_counters(state, controller, 1);
     match name {
         "Djeru and Hazoret" if state.players[controller.index()].hand.len() <= 1 => {
             Keywords(Keywords::VIGILANCE.0 | Keywords::HASTE.0)
@@ -85,11 +86,13 @@ pub(crate) fn apply_conditional_entry_counters(state: &mut GameState, id: Object
                 .iter()
                 .any(|&other| other != id && crate::engine::object_mana_value(state, other) >= 4);
             if controls_big_permanent {
-                state.objects.get_mut(id).counters.plus1_plus1 += 1;
+                state.objects.get_mut(id).counters.plus1_plus1 += count;
             }
         }
         // "This creature enters with an oil counter on it."
-        "Evolving Adaptive" => state.objects.get_mut(id).counters.oil += 1,
+        "Evolving Adaptive" => {
+            state.objects.get_mut(id).counters.oil += i16::try_from(count).unwrap_or(i16::MAX)
+        }
         _ => {}
     }
 }
