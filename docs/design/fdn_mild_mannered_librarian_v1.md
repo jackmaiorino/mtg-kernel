@@ -114,3 +114,29 @@ byte mutation; ordinary advancement may only set the exact failure halt. Existin
 four registered-operand and seven actual-printed groups stay intact. All thirteen
 groups remain native-unrun. Precise meaning/public/Human successors are still
 separate work; no global consumer/model/sampler or supported-gameplay claim follows.
+
+The a125 fabricated-Finished finding is repaired with a separate committed
+full-original-item operation and exact ordered completion reference. Genuine
+atomic resolution binds the ordinary committed Draw attempt (including an empty
+library attempt) and the exact two-counter occurrence for the surviving source;
+the source-free case requires a real intervening Battlefield departure. Genuine
+counter removal emits a distinct full-item Countered operation. Each paid row
+owns either its exact live item with no operation/completion, or exactly one
+matching operation followed by one linked completion with no live item.
+Reintroduced transient authority, erased/redirected operations and duplicated
+completion refuse before actions. Counter operations retain the trusted actual
+engine-removal journal assumption, not cryptographic proof against replacing
+all journals. The closed printed recipe is atomic and has no player-choice
+continuation; the common resumed-completion hook cannot close it without the
+same required operation. Old unrelated definitions emit no new operation.
+
+A future genuine both-seat printed fixture deletes the unresolved paid item and
+appends a fake Finished record, retaining original payment and once facts, and
+requires read-only refusal. Its actual resolved branch retains counters/draw and
+rejects erased operations, duplicate completion and redirected draw references.
+A future genuine registered-source unit traverses actual activation payment and
+the accepted exact-ID counter primitive, verifies no counters/draw, retained once
+mark, one completion and ordinary absent-ID second counter behavior. The early
+test module declaration is moved unchanged to the production file end. All
+fifteen original/new prepared groups remain unrun; only pinned formatting and
+diff checks have been performed for this repair.

@@ -3,6 +3,17 @@ use crate::card_def::{TargetSpec, CARD_DEFS};
 use crate::event::CommittedEvent;
 use crate::ids::StackItemId;
 use crate::state::{GameState, StackItem, StackItemKind, Zone};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum OperationV1 {
+    Resolved {
+        draw_history_index: u64,
+        counter_history_index: Option<u64>,
+    },
+    Countered,
+}
 
 fn definition_owns(item: &StackItem) -> bool {
     item.kind == StackItemKind::ActivatedAbility
@@ -59,15 +70,113 @@ pub(crate) fn record_paid(state: &mut GameState, id: StackItemId) {
     }
 }
 
-pub(crate) fn finish(state: &mut GameState, item: &StackItem) {
+pub(crate) fn record_countered(state: &mut GameState, item: &StackItem) {
     if definition_owns(item) {
         state
             .engine
             .event_history
-            .push(CommittedEvent::LibrarianActivationFinishedV1 {
-                stack_item_id: item.v4.stack_item_id,
+            .push(CommittedEvent::LibrarianActivationOperationV1 {
+                item: Box::new(item.clone()),
+                operation: OperationV1::Countered,
             });
     }
+}
+
+/// Called only after the exact atomic printed program executes. The ordinary
+/// draw and counter journals independently bind the actual effects.
+pub(crate) fn record_resolved(
+    state: &mut GameState,
+    item: &StackItem,
+    start: usize,
+) -> Result<(), String> {
+    if !definition_owns(item) {
+        return Ok(());
+    }
+    if state.engine.halted.is_some() {
+        return Err("Librarian execution halted".into());
+    }
+    let source = item
+        .v4
+        .ability_source_contract
+        .ok_or("Librarian source lost")?;
+    let rows = &state.engine.event_history[start..];
+    let draws: Vec<_> = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(offset, event)| {
+            matches!(event, CommittedEvent::Draw { player, .. } if *player == source.controller)
+                .then_some(start + offset)
+        })
+        .collect();
+    let [draw] = draws.as_slice() else {
+        return Err("Librarian did not commit exactly one draw attempt".into());
+    };
+    let counters: Vec<_> = rows.iter().enumerate().filter_map(|(offset, event)| {
+        matches!(event, CommittedEvent::PlusOneCountersAdded { object, zone_change_count, player, count }
+            if *object == source.source && *zone_change_count == source.zone_change_count
+                && *player == source.controller && *count == 2).then_some(start + offset)
+    }).collect();
+    let surviving = state.objects.try_get(source.source).filter(|live| {
+        live.zone == Zone::Battlefield && live.zone_change_count == source.zone_change_count
+    });
+    let counter = match (surviving, counters.as_slice()) {
+        (Some(live), [counter])
+            if live.v4.creature_upgrade.as_ref().is_some_and(|upgrade| {
+                upgrade.creature_types.as_ref().is_some_and(|(types, _)| {
+                    types.as_slice() == [crate::card_def::Subtype::Werewolf.stable_id()]
+                })
+            }) =>
+        {
+            Some(u64::try_from(*counter).map_err(|_| "counter occurrence exceeds u64")?)
+        }
+        (None, []) => None,
+        _ => {
+            return Err("Librarian did not commit its surviving source upgrade and counters".into())
+        }
+    };
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::LibrarianActivationOperationV1 {
+            item: Box::new(item.clone()),
+            operation: OperationV1::Resolved {
+                draw_history_index: u64::try_from(*draw)
+                    .map_err(|_| "draw occurrence exceeds u64")?,
+                counter_history_index: counter,
+            },
+        });
+    Ok(())
+}
+
+pub(crate) fn finish(state: &mut GameState, item: &StackItem) {
+    if !definition_owns(item) {
+        return;
+    }
+    let operations: Vec<_> = state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| {
+            matches!(event, CommittedEvent::LibrarianActivationOperationV1 { item: saved, .. }
+            if saved.as_ref() == item)
+            .then_some(index)
+        })
+        .collect();
+    let [operation] = operations.as_slice() else {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            item.source,
+        ));
+        return;
+    };
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::LibrarianActivationFinishedV1 {
+            stack_item_id: item.v4.stack_item_id,
+            operation_history_index: u64::try_from(*operation).expect("bounded history"),
+        });
 }
 
 pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), String> {
@@ -94,7 +203,7 @@ pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), S
     if rows.as_slice() != [item]
         || state.engine.event_history.iter().any(|event| {
             matches!(event,
-            CommittedEvent::LibrarianActivationFinishedV1 { stack_item_id }
+            CommittedEvent::LibrarianActivationFinishedV1 { stack_item_id, .. }
                 if *stack_item_id == item.v4.stack_item_id)
         })
     {
@@ -125,6 +234,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             event,
             CommittedEvent::LibrarianActivationCommittedV1 { .. }
                 | CommittedEvent::LibrarianActivationFinishedV1 { .. }
+                | CommittedEvent::LibrarianActivationOperationV1 { .. }
         )
     }) {
         return Err("Librarian paid authority entered transient trigger log".into());
@@ -149,7 +259,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             .iter()
             .enumerate()
             .filter_map(|(at, event)| {
-                matches!(event, CommittedEvent::LibrarianActivationFinishedV1 { stack_item_id }
+                matches!(event, CommittedEvent::LibrarianActivationFinishedV1 { stack_item_id, .. }
                 if *stack_item_id == item.v4.stack_item_id)
                 .then_some(at)
             })
@@ -159,9 +269,67 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             .iter()
             .filter(|live| live.v4.stack_item_id == item.v4.stack_item_id)
             .collect();
-        match (finishes.as_slice(), live.as_slice()) {
-            ([], [live]) if **live == **item => {}
-            ([finished], []) if *finished > index => {}
+        let operations: Vec<_> = state
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .filter_map(|(at, event)| match event {
+                CommittedEvent::LibrarianActivationOperationV1 {
+                    item: original,
+                    operation,
+                } if original.v4.stack_item_id == item.v4.stack_item_id => {
+                    Some((at, original.as_ref(), operation))
+                }
+                _ => None,
+            })
+            .collect();
+        match (finishes.as_slice(), live.as_slice(), operations.as_slice()) {
+            ([], [live], []) if **live == **item => {}
+            ([finished], [], [(operation_index, original, operation)])
+                if index < *operation_index
+                    && *operation_index < *finished
+                    && *original == item.as_ref() =>
+            {
+                let Some(CommittedEvent::LibrarianActivationFinishedV1 {
+                    operation_history_index,
+                    ..
+                }) = state.engine.event_history.get(*finished)
+                else {
+                    unreachable!()
+                };
+                if usize::try_from(*operation_history_index).ok() != Some(*operation_index) {
+                    return Err("Librarian completion redirected its original operation".into());
+                }
+                if let OperationV1::Resolved {
+                    draw_history_index,
+                    counter_history_index,
+                } = operation
+                {
+                    let draw = usize::try_from(*draw_history_index)
+                        .map_err(|_| "draw occurrence exceeds usize")?;
+                    if draw <= index
+                        || draw >= *operation_index
+                        || !matches!(state.engine.event_history.get(draw),
+                        Some(CommittedEvent::Draw { player, .. }) if *player == source.controller)
+                    {
+                        return Err("Librarian completion lost its actual draw attempt".into());
+                    }
+                    if let Some(counter) = counter_history_index {
+                        let counter = usize::try_from(*counter).map_err(|_| "counter occurrence exceeds usize")?;
+                        if counter <= index || counter >= draw || !matches!(state.engine.event_history.get(counter),
+                            Some(CommittedEvent::PlusOneCountersAdded { object, zone_change_count, player, count })
+                            if *object == source.source && *zone_change_count == source.zone_change_count
+                                && *player == source.controller && *count == 2) {
+                            return Err("Librarian completion lost its actual source counter placement".into());
+                        }
+                    } else if !state.engine.event_history[index+1..draw].iter().any(|event|
+                        matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Battlefield, .. }
+                            if *object == source.source)) {
+                        return Err("Librarian source-free completion lost its actual departure".into());
+                    }
+                }
+            }
             _ => return Err("Librarian paid activation ownership was erased or replayed".into()),
         }
         if let Some(live) = state.objects.try_get(source.source).filter(|live| {
@@ -181,9 +349,15 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             }
         }
     }
-    if state.engine.event_history.iter().any(|event| matches!(event,
-        CommittedEvent::LibrarianActivationFinishedV1 { stack_item_id } if !ids.contains(stack_item_id)))
-    {
+    if state.engine.event_history.iter().any(|event| match event {
+        CommittedEvent::LibrarianActivationFinishedV1 { stack_item_id, .. } => {
+            !ids.contains(stack_item_id)
+        }
+        CommittedEvent::LibrarianActivationOperationV1 { item, .. } => {
+            !ids.contains(&item.v4.stack_item_id)
+        }
+        _ => false,
+    }) {
         return Err("Librarian completion has no genuine payment".into());
     }
     for (id, object) in state.objects.iter() {
@@ -200,4 +374,76 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod tests {
+    use super::*;
+    use crate::policy_observation_v6::tests::{put, ready_state};
+    #[test]
+    fn genuine_counter_primitive_closes_paid_ability_once_without_upgrading_or_drawing_both_seats()
+    {
+        for actor in [crate::ids::PlayerId::P0, crate::ids::PlayerId::P1] {
+            let mut state = ready_state();
+            state.active_player = actor;
+            state.priority_player = actor;
+            let source = put(
+                &mut state,
+                actor,
+                "Mild-Mannered Librarian",
+                Zone::Battlefield,
+            );
+            state.players[actor.index()].mana_pool[crate::mana::ManaColor::G.pool_index()] = 4;
+            assert!(matches!(crate::engine::advance_until_decision(&mut state),
+                crate::engine::Decision::CastSpellOrPass { activatable_abilities, .. }
+                if activatable_abilities.contains(&(source, 0))));
+            crate::engine::step(
+                &mut state,
+                crate::engine::Action::ActivateAbility(source, 0),
+            )
+            .unwrap();
+            crate::engine::advance_until_decision(&mut state);
+            let original = state
+                .stack
+                .iter()
+                .find(|item| item.source == source)
+                .unwrap()
+                .clone();
+            let hand = state.players[actor.index()].hand.len();
+            assert_eq!(
+                crate::engine::counter_stack_item_by_id(&mut state, original.v4.stack_item_id)
+                    .unwrap(),
+                Some(original.clone())
+            );
+            validate_state(&state).unwrap();
+            assert!(
+                crate::engine::counter_stack_item_by_id(&mut state, original.v4.stack_item_id)
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(
+                state
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter(|event| matches!(event,
+                CommittedEvent::LibrarianActivationFinishedV1 { stack_item_id, .. }
+                    if *stack_item_id == original.v4.stack_item_id))
+                    .count(),
+                1
+            );
+            assert_eq!(state.objects.get(source).counters.plus1_plus1, 0);
+            assert_eq!(state.players[actor.index()].hand.len(), hand);
+            assert!(!crate::mild_mannered_librarian_v1::activation_allowed(
+                &state, source, 0
+            ));
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            validate_state(&restored).unwrap();
+        }
+    }
 }

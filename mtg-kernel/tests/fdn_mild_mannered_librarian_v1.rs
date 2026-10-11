@@ -558,3 +558,85 @@ fn actual_completed_paid_activation_cannot_be_reintroduced_or_lose_completion() 
         refuse_paid_restore(&repeated);
     }
 }
+
+#[test]
+fn actual_unresolved_paid_activation_cannot_manufacture_completion_without_an_operation() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let source = source(&mut state, actor);
+        announce(&mut state, actor, source);
+        let original = state
+            .stack
+            .iter()
+            .find(|item| item.source == source)
+            .unwrap()
+            .clone();
+        let hand = state.players[actor.index()].hand.len();
+        let mut forged = restore(&state);
+        forged
+            .stack
+            .retain(|item| item.v4.stack_item_id != original.v4.stack_item_id);
+        forged.engine.event_history.push(
+            mtg_kernel::event::CommittedEvent::LibrarianActivationFinishedV1 {
+                stack_item_id: original.v4.stack_item_id,
+                operation_history_index: 0,
+            },
+        );
+        assert_eq!(forged.objects.get(source).counters.plus1_plus1, 0);
+        assert_eq!(forged.players[actor.index()].hand.len(), hand);
+        refuse_paid_restore(&forged);
+        finish(&mut state);
+        assert_eq!(state.objects.get(source).counters.plus1_plus1, 2);
+        assert_eq!(state.players[actor.index()].hand.len(), hand + 1);
+        for alteration in 0..3 {
+            let mut forged = restore(&state);
+            match alteration {
+                0 => forged.engine.event_history.retain(|event| {
+                    !matches!(
+                        event,
+                        mtg_kernel::event::CommittedEvent::LibrarianActivationOperationV1 { .. }
+                    )
+                }),
+                1 => {
+                    let completion =
+                        forged
+                            .engine
+                            .event_history
+                            .iter()
+                            .find(|event| {
+                                matches!(event,
+                        mtg_kernel::event::CommittedEvent::LibrarianActivationFinishedV1 { .. })
+                            })
+                            .unwrap()
+                            .clone();
+                    forged.engine.event_history.push(completion);
+                }
+                _ => {
+                    let operation =
+                        forged
+                            .engine
+                            .event_history
+                            .iter_mut()
+                            .find(|event| {
+                                matches!(event,
+                        mtg_kernel::event::CommittedEvent::LibrarianActivationOperationV1 { .. })
+                            })
+                            .unwrap();
+                    let mtg_kernel::event::CommittedEvent::LibrarianActivationOperationV1 {
+                        operation:
+                            mtg_kernel::librarian_activation_v1::OperationV1::Resolved {
+                                draw_history_index,
+                                ..
+                            },
+                        ..
+                    } = operation
+                    else {
+                        panic!("genuine resolved operation")
+                    };
+                    *draw_history_index = 0;
+                }
+            }
+            refuse_paid_restore(&forged);
+        }
+    }
+}

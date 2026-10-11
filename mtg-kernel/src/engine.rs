@@ -13809,6 +13809,7 @@ pub(crate) fn counter_stack_item_by_id(
     crate::source_power_activation_v1::finish(state, &item);
     crate::authority_of_the_consuls_v1::record_countered(state, &item);
     crate::cerberus_capture_v1::record_countered(state, &item);
+    crate::librarian_activation_v1::record_countered(state, &item);
     crate::librarian_activation_v1::finish(state, &item);
     crate::authority_of_the_consuls_v1::finish(state, &item);
     crate::cerberus_capture_v1::finish(state, &item);
@@ -14175,6 +14176,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     }
 
     if let Some(effect) = item.inline_effect.clone() {
+        let effect_history_start = state.engine.event_history.len();
         let progress = execute_resolving_program(
             state,
             &item,
@@ -14184,6 +14186,13 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             frenzied_owner.as_ref(),
         );
         if progress == ResolutionProgress::Complete {
+            if crate::librarian_activation_v1::record_resolved(state, &item, effect_history_start)
+                .is_err()
+            {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                return ResolutionProgress::Suspended;
+            }
             crate::source_power_activation_v1::finish(state, &item);
             crate::librarian_activation_v1::finish(state, &item);
             crate::authority_of_the_consuls_v1::finish(state, &item);

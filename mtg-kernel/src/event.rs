@@ -814,6 +814,11 @@ pub enum CommittedEvent {
     },
     LibrarianActivationFinishedV1 {
         stack_item_id: crate::ids::StackItemId,
+        operation_history_index: u64,
+    },
+    LibrarianActivationOperationV1 {
+        item: Box<crate::state::StackItem>,
+        operation: crate::librarian_activation_v1::OperationV1,
     },
 }
 

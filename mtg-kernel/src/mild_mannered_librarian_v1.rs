@@ -5,14 +5,6 @@ use crate::ids::ObjectId;
 use crate::standard_creatures_v1::CreatureEffectV1;
 use crate::state::{GameState, Zone};
 
-#[cfg(all(
-    test,
-    feature = "limited-fdn-fixtures",
-    not(feature = "standard-magezero-fixtures")
-))]
-#[path = "mild_mannered_librarian_v1_tests.rs"]
-mod tests;
-
 pub fn program_v1() -> EffectOp {
     EffectOp::Sequence(vec![
         EffectOp::CreatureUpgrade(CreatureEffectV1::LibrarianWerewolfAndCounters),
@@ -103,3 +95,11 @@ pub(crate) fn resolve_source_upgrade(state: &mut GameState, ctx: &ExecCtx) {
         ));
     }
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "mild_mannered_librarian_v1_tests.rs"]
+mod tests;
