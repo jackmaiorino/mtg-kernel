@@ -17,11 +17,12 @@
 //! `world`), dispatched through arm label "E", with no refresh and no tree
 //! update. Nothing here feeds back into selection, backups or execution.
 
-use super::arms::{Capture, EvalOut, Limits, Roles, SamplerStats, SimRecord};
+use super::arms::{Capture, EvalOut, Limits, Roles, SamplerStats, SearchDiag, SimRecord};
 use super::bank::{
     bank_roles, decision_identity, guide_ctx, plain_logged, source_identity, source_session, walk,
     BankShared, SourceSpec,
 };
+use super::canon2::KeyMode;
 use super::play::{acting, decision};
 use super::seeds::{Purpose, RootSeeds};
 use super::tree::{Key, Tree};
@@ -666,6 +667,205 @@ fn substep0(groups: &[(u64, Vec<(u32, u8)>)]) -> (usize, usize) {
     (zero.len(), zero.iter().filter(|&&s| s == 0).count())
 }
 
+/// Repeat-support readout of one finished search (collab
+/// LANES/search-canonical-repair-plan-20261011). Edge counts are natural
+/// terminal backups; child visits are not used as edge backups.
+pub(super) fn support_report(tree: &Tree, records: &[SimRecord], diag: &SearchDiag) -> Value {
+    let min = super::tree::MIN_EXEC_BACKUPS;
+    let natural_total = records
+        .iter()
+        .filter(|r| r.outcome == 1 || r.outcome == 2)
+        .count() as u64;
+    // Per-edge first wins and what followed.
+    let mut cat: BTreeMap<&str, u64> = BTreeMap::new();
+    let (mut repeat_losses, mut repeat_wins, mut after_opportunities, mut node_visits_after) =
+        (0u64, 0u64, 0u64, 0u64);
+    let mut first_win_prior: BTreeMap<u64, u64> = BTreeMap::new();
+    let mut by_depth: BTreeMap<u32, [u64; 6]> = BTreeMap::new();
+    let mut keys: Vec<&Key> = tree.nodes.keys().collect();
+    keys.sort_unstable();
+    for k in keys {
+        let n = &tree.nodes[k];
+        let d = by_depth.entry(n.depth).or_default();
+        d[0] += 1;
+        d[1] += u64::from(n.n.iter().any(|&x| x >= min));
+        for (a, (&b, &w)) in n.n.iter().zip(&n.wins).enumerate() {
+            if b == 0 {
+                continue;
+            }
+            d[2] += 1;
+            d[3] += u64::from(b >= min);
+            d[4] += b;
+            d[5] += w;
+            let e = diag.edges.get(&(*k, a)).copied().unwrap_or_default();
+            let c = match e.first_win {
+                None => "never_won",
+                Some((ord, prior, visits)) => {
+                    *first_win_prior.entry(prior.min(min)).or_default() += 1;
+                    after_opportunities += natural_total.saturating_sub(ord + 1);
+                    node_visits_after += n.visits.saturating_sub(visits + 1);
+                    repeat_losses += e.backups_after - e.wins_after;
+                    repeat_wins += e.wins_after;
+                    if e.backups_after == 0 {
+                        "won_without_later_backup"
+                    } else {
+                        "won_then_backed_up_again"
+                    }
+                }
+            };
+            *cat.entry(c).or_default() += 1;
+        }
+    }
+    let depth: Vec<Value> = by_depth
+        .iter()
+        .map(|(d, x)| {
+            json!({"physical_depth":d,"nodes":x[0],"nodes_with_eligible_edge":x[1],"backed_edges":x[2],
+                "eligible_edges":x[3],"backups":x[4],"winning_backups":x[5]})
+        })
+        .collect();
+    // Legacy identities folded into stored nodes.
+    let (mut multi, mut multi_ids, mut consolidated, mut newly_eligible) = (0u64, 0u64, 0u64, 0u64);
+    let mut legacy_keys: Vec<&Key> = diag.legacy.keys().collect();
+    legacy_keys.sort_unstable();
+    for k in legacy_keys {
+        let ids = &diag.legacy[k];
+        if ids.len() < 2 {
+            continue;
+        }
+        multi += 1;
+        multi_ids += ids.len() as u64;
+        let width = ids.values().map(Vec::len).max().unwrap_or(0);
+        for a in 0..width {
+            let parts: Vec<u64> = ids
+                .values()
+                .map(|v| v.get(a).copied().unwrap_or(0))
+                .collect();
+            let total: u64 = parts.iter().sum();
+            let contributors = parts.iter().filter(|&&x| x > 0).count();
+            if total >= min && contributors >= 2 {
+                if parts.iter().all(|&x| x < min) {
+                    newly_eligible += 1;
+                } else {
+                    consolidated += 1;
+                }
+            }
+        }
+    }
+    // Contiguous supported prefixes of selection trajectories (natural).
+    let nat: Vec<&SimRecord> = records
+        .iter()
+        .filter(|r| r.outcome == 1 || r.outcome == 2)
+        .collect();
+    let hist = |f: &dyn Fn(&SimRecord) -> u32| {
+        let mut h: BTreeMap<u32, u64> = BTreeMap::new();
+        for r in &nat {
+            *h.entry(f(r)).or_default() += 1;
+        }
+        h
+    };
+    let mean_of = |f: &dyn Fn(&SimRecord) -> u32| {
+        if nat.is_empty() {
+            0.0
+        } else {
+            nat.iter().map(|r| f64::from(f(r))).sum::<f64>() / nat.len() as f64
+        }
+    };
+    // Per attempt (index = selection-world index): [outcome, groups, substeps].
+    let per_attempt: Vec<[u32; 3]> = records
+        .iter()
+        .map(|r| {
+            [
+                u32::from(r.outcome),
+                r.supported_groups,
+                r.supported_substeps,
+            ]
+        })
+        .collect();
+    json!({"eligibility_threshold":min,
+        "edges":{"by_category":cat,"repeat_losses_after_first_win":repeat_losses,
+            "repeat_wins_after_first_win":repeat_wins,
+            "later_natural_simulations_after_first_win":after_opportunities,
+            "node_visits_after_first_win":node_visits_after,
+            "prior_backups_at_first_win":first_win_prior},
+        "by_physical_depth":depth,
+        "legacy_identities":{"stored_nodes_with_several":multi,"identities_in_them":multi_ids,
+            "edges_consolidated_already_eligible":consolidated,"edges_newly_eligible_only_when_pooled":newly_eligible},
+        "selection_trajectories":{"note":"selection diagnostics, not held-out L",
+            "natural":nat.len(),
+            "mean_supported_groups":mean_of(&|r| r.supported_groups),
+            "mean_supported_substeps":mean_of(&|r| r.supported_substeps),
+            "supported_groups_histogram":hist(&|r| r.supported_groups),
+            "supported_substeps_histogram":hist(&|r| r.supported_substeps),
+            "first_unsupported_depth_histogram":hist(&|r| r.first_unsupported_depth),
+            "per_attempt":per_attempt}})
+}
+
+/// Repaired keys of captured nodes from their captured visible prefix
+/// (offline; collab LANES/search-canonical-repair-plan-20261011). Each
+/// capture row's chain names its ancestors; every ancestor must itself be
+/// captured (raw view, raw menu, canonical menu in live order). Returns one
+/// row per captured node with its legacy and repaired keys and the fallback
+/// reason, if any.
+pub(super) fn offline_keys(dump: &str) -> Result<Vec<Value>, String> {
+    use super::canon2::{KeyStats, Keyer};
+    let rows: Vec<Value> = dump
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).map_err(|e| e.to_string()))
+        .collect::<Result<_, _>>()?;
+    let caps: HashMap<String, &Value> = rows
+        .iter()
+        .filter(|r| r["kind"] == "capture")
+        .map(|r| (r["key"].as_str().unwrap_or_default().to_owned(), r))
+        .collect();
+    let raw = |r: &Value| -> (Value, Vec<Value>) {
+        (
+            r["raw_obs"].clone(),
+            r["raw_menu"].as_array().cloned().unwrap_or_default(),
+        )
+    };
+    let mut out = Vec::new();
+    let mut keys: Vec<&String> = caps.keys().collect();
+    keys.sort();
+    for k in keys {
+        let r = caps[k];
+        let chain = r["chain"].as_array().cloned().unwrap_or_default();
+        let mut stats = KeyStats::default();
+        let mut kr = Keyer::new(KeyMode::Repaired, &mut stats);
+        let mut missing = None;
+        for h in &chain {
+            let hk = h["key"].as_str().unwrap_or_default();
+            let Some(a) = caps.get(hk) else {
+                missing = Some(format!("ancestor {hk} not captured"));
+                break;
+            };
+            let (o, m) = raw(a);
+            let st = kr.key_raw(o, m).map_err(|e| format!("{e:?}"))?;
+            let edge = h["edge"].as_str().unwrap_or_default();
+            let live = a["canon_menu"]
+                .as_array()
+                .and_then(|v| v.iter().position(|x| x.as_str() == Some(edge)));
+            let Some(live) = live else {
+                missing = Some(format!("ancestor {hk} edge not in its live menu"));
+                break;
+            };
+            kr.advance(st, live as u32);
+        }
+        if let Some(why) = missing {
+            out.push(json!({"key":k,"evaluable":false,"why":why}));
+            continue;
+        }
+        let (o, m) = raw(r);
+        let st = kr.key_raw(o, m).map_err(|e| format!("{e:?}"))?;
+        let legacy_ok = key_hex(&st.legacy_key) == *k;
+        out.push(json!({"key":k,"evaluable":true,"physical_depth":r["physical_depth"],
+            "legacy_key_reproduced":legacy_ok,"repaired_key":key_hex(&st.repaired_key),
+            "fallbacks":stats.fallbacks,"frames_with_mattering_ties":stats.frames_with_mattering_ties,
+            "exact_resolved":stats.exact_resolved}));
+    }
+    Ok(out)
+}
+
 /// Row schema of `root_arm` (v1 rows: no `schema` field).
 pub(super) const ROW_SCHEMA: &str = "branch-root-v2";
 
@@ -686,6 +886,8 @@ pub(super) struct RunOpts {
     pub(super) snapshot_sims: Vec<u64>,
     /// Captured sibling pairs to probe (`identity.rs`).
     pub(super) probe_pairs: Vec<(Key, Key)>,
+    /// E's node key version (legacy by default).
+    pub(super) key_mode: Option<KeyMode>,
 }
 
 /// Shared limits of all paired engine probes in one run (collab
@@ -808,14 +1010,28 @@ pub(super) fn root_arm(
         eval_worlds: EVAL_WORLDS,
         eval_cap: EVAL_CAP,
     };
-    let ctx = guide_ctx(&root, focal, opp, &seeds, &sh.prior, limits)?;
+    let mut ctx = guide_ctx(&root, focal, opp, &seeds, &sh.prior, limits)?;
+    let key_mode = opts.key_mode.unwrap_or(KeyMode::Legacy);
+    ctx.key_mode = key_mode;
+    if key_mode != KeyMode::Legacy
+        && (opts.evaluate || retain > 1 || opts.groups > 0 || !opts.capture_keys.is_empty())
+    {
+        return Err("non-legacy keys run B1 selection only, without dumps".into());
+    }
     let t0 = Instant::now();
     let mut records = Vec::new();
+    let mut diag = SearchDiag::default();
     let mut cap = Capture::new(opts.capture_keys.iter().copied().collect());
     cap.snapshot_sims = opts.snapshot_sims.iter().copied().collect();
     cap.all_up_to = opts.capture_up_to;
-    let (sel, tree) =
-        roles.select_e_capturing(&ctx, None, retain, Some(&mut records), Some(&mut cap));
+    let (sel, tree) = roles.select_e_diagnosed(
+        &ctx,
+        None,
+        retain,
+        Some(&mut records),
+        Some(&mut cap),
+        Some(&mut diag),
+    );
     let selection_wall = t0.elapsed().as_secs_f64();
     let failed = sel.incomplete || !sel.faults.is_empty();
     let tree_hash = tree.hash();
@@ -829,6 +1045,7 @@ pub(super) fn root_arm(
         sel.attempted,
         sel.sampler.rejected,
     );
+    let support = support_report(&tree, &records, &diag);
     let mut dump = group_dump(&tree, &cap.created, opts.groups);
     let captured = cap.committed.len();
     dump.extend(capture_dump(&tree, &cap));
@@ -884,7 +1101,8 @@ pub(super) fn root_arm(
         "named_input":spec.named.as_ref().map(|n| json!({"row_sha256":n.row_sha256,
             "bank_binding_sha256":n.bank_binding_sha256,"search":n.search,"step":n.step})),
         "tree_hash":tree_hash,"expected_b1_tree":spec.expected_b1_tree,
-        "b1_parity":(retain == 1).then(|| tree_hash == spec.expected_b1_tree),
+        "b1_parity":(retain == 1 && key_mode == KeyMode::Legacy).then(|| tree_hash == spec.expected_b1_tree),
+        "key_mode":key_mode.label(),"keys":diag.keys.json(),"support":support,
         "tree":report,"simulations":sims,"evaluated":opts.evaluate,"evaluation":worlds,
         "dump":{"groups":opts.groups,"capture_keys":opts.capture_keys.len(),"captured":captured,
             "probe_pairs":opts.probe_pairs.len(),"probe_pairs_left":budget.pairs,"probe_transitions_left":budget.transitions},
@@ -1217,6 +1435,58 @@ mod tests {
             assert_eq!(
                 records.iter().map(|x| x.new_nodes).sum::<usize>(),
                 tree.nodes.len()
+            );
+        }
+    }
+
+    /// Shadow and repaired keys on a real fixture search: accounting
+    /// reconciles, and frozen execution with the same key version finds the
+    /// selection tree's root. Small (2 x 5,000 selection transitions).
+    #[test]
+    #[ignore = "native qualification: fixture game and two small searches"]
+    fn non_legacy_selection_and_frozen_execution_agree() {
+        use super::super::canon2::KeyMode;
+        let policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let mut roles = bank_roles(&policy, std::slice::from_ref(&policy)).unwrap();
+        let s = root();
+        let prior = DeckPrior::new(&(0..RUNTIME_DECKS.len()).collect::<Vec<_>>());
+        let seeds = RootSeeds {
+            model: "test".into(),
+            root: "canon".into(),
+        };
+        let limits = Limits {
+            select_cap: 5_000,
+            ..Limits::FORMAL
+        };
+        for mode in [KeyMode::Shadow, KeyMode::Repaired] {
+            let mut ctx = guide_ctx(&s, PlayerId(0), 0, &seeds, &prior, limits).unwrap();
+            ctx.key_mode = mode;
+            let mut records = Vec::new();
+            let mut diag = SearchDiag::default();
+            let (sel, tree) =
+                roles.select_e_diagnosed(&ctx, None, 1, Some(&mut records), None, Some(&mut diag));
+            assert!(sel.faults.is_empty(), "{:?}", sel.faults);
+            let r = sim_report(
+                &records,
+                1,
+                sel.transitions,
+                sel.inference,
+                sel.attempted,
+                sel.sampler.rejected,
+            );
+            for (k, v) in r["reconciles"].as_object().unwrap() {
+                assert_eq!(*v, true, "{k} {mode:?}");
+            }
+            assert!(diag.keys.frames > 0);
+            let seed = seeds.get(Purpose::EvalWorld, "", 0, b"world");
+            let w = sample(&s, seed, &prior).expect("world");
+            let mut sampler = SamplerStats::default();
+            let out = roles.evaluate(&ctx, "E", &w.world, 0, None, Some(&tree), &mut sampler);
+            assert!(out.fault.is_none(), "{:?}", out.fault);
+            assert!(
+                out.e["max_hit_depth"].as_u64().unwrap_or(0) >= 1,
+                "{mode:?}: {}",
+                out.e
             );
         }
     }

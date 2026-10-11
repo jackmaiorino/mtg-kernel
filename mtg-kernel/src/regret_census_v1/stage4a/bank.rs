@@ -290,6 +290,7 @@ pub(super) fn guide_ctx<'a>(
         probs: Vec::new(),
         limits,
         urgency: Some(URGENCY),
+        key_mode: super::canon2::KeyMode::Legacy,
     })
 }
 

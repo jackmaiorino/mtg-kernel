@@ -134,7 +134,7 @@ fn rewrite(v: &mut Value, h: &Handles) {
 
 /// Sort key of an observation element: its JSON with engine handles and
 /// incarnation counters masked.
-fn masked(v: &Value) -> String {
+pub(crate) fn masked(v: &Value) -> String {
     fn mask(v: &mut Value) {
         match v {
             Value::Object(m) => {
@@ -160,7 +160,7 @@ fn masked(v: &Value) -> String {
 /// cards) but can follow engine handles or hidden draw order (a mill reveals
 /// the library in its sampled order). Every other list keeps engine order:
 /// stack, targets, combat orders, pending triggers. Never applied to the menu.
-const UNORDERED_LISTS: [&str; 10] = [
+pub(crate) const UNORDERED_LISTS: [&str; 10] = [
     "own_hand",
     "known_hand_cards",
     "battlefield",
@@ -173,38 +173,81 @@ const UNORDERED_LISTS: [&str; 10] = [
     "cards",
 ];
 
-fn sort_by_content(a: &mut Vec<Value>) {
+/// Raw handle → tie rank, consulted only between entries equal under the
+/// content mask (repaired key mode; `None` is the legacy rule: input order).
+pub(crate) type TieRanks = HashMap<u64, u32>;
+
+/// The handle that names a list entry: the shallowest `arena_id` in it.
+pub(crate) fn own_handle(v: &Value) -> Option<u64> {
+    let mut level = vec![v];
+    while !level.is_empty() {
+        let mut next = Vec::new();
+        for x in level {
+            match x {
+                Value::Object(m) => {
+                    if let Some(id) = m.get("arena_id").and_then(Value::as_u64) {
+                        return Some(id);
+                    }
+                    next.extend(m.values());
+                }
+                Value::Array(a) => next.extend(a.iter()),
+                _ => {}
+            }
+        }
+        level = next;
+    }
+    None
+}
+
+fn sort_by_content(a: &mut Vec<Value>, ranks: Option<&TieRanks>) {
     if a.len() > 1 && a.iter().all(Value::is_object) {
-        let mut keyed: Vec<(String, Value)> = a.drain(..).map(|x| (masked(&x), x)).collect();
+        let rank = |x: &Value| {
+            ranks
+                .and_then(|r| own_handle(x).and_then(|h| r.get(&h).copied()))
+                .unwrap_or(u32::MAX)
+        };
+        let mut keyed: Vec<((String, u32), Value)> =
+            a.drain(..).map(|x| ((masked(&x), rank(&x)), x)).collect();
         keyed.sort_by(|x, y| x.0.cmp(&y.0));
         a.extend(keyed.into_iter().map(|(_, x)| x));
     }
 }
 
-fn sort_object_lists(v: &mut Value) {
+/// Calls `f` on every declared-unordered list (each seat's list of a
+/// per-seat pair separately), innermost first.
+pub(crate) fn for_unordered_lists(v: &mut Value, f: &mut impl FnMut(&mut Vec<Value>)) {
     match v {
         Value::Object(m) => {
             for (k, x) in m.iter_mut() {
-                sort_object_lists(x);
+                for_unordered_lists(x, f);
                 if UNORDERED_LISTS.contains(&k.as_str()) {
                     if let Value::Array(a) = x {
                         // Per-seat pairs ([[..], [..]]) sort within each seat.
                         if a.iter().all(Value::is_array) {
                             for inner in a.iter_mut() {
                                 if let Value::Array(i) = inner {
-                                    sort_by_content(i);
+                                    f(i);
                                 }
                             }
                         } else {
-                            sort_by_content(a);
+                            f(a);
                         }
                     }
                 }
             }
         }
-        Value::Array(a) => a.iter_mut().for_each(sort_object_lists),
+        Value::Array(a) => a.iter_mut().for_each(|x| for_unordered_lists(x, f)),
         _ => {}
     }
+}
+
+#[cfg(test)]
+fn sort_object_lists(v: &mut Value) {
+    sort_object_lists_with(v, None);
+}
+
+fn sort_object_lists_with(v: &mut Value, ranks: Option<&TieRanks>) {
+    for_unordered_lists(v, &mut |a| sort_by_content(a, ranks));
 }
 
 /// Timestamps become their rank within the observation; exile-permission
@@ -275,11 +318,9 @@ pub(crate) struct Mapping {
     pub(crate) min_zcc: Vec<(u64, u64)>,
 }
 
-/// `canon` on a raw observation and menu, with its handle mapping.
-pub(crate) fn canon_values(
-    mut obs: Value,
-    mut sem: Vec<Value>,
-) -> Result<(Canon, Mapping), PlayErr> {
+/// The observation and menu with step bookkeeping removed and absolute
+/// counters ranked: the input to the content sort.
+pub(crate) fn prepare(mut obs: Value, mut sem: Vec<Value>) -> (Value, Vec<Value>) {
     if let Value::Object(m) = &mut obs {
         for k in [
             "step_index",
@@ -294,7 +335,22 @@ pub(crate) fn canon_values(
     for x in &mut sem {
         rank_counters(x);
     }
-    sort_object_lists(&mut obs);
+    (obs, sem)
+}
+
+/// `canon` on a raw observation and menu, with its handle mapping.
+pub(crate) fn canon_values(obs: Value, sem: Vec<Value>) -> Result<(Canon, Mapping), PlayErr> {
+    let (obs, sem) = prepare(obs, sem);
+    canon_prepared(obs, sem, None)
+}
+
+/// `canon_values` on prepared input, with optional tie ranks.
+pub(crate) fn canon_prepared(
+    mut obs: Value,
+    mut sem: Vec<Value>,
+    ranks: Option<&TieRanks>,
+) -> Result<(Canon, Mapping), PlayErr> {
+    sort_object_lists_with(&mut obs, ranks);
     let mut handles = Handles::default();
     collect_ids(&obs, &mut handles);
     // Handles named only by the menu are indexed in content order, not in
@@ -368,7 +424,7 @@ pub(crate) struct Node {
     pub(crate) depth: u32,
 }
 
-fn permutation(len: usize, seed: u64) -> Vec<usize> {
+pub(crate) fn permutation(len: usize, seed: u64) -> Vec<usize> {
     let mut p: Vec<usize> = (0..len).collect();
     let mut rng = SplitMix64::seed(seed);
     for i in (1..len).rev() {
@@ -394,11 +450,24 @@ impl Node {
         depth: u32,
         seeds: &RootSeeds,
     ) -> Self {
+        let perm = permutation(canon.edges.len(), seeds.get(Purpose::Ties, "E", 0, key));
+        Self::with_perm(parent, edge, canon, depth, perm)
+    }
+
+    /// A node with an explicit seeded tie order over its edges.
+    pub(crate) fn with_perm(
+        parent: Key,
+        edge: Vec<u8>,
+        canon: Canon,
+        depth: u32,
+        perm: Vec<usize>,
+    ) -> Self {
         let k = canon.edges.len();
+        debug_assert_eq!(perm.len(), k);
         Self {
             parent,
             edge,
-            perm: permutation(k, seeds.get(Purpose::Ties, "E", 0, key)),
+            perm,
             canon,
             visits: 0,
             n: vec![0; k],

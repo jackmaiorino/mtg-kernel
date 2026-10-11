@@ -395,6 +395,7 @@ fn small_root_package_is_deterministic_and_within_ceilings() {
                 eval_cap: 4_000,
             },
             urgency: None,
+            key_mode: super::canon2::KeyMode::Legacy,
         };
         let (e, tree) = roles.select_e(&ctx);
         assert!(e.transitions <= 6_000);
@@ -934,6 +935,7 @@ fn diagnostic_trace_is_passive_and_reconstructs_backups() {
                 eval_cap: 4_000,
             },
             urgency: None,
+            key_mode: super::canon2::KeyMode::Legacy,
         };
         let mut trace = traced.then(diag::Trace::default);
         let (e, tree) = roles.select_e_traced(&ctx, trace.as_mut());
