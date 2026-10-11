@@ -3355,9 +3355,13 @@ fn standard_trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetS
                 TargetSpec::None
             })
         }
-        "Quirion Beastcaller" => Some(if matches!(effect, EffectOp::DistributePlusOneCounters { .. }) {
-            TargetSpec::CounterDistribution
-        } else { TargetSpec::None }),
+        "Quirion Beastcaller" => Some(
+            if matches!(effect, EffectOp::DistributePlusOneCounters { .. }) {
+                TargetSpec::CounterDistribution
+            } else {
+                TargetSpec::None
+            },
+        ),
         "Graveyard Trespasser" => Some(match effect {
             EffectOp::ExileGraveyardTargetsDrainPerCreature { max_targets: 1 } => {
                 TargetSpec::UpToOneCardInGraveyards

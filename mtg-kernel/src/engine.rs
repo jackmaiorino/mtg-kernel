@@ -62,11 +62,11 @@ use serde::{Deserialize, Serialize};
 use std::hash::Hash;
 
 // Shared selected-cost collection is prepared separately from route wiring.
+#[path = "counter_distribution_v1.rs"]
+mod counter_distribution_v1;
 #[path = "spell_costs_v1.rs"]
 #[allow(dead_code)]
 mod spell_costs_v1;
-#[path = "counter_distribution_v1.rs"]
-mod counter_distribution_v1;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EngineState {
@@ -1645,7 +1645,8 @@ fn target_min_count(spec: TargetSpec) -> u8 {
 
 fn target_cardinality_is_complete(spec: TargetSpec, count: usize) -> bool {
     spec == TargetSpec::CounterDistribution
-        || (count >= usize::from(target_min_count(spec)) && count <= usize::from(target_count(spec)))
+        || (count >= usize::from(target_min_count(spec))
+            && count <= usize::from(target_count(spec)))
 }
 
 fn pending_cast_targeting_is_complete(pending: &PendingCast, spec: TargetSpec) -> bool {
@@ -2781,10 +2782,13 @@ fn legal_targets_for_controller_from_source(
     let mut targets = match spec {
         TargetSpec::None => Vec::new(),
         TargetSpec::CounterDistribution => battlefield_objects(state)
-            .filter(|&id| state.objects.get(id).controller == controller
-                && object_has_type(state, id, CardType::Creature)
-                && !targets_chosen.contains(&Target::Object(id)))
-            .map(Target::Object).collect(),
+            .filter(|&id| {
+                state.objects.get(id).controller == controller
+                    && object_has_type(state, id, CardType::Creature)
+                    && !targets_chosen.contains(&Target::Object(id))
+            })
+            .map(Target::Object)
+            .collect(),
         TargetSpec::UpToOneOtherControlledPermanent
         | TargetSpec::UpToTwoOtherControlledCreatures => battlefield_objects(state)
             .filter(|&id| {
@@ -10966,7 +10970,8 @@ fn validate_pending_trigger(state: &GameState, pending: &PendingTrigger) -> Resu
     if pending.target_spec != expected {
         return Err("pending trigger target specification changed".to_string());
     }
-    if (expected != TargetSpec::CounterDistribution && pending.targets.len() > usize::from(target_count(expected)))
+    if (expected != TargetSpec::CounterDistribution
+        && pending.targets.len() > usize::from(target_count(expected)))
         || !target_contracts_are_structurally_valid(
             state,
             &pending.targets,
@@ -11763,13 +11768,26 @@ pub(crate) fn validated_stack_item_target_spec(
     if item.v4.target_spec != Some(spec) {
         return Err("stack target specification does not match its definition".to_string());
     }
-    if let Some(EffectOp::DistributePlusOneCounters { total, allocations, finalized }) = &item.inline_effect {
-        let source = item.v4.ability_source_contract.ok_or("counter distribution lost source")?;
-        let original = state.counter_lki_for(source.source, source.zone_change_count)
+    if let Some(EffectOp::DistributePlusOneCounters {
+        total,
+        allocations,
+        finalized,
+    }) = &item.inline_effect
+    {
+        let source = item
+            .v4
+            .ability_source_contract
+            .ok_or("counter distribution lost source")?;
+        let original = state
+            .counter_lki_for(source.source, source.zone_change_count)
             .map_or(0, |counters| counters.plus1_plus1.max(0) as u32);
-        if !*finalized || *total != original || allocations.len() != item.targets.len()
+        if !*finalized
+            || *total != original
+            || allocations.len() != item.targets.len()
             || allocations.contains(&0)
-            || (!allocations.is_empty() && allocations.iter().map(|&x| u64::from(x)).sum::<u64>() != u64::from(*total)) {
+            || (!allocations.is_empty()
+                && allocations.iter().map(|&x| u64::from(x)).sum::<u64>() != u64::from(*total))
+        {
             return Err("stack counter distribution allocation is malformed".into());
         }
     }
@@ -13174,9 +13192,13 @@ pub fn effective_base_toughness(state: &GameState, id: ObjectId) -> Option<i32> 
         .map(|(characteristics, _)| i32::from(characteristics.toughness))
         .or_else(|| {
             #[cfg(feature = "standard-magezero-fixtures")]
-            { crate::standard_statics_v1::characteristic_defining_toughness(state, id) }
+            {
+                crate::standard_statics_v1::characteristic_defining_toughness(state, id)
+            }
             #[cfg(not(feature = "standard-magezero-fixtures"))]
-            { None }
+            {
+                None
+            }
         })
         .or_else(|| {
             crate::continuous_characteristics_v1::animation(state, id)

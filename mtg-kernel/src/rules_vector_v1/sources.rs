@@ -1548,9 +1548,18 @@ fn standard_statics(name: &str, walk: &mut Walk) {
                 );
             }
             StandardStaticV1::PowerToughnessEqualsControlledNonlandPermanents => {
-                out.read(RelF::You, Some(ZoneF::Battlefield), Some(ObjF::NonlandPermanent), AggF::Count);
-                out.effect(EffectAtom::new(EvF::SetCharacteristic)
-                    .obj(ObjF::ThisObject).amount(AmtF::Dynamic).duration(DurF::Permanent));
+                out.read(
+                    RelF::You,
+                    Some(ZoneF::Battlefield),
+                    Some(ObjF::NonlandPermanent),
+                    AggF::Count,
+                );
+                out.effect(
+                    EffectAtom::new(EvF::SetCharacteristic)
+                        .obj(ObjF::ThisObject)
+                        .amount(AmtF::Dynamic)
+                        .duration(DurF::Permanent),
+                );
             }
             StandardStaticV1::PowerEqualsControlledCreatures => {
                 out.read(
