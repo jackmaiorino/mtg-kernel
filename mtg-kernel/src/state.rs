@@ -1036,6 +1036,7 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::OpponentArtifactOrEnchantmentPermanent
                 | TargetSpec::ArtifactOrEnchantmentPermanent
                 | TargetSpec::AttackingOrBlockingCreature
+                | TargetSpec::AttackingCreature
                 | TargetSpec::CreatureOrPlaneswalker
                 | TargetSpec::ArtifactEnchantmentOrFlyingCreature
                 | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour

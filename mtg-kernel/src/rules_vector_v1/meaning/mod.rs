@@ -249,6 +249,9 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::ExileGraveyardTargetsDrainPerCreature { .. }
         | EffectOp::RemoveTimeCounterFromSource
         | EffectOp::ReturnSourceAsEnduringEnchantment => effect_h::effect_op(op, env, out),
-        EffectOp::AnimateSource => effect_i::effect_op(op, env, out),
+        EffectOp::AnimateSource
+        | EffectOp::PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness { .. } => {
+            effect_i::effect_op(op, env, out)
+        }
     }
 }

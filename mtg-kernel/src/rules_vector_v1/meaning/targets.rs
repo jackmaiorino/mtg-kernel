@@ -233,6 +233,11 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
         }
         // A creature among the attackers or blockers of the current combat.
         // No combat-status facet exists; the nearest class is "a creature".
+        TargetSpec::AttackingCreature => {
+            object(out, creature(), None, ZoneF::Battlefield);
+            // Frozen vocabulary lacks a predicate for current attacking status.
+            out.atoms.push(Atom::Opaque);
+        }
         TargetSpec::AttackingOrBlockingCreature => {
             object(out, creature(), None, ZoneF::Battlefield)
         }
@@ -446,6 +451,7 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
         | TargetSpec::NonblackCreature
         | TargetSpec::ControlledCreatureThenOpponentCreature
         | TargetSpec::AttackingOrBlockingCreature
+        | TargetSpec::AttackingCreature
         | TargetSpec::NonOutlawCreature
         | TargetSpec::CreatureToughnessAtLeastFour => {
             let _ = slot; // Every slot is a creature.

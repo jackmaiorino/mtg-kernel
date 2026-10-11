@@ -21,6 +21,31 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                     .duration(DurF::EndOfTurn),
             );
         }
+        EffectOp::PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness {
+            target_index,
+        } => {
+            let obj = env.target_obj(*target_index);
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Battlefield), ZoneF::Library)
+                    .player(RelF::ObjectOwner)
+                    .obj(obj),
+            );
+            out.read(
+                RelF::ObjectController,
+                Some(ZoneF::Battlefield),
+                Some(obj),
+                AggF::Characteristic,
+            );
+            out.effect(
+                EffectAtom::new(EvF::LifeGain)
+                    .player(RelF::ObjectController)
+                    .obj(ObjF::Player)
+                    .amount(AmtF::Dynamic),
+            );
+            // No frozen facet expresses bottom position, toughness specifically,
+            // or the correlation to the same captured controller/characteristic.
+            out.atoms.push(Atom::Opaque);
+        }
         _ => unreachable!("dispatched to the wrong slice"),
     }
 }

@@ -839,6 +839,8 @@ pub enum TargetSpec {
     UpToOneOtherControlledPermanent,
     /// Zero to two controlled creatures other than the captured source incarnation.
     UpToTwoOtherControlledCreatures,
+    /// One currently attacking effective creature. Condemn is the first consumer.
+    AttackingCreature,
 }
 
 impl TargetSpec {
@@ -907,6 +909,7 @@ impl TargetSpec {
             TargetSpec::PermanentCardInOwnGraveyard => 57,
             TargetSpec::UpToOneOtherControlledPermanent => 58,
             TargetSpec::UpToTwoOtherControlledCreatures => 59,
+            TargetSpec::AttackingCreature => 60,
         }
     }
 }
@@ -2343,6 +2346,7 @@ mod tests {
             (TargetSpec::PermanentCardInOwnGraveyard, 57),
             (TargetSpec::UpToOneOtherControlledPermanent, 58),
             (TargetSpec::UpToTwoOtherControlledCreatures, 59),
+            (TargetSpec::AttackingCreature, 60),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);

@@ -3384,6 +3384,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         mode2: None,
     };
     Some(match name {
+        "Condemn" => program(
+            "AttackingCreature",
+            "PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness(Target0,currentAttacker,exactIncarnation,captureCurrentControllerAndEffectiveToughnessBeforeMove,publicBottomInsert,positiveLifeGain)",
+            "EffectOp::PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness { target_index: 0 }",
+        ),
         "Stroke of Midnight" => program(
             "NonlandPermanent",
             "DestroyObjectThenCreateTokens(Target0,currentTargetController,captureBeforeDestruction,HumanToken,1,createEvenIfIndestructible,exactIncarnation)",
@@ -3684,6 +3689,7 @@ fn program_target_spec_src(target: &str) -> &'static str {
         }
         "NonOutlawCreature" => "TargetSpec::NonOutlawCreature",
         "CreatureToughnessAtLeastFour" => "TargetSpec::CreatureToughnessAtLeastFour",
+        "AttackingCreature" => "TargetSpec::AttackingCreature",
         "CreatureEnchantmentOrPlaneswalker" => "TargetSpec::CreatureEnchantmentOrPlaneswalker",
         other => panic!("unsupported program target spec {other}"),
     }

@@ -100,6 +100,7 @@ impl Scan<'_> {
             | UntapObject { .. }
             | AnimateSource
             | PumpTargetUntilEndOfTurnDynamic { .. }
+            | PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness { .. }
             | DoubleTargetPowerUntilEndOfTurn { .. }
             | DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
             | CreateTokensForOtherControlledCreaturesNamed { .. }

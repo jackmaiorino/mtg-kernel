@@ -1553,6 +1553,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::NonblackCreature
         | TargetSpec::ArtifactOrEnchantmentPermanent
         | TargetSpec::AttackingOrBlockingCreature
+        | TargetSpec::AttackingCreature
         | TargetSpec::CreatureOrPlaneswalker
         | TargetSpec::ArtifactEnchantmentOrFlyingCreature
         | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour
@@ -2970,6 +2971,13 @@ fn legal_targets_for_controller_from_source(
                             .blocked_by
                             .iter()
                             .any(|(_, blockers)| blockers.contains(&id)))
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::AttackingCreature => battlefield_objects(state)
+            .filter(|&id| {
+                object_has_type(state, id, CardType::Creature)
+                    && state.engine.combat.attackers.contains(&id)
             })
             .map(Target::Object)
             .collect(),
