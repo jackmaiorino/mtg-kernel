@@ -225,7 +225,7 @@ fn printed_definition_real_normal_and_flashback_cast_stolen_owner_copy_etb_and_r
         Some(EffectOp::CreateControlledCreatureTargetCopyV1)
     );
     assert!(
-        matches!(def.flashback.unwrap().cost,[CostComponent::Mana(cost)] if cost.generic==3 && cost.pips==[Pip::Colored(ManaColor::U)])
+        matches!(def.flashback.as_ref().unwrap().cost,[CostComponent::Mana(cost)] if cost.generic==3 && cost.pips==[Pip::Colored(ManaColor::U)])
     );
     for actor in [PlayerId::P0, PlayerId::P1] {
         for flashback in [false, true] {
