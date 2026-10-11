@@ -203,7 +203,7 @@ fn build_history_parts(
     state: &GameState,
     surface: &crate::surface_v2::HarnessSurfaceV2,
     acting_player: PlayerId,
-    step_index: u64,
+    _step_index: u64,
     text_mode: ObservationTextModeV2,
 ) -> Result<HistoryParts> {
     let projection = PublicObservationProjectionV2 {

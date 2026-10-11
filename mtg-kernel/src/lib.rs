@@ -48,6 +48,7 @@ pub mod card_def;
 pub mod combat_damage_v1;
 pub(crate) mod continuous_characteristics_v1;
 mod creature_death_capture_v1;
+mod creature_stats_lki_v1;
 pub mod legend_rule_v1;
 pub mod native_search_collection_v3;
 pub mod native_search_trajectory_v3;
