@@ -38,3 +38,12 @@ source and replay artifacts in that same cold record. Prior failed attempts
 remain retained. Exact current-head CI, prerequisite integration and actual
 default delivery remain pending. No research run, model admission, strength
 or full-pool completion is claimed.
+
+
+The current CI amendment includes all four new Limited integration targets,
+Condemn/return/Bloodwitch primitives, precise target meaning and AnyTarget
+recipient checks. AnyTarget also joins the existing Standard library group.
+Existing full NativeRun, public/Human, stale-store and catalog groups remain.
+These added current-head CI cases must pass before delivery; Native33 does
+not claim a pass for additional current-main target-meaning or Standard
+recipient cases that it did not execute.
