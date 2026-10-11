@@ -1435,6 +1435,21 @@ const NESSIAN_HORNBEETLE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityD
     ..etb_trigger(nessian_hornbeetle_effect)
 }];
 
+fn micromancer_effect() -> EffectOp {
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: vec![
+            EffectOp::SearchLibraryToHand {
+                player: PlayerRef::Controller,
+                filter: crate::effect::LibraryCardFilter::InstantOrSorceryManaValue(1),
+            },
+            EffectOp::Sequence(vec![]),
+        ],
+    }
+}
+
+const MICROMANCER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(micromancer_effect)];
+
 fn ruby_daring_tracker_effect() -> EffectOp {
     EffectOp::BindTemporaryBoostToTriggerSource {
         power: 2,
@@ -3222,6 +3237,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Gixian Infiltrator" => &GIXIAN_INFILTRATOR_TRIGGERS,
         "Brineborn Cutthroat" => &BRINEBORN_CUTTHROAT_TRIGGERS,
         "Nessian Hornbeetle" => &NESSIAN_HORNBEETLE_TRIGGERS,
+        "Micromancer" => &MICROMANCER_TRIGGERS,
         "Ruby, Daring Tracker" => &RUBY_DARING_TRACKER_TRIGGERS,
         "Courageous Goblin" => &COURAGEOUS_GOBLIN_TRIGGERS,
         "Webweaver Changeling" => &WEBWEAVER_CHANGELING_TRIGGERS,

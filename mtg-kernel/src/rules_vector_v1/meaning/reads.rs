@@ -527,6 +527,12 @@ pub(crate) fn library_card_filter(filter: LibraryCardFilter, out: &mut Collector
         }
         LibraryCardFilter::AnyLand => ObjF::Typed(CardTypeF::Land),
         LibraryCardFilter::AnyCard => ObjF::AnyCard,
+        LibraryCardFilter::InstantOrSorceryManaValue(value) => {
+            let _ = value;
+            // The vocabulary lacks a disjunction of types and exact mana value.
+            out.atoms.push(Atom::Opaque);
+            ObjF::AnyCard
+        }
     }
 }
 

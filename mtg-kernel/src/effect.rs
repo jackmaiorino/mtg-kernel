@@ -130,6 +130,8 @@ pub enum LibraryCardFilter {
     /// is the only filter whose result is not publicly revealed. Appended
     /// for the FDN library-search batch.
     AnyCard,
+    /// Front-face instant or sorcery card with exactly this printed mana value.
+    InstantOrSorceryManaValue(u16),
 }
 
 impl LibraryCardFilter {
@@ -11676,6 +11678,10 @@ fn library_filter_matches(
         }
         LibraryCardFilter::AnyLand => def.has_type(CardType::Land),
         LibraryCardFilter::AnyCard => true,
+        LibraryCardFilter::InstantOrSorceryManaValue(value) => {
+            (def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery))
+                && def.mana_value == value
+        }
     })
 }
 
@@ -11701,6 +11707,9 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
             }),
         LibraryCardFilter::AnyLand => fnv1a_u64(0xcbf2_9ce4_8422_2325, 5),
         LibraryCardFilter::AnyCard => fnv1a_u64(0xcbf2_9ce4_8422_2325, 6),
+        LibraryCardFilter::InstantOrSorceryManaValue(value) => {
+            fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 7), u64::from(value))
+        }
     }
 }
 
@@ -17069,6 +17078,80 @@ mod tests {
                 );
             }
             other => panic!("expected MayPayCostThen, got {other:?}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod filtered_library_search_tests {
+    use super::*;
+
+    #[test]
+    fn exact_spell_mana_value_filter_keeps_owned_incarnations_and_rejects_other_types() {
+        let names = [
+            "Burst Lightning",
+            "Duress",
+            "Llanowar Elves",
+            "Think Twice",
+            "Forest",
+            "Exsanguinate",
+        ];
+        let cards = names.map(|name| crate::card_def::card_id_by_name(name).unwrap());
+        let mut state = GameState::new_from_libraries(
+            &cards,
+            &cards,
+            |id| crate::card_def::CARD_DEFS[id as usize].name.into(),
+            1114,
+        );
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let library = bind_library_exact(&state, player);
+            let candidates = library_search_candidates(
+                &state,
+                player,
+                LibraryCardFilter::InstantOrSorceryManaValue(1),
+                &library,
+            )
+            .unwrap();
+            let found: Vec<_> = candidates
+                .iter()
+                .map(|b| state.objects.get(b.object).card_def)
+                .collect();
+            assert_eq!(found.len(), 2);
+            assert!(found.contains(&cards[0]) && found.contains(&cards[1]));
+            assert!(candidates
+                .iter()
+                .all(|b| state.players[player.index()].library.contains(&b.object)));
+            let replay: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(
+                library_search_candidates(
+                    &replay,
+                    player,
+                    LibraryCardFilter::InstantOrSorceryManaValue(1),
+                    &library
+                )
+                .unwrap(),
+                candidates
+            );
+            let bound = candidates[0];
+            state.objects.get_mut(bound.object).v4.face_index = 1;
+            assert!(library_filter_matches(
+                &state,
+                bound,
+                LibraryCardFilter::InstantOrSorceryManaValue(1)
+            )
+            .is_err());
+            state.objects.get_mut(bound.object).v4.face_index = 0;
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(bound.object, Zone::Hand),
+            );
+            assert!(library_filter_matches(
+                &state,
+                bound,
+                LibraryCardFilter::InstantOrSorceryManaValue(1)
+            )
+            .is_err());
         }
     }
 }
