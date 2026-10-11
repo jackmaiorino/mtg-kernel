@@ -251,7 +251,11 @@ fn functional_reprints_collapse() {
 #[test]
 fn no_lossy_collisions_in_the_nine_decks() {
     let table = supported_records_for_audit();
-    let collisions = lossy_collisions(&table, &nine_deck_cards());
+    let ids = nine_deck_cards();
+    assert!(ids
+        .iter()
+        .all(|id| table.cards.iter().any(|row| row.id == *id)));
+    let collisions = lossy_collisions(&table, &ids);
     let named: Vec<Vec<&str>> = collisions
         .iter()
         .map(|ids| {
