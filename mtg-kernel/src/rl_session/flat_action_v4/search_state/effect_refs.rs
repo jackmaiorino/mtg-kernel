@@ -1031,6 +1031,9 @@ pub(super) fn conflicts(
             MonarchTrigger { binding } => s.raw(binding.source.source),
             ControlledCreatureDeathCaptureCollectedV1 { .. }
             | SquadRallierResolutionBoundaryV1 { .. }
+            | SowerRestrictionInstalledV1 { .. }
+            | SowerRestrictionExpiredV1 { .. }
+            | SowerRestrictionResolutionV1 { .. }
             | DifferentControllerTargetDepartureV1 { .. }
             | LifeLoss { .. }
             | LifeGain { .. }

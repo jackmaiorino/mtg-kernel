@@ -660,6 +660,19 @@ pub enum CommittedEvent {
     SquadRallierResolutionBoundaryV1 {
         receipt: crate::effect::SquadRallierResolutionReceiptV1,
     },
+    /// Private committed Sower installation and exact Cleanup expiry.
+    SowerRestrictionInstalledV1 {
+        capture: Box<crate::sower_restriction_capture_v1::CaptureV1>,
+    },
+    SowerRestrictionExpiredV1 {
+        capture: Box<crate::sower_restriction_capture_v1::CaptureV1>,
+    },
+    /// Exact validated item, captured before the resolver pops it.
+    SowerRestrictionResolutionV1 {
+        item: Box<crate::state::StackItem>,
+        timestamp: u64,
+        recipient_snapshot: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

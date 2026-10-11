@@ -39,6 +39,7 @@ use std::fmt;
 pub mod census_future_v2;
 pub(crate) mod human_opening_v1;
 pub(crate) mod human_v8;
+pub(crate) mod sower_v14;
 
 pub const RL_SESSION_SCHEMA_VERSION: u32 = 5;
 pub const RL_SESSION_PROTOCOL_VERSION: u32 = 5;
@@ -4420,6 +4421,7 @@ enum FlatActionContractModeV1 {
     HumanV8,
     V5,
     HeartfireHistoryV1,
+    SowerV14,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -7247,6 +7249,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:human_v8:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::SowerV14 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = sower_v14::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:sower_v14:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));
