@@ -1695,6 +1695,8 @@ fn render_activated_ability_text(state: &GameState, id: ObjectId, ability_idx: u
             }
             card_def::CostComponent::SacrificeSelf => "Sacrifice {this}".to_string(),
             card_def::CostComponent::ExileSelf => "Exile this".to_string(),
+            card_def::CostComponent::Loyalty(delta) if *delta > 0 => format!("+{delta}"),
+            card_def::CostComponent::Loyalty(delta) => format!("{delta}"),
             card_def::CostComponent::DiscardSelf => "Discard this card".to_string(),
             card_def::CostComponent::DiscardCards(1) => "Discard a card".to_string(),
             card_def::CostComponent::DiscardCards(n) => format!("Discard {n} cards"),
@@ -1718,7 +1720,10 @@ fn render_activated_ability_text(state: &GameState, id: ObjectId, ability_idx: u
             | card_def::CostComponent::ReturnControlledUnblockedAttackerToOwnersHand
             | card_def::CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand
             | card_def::CostComponent::RemovePlusOneCountersFromControlledCreatures(_)
-            | card_def::CostComponent::ConvokeMana(_)) => {
+            | card_def::CostComponent::ConvokeMana(_)
+
+            | card_def::CostComponent::ExileCraftArtifactMaterial
+            | card_def::CostComponent::RemoveNetCounterFromSelf) => {
                 panic!("walk_diff has no Mage-pinned renderer for activated cost {unsupported:?}")
             }
         }
@@ -1967,6 +1972,7 @@ fn decision_texts(
         // activate the custom Foundations assignment protocol.
         SurfaceDecision::Decision(Decision::ChooseCombatDamageRange { .. })
         | SurfaceDecision::Decision(Decision::ChooseLegendPermanent { .. })
+        | SurfaceDecision::Decision(Decision::ChooseAttackTarget { .. })
         | SurfaceDecision::Decision(Decision::ChooseLondonMulligan { .. })
         | SurfaceDecision::Decision(Decision::ChooseLondonBottom { .. }) => None,
         SurfaceDecision::Decision(Decision::Halted { .. }) => None,
@@ -2202,6 +2208,9 @@ fn apply_by_indices(
             .map_err(|e| format!("engine-step-error:walk:ChooseSpellCopyRetarget:{e}")),
         SurfaceDecision::Decision(Decision::ChooseLegendPermanent { .. }) => {
             Err("unhandled-decision:ChooseLegendPermanent".into())
+        }
+        SurfaceDecision::Decision(Decision::ChooseAttackTarget { .. }) => {
+            Err("unhandled-decision:ChooseAttackTarget".into())
         }
         SurfaceDecision::Decision(Decision::ChooseCombatDamageRange { .. }) => {
             Err("apply_by_indices:unsupported-foundations-combat-protocol".to_string())

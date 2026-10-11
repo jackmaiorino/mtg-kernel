@@ -368,8 +368,12 @@ impl ObjectStateV4 {
     }
 
     pub fn reset_for_zone_change(&mut self, card_def: u16, to_zone: Zone, turn: u32) {
+        // A token copy of a nontoken card stays a token in every zone, so
+        // the state-based action can make it cease to exist (111.7).
+        let was_token = self.is_token;
         let base = ObjectStateV4::from_card_def(card_def);
         *self = base;
+        self.is_token |= was_token;
         if to_zone == Zone::Battlefield {
             self.entered_battlefield_turn = Some(turn);
             self.entered_battlefield_this_turn = cfg!(feature = "standard-magezero-fixtures");
@@ -741,6 +745,14 @@ pub enum SpellCastRouteV4 {
     /// `engine::PlayPermission`, and a card exiled by any other means never
     /// carries it.
     AdventureExile,
+    /// Casting a card from its owner's graveyard under a "you may cast this
+    /// card from your graveyard" grant held by the Standard catalog's card
+    /// module (Case of the Uneaten Feast), for the grant's exact graveyard
+    /// incarnation.
+    GraveyardPermissionV1 {
+        holder: PlayerId,
+        permission_zone_change_count: u32,
+    },
 }
 
 /// Incarnation-local cast provenance stored on the physical source object
@@ -994,125 +1006,143 @@ pub fn stack_target_contract_is_structurally_valid(
     if contract.target() != target {
         return false;
     }
-    let shape_is_valid = matches!(
-        (spec, target_index, contract),
-        (
-            TargetSpec::AnyPlayer
-                | TargetSpec::AnyTarget
-                | TargetSpec::PlayerThenTheirCreature
-                | TargetSpec::TargetOpponent,
-            0,
-            StackTargetContractV4::Player(_),
-        ) | (
-            TargetSpec::UpToTwoPlayers,
-            0 | 1,
-            StackTargetContractV4::Player(_),
-        ) | (
-            TargetSpec::PlayerThenTheirCreature,
-            1,
-            StackTargetContractV4::Object {
-                zone: Zone::Battlefield,
-                ..
-            },
-        ) | (
-            TargetSpec::AnyTarget
-                | TargetSpec::AnyPermanent
-                | TargetSpec::BluePermanent
-                | TargetSpec::RedPermanent
-                | TargetSpec::NonlandPermanent
-                | TargetSpec::Creature
-                | TargetSpec::CreatureOtherThanSource
-                | TargetSpec::NonlegendaryCreature
-                | TargetSpec::NonblackCreature
-                | TargetSpec::ArtifactPermanent
-                | TargetSpec::EnchantmentPermanent
-                | TargetSpec::ControlledCreature
-                | TargetSpec::UpToOneOtherControlledPermanent
-                | TargetSpec::OpponentControlledCreature
-                | TargetSpec::UpToOneTappedCreature
-                | TargetSpec::NoncreatureArtifactPermanent
-                | TargetSpec::Land
-                | TargetSpec::OpponentArtifactOrEnchantmentPermanent
-                | TargetSpec::ArtifactOrEnchantmentPermanent
-                | TargetSpec::AttackingOrBlockingCreature
-                | TargetSpec::CreatureOrPlaneswalker
-                | TargetSpec::ArtifactEnchantmentOrFlyingCreature
-                | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour
-                | TargetSpec::OpponentNonlandPermanent
-                | TargetSpec::NonOutlawCreature
-                | TargetSpec::CreatureToughnessAtLeastFour
-                | TargetSpec::CreatureEnchantmentOrPlaneswalker
-                | TargetSpec::AnotherControlledCreature
-                | TargetSpec::ControlledCreatureWithSubtype(_)
-                | TargetSpec::AttackingCreatureWithSubtype(_)
-                | TargetSpec::ControlledPermanentWithAnySubtype(_),
-            0,
-            StackTargetContractV4::Object {
-                zone: Zone::Battlefield,
-                ..
-            },
-        ) | (
-            TargetSpec::UpToTwoCreatures
-                | TargetSpec::UpToTwoOtherControlledCreatures
-                | TargetSpec::ExactlyTwoArtifactPermanents
-                | TargetSpec::ControlledCreatureThenOpponentCreature
-                | TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker,
-            0 | 1,
-            StackTargetContractV4::Object {
-                zone: Zone::Battlefield,
-                ..
-            },
-        ) | (
-            TargetSpec::CreatureOrLandCardInGraveyard
-                | TargetSpec::CreatureCardInOwnGraveyard
-                | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_)
-                | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_)
-                | TargetSpec::PermanentCardInOwnGraveyard,
-            0,
-            StackTargetContractV4::Object {
-                zone: Zone::Graveyard,
-                ..
-            },
-        ) | (
-            TargetSpec::UpToTwoCreatureCardsInOwnGraveyard,
-            0 | 1,
-            StackTargetContractV4::Object {
-                zone: Zone::Graveyard,
-                ..
-            },
-        ) | (
-            TargetSpec::UpToTwoCardsInGraveyards,
-            0 | 1,
-            StackTargetContractV4::Object {
-                zone: Zone::Graveyard,
-                ..
-            },
-        ) | (
-            TargetSpec::UpToOneCardInGraveyards,
-            0,
-            StackTargetContractV4::Object {
-                zone: Zone::Graveyard,
-                ..
-            },
-        ) | (
-            TargetSpec::AnySpellOnStack
-                | TargetSpec::InstantSpellOnStack
-                | TargetSpec::BlueSpellOnStack
-                | TargetSpec::RedSpellOnStack
-                | TargetSpec::ArtifactOrEnchantmentSpellOnStack
-                | TargetSpec::SorcerySpellOnStack
-                | TargetSpec::NoncreatureSpellOnStack
-                | TargetSpec::CreatureSpellOnStack
-                | TargetSpec::ArtifactSpellOnStack
-                | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. }
-                | TargetSpec::SpellYouDontControl,
-            0,
-            StackTargetContractV4::Object {
-                zone: Zone::Stack,
-                ..
-            },
-        )
-    );
+    if let TargetSpec::StandardV1(filter) = spec {
+        if target_index >= usize::from(filter.counts().0) {
+            return false;
+        }
+        let matches_kind = match &contract {
+            StackTargetContractV4::Object { zone, .. } => {
+                *zone == crate::standard_cards_v1::target_zone(filter)
+            }
+            StackTargetContractV4::Player(_) => matches!(
+                filter,
+                crate::standard_cards_v1::StandardTargetV1::UpToTwoAnyTargets
+            ),
+        };
+        if !matches_kind {
+            return false;
+        }
+    }
+    let shape_is_valid = matches!(spec, TargetSpec::StandardV1(_))
+        || matches!(
+            (spec, target_index, contract),
+            (
+                TargetSpec::AnyPlayer
+                    | TargetSpec::AnyTarget
+                    | TargetSpec::PlayerThenTheirCreature
+                    | TargetSpec::TargetOpponent,
+                0,
+                StackTargetContractV4::Player(_),
+            ) | (
+                TargetSpec::UpToTwoPlayers,
+                0 | 1,
+                StackTargetContractV4::Player(_),
+            ) | (
+                TargetSpec::PlayerThenTheirCreature,
+                1,
+                StackTargetContractV4::Object {
+                    zone: Zone::Battlefield,
+                    ..
+                },
+            ) | (
+                TargetSpec::AnyTarget
+                    | TargetSpec::AnyPermanent
+                    | TargetSpec::BluePermanent
+                    | TargetSpec::RedPermanent
+                    | TargetSpec::NonlandPermanent
+                    | TargetSpec::Creature
+                    | TargetSpec::CreatureOtherThanSource
+                    | TargetSpec::NonlegendaryCreature
+                    | TargetSpec::NonblackCreature
+                    | TargetSpec::ArtifactPermanent
+                    | TargetSpec::EnchantmentPermanent
+                    | TargetSpec::ControlledCreature
+                    | TargetSpec::UpToOneOtherControlledPermanent
+                    | TargetSpec::OpponentControlledCreature
+                    | TargetSpec::UpToOneTappedCreature
+                    | TargetSpec::NoncreatureArtifactPermanent
+                    | TargetSpec::Land
+                    | TargetSpec::OpponentArtifactOrEnchantmentPermanent
+                    | TargetSpec::ArtifactOrEnchantmentPermanent
+                    | TargetSpec::AttackingOrBlockingCreature
+                    | TargetSpec::CreatureOrPlaneswalker
+                    | TargetSpec::ArtifactEnchantmentOrFlyingCreature
+                    | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour
+                    | TargetSpec::OpponentNonlandPermanent
+                    | TargetSpec::NonOutlawCreature
+                    | TargetSpec::CreatureToughnessAtLeastFour
+                    | TargetSpec::CreatureEnchantmentOrPlaneswalker
+                    | TargetSpec::AnotherControlledCreature
+                    | TargetSpec::ControlledCreatureWithSubtype(_)
+                    | TargetSpec::AttackingCreatureWithSubtype(_)
+                    | TargetSpec::ControlledPermanentWithAnySubtype(_),
+                0,
+                StackTargetContractV4::Object {
+                    zone: Zone::Battlefield,
+                    ..
+                },
+            ) | (
+                TargetSpec::UpToTwoCreatures
+                    | TargetSpec::UpToTwoOtherControlledCreatures
+                    | TargetSpec::ExactlyTwoArtifactPermanents
+                    | TargetSpec::ControlledCreatureThenOpponentCreature
+                    | TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker,
+                0 | 1,
+                StackTargetContractV4::Object {
+                    zone: Zone::Battlefield,
+                    ..
+                },
+            ) | (
+                TargetSpec::CreatureOrLandCardInGraveyard
+                    | TargetSpec::CreatureCardInOwnGraveyard
+                    | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_)
+                    | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_)
+                    | TargetSpec::PermanentCardInOwnGraveyard,
+                0,
+                StackTargetContractV4::Object {
+                    zone: Zone::Graveyard,
+                    ..
+                },
+            ) | (
+                TargetSpec::UpToTwoCreatureCardsInOwnGraveyard,
+                0 | 1,
+                StackTargetContractV4::Object {
+                    zone: Zone::Graveyard,
+                    ..
+                },
+            ) | (
+                TargetSpec::UpToTwoCardsInGraveyards,
+                0 | 1,
+                StackTargetContractV4::Object {
+                    zone: Zone::Graveyard,
+                    ..
+                },
+            ) | (
+                TargetSpec::UpToOneCardInGraveyards,
+                0,
+                StackTargetContractV4::Object {
+                    zone: Zone::Graveyard,
+                    ..
+                },
+            ) | (
+                TargetSpec::AnySpellOnStack
+                    | TargetSpec::InstantSpellOnStack
+                    | TargetSpec::BlueSpellOnStack
+                    | TargetSpec::RedSpellOnStack
+                    | TargetSpec::ArtifactOrEnchantmentSpellOnStack
+                    | TargetSpec::SorcerySpellOnStack
+                    | TargetSpec::NoncreatureSpellOnStack
+                    | TargetSpec::CreatureSpellOnStack
+                    | TargetSpec::ArtifactSpellOnStack
+                    | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. }
+                    | TargetSpec::SpellYouDontControl,
+                0,
+                StackTargetContractV4::Object {
+                    zone: Zone::Stack,
+                    ..
+                },
+            )
+        );
     if !shape_is_valid {
         return false;
     }
@@ -1639,6 +1669,9 @@ pub struct GameState {
     /// Engine-only history. Absence preserves historical bytes and hashes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub life_gain_turn_v1: Option<LifeGainTurnV1>,
+    /// Card state for the MageZero Standard catalog's own cards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub standard_v1: Option<crate::standard_cards_v1::StandardStateV1>,
 }
 
 /// Which players lost life during one turn (Hired Claw: "only if an
@@ -1757,6 +1790,10 @@ impl Hash for GameState {
         if let Some(history) = &self.life_gain_turn_v1 {
             "life-gain-turn-v1".hash(state);
             history.hash(state);
+        }
+        if let Some(standard) = &self.standard_v1 {
+            "standard-v1".hash(state);
+            standard.hash(state);
         }
     }
 }
@@ -1935,6 +1972,7 @@ impl GameState {
             day_night_v1: None,
             descended_v1: None,
             life_gain_turn_v1: None,
+            standard_v1: None,
         };
         crate::life_gain_turn_v1::initialize_for_pool(&mut state);
         state

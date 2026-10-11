@@ -21,6 +21,7 @@
 //! environment, proc-macro, generated, or every dependency byte consumed by
 //! compilation.
 
+mod build_standard_v1;
 #[allow(dead_code)]
 #[path = "../build_support/native_store_build_capture_v1.rs"]
 mod native_store_build_capture_v1;
@@ -2380,6 +2381,12 @@ fn parse_runtime_deck_hash(deck_id: &str, value: &str) -> u64 {
 #[derive(Clone, Copy)]
 enum Special {
     None,
+    /// A Standard-catalog spell whose whole program is a named runtime
+    /// function in `standard_cards_v1` (see `build_standard_v1`).
+    StandardProgram {
+        target_spec: &'static str,
+        program: &'static str,
+    },
     /// Great Furnace's explicit `{T}: Add {R}` program. Basic-land mana is
     /// not a name special: it is derived from Basic + Land + one
     /// `produces_mana` color in `codegen`.
@@ -2860,6 +2867,10 @@ impl Special {
     fn canonical_token(self) -> String {
         match self {
             Special::None => "none".to_string(),
+            Special::StandardProgram {
+                target_spec,
+                program,
+            } => format!("standard_program:{target_spec}:{program}"),
             Special::GreatFurnace => "great_furnace:add_r".to_string(),
             Special::DrawCards(count) => format!("draw_cards:{count}"),
             Special::PumpCreature { power, toughness } => {
@@ -3050,6 +3061,16 @@ enum AbilityCostRecipe {
     ManaCost(&'static str),
     RemovePlusOneCountersFromControlledCreatures(u8),
     SacrificeOtherControlledCreatures(u8),
+    /// A planeswalker loyalty cost (`CostComponent::Loyalty`).
+    Loyalty(i8),
+    /// "Pay N life" (`CostComponent::PayLife`).
+    PayLife(u8),
+    /// Craft with artifact's material
+    /// (`CostComponent::ExileCraftArtifactMaterial`).
+    ExileCraftArtifactMaterial,
+    /// "Remove a net counter from this"
+    /// (`CostComponent::RemoveNetCounterFromSelf`).
+    RemoveNetCounterFromSelf,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3152,12 +3173,17 @@ enum AbilityEffectRecipe {
         toughness: i8,
         keyword: &'static str,
     },
+    /// A hand-written runtime program, named by its `crate::` path. Used for
+    /// card-specific abilities whose shape no structured recipe covers; the
+    /// path is part of the card-database token.
+    Program(&'static str),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PermanentFilterRecipe {
     Artifact,
     ArtifactOrCreature,
+    AnotherArtifact,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3187,6 +3213,26 @@ struct ActivatedAbilityRecipe {
     target_spec: &'static str,
     activation_target_filter: &'static str,
     max_activations_per_turn: Option<u8>,
+}
+
+/// The generated spell-effect function for a `Special::StandardProgram` card.
+fn standard_program_function(name: &str) -> String {
+    let slug = name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let slug = slug
+        .split('_')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("_");
+    format!("spell_effect_standard_{slug}")
 }
 
 fn special_for(name: &str) -> Special {
@@ -3369,6 +3415,7 @@ fn special_for(name: &str) -> Special {
         },
         _ => fdn_program_for(name)
             .or_else(|| standard_program_for(name))
+            .or_else(|| build_standard_v1::special_for(name))
             .unwrap_or(Special::None),
     }
 }
@@ -3825,6 +3872,10 @@ fn effect_recipe_for(card: &CardJson) -> String {
         Special::DestroyNonlegendaryCreature => {
             "target=NonlegendaryCreature;spell=DestroyObject(Target0);mana=None".to_string()
         }
+        Special::StandardProgram {
+            target_spec,
+            program,
+        } => format!("target={target_spec};spell=Program({program});mana=None"),
         Special::DestroyCreature => {
             "target=Creature;spell=DestroyObject(Target0);mana=None".to_string()
         }
@@ -4069,6 +4120,7 @@ fn keywords_for(card: &CardJson) -> String {
     if card.name == "Phyrexian Mite Token" {
         keywords.push("Keywords::TOXIC_1");
     }
+    keywords.extend(build_standard_v1::keywords_for(&card.name));
     if keywords.is_empty() {
         "Keywords::NONE".to_string()
     } else if keywords.len() == 1 {
@@ -4191,7 +4243,7 @@ fn object_name_for(name: &str) -> &str {
         "Manifold Mouse Offspring Token" => "Manifold Mouse",
         "Koma's Coil Token" => "Koma's Coil",
         "Scion of the Deep Token" => "Scion of the Deep",
-        _ => name,
+        _ => build_standard_v1::object_name_for(name).unwrap_or(name),
     }
 }
 
@@ -4202,7 +4254,7 @@ fn transform_face_for(name: &str) -> &'static str {
         "Graveyard Trespasser" => "Some(TransformFaceDef { name: \"Graveyard Glutton\", types: &[CardType::Creature], subtypes: &[Subtype::Werewolf], colors: &[ManaColor::B], power: Some(4), toughness: Some(4), keywords: Keywords::NONE })",
         "Brutal Cathar" => "Some(TransformFaceDef { name: \"Moonrage Brute\", types: &[CardType::Creature], subtypes: &[Subtype::Werewolf], colors: &[ManaColor::R], power: Some(3), toughness: Some(3), keywords: Keywords::FIRST_STRIKE })",
         "Incubator Token" => "Some(TransformFaceDef { name: \"Phyrexian Token\", types: &[CardType::Artifact, CardType::Creature], subtypes: &[Subtype::Phyrexian], colors: &[], power: Some(0), toughness: Some(0), keywords: Keywords::NONE })",
-        _ => "None",
+        _ => build_standard_v1::transform_face_for(name),
     }
 }
 
@@ -4218,14 +4270,14 @@ fn transform_face_name_for(name: &str) -> Option<&'static str> {
         "Incubator Token" => Some("Phyrexian Token"),
         "Brutal Cathar" => Some("Moonrage Brute"),
         "Graveyard Trespasser" => Some("Graveyard Glutton"),
-        _ => None,
+        _ => build_standard_v1::transform_face_name_for(name),
     }
 }
 
 fn saga_for(name: &str) -> &'static str {
     match name {
         "The Modern Age" => "Some(SagaDef { chapter_effects: &[saga_chapter_modern_age_loot, saga_chapter_modern_age_loot, saga_chapter_modern_age_transform] })",
-        _ => "None",
+        _ => build_standard_v1::saga_for(name),
     }
 }
 
@@ -4339,7 +4391,7 @@ fn alt_cost_for(name: &str) -> &'static str {
         "Knight-Errant of Eos" => "Some(AltCostDef { components: &[CostComponent::ConvokeMana(Cost { pips: &[Pip::Colored(ManaColor::W)], generic: 4, x_count: 0 })], condition: AltCostCondition::Always })",
         "Overlord of the Mistmoors" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::W), Pip::Colored(ManaColor::W)], generic: 2, x_count: 0 })], condition: AltCostCondition::ImpendingFromHand { time_counters: 4 } })",
         "Nova Hellkite" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 2, x_count: 0 })], condition: AltCostCondition::WarpFromHand })",
-        _ => "None",
+        _ => build_standard_v1::alt_cost_for(name),
     }
 }
 
@@ -4359,7 +4411,7 @@ fn additional_cost_for(name: &str) -> &'static str {
         "Raze" => {
             "Some(&[CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::Land }])"
         }
-        _ => "None",
+        _ => build_standard_v1::additional_cost_for(name),
     }
 }
 
@@ -5382,7 +5434,7 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
-        _ => &[],
+        _ => build_standard_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -5437,6 +5489,14 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
                 pips.join(", ")
             )
         }
+        AbilityCostRecipe::Loyalty(delta) => format!("CostComponent::Loyalty({delta})"),
+        AbilityCostRecipe::PayLife(amount) => format!("CostComponent::PayLife({amount})"),
+        AbilityCostRecipe::ExileCraftArtifactMaterial => {
+            "CostComponent::ExileCraftArtifactMaterial".to_string()
+        }
+        AbilityCostRecipe::RemoveNetCounterFromSelf => {
+            "CostComponent::RemoveNetCounterFromSelf".to_string()
+        }
     }
 }
 
@@ -5478,6 +5538,12 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::RemovePlusOneCountersFromControlledCreatures(count) => {
             format!("remove_controlled_plus_one_counters:{count}")
         }
+        AbilityCostRecipe::Loyalty(delta) => format!("loyalty:{delta}"),
+        AbilityCostRecipe::PayLife(amount) => format!("pay_life:{amount}"),
+        AbilityCostRecipe::ExileCraftArtifactMaterial => {
+            "exile_craft_artifact_material".to_string()
+        }
+        AbilityCostRecipe::RemoveNetCounterFromSelf => "remove_net_counter_from_self".to_string(),
     }
 }
 
@@ -5485,6 +5551,7 @@ fn permanent_filter_src(filter: PermanentFilterRecipe) -> &'static str {
     match filter {
         PermanentFilterRecipe::Artifact => "PermanentFilter::Artifact",
         PermanentFilterRecipe::ArtifactOrCreature => "PermanentFilter::ArtifactOrCreature",
+        PermanentFilterRecipe::AnotherArtifact => "PermanentFilter::AnotherArtifact",
     }
 }
 
@@ -5492,6 +5559,7 @@ fn permanent_filter_token(filter: PermanentFilterRecipe) -> &'static str {
     match filter {
         PermanentFilterRecipe::Artifact => "artifact",
         PermanentFilterRecipe::ArtifactOrCreature => "artifact_or_creature",
+        PermanentFilterRecipe::AnotherArtifact => "another_artifact",
     }
 }
 
@@ -5600,6 +5668,7 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
             "pump_target_and_grant_keyword_until_end_of_turn:{power}:{toughness}:{}",
             keyword.to_ascii_lowercase()
         ),
+        AbilityEffectRecipe::Program(path) => format!("program:{path}"),
     }
 }
 
@@ -5820,6 +5889,10 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
             signed_fn_token(toughness),
             keyword.to_ascii_lowercase()
         ),
+        AbilityEffectRecipe::Program(path) => format!(
+            "ability_effect_program_{}",
+            path.trim_start_matches("crate::").replace("::", "_")
+        ),
     }
 }
 
@@ -5832,14 +5905,22 @@ fn signed_fn_token(value: i8) -> String {
     }
 }
 
-fn activated_abilities_for(name: &str) -> String {
+fn activated_ability_face_for(name: &str, index: usize) -> Option<u8> {
+    build_standard_v1::activated_ability_face_for(name, index)
+}
+
+/// Rust source for a card's activated abilities. `canonical` omits the
+/// face of single-faced abilities so earlier catalogs keep their card
+/// database identity byte for byte.
+fn activated_abilities_src(name: &str, canonical: bool) -> String {
     let recipes = activated_ability_recipes_for(name);
     if recipes.is_empty() {
         return "&[]".to_string();
     }
     let abilities = recipes
         .iter()
-        .map(|recipe| {
+        .enumerate()
+        .map(|(index, recipe)| {
             let costs = recipe
                 .cost
                 .iter()
@@ -5856,8 +5937,13 @@ fn activated_abilities_for(name: &str) -> String {
                 Some(limit) => format!("Some({limit})"),
                 None => "None".to_string(),
             };
+            let face = match activated_ability_face_for(name, index) {
+                Some(face) => format!(", face: Some({face})"),
+                None if canonical => String::new(),
+                None => ", face: None".to_string(),
+            };
             format!(
-                "ActivatedAbilityDef {{ cost: &[{costs}], target_spec: TargetSpec::{target_spec}, effect: {effect}, activation_zone: Zone::{zone}, sorcery_speed_only: {sorcery}, activation_target_filter: ActivationTargetFilter::{activation_target_filter}, max_activations_per_turn: {max_activations_per_turn} }}"
+                "ActivatedAbilityDef {{ cost: &[{costs}], target_spec: TargetSpec::{target_spec}, effect: {effect}, activation_zone: Zone::{zone}, sorcery_speed_only: {sorcery}, activation_target_filter: ActivationTargetFilter::{activation_target_filter}, max_activations_per_turn: {max_activations_per_turn}{face} }}"
             )
         })
         .collect::<Vec<_>>()
@@ -5865,10 +5951,15 @@ fn activated_abilities_for(name: &str) -> String {
     format!("&[{abilities}]")
 }
 
+fn activated_abilities_for(name: &str) -> String {
+    activated_abilities_src(name, false)
+}
+
 fn activated_abilities_token(name: &str) -> String {
     activated_ability_recipes_for(name)
         .iter()
-        .map(|recipe| {
+        .enumerate()
+        .map(|(index, recipe)| {
             let costs = recipe
                 .cost
                 .iter()
@@ -5876,8 +5967,12 @@ fn activated_abilities_token(name: &str) -> String {
                 .map(ability_cost_token)
                 .collect::<Vec<_>>()
                 .join(",");
+            // Single-faced abilities omit the face so earlier catalogs keep
+            // their tokens byte for byte.
+            let face = activated_ability_face_for(name, index)
+                .map_or_else(String::new, |face| format!(";face={face}"));
             format!(
-                "zone={};sorcery={};target={};activation_filter={};max_per_turn={};cost=[{}];effect={}",
+                "zone={};sorcery={};target={};activation_filter={};max_per_turn={};cost=[{}];effect={}{face}",
                 recipe.activation_zone.to_ascii_lowercase(),
                 recipe.sorcery_speed_only,
                 recipe.target_spec.to_ascii_lowercase(),
@@ -6100,7 +6195,7 @@ fn ward_cost_for(name: &str) -> &'static str {
         "Axebane Ferox" => "Some(WardCostDef::CollectEvidence(4))",
         "Brutal Cathar" => "Some(WardCostDef::BackFacePayLife(3))",
         "Graveyard Trespasser" => "Some(WardCostDef::DiscardCard)",
-        _ => "None",
+        _ => build_standard_v1::ward_cost_for(name),
     }
 }
 
@@ -6131,7 +6226,7 @@ fn equipment_for(name: &str) -> &'static str {
         "Swiftfoot Boots" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords(Keywords::HEXPROOF.0 | Keywords::HASTE.0), other_turn_keywords: Keywords(Keywords::HEXPROOF.0 | Keywords::HASTE.0), noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
         "Cori-Steel Cutter" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords(Keywords::TRAMPLE.0 | Keywords::HASTE.0), other_turn_keywords: Keywords(Keywords::TRAMPLE.0 | Keywords::HASTE.0), noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
         "Viridian Longbow" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: Some(GrantedActivatedAbilityDef { cost: &[CostComponent::Tap], target_spec: TargetSpec::AnyTarget, effect: longbow_ping }) })",
-        _ => "None",
+        _ => build_standard_v1::equipment_for(name),
     }
 }
 
@@ -6363,7 +6458,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Hullbreaker Horror" => {
             "cast_spell:mode_before_targets:spell_you_dont_control_to_owners_hand|nonland_permanent_to_owners_hand|no_mode"
         }
-        _ => "none",
+        _ => build_standard_v1::trigger_recipe_for(name),
     }
 }
 
@@ -6475,6 +6570,13 @@ fn codegen(cards: &[CardJson]) -> String {
 
     for card in cards {
         match special_for(&card.name) {
+            Special::StandardProgram { program, .. } => {
+                let function = standard_program_function(&card.name);
+                writeln!(out, "fn {function}() -> Option<EffectOp> {{").unwrap();
+                writeln!(out, "    Some({program}())").unwrap();
+                writeln!(out, "}}").unwrap();
+                writeln!(out).unwrap();
+            }
             Special::DrawThenCreateToken { draw, token } => {
                 let function = card.name.to_ascii_lowercase().replace([' ', '\''], "_");
                 writeln!(out, "fn spell_effect_{function}() -> Option<EffectOp> {{").unwrap();
@@ -7105,6 +7207,9 @@ fn codegen(cards: &[CardJson]) -> String {
                 writeln!(out, "        EffectOp::PumpTargetUntilEndOfTurnDynamic {{ target: TargetRef::Target(0), power: DynamicValueDef::Fixed({power}), toughness: DynamicValueDef::Fixed({toughness}) }},").unwrap();
                 writeln!(out, "        EffectOp::GrantKeywordTargetUntilEndOfTurn {{ object: ObjectRef::Target(0), keyword: Keywords::{keyword} }},").unwrap();
                 writeln!(out, "    ])").unwrap();
+            }
+            AbilityEffectRecipe::Program(path) => {
+                writeln!(out, "    {path}()").unwrap();
             }
         }
         writeln!(out, "}}").unwrap();
@@ -8816,6 +8921,11 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_destroy_nonlegendary_creature".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::StandardProgram { target_spec, .. } => (
+                target_spec,
+                standard_program_function(&c.name),
+                "no_effect".to_string(),
+            ),
             Special::DestroyCreature => (
                 "TargetSpec::Creature",
                 "spell_effect_destroy_creature".to_string(),
@@ -9412,7 +9522,7 @@ fn codegen(cards: &[CardJson]) -> String {
         // `standard-magezero-fixtures` builds: the Pauper prefix plus
         // `data/standard/magezero_v1/cards_v1.json`, versioned separately
         // from the FDN Limited catalog.
-        canon = String::from("kernel_carddb_standard/v5\n");
+        canon = String::from("kernel_carddb_standard/v6\n");
     }
     if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
         canon.push_str("counter_target_spell_guard=bound_stack_spell_can_be_countered\n");
@@ -9608,7 +9718,7 @@ fn codegen(cards: &[CardJson]) -> String {
         canon.push('|');
         canon.push_str(&flashback_for(&c.name));
         canon.push('|');
-        canon.push_str(&activated_abilities_for(&c.name));
+        canon.push_str(&activated_abilities_src(&c.name, true));
         canon.push('|');
         canon.push_str(&plot_cost_for(&c.name));
         canon.push('|');
@@ -9860,6 +9970,14 @@ fn subtype_variant(t: &str) -> &'static str {
         "Power-Plant" => "Subtype::PowerPlant",
         "Mine" => "Subtype::Mine",
         "Desert" => "Subtype::Desert",
+        "Teferi" => "Subtype::Teferi",
+        "God" => "Subtype::God",
+        "Room" => "Subtype::Room",
+        "Case" => "Subtype::Case",
+        "Class" => "Subtype::Class",
+        "Liliana" => "Subtype::Liliana",
+        "Gnome" => "Subtype::Gnome",
+        "Chandra" => "Subtype::Chandra",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

@@ -1091,6 +1091,11 @@ pub struct CombatState {
     /// Explicit custom-game rules. Absent in frozen Pauper sessions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub foundations_v1: Option<crate::combat_damage_v1::FoundationsCombatV1>,
+    /// Attackers attacking planeswalkers, and a declaration whose attack
+    /// targets are still being chosen. Absent whenever every attacker
+    /// attacks the defending player.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attack_targets_v1: Option<crate::attack_target_v1::AttackTargetsV1>,
 }
 
 // Preserve the original derived field sequence when the extension is absent.
@@ -1103,6 +1108,10 @@ impl std::hash::Hash for CombatState {
         if let Some(rules) = &self.foundations_v1 {
             "foundations_combat/v1".hash(state);
             rules.hash(state);
+        }
+        if let Some(targets) = &self.attack_targets_v1 {
+            "attack_targets/v1".hash(state);
+            targets.hash(state);
         }
     }
 }
@@ -1127,6 +1136,7 @@ impl CombatState {
         for (_, blockers) in &mut self.blocked_by {
             blockers.retain(|&blocker| blocker != id);
         }
+        crate::attack_target_v1::remove_from_combat(&mut self.attack_targets_v1, id);
     }
 }
 
@@ -1382,6 +1392,15 @@ pub enum Decision {
         remaining: u8,
         candidates: Vec<ObjectId>,
     },
+    /// 508.1b: choose whether `attacker` attacks the defending player or
+    /// one of their planeswalkers. Asked once per declared attacker, in
+    /// declaration order, only while the defending player controls a
+    /// planeswalker. `candidates` starts with the player.
+    ChooseAttackTarget {
+        player: PlayerId,
+        attacker: ObjectId,
+        candidates: Vec<Target>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1467,6 +1486,8 @@ pub enum Action {
         mulligan: bool,
     },
     ChooseLondonBottom(ObjectId),
+    /// Answers `Decision::ChooseAttackTarget`.
+    ChooseAttackTarget(Target),
 }
 
 const CHAIN_COPY_COST: Cost = Cost {
@@ -1566,6 +1587,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::UpToOneOtherControlledPermanent
         | TargetSpec::AttackingCreatureWithSubtype(_)
         | TargetSpec::ControlledPermanentWithAnySubtype(_) => 1,
+        TargetSpec::StandardV1(filter) => filter.counts().0,
         TargetSpec::PlayerThenTheirCreature
         | TargetSpec::UpToTwoOtherControlledCreatures
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
@@ -1588,6 +1610,7 @@ fn target_min_count(spec: TargetSpec) -> u8 {
         | TargetSpec::UpToOneOtherControlledPermanent
         | TargetSpec::UpToTwoOtherControlledCreatures
         | TargetSpec::UpToOneTappedCreature => 0,
+        TargetSpec::StandardV1(filter) => filter.counts().1,
         _ => target_count(spec),
     }
 }
@@ -1820,6 +1843,24 @@ fn validate_physical_spell_cast_origin(
                 && def.flashback.is_some()
                 && def.escape.is_none()
         }
+        SpellCastRouteV4::GraveyardPermissionV1 {
+            holder,
+            permission_zone_change_count,
+        } => {
+            origin.origin_zone == Zone::Graveyard
+                && source.owner == item.controller
+                && holder == item.controller
+                && matches!(
+                    cast_method,
+                    CastMethodV4::Normal | CastMethodV4::Alternative
+                )
+                && crate::standard_cards_v1::graveyard_cast_granted(
+                    state,
+                    item.source,
+                    holder,
+                    permission_zone_change_count,
+                )
+        }
         SpellCastRouteV4::ExilePermission {
             holder,
             permission_zone_change_count,
@@ -2043,6 +2084,25 @@ fn validated_ability_source_contract(
     Ok(contract)
 }
 
+/// Whether an ability's source contract names the definition its source
+/// has now or had as that same incarnation: a copy effect (Assimilation
+/// Aegis) changes a permanent's definition without a zone change, and an
+/// ability already on the stack keeps the one it was created with
+/// (113.7a).
+fn source_card_def_matches(
+    state: &GameState,
+    contract: AbilitySourceContractV4,
+    live_card_def: u16,
+) -> bool {
+    contract.card_def == live_card_def
+        || crate::standard_cards_v1::had_card_def(
+            state,
+            contract.source,
+            contract.zone_change_count,
+            contract.card_def,
+        )
+}
+
 fn validate_historical_ability_source_contract(
     state: &GameState,
     contract: AbilitySourceContractV4,
@@ -2051,7 +2111,7 @@ fn validate_historical_ability_source_contract(
         .objects
         .try_get(contract.source)
         .ok_or("ability source object no longer exists")?;
-    if contract.card_def != live.card_def
+    if !source_card_def_matches(state, contract, live.card_def)
         || contract.owner != live.owner
         || live.zone_change_count < contract.zone_change_count
         || (live.zone_change_count == contract.zone_change_count && live.zone != contract.zone)
@@ -2135,7 +2195,8 @@ fn storm_source_contract_is_structurally_valid(
         | SpellCastRouteV4::Plotted { .. }
         | SpellCastRouteV4::Madness
         | SpellCastRouteV4::GraveyardEscape
-        | SpellCastRouteV4::AdventureExile => false,
+        | SpellCastRouteV4::AdventureExile
+        | SpellCastRouteV4::GraveyardPermissionV1 { .. } => false,
     };
     has_storm(definition)
         && definition.is_executable()
@@ -2411,7 +2472,7 @@ fn validate_ability_source_contract(
         .try_get(item.source)
         .ok_or("ability source object no longer exists")?;
     if contract.source != item.source
-        || contract.card_def != source.card_def
+        || !source_card_def_matches(state, contract, source.card_def)
         || contract.owner != source.owner
         || contract.controller != item.controller
         || contract.zone == Zone::Stack
@@ -2726,10 +2787,13 @@ fn legal_targets_for_controller_from_source(
             .collect(),
         TargetSpec::TargetOpponent => vec![Target::Player(controller.opponent())],
         TargetSpec::AnyTarget => {
+            // 115.4: any target is a creature, player, planeswalker or battle.
             let mut out = vec![Target::Player(PlayerId::P0), Target::Player(PlayerId::P1)];
             for p in [PlayerId::P0, PlayerId::P1] {
                 for &id in &state.players[p.index()].battlefield {
-                    if object_has_type(state, id, CardType::Creature) {
+                    if object_has_type(state, id, CardType::Creature)
+                        || object_has_type(state, id, CardType::Planeswalker)
+                    {
                         out.push(Target::Object(id));
                     }
                 }
@@ -2960,6 +3024,13 @@ fn legal_targets_for_controller_from_source(
             })
             .map(Target::Object)
             .collect(),
+        TargetSpec::StandardV1(filter) => crate::standard_cards_v1::legal_targets(
+            filter,
+            controller,
+            source.map(|source| source.object),
+            targets_chosen,
+            state,
+        ),
         TargetSpec::AttackingOrBlockingCreature => battlefield_objects(state)
             .filter(|&id| {
                 object_has_type(state, id, CardType::Creature)
@@ -3973,6 +4044,28 @@ fn reduced_activation_mana_cost(
     reduced
 }
 
+fn activation_mana_payment(
+    components: &[CostComponent],
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+) -> Option<Cost> {
+    activation_mana_cost(components).map(|cost| {
+        let reduced = reduced_activation_mana_cost(cost, components, player, source, state);
+        crate::standard_cards_v1::spend_as_any_color(state, player, source, reduced)
+    })
+}
+
+pub(crate) fn maximum_payable_unadjusted_x(
+    cost: &Cost,
+    player: PlayerId,
+    state: &GameState,
+) -> Option<u8> {
+    (0..=u8::MAX)
+        .rev()
+        .find(|&x| mana::can_pay(cost, x, player, state).is_some())
+}
+
 fn payable_activation_cost_object_candidates(
     player: PlayerId,
     source: ObjectId,
@@ -3985,8 +4078,8 @@ fn payable_activation_cost_object_candidates(
     activation_cost_object_candidates(player, source, subtype, state, &[])
         .into_iter()
         .filter(|candidate| {
-            activation_mana_cost(components).is_none_or(|cost| {
-                mana::can_pay_excluding_sources(cost, 0, player, state, &[source, *candidate])
+            activation_mana_payment(components, player, source, state).is_none_or(|cost| {
+                mana::can_pay_excluding_sources(&cost, 0, player, state, &[source, *candidate])
                     .is_some()
             })
         })
@@ -4060,6 +4153,9 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
     let mut chosen_creature_count = 0;
     let mut remove_counters_count = 0;
     let mut convoke_count = 0;
+    let mut loyalty_count = 0;
+    let mut craft_material_count = 0;
+    let mut net_counter_count = 0;
 
     for component in components {
         match component {
@@ -4148,6 +4244,16 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
             CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand => {
                 chosen_creature_count += 1;
             }
+            CostComponent::Loyalty(_) => {
+                loyalty_count += 1;
+            }
+            CostComponent::ExileCraftArtifactMaterial => {
+                craft_material_count += 1;
+                saw_source_changing_component = true;
+            }
+            CostComponent::RemoveNetCounterFromSelf => {
+                net_counter_count += 1;
+            }
         }
     }
 
@@ -4158,6 +4264,7 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
             + return_permanent_count
             + tap_other_permanent_count
             + tap_filtered_permanent_count
+            + craft_material_count
             > 1
         || pay_life_count > 1
         || tap_count > 1
@@ -4167,6 +4274,8 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
         || reveal_hand_condition_count > 1
         || chosen_creature_count > 1
         || remove_counters_count > 1
+        || loyalty_count > 1
+        || net_counter_count > 1
     {
         return false;
     }
@@ -4224,15 +4333,14 @@ fn can_pay_activation_components_with_x(
     if has_unblocked_attacker_return_cost(components) {
         return !unblocked_attacker_return_candidates(player, state, &[]).is_empty();
     }
-    if let Some(cost) = activation_mana_cost(components) {
-        let cost = &reduced_activation_mana_cost(cost, components, player, source, state);
+    if let Some(cost) = activation_mana_payment(components, player, source, state) {
         let plan = if components
             .iter()
             .any(|component| matches!(component, CostComponent::Tap))
         {
-            mana::can_pay_excluding_source(cost, x_value, player, state, source)
+            mana::can_pay_excluding_source(&cost, x_value, player, state, source)
         } else {
-            mana::can_pay(cost, x_value, player, state)
+            mana::can_pay(&cost, x_value, player, state)
         };
         if plan.is_none() {
             return false;
@@ -4369,7 +4477,10 @@ fn can_pay_components(
                     >= usize::from(*count)
             }
             CostComponent::SacrificeControlled { count, filter } => {
-                sacrificeable_controlled_permanents(player, *filter, state, &[]).len()
+                sacrificeable_controlled_permanents(player, *filter, state, &[])
+                    .into_iter()
+                    .filter(|&id| *filter != PermanentFilter::AnotherArtifact || id != source)
+                    .count()
                     >= usize::from(*count)
             }
             CostComponent::TapControlled { count, filter } => {
@@ -4387,7 +4498,12 @@ fn can_pay_components(
                 !unblocked_attacker_return_candidates(player, state, &[]).is_empty()
             }
             CostComponent::Mana(cost) => mana::can_pay(
-                &reduced_activation_mana_cost(cost, components, player, source, state),
+                &crate::standard_cards_v1::spend_as_any_color(
+                    state,
+                    player,
+                    source,
+                    reduced_activation_mana_cost(cost, components, player, source, state),
+                ),
                 0,
                 player,
                 state,
@@ -4421,6 +4537,14 @@ fn can_pay_components(
                     !card_def::CARD_DEFS[state.objects.get(object).card_def as usize]
                         .has_type(*card_type)
                 })
+            }
+            CostComponent::Loyalty(delta) => crate::planeswalker_v1::loyalty(state, source)
+                .is_some_and(|loyalty| *delta >= 0 || loyalty >= u32::from(delta.unsigned_abs())),
+            CostComponent::ExileCraftArtifactMaterial => {
+                !craft_material_candidates(player, source, state, &[]).is_empty()
+            }
+            CostComponent::RemoveNetCounterFromSelf => {
+                crate::standard_cards_v1::net_counters(state, source) > 0
             }
             CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand => {
                 !chosen_creature_cost_candidates(
@@ -4500,6 +4624,17 @@ fn validate_cost_component_choices_v1(
         matches!(component, CostComponent::PayLife(amount) if state.players[player.index()].life < i32::from(*amount))
     }) {
         return None;
+    }
+    if components.iter().any(|component| {
+        matches!(component, CostComponent::Loyalty(delta) if !crate::planeswalker_v1::loyalty(state, source).is_some_and(|loyalty| *delta >= 0 || loyalty >= u32::from(delta.unsigned_abs())))
+    }) {
+        return false;
+    }
+    if components.iter().any(|component| {
+        matches!(component, CostComponent::RemoveNetCounterFromSelf)
+            && crate::standard_cards_v1::net_counters(state, source) == 0
+    }) {
+        return false;
     }
     if components.iter().any(|component| {
         matches!(component, CostComponent::RevealHandIfNoCardsWithType(card_type) if state.players[player.index()].hand.iter().any(|&object| card_def::CARD_DEFS[state.objects.get(object).card_def as usize].has_type(*card_type)))
@@ -4586,14 +4721,15 @@ fn validate_cost_component_choices_v1(
                 })
         });
         let aliases_source_departure = object_cost_chosen.contains(&source)
-            && components.iter().any(|component| {
-                matches!(
-                    component,
-                    CostComponent::SacrificeSelf
-                        | CostComponent::ExileSelf
-                        | CostComponent::DiscardSelf
-                )
-            });
+            && (filter == PermanentFilter::AnotherArtifact
+                || components.iter().any(|component| {
+                    matches!(
+                        component,
+                        CostComponent::SacrificeSelf
+                            | CostComponent::ExileSelf
+                            | CostComponent::DiscardSelf
+                    )
+                }));
         if object_cost_chosen.len() != needed || duplicate || invalid || aliases_source_departure {
             return None;
         }
@@ -4665,6 +4801,15 @@ fn validate_cost_component_choices_v1(
             return None;
         }
     }
+    let craft_material = has_craft_material_cost(components);
+    if craft_material
+        && (object_cost_chosen.len() != 1
+            || !craft_material_candidates(player, source, state, &[])
+                .iter()
+                .any(|binding| binding.object == object_cost_chosen[0]))
+    {
+        return false;
+    }
     if sacrifice_needed.is_none()
         && sacrifice_controlled.is_none()
         && tap_controlled.is_none()
@@ -4673,11 +4818,16 @@ fn validate_cost_component_choices_v1(
         && !returns_unblocked_attacker
         && tap_other_subtype.is_none()
         && tap_filter.is_none()
+        && !craft_material
         && !object_cost_chosen.is_empty()
     {
         return None;
     }
 
+    // Derive the sole mana plan before applying any state-changing component.
+    // This keeps a restored or forward-generated unaffordable shape from
+    // partially paying life/discard-adjacent components before failing.
+    let mana_cost = activation_mana_payment(components, player, source, state);
     let mut reserved = Vec::new();
     if components
         .iter()
@@ -4688,7 +4838,7 @@ fn validate_cost_component_choices_v1(
     if tap_other_subtype.is_some() {
         reserved.extend(object_cost_chosen.iter().copied());
     }
-    if tap_filter.is_some() || tap_controlled.is_some() {
+    if tap_filter.is_some() || tap_controlled.is_some() || craft_material {
         reserved.extend(object_cost_chosen.iter().copied());
     }
     Some(reserved)
@@ -4713,9 +4863,9 @@ fn pay_cost_components_spending_mana(
     let mana_plan = mana_cost.map(|cost| {
         let cost = &reduced_activation_mana_cost(cost, components, player, source, state);
         if reserved.is_empty() {
-            mana::can_pay(cost, x_value, player, state)
+            mana::can_pay(&cost, x_value, player, state)
         } else {
-            mana::can_pay_excluding_sources(cost, x_value, player, state, &reserved)
+            mana::can_pay_excluding_sources(&cost, x_value, player, state, &reserved)
         }
     });
     if mana_plan.as_ref().is_some_and(Option::is_none) {
@@ -4886,6 +5036,16 @@ fn commit_cost_components_from_plan_v1(
                 }
             }
             CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand => {}
+            CostComponent::Loyalty(delta) => {
+                crate::planeswalker_v1::change_loyalty(state, source, i32::from(*delta));
+            }
+            CostComponent::ExileCraftArtifactMaterial => event::propose_and_commit(
+                state,
+                ProposedEvent::zone_change(object_cost_chosen[0], Zone::Exile),
+            ),
+            CostComponent::RemoveNetCounterFromSelf => {
+                crate::standard_cards_v1::remove_net_counter(state, source);
+            }
         }
     }
     Some(mana_spent)
@@ -5306,6 +5466,7 @@ pub(crate) fn permanent_matches_filter(
         PermanentFilter::Land => {
             card_def::CARD_DEFS[state.objects.get(id).card_def as usize].is_land
         }
+        PermanentFilter::AnotherArtifact => object_has_type(state, id, CardType::Artifact),
     }
 }
 
@@ -5373,6 +5534,7 @@ fn activation_controlled_cost_candidates(
     player: PlayerId,
     filter: PermanentFilter,
     tap: bool,
+    source: ObjectId,
     state: &GameState,
     already_chosen: &[EffectObjectBinding],
 ) -> Vec<EffectObjectBinding> {
@@ -5389,11 +5551,56 @@ fn activation_controlled_cost_candidates(
     };
     candidates
         .into_iter()
+        .filter(|&object| filter != PermanentFilter::AnotherArtifact || object != source)
         .map(|object| {
             let live = state.objects.get(object);
             EffectObjectBinding {
                 object,
                 expected_zone: Zone::Battlefield,
+                expected_zone_change_count: live.zone_change_count,
+            }
+        })
+        .collect()
+}
+
+fn has_craft_material_cost(components: &[CostComponent]) -> bool {
+    components
+        .iter()
+        .any(|component| matches!(component, CostComponent::ExileCraftArtifactMaterial))
+}
+
+/// Craft with artifact's material candidates (702.167a): the other
+/// artifacts `player` controls, then the artifact cards in their own
+/// graveyard, each bound to its current incarnation.
+fn craft_material_candidates(
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+    already_chosen: &[EffectObjectBinding],
+) -> Vec<EffectObjectBinding> {
+    let seat = &state.players[player.index()];
+    let permanents = seat.battlefield.iter().copied().filter(|&id| {
+        let object = state.objects.get(id);
+        id != source
+            && object.zone == Zone::Battlefield
+            && object.controller == player
+            && object_has_type(state, id, CardType::Artifact)
+    });
+    let cards = seat.graveyard.iter().copied().filter(|&id| {
+        let object = state.objects.get(id);
+        id != source
+            && object.zone == Zone::Graveyard
+            && object.owner == player
+            && card_def::CARD_DEFS[object.card_def as usize].has_type(CardType::Artifact)
+    });
+    permanents
+        .chain(cards)
+        .filter(|id| !already_chosen.iter().any(|binding| binding.object == *id))
+        .map(|object| {
+            let live = state.objects.get(object);
+            EffectObjectBinding {
+                object,
+                expected_zone: live.zone,
                 expected_zone_change_count: live.zone_change_count,
             }
         })
@@ -5464,7 +5671,9 @@ fn tappable_controlled_permanents(
 
 fn cost_kind_for_permanent_filter(filter: PermanentFilter) -> CostKind {
     match filter {
-        PermanentFilter::Artifact => CostKind::SacrificeArtifacts,
+        PermanentFilter::Artifact | PermanentFilter::AnotherArtifact => {
+            CostKind::SacrificeArtifacts
+        }
         PermanentFilter::ArtifactOrCreature | PermanentFilter::Creature => {
             CostKind::SacrificePermanents
         }
@@ -5880,6 +6089,21 @@ fn completable_next_cast_targets(
         targeting_source_for_object(state, pending.spell),
         state,
     );
+    let candidates = if crate::standard_cards_v1::filters_cast_targets(def) {
+        candidates
+            .into_iter()
+            .filter(|&target| {
+                crate::standard_cards_v1::cast_target_allowed(
+                    def,
+                    pending.controller,
+                    target,
+                    state,
+                )
+            })
+            .collect()
+    } else {
+        candidates
+    };
     if !normal_cast_cost_depends_on_targets(def) {
         return candidates;
     }
@@ -6229,6 +6453,25 @@ fn maximum_payable_x(
 /// the current object-id-only `Action::CastSpell` surface. A future card with
 /// both Flashback and Escape is deliberately omitted until the action schema
 /// can carry an explicit method choice.
+/// The graveyard incarnation a standing "you may cast this card from your
+/// graveyard" grant lets `holder` cast `id` from, if any.
+fn graveyard_permission_zone_change_count(
+    holder: PlayerId,
+    id: ObjectId,
+    state: &GameState,
+) -> Option<u32> {
+    let live = state.objects.get(id);
+    (live.zone == Zone::Graveyard
+        && live.owner == holder
+        && crate::standard_cards_v1::graveyard_cast_granted(
+            state,
+            id,
+            holder,
+            live.zone_change_count,
+        ))
+    .then_some(live.zone_change_count)
+}
+
 fn unambiguous_graveyard_cast_method(def: &card_def::CardDef) -> Option<CastMethodV4> {
     match (def.flashback.is_some(), def.escape.is_some()) {
         (true, false) => Some(CastMethodV4::Flashback),
@@ -6279,6 +6522,20 @@ fn is_castable_now(
     // just didn't consult it for this card's type).
     let main_timing_ok = cast_form_timing_ok(def.types, def.keywords, player, state);
     if cast_method != CastMethodV4::Normal && !main_timing_ok {
+        return false;
+    }
+    if main_timing_ok
+        && crate::standard_cards_v1::filters_cast_targets(def)
+        && !completable_next_targets_for_controller_and_source(
+            def.target_spec,
+            &[],
+            player,
+            targeting_source_for_object(state, id),
+            state,
+        )
+        .into_iter()
+        .any(|target| crate::standard_cards_v1::cast_target_allowed(def, player, target, state))
+    {
         return false;
     }
 
@@ -6487,9 +6744,14 @@ fn castable_spells(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
     }
     for &id in &state.players[player.index()].graveyard {
         let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
-        if unambiguous_graveyard_cast_method(def)
-            .is_some_and(|method| is_castable_now(player, id, method, state))
-        {
+        let castable = match unambiguous_graveyard_cast_method(def) {
+            Some(method) => is_castable_now(player, id, method, state),
+            None => {
+                graveyard_permission_zone_change_count(player, id, state).is_some()
+                    && is_castable_now(player, id, CastMethodV4::Normal, state)
+            }
+        };
+        if castable {
             out.push(id);
         }
     }
@@ -6550,6 +6812,7 @@ pub(crate) fn active_permission_for(
                     granted_active_player,
                 } if granted_turn == state.turn && granted_active_player == state.active_player
             )
+            && !crate::standard_cards_v1::exile_cast_group_spent(state, id)
     })
 }
 
@@ -6637,6 +6900,18 @@ fn available_mana_abilities(player: PlayerId, state: &GameState) -> Vec<ObjectId
         .collect()
 }
 
+/// 302.6: summoning sickness restricts the tap symbol only while the
+/// permanent is a creature on the face it shows.
+pub(crate) fn creature_summoning_sick(
+    state: &GameState,
+    object: ObjectId,
+    _def: &card_def::CardDef,
+) -> bool {
+    object_has_type(state, object, CardType::Creature)
+        && state.objects.get(object).summoning_sick
+        && !has_effective_keyword(state, object, Keywords::HASTE)
+}
+
 fn rich_mana_ability_is_payable(
     player: PlayerId,
     source: ObjectId,
@@ -6658,12 +6933,10 @@ fn rich_mana_ability_is_payable(
     }
     match rich.cost {
         ManaAbilityCostDef::TapSelf | ManaAbilityCostDef::TapAndSacrificeSelf => {
-            !(object.tapped
-                || object_has_type(state, source, CardType::Creature) && object.summoning_sick)
+            !(object.tapped || creature_summoning_sick(state, source, def))
         }
         ManaAbilityCostDef::TapSelfPayLife(life) => {
-            !(object.tapped
-                || object_has_type(state, source, CardType::Creature) && object.summoning_sick)
+            !(object.tapped || creature_summoning_sick(state, source, def))
                 && mana::life_payment_affordable(
                     i32::from(life),
                     state.players[player.index()].life,
@@ -6677,7 +6950,7 @@ fn rich_mana_ability_is_payable(
             // cheap checks: the flat-encode zero-allocation contract counts
             // on the short-circuit (tests/flat_action_allocation.rs).
             !(object.tapped
-                || object_has_type(state, source, CardType::Creature) && object.summoning_sick
+                || creature_summoning_sick(state, source, def)
                 || mana_ability_cost_targets(player, source, state).is_empty())
         }
     }
@@ -6731,6 +7004,7 @@ pub(crate) fn available_mana_ability_choices_into(
     };
     if !def.has_mana_ability()
         || !crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+        || !crate::standard_cards_v1::mana_abilities_active(state, source, def)
     {
         return;
     }
@@ -6740,8 +7014,7 @@ pub(crate) fn available_mana_ability_choices_into(
     let primary_payable = if let Some(rich) = def.mana_ability_def {
         rich_mana_ability_is_payable(player, source, 0, rich, None, state)
     } else {
-        !(object.tapped
-            || object_has_type(state, source, CardType::Creature) && object.summoning_sick)
+        !(object.tapped || creature_summoning_sick(state, source, def))
     };
     if primary_payable {
         for &color in primary.as_slice() {
@@ -6817,6 +7090,33 @@ fn mana_ability_use_count(state: &GameState, source: ObjectId, ability_index: u1
             entry.ability_kind == AbilityKindV4::Mana && entry.ability_index == ability_index
         })
         .map_or(0, |entry| entry.uses)
+}
+
+/// 606.3: a permanent's controller may activate one of its loyalty
+/// abilities only if none of that permanent's loyalty abilities has been
+/// activated this turn.
+fn loyalty_ability_activated_this_turn(state: &GameState, source: ObjectId) -> bool {
+    let object = state.objects.get(source);
+    let abilities = card_def::CARD_DEFS[object.card_def as usize].activated_abilities;
+    object.v4.ability_uses_this_turn.iter().any(|entry| {
+        entry.ability_kind == AbilityKindV4::Activated
+            && entry.uses > 0
+            && abilities
+                .get(usize::from(entry.ability_index))
+                .is_some_and(card_def::ActivatedAbilityDef::is_loyalty_ability)
+    })
+}
+
+/// A transforming card's ability printed on one face functions only while a
+/// battlefield permanent shows that face. Single-faced abilities always do.
+pub(crate) fn activated_ability_face_active(
+    state: &GameState,
+    source: ObjectId,
+    ability: &card_def::ActivatedAbilityDef,
+) -> bool {
+    ability
+        .face
+        .is_none_or(|face| state.objects.get(source).v4.face_index == face)
 }
 
 fn activated_ability_use_count(state: &GameState, source: ObjectId, ability_index: u16) -> u16 {
@@ -7085,6 +7385,11 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
                     break;
                 }
                 if ability.activation_zone != zone
+                    || !activated_ability_face_active(state, id, ability)
+                    || !crate::standard_cards_v1::activation_allowed(state, id, def, i)
+                    || (ability.is_loyalty_ability()
+                        && (!sorcery_speed_timing_ok(player, state)
+                            || loyalty_ability_activated_this_turn(state, id)))
                     || (ability.sorcery_speed_only && !sorcery_speed_timing_ok(player, state))
                     || ability.max_activations_per_turn.is_some_and(|limit| {
                         activated_ability_use_count(state, id, i as u16) >= u16::from(limit)
@@ -7111,10 +7416,31 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
             if zone == Zone::Battlefield {
                 if let Some(granted) = equipped_granted_activated_ability(state, id) {
                     let granted_index = def.activated_abilities.len() as u8;
-                    if can_pay_activation_components(granted.cost, player, id, state)
+                    if !crate::standard_cards_v1::activations_locked(state, id)
+                        && can_pay_activation_components(granted.cost, player, id, state)
                         && activation_target_prefix_can_complete(id, &granted, &[], state)
                     {
                         out.push((id, granted_index));
+                    }
+                }
+                // Agatha's Soul Cauldron's granted abilities follow
+                // (`standard_cards_v1::cauldron_granted_abilities`).
+                for (index, _, granted) in
+                    crate::standard_cards_v1::cauldron_granted_abilities(state, id)
+                {
+                    if crate::standard_cards_v1::activations_locked(state, id)
+                        || (granted.sorcery_speed_only && !sorcery_speed_timing_ok(player, state))
+                        || granted.max_activations_per_turn.is_some_and(|limit| {
+                            activated_ability_use_count(state, id, u16::from(index))
+                                >= u16::from(limit)
+                        })
+                    {
+                        continue;
+                    }
+                    if can_pay_activation_components(granted.cost, player, id, state)
+                        && activation_target_prefix_can_complete(id, &granted, &[], state)
+                    {
+                        out.push((id, index));
                     }
                 }
             }
@@ -7346,6 +7672,15 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
                     continue;
                 }
             }
+        }
+
+        if crate::attack_target_v1::has_pending(state) {
+            if let Some(decision) = crate::attack_target_v1::decision(state) {
+                return decision;
+            }
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+            continue;
         }
 
         if crate::combat_damage_v1::has_pending_assignment(state) {
@@ -8040,6 +8375,10 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
         }
         DiscardResume::None => collect_and_queue_triggers(state),
         DiscardResume::FinishAbilityResolution { stack_item_id } => {
+            #[cfg(feature = "standard-magezero-fixtures")]
+            if crate::standard_cards_v1::stage_queued_discard(state, stack_item_id) {
+                return;
+            }
             // The ability's resolution is over only now (608.2).
             state
                 .stack
@@ -8565,7 +8904,22 @@ pub(crate) fn validate_pending_cast(
             // it is still readable here on the live post-move source.
             let has_adventure_exile_permission =
                 pending.origin_zone == Zone::Exile && source.v4.on_adventure;
+            let has_graveyard_permission = pending.origin_zone == Zone::Graveyard
+                && source.owner == pending.controller
+                && pending
+                    .source_contract
+                    .zone_change_count
+                    .checked_sub(1)
+                    .is_some_and(|generation| {
+                        crate::standard_cards_v1::graveyard_cast_granted(
+                            state,
+                            pending.spell,
+                            pending.controller,
+                            generation,
+                        )
+                    });
             if pending.origin_zone != Zone::Hand
+                && !has_graveyard_permission
                 && !(pending.origin_zone == Zone::Exile
                     && (has_prior_exile_permission() || has_adventure_exile_permission))
             {
@@ -9410,7 +9764,9 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 source: pending.spell,
                 cost_kind: match filter {
                     PermanentFilter::Creature => CostKind::SacrificeCreatures,
-                    PermanentFilter::Artifact => CostKind::SacrificeArtifacts,
+                    PermanentFilter::Artifact | PermanentFilter::AnotherArtifact => {
+                        CostKind::SacrificeArtifacts
+                    }
                     PermanentFilter::ArtifactOrCreature => CostKind::SacrificePermanents,
                     PermanentFilter::Land => CostKind::SacrificeLands,
                 },
@@ -9660,20 +10016,24 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             ));
             return None;
         };
-        let Some(maximum) = maximum_payable_x(def, &pending, state) else {
+        let minimum = crate::standard_cards_v1::minimum_x(def, &pending.targets_chosen, state);
+        let Some(maximum) =
+            maximum_payable_x(def, &pending, state).filter(|&maximum| maximum >= minimum)
+        else {
             let cast_method = finalized_cast_method(&pending, staged_method, def);
             let pending = state.engine.pending_cast.take().unwrap();
             abort_cast(state, pending, cast_method);
             return None;
         };
-        if maximum == 0 {
-            state.engine.pending_cast.as_mut().unwrap().x_value = Some(0);
+        if maximum == minimum {
+            state.engine.pending_cast.as_mut().unwrap().x_value = Some(minimum);
             return drain_pending_cast_or_decide(state);
         }
+        // Option `i` announces X = `minimum + i`.
         return Some(Decision::ChooseEffectOption {
             player: pending.controller,
             source: pending.spell,
-            option_count: u16::from(maximum) + 1,
+            option_count: u16::from(maximum - minimum) + 1,
         });
     }
 
@@ -9812,6 +10172,7 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
                 pending.controller,
                 filter,
                 tap,
+                pending.source,
                 state,
                 &pending.object_cost_chosen,
             );
@@ -9841,6 +10202,45 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
                     .collect(),
             });
         }
+    }
+
+    if has_craft_material_cost(ability.cost) && pending.object_cost_chosen.is_empty() {
+        let candidates = craft_material_candidates(
+            pending.controller,
+            pending.source,
+            state,
+            &pending.object_cost_chosen,
+        );
+        if candidates.is_empty() {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                pending.source,
+            ));
+            return Some(Decision::Halted {
+                mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                source: pending.source,
+            });
+        }
+        if candidates.len() == 1 {
+            state
+                .engine
+                .pending_activation
+                .as_mut()
+                .expect("validated activation remains staged")
+                .object_cost_chosen
+                .push(candidates[0]);
+            return drain_pending_activation_or_decide(state);
+        }
+        return Some(Decision::ChooseCostTargets {
+            player: pending.controller,
+            source: pending.source,
+            cost_kind: CostKind::ExileFromGraveyard,
+            remaining: 1,
+            candidates: candidates
+                .into_iter()
+                .map(|binding| binding.object)
+                .collect(),
+        });
     }
 
     if has_unblocked_attacker_return_cost(ability.cost) && pending.object_cost_chosen.is_empty() {
@@ -10006,10 +10406,12 @@ pub(crate) fn validate_pending_activation(
     let tap_cost_subtype = activation_tap_cost_subtype(ability.cost);
     let sacrifice_cost = activation_controlled_object_cost(ability.cost);
     let returns_unblocked_attacker = has_unblocked_attacker_return_cost(ability.cost);
+    let craft_material = has_craft_material_cost(ability.cost);
     let interactive_families = usize::from(return_filter.is_some())
         + usize::from(tap_cost_subtype.is_some())
         + usize::from(sacrifice_cost.is_some())
-        + usize::from(returns_unblocked_attacker);
+        + usize::from(returns_unblocked_attacker)
+        + usize::from(craft_material);
     if interactive_families > 1 {
         return Err("activation has multiple interactive object-cost families".to_string());
     }
@@ -10095,6 +10497,7 @@ pub(crate) fn validate_pending_activation(
                         || !permanent_matches_filter(state, binding.object, filter)
                         || (tap && live.tapped)
                 })
+                || (filter == PermanentFilter::AnotherArtifact && binding.object == pending.source)
         }) {
             return Err("pending activation carries an illegal object-cost selection".to_string());
         }
@@ -10103,11 +10506,22 @@ pub(crate) fn validate_pending_activation(
             pending.controller,
             filter,
             tap,
+            pending.source,
             state,
             &pending.object_cost_chosen,
         );
         if remaining.len() < usize::from(needed).saturating_sub(pending.object_cost_chosen.len()) {
             return Err("pending activation object cost can no longer complete".to_string());
+        }
+    } else if craft_material {
+        let candidates = craft_material_candidates(pending.controller, pending.source, state, &[]);
+        if pending.object_cost_chosen.len() > 1
+            || pending
+                .object_cost_chosen
+                .iter()
+                .any(|binding| !candidates.contains(binding))
+        {
+            return Err("pending activation carries an illegal craft material".to_string());
         }
     }
 
@@ -10207,7 +10621,8 @@ pub(crate) fn validate_pending_activation(
             || !target_cardinality_is_complete(pending.target_spec, pending.targets_chosen.len())
             || ((return_filter.is_some()
                 || tap_cost_subtype.is_some()
-                || returns_unblocked_attacker)
+                || returns_unblocked_attacker
+                || craft_material)
                 && pending.object_cost_chosen.len() != 1)
         {
             return Err("pending activation discard binding or stage changed".to_string());
@@ -10869,6 +11284,15 @@ fn triggered_stack_item_expected_target_spec(
             return Err("bound-source trigger changed its exact source binding".to_string());
         }
     }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if matches!(
+        inline_effect,
+        EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SacrificeSourceAtEndStep)
+    ) && !ability_source_contract.is_some_and(|contract| {
+        crate::standard_cards_v1::is_hasty_copy_incarnation(state, contract)
+    }) {
+        return Err("delayed sacrifice trigger lost its token copy".to_string());
+    }
     if let EffectOp::ResolveInitiativeTrigger { binding } = inline_effect {
         let Some(source_contract) = ability_source_contract else {
             return Err("Initiative trigger lost its historical designation source".to_string());
@@ -10994,7 +11418,7 @@ fn triggered_stack_item_expected_target_spec(
                                 if crate::standard_statics_v1::may_have_granted_ward(
                                     source_contract.card_def,
                                     generic,
-                                )
+                                ) || crate::standard_cards_v1::ward_grant_exists(generic)
                         );
                     printed_or_granted
                         && *targeting_stack_item != StackItemId::default()
@@ -12012,6 +12436,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 }
                 obj.summoning_sick = false;
             }
+            crate::standard_cards_v1::release_untapped_locks(state);
             state.players[0].draws_this_turn = 0;
             state.players[1].draws_this_turn = 0;
             #[cfg(feature = "standard-magezero-fixtures")]
@@ -12594,6 +13019,7 @@ pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
     {
         power += crate::standard_keywords_v1::controlled_forest_boost(state, id);
         power += crate::standard_statics_v1::self_counter_boost(state, id).0;
+        power += crate::standard_cards_v1::controlled_boost(state, id).0;
     }
     power += controlled_creature_boost_v1(state, id).0;
     if def.is_executable()
@@ -12656,6 +13082,7 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
     {
         toughness += crate::standard_keywords_v1::controlled_forest_boost(state, id);
         toughness += crate::standard_statics_v1::self_counter_boost(state, id).1;
+        toughness += crate::standard_cards_v1::controlled_boost(state, id).1;
     }
     toughness += controlled_creature_boost_v1(state, id).1;
     if def.is_executable()
@@ -12741,6 +13168,10 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
         return true;
     }
     if printed_active && def.keywords_for_face(obj.v4.face_index).has(kw) {
+        return true;
+    }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if kw == Keywords::HASTE && crate::standard_cards_v1::has_copied_haste(state, id) {
         return true;
     }
     if crate::continuous_characteristics_v1::animation(state, id)
@@ -13012,6 +13443,7 @@ fn synthesized_granted_activated_ability(
         sorcery_speed_only: false,
         activation_target_filter: card_def::ActivationTargetFilter::TargetSpecOnly,
         max_activations_per_turn: None,
+        face: None,
     }
 }
 
@@ -13078,7 +13510,10 @@ fn resolved_activated_ability(
         return Some(*ability);
     }
     if ability_index as usize != def.activated_abilities.len() {
-        return None;
+        return crate::standard_cards_v1::cauldron_granted_abilities(state, source)
+            .into_iter()
+            .find(|&(index, _, _)| index == ability_index)
+            .map(|(_, _, ability)| ability);
     }
     equipped_granted_activated_ability(state, source)
 }
@@ -13122,8 +13557,18 @@ fn resolved_stack_activated_ability(
         }
         return Ok(*ability);
     }
-    if ability_index as usize != def.activated_abilities.len() {
-        return Err("activated stack item carries an out-of-range ability index".to_string());
+    if ability_index as usize > def.activated_abilities.len() {
+        let card = granted_by.ok_or("granted activated ability lost its exiled-card provenance")?;
+        validate_historical_ability_source_contract(state, card)?;
+        if card.zone != Zone::Exile || host_contract.zone != Zone::Battlefield {
+            return Err("Cauldron-granted ability provenance is inconsistent".to_string());
+        }
+        return crate::standard_cards_v1::cauldron_ability_of(
+            card.card_def,
+            def.activated_abilities.len(),
+            ability_index,
+        )
+        .ok_or_else(|| "activated stack item carries an out-of-range ability index".to_string());
     }
     let equipment = granted_by.ok_or("granted activated ability lost its equipment provenance")?;
     validate_historical_ability_source_contract(state, equipment)?;
@@ -13173,6 +13618,14 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
             })
             .filter_map(|(_, equipment)| equipment.add_subtype.map(|subtype| subtype.stable_id())),
     );
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if crate::standard_cards_v1::is_phyrexian(state, id) {
+        subtype_ids.push(card_def::Subtype::Phyrexian.stable_id());
+    }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if crate::standard_cards_v1::is_everflame(state, id) {
+        subtype_ids.push(card_def::Subtype::Equipment.stable_id());
+    }
     subtype_ids.sort_unstable();
     subtype_ids.dedup();
     subtype_ids
@@ -13182,6 +13635,14 @@ pub fn has_effective_subtype(state: &GameState, id: ObjectId, subtype: card_def:
     let Some(object) = state.objects.try_get(id) else {
         return false;
     };
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if (subtype.same_subtype_as(card_def::Subtype::Phyrexian)
+        && crate::standard_cards_v1::is_phyrexian(state, id))
+        || (subtype.same_subtype_as(card_def::Subtype::Equipment)
+            && crate::standard_cards_v1::is_everflame(state, id))
+    {
+        return true;
+    }
     let override_effect = crate::continuous_characteristics_v1::creature_override(state, id);
     let base_has_subtype = override_effect.map_or_else(
         || subtype.is_in_subtype_ids(&object.v4.effective_subtype_ids),
@@ -13293,13 +13754,10 @@ fn combat_damage_wave(state: &mut GameState, first_strike_wave: bool) {
         }
         if let Some((_, blockers)) = blocked_by.iter().find(|(a, _)| *a == attacker) {
             assign_attacker_damage_to_blockers(state, attacker, power, blockers, &mut events);
-        } else {
-            let defender = state.objects.get(attacker).controller.opponent();
-            events.push(ProposedEvent::damage(
-                attacker,
-                Target::Player(defender),
-                power,
-            ));
+        } else if let Some((recipient, _)) =
+            crate::attack_target_v1::damage_recipient(state, attacker)
+        {
+            events.push(ProposedEvent::damage(attacker, recipient, power));
         }
     }
     for (attacker, blockers) in &blocked_by {
@@ -13514,11 +13972,23 @@ fn assign_attacker_damage_to_blockers(
     if has_effective_keyword(state, attacker, Keywords::TRAMPLE) {
         let mut remaining = power;
         let deathtouch = has_effective_keyword(state, attacker, Keywords::DEATHTOUCH);
-        for &blocker in blockers.iter().filter(|&&id| is_still_in_combat(state, id)) {
+        // 702.19e: with the attacked planeswalker gone there is no excess
+        // recipient, so the last blocker takes whatever remains.
+        let excess = crate::attack_target_v1::damage_recipient(state, attacker);
+        let live_blockers = blockers
+            .iter()
+            .copied()
+            .filter(|&id| is_still_in_combat(state, id))
+            .collect::<Vec<_>>();
+        for (index, &blocker) in live_blockers.iter().enumerate() {
             let lethal = (effective_toughness(state, blocker)
                 - state.objects.get(blocker).damage as i32)
                 .max(0);
-            let assign = remaining.min(if deathtouch { lethal.min(1) } else { lethal });
+            let assign = if excess.is_none() && index + 1 == live_blockers.len() {
+                remaining
+            } else {
+                remaining.min(if deathtouch { lethal.min(1) } else { lethal })
+            };
             if assign > 0 {
                 events.push(ProposedEvent::damage(
                     attacker,
@@ -13532,11 +14002,9 @@ fn assign_attacker_damage_to_blockers(
             }
         }
         if remaining > 0 {
-            events.push(ProposedEvent::damage(
-                attacker,
-                Target::Player(state.objects.get(attacker).controller.opponent()),
-                remaining,
-            ));
+            if let Some((recipient, _)) = excess {
+                events.push(ProposedEvent::damage(attacker, recipient, remaining));
+            }
         }
         return;
     }
@@ -13770,7 +14238,10 @@ fn pending_activation_action_stage(
         && pending.object_cost_chosen.is_empty();
     let unblocked_attacker_return_cost_incomplete =
         has_unblocked_attacker_return_cost(ability.cost) && pending.object_cost_chosen.is_empty();
+    let craft_material_incomplete =
+        has_craft_material_cost(ability.cost) && pending.object_cost_chosen.is_empty();
     if return_cost_incomplete
+        || craft_material_incomplete
         || sacrifice_cost_incomplete
         || tap_cost_incomplete
         || unblocked_attacker_return_cost_incomplete
@@ -13814,6 +14285,14 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
         return match action {
             Action::ChooseLegendPermanent(keep) => crate::legend_rule_v1::answer(state, keep),
             _ => Err("only a legend-rule answer may be taken during its SBA pass".into()),
+        };
+    }
+    if crate::attack_target_v1::has_pending(state) {
+        return match action {
+            Action::ChooseAttackTarget(target) => crate::attack_target_v1::answer(state, target),
+            _ => {
+                Err("only an attack target answer may be taken while attackers are declared".into())
+            }
         };
     }
     if crate::combat_damage_v1::has_pending_assignment(state) {
@@ -13910,6 +14389,7 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
             Ok(())
         }
         Action::ChooseLegendPermanent(_) => Err("no legend-rule choice is pending".into()),
+        Action::ChooseAttackTarget(_) => Err("no attack target choice is pending".into()),
         Action::ChooseLondonMulligan { .. } | Action::ChooseLondonBottom(_) => {
             Err("no London mulligan choice is pending".into())
         }
@@ -14495,6 +14975,27 @@ fn apply_choose_optional_activation_target(
     Ok(())
 }
 
+/// Puts the first pending triggered ability on the stack with fewer than
+/// its maximum number of "up to" targets (Assimilation Aegis).
+fn finish_optional_trigger_targets(state: &mut GameState) -> Result<(), String> {
+    let pending = state
+        .engine
+        .pending_triggers
+        .first()
+        .cloned()
+        .ok_or("no triggered ability is selecting optional targets")?;
+    validate_pending_trigger(state, &pending)?;
+    if target_min_count(pending.target_spec) >= target_count(pending.target_spec)
+        || !target_cardinality_is_complete(pending.target_spec, pending.targets.len())
+        || pending_trigger_modes(state, &pending).is_some()
+    {
+        return Err("the pending trigger target selection cannot finish".to_string());
+    }
+    validate_pending_trigger_for_stack(state, &pending)?;
+    let pending = state.engine.pending_triggers.remove(0);
+    push_trigger_onto_stack(state, pending)
+}
+
 fn finish_optional_activation_targets(state: &mut GameState) -> Result<(), String> {
     let pending = state
         .engine
@@ -14782,6 +15283,7 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
                     pending.controller,
                     filter,
                     tap,
+                    pending.source,
                     state,
                     &pending.object_cost_chosen,
                 );
@@ -14804,6 +15306,27 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
                     .push(binding);
                 return Ok(());
             }
+        } else if has_craft_material_cost(ability.cost) {
+            if !pending.object_cost_chosen.is_empty() {
+                return Err("activation craft material has already been selected".to_string());
+            }
+            let binding = craft_material_candidates(
+                pending.controller,
+                pending.source,
+                state,
+                &pending.object_cost_chosen,
+            )
+            .into_iter()
+            .find(|binding| binding.object == id)
+            .ok_or_else(|| format!("{id} is not a legal craft material"))?;
+            state
+                .engine
+                .pending_activation
+                .as_mut()
+                .expect("validated activation remains staged")
+                .object_cost_chosen
+                .push(binding);
+            return Ok(());
         }
         if activation_tap_cost_subtype(ability.cost).is_some() {
             if !payable_activation_cost_object_candidates(
@@ -15062,6 +15585,124 @@ fn expected_spell_copy(
     copy.is_flashback = false;
     copy.madness_offer = false;
     copy
+}
+
+/// Copies the live, cast spell `spell` for `controller` (707.10): the copy
+/// keeps its targets, mode, X and kicker, is put on top of the stack, and
+/// is not cast. Returns the copy's source and stack incarnation, or `None`
+/// once the spell has left the stack.
+pub(crate) fn copy_spell_for(
+    state: &mut GameState,
+    spell: ObjectId,
+    controller: PlayerId,
+) -> Option<(ObjectId, StackItemId)> {
+    let parent = state
+        .stack
+        .iter()
+        .find(|item| item.kind == StackItemKind::Spell && item.source == spell)?
+        .clone();
+    let original = state.objects.get(parent.source).clone();
+    let copy_source = state.objects.push(crate::state::GameObject {
+        card_def: original.card_def,
+        name: original.name.clone(),
+        owner: controller,
+        controller,
+        zone: Zone::Stack,
+        tapped: false,
+        summoning_sick: false,
+        damage: 0,
+        counters: Default::default(),
+        attachments: Vec::new(),
+        v4: ObjectStateV4::from_card_def(original.card_def),
+        spell_copy_origin: Some(SpellCopyOriginV4 {
+            parent: parent.source,
+            parent_card_def: original.card_def,
+            parent_owner: original.owner,
+            parent_controller: parent.controller,
+            parent_stack_zone_change_count: original.zone_change_count,
+            parent_was_copy: original.spell_copy_origin.is_some(),
+        }),
+        plotted_turn: None,
+        zone_change_count: 0,
+    });
+    let copy_stack_item = next_stack_item_id(state);
+    let source_contract = StackSourceContractV4::capture(state, copy_source, CastMethodV4::Normal);
+    let mut copy = parent;
+    copy.source = copy_source;
+    copy.controller = controller;
+    copy.is_copy = true;
+    copy.is_flashback = false;
+    copy.madness_offer = false;
+    copy.discarded = Vec::new();
+    copy.v4.stack_item_id = copy_stack_item;
+    copy.v4.cast_method = Some(CastMethodV4::Normal);
+    copy.v4.source_contract = Some(source_contract);
+    copy.v4.paid_cost_refs = Vec::new();
+    copy.v4.optional_additional_cost_paid = None;
+    state.stack.push(copy);
+    Some((copy_source, copy_stack_item))
+}
+
+/// The targets a spell copy's controller may choose instead of its
+/// inherited one: every legal target for its single-target spec. Empty for
+/// an untargeted or multi-target copy, which keeps its targets.
+pub(crate) fn spell_copy_retarget_candidates(
+    state: &GameState,
+    copy_stack_item: StackItemId,
+) -> Vec<Target> {
+    let Some(copy) = state
+        .stack
+        .iter()
+        .find(|item| item.v4.stack_item_id == copy_stack_item && item.is_copy)
+    else {
+        return Vec::new();
+    };
+    let Some(spec) = copy.v4.target_spec else {
+        return Vec::new();
+    };
+    if copy.targets.len() != 1 || target_count(spec) != 1 {
+        return Vec::new();
+    }
+    legal_targets_for_controller_from_source(
+        spec,
+        &[],
+        copy.controller,
+        targeting_source_for_object(state, copy.source),
+        state,
+    )
+}
+
+/// The spell copy's current targets.
+pub(crate) fn spell_copy_targets(state: &GameState, copy_stack_item: StackItemId) -> Vec<Target> {
+    state
+        .stack
+        .iter()
+        .find(|item| item.v4.stack_item_id == copy_stack_item && item.is_copy)
+        .map(|item| item.targets.clone())
+        .unwrap_or_default()
+}
+
+/// Gives a spell copy its chosen target (or keeps the inherited one) and
+/// logs its final targeting.
+pub(crate) fn finish_spell_copy_targets(
+    state: &mut GameState,
+    copy_stack_item: StackItemId,
+    target: Option<Target>,
+) -> Result<(), String> {
+    if let Some(target) = target {
+        if !spell_copy_retarget_candidates(state, copy_stack_item).contains(&target) {
+            return Err(format!("{target:?} is not a legal spell-copy target"));
+        }
+        let contract = StackTargetContractV4::capture(state, target);
+        let copy = state
+            .stack
+            .iter_mut()
+            .find(|item| item.v4.stack_item_id == copy_stack_item && item.is_copy)
+            .ok_or("the spell copy is no longer on the stack")?;
+        copy.targets = vec![target];
+        copy.v4.target_contracts = vec![contract];
+    }
+    log_final_targeting_events(state, copy_stack_item)
 }
 
 fn create_spell_copy(state: &mut GameState, pending: &PendingSpellCopy) -> (ObjectId, StackItemId) {
@@ -15688,12 +16329,22 @@ pub(crate) fn validate_declare_attackers(
 
 fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> Result<(), String> {
     validate_declare_attackers(state, &attackers)?;
+    if crate::attack_target_v1::begin(state, &attackers) {
+        return Ok(());
+    }
+    finish_declare_attackers(state, attackers);
+    Ok(())
+}
 
+/// Completes a validated declaration once every attacker's target is known.
+pub(crate) fn finish_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) {
     for &id in &attackers {
         if !has_effective_keyword(state, id, Keywords::VIGILANCE) {
             event::propose_and_commit(state, ProposedEvent::tap(id));
         }
     }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    crate::standard_cards_v1::record_attackers(state, attackers.len());
     state.engine.combat.attackers = attackers;
     state.engine.combat.attackers_declared = true;
     for &source in &state.engine.combat.attackers {
@@ -15739,7 +16390,6 @@ fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> R
     }
     collect_and_queue_triggers(state);
     reset_priority(state);
-    Ok(())
 }
 
 pub(crate) fn validate_declare_blockers(
@@ -15968,9 +16618,12 @@ fn apply_pending_cast_effect_option(
                 .ok_or("pending X choice lost its selected spell form")?;
             let maximum = maximum_payable_x(def, &pending, state)
                 .ok_or("pending X choice has no payable value")?;
+            let minimum = crate::standard_cards_v1::minimum_x(def, &pending.targets_chosen, state);
             let x_value = u8::try_from(option_index)
-                .map_err(|_| "chosen X exceeds the supported u8 range".to_string())?;
-            if maximum == 0 || x_value > maximum {
+                .ok()
+                .and_then(|index| index.checked_add(minimum))
+                .ok_or_else(|| "chosen X exceeds the supported u8 range".to_string())?;
+            if maximum <= minimum || x_value > maximum {
                 return Err("chosen X is outside the currently payable range".to_string());
             }
             state
@@ -16084,8 +16737,15 @@ fn begin_cast_ex(
         && state.objects.get(spell_id).owner == player
         && state.objects.get(spell_id).v4.on_adventure;
     let target_spec = def.target_spec;
+    let graveyard_permission = (forced_cast_method.is_none()
+        && origin_zone == Zone::Graveyard
+        && unambiguous_graveyard_cast_method(def).is_none())
+    .then(|| graveyard_permission_zone_change_count(player, spell_id, state))
+    .flatten();
     let cast_method = forced_cast_method.unwrap_or_else(|| {
-        if origin_zone == Zone::Graveyard {
+        if graveyard_permission.is_some() {
+            CastMethodV4::Normal
+        } else if origin_zone == Zone::Graveyard {
             unambiguous_graveyard_cast_method(def).expect(
                 "a graveyard CastSpell action was offered through exactly one supported method",
             )
@@ -16105,6 +16765,13 @@ fn begin_cast_ex(
         },
         CastMethodV4::Madness => SpellCastRouteV4::Madness,
         CastMethodV4::Normal if origin_zone == Zone::Hand => SpellCastRouteV4::Hand,
+        CastMethodV4::Normal if origin_zone == Zone::Graveyard => {
+            SpellCastRouteV4::GraveyardPermissionV1 {
+                holder: player,
+                permission_zone_change_count: graveyard_permission
+                    .expect("an ordinary graveyard cast was offered through an exact grant"),
+            }
+        }
         CastMethodV4::Normal if origin_zone == Zone::Exile && is_adventure_exile => {
             SpellCastRouteV4::AdventureExile
         }
@@ -16423,6 +17090,7 @@ fn finalize_owned_cast(
     ) {
         copy_spell_keeping_targets(state, stack_item_id)?;
     }
+    crate::standard_cards_v1::note_spell_cast(state, pending.spell);
 
     // 601.2i/603.3: casting is complete the instant costs are paid --
     // triggered abilities that saw it happen (Guttersnipe) go on the stack
@@ -16617,6 +17285,16 @@ fn finalize_activation(state: &mut GameState) {
         ));
         return;
     }
+    let host = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
+    if crate::standard_cards_v1::is_special_action(host, pending.ability_index) {
+        // A special action (116.2): no stack object; the activator receives
+        // priority again (116.3c).
+        crate::standard_cards_v1::special_action(state, pending.source, pending.ability_index);
+        collect_and_queue_triggers(state);
+        state.engine.priority_passes = [false, false];
+        state.priority_player = pending.controller;
+        return;
+    }
     push_paid_activation(state, pending, discarded);
 }
 
@@ -16647,7 +17325,7 @@ fn push_paid_activation(
                 [pending.ability_index as usize],
             None,
         )
-    } else {
+    } else if pending.ability_index as usize == printed_len {
         let (equipment_id, ability) =
             equipped_granted_activated_ability_with_equipment(state, pending.source).expect(
                 "callers validate this ability index resolves before pushing the activation",
@@ -16656,6 +17334,17 @@ fn push_paid_activation(
             ability,
             Some(AbilitySourceContractV4::capture(state, equipment_id)),
         )
+    } else {
+        // An Agatha's Soul Cauldron grant freezes the exiled card it comes
+        // from.
+        let (_, card, ability) =
+            crate::standard_cards_v1::cauldron_granted_abilities(state, pending.source)
+                .into_iter()
+                .find(|&(index, _, _)| index == pending.ability_index)
+                .expect(
+                    "callers validate this ability index resolves before pushing the activation",
+                );
+        (ability, Some(AbilitySourceContractV4::capture(state, card)))
     };
     let ability = &ability;
     let source = state.objects.get(pending.source);

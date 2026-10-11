@@ -222,6 +222,8 @@ pub enum TriggerCondition {
     /// One declaration by the controller containing at least this many
     /// creatures. The observing source need not attack.
     ControllerAttacksWithAtLeastCreatures(u8),
+    /// Conditions owned by the Standard catalog's card module.
+    StandardV1(crate::standard_cards_v1::StandardTriggerV1),
 }
 
 pub struct TriggeredAbilityDef {
@@ -348,7 +350,7 @@ fn contains_source_binding_template(effect: &EffectOp) -> bool {
     }
 }
 
-fn battlefield_entry_object(event: &CommittedEvent) -> Option<ObjectId> {
+pub(crate) fn battlefield_entry_object(event: &CommittedEvent) -> Option<ObjectId> {
     match event {
         CommittedEvent::ZoneChange {
             object,
@@ -383,6 +385,9 @@ fn materialize_trigger_event_effect(
                 then: Box::new(materialize_trigger_source_program(*then, source, state)),
             };
         }
+    }
+    if let Some(effect) = crate::standard_cards_v1::materialize_event(&(trigger.effect)(), event) {
+        return effect;
     }
     if matches!(
         (trigger.effect)(),
@@ -3264,7 +3269,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Extraction Specialist" => &standard_family_g_v1::EXTRACTION_SPECIALIST_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Hullbreaker Horror" => &standard_family_g_v1::HULLBREAKER_HORROR_TRIGGERS,
-        _ => &[],
+        name => crate::standard_cards_v1::triggers_for(name),
     }
 }
 
@@ -3463,7 +3468,7 @@ fn source_bound_trigger_program_matches(template: &EffectOp, effect: &EffectOp) 
                 ..
             },
         ) => count == actual_count && max_taken == actual_max_taken,
-        _ => false,
+        _ => crate::standard_cards_v1::template_matches(template, effect),
     }
 }
 
@@ -3551,6 +3556,15 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
     if matches!(effect, EffectOp::ResolveMonarchTrigger { .. }) {
         return Some(TargetSpec::None);
     }
+    // Reflection of Kiki-Jiki's delayed "sacrifice it" trigger belongs to
+    // whatever token it copied; `engine` checks that exact incarnation.
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if matches!(
+        effect,
+        EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SacrificeSourceAtEndStep)
+    ) {
+        return Some(TargetSpec::None);
+    }
     if !trigger_effect_matches(card_def, effect) {
         return None;
     }
@@ -3592,6 +3606,9 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
             TargetSpec::TargetOpponent
         } else if card.name == "Journey to Nowhere" && *effect == journey_to_nowhere_etb_effect() {
             TargetSpec::CreatureOtherThanSource
+        } else if let Some(spec) = crate::standard_cards_v1::trigger_target_spec(card.name, effect)
+        {
+            spec
         } else if card.name == "Avenging Hunter" {
             match effect {
                 EffectOp::ResolveInitiativeTrigger { binding } => match binding.kind {
@@ -3746,6 +3763,8 @@ fn sba_fixed_point_with_protected_triggers(
     protected_triggers: &[PendingTrigger],
 ) {
     loop {
+        #[cfg(feature = "standard-magezero-fixtures")]
+        crate::standard_cards_v1::refresh_aegis_copies(state);
         if crate::legend_rule_v1::stage(state, protected_triggers) {
             return;
         }
@@ -3809,6 +3828,22 @@ fn sba_fixed_point_with_protected_triggers(
                     return None;
                 }
                 let definition = &crate::card_def::CARD_DEFS[aura.card_def as usize];
+                if crate::standard_cards_v1::is_aura(definition) {
+                    // This module's Auras: the enchant restriction includes
+                    // control ("enchant creature you control").
+                    let valid = aura.v4.attached_to.is_some_and(|link| {
+                        state.objects.try_get(link.object).is_some_and(|host| {
+                            host.zone_change_count == link.zone_change_count
+                                && host.attachments.contains(&id)
+                        }) && crate::standard_cards_v1::aura_host_legal(
+                            definition,
+                            aura.controller,
+                            link.object,
+                            state,
+                        ) == Some(true)
+                    });
+                    return (!valid).then_some(id);
+                }
                 if !definition
                     .attachment
                     .is_some_and(crate::card_def::AttachmentDef::is_creature_aura)
@@ -3895,7 +3930,10 @@ fn sba_fixed_point_with_protected_triggers(
         let leaving: Vec<ObjectId> = state
             .objects
             .iter()
-            .filter(|(_, obj)| obj.zone != Zone::Battlefield && token_defs[obj.card_def as usize])
+            .filter(|(_, obj)| {
+                obj.zone != Zone::Battlefield
+                    && (token_defs[obj.card_def as usize] || obj.v4.is_token)
+            })
             .map(|(id, _)| id)
             .collect();
         for id in leaving {
@@ -4030,7 +4068,10 @@ fn triggers_from_events(
         // Most objects (lands, vanilla creatures, every library card of a
         // definition with no triggered ability) can never match; skip them
         // without touching their large `CardDef` entry.
-        if !may_trigger[obj.card_def as usize] {
+        if !may_trigger[obj.card_def as usize]
+            && (obj.attachments.is_empty()
+                || crate::standard_cards_v1::granted_wards(state, id).is_empty())
+        {
             continue;
         }
         let card = &crate::card_def::CARD_DEFS[obj.card_def as usize];
@@ -4098,6 +4139,7 @@ fn triggers_from_events(
                 TriggerCondition::LeftBattlefieldToGraveyard
                     | TriggerCondition::LeftBattlefield
                     | TriggerCondition::DiesWithoutCounters
+                    | TriggerCondition::StandardV1(_)
             );
             // Enduring keeps a graveyard-incarnation binding for its return,
             // but its death ability and controller come from the battlefield.
@@ -4119,11 +4161,24 @@ fn triggers_from_events(
             // exclusion the Saga chapter/completion paths already apply
             // unconditionally (`obj.v4.face_index != 0` at this file's own
             // SBA and chapter-matching sites).
-            if obj.v4.face_index != def.face_index {
+            // Leave triggers check the face that left (per event, below).
+            let printed_face = def.face_index;
+            if !uses_leave_lki && obj.v4.face_index != printed_face {
                 continue;
             }
             for (i, ev) in events.iter().enumerate() {
-                if uses_death_lki && i.checked_sub(1).and_then(|index| events.get(index)).is_some_and(|event| matches!(event, CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange { object, .. } if *object == id)) {
+                if let TriggerCondition::StandardV1(condition) = def.condition {
+                    if !crate::standard_cards_v1::trigger_matches(condition, events, i, id, state) {
+                        continue;
+                    }
+                } else if uses_leave_lki
+                    && crate::standard_cards_v1::departure_face(events, i, id)
+                        .unwrap_or(obj.v4.face_index)
+                        != printed_face
+                {
+                    continue;
+                }
+                if uses_leave_lki && i.checked_sub(1).and_then(|index| events.get(index)).is_some_and(|event| matches!(event, CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange { object, .. } if *object == id)) {
                     continue;
                 }
                 let event_controller = match ev {
@@ -4209,7 +4264,14 @@ fn triggers_from_events(
                         };
                     let target_spec =
                         target_spec_for_trigger(obj.card_def, &effect).unwrap_or(TargetSpec::None);
-                    if let Some(maximum) = per_turn_trigger_cap(def.condition) {
+                    let limit =
+                        per_turn_trigger_cap(def.condition).or_else(|| match def.condition {
+                            TriggerCondition::StandardV1(condition) => {
+                                crate::standard_cards_v1::trigger_limit_per_turn(condition)
+                            }
+                            _ => None,
+                        });
+                    if let Some(maximum) = limit {
                         let ability_index =
                             u16::try_from(ability_index).expect("bounded definition abilities");
                         let source = crate::state::ObjectLinkV4 {
@@ -4290,7 +4352,11 @@ fn triggers_from_events(
                 crate::card_def::WardCostDef::DiscardCard => true,
                 _ => obj.v4.face_index == 0,
             });
-            if let Some(ward_cost) = ward_cost {
+            for ward_cost in ward_cost.into_iter().chain(
+                crate::standard_cards_v1::granted_wards(state, id)
+                    .into_iter()
+                    .map(crate::card_def::WardCostDef::Generic),
+            ) {
                 for event in events {
                     let CommittedEvent::Targeted {
                         target,
@@ -4520,6 +4586,11 @@ fn triggers_from_events(
             paid_cost_refs: Vec::new(),
         });
     }
+
+    #[cfg(feature = "standard-magezero-fixtures")]
+    new_triggers.extend(crate::standard_cards_v1::end_step_delayed_triggers(
+        state, events,
+    ));
 
     uses.sort_by_key(|entry| (entry.source.object, entry.ability_index));
     state.trigger_uses_v1 = (!uses.is_empty()).then_some(uses);
@@ -5141,6 +5212,8 @@ fn trigger_matches(
                 && *target_zone_change_count == state.objects.get(source).zone_change_count
                 && *targeting_controller == controller
         }
+        // Matched against the whole event batch before this is called.
+        (TriggerCondition::StandardV1(_), _) => true,
         _ => false,
     }
 }

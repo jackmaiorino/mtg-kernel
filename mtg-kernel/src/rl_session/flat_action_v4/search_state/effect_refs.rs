@@ -56,6 +56,7 @@ impl Scan<'_> {
             | EnterUndercityRoom { binding, .. }
             | ResolveUndercityThrone { binding } => self.a(&binding.source),
             ResolveMonarchTrigger { binding } => self.a(&binding.source),
+            StandardV1(op) => op.bound_objects().iter().any(|chosen| self.b(chosen)),
             // Other current leaf programs carry symbolic refs, not physical bindings.
             DealDamage { .. }
             | ReturnTargetPermanentToBattlefield { .. }
@@ -407,6 +408,16 @@ impl Scan<'_> {
         use EffectTargetSelectionPurpose::*;
         match p {
             OrderIntoGraveyard { .. } | OrderMilledIntoGraveyard => false,
+            StandardBreachChoiceV1 {
+                chosen,
+                original_candidates,
+                later,
+                ..
+            } => {
+                self.bs(chosen)
+                    || self.bs(original_candidates)
+                    || later.as_ref().is_some_and(|(_, cards)| self.bs(cards))
+            }
             AttachReturningAura {
                 aura,
                 original_candidates,
@@ -493,10 +504,32 @@ impl Scan<'_> {
                 original_candidates,
                 ..
             }
+            | StandardChoosePermanentV1 {
+                original_candidates,
+                ..
+            }
+            | StandardSeparatePilesV1 {
+                original_candidates,
+                ..
+            }
+            | StandardDiscardToDrawV1 {
+                original_candidates,
+                ..
+            }
             | UntapLands {
                 original_candidates,
                 ..
             } => self.bs(original_candidates),
+            StandardCopyTargetV1 {
+                copy_source,
+                original_candidates,
+                ..
+            } => {
+                self.raw(*copy_source)
+                    || original_candidates
+                        .iter()
+                        .any(|t| matches!(t, crate::state::Target::Object(id) if self.raw(*id)))
+            }
             DuressDiscard {
                 original_hand,
                 eligible,
@@ -561,6 +594,10 @@ impl Scan<'_> {
                         ChooseColor {
                             expected_remaining_frames,
                             ..
+                        }
+                        | StandardManaCombinationV1 {
+                            expected_remaining_frames,
+                            ..
                         } => self.fs(expected_remaining_frames),
                         UndercityRoute {
                             binding,
@@ -588,6 +625,17 @@ impl Scan<'_> {
                         ..
                     } => self.bs(original_graveyard) || self.bs(candidates) || self.op(then),
                     LookAtTopMayRevealThen { top, then, .. } => self.b(top) || self.op(then),
+                    StandardSacrificePileV1 {
+                        pile_a,
+                        pile_b,
+                        expected_remaining_frames,
+                        ..
+                    } => self.bs(pile_a) || self.bs(pile_b) || self.fs(expected_remaining_frames),
+                    StandardMayBecomeEverflameV1 {
+                        source,
+                        expected_remaining_frames,
+                        ..
+                    } => self.b(source) || self.fs(expected_remaining_frames),
                 }
             }
         }
@@ -682,6 +730,47 @@ pub(super) fn conflicts(
                     remaining_frames,
                     ..
                 } => s.b(aura) || s.b(host) || s.fs(remaining_frames),
+                StandardChosenPermanentV1 {
+                    chosen,
+                    remaining_frames,
+                    ..
+                } => s.b(chosen) || s.fs(remaining_frames),
+                StandardPilesSeparatedV1 {
+                    pile_a,
+                    pile_b,
+                    remaining_frames,
+                    ..
+                } => s.bs(pile_a) || s.bs(pile_b) || s.fs(remaining_frames),
+                StandardPileChosenV1 {
+                    pile,
+                    remaining_frames,
+                    ..
+                } => s.bs(pile) || s.fs(remaining_frames),
+                StandardBreachChosenV1 {
+                    cards,
+                    remaining_frames,
+                    ..
+                }
+                | StandardDiscardChosenV1 {
+                    cards,
+                    remaining_frames,
+                    ..
+                } => s.bs(cards) || s.fs(remaining_frames),
+                StandardEverflameChosenV1 {
+                    source,
+                    remaining_frames,
+                    ..
+                } => s.b(source) || s.fs(remaining_frames),
+                StandardCopyRetargetedV1 {
+                    copy_source,
+                    target,
+                    remaining_frames,
+                    ..
+                } => {
+                    s.raw(*copy_source)
+                        || matches!(target, crate::state::Target::Object(id) if s.raw(*id))
+                        || s.fs(remaining_frames)
+                }
             };
             if guard_conflicts {
                 return true;
@@ -702,7 +791,10 @@ pub(super) fn conflicts(
             PlusOneCountersAdded { object, .. }
             | PrintedAbilitiesRemovedBeforeZoneChange { object, .. }
             | WasCreatureBeforeLeavingBattlefield { object, .. }
-            | PowerBeforeLeavingBattlefield { object, .. } => s.raw(*object),
+            | PowerBeforeLeavingBattlefield { object, .. }
+            | LeftBattlefieldFaceV1 { object, .. }
+            | RoomDoorUnlockedV1 { object, .. }
+            | ClassLevelGainedV1 { object, .. } => s.raw(*object),
             Draw { object, .. } => object.is_some_and(|id| s.raw(id)),
             SpellCast { spell, .. } => s.raw(*spell),
             Targeted { target, .. } => s.raw(*target),

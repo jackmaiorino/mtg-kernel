@@ -616,8 +616,8 @@ pub fn gather_sources_for_spell(
         // contract, including an incarnation-local chosen color. A creature
         // source also obeys summoning sickness for the tap symbol in its
         // activation cost.
-        if crate::engine::object_has_type(state, id, crate::card_def::CardType::Creature)
-            && obj.summoning_sick
+        if crate::engine::creature_summoning_sick(state, id, def)
+            || !crate::standard_cards_v1::mana_abilities_active(state, id, def)
         {
             continue;
         }

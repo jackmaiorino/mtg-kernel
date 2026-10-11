@@ -308,6 +308,16 @@ pub enum Subtype {
     Construct,
     /// Appended for unregistered Mischievous Pup, preserving existing ids.
     Dog,
+    /// Appended for the MageZero Standard permanents and planeswalkers.
+    /// Existing stable ids remain fixed. Teferi is a planeswalker type.
+    Teferi,
+    God,
+    Room,
+    Case,
+    Class,
+    Liliana,
+    Gnome,
+    Chandra,
 }
 
 impl Subtype {
@@ -464,6 +474,10 @@ impl Subtype {
         Subtype::AssemblyWorker,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Mite,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::God,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Gnome,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -834,6 +848,10 @@ pub enum TargetSpec {
     UpToOneOtherControlledPermanent,
     /// Zero to two controlled creatures other than the captured source incarnation.
     UpToTwoOtherControlledCreatures,
+    /// A single-object target filter owned by the Standard catalog's card
+    /// module. Stable id 60 follows the ids 42-59 that the FDN and other
+    /// Standard batches claim.
+    StandardV1(crate::standard_cards_v1::StandardTargetV1),
 }
 
 impl TargetSpec {
@@ -902,6 +920,7 @@ impl TargetSpec {
             TargetSpec::PermanentCardInOwnGraveyard => 57,
             TargetSpec::UpToOneOtherControlledPermanent => 58,
             TargetSpec::UpToTwoOtherControlledCreatures => 59,
+            TargetSpec::StandardV1(_) => 60,
         }
     }
 }
@@ -1011,6 +1030,9 @@ pub enum PermanentFilter {
     /// can be embedded in `effect::EffectOp::PumpAllUntilEndOfTurn`, which
     /// (like every other `EffectOp` variant) must derive those traits.
     Land,
+    /// A controlled artifact other than the ability's own source
+    /// (Repurposing Bay's "Sacrifice another artifact"). Appended.
+    AnotherArtifact,
 }
 
 /// One component of a composite cost. Composable (a real cost is `&'static
@@ -1105,6 +1127,27 @@ pub enum CostComponent {
     /// The source is excluded from both selection and atomic payment.
     /// Appended for Hungry Ghoul, preserving all older cost variants.
     SacrificeOtherControlledCreatures(u8),
+    /// A planeswalker loyalty cost (606.4): a positive amount puts that many
+    /// loyalty counters on the source, a negative one removes that many and
+    /// requires at least as many. Any ability with this component is a
+    /// loyalty ability, so it is sorcery-speed and shares the source's
+    /// one-loyalty-activation-per-turn limit (606.3). Appended for the
+    /// Standard planeswalkers.
+    Loyalty(i8),
+    /// Craft with artifact's material (702.167a): exile one other artifact
+    /// the payer controls or one artifact card from their own graveyard.
+    /// The exact object is staged through `Decision::ChooseCostTargets`
+    /// before any payment commits. Appended for the Standard craft cards.
+    ExileCraftArtifactMaterial,
+    /// "Remove a net counter from this" (Braided Net). The counters live in
+    /// `standard_cards_v1`'s per-incarnation state.
+    RemoveNetCounterFromSelf,
+}
+
+impl CostComponent {
+    pub const fn is_loyalty(self) -> bool {
+        matches!(self, Self::Loyalty(_))
+    }
 }
 
 /// Optional additional costs chosen while announcing a spell. The selected
@@ -1260,6 +1303,26 @@ pub struct ActivatedAbilityDef {
     /// `None` means unrestricted. Appended for Quirion Ranger without
     /// changing any existing ability selector.
     pub max_activations_per_turn: Option<u8>,
+    /// Transforming-card face this ability is printed on. `None` means the
+    /// card's only face (every single-faced card); `Some(face)` limits the
+    /// ability to a battlefield permanent showing that face. Appended for the
+    /// Standard double-faced legends.
+    pub face: Option<u8>,
+}
+
+impl ActivatedAbilityDef {
+    /// True iff this is a planeswalker loyalty ability (606.3).
+    pub fn is_loyalty_ability(&self) -> bool {
+        self.cost.iter().any(|component| component.is_loyalty())
+    }
+
+    /// The loyalty counters this ability's cost adds (positive) or removes.
+    pub fn loyalty_delta(&self) -> Option<i8> {
+        self.cost.iter().find_map(|component| match component {
+            CostComponent::Loyalty(delta) => Some(*delta),
+            _ => None,
+        })
+    }
 }
 
 /// A source-relative restriction that applies while announcing a non-mana
@@ -2475,9 +2538,12 @@ mod tests {
     fn ward_costs_fail_closed_outside_the_static_generic_creature_shape() {
         for def in CARD_DEFS.iter().filter(|def| def.ward_cost.is_some()) {
             assert!(def.is_castable(), "{} is not executable", def.name);
+            // Dusk Rose Reliquary (Standard catalog) is the one warded
+            // artifact; ward on a noncreature permanent uses the same
+            // targeted-permanent trigger.
             assert!(
-                def.has_type(CardType::Creature),
-                "{} is not a creature",
+                def.has_type(CardType::Creature) || def.has_type(CardType::Artifact),
+                "{} is not a creature or artifact",
                 def.name
             );
             match def.ward_cost.unwrap() {

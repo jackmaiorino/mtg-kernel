@@ -38,6 +38,7 @@ pub mod async_flat_scored_rollout_v1;
 pub mod async_flat_scored_rollout_v2;
 pub mod async_rollout;
 pub mod async_rollout_v2;
+pub mod attack_target_v1;
 pub mod bo3_match;
 pub mod bo3_session;
 pub mod bounded_staleness_async_harness_v1;
@@ -50,6 +51,7 @@ pub mod legend_rule_v1;
 pub mod native_search_collection_v3;
 pub mod native_search_trajectory_v3;
 pub mod planeswalker_v1;
+pub mod standard_cards_v1;
 #[cfg(feature = "standard-magezero-fixtures")]
 pub mod standard_keywords_v1;
 #[cfg(feature = "standard-magezero-fixtures")]

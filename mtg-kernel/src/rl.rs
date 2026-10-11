@@ -1147,6 +1147,13 @@ pub enum ActionSemanticV1 {
         remaining: u8,
         card: CardStableRefV1,
     },
+    /// 508.1b: `attacker` attacks `target`, the defending player or one of
+    /// their planeswalkers.
+    ChooseAttackTarget {
+        actor: PlayerSeatV1,
+        attacker: CardStableRefV1,
+        target: TargetRefV1,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -3082,6 +3089,25 @@ fn core_surface_action_candidates_v1(
                     )?;
                 }
             }
+            Decision::ChooseAttackTarget {
+                player,
+                attacker,
+                candidates,
+            } => {
+                let actor = (*player).into();
+                let attacker = card_ref(state, *attacker)?;
+                for &target in candidates {
+                    push_action(
+                        &mut out,
+                        ActionSemanticV1::ChooseAttackTarget {
+                            actor,
+                            attacker: attacker.clone(),
+                            target: target_ref(state, target)?,
+                        },
+                        SurfaceAction::Action(Action::ChooseAttackTarget(target)),
+                    )?;
+                }
+            }
             Decision::ChooseLegendPermanent { player, candidates } => {
                 let actor = (*player).into();
                 let references = candidates
@@ -3374,6 +3400,7 @@ pub fn acting_player_for_surface_decision(
             | Decision::ChooseLegendPermanent { player, .. }
             | Decision::ChooseLondonMulligan { player, .. }
             | Decision::ChooseLondonBottom { player, .. }
+            | Decision::ChooseAttackTarget { player, .. }
             | Decision::ChooseOptionalCost { player, .. }
             | Decision::ChooseSpellCopyPayment { player, .. }
             | Decision::ChooseSpellCopyRetarget { player, .. }
@@ -6752,7 +6779,22 @@ fn pending_effect_semantic_v4(
                             } => TargetSelectionPurposeV4::CardSelection,
                             crate::effect::EffectTargetSelectionPurpose::SacrificeCreature {
                                 ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::StandardChoosePermanentV1 {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::StandardSeparatePilesV1 {
+                                ..
                             } => TargetSelectionPurposeV4::PermanentSelection,
+                            crate::effect::EffectTargetSelectionPurpose::StandardBreachChoiceV1 {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::StandardDiscardToDrawV1 {
+                                ..
+                            } => TargetSelectionPurposeV4::CardSelection,
+                            crate::effect::EffectTargetSelectionPurpose::StandardCopyTargetV1 {
+                                ..
+                            } => TargetSelectionPurposeV4::EffectTargets,
                         },
                     })
                 }
@@ -6783,6 +6825,12 @@ fn pending_effect_semantic_v4(
                             ..
                         }
                         | crate::effect::EffectBooleanChoicePurpose::LookAtTopMayRevealThen {
+                            ..
+                        }
+                        | crate::effect::EffectBooleanChoicePurpose::StandardSacrificePileV1 {
+                            ..
+                        }
+                        | crate::effect::EffectBooleanChoicePurpose::StandardMayBecomeEverflameV1 {
                             ..
                         } => BooleanChoicePurposeV4::OptionalEffect,
                     },

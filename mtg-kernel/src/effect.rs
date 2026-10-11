@@ -130,6 +130,9 @@ pub enum LibraryCardFilter {
     /// is the only filter whose result is not publicly revealed. Appended
     /// for the FDN library-search batch.
     AnyCard,
+    /// An artifact card with exactly this mana value (Repurposing Bay).
+    /// Appended for the MageZero Standard catalog.
+    ArtifactWithManaValue(u16),
 }
 
 impl LibraryCardFilter {
@@ -1391,6 +1394,9 @@ pub enum EffectOp {
     /// Move all creature cards from both graveyards into one battlefield
     /// entry batch under the effect controller; physical owners are unchanged.
     ReturnAllGraveyardCreaturesUnderController,
+    /// A MageZero Standard card leaf (`standard_cards_v1`). Appended so every
+    /// earlier variant keeps its serialized and hashed shape.
+    StandardV1(crate::standard_cards_v1::StandardOpV1),
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -2026,6 +2032,55 @@ pub enum EffectTargetSelectionPurpose {
         canonical_path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
     },
+    /// Public exact-one choice of a permanent the chooser controls
+    /// (`StandardOpV1::PlayerChoosesControlledPermanent`).
+    StandardChoosePermanentV1 {
+        player: PlayerId,
+        filter: crate::standard_cards_v1::StandardPermanentFilterV1,
+        action: crate::standard_cards_v1::StandardChosenActionV1,
+        original_candidates: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+    },
+    /// Public choice of the first of two piles from every permanent
+    /// `player` controls, made by `separator`
+    /// (`StandardOpV1::SeparatePilesThenSacrifice`); the unselected
+    /// permanents form the second pile.
+    StandardSeparatePilesV1 {
+        separator: PlayerId,
+        player: PlayerId,
+        original_candidates: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+    },
+    /// Breach the Multiverse: `chooser` picks one creature or planeswalker
+    /// card from `from`'s graveyard. `chosen` holds the earlier players'
+    /// picks and `later` the next player's stage, if any
+    /// (`StandardOpV1::PutCreatureOrPlaneswalkerFromEachGraveyard`).
+    StandardBreachChoiceV1 {
+        chooser: PlayerId,
+        from: PlayerId,
+        chosen: Vec<EffectObjectBinding>,
+        original_candidates: Vec<EffectObjectBinding>,
+        later: Option<(PlayerId, Vec<EffectObjectBinding>)>,
+        canonical_path: Vec<u16>,
+    },
+    /// `player` chooses up to `max_targets` cards from their own hand to
+    /// discard, then draws that many
+    /// (`StandardOpV1::MayDiscardUpToThenDraw`).
+    StandardDiscardToDrawV1 {
+        player: PlayerId,
+        original_candidates: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+    },
+    /// `player` may choose a new target for the spell copy `copy`
+    /// (`StandardOpV1::CopySpellMayChooseNewTargets`); its current target is
+    /// among the candidates when still legal.
+    StandardCopyTargetV1 {
+        player: PlayerId,
+        copy: crate::ids::StackItemId,
+        copy_source: ObjectId,
+        original_candidates: Vec<Target>,
+        canonical_path: Vec<u16>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -2118,6 +2173,22 @@ pub enum EffectBooleanChoicePurpose {
         predicate: CardTypePredicate,
         then: Box<EffectOp>,
     },
+    /// `player` chooses which separated pile to sacrifice: `true` is the
+    /// first pile, `false` the second.
+    StandardSacrificePileV1 {
+        player: PlayerId,
+        pile_a: Vec<EffectObjectBinding>,
+        pile_b: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
+    },
+    /// Whether The Irencrag becomes Everflame, Heroes' Legacy.
+    StandardMayBecomeEverflameV1 {
+        player: PlayerId,
+        source: EffectObjectBinding,
+        canonical_path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
+    },
 }
 
 /// Internal completion contract for an option choice. Public schema-v4
@@ -2167,6 +2238,14 @@ pub enum EffectOptionChoicePurpose {
     OwnerLibraryTopOrBottom {
         object: EffectObjectBinding,
         owner: PlayerId,
+        canonical_path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
+    },
+    /// "Add two mana in any combination of colors": the fifteen
+    /// combinations in WUBRG order
+    /// (`StandardOpV1::ChooseTwoManaInAnyCombination`).
+    StandardManaCombinationV1 {
+        player: PlayerId,
         canonical_path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
     },
@@ -2280,6 +2359,59 @@ pub enum EffectAnsweredChoiceGuard {
     },
     SurveilLibraryMany {
         frame: Box<EffectFrame>,
+    },
+    /// An answered `StandardOpV1::PlayerChoosesControlledPermanent` whose
+    /// bound action frame has not run yet.
+    StandardChosenPermanentV1 {
+        player: PlayerId,
+        chosen: EffectObjectBinding,
+        action: crate::standard_cards_v1::StandardChosenActionV1,
+        canonical_path: Vec<u16>,
+        remaining_frames: Vec<EffectFrame>,
+    },
+    /// Answered pile separation whose pile choice has not been staged yet.
+    StandardPilesSeparatedV1 {
+        player: PlayerId,
+        pile_a: Vec<EffectObjectBinding>,
+        pile_b: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+        remaining_frames: Vec<EffectFrame>,
+    },
+    /// Answered pile choice whose sacrifice has not run yet.
+    StandardPileChosenV1 {
+        player: PlayerId,
+        pile: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+        remaining_frames: Vec<EffectFrame>,
+    },
+    /// Answered Breach the Multiverse picks, one per graveyard stage, whose
+    /// move onto the battlefield has not run yet.
+    StandardBreachChosenV1 {
+        cards: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+        remaining_frames: Vec<EffectFrame>,
+    },
+    /// Answered hand cards to discard whose discard and draw have not run
+    /// yet.
+    StandardDiscardChosenV1 {
+        player: PlayerId,
+        cards: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+        remaining_frames: Vec<EffectFrame>,
+    },
+    /// Accepted Everflame choice whose change has not run yet.
+    StandardEverflameChosenV1 {
+        source: EffectObjectBinding,
+        canonical_path: Vec<u16>,
+        remaining_frames: Vec<EffectFrame>,
+    },
+    /// The answered target of a spell copy, not yet given to it.
+    StandardCopyRetargetedV1 {
+        copy: crate::ids::StackItemId,
+        copy_source: ObjectId,
+        target: Target,
+        canonical_path: Vec<u16>,
+        remaining_frames: Vec<EffectFrame>,
     },
 }
 
@@ -2484,6 +2616,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::ResolveUndercityThrone { .. }
         | EffectOp::LookAtTopMayRevealThen { .. }
         | EffectOp::Surveil { .. } => true,
+        EffectOp::StandardV1(op) => op.contains_player_choice(),
         _ => false,
     }
 }
@@ -2558,6 +2691,26 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
             };
             match purpose {
                 EffectOptionChoicePurpose::Generic => {
+                    path.push(option_index);
+                    continuation
+                        .frames
+                        .push(EffectFrame::Program { op: selected, path });
+                }
+                EffectOptionChoicePurpose::StandardManaCombinationV1 {
+                    player: mana_player,
+                    canonical_path,
+                    expected_remaining_frames,
+                } => {
+                    if player != mana_player
+                        || path != canonical_path
+                        || continuation.frames != expected_remaining_frames
+                        || options
+                            != crate::standard_cards_v1::two_mana_combinations(
+                                PlayerRef::Controller,
+                            )
+                    {
+                        return Err("mana combination choice changed before answer".to_string());
+                    }
                     path.push(option_index);
                     continuation
                         .frames
@@ -3188,6 +3341,79 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
                         }
                     }
                 }
+                EffectBooleanChoicePurpose::StandardMayBecomeEverflameV1 {
+                    player: choosing_player,
+                    source,
+                    canonical_path,
+                    expected_remaining_frames,
+                } => {
+                    if player != choosing_player || continuation.frames != expected_remaining_frames
+                    {
+                        continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                            player,
+                            path: canonical_path.clone(),
+                            default,
+                            purpose: EffectBooleanChoicePurpose::StandardMayBecomeEverflameV1 {
+                                player: choosing_player,
+                                source,
+                                canonical_path,
+                                expected_remaining_frames,
+                            },
+                        });
+                        return Err("Everflame choice player or continuation changed".to_string());
+                    }
+                    if value {
+                        continuation.answered_choice_guard =
+                            Some(EffectAnsweredChoiceGuard::StandardEverflameChosenV1 {
+                                source,
+                                canonical_path: canonical_path.clone(),
+                                remaining_frames: continuation.frames.clone(),
+                            });
+                        continuation.frames.push(EffectFrame::Program {
+                            op: EffectOp::StandardV1(
+                                crate::standard_cards_v1::StandardOpV1::BecomeEverflame { source },
+                            ),
+                            path: canonical_path,
+                        });
+                    }
+                }
+                EffectBooleanChoicePurpose::StandardSacrificePileV1 {
+                    player: pile_player,
+                    pile_a,
+                    pile_b,
+                    canonical_path,
+                    expected_remaining_frames,
+                } => {
+                    if player != pile_player || continuation.frames != expected_remaining_frames {
+                        continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                            player,
+                            path: canonical_path.clone(),
+                            default,
+                            purpose: EffectBooleanChoicePurpose::StandardSacrificePileV1 {
+                                player: pile_player,
+                                pile_a,
+                                pile_b,
+                                canonical_path,
+                                expected_remaining_frames,
+                            },
+                        });
+                        return Err("pile choice player or continuation changed".to_string());
+                    }
+                    let pile = if value { pile_a } else { pile_b };
+                    continuation.answered_choice_guard =
+                        Some(EffectAnsweredChoiceGuard::StandardPileChosenV1 {
+                            player,
+                            pile: pile.clone(),
+                            canonical_path: canonical_path.clone(),
+                            remaining_frames: continuation.frames.clone(),
+                        });
+                    continuation.frames.push(EffectFrame::Program {
+                        op: EffectOp::StandardV1(
+                            crate::standard_cards_v1::StandardOpV1::SacrificePile { player, pile },
+                        ),
+                        path: canonical_path,
+                    });
+                }
                 EffectBooleanChoicePurpose::LookAtTopMayRevealThen {
                     player: reveal_player,
                     top,
@@ -3254,6 +3480,38 @@ fn complete_resumable_target_selection(
         continuation.choice = Some(choice);
         return Err("the pending effect is not waiting for a target selection".to_string());
     };
+    if let EffectTargetSelectionPurpose::StandardCopyTargetV1 {
+        copy,
+        copy_source,
+        original_candidates,
+        canonical_path,
+        ..
+    } = purpose
+    {
+        // A copy's new target may be a player, so it has no object binding.
+        let [chosen] = selected.as_slice() else {
+            return Err("a spell copy takes exactly one new target".to_string());
+        };
+        if path != canonical_path || !original_candidates.contains(&chosen.target) {
+            return Err("spell-copy target choice changed".to_string());
+        }
+        continuation.answered_choice_guard =
+            Some(EffectAnsweredChoiceGuard::StandardCopyRetargetedV1 {
+                copy,
+                copy_source,
+                target: chosen.target,
+                canonical_path: canonical_path.clone(),
+                remaining_frames: continuation.frames.clone(),
+            });
+        continuation.frames.push(EffectFrame::Program {
+            op: EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::RetargetSpellCopy {
+                copy,
+                target: chosen.target,
+            }),
+            path: canonical_path,
+        });
+        return Ok(());
+    }
     let mut objects = selected
         .into_iter()
         .map(|candidate| {
@@ -3267,6 +3525,171 @@ fn complete_resumable_target_selection(
         })
         .collect::<Result<Vec<_>, String>>()?;
     match purpose {
+        EffectTargetSelectionPurpose::StandardCopyTargetV1 { .. } => {
+            unreachable!("answered above without object bindings")
+        }
+        EffectTargetSelectionPurpose::StandardDiscardToDrawV1 {
+            player,
+            original_candidates,
+            canonical_path,
+        } => {
+            if path != canonical_path
+                || objects
+                    .iter()
+                    .any(|object| !original_candidates.contains(object))
+            {
+                return Err("discard choice changed path or candidate".to_string());
+            }
+            if objects.is_empty() {
+                return Ok(());
+            }
+            let cards = original_candidates
+                .iter()
+                .copied()
+                .filter(|binding| objects.contains(binding))
+                .collect::<Vec<_>>();
+            continuation.answered_choice_guard =
+                Some(EffectAnsweredChoiceGuard::StandardDiscardChosenV1 {
+                    player,
+                    cards: cards.clone(),
+                    canonical_path: canonical_path.clone(),
+                    remaining_frames: continuation.frames.clone(),
+                });
+            continuation.frames.push(EffectFrame::Program {
+                op: EffectOp::StandardV1(
+                    crate::standard_cards_v1::StandardOpV1::DiscardChosenThenDraw { player, cards },
+                ),
+                path: canonical_path,
+            });
+        }
+        EffectTargetSelectionPurpose::StandardBreachChoiceV1 {
+            chooser,
+            mut chosen,
+            original_candidates,
+            later,
+            canonical_path,
+            ..
+        } => {
+            let [pick] = objects.as_slice() else {
+                return Err("Breach choice must pick exactly one card".to_string());
+            };
+            if path != canonical_path || !original_candidates.contains(pick) {
+                return Err("Breach choice changed path or candidate".to_string());
+            }
+            chosen.push(*pick);
+            if let Some((from, candidates)) = later {
+                continuation.choice = Some(PendingEffectChoice::SelectTargets {
+                    player: chooser,
+                    path: canonical_path.clone(),
+                    selected: vec![],
+                    legal: candidates
+                        .iter()
+                        .copied()
+                        .map(|binding| EffectTargetCandidate {
+                            target: Target::Object(binding.object),
+                            expected_object: Some(binding),
+                        })
+                        .collect(),
+                    min_targets: 1,
+                    max_targets: 1,
+                    ordered: false,
+                    purpose: EffectTargetSelectionPurpose::StandardBreachChoiceV1 {
+                        chooser,
+                        from,
+                        chosen,
+                        original_candidates: candidates,
+                        later: None,
+                        canonical_path,
+                    },
+                });
+                return Ok(());
+            }
+            continuation.answered_choice_guard =
+                Some(EffectAnsweredChoiceGuard::StandardBreachChosenV1 {
+                    cards: chosen.clone(),
+                    canonical_path: canonical_path.clone(),
+                    remaining_frames: continuation.frames.clone(),
+                });
+            continuation.frames.push(EffectFrame::Program {
+                op: EffectOp::StandardV1(
+                    crate::standard_cards_v1::StandardOpV1::PutChosenCardsOntoBattlefield {
+                        cards: chosen,
+                    },
+                ),
+                path: canonical_path,
+            });
+        }
+        EffectTargetSelectionPurpose::StandardSeparatePilesV1 {
+            player,
+            original_candidates,
+            canonical_path,
+            ..
+        } => {
+            if path != canonical_path
+                || objects
+                    .iter()
+                    .any(|object| !original_candidates.contains(object))
+            {
+                return Err("pile separation changed path or candidate".to_string());
+            }
+            let pile_a = original_candidates
+                .iter()
+                .copied()
+                .filter(|binding| objects.contains(binding))
+                .collect::<Vec<_>>();
+            let pile_b = original_candidates
+                .iter()
+                .copied()
+                .filter(|binding| !objects.contains(binding))
+                .collect::<Vec<_>>();
+            continuation.answered_choice_guard =
+                Some(EffectAnsweredChoiceGuard::StandardPilesSeparatedV1 {
+                    player,
+                    pile_a: pile_a.clone(),
+                    pile_b: pile_b.clone(),
+                    canonical_path: canonical_path.clone(),
+                    remaining_frames: continuation.frames.clone(),
+                });
+            continuation.frames.push(EffectFrame::Program {
+                op: EffectOp::StandardV1(
+                    crate::standard_cards_v1::StandardOpV1::ChooseSacrificePile {
+                        player,
+                        pile_a,
+                        pile_b,
+                    },
+                ),
+                path: canonical_path,
+            });
+        }
+        EffectTargetSelectionPurpose::StandardChoosePermanentV1 {
+            player,
+            action,
+            original_candidates,
+            canonical_path,
+            ..
+        } => {
+            if path != canonical_path
+                || objects.len() != 1
+                || !original_candidates.contains(&objects[0])
+            {
+                return Err("chosen-permanent answer changed path or candidate".to_string());
+            }
+            let chosen = objects[0];
+            continuation.answered_choice_guard =
+                Some(EffectAnsweredChoiceGuard::StandardChosenPermanentV1 {
+                    player,
+                    chosen,
+                    action,
+                    canonical_path: canonical_path.clone(),
+                    remaining_frames: continuation.frames.clone(),
+                });
+            continuation.frames.push(EffectFrame::Program {
+                op: EffectOp::StandardV1(
+                    crate::standard_cards_v1::StandardOpV1::ApplyChosenPermanent { chosen, action },
+                ),
+                path: canonical_path,
+            });
+        }
         EffectTargetSelectionPurpose::AttachReturningAura {
             aura,
             original_candidates,
@@ -4584,15 +5007,29 @@ fn validated_definition_owned_root_effect(
             .try_get(pending.resolving_item.source)
             .ok_or("answered trigger frame lost its source object")?
             .card_def;
-        if !crate::trigger::triggers_for(card_def)
-            .iter()
-            .any(|trigger| {
-                crate::trigger::materialize_trigger_effect(
-                    trigger,
-                    pending.resolving_item.source,
-                    state,
-                ) == *root
-            })
+        // A Saga's chapter abilities are definition-owned triggers too
+        // (714.2b).
+        let is_saga_chapter = crate::card_def::CARD_DEFS[card_def as usize]
+            .saga
+            .as_ref()
+            .is_some_and(|saga| {
+                saga.chapter_effects
+                    .iter()
+                    .any(|chapter| chapter() == *root)
+            });
+        if !is_saga_chapter
+            && !crate::trigger::triggers_for(card_def)
+                .iter()
+                .any(|trigger| {
+                    crate::trigger::materialize_trigger_effect(
+                        trigger,
+                        pending.resolving_item.source,
+                        state,
+                    ) == *root
+                        // Event-bound Standard programs (Chandra's copy) are
+                        // filled in from the triggering event.
+                        || crate::standard_cards_v1::template_matches(&(trigger.effect)(), &root)
+                })
         {
             return Err(
                 "answered trigger effect no longer matches its card definition".to_string(),
@@ -5008,8 +5445,29 @@ fn validate_search_library_to_battlefield_origin(
         {
             Ok(())
         }
+        Some(EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SearchArtifactWithManaValueOneMoreThanSacrificed))
+            if player == pending.ctx.controller
+                && Some(filter)
+                    == crate::standard_cards_v1::repurposing_bay_filter(&pending.ctx) =>
+        {
+            Ok(())
+        }
         _ => Err("battlefield-search lost its definition-owned origin".to_string()),
     }
+}
+
+/// Whether a search-to-battlefield's origin puts the card onto the
+/// battlefield untapped (Repurposing Bay) rather than tapped.
+fn search_to_battlefield_untapped(
+    state: &GameState,
+    pending: &EffectContinuation,
+    canonical_path: &[u16],
+) -> Result<bool, String> {
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    Ok(matches!(
+        effect_op_at_path(root.as_ref(), canonical_path),
+        Some(EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SearchArtifactWithManaValueOneMoreThanSacrificed))
+    ))
 }
 
 fn revealed_discard_excludes_creatures(
@@ -5633,6 +6091,23 @@ fn validate_answered_choice_guard(
                 ) {
                     return Err("bound Aura attachment has no answered choice guard".to_string());
                 }
+            } else if matches!(op, EffectOp::StandardV1(inner) if inner.is_bound_continuation()) {
+                if !matches!(
+                    pending.answered_choice_guard,
+                    Some(
+                        EffectAnsweredChoiceGuard::StandardChosenPermanentV1 { .. }
+                            | EffectAnsweredChoiceGuard::StandardPilesSeparatedV1 { .. }
+                            | EffectAnsweredChoiceGuard::StandardPileChosenV1 { .. }
+                            | EffectAnsweredChoiceGuard::StandardBreachChosenV1 { .. }
+                            | EffectAnsweredChoiceGuard::StandardDiscardChosenV1 { .. }
+                            | EffectAnsweredChoiceGuard::StandardEverflameChosenV1 { .. }
+                            | EffectAnsweredChoiceGuard::StandardCopyRetargetedV1 { .. }
+                    )
+                ) {
+                    return Err(
+                        "bound chosen-permanent action has no answered choice guard".to_string()
+                    );
+                }
             } else {
                 validate_resumable_program(op)?;
             }
@@ -5911,6 +6386,177 @@ fn validate_answered_choice_guard(
                 return Err("answered Aura attachment host changed".to_string());
             }
         }
+        Some(EffectAnsweredChoiceGuard::StandardChosenPermanentV1 {
+            player,
+            chosen,
+            action,
+            canonical_path,
+            remaining_frames,
+        }) => {
+            let mut expected = remaining_frames.clone();
+            expected.push(EffectFrame::Program {
+                op: EffectOp::StandardV1(
+                    crate::standard_cards_v1::StandardOpV1::ApplyChosenPermanent {
+                        chosen: *chosen,
+                        action: *action,
+                    },
+                ),
+                path: canonical_path.clone(),
+            });
+            if pending.choice.is_some() || pending.frames != expected {
+                return Err("answered chosen-permanent continuation changed".to_string());
+            }
+            let filter = validate_standard_choose_permanent_origin(
+                state,
+                pending,
+                *player,
+                *action,
+                canonical_path,
+            )?;
+            if !crate::standard_cards_v1::controlled_permanent_candidates(state, *player, filter)
+                .contains(chosen)
+            {
+                return Err("answered chosen permanent changed".to_string());
+            }
+        }
+        Some(EffectAnsweredChoiceGuard::StandardPilesSeparatedV1 {
+            player,
+            pile_a,
+            pile_b,
+            canonical_path,
+            remaining_frames,
+        }) => {
+            let mut expected = remaining_frames.clone();
+            expected.push(EffectFrame::Program {
+                op: EffectOp::StandardV1(
+                    crate::standard_cards_v1::StandardOpV1::ChooseSacrificePile {
+                        player: *player,
+                        pile_a: pile_a.clone(),
+                        pile_b: pile_b.clone(),
+                    },
+                ),
+                path: canonical_path.clone(),
+            });
+            if pending.choice.is_some() || pending.frames != expected {
+                return Err("answered pile separation continuation changed".to_string());
+            }
+            validate_standard_piles(state, pending, *player, pile_a, pile_b, canonical_path)?;
+        }
+        Some(EffectAnsweredChoiceGuard::StandardEverflameChosenV1 {
+            source,
+            canonical_path,
+            remaining_frames,
+        }) => {
+            let mut expected = remaining_frames.clone();
+            expected.push(EffectFrame::Program {
+                op: EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::BecomeEverflame {
+                    source: *source,
+                }),
+                path: canonical_path.clone(),
+            });
+            if pending.choice.is_some() || pending.frames != expected {
+                return Err("answered Everflame continuation changed".to_string());
+            }
+            validate_standard_everflame(state, pending, *source, canonical_path)?;
+        }
+        Some(EffectAnsweredChoiceGuard::StandardCopyRetargetedV1 {
+            copy,
+            copy_source,
+            target,
+            canonical_path,
+            remaining_frames,
+        }) => {
+            let mut expected = remaining_frames.clone();
+            expected.push(EffectFrame::Program {
+                op: EffectOp::StandardV1(
+                    crate::standard_cards_v1::StandardOpV1::RetargetSpellCopy {
+                        copy: *copy,
+                        target: *target,
+                    },
+                ),
+                path: canonical_path.clone(),
+            });
+            if pending.choice.is_some() || pending.frames != expected {
+                return Err("answered spell-copy target continuation changed".to_string());
+            }
+            validate_standard_copy_origin(state, pending, *copy, *copy_source, canonical_path)?;
+            if !crate::engine::spell_copy_retarget_candidates(state, *copy).contains(target) {
+                return Err("answered spell-copy target is no longer legal".to_string());
+            }
+        }
+        Some(EffectAnsweredChoiceGuard::StandardDiscardChosenV1 {
+            player,
+            cards,
+            canonical_path,
+            remaining_frames,
+        }) => {
+            let mut expected = remaining_frames.clone();
+            expected.push(EffectFrame::Program {
+                op: EffectOp::StandardV1(
+                    crate::standard_cards_v1::StandardOpV1::DiscardChosenThenDraw {
+                        player: *player,
+                        cards: cards.clone(),
+                    },
+                ),
+                path: canonical_path.clone(),
+            });
+            if pending.choice.is_some() || pending.frames != expected {
+                return Err("answered discard continuation changed".to_string());
+            }
+            let count = validate_standard_discard_origin(state, pending, *player, canonical_path)?;
+            let hand = crate::standard_cards_v1::hand_candidates(state, *player);
+            if cards.is_empty()
+                || cards.len() > usize::from(count)
+                || cards.iter().any(|card| !hand.contains(card))
+            {
+                return Err("answered discard cards changed".to_string());
+            }
+        }
+        Some(EffectAnsweredChoiceGuard::StandardBreachChosenV1 {
+            cards,
+            canonical_path,
+            remaining_frames,
+        }) => {
+            let mut expected = remaining_frames.clone();
+            expected.push(EffectFrame::Program {
+                op: EffectOp::StandardV1(
+                    crate::standard_cards_v1::StandardOpV1::PutChosenCardsOntoBattlefield {
+                        cards: cards.clone(),
+                    },
+                ),
+                path: canonical_path.clone(),
+            });
+            if pending.choice.is_some() || pending.frames != expected {
+                return Err("answered Breach continuation changed".to_string());
+            }
+            if validate_standard_breach(state, pending, cards, canonical_path)?.len() != cards.len()
+            {
+                return Err("answered Breach picks skipped a graveyard".to_string());
+            }
+        }
+        Some(EffectAnsweredChoiceGuard::StandardPileChosenV1 {
+            player,
+            pile,
+            canonical_path,
+            remaining_frames,
+        }) => {
+            let mut expected = remaining_frames.clone();
+            expected.push(EffectFrame::Program {
+                op: EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SacrificePile {
+                    player: *player,
+                    pile: pile.clone(),
+                }),
+                path: canonical_path.clone(),
+            });
+            if pending.choice.is_some() || pending.frames != expected {
+                return Err("answered pile choice continuation changed".to_string());
+            }
+            validate_standard_piles_origin(state, pending, *player, canonical_path)?;
+            let candidates = crate::standard_cards_v1::pile_candidates(state, *player);
+            if pile.iter().any(|binding| !candidates.contains(binding)) {
+                return Err("answered pile changed".to_string());
+            }
+        }
     }
     Ok(())
 }
@@ -5942,6 +6588,213 @@ fn definition_has_nonterminal_discard(state: &GameState, pending: &EffectContinu
                 .is_some_and(|mode| nonterminal(&(mode.effect)()));
     }
     false
+}
+
+/// A spell-copy target candidate: objects carry their live incarnation.
+fn standard_copy_target_candidate(state: &GameState, target: Target) -> EffectTargetCandidate {
+    EffectTargetCandidate {
+        target,
+        expected_object: match target {
+            Target::Object(object) => {
+                let live = state.objects.get(object);
+                Some(EffectObjectBinding {
+                    object,
+                    expected_zone: live.zone,
+                    expected_zone_change_count: live.zone_change_count,
+                })
+            }
+            Target::Player(_) => None,
+        },
+    }
+}
+
+/// Authenticates a spell-copy target prompt or answer: the definition-owned
+/// copy operation at its path, and the live copy of that operation's spell.
+fn validate_standard_copy_origin(
+    state: &GameState,
+    pending: &EffectContinuation,
+    copy: crate::ids::StackItemId,
+    copy_source: ObjectId,
+    path: &[u16],
+) -> Result<(), String> {
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    let Some(EffectOp::StandardV1(
+        crate::standard_cards_v1::StandardOpV1::CopySpellMayChooseNewTargets { spell },
+    )) = effect_op_at_structural_path(&root, path)
+    else {
+        return Err("spell-copy choice lost its originating operation".to_string());
+    };
+    let live = state
+        .stack
+        .iter()
+        .find(|item| item.v4.stack_item_id == copy)
+        .ok_or("the spell copy left the stack")?;
+    if live.source != copy_source
+        || !live.is_copy
+        || live.controller != pending.ctx.controller
+        || state
+            .objects
+            .try_get(copy_source)
+            .and_then(|object| object.spell_copy_origin)
+            .is_none_or(|origin| origin.parent != *spell)
+    {
+        return Err("spell copy changed".to_string());
+    }
+    Ok(())
+}
+
+/// Authenticates an Everflame prompt or answer against the definition-owned
+/// operation at its structural path and the live source incarnation.
+fn validate_standard_everflame(
+    state: &GameState,
+    pending: &EffectContinuation,
+    source: EffectObjectBinding,
+    path: &[u16],
+) -> Result<(), String> {
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    if !matches!(
+        effect_op_at_structural_path(&root, path),
+        Some(EffectOp::StandardV1(
+            crate::standard_cards_v1::StandardOpV1::MayBecomeEverflame
+        ))
+    ) {
+        return Err("Everflame choice lost its originating operation".to_string());
+    }
+    if crate::standard_cards_v1::everflame_candidate(state, &pending.ctx) != Some(source) {
+        return Err("Everflame source changed".to_string());
+    }
+    Ok(())
+}
+
+/// Authenticates a discard-then-draw prompt or answer against the
+/// definition-owned operation at its structural path.
+fn validate_standard_discard_origin(
+    state: &GameState,
+    pending: &EffectContinuation,
+    player: PlayerId,
+    path: &[u16],
+) -> Result<u8, String> {
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    let Some(EffectOp::StandardV1(
+        crate::standard_cards_v1::StandardOpV1::MayDiscardUpToThenDraw {
+            player: original_player,
+            count,
+        },
+    )) = effect_op_at_structural_path(&root, path)
+    else {
+        return Err("discard choice lost its originating operation".to_string());
+    };
+    if pending.ctx.resolve_player(*original_player, state) != player {
+        return Err("discard player changed".to_string());
+    }
+    Ok(*count)
+}
+
+/// Authenticates a Breach the Multiverse prompt or answer against the
+/// definition-owned operation at its structural path, and checks that the
+/// earlier picks are still the cards of their stages.
+fn validate_standard_breach(
+    state: &GameState,
+    pending: &EffectContinuation,
+    chosen: &[EffectObjectBinding],
+    path: &[u16],
+) -> Result<Vec<(PlayerId, Vec<EffectObjectBinding>)>, String> {
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    if !matches!(
+        effect_op_at_structural_path(&root, path),
+        Some(EffectOp::StandardV1(
+            crate::standard_cards_v1::StandardOpV1::PutCreatureOrPlaneswalkerFromEachGraveyard
+        ))
+    ) {
+        return Err("Breach choice lost its originating operation".to_string());
+    }
+    let stages = crate::standard_cards_v1::breach_stages(state, pending.ctx.controller);
+    if chosen.len() > stages.len()
+        || chosen
+            .iter()
+            .zip(&stages)
+            .any(|(pick, (_, cards))| !cards.contains(pick))
+    {
+        return Err("Breach picks no longer match their graveyards".to_string());
+    }
+    Ok(stages)
+}
+
+/// Authenticates a pile prompt or answer against the definition-owned
+/// operation at its structural path.
+fn validate_standard_piles_origin(
+    state: &GameState,
+    pending: &EffectContinuation,
+    player: PlayerId,
+    path: &[u16],
+) -> Result<(), String> {
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    let Some(EffectOp::StandardV1(
+        crate::standard_cards_v1::StandardOpV1::SeparatePilesThenSacrifice {
+            player: original_player,
+        },
+    )) = effect_op_at_structural_path(&root, path)
+    else {
+        return Err("pile choice lost its originating operation".to_string());
+    };
+    if pending.ctx.resolve_player(*original_player, state) != player {
+        return Err("pile player changed".to_string());
+    }
+    Ok(())
+}
+
+/// Two piles must exactly partition the player's current permanents, in
+/// battlefield order.
+fn validate_standard_piles(
+    state: &GameState,
+    pending: &EffectContinuation,
+    player: PlayerId,
+    pile_a: &[EffectObjectBinding],
+    pile_b: &[EffectObjectBinding],
+    path: &[u16],
+) -> Result<(), String> {
+    validate_standard_piles_origin(state, pending, player, path)?;
+    let candidates = crate::standard_cards_v1::pile_candidates(state, player);
+    let expected_a = candidates
+        .iter()
+        .copied()
+        .filter(|binding| pile_a.contains(binding))
+        .collect::<Vec<_>>();
+    let expected_b = candidates
+        .iter()
+        .copied()
+        .filter(|binding| !pile_a.contains(binding))
+        .collect::<Vec<_>>();
+    if expected_a != pile_a || expected_b != pile_b {
+        return Err("separated piles no longer partition the player's permanents".to_string());
+    }
+    Ok(())
+}
+
+/// Authenticates a chosen-permanent prompt or answer against the
+/// definition-owned operation at its structural path, returning its filter.
+fn validate_standard_choose_permanent_origin(
+    state: &GameState,
+    pending: &EffectContinuation,
+    player: PlayerId,
+    action: crate::standard_cards_v1::StandardChosenActionV1,
+    path: &[u16],
+) -> Result<crate::standard_cards_v1::StandardPermanentFilterV1, String> {
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    let Some(EffectOp::StandardV1(
+        crate::standard_cards_v1::StandardOpV1::PlayerChoosesControlledPermanent {
+            player: original_player,
+            filter,
+            action: original_action,
+        },
+    )) = effect_op_at_structural_path(&root, path)
+    else {
+        return Err("chosen-permanent choice lost its originating operation".to_string());
+    };
+    if pending.ctx.resolve_player(*original_player, state) != player || *original_action != action {
+        return Err("chosen-permanent player or action changed".to_string());
+    }
+    Ok(*filter)
 }
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
@@ -6000,6 +6853,195 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 validate_effect_target_candidate(state, candidate)?;
             }
             match purpose {
+                EffectTargetSelectionPurpose::StandardDiscardToDrawV1 {
+                    player,
+                    original_candidates,
+                    canonical_path,
+                } => {
+                    if chooser != player
+                        || path != canonical_path
+                        || *min_targets != 0
+                        || *ordered
+                        || original_candidates.is_empty()
+                    {
+                        return Err("discard prompt has a noncanonical shape".to_string());
+                    }
+                    let count =
+                        validate_standard_discard_origin(state, pending, *player, canonical_path)?;
+                    if usize::from(*max_targets)
+                        != usize::from(count).min(original_candidates.len())
+                    {
+                        return Err("discard prompt has a noncanonical size".to_string());
+                    }
+                    let chosen = selected
+                        .iter()
+                        .map(|candidate| candidate.expected_object)
+                        .collect::<Option<Vec<_>>>()
+                        .ok_or("discard selection lacks bindings")?;
+                    if crate::standard_cards_v1::hand_candidates(state, *player)
+                        != *original_candidates
+                        || chosen
+                            .iter()
+                            .any(|binding| !original_candidates.contains(binding))
+                        || legal
+                            != &original_candidates
+                                .iter()
+                                .filter(|binding| !chosen.contains(binding))
+                                .map(|binding| EffectTargetCandidate {
+                                    target: Target::Object(binding.object),
+                                    expected_object: Some(*binding),
+                                })
+                                .collect::<Vec<_>>()
+                    {
+                        return Err("discard prompt candidates changed".to_string());
+                    }
+                }
+                EffectTargetSelectionPurpose::StandardCopyTargetV1 {
+                    player,
+                    copy,
+                    copy_source,
+                    original_candidates,
+                    canonical_path,
+                } => {
+                    if chooser != player
+                        || path != canonical_path
+                        || *min_targets != 1
+                        || *max_targets != 1
+                        || *ordered
+                        || !selected.is_empty()
+                    {
+                        return Err("spell-copy target prompt has a noncanonical shape".to_string());
+                    }
+                    validate_standard_copy_origin(state, pending, *copy, *copy_source, path)?;
+                    let expected = original_candidates
+                        .iter()
+                        .map(|&target| standard_copy_target_candidate(state, target))
+                        .collect::<Vec<_>>();
+                    if crate::engine::spell_copy_retarget_candidates(state, *copy)
+                        != *original_candidates
+                        || *legal != expected
+                    {
+                        return Err("spell-copy target candidates changed".to_string());
+                    }
+                }
+                EffectTargetSelectionPurpose::StandardBreachChoiceV1 {
+                    chooser: breach_chooser,
+                    from,
+                    chosen,
+                    original_candidates,
+                    later,
+                    canonical_path,
+                } => {
+                    if chooser != breach_chooser
+                        || *breach_chooser != pending.ctx.controller
+                        || path != canonical_path
+                        || *min_targets != 1
+                        || *max_targets != 1
+                        || *ordered
+                        || !selected.is_empty()
+                    {
+                        return Err("Breach prompt has a noncanonical shape".to_string());
+                    }
+                    let stages = validate_standard_breach(state, pending, chosen, canonical_path)?;
+                    let expected_legal = original_candidates
+                        .iter()
+                        .copied()
+                        .map(|binding| EffectTargetCandidate {
+                            target: Target::Object(binding.object),
+                            expected_object: Some(binding),
+                        })
+                        .collect::<Vec<_>>();
+                    if stages.get(chosen.len()) != Some(&(*from, original_candidates.clone()))
+                        || stages.get(chosen.len() + 1) != later.as_ref()
+                        || *legal != expected_legal
+                    {
+                        return Err("Breach prompt candidates changed".to_string());
+                    }
+                }
+                EffectTargetSelectionPurpose::StandardSeparatePilesV1 {
+                    separator,
+                    player,
+                    original_candidates,
+                    canonical_path,
+                } => {
+                    if chooser != separator
+                        || *separator != pending.ctx.controller
+                        || path != canonical_path
+                        || *min_targets != 0
+                        || usize::from(*max_targets) != original_candidates.len()
+                        || *ordered
+                        || original_candidates.is_empty()
+                    {
+                        return Err("pile separation prompt has a noncanonical shape".to_string());
+                    }
+                    validate_standard_piles_origin(state, pending, *player, canonical_path)?;
+                    let as_candidate = |binding: &EffectObjectBinding| EffectTargetCandidate {
+                        target: Target::Object(binding.object),
+                        expected_object: Some(*binding),
+                    };
+                    let chosen = selected
+                        .iter()
+                        .map(|candidate| candidate.expected_object)
+                        .collect::<Option<Vec<_>>>()
+                        .ok_or("pile separation selection lacks bindings")?;
+                    if crate::standard_cards_v1::pile_candidates(state, *player)
+                        != *original_candidates
+                        || chosen
+                            .iter()
+                            .any(|binding| !original_candidates.contains(binding))
+                        || legal
+                            != &original_candidates
+                                .iter()
+                                .filter(|binding| !chosen.contains(binding))
+                                .map(as_candidate)
+                                .collect::<Vec<_>>()
+                    {
+                        return Err("pile separation candidates changed".to_string());
+                    }
+                }
+                EffectTargetSelectionPurpose::StandardChoosePermanentV1 {
+                    player,
+                    filter,
+                    action,
+                    original_candidates,
+                    canonical_path,
+                } => {
+                    if chooser != player
+                        || path != canonical_path
+                        || *min_targets != 1
+                        || *max_targets != 1
+                        || !*ordered
+                        || !selected.is_empty()
+                        || original_candidates.len() < 2
+                    {
+                        return Err("chosen-permanent prompt has a noncanonical shape".to_string());
+                    }
+                    if validate_standard_choose_permanent_origin(
+                        state,
+                        pending,
+                        *player,
+                        *action,
+                        canonical_path,
+                    )? != *filter
+                    {
+                        return Err("chosen-permanent filter changed".to_string());
+                    }
+                    if crate::standard_cards_v1::controlled_permanent_candidates(
+                        state, *player, *filter,
+                    ) != *original_candidates
+                        || legal
+                            != &original_candidates
+                                .iter()
+                                .copied()
+                                .map(|binding| EffectTargetCandidate {
+                                    target: Target::Object(binding.object),
+                                    expected_object: Some(binding),
+                                })
+                                .collect::<Vec<_>>()
+                    {
+                        return Err("chosen-permanent candidates changed".to_string());
+                    }
+                }
                 EffectTargetSelectionPurpose::AttachReturningAura {
                     aura,
                     original_candidates,
@@ -7135,6 +8177,36 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 }
                 validate_resumable_program(then)?;
             }
+            EffectBooleanChoicePurpose::StandardMayBecomeEverflameV1 {
+                player: choosing_player,
+                source,
+                canonical_path,
+                expected_remaining_frames,
+            } => {
+                if player != choosing_player
+                    || *choosing_player != pending.ctx.controller
+                    || path != canonical_path
+                    || pending.frames != *expected_remaining_frames
+                {
+                    return Err("Everflame choice metadata is inconsistent".to_string());
+                }
+                validate_standard_everflame(state, pending, *source, canonical_path)?;
+            }
+            EffectBooleanChoicePurpose::StandardSacrificePileV1 {
+                player: pile_player,
+                pile_a,
+                pile_b,
+                canonical_path,
+                expected_remaining_frames,
+            } => {
+                if player != pile_player
+                    || path != canonical_path
+                    || pending.frames != *expected_remaining_frames
+                {
+                    return Err("pile choice metadata is inconsistent".to_string());
+                }
+                validate_standard_piles(state, pending, *player, pile_a, pile_b, canonical_path)?;
+            }
         },
         PendingEffectChoice::ChooseOption {
             player,
@@ -7145,6 +8217,32 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
             EffectOptionChoicePurpose::Generic => {
                 for option in options {
                     validate_resumable_program(option)?;
+                }
+            }
+            EffectOptionChoicePurpose::StandardManaCombinationV1 {
+                player: mana_player,
+                canonical_path,
+                expected_remaining_frames,
+            } => {
+                if player != mana_player
+                    || *mana_player != pending.ctx.controller
+                    || path != canonical_path
+                    || &pending.frames != expected_remaining_frames
+                    || *options
+                        != crate::standard_cards_v1::two_mana_combinations(PlayerRef::Controller)
+                {
+                    return Err("mana combination choice metadata is not canonical".to_string());
+                }
+                let root = validated_definition_owned_root_effect(state, pending)?;
+                if !matches!(
+                    effect_op_at_structural_path(&root, path),
+                    Some(EffectOp::StandardV1(
+                        crate::standard_cards_v1::StandardOpV1::ChooseTwoManaInAnyCombination
+                    ))
+                ) {
+                    return Err(
+                        "mana combination choice lost its originating operation".to_string()
+                    );
                 }
             }
             EffectOptionChoicePurpose::OwnerLibrarySecondOrBottom {
@@ -7411,6 +8509,11 @@ fn validate_resumable_program(op: &EffectOp) -> Result<(), String> {
         }
         EffectOp::EnterUndercityRoom { .. } | EffectOp::ResolveUndercityThrone { .. } => {
             return Err("generated programs cannot contain bound Undercity operations".to_string());
+        }
+        EffectOp::StandardV1(op) if op.is_bound_continuation() => {
+            return Err(
+                "generated programs cannot contain a bound chosen-permanent action".to_string(),
+            );
         }
         _ => {}
     }
@@ -8204,13 +9307,21 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                                 .to_string(),
                         );
                     }
+                    let untapped =
+                        search_to_battlefield_untapped(state, &continuation, &canonical_path)?;
                     let shuffle_token = state
                         .preflight_library_shuffle(player)
                         .map_err(|error| error.to_string())?;
                     if let Some(binding) = selected {
                         event::propose_and_commit(
                             state,
-                            event::ProposedEvent::zone_change_to_battlefield_tapped(binding.object),
+                            if untapped {
+                                event::ProposedEvent::zone_change(binding.object, Zone::Battlefield)
+                            } else {
+                                event::ProposedEvent::zone_change_to_battlefield_tapped(
+                                    binding.object,
+                                )
+                            },
                         );
                     }
                     state
@@ -8560,6 +9671,7 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         seen.push(binding.object);
                         state.objects.get_mut(binding.object).tapped = false;
                     }
+                    crate::standard_cards_v1::release_untapped_locks(state);
                 }
                 EffectFrame::LinkedExileChosenHandCard {
                     player,
@@ -8815,6 +9927,364 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
             continue;
         };
         match op {
+            EffectOp::StandardV1(
+                crate::standard_cards_v1::StandardOpV1::PlayerChoosesControlledPermanent {
+                    player,
+                    filter,
+                    action,
+                },
+            ) => {
+                let player = continuation.ctx.resolve_player(player, state);
+                let candidates = crate::standard_cards_v1::controlled_permanent_candidates(
+                    state, player, filter,
+                );
+                match candidates.as_slice() {
+                    [] => {}
+                    [chosen] => {
+                        crate::standard_cards_v1::apply_chosen_permanent(state, *chosen, action)
+                    }
+                    _ => {
+                        continuation.choice = Some(PendingEffectChoice::SelectTargets {
+                            player,
+                            path: path.clone(),
+                            selected: vec![],
+                            legal: candidates
+                                .iter()
+                                .copied()
+                                .map(|binding| EffectTargetCandidate {
+                                    target: Target::Object(binding.object),
+                                    expected_object: Some(binding),
+                                })
+                                .collect(),
+                            min_targets: 1,
+                            max_targets: 1,
+                            ordered: true,
+                            purpose: EffectTargetSelectionPurpose::StandardChoosePermanentV1 {
+                                player,
+                                filter,
+                                action,
+                                original_candidates: candidates,
+                                canonical_path: path,
+                            },
+                        });
+                        state.engine.pending_effect = Some(continuation);
+                        return Ok(ResumableProgress::Suspended);
+                    }
+                }
+            }
+            EffectOp::StandardV1(
+                crate::standard_cards_v1::StandardOpV1::ChooseTwoManaInAnyCombination,
+            ) => {
+                let player = continuation.ctx.controller;
+                let canonical_path = path.clone();
+                let expected_remaining_frames = continuation.frames.clone();
+                continuation.choice = Some(PendingEffectChoice::ChooseOption {
+                    player,
+                    path,
+                    options: crate::standard_cards_v1::two_mana_combinations(
+                        PlayerRef::Controller,
+                    ),
+                    purpose: EffectOptionChoicePurpose::StandardManaCombinationV1 {
+                        player,
+                        canonical_path,
+                        expected_remaining_frames,
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::StandardV1(
+                crate::standard_cards_v1::StandardOpV1::CopySpellMayChooseNewTargets { spell },
+            ) => {
+                let player = continuation.ctx.controller;
+                let Some((copy_source, copy)) = crate::engine::copy_spell_for(state, spell, player)
+                else {
+                    continue;
+                };
+                let candidates = crate::engine::spell_copy_retarget_candidates(state, copy);
+                if candidates.is_empty()
+                    || candidates == crate::engine::spell_copy_targets(state, copy)
+                {
+                    crate::engine::finish_spell_copy_targets(state, copy, None)?;
+                    continue;
+                }
+                continuation.choice = Some(PendingEffectChoice::SelectTargets {
+                    player,
+                    path: path.clone(),
+                    selected: vec![],
+                    legal: candidates
+                        .iter()
+                        .map(|&target| standard_copy_target_candidate(state, target))
+                        .collect(),
+                    min_targets: 1,
+                    max_targets: 1,
+                    ordered: false,
+                    purpose: EffectTargetSelectionPurpose::StandardCopyTargetV1 {
+                        player,
+                        copy,
+                        copy_source,
+                        original_candidates: candidates,
+                        canonical_path: path,
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::RetargetSpellCopy {
+                copy,
+                target,
+            }) => {
+                let Some(EffectAnsweredChoiceGuard::StandardCopyRetargetedV1 {
+                    copy: expected_copy,
+                    target: expected_target,
+                    canonical_path,
+                    remaining_frames,
+                    ..
+                }) = continuation.answered_choice_guard.as_ref()
+                else {
+                    return Err("spell-copy target lost its answered choice".to_string());
+                };
+                if copy != *expected_copy
+                    || target != *expected_target
+                    || path != *canonical_path
+                    || continuation.frames != *remaining_frames
+                {
+                    return Err("spell-copy target choice changed".to_string());
+                }
+                continuation.answered_choice_guard = None;
+                crate::engine::finish_spell_copy_targets(state, copy, Some(target))?;
+            }
+            EffectOp::StandardV1(
+                crate::standard_cards_v1::StandardOpV1::MayDiscardUpToThenDraw { player, count },
+            ) => {
+                let player = continuation.ctx.resolve_player(player, state);
+                let candidates = crate::standard_cards_v1::hand_candidates(state, player);
+                if candidates.is_empty() || count == 0 {
+                    continue;
+                }
+                continuation.choice = Some(PendingEffectChoice::SelectTargets {
+                    player,
+                    path: path.clone(),
+                    selected: vec![],
+                    legal: candidates
+                        .iter()
+                        .copied()
+                        .map(|binding| EffectTargetCandidate {
+                            target: Target::Object(binding.object),
+                            expected_object: Some(binding),
+                        })
+                        .collect(),
+                    min_targets: 0,
+                    max_targets: u16::from(count)
+                        .min(u16::try_from(candidates.len()).unwrap_or(u16::MAX)),
+                    ordered: false,
+                    purpose: EffectTargetSelectionPurpose::StandardDiscardToDrawV1 {
+                        player,
+                        original_candidates: candidates,
+                        canonical_path: path,
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::StandardV1(
+                crate::standard_cards_v1::StandardOpV1::DiscardChosenThenDraw { player, cards },
+            ) => {
+                let Some(EffectAnsweredChoiceGuard::StandardDiscardChosenV1 {
+                    player: expected_player,
+                    cards: expected_cards,
+                    canonical_path,
+                    remaining_frames,
+                }) = continuation.answered_choice_guard.as_ref()
+                else {
+                    return Err("discard lost its answered choice".to_string());
+                };
+                if player != *expected_player
+                    || cards != *expected_cards
+                    || path != *canonical_path
+                    || continuation.frames != *remaining_frames
+                {
+                    return Err("discard choice changed".to_string());
+                }
+                continuation.answered_choice_guard = None;
+                crate::standard_cards_v1::discard_chosen_then_draw(state, player, &cards);
+            }
+            EffectOp::StandardV1(
+                crate::standard_cards_v1::StandardOpV1::PutCreatureOrPlaneswalkerFromEachGraveyard,
+            ) => {
+                let chooser = continuation.ctx.controller;
+                let mut stages =
+                    crate::standard_cards_v1::breach_stages(state, chooser).into_iter();
+                let Some((from, candidates)) = stages.next() else {
+                    continue;
+                };
+                continuation.choice = Some(PendingEffectChoice::SelectTargets {
+                    player: chooser,
+                    path: path.clone(),
+                    selected: vec![],
+                    legal: candidates
+                        .iter()
+                        .copied()
+                        .map(|binding| EffectTargetCandidate {
+                            target: Target::Object(binding.object),
+                            expected_object: Some(binding),
+                        })
+                        .collect(),
+                    min_targets: 1,
+                    max_targets: 1,
+                    ordered: false,
+                    purpose: EffectTargetSelectionPurpose::StandardBreachChoiceV1 {
+                        chooser,
+                        from,
+                        chosen: vec![],
+                        original_candidates: candidates,
+                        later: stages.next(),
+                        canonical_path: path,
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::StandardV1(
+                crate::standard_cards_v1::StandardOpV1::PutChosenCardsOntoBattlefield { cards },
+            ) => {
+                let Some(EffectAnsweredChoiceGuard::StandardBreachChosenV1 {
+                    cards: expected_cards,
+                    canonical_path,
+                    remaining_frames,
+                }) = continuation.answered_choice_guard.as_ref()
+                else {
+                    return Err("Breach move lost its answered choices".to_string());
+                };
+                if cards != *expected_cards
+                    || path != *canonical_path
+                    || continuation.frames != *remaining_frames
+                {
+                    return Err("Breach choices changed".to_string());
+                }
+                continuation.answered_choice_guard = None;
+                let controller = continuation.ctx.controller;
+                crate::standard_cards_v1::put_chosen_onto_battlefield(state, controller, &cards);
+            }
+            EffectOp::StandardV1(
+                crate::standard_cards_v1::StandardOpV1::SeparatePilesThenSacrifice { player },
+            ) => {
+                let player = continuation.ctx.resolve_player(player, state);
+                let candidates = crate::standard_cards_v1::pile_candidates(state, player);
+                if candidates.is_empty() {
+                    continue;
+                }
+                let separator = continuation.ctx.controller;
+                continuation.choice = Some(PendingEffectChoice::SelectTargets {
+                    player: separator,
+                    path: path.clone(),
+                    selected: vec![],
+                    legal: candidates
+                        .iter()
+                        .copied()
+                        .map(|binding| EffectTargetCandidate {
+                            target: Target::Object(binding.object),
+                            expected_object: Some(binding),
+                        })
+                        .collect(),
+                    min_targets: 0,
+                    max_targets: u16::try_from(candidates.len()).unwrap_or(u16::MAX),
+                    ordered: false,
+                    purpose: EffectTargetSelectionPurpose::StandardSeparatePilesV1 {
+                        separator,
+                        player,
+                        original_candidates: candidates,
+                        canonical_path: path,
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::ChooseSacrificePile {
+                player,
+                pile_a,
+                pile_b,
+            }) => {
+                let Some(EffectAnsweredChoiceGuard::StandardPilesSeparatedV1 {
+                    player: expected_player,
+                    pile_a: expected_a,
+                    pile_b: expected_b,
+                    canonical_path,
+                    remaining_frames,
+                }) = continuation.answered_choice_guard.as_ref()
+                else {
+                    return Err("pile choice lost its answered separation".to_string());
+                };
+                if player != *expected_player
+                    || pile_a != *expected_a
+                    || pile_b != *expected_b
+                    || path != *canonical_path
+                    || continuation.frames != *remaining_frames
+                {
+                    return Err("pile separation answer changed".to_string());
+                }
+                continuation.answered_choice_guard = None;
+                continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                    player,
+                    path: path.clone(),
+                    default: None,
+                    purpose: EffectBooleanChoicePurpose::StandardSacrificePileV1 {
+                        player,
+                        pile_a,
+                        pile_b,
+                        canonical_path: path,
+                        expected_remaining_frames: continuation.frames.clone(),
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SacrificePile {
+                player,
+                pile,
+            }) => {
+                let Some(EffectAnsweredChoiceGuard::StandardPileChosenV1 {
+                    player: expected_player,
+                    pile: expected_pile,
+                    canonical_path,
+                    remaining_frames,
+                }) = continuation.answered_choice_guard.as_ref()
+                else {
+                    return Err("pile sacrifice lost its answered choice".to_string());
+                };
+                if player != *expected_player
+                    || pile != *expected_pile
+                    || path != *canonical_path
+                    || continuation.frames != *remaining_frames
+                {
+                    return Err("pile choice answer changed".to_string());
+                }
+                continuation.answered_choice_guard = None;
+                crate::standard_cards_v1::sacrifice_pile(state, player, &pile);
+            }
+            EffectOp::StandardV1(
+                crate::standard_cards_v1::StandardOpV1::ApplyChosenPermanent { chosen, action },
+            ) => {
+                let Some(EffectAnsweredChoiceGuard::StandardChosenPermanentV1 {
+                    chosen: expected_chosen,
+                    action: expected_action,
+                    canonical_path,
+                    remaining_frames,
+                    ..
+                }) = continuation.answered_choice_guard.as_ref()
+                else {
+                    return Err("chosen-permanent action lost its answered choice".to_string());
+                };
+                if chosen != *expected_chosen
+                    || action != *expected_action
+                    || path != *canonical_path
+                    || continuation.frames != *remaining_frames
+                {
+                    return Err("chosen-permanent answer changed".to_string());
+                }
+                continuation.answered_choice_guard = None;
+                crate::standard_cards_v1::apply_chosen_permanent(state, chosen, action);
+            }
             EffectOp::ReturnTargetPermanentToBattlefield { target_index } => {
                 let index = usize::from(target_index);
                 let Some(Target::Object(object)) = continuation.ctx.targets.get(index).copied()
@@ -9838,6 +11308,67 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
             }
+            EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SearchArtifactWithManaValueOneMoreThanSacrificed) => {
+                let player = continuation.ctx.controller;
+                let Some(filter) =
+                    crate::standard_cards_v1::repurposing_bay_filter(&continuation.ctx)
+                else {
+                    return Err("Repurposing Bay lost its sacrificed artifact".to_string());
+                };
+                let original_library = bind_library_exact(state, player);
+                validate_library_search_live_metadata(state, player, filter, &original_library)?;
+                let candidates =
+                    library_search_candidates(state, player, filter, &original_library)?;
+                stage_library_search_to_battlefield_choice(
+                    &mut continuation,
+                    player,
+                    filter,
+                    original_library,
+                    candidates,
+                    path,
+                );
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::MayBecomeEverflame) => {
+                let Some(source) =
+                    crate::standard_cards_v1::everflame_candidate(state, &continuation.ctx)
+                else {
+                    continue;
+                };
+                let player = continuation.ctx.controller;
+                continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                    player,
+                    path: path.clone(),
+                    default: None,
+                    purpose: EffectBooleanChoicePurpose::StandardMayBecomeEverflameV1 {
+                        player,
+                        source,
+                        canonical_path: path,
+                        expected_remaining_frames: continuation.frames.clone(),
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::BecomeEverflame { source }) => {
+                let Some(EffectAnsweredChoiceGuard::StandardEverflameChosenV1 {
+                    source: expected_source,
+                    canonical_path,
+                    remaining_frames,
+                }) = continuation.answered_choice_guard.as_ref()
+                else {
+                    return Err("Everflame change lost its answered choice".to_string());
+                };
+                if source != *expected_source
+                    || path != *canonical_path
+                    || continuation.frames != *remaining_frames
+                {
+                    return Err("Everflame choice changed".to_string());
+                }
+                continuation.answered_choice_guard = None;
+                crate::standard_cards_v1::become_everflame(state, source);
+            }
             EffectOp::SearchLibraryToBattlefieldTapped { player, filter } => {
                 let player = continuation.ctx.resolve_player(player, state);
                 let original_library = bind_library_exact(state, player);
@@ -10256,7 +11787,7 @@ impl ExecCtx {
         }
     }
 
-    fn resolve_object(&self, r: ObjectRef) -> ObjectId {
+    pub(crate) fn resolve_object(&self, r: ObjectRef) -> ObjectId {
         match r {
             ObjectRef::ThisSource => self.source,
             ObjectRef::Target(i) => match self.targets[i as usize] {
@@ -10266,7 +11797,7 @@ impl ExecCtx {
         }
     }
 
-    fn resolve_target(&self, r: TargetRef) -> Target {
+    pub(crate) fn resolve_target(&self, r: TargetRef) -> Target {
         match r {
             TargetRef::ThisSource => Target::Object(self.source),
             TargetRef::Target(i) => self.targets[i as usize],
@@ -10275,7 +11806,7 @@ impl ExecCtx {
         }
     }
 
-    fn target_incarnation_matches(&self, index: usize, state: &GameState) -> bool {
+    pub(crate) fn target_incarnation_matches(&self, index: usize, state: &GameState) -> bool {
         match (self.targets.get(index), self.target_contracts.get(index)) {
             (Some(Target::Player(player)), Some(StackTargetContractV4::Player(bound))) => {
                 player == bound
@@ -10301,7 +11832,7 @@ impl ExecCtx {
         }
     }
 
-    fn resolve_player(&self, r: PlayerRef, state: &GameState) -> PlayerId {
+    pub(crate) fn resolve_player(&self, r: PlayerRef, state: &GameState) -> PlayerId {
         match r {
             PlayerRef::Controller => self.controller,
             PlayerRef::Target(i) => match self.targets[i as usize] {
@@ -11674,6 +13205,9 @@ fn library_filter_matches(
         }
         LibraryCardFilter::AnyLand => def.has_type(CardType::Land),
         LibraryCardFilter::AnyCard => true,
+        LibraryCardFilter::ArtifactWithManaValue(mana_value) => {
+            def.has_type(CardType::Artifact) && def.mana_value == mana_value
+        }
     })
 }
 
@@ -11699,6 +13233,9 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
             }),
         LibraryCardFilter::AnyLand => fnv1a_u64(0xcbf2_9ce4_8422_2325, 5),
         LibraryCardFilter::AnyCard => fnv1a_u64(0xcbf2_9ce4_8422_2325, 6),
+        LibraryCardFilter::ArtifactWithManaValue(mana_value) => {
+            fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 7), u64::from(mana_value))
+        }
     }
 }
 
@@ -13638,6 +15175,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 }
             }
         }
+        EffectOp::StandardV1(op) => crate::standard_cards_v1::execute(op, ctx, state),
         EffectOp::BoostAttachedCreatureUntilEndOfTurn { power, toughness } => {
             let Some(source_contract) = ctx.ability_source_contract else {
                 return;
@@ -13957,6 +15495,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             let object = ctx.resolve_object(*object);
             if state.objects.get(object).zone == Zone::Battlefield {
                 state.objects.get_mut(object).tapped = false;
+                crate::standard_cards_v1::release_untapped_locks(state);
             }
         }
         EffectOp::AnimateSource => {
@@ -14065,6 +15604,20 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ));
                 return;
             }
+            #[cfg(feature = "standard-magezero-fixtures")]
+            let scaled = {
+                let scale = |count: i16| {
+                    i16::try_from(crate::standard_cards_v1::scale_counters(
+                        state,
+                        ctx.controller,
+                        i32::from(count),
+                    ))
+                    .unwrap_or(i16::MAX)
+                };
+                (scale(*plus1_plus1), scale(*lifelink), scale(*stun))
+            };
+            #[cfg(feature = "standard-magezero-fixtures")]
+            let (plus1_plus1, lifelink, stun) = (&scaled.0, &scaled.1, &scaled.2);
             let next = (
                 live.counters
                     .plus1_plus1
@@ -14854,7 +16407,6 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ObjectRef::Target(index) => Some(usize::from(index)),
                 ObjectRef::ThisSource => None,
             };
-            let object = ctx.resolve_object(*object);
             let Some(target_index) = target_index else {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -14862,6 +16414,11 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ));
                 return;
             };
+            // "Up to one target" (Assimilation Aegis) may have chosen none.
+            if target_index >= ctx.targets.len() {
+                return;
+            }
+            let object = ctx.resolve_object(*object);
             if !ctx.target_incarnation_matches(target_index, state)
                 || state.objects.get(object).zone != Zone::Battlefield
             {
@@ -14880,12 +16437,14 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     && source.zone == Zone::Battlefield
                     && source.zone_change_count == source_contract.zone_change_count
             });
-            let target_card_def = state.objects.get(object).card_def;
             let target_owner = state.objects.get(object).owner;
             event::propose_and_commit(
                 state,
                 event::ProposedEvent::zone_change(object, Zone::Exile),
             );
+            // Read after the move: a creature that was a copy (Assimilation
+            // Aegis) arrives in exile as its own card.
+            let target_card_def = state.objects.get(object).card_def;
             if source_is_live {
                 let exiled_zone_change_count = state.objects.get(object).zone_change_count;
                 let source = ObjectLinkV4 {

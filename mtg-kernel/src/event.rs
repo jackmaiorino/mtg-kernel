@@ -24,6 +24,8 @@ pub enum LibraryPlacement {
     Top,
     SecondFromTop,
     Bottom,
+    /// Appended for Braided Quipu.
+    ThirdFromTop,
 }
 
 /// Which observers learn the identity of a card inserted into a library at
@@ -574,6 +576,30 @@ pub enum CommittedEvent {
         turn: u32,
         active_player: PlayerId,
     },
+    /// Precedes a transforming permanent's departure from the battlefield
+    /// while it showed a face other than its front, so leave triggers see
+    /// the face that left. Only the Standard catalog's transforming cards
+    /// record it.
+    LeftBattlefieldFaceV1 {
+        object: ObjectId,
+        zone_change_count: u32,
+        face_index: u8,
+    },
+    /// A door of a Room permanent became unlocked (709.5), either as the
+    /// Room entered after its half was cast or by the unlock special action.
+    /// Only the Standard catalog's Rooms record it.
+    RoomDoorUnlockedV1 {
+        object: ObjectId,
+        zone_change_count: u32,
+        door: u8,
+    },
+    /// A Class permanent gained a level (716.2). Only the Standard catalog's
+    /// Classes record it.
+    ClassLevelGainedV1 {
+        object: ObjectId,
+        zone_change_count: u32,
+        level: u8,
+    },
 }
 
 /// Remembers the counters of a departing permanent whose own leave ability
@@ -613,7 +639,12 @@ fn initialize_entry_counters(state: &mut GameState, object: ObjectId, kicked: bo
     if definition.is_executable() {
         if let Some(entry) = definition.enters_with_plus_one_counters {
             if !entry.if_kicked || kicked {
-                state.objects.get_mut(object).counters.plus1_plus1 = entry.count;
+                #[cfg(feature = "standard-magezero-fixtures")]
+                let entry_count =
+                    crate::standard_cards_v1::scale_counters(state, live.controller, entry.count);
+                #[cfg(not(feature = "standard-magezero-fixtures"))]
+                let entry_count = entry.count;
+                state.objects.get_mut(object).counters.plus1_plus1 = entry_count;
             }
         }
     }
@@ -651,6 +682,8 @@ pub(crate) fn add_plus_one_counters(
     if live.zone != Zone::Battlefield || count < 0 {
         return Err("invalid +1/+1 counter placement".to_string());
     }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    let count = crate::standard_cards_v1::scale_counters(state, player, count);
     let total = live
         .counters
         .plus1_plus1
@@ -676,6 +709,9 @@ pub fn apply_replacements(
                 crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
             )
         });
+    if let ProposedEvent::Damage(damage) = &mut proposed {
+        crate::standard_cards_v1::replace_damage(state, damage);
+    }
     if let ProposedEvent::Damage(damage) = &proposed {
         if !damage_cannot_be_prevented
             && crate::engine::damage_is_prevented_by_protection(state, damage.source, damage.target)
@@ -962,8 +998,12 @@ fn commit_with_ability_lki(
                         state.record_life_loss_v1(p);
                     }
                     state.players[p.index()].life -= lost;
+                    #[cfg(feature = "standard-magezero-fixtures")]
+                    crate::standard_cards_v1::record_life(state, p, 0, lost);
                 }
             }
+            #[cfg(feature = "standard-magezero-fixtures")]
+            crate::standard_cards_v1::after_damage(state, d.source, d.amount, d.is_combat);
             CommittedEvent::Damage {
                 source: d.source,
                 target: d.target,
@@ -976,7 +1016,27 @@ fn commit_with_ability_lki(
             #[cfg(not(feature = "standard-magezero-fixtures"))]
             let _ = &mut z;
             let from = state.objects.get(z.object).zone;
+            #[cfg(feature = "standard-magezero-fixtures")]
+            if from == Zone::Battlefield {
+                crate::standard_cards_v1::end_aegis_copies_before_departure(state, z.object);
+            }
             let controller_before = state.objects.get(z.object).controller;
+            if from == Zone::Battlefield {
+                let live = state.objects.get(z.object);
+                if live.v4.face_index != 0
+                    && crate::standard_cards_v1::records_departure_face(
+                        &crate::card_def::CARD_DEFS[live.card_def as usize],
+                    )
+                {
+                    let marker = CommittedEvent::LeftBattlefieldFaceV1 {
+                        object: z.object,
+                        zone_change_count: live.zone_change_count,
+                        face_index: live.v4.face_index,
+                    };
+                    state.engine.event_log.push(marker.clone());
+                    state.engine.event_history.push(marker);
+                }
+            }
             #[cfg(feature = "standard-magezero-fixtures")]
             if from == Zone::Battlefield {
                 record_counter_lki(state, z.object);
@@ -1037,6 +1097,8 @@ fn commit_with_ability_lki(
                 state.record_life_loss_v1(l.player);
             }
             state.players[l.player.index()].life -= amount;
+            #[cfg(feature = "standard-magezero-fixtures")]
+            crate::standard_cards_v1::record_life(state, l.player, 0, amount);
             CommittedEvent::LifeLoss {
                 player: l.player,
                 amount,
@@ -1047,6 +1109,8 @@ fn commit_with_ability_lki(
                 return;
             }
             state.players[g.player.index()].life += g.amount;
+            #[cfg(feature = "standard-magezero-fixtures")]
+            crate::standard_cards_v1::record_life(state, g.player, g.amount, 0);
             CommittedEvent::LifeGain {
                 player: g.player,
                 amount: g.amount,
@@ -1613,6 +1677,7 @@ fn commit_zone_change(
                 LibraryPlacement::Top => 0,
                 LibraryPlacement::SecondFromTop => 1.min(library_len),
                 LibraryPlacement::Bottom => library_len,
+                LibraryPlacement::ThirdFromTop => 2.min(library_len),
             };
             // The insertion position is public even when the inserted
             // identity is not. Preserve every still-valid older fact by

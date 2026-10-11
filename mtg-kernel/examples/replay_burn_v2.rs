@@ -1653,6 +1653,9 @@ fn run(
             SurfaceDecision::Decision(Decision::ChooseLegendPermanent { .. }) => {
                 return Err("unhandled-decision:ChooseLegendPermanent".to_string())
             }
+            SurfaceDecision::Decision(Decision::ChooseAttackTarget { .. }) => {
+                return Err("unhandled-decision:ChooseAttackTarget".to_string())
+            }
             SurfaceDecision::Decision(Decision::ChooseLondonMulligan { .. })
             | SurfaceDecision::Decision(Decision::ChooseLondonBottom { .. }) => {
                 return Err("unsupported-london-mulligan-protocol".to_string())
@@ -1785,6 +1788,7 @@ fn decision_player(d: &SurfaceDecision, state: &GameState) -> Option<PlayerId> {
         | SurfaceDecision::Decision(Decision::ChooseEffectBoolean { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseCombatDamageRange { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseLegendPermanent { player, .. })
+        | SurfaceDecision::Decision(Decision::ChooseAttackTarget { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseLondonMulligan { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseLondonBottom { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseEffectTargets { player, .. })

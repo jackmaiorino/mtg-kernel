@@ -3754,6 +3754,1201 @@
         "pay_life_cost"
       ],
       "java_file": "Mage.Sets/src/mage/cards/s/StartingTown.java"
+    },
+    {
+      "name": "Teferi, Temporal Pilgrim",
+      "engine_capability": "full",
+      "mana_cost": "{3}{U}{U}",
+      "mana_value": 5,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Planeswalker"
+      ],
+      "subtypes": [
+        "Teferi"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoU.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "loyalty_abilities",
+        "draw_trigger",
+        "token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/TeferiTemporalPilgrim.java",
+      "starting_loyalty": 4
+    },
+    {
+      "name": "Teferi Spirit Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Spirit"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "vigilance",
+        "draw_trigger"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/SpiritTeferiToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Cecil, Dark Knight",
+      "engine_capability": "full",
+      "mana_cost": "{B}",
+      "mana_value": 1,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Knight"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 2,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "deathtouch",
+        "transform",
+        "damage_trigger",
+        "lifelink",
+        "attack_trigger"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CecilDarkKnight.java"
+    },
+    {
+      "name": "Polukranos Reborn",
+      "engine_capability": "full",
+      "mana_cost": "{G}{G}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Hydra"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 4,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "reach",
+        "transform",
+        "phyrexian_mana",
+        "lifelink",
+        "dies_trigger",
+        "token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/p/PolukranosReborn.java"
+    },
+    {
+      "name": "Phyrexian Hydra Reach Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "G",
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Phyrexian",
+        "Hydra"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "reach"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/PhyrexianHydraWithReachToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Phyrexian Hydra Lifelink Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "G",
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Phyrexian",
+        "Hydra"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "lifelink"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/PhyrexianHydraWithLifelinkToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Ojer Axonil, Deepest Might",
+      "engine_capability": "full",
+      "mana_cost": "{2}{R}{R}",
+      "mana_value": 4,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "God"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 4,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [
+        "R"
+      ],
+      "decks": [
+        "Standard-MonoR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "trample",
+        "damage_replacement",
+        "dies_trigger",
+        "transform",
+        "mana_ability"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/o/OjerAxonilDeepestMight.java"
+    },
+    {
+      "name": "Blue Sun's Twilight",
+      "engine_capability": "full",
+      "mana_cost": "{X}{U}{U}",
+      "mana_value": 2,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoU.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "x_cost",
+        "gain_control",
+        "token_copy"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BlueSunsTwilight.java"
+    },
+    {
+      "name": "Unholy Annex // Ritual Chamber",
+      "engine_capability": "full",
+      "mana_cost": "{2}{B}",
+      "mana_value": 8,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [
+        "Room"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "room",
+        "end_step_trigger",
+        "unlock_trigger",
+        "token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/u/UnholyAnnexRitualChamber.java"
+    },
+    {
+      "name": "Demon Flying Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Demon"
+      ],
+      "supertypes": [],
+      "power": 6,
+      "toughness": 6,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/Demon66Token.java",
+      "is_token": true
+    },
+    {
+      "name": "Seam Rip",
+      "engine_capability": "full",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "etb_trigger",
+        "exile_until_leaves"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SeamRip.java"
+    },
+    {
+      "name": "Dusk Rose Reliquary",
+      "engine_capability": "full",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "additional_cost_sacrifice",
+        "ward",
+        "etb_trigger",
+        "exile_until_leaves"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DuskRoseReliquary.java"
+    },
+    {
+      "name": "Sheltered by Ghosts",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [
+        "Aura"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "aura",
+        "etb_trigger",
+        "exile_until_leaves",
+        "lifelink",
+        "ward"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/ShelteredByGhosts.java"
+    },
+    {
+      "name": "Hardlight Containment",
+      "engine_capability": "full",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [
+        "Aura"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "aura",
+        "etb_trigger",
+        "exile_until_leaves",
+        "ward"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HardlightContainment.java"
+    },
+    {
+      "name": "Basilisk Collar",
+      "engine_capability": "full",
+      "mana_cost": "{1}",
+      "mana_value": 1,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Equipment"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "equipment",
+        "deathtouch",
+        "lifelink"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BasiliskCollar.java"
+    },
+    {
+      "name": "Candy Trail",
+      "engine_capability": "full",
+      "mana_cost": "{1}",
+      "mana_value": 1,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Food",
+        "Clue"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "etb_trigger",
+        "scry",
+        "activated_sacrifice",
+        "lifegain",
+        "draw"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CandyTrail.java"
+    },
+    {
+      "name": "Warleader's Call",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}{W}",
+      "mana_value": 3,
+      "colors": [
+        "R",
+        "W"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "anthem",
+        "creature_enters_trigger",
+        "damage_each_opponent"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/w/WarleadersCall.java"
+    },
+    {
+      "name": "Lunar Convocation",
+      "engine_capability": "full",
+      "mana_cost": "{W}{B}",
+      "mana_value": 2,
+      "colors": [
+        "W",
+        "B"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-BW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "end_step_trigger",
+        "lifegain_watcher",
+        "token",
+        "pay_life",
+        "draw"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LunarConvocation.java"
+    },
+    {
+      "name": "Bat Flying Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bat"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/BatToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Simulacrum Synthesizer",
+      "engine_capability": "full",
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "etb_trigger",
+        "scry",
+        "artifact_enters_trigger",
+        "token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SimulacrumSynthesizer.java"
+    },
+    {
+      "name": "Karn Construct Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Construct"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 0,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "artifact_count_boost"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/KarnConstructToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Case of the Gateway Express",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [
+        "Case"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "case",
+        "etb_trigger",
+        "damage",
+        "anthem"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CaseOfTheGatewayExpress.java"
+    },
+    {
+      "name": "Innkeeper's Talent",
+      "engine_capability": "full",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [
+        "Class"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "class",
+        "beginning_of_combat_trigger",
+        "counters",
+        "ward",
+        "counter_doubling"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/i/InnkeepersTalent.java"
+    },
+    {
+      "name": "Stormchaser's Talent",
+      "engine_capability": "full",
+      "mana_cost": "{U}",
+      "mana_value": 1,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [
+        "Class"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "class",
+        "etb_trigger",
+        "token",
+        "regrowth",
+        "cast_trigger"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/StormchasersTalent.java"
+    },
+    {
+      "name": "Otter Prowess Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "U",
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Otter"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "prowess"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/OtterProwessToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Case of the Uneaten Feast",
+      "engine_capability": "full",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [
+        "Case"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-BW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "case",
+        "creature_enters_trigger",
+        "lifegain",
+        "cast_from_graveyard"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CaseOfTheUneatenFeast.java"
+    },
+    {
+      "name": "Liliana of the Veil",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Planeswalker"
+      ],
+      "subtypes": [
+        "Liliana"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "loyalty_abilities",
+        "discard",
+        "edict",
+        "piles"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LilianaOfTheVeil.java",
+      "starting_loyalty": 3
+    },
+    {
+      "name": "Breach the Multiverse",
+      "engine_capability": "full",
+      "mana_cost": "{5}{B}{B}",
+      "mana_value": 7,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "mill",
+        "reanimate_from_any_graveyard",
+        "type_change"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BreachTheMultiverse.java"
+    },
+    {
+      "name": "Fable of the Mirror-Breaker",
+      "engine_capability": "full",
+      "mana_cost": "{2}{R}",
+      "mana_value": 3,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [
+        "Saga"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "saga",
+        "token",
+        "rummage",
+        "transform",
+        "token_copy",
+        "delayed_trigger"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FableOfTheMirrorBreaker.java"
+    },
+    {
+      "name": "Fable Goblin Shaman Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Goblin",
+        "Shaman"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "attack_trigger",
+        "treasure"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/FableOfTheMirrorBreakerToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Repurposing Bay",
+      "engine_capability": "full",
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "sacrifice_cost",
+        "library_search",
+        "paid_cost_mana_value"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RepurposingBay.java"
+    },
+    {
+      "name": "The Irencrag",
+      "engine_capability": "full",
+      "mana_cost": "{2}",
+      "mana_value": 2,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [
+        "C"
+      ],
+      "decks": [
+        "Standard16-UW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "mana_ability",
+        "legendary_enters_trigger",
+        "becomes_equipment",
+        "equip"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/TheIrencrag.java"
+    },
+    {
+      "name": "Clay-Fired Bricks",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "etb_trigger",
+        "library_search",
+        "lifegain",
+        "craft",
+        "transform",
+        "token",
+        "anthem"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/ClayFiredBricks.java"
+    },
+    {
+      "name": "Cosmium Gnome Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Gnome"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/GnomeToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Braided Net",
+      "engine_capability": "full",
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "counters",
+        "remove_counter_cost",
+        "tap_target",
+        "activation_lock",
+        "craft",
+        "transform",
+        "draw",
+        "library_placement"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BraidedNet.java"
+    },
+    {
+      "name": "Chandra, Hope's Beacon",
+      "engine_capability": "full",
+      "mana_cost": "{4}{R}{R}",
+      "mana_value": 6,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Planeswalker"
+      ],
+      "subtypes": [
+        "Chandra"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "planeswalker",
+        "cast_trigger",
+        "spell_copy",
+        "new_targets",
+        "once_each_turn",
+        "mana_any_combination",
+        "impulse_exile_cast",
+        "variable_loyalty",
+        "multi_target_damage"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/ChandraHopesBeacon.java",
+      "starting_loyalty": 5
+    },
+    {
+      "name": "Assimilation Aegis",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}{U}",
+      "mana_value": 3,
+      "colors": [
+        "W",
+        "U"
+      ],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Equipment"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "equipment",
+        "etb_trigger",
+        "exile_until_leaves",
+        "copy"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AssimilationAegis.java"
+    },
+    {
+      "name": "Agatha's Soul Cauldron",
+      "engine_capability": "full",
+      "mana_cost": "{2}",
+      "mana_value": 2,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "activated_ability",
+        "graveyard_hate",
+        "ability_granting",
+        "mana_any_color"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AgathasSoulCauldron.java"
     }
   ]
 }
