@@ -131,7 +131,10 @@ fn overlapping_control_effects_unwind_to_nonowner_baseline_and_survive_source_de
         // Cleanup and into the baseline controller's next Untap. Control expiry
         // first restores that player; their new turn then clears sickness.
         assert_eq!(restored.active_player, controller.opponent());
-        assert_eq!(restored.turn, ending_turn + 1);
+        assert_eq!(
+            restored.turn,
+            ending_turn + u32::from(restored.active_player == restored.starting_player)
+        );
         assert!(!restored.objects.get(target).summoning_sick);
     }
 }
