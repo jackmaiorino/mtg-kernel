@@ -5,9 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools" / "spy_reset"))
-import analyze
-import pilot
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from tools.spy_reset import analyze, pilot
 
 
 class AnalysisInputs(unittest.TestCase):
