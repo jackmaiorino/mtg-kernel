@@ -124,6 +124,8 @@ def bindings(root, python):
         "formal_case_driver.py", "formal_launcher_adapter.py", "observe_native_affinity.py",
         "wait_canonical_free.py", "run_comparison.py", "run_qualifications.py")}
     return {"tools": tools, "runtimes": runtimes, "helpers": helpers,
+            "controller": helpers["formal_case_driver.py"],
+            "adapter": helpers["formal_launcher_adapter.py"],
             "runtime_decks": pin(root / "runtime_decks_v1.json"),
             "python_pin": pin(python), "python": str(python), "helper": pin(Path(__file__).resolve())}
 
