@@ -844,14 +844,19 @@ pub enum CommittedEvent {
     BanishingLinkInstalledV1 {
         record: crate::state::LinkedExileRecordV4,
         exile_history_index: u64,
+        recipient_was_token: bool,
     },
     BanishingLinkExpiredV1 {
         record: crate::state::LinkedExileRecordV4,
         departure_history_index: u64,
         return_history_index: Option<u64>,
+        no_return_reason: Option<crate::banishing_light_v1::NoReturnV1>,
     },
     BanishingRecipientCeasedV1 {
         record: crate::state::LinkedExileRecordV4,
+    },
+    BanishingAuraHostsCapturedV1 {
+        choice: Box<crate::linked_aura_return_v1::HostChoiceV1>,
     },
 }
 

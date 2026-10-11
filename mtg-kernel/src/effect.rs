@@ -6243,13 +6243,33 @@ fn returning_aura_hosts(
     state: &GameState,
     aura: EffectObjectBinding,
 ) -> Result<Vec<EffectObjectBinding>, String> {
+    returning_aura_hosts_in_zone(state, aura, Zone::Graveyard)
+}
+
+pub(crate) fn exiled_aura_hosts(
+    state: &GameState,
+    aura: EffectObjectBinding,
+) -> Result<Vec<EffectObjectBinding>, String> {
+    returning_aura_hosts_in_zone(state, aura, Zone::Exile)
+}
+
+fn returning_aura_hosts_in_zone(
+    state: &GameState,
+    aura: EffectObjectBinding,
+    expected_zone: Zone,
+) -> Result<Vec<EffectObjectBinding>, String> {
     validate_effect_object_binding(state, aura)?;
-    if aura.expected_zone != Zone::Graveyard
+    if aura.expected_zone != expected_zone
         || crate::card_def::CARD_DEFS[state.objects.get(aura.object).card_def as usize]
             .attachment
             .is_none()
     {
-        return Err("returning Aura is not a creature Aura in its graveyard".to_string());
+        return Err(if expected_zone == Zone::Graveyard {
+            "returning Aura is not a creature Aura in its graveyard"
+        } else {
+            "returning Aura lost its exact permitted card zone"
+        }
+        .to_string());
     }
     Ok(state
         .objects
@@ -6309,6 +6329,25 @@ fn put_returning_aura_attached(
     if !returning_aura_hosts(state, aura)?.contains(&host) {
         return Err("returning Aura host is no longer legal".to_string());
     }
+    put_aura_attached_from_validated_zone(state, aura, host)
+}
+
+pub(crate) fn put_exiled_aura_attached(
+    state: &mut GameState,
+    aura: EffectObjectBinding,
+    host: EffectObjectBinding,
+) -> Result<(), String> {
+    if !exiled_aura_hosts(state, aura)?.contains(&host) {
+        return Err("exiled Aura host is no longer legal".to_string());
+    }
+    put_aura_attached_from_validated_zone(state, aura, host)
+}
+
+fn put_aura_attached_from_validated_zone(
+    state: &mut GameState,
+    aura: EffectObjectBinding,
+    host: EffectObjectBinding,
+) -> Result<(), String> {
     event::propose_and_commit(
         state,
         event::ProposedEvent::zone_change(aura.object, Zone::Battlefield),
@@ -14741,9 +14780,67 @@ pub(crate) fn return_cards_exiled_until_source_leaves(
         let Some(position) = position else { break };
         let record = state.engine.linked_exile_records.remove(position);
         let return_start = state.engine.event_history.len();
-        if state.objects.try_get(record.exiled).is_some_and(|live| {
-            live.zone == Zone::Exile && live.zone_change_count == record.exiled_zone_change_count
-        }) {
+        let mut no_return_reason = None;
+        if crate::banishing_light_v1::owns_definition(record.source.card_def) {
+            match crate::banishing_light_v1::original_token(state, record) {
+                Ok(true) => {
+                    no_return_reason =
+                        Some(crate::banishing_light_v1::NoReturnV1::TokenCannotReturn)
+                }
+                Ok(false) => {
+                    let still_exiled = state.objects.try_get(record.exiled).is_some_and(|live| {
+                        live.zone == Zone::Exile
+                            && live.zone_change_count == record.exiled_zone_change_count
+                            && state.exile.contains(&record.exiled)
+                    });
+                    if !still_exiled {
+                        no_return_reason =
+                            Some(crate::banishing_light_v1::NoReturnV1::RecipientDeparted);
+                    } else if crate::card_def::CARD_DEFS
+                        [state.objects.get(record.exiled).card_def as usize]
+                        .attachment
+                        .is_some()
+                    {
+                        match crate::linked_aura_return_v1::prepare(state, record) {
+                            Ok(choice) if choice.original_candidates.is_empty() => {
+                                match crate::linked_aura_return_v1::record_capture(state, choice) {
+                                    Ok(capture_history_index) => no_return_reason = Some(
+                                        crate::banishing_light_v1::NoReturnV1::AuraNoLegalHost {
+                                            capture_history_index,
+                                        },
+                                    ),
+                                    Err(_) => {
+                                        state.engine.halted=Some((crate::engine::UnsupportedMechanic::InvalidEffectContinuation,source));
+                                        return;
+                                    }
+                                }
+                            }
+                            Ok(_) => {} // Nonempty choices require the owning departure continuation.
+                            Err(_) => {
+                                state.engine.halted = Some((
+                                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                                    source,
+                                ));
+                                return;
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        source,
+                    ));
+                    return;
+                }
+            }
+        }
+        if no_return_reason.is_none()
+            && state.objects.try_get(record.exiled).is_some_and(|live| {
+                live.zone == Zone::Exile
+                    && live.zone_change_count == record.exiled_zone_change_count
+            })
+        {
             let to = if battlefield_exile_until_source_leaves(record.source.card_def) {
                 Zone::Battlefield
             } else {
@@ -14754,7 +14851,7 @@ pub(crate) fn return_cards_exiled_until_source_leaves(
                 event::ProposedEvent::zone_change_preserving_known_identity(record.exiled, to),
             );
         }
-        crate::banishing_light_v1::record_expiry(state, record, return_start);
+        crate::banishing_light_v1::record_expiry(state, record, return_start, no_return_reason);
     }
 }
 
