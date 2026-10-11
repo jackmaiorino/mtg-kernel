@@ -2510,11 +2510,9 @@ pub fn cease_to_exist(state: &mut GameState, id: ObjectId) -> bool {
         .iter()
         .find(|item| item.source == id && item.is_copy)
         .filter(|item| {
-            item.v4.source_contract.is_some_and(|source| {
-                crate::card_def::CARD_DEFS
-                    .get(usize::from(source.card_def))
-                    .is_some_and(|def| def.name == "Temporal Manipulation")
-            })
+            item.v4
+                .source_contract
+                .is_some_and(|source| crate::extra_turn_v1::selected_definition(source.card_def))
         })
         .and_then(|item| {
             item.v4

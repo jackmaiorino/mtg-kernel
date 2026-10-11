@@ -34,6 +34,12 @@ pub fn recipe() -> EffectOp {
     EffectOp::TakeExtraTurnAfterThisOneV1
 }
 
+pub(crate) fn selected_definition(id: u16) -> bool {
+    card_def::CARD_DEFS
+        .get(usize::from(id))
+        .is_some_and(|definition| definition.name == "Temporal Manipulation")
+}
+
 fn selected(item: &StackItem, state: &GameState) -> bool {
     [
         item.v4.source_contract.map(|source| source.card_def),
@@ -44,11 +50,7 @@ fn selected(item: &StackItem, state: &GameState) -> bool {
     ]
     .into_iter()
     .flatten()
-    .any(|id| {
-        card_def::CARD_DEFS
-            .get(usize::from(id))
-            .is_some_and(|definition| definition.name == "Temporal Manipulation")
-    })
+    .any(selected_definition)
 }
 
 fn exact_recipe(item: &StackItem) -> bool {
