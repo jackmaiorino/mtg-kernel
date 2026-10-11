@@ -475,6 +475,8 @@ pub mod sideboard_search_campaign_v1;
 // walk against an externally supplied Store copy. Test-only, ignored by
 // default, never built into the product binary.
 mod authority_of_the_consuls_v1;
+pub(crate) mod cerberus_capture_v1;
+pub mod cerberus_public_v1;
 pub(crate) mod life_gain_turn_v1;
 pub mod phase_profile;
 pub mod policy_surface_v5;

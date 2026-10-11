@@ -12826,6 +12826,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
     let finalized = state.stack.last().expect("trigger just published").clone();
     crate::wildwood_capture_v1::publish(state, &finalized);
     effect::frenzied_goblin_resolution_v1::publish(state)?;
+    crate::cerberus_capture_v1::publish(state, &finalized)?;
     // Same `priority_passes`/`priority_player` reset as `reset_priority`
     // (117.5: priority passes to the active player once a triggered
     // ability is put on the stack), but deliberately inlined instead of
@@ -13030,6 +13031,7 @@ fn triggered_stack_item_expected_target_spec(
         inline_effect,
         ability_source_contract,
     )?;
+    crate::cerberus_capture_v1::validate_source(state, inline_effect, ability_source_contract)?;
     #[cfg(feature = "standard-magezero-fixtures")]
     if matches!(
         inline_effect,
@@ -13781,7 +13783,9 @@ pub(crate) fn counter_stack_item_by_id(
     )?;
     crate::source_power_activation_v1::finish(state, &item);
     crate::authority_of_the_consuls_v1::record_countered(state, &item);
+    crate::cerberus_capture_v1::record_countered(state, &item);
     crate::authority_of_the_consuls_v1::finish(state, &item);
+    crate::cerberus_capture_v1::finish(state, &item);
     crate::wildwood_capture_v1::close(state, &item, true);
     if let Some(departure) = departure {
         apply_spell_departure(state, departure)?;
@@ -14155,6 +14159,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         if progress == ResolutionProgress::Complete {
             crate::source_power_activation_v1::finish(state, &item);
             crate::authority_of_the_consuls_v1::finish(state, &item);
+            crate::cerberus_capture_v1::finish(state, &item);
             crate::wildwood_capture_v1::close(state, &item, false);
             keep_ability_on_stack_until_discarded(state, &item);
         }
@@ -14712,6 +14717,10 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 };
                 state.engine.event_log.push(marker.clone());
                 state.engine.event_history.push(marker);
+                crate::cerberus_capture_v1::record_begin(
+                    state,
+                    state.engine.event_history.len() - 1,
+                );
             }
             let p = state.active_player;
             // 306.3: logged only for whichever player's own End step this

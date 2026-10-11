@@ -71,6 +71,7 @@ pub fn producer_sha256() -> String {
         SCHEMA,
         include_str!("rules_meaning_cerberus_v1.rs"),
         include_str!("slumbering_cerberus_v1.rs"),
+        include_str!("cerberus_capture_v1.rs"),
         include_str!("trigger.rs"),
         include_str!("engine.rs"),
         include_str!("effect.rs"),

@@ -3845,6 +3845,11 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
             },
         ) => count == actual_count && max_taken == actual_max_taken,
         (EffectOp::BindAuthorityEntryGainLifeV1, EffectOp::AuthorityEntryGainLifeV1 { .. }) => true,
+        (template, EffectOp::CerberusUntapV1 { .. })
+            if *template == crate::slumbering_cerberus_v1::program_v1() =>
+        {
+            true
+        }
         _ => crate::standard_cards_v1::template_matches(template, effect),
     }
 }
@@ -4586,6 +4591,16 @@ fn triggers_from_events(
                 })
     });
     let mut new_triggers = state.legend_pending_v1.take().unwrap_or_default();
+    match crate::cerberus_capture_v1::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
     match crate::authority_of_the_consuls_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
@@ -4771,6 +4786,12 @@ fn triggers_from_events(
                 }
             }
             for (ability_index, def) in triggers_for(obj.card_def).iter().enumerate() {
+                if def.condition == TriggerCondition::BeginningAnyEndStepIfCreatureDied
+                    && crate::card_def::CARD_DEFS[usize::from(obj.card_def)].name
+                        == "Slumbering Cerberus"
+                {
+                    continue;
+                }
                 // Kept in the definition table for mechanical description;
                 // its runtime producer is the persisted grant above.
                 if crate::standard_creatures_v1::grants_combat_impulse(obj.card_def)

@@ -166,6 +166,7 @@ impl Scan<'_> {
             | ReturnTwoDifferentControllerCreaturesToOwnersHands
             | BindAuthorityEntryGainLifeV1
             | AuthorityEntryGainLifeV1 { .. }
+            | CerberusUntapV1 { .. }
             | CreateControlledCreatureTargetCopyV1
             | DoubleTargetPowerUntilEndOfTurn { .. }
             | DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
@@ -1052,6 +1053,12 @@ pub(super) fn conflicts(
                             || source.attached_to.is_some_and(|link| s.raw(link.object))
                     })
             }
+            CerberusCaptureV1 { capture } => s.raw(capture.source.source),
+            CerberusObserversV1 { sources, .. } => {
+                sources.iter().any(|source| s.raw(source.source))
+            }
+            CerberusPublishedV1 { item, .. } => s.raw(item.source),
+            CerberusOperationV1 { source, .. } => s.raw(source.source),
             AuthorityEntryPublishedV1 { item, .. } => {
                 s.raw(item.source)
                     || item.v4.ability_source_contract.is_some_and(|source| {
@@ -1066,6 +1073,8 @@ pub(super) fn conflicts(
             ControlledCreatureDeathCaptureCollectedV1 { .. }
             | AuthorityEntryCollectedV1 { .. }
             | AuthorityEntryCompletedV1 { .. }
+            | CerberusCollectedV1 { .. }
+            | CerberusCompletedV1 { .. }
             | SquadRallierResolutionBoundaryV1 { .. }
             | SowerRestrictionInstalledV1 { .. }
             | SowerRestrictionExpiredV1 { .. }

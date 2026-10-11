@@ -784,6 +784,31 @@ pub enum CommittedEvent {
     AuthorityEntryPublicFactsV1 {
         capture: crate::authority_public_capture_v1::EntryPublicFactsV1,
     },
+    CerberusObserversV1 {
+        begin_history_index: u64,
+        sources: Vec<crate::state::AbilitySourceContractV4>,
+    },
+    CerberusCaptureV1 {
+        capture: crate::cerberus_capture_v1::CerberusCaptureV1,
+    },
+    CerberusCollectedV1 {
+        capture_history_index: u64,
+    },
+    CerberusPublishedV1 {
+        capture_history_index: u64,
+        item: crate::state::StackItem,
+    },
+    CerberusOperationV1 {
+        capture_history_index: u64,
+        stack_item_id: StackItemId,
+        source: crate::state::AbilitySourceContractV4,
+        kind: crate::cerberus_capture_v1::CerberusOperationKindV1,
+    },
+    CerberusCompletedV1 {
+        capture_history_index: u64,
+        stack_item_id: StackItemId,
+        operation_history_index: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

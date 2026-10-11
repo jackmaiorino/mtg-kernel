@@ -1606,6 +1606,9 @@ pub enum EffectOp {
         capture_history_index: u64,
         observer_index: u32,
     },
+    CerberusUntapV1 {
+        capture_history_index: u64,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -7770,6 +7773,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     temporary_control_v1::authority::validate(state)?;
     crate::self_reflection_v1::validate_live_stack(state)?;
     crate::authority_of_the_consuls_v1::validate_state(state)?;
+    crate::cerberus_capture_v1::validate_state(state)?;
     crate::soul_shackled_zombie_v1::validate_state(state)?;
     crate::source_power_activation_v1::validate_state(state)?;
     crate::wildwood_capture_v1::validate_state(state)?;
@@ -18533,6 +18537,11 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             capture_history_index,
         } => {
             crate::authority_of_the_consuls_v1::resolve(state, ctx, *capture_history_index);
+        }
+        EffectOp::CerberusUntapV1 {
+            capture_history_index,
+        } => {
+            crate::cerberus_capture_v1::resolve(state, ctx, *capture_history_index);
         }
         EffectOp::GrantKeywordTargetUntilEndOfTurn { object, keyword } => {
             let object = ctx.resolve_object(*object);
