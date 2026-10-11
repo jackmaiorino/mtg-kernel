@@ -251,6 +251,63 @@ fn printed_metadata_exact_attack_trigger_and_no_new_catalog_ids() {
 }
 
 #[test]
+fn precise_meaning_authenticates_actual_printed_trigger_and_refuses_forged_facts() {
+    use mtg_kernel::rules_meaning_frenzied_goblin_v1 as precise;
+    let card = card_id_by_name("Frenzied Goblin").expect("true future registration required");
+    let selector = precise::live_selector().unwrap();
+    let record = precise::meaning(&selector, card, 0).unwrap();
+    precise::validate(&record).unwrap();
+    assert_eq!(
+        record.target_spec,
+        mtg_kernel::trigger::trigger_target_spec(card)
+    );
+    assert_eq!((record.target_minimum, record.target_maximum), (1, 1));
+    assert!(record.target_mandatory_at_placement_before_payment);
+    assert_eq!(record.payment_colored, [ManaColor::R]);
+    assert_eq!(record.payment_generic, 0);
+    assert!(record.payment_optional_at_resolution);
+    assert_eq!(
+        precise::meaning(&selector, card, 1),
+        Err(precise::ErrorV1::WrongRoot)
+    );
+    let decoded: precise::MeaningV1 =
+        serde_json::from_slice(&serde_json::to_vec(&record).unwrap()).unwrap();
+    assert_eq!(record, decoded);
+    for field in 0..17 {
+        let mut forged = record.clone();
+        match field {
+            0 => forged.payment_colored = vec![ManaColor::G],
+            1 => forged.payment_generic = 1,
+            2 => forged.target_mandatory_at_placement_before_payment = false,
+            3 => forged.target_any_controller_and_any_power = false,
+            4 => forged.payer_is_captured_trigger_controller = false,
+            5 => forged.source_survival_required_after_capture = true,
+            6 => forged.restriction_expires_at_next_cleanup_including_repeated_cleanup = false,
+            7 => forged.restriction_is_rule_change_not_removable_keyword = false,
+            8 => forged.illegal_sole_target_fizzles_without_payment_choice = false,
+            9 => forged.source_zone = Zone::Hand,
+            10 => forged.source_face_index = 1,
+            11 => forged.target_minimum = 0,
+            12 => forged.target_maximum = 2,
+            13 => forged.recheck_exact_target_incarnation_and_full_legality_at_resolution = false,
+            14 => forged.root_sha256.push('x'),
+            15 => forged.target_spec = mtg_kernel::card_def::TargetSpec::ControlledCreature,
+            _ => forged.recipient_control_or_ability_changes_end_restriction = true,
+        }
+        assert_eq!(
+            precise::validate(&forged),
+            Err(precise::ErrorV1::IdentityMismatch)
+        );
+    }
+    let mut unknown = serde_json::to_value(&record).unwrap();
+    unknown
+        .as_object_mut()
+        .unwrap()
+        .insert("execution_authority".into(), true.into());
+    assert!(serde_json::from_value::<precise::MeaningV1>(unknown).is_err());
+}
+
+#[test]
 fn real_attack_targets_before_optional_payment_pay_decline_and_unpayable() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for choice in 0..3 {
