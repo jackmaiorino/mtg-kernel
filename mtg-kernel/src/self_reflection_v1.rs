@@ -23,7 +23,7 @@ fn copiable_values(state: &GameState, object: crate::ids::ObjectId) -> CopyToken
 }
 
 pub(crate) const ANONYMOUS_BLUEPRINT: &str = "Nameless Creature Copy Token";
-fn anonymous_blueprint_is_exact(card_def: u16) -> bool {
+pub(crate) fn anonymous_blueprint_is_exact(card_def: u16) -> bool {
     let def = &CARD_DEFS[card_def as usize];
     def.name == ANONYMOUS_BLUEPRINT
         && def.object_name.is_empty()
