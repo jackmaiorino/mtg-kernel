@@ -20,6 +20,54 @@ fn restored(state: &GameState) -> GameState {
     serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap()
 }
 #[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn genuine_closed_journals_cannot_transfer_to_a_foreign_catalog_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, _) = actual_trigger(actor);
+        let live = serde_json::to_vec(&state).unwrap();
+        assert!(validate_selected_catalog(&state, false).is_err());
+        assert_eq!(serde_json::to_vec(&state).unwrap(), live);
+        resolve_actual(&mut state);
+        validate_state(&state).unwrap();
+        let rows: Vec<_> = state
+            .engine
+            .event_history
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    CommittedEvent::CerberusObserversV1 { .. }
+                        | CommittedEvent::CerberusCaptureV1 { .. }
+                        | CommittedEvent::CerberusCollectedV1 { .. }
+                        | CommittedEvent::CerberusPublishedV1 { .. }
+                        | CommittedEvent::CerberusOperationV1 { .. }
+                        | CommittedEvent::CerberusCompletedV1 { .. }
+                )
+            })
+            .cloned()
+            .collect();
+        assert_eq!(rows.len(), 6);
+        for event in rows {
+            for history in [false, true] {
+                let mut foreign = ready_state();
+                if history {
+                    foreign.engine.event_history.push(event.clone());
+                } else {
+                    foreign.engine.event_log.push(event.clone());
+                }
+                let foreign = restored(&foreign);
+                let before = serde_json::to_vec(&foreign).unwrap();
+                assert!(validate_selected_catalog(&foreign, false).is_err());
+                assert_eq!(serde_json::to_vec(&foreign).unwrap(), before);
+            }
+        }
+    }
+}
+
+#[test]
 fn registered_absence_preserves_bytes_hash_and_has_no_new_occurrence() {
     use std::hash::{Hash, Hasher};
     for actor in [PlayerId::P0, PlayerId::P1] {

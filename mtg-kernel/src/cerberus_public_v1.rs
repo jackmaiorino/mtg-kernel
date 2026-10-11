@@ -173,6 +173,7 @@ fn roots() -> Result<Vec<RootV1>, RlContractError> {
 }
 /// Authenticates selected roots and the independent event-time capture lifecycle.
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    crate::cerberus_capture_v1::validate_state(state)?;
     crate::effect::validate_pending_effect_choice(state)?;
     for pending in &state.engine.pending_triggers {
         crate::engine::validate_pending_trigger_identity(state, pending)?;
@@ -193,10 +194,12 @@ fn trigger_rows(state: &GameState) -> Result<Vec<TriggerV1>, RlContractError> {
             continue;
         };
         let contract = capture.source;
-        let CommittedEvent::BeginningEndStep {
+        let index = usize::try_from(capture.begin_history_index)
+            .map_err(|_| RlContractError("captured end-step index exceeds usize".into()))?;
+        let Some(CommittedEvent::BeginningEndStep {
             active_player,
             creature_died_this_turn,
-        } = &state.engine.event_history[capture.begin_history_index as usize]
+        }) = state.engine.event_history.get(index)
         else {
             return Err(RlContractError(
                 "captured end-step occurrence missing".into(),
