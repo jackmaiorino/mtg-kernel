@@ -1,0 +1,55 @@
+{
+  "schema": "search-buffer-reuse-state/v1",
+  "pull_request": "https://github.com/jackmaiorino/mtg-kernel/pull/220",
+  "baseline_commit": "1d2404775a141db4cd90d7579f8f765db37d55df",
+  "candidate_commit": "a70a6b9db1d1148f8aab29d7da11b88bb5b1b63d",
+  "baseline_build": {
+    "state": "queued",
+    "claim_id": "186897bc64444827b21f30edf3a6d06f",
+    "runner_pid": 33924,
+    "log": "D:/search-buffer-reuse-20261010/build-baseline-1d240477-claim.log",
+    "receipt": "D:/search-buffer-reuse-20261010/build-baseline.json"
+  },
+  "candidate_build_and_tests": "Combined candidate pinned; one-shot watcher waits for baseline success and host_slots admission",
+  "measurements": "Authorized fixed one/two-worker qualification and ABBA after candidate checks; no measurement has started",
+  "speedup_claim": null,
+  "resource_constraint": "Current fleet inventory has no admissible cores on either PC; existing host_slots baseline queue remains the wake mechanism",
+  "next_wake": "Existing host_slots baseline queue admission, followed by one-shot watcher for candidate checks and measurement",
+  "retired_attempt": "D:/search-buffer-reuse-20261010/retired-baseline-c86b1bf0-queue.json",
+  "storage": {
+    "scratch": "D:/search-buffer-reuse-20261010",
+    "projected_bytes": 12884901888,
+    "cap_bytes": 21474836480,
+    "reserve_bytes": 64424509440
+  },
+  "watcher": {
+    "record": "D:/search-buffer-reuse-20261010/pipeline-watcher.json",
+    "errors": "D:/search-buffer-reuse-20261010/pipeline-watch-error.log",
+    "deadline_hours": 12,
+    "pid": 40980,
+    "log": "D:/search-buffer-reuse-20261010/pipeline-watch.log",
+    "state": "active; waiting for queued baseline build"
+  },
+  "superseded_buffer_only": {
+    "candidate_commit": "ed0482436c2f91bc318557d02e44108ae56b5f66",
+    "record_directory": "D:/search-buffer-reuse-20261010/superseded-buffer-only",
+    "candidate_build_started": false,
+    "measurement_started": false
+  },
+  "validation": {
+    "rustfmt": "passed with Rust 1.94.1",
+    "diff_check": "passed",
+    "source_review": "Separate read-only reviews of batching, reference reuse, common/extension serializers and context serializers found no material discrepancy",
+    "native_checks": "queued",
+    "matched_search": "queued after native checks",
+    "hosted_ci": "Prior candidate failed on two corrected source issues; rerun pending for the repaired candidate"
+  },
+  "superseded_combined": {
+    "candidate_commit": "d362448588c1bae5a9ede4b7442fce7a5902e39b",
+    "record_directory": "D:/search-buffer-reuse-20261010/superseded-combined-d3624485",
+    "reason": "Hosted CI found a redundant closure lint and an invalid test fixture type; both corrected before local candidate dispatch",
+    "candidate_build_started": false,
+    "measurement_started": false,
+    "ci_run": "https://github.com/jackmaiorino/mtg-kernel/actions/runs/38106513339"
+  }
+}

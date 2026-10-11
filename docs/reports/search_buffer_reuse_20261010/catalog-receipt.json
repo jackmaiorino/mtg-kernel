@@ -1,0 +1,15 @@
+{
+  "schema": "search-buffer-reuse-catalog-delivery/v1",
+  "pull_request": "https://github.com/jackmaiorino/mtg-kernel-collab/pull/150",
+  "state": "MERGED",
+  "reviewed_head": "3a2d68f66e5a61dab1f4272c996742f6f3c736ee",
+  "merge_commit": "a4602bb72891fcfdd599bc9659f8d1bdaa35c959",
+  "maintainer_review": "https://github.com/jackmaiorino/mtg-kernel-collab/pull/150#issuecomment-6104598716",
+  "default_branch_verified": true,
+  "owned_rows": 3,
+  "registered_roots": [
+    "D:/search-buffer-reuse-20261010",
+    "E:/search-buffer-reuse-20261010"
+  ],
+  "other_catalog_entries_preserved": true
+}

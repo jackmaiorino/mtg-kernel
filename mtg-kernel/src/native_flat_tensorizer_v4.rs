@@ -12,7 +12,8 @@
 
 use crate::flat_policy_v4::FlatScoringDecisionViewV4;
 use crate::native_flat_tensorizer_v2::{
-    fill_native_flat_decision_tensors_v4, NativeFlatDecisionTensorV2, NativeFlatTensorErrorV2,
+    fill_native_flat_decision_tensors_v4_with_scratch, NativeFlatDecisionTensorV2,
+    NativeFlatTensorErrorV2, NativeFlatTensorScratchV3,
 };
 use crate::native_policy_value_net_v1::{
     NativeEncodedDecisionSchemaV1, NativeEncodedDecisionViewV1,
@@ -31,6 +32,7 @@ pub(crate) struct NativeFlatDecisionTensorV4 {
 #[derive(Default)]
 pub(crate) struct NativeFlatTensorizerV4 {
     poisoned: bool,
+    scratch: NativeFlatTensorScratchV3,
 }
 
 impl NativeFlatTensorizerV4 {
@@ -42,11 +44,12 @@ impl NativeFlatTensorizerV4 {
         if self.poisoned {
             return Err(NativeFlatTensorErrorV2::Poisoned);
         }
-        match fill_native_flat_decision_tensors_v4(decision) {
-            Ok(common) => {
-                *output = NativeFlatDecisionTensorV4 { common };
-                Ok(())
-            }
+        match fill_native_flat_decision_tensors_v4_with_scratch(
+            decision,
+            &mut self.scratch,
+            &mut output.common,
+        ) {
+            Ok(()) => Ok(()),
             Err(error) => {
                 self.poisoned = true;
                 Err(error)
