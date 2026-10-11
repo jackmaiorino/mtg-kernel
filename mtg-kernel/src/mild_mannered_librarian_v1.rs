@@ -50,7 +50,7 @@ pub(crate) fn activation_paid(state: &mut GameState, source: ObjectId, index: us
         }
     }
 }
-fn is_librarian(state: &GameState, source: ObjectId, index: usize) -> bool {
+pub(crate) fn is_librarian(state: &GameState, source: ObjectId, index: usize) -> bool {
     if !cfg!(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")

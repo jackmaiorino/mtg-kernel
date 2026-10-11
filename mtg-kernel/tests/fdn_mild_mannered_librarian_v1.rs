@@ -475,3 +475,86 @@ fn genuine_opponent_turn_activation_is_instant_speed_and_keeps_once_through_that
         );
     }
 }
+
+fn refuse_paid_restore(state: &GameState) {
+    let mut restored = restore(state);
+    let bytes = serde_json::to_vec(&restored).unwrap();
+    assert!(engine::step(&mut restored, Action::Pass).is_err());
+    assert_eq!(serde_json::to_vec(&restored).unwrap(), bytes);
+    let mut expected = restored.clone();
+    expected.engine.halted = Some((
+        engine::UnsupportedMechanic::InvalidEffectContinuation,
+        ObjectId(0),
+    ));
+    assert!(matches!(
+        engine::advance_until_decision(&mut restored),
+        Decision::Halted { .. }
+    ));
+    assert_eq!(
+        serde_json::to_vec(&restored).unwrap(),
+        serde_json::to_vec(&expected).unwrap()
+    );
+}
+
+#[test]
+fn actual_paid_once_mark_and_full_root_are_mandatory_before_or_after_resolution() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for completed in [false, true] {
+            let mut state = ready(actor);
+            let source = source(&mut state, actor);
+            announce(&mut state, actor, source);
+            if completed {
+                finish(&mut state);
+            }
+            for erase_receipt in [false, true] {
+                let mut forged = restore(&state);
+                if erase_receipt {
+                    forged.engine.event_history.retain(|event| {
+                        !matches!(
+                            event,
+                            mtg_kernel::event::CommittedEvent::LibrarianActivationCommittedV1 { .. }
+                        )
+                    });
+                } else {
+                    forged
+                        .objects
+                        .get_mut(source)
+                        .v4
+                        .creature_upgrade
+                        .as_mut()
+                        .unwrap()
+                        .once_activated
+                        .clear();
+                }
+                refuse_paid_restore(&forged);
+            }
+        }
+    }
+}
+
+#[test]
+fn actual_completed_paid_activation_cannot_be_reintroduced_or_lose_completion() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let source = source(&mut state, actor);
+        announce(&mut state, actor, source);
+        let original = state
+            .stack
+            .iter()
+            .find(|item| item.source == source)
+            .unwrap()
+            .clone();
+        finish(&mut state);
+        let mut missing = restore(&state);
+        missing.engine.event_history.retain(|event| {
+            !matches!(
+                event,
+                mtg_kernel::event::CommittedEvent::LibrarianActivationFinishedV1 { .. }
+            )
+        });
+        refuse_paid_restore(&missing);
+        let mut repeated = restore(&state);
+        repeated.stack.push(original);
+        refuse_paid_restore(&repeated);
+    }
+}

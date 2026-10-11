@@ -8977,6 +8977,12 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
             source,
         };
     }
+    if crate::librarian_activation_v1::validate_state(state).is_err() {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
     refresh_face_down_lookers(state);
     loop {
         #[cfg(feature = "standard-magezero-fixtures")]
@@ -13296,6 +13302,7 @@ pub(crate) fn validated_stack_item_target_spec(
 ) -> Result<Option<TargetSpec>, String> {
     validate_spell_stack_source(state, item)?;
     crate::source_power_activation_v1::validate_item(state, item)?;
+    crate::librarian_activation_v1::validate_item(state, item)?;
     if item.madness_offer != (item.kind == StackItemKind::MadnessOffer) {
         return Err("Madness-offer kind and flag disagree".to_string());
     }
@@ -13802,6 +13809,7 @@ pub(crate) fn counter_stack_item_by_id(
     crate::source_power_activation_v1::finish(state, &item);
     crate::authority_of_the_consuls_v1::record_countered(state, &item);
     crate::cerberus_capture_v1::record_countered(state, &item);
+    crate::librarian_activation_v1::finish(state, &item);
     crate::authority_of_the_consuls_v1::finish(state, &item);
     crate::cerberus_capture_v1::finish(state, &item);
     crate::wildwood_capture_v1::close(state, &item, true);
@@ -13814,6 +13822,7 @@ pub(crate) fn counter_stack_item_by_id(
 /// Applies the last part of a completed spell resolution. Physical cards
 /// move normally; virtual spell copies cease without entering a card zone.
 fn finish_resolved_stack_item(state: &mut GameState, item: &StackItem) -> Result<(), String> {
+    crate::librarian_activation_v1::finish(state, item);
     if item.inline_effect.is_some() || item.kind != StackItemKind::Spell {
         return Ok(());
     }
@@ -14176,6 +14185,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         );
         if progress == ResolutionProgress::Complete {
             crate::source_power_activation_v1::finish(state, &item);
+            crate::librarian_activation_v1::finish(state, &item);
             crate::authority_of_the_consuls_v1::finish(state, &item);
             crate::cerberus_capture_v1::finish(state, &item);
             crate::wildwood_capture_v1::close(state, &item, false);
@@ -20130,6 +20140,7 @@ fn push_paid_activation(
         },
     });
     crate::source_power_activation_v1::record_paid(state, stack_item_id);
+    crate::librarian_activation_v1::record_paid(state, stack_item_id);
     if log_final_targeting_events(state, stack_item_id).is_err() {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,

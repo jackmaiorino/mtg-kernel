@@ -7776,6 +7776,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::cerberus_capture_v1::validate_state(state)?;
     crate::soul_shackled_zombie_v1::validate_state(state)?;
     crate::source_power_activation_v1::validate_state(state)?;
+    crate::librarian_activation_v1::validate_state(state)?;
     crate::wildwood_capture_v1::validate_state(state)?;
     squad_rallier_resolution_v1::validate(state)?;
     frenzied_goblin_resolution_v1::validate(state)?;

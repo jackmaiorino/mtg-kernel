@@ -18,8 +18,8 @@ ability's captured controller, independently of source survival. All three
 primary helper sources are pinned in the same Mage tree.
 
 The existing CreatureUpgradeV1 already carries persistent creature_types with
-timestamp and once_activated indices. Reuse those fields rather than introducing
-a second continuous effect, usage counter, source incarnation or history ledger.
+timestamp and once_activated indices. Reuse those fields for gameplay storage
+instead of a second continuous effect, usage counter or source incarnation.
 The once limit is definition-owned, selected only for executable Librarian's
 sole exact printed program, index zero, on Limited AND NOT Standard builds.
 Its paid-activation hook stamps the existing persistent zero index after
@@ -51,7 +51,7 @@ without countering an already paid activation: the later type timestamp sets
 Werewolf; a later Witness type timestamp sets Citizen. Removing Witness does not
 erase counters or the already paid once-only mark. The counter instruction is
 source-bound and untargeted, using existing TargetSpec::None throughout.
-No TargetSpec, subtype, card ID, serialized field or action layout is added.
+No TargetSpec, subtype, card ID, serialized object field or action layout is added.
 The appended CreatureEffect variant preserves predecessor discriminants; absent
 upgrades preserve older serialized bytes and hashes by source inspection.
 
@@ -90,3 +90,27 @@ rustfmt, JSON parsing and diff checks are the only checks run in this lane.
 No native tests/build/lint, registration, catalog hash derivation, guessed
 profile, remote execution or new PR. Parent owns current-head composition,
 actual printed qualification, public/Human successor work and serial admission.
+
+Root-owned preparation now composes the original source8a104b56 at4071833b
+from411/v79 baseb612 plus compile repair6b2dff91. It remains unregistered and
+does not change catalog identity. A separate paid-activation journal authenticates
+the reused once mark. Actual engine payment/publication alone emits its full
+original root; same-incarnation duplicate payments, removed/duplicated once marks,
+missing payment, erased completion and reintroduced completed stack rows refuse
+at common read-only action/restore boundaries. Completion is recorded on normal,
+resumed or countered resolution. Validation runs before ordinary advancement can
+clear a malformed state. No new authority row or object field is emitted for
+unrelated abilities; absent/default/Standard serialization and hash paths remain
+unchanged by source inspection, with native parity still required. The original
+incarnation keeps its once mark after control/ability changes and cleanup; genuine
+zone changes reset the gameplay storage. Copied/granted cross-definition abilities
+remain outside this selected root's admission. These are trusted engine journal
+commitments, not cryptographic proof against coherent replacement of the journal.
+
+Two additional future both-seat groups require actual registration. They restore
+missing payment/once marks before and after genuine resolution, and erased
+completion/reintroduced original roots afterward. Pass must refuse without any
+byte mutation; ordinary advancement may only set the exact failure halt. Existing
+four registered-operand and seven actual-printed groups stay intact. All thirteen
+groups remain native-unrun. Precise meaning/public/Human successors are still
+separate work; no global consumer/model/sampler or supported-gameplay claim follows.

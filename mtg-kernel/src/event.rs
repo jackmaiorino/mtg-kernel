@@ -809,6 +809,12 @@ pub enum CommittedEvent {
         stack_item_id: StackItemId,
         operation_history_index: u64,
     },
+    LibrarianActivationCommittedV1 {
+        item: Box<crate::state::StackItem>,
+    },
+    LibrarianActivationFinishedV1 {
+        stack_item_id: crate::ids::StackItemId,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
