@@ -620,6 +620,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Nessian Hornbeetle",
     "Needletooth Pack",
     "Hare Apparent",
+    "Rabbit Token",
     "Micromancer",
     "Arbiter of Woe",
     "Armasaur Guide",
@@ -826,6 +827,11 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    (
+        "effect.rs",
+        "Micromancer",
+        "definition-owned exact spell search continuation authentication",
+    ),
     (
         "engine.rs",
         "Paradise Druid",
