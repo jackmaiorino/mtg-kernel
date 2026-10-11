@@ -216,7 +216,9 @@ def allocation_inventory(record, native):
 
 def physical_reconciliation(reader, state, first_request):
     reconciliation = state["first_block_reconciliation"]
-    before_ref = pin(ROOT / "formal/coordinator/before.allocation.json")
+    before_ref = state["initial_allocation_measurement"]
+    require(same_path(before_ref["path"], ROOT / "formal/coordinator/before.allocation.json"),
+            "initial allocation receipt belongs to another coordinator")
     before = allocation_inventory(reader.json(before_ref), ROOT / "measure/hot/qual-baseline-w1/native")
     after = allocation_inventory(reader.json(reconciliation["measurement"]), ROOT / "measure/hot/matched-native")
     growth = {field: after["totals"][field] - before["totals"][field] for field in ("logical_bytes", "allocated_bytes")}
@@ -228,7 +230,7 @@ def physical_reconciliation(reader, state, first_request):
     return {"before": before_ref, "after": reconciliation["measurement"], "before_allocation": before,
             "after_allocation": after, "growth": growth, "logical_projection_bytes": logical,
             "physical_projection_bytes": physical, "within_sealed_projections": True,
-            "scope": "Historical GetCompressedFileSizeW receipt reconciliation; excludes directory/volume metadata. Before receipt hash is captured at analysis; after receipt hash is bound by coordinator state."}
+            "scope": "Historical GetCompressedFileSizeW receipt reconciliation; excludes directory/volume metadata. Both receipt hashes are bound by coordinator state."}
 
 
 def verify_native_archives(reader, archive, recovery_files, workers):

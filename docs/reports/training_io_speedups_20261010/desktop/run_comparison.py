@@ -140,6 +140,7 @@ def main():
     save()
     try:
         before=measure('before',ROOT/'measure/hot/qual-baseline-w1/native')
+        state['initial_allocation_measurement']=pin(out/'before.allocation.json'); save()
         for index,(case,request) in enumerate(zip(plan['commands'],requests)):
             stable()
             def queue_changed(value):
