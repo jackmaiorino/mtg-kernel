@@ -36,13 +36,18 @@ generated hash and preserves historical v67 readability/stale mutator refusal.
 Linux Limited CI job114364708658 at repaired source5f0bdae2 passes all22 new
 card cases, including all6 ferocious cases, and the generated frozen-literal
 check. Native2 guardff99f2e7f20b4de4a50f66a41c9d1ed3 acquired Jack16-17 and
-is running against pinned5f0bdae2. Current-head CI38103703197 remains pending;
-17 jobs have passed. The actual failed native1 receipt is not overwritten.
+ended0 against pinned5f0bdae2, passing all22 groups,48 definitions,23 rules
+(one existing ignore),151 records(three existing ignores),69 production
+cases, Limited strict lint and combined all-test typecheck/strict lint.
+The actual failed native1 receipt is not overwritten.
 
 Default advanced to1d240477 through PR206 and PR219. Separate owned integration
 459bd759 composes both parents without conflicts; the13 accepted default paths
 do not overlap the FDN diff. The running source/target remain pinned. Source
-review, final CI, native/profile qualification and actual default acceptance
-remain required for the composed head. Current
-accepted coverage remains171; candidate177 is engineering preparation, with
+review has no unresolved findings atbbe4968146a03f206d9dec85e5d6c22bc1680493.
+All23 final checks pass in CI38105979002. PR216 merged atf7d115fa on October11
+04:16:14 UTC; actual default tree equals the reviewed tree and all38 affected
+Python cases pass there. Accepted coverage is177 full/1 partial/108 missing;
+live identity645f2da1b223a18f and unchanged frozen membership are verified.
+Default receipt: PR216#issuecomment-6105370378. Issue110 remains open, with
 no strength, search, evaluation or training result.
