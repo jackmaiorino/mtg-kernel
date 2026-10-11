@@ -9143,4 +9143,240 @@ mod adventure_and_monarch_rl_tests {
         };
         assert_eq!(projected.card_db_id, captured);
     }
+
+    #[cfg(feature = "standard-magezero-fixtures")]
+    mod standard_face_down_public_refs {
+        use super::*;
+        use crate::event::{self, ProposedEvent};
+        use crate::surface_v2::HarnessSurfaceV2;
+
+        fn ready() -> GameState {
+            let land = card_id_by_name("Island").unwrap();
+            let mut state =
+                GameState::new_from_libraries(&[land; 12], &[land; 12], card_name, 0xface_002);
+            state.active_player = PlayerId::P0;
+            state.priority_player = PlayerId::P0;
+            state.step = Step::Main1;
+            state
+        }
+
+        fn next(state: &mut GameState) -> Decision {
+            let decision = engine::advance_until_decision(state);
+            assert!(!matches!(decision, Decision::Halted { .. }), "{decision:?}");
+            decision
+        }
+
+        fn observe_opponent_and_restore(state: &GameState) -> ObservationV2 {
+            let surface = HarnessSurfaceV2::new();
+            let view = observe_v2(state, &surface, PlayerId::P1, 0).unwrap();
+            let restored: GameState =
+                serde_json::from_str(&serde_json::to_string(state).unwrap()).unwrap();
+            assert_eq!(
+                view,
+                observe_v2(&restored, &surface, PlayerId::P1, 0).unwrap()
+            );
+            view
+        }
+
+        fn cast_disguised_bloom(state: &mut GameState) -> ObjectId {
+            let bloom = put_object(state, PlayerId::P0, "Flourishing Bloom-Kin", Zone::Hand);
+            state.players[0].mana_pool[ManaColor::C.pool_index()] = 3;
+            engine::step(state, Action::CastSpell(bloom)).unwrap();
+            let decision = next(state);
+            if matches!(decision, Decision::ChooseCastMode { .. }) {
+                engine::step(state, Action::ChooseCastMode(CastMode::Alternative)).unwrap();
+                assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
+            } else {
+                assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
+            }
+            assert!(state.engine.pending_cast.is_none());
+            assert!(state.objects.get(bloom).v4.face_down_v1.is_some());
+            assert_eq!(state.objects.get(bloom).zone, Zone::Stack);
+            bloom
+        }
+
+        fn target_source(target: &TargetRefV1) -> &CardStableRefV1 {
+            let TargetRefV1::StackItem { source, .. } = target else {
+                panic!("expected an exact stack-item target: {target:?}");
+            };
+            source
+        }
+
+        #[test]
+        fn opponent_counter_targets_and_announced_targets_mask_disguise_through_restore() {
+            let mut state = ready();
+            let bloom = cast_disguised_bloom(&mut state);
+            let bloom_stack_id = state.stack.last().unwrap().v4.stack_item_id;
+            let physical = state.objects.get(bloom).card_def;
+            let generation = state.objects.get(bloom).zone_change_count;
+            let sentinel = card_id_by_name("Face-down creature").unwrap();
+            engine::step(&mut state, Action::Pass).unwrap();
+            assert!(matches!(
+                next(&mut state),
+                Decision::CastSpellOrPass {
+                    player: PlayerId::P1,
+                    ..
+                }
+            ));
+            let ertai = put_object(&mut state, PlayerId::P1, "Ertai Resurrected", Zone::Hand);
+            state.players[1].mana_pool[ManaColor::U.pool_index()] = 1;
+            state.players[1].mana_pool[ManaColor::B.pool_index()] = 1;
+            state.players[1].mana_pool[ManaColor::C.pool_index()] = 2;
+            engine::step(&mut state, Action::CastSpell(ertai)).unwrap();
+            let mut chose_counter_mode = false;
+            for _ in 0..8 {
+                match next(&mut state) {
+                    Decision::CastSpellOrPass { .. } => {
+                        engine::step(&mut state, Action::Pass).unwrap()
+                    }
+                    Decision::ChooseTriggerMode { legal_modes, .. } => {
+                        assert!(legal_modes.contains(&0));
+                        engine::step(&mut state, Action::ChooseTriggerMode(0)).unwrap();
+                        chose_counter_mode = true;
+                        break;
+                    }
+                    other => panic!("expected Ertai's counter mode, got {other:?}"),
+                }
+            }
+            assert!(chose_counter_mode, "Ertai's entry trigger did not arrive");
+            let decision = next(&mut state);
+            assert!(
+                matches!(&decision, Decision::ChooseTargets { legal_targets, .. }
+                if legal_targets.contains(&Target::StackItem(bloom_stack_id)))
+            );
+            let surface_decision = SurfaceDecision::Decision(decision);
+            let candidates = legal_action_candidates_v1(&surface_decision, &state).unwrap();
+            let restored: GameState =
+                serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+            assert_eq!(
+                candidates,
+                legal_action_candidates_v1(&surface_decision, &restored).unwrap()
+            );
+            let candidate = candidates.iter().find(|candidate| matches!(
+                &candidate.surface_action,
+                SurfaceAction::Action(Action::ChooseTarget(Target::StackItem(id))) if *id == bloom_stack_id
+            )).unwrap();
+            let ActionSemanticV1::ChooseTarget { target, .. } = &candidate.record.semantic else {
+                panic!("counter target lacks its public target semantic");
+            };
+            assert_eq!(target_source(target).card_db_id, sentinel);
+            assert_eq!(target_source(target).zone_change_count, generation);
+            assert!(!serde_json::to_string(&candidate.record)
+                .unwrap()
+                .contains("Flourishing Bloom-Kin"));
+            engine::step(
+                &mut state,
+                Action::ChooseTarget(Target::StackItem(bloom_stack_id)),
+            )
+            .unwrap();
+            // Include the announcement boundary before the pending trigger is
+            // placed, then the public target contract on the completed stack.
+            let pending = observe_opponent_and_restore(&state);
+            assert!(pending.known_face_down_cards.is_empty());
+            assert!(!serde_json::to_string(&pending)
+                .unwrap()
+                .contains("Flourishing Bloom-Kin"));
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            let view = observe_opponent_and_restore(&state);
+            let target = &view.projection.stack.last().unwrap().targets[0];
+            assert_eq!(target_source(target).card_db_id, sentinel);
+            assert_eq!(target_source(target).zone, Zone::Stack);
+            assert_eq!(
+                state.stack.last().unwrap().v4.target_contracts[0],
+                crate::state::StackTargetContractV4::capture(
+                    &state,
+                    Target::StackItem(bloom_stack_id)
+                )
+            );
+
+            // Counter the original in response: its revealed departure changes
+            // public knowledge, while Ertai retains the old target generation.
+            engine::counter_stack_item_by_id(&mut state, bloom_stack_id)
+                .unwrap()
+                .unwrap();
+            assert_eq!(state.objects.get(bloom).zone, Zone::Graveyard);
+            let view = observe_opponent_and_restore(&state);
+            let target = &view.projection.stack.last().unwrap().targets[0];
+            assert_eq!(target_source(target).card_db_id, physical);
+            assert_eq!(target_source(target).zone, Zone::Stack);
+            assert_eq!(target_source(target).zone_change_count, generation);
+        }
+
+        #[test]
+        fn real_crew_payment_masks_identity_until_revealed_departure_with_restore() {
+            let mut state = ready();
+            let bloom = cast_disguised_bloom(&mut state);
+            let stack_contract = crate::state::StackTargetContractV4::capture(
+                &state,
+                Target::StackItem(state.stack.last().unwrap().v4.stack_item_id),
+            );
+            for _ in 0..2 {
+                engine::step(&mut state, Action::Pass).unwrap();
+                assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            }
+            assert!(state.stack.is_empty());
+            assert_eq!(state.objects.get(bloom).zone, Zone::Battlefield);
+            let physical = state.objects.get(bloom).card_def;
+            let sentinel = card_id_by_name("Face-down creature").unwrap();
+            assert_eq!(
+                target_source(
+                    &stack_item_target_ref_from_contract(&state, stack_contract).unwrap()
+                )
+                .card_db_id,
+                sentinel
+            );
+            // A public counter lets the face-down 2/2 meet Bankbuster's crew 3.
+            state.objects.get_mut(bloom).counters.plus1_plus1 = 1;
+            let vehicle = put_object(&mut state, PlayerId::P0, "Reckoner Bankbuster", Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(vehicle, Zone::Battlefield),
+            );
+            next(&mut state);
+            engine::step(&mut state, Action::ActivateAbility(vehicle, 1)).unwrap();
+            assert!(matches!(
+                next(&mut state),
+                Decision::ChooseEffectTargets { .. }
+            ));
+            engine::step(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(bloom)),
+            )
+            .unwrap();
+            assert!(matches!(
+                next(&mut state),
+                Decision::ChooseEffectTargets {
+                    can_finish: true,
+                    ..
+                }
+            ));
+            engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            assert!(state.objects.get(bloom).tapped);
+            let paid = state.stack.last().unwrap().v4.paid_cost_refs[0];
+            assert_eq!(paid.object, bloom);
+            assert_eq!(
+                paid.card_def, physical,
+                "rules validation keeps the physical identity"
+            );
+            let view = observe_opponent_and_restore(&state);
+            assert_eq!(
+                view.projection.stack.last().unwrap().paid_cost_refs[0].card_db_id,
+                sentinel
+            );
+            assert!(view.known_face_down_cards.is_empty());
+            assert!(!serde_json::to_string(&view)
+                .unwrap()
+                .contains("Flourishing Bloom-Kin"));
+
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(bloom, Zone::Hand));
+            assert!(state.objects.get(bloom).v4.face_down_v1.is_none());
+            let view = observe_opponent_and_restore(&state);
+            let public_paid = &view.projection.stack.last().unwrap().paid_cost_refs[0];
+            assert_eq!(public_paid.card_db_id, physical);
+            assert_eq!(public_paid.zone, Zone::Battlefield);
+            assert_eq!(public_paid.zone_change_count, paid.zone_change_count);
+            assert_eq!(state.stack.last().unwrap().v4.paid_cost_refs, vec![paid]);
+        }
+    }
 }
