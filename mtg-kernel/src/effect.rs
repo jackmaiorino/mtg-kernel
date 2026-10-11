@@ -3155,6 +3155,7 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
     } else {
         None
     };
+    let exact_five = matches!(purpose, EffectTargetSelectionPurpose::SelectObjectsV1 { rule, .. } if rule.action == ObjectSelectionActionV1::TapFiveThenTransformSource);
     let continuation = state.engine.pending_effect.as_mut().unwrap();
     let PendingEffectChoice::SelectTargets {
         selected,
@@ -3168,6 +3169,9 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
         unreachable!("validated target-selection choice above")
     };
     selected.push(legal.remove(position));
+    if exact_five {
+        *min_targets = 5;
+    }
     if let Some(minimum) = ward_minimum {
         *min_targets = minimum;
     }

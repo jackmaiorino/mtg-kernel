@@ -7625,6 +7625,69 @@
         "lose_all_abilities"
       ],
       "java_file": "Mage.Sets/src/mage/cards/t/TishanasTidebinder.java"
+    },
+    {
+      "name": "Thousand Moons Smithy",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{W}{W}",
+      "mana_value": 4,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [
+        "W"
+      ],
+      "decks": [
+        "Standard16-UW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "transform",
+        "mana_ability",
+        "create_token"
+      ]
+    },
+    {
+      "name": "Gnome Soldier Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Gnome",
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 0,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "token",
+        "characteristic_power_toughness"
+      ],
+      "is_token": true,
+      "object_name": "Gnome Soldier"
     }
   ]
 }

@@ -4078,8 +4078,14 @@ fn keywords_for(card: &CardJson) -> String {
         "Knight Vigilance Token" => keywords.push("Keywords::VIGILANCE"),
         "Mosswood Dreadknight" => keywords.push("Keywords::TRAMPLE"),
         "Tishana's Tidebinder" => keywords.push("Keywords::FLASH"),
-        "Brightglass Gearhulk" => { keywords.push("Keywords::FIRST_STRIKE"); keywords.push("Keywords::TRAMPLE"); }
-        "Floodpits Drowner" => { keywords.push("Keywords::FLASH"); keywords.push("Keywords::VIGILANCE"); }
+        "Brightglass Gearhulk" => {
+            keywords.push("Keywords::FIRST_STRIKE");
+            keywords.push("Keywords::TRAMPLE");
+        }
+        "Floodpits Drowner" => {
+            keywords.push("Keywords::FLASH");
+            keywords.push("Keywords::VIGILANCE");
+        }
         "Gingerbrute" => keywords.push("Keywords::HASTE"),
         "Surge Engine" => keywords.push("Keywords::DEFENDER"),
         "Spyglass Siren" => keywords.push("Keywords::FLYING"),

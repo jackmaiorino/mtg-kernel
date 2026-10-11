@@ -19,6 +19,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StandardStateV1 {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    last_mana_sources: Vec<crate::state::ObjectLinkV4>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    paid_spells: Vec<(crate::state::ObjectLinkV4, Vec<crate::state::ObjectLinkV4>)>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) resolution_play: Option<crate::engine::resolution_cast_v1::ResolutionPlayV1>,
     /// Turn number and, per player, the noncombat damage dealt that turn by
@@ -1326,12 +1330,18 @@ pub enum StandardTriggerV1 {
     ThisOrAnotherNontokenHydraYouControlDies,
     /// "At the beginning of your end step", printed on a Room door, which
     /// works only while that door is unlocked.
-    ControllerEndStepWhileDoorUnlocked { door: u8 },
+    ControllerEndStepWhileDoorUnlocked {
+        door: u8,
+    },
     /// "When you unlock this door."
-    YouUnlockThisDoor { door: u8 },
+    YouUnlockThisDoor {
+        door: u8,
+    },
     /// "At the beginning of your end step, if you gained life this turn"
     /// (and, with `require_lost`, "and lost life").
-    ControllerEndStepIfLifeChanged { require_lost: bool },
+    ControllerEndStepIfLifeChanged {
+        require_lost: bool,
+    },
     /// "Whenever another artifact you control with mana value N or greater
     /// enters."
     AnotherControlledArtifactEntersManaValueAtLeast(u8),
@@ -1341,10 +1351,14 @@ pub enum StandardTriggerV1 {
     /// "At the beginning of combat on your turn."
     ControllerBeginningOfCombat,
     /// "When this Class becomes level N" (716.2c).
-    ClassBecomesLevel { level: u8 },
+    ClassBecomesLevel {
+        level: u8,
+    },
     /// "Whenever you cast an instant or sorcery spell", printed at a Class
     /// level, so it works only from that level on.
-    YouCastInstantOrSorceryAtClassLevel { level: u8 },
+    YouCastInstantOrSorceryAtClassLevel {
+        level: u8,
+    },
     /// "Whenever a legendary creature you control enters", on a permanent
     /// that has not become Everflame.
     ControlledLegendaryCreatureEntersUnlessEverflame,
@@ -1353,6 +1367,8 @@ pub enum StandardTriggerV1 {
     YouCastInstantOrSorceryOncePerTurn,
     /// "When a creature card is exiled this way" (Agatha's Soul Cauldron).
     CreatureCardExiledWithThis,
+    ControllerPrecombatMain,
+    CastArtifactOrCreatureUsingSourceMana,
 }
 
 /// How many times each turn a trigger condition may trigger, if limited.
@@ -1420,6 +1436,33 @@ pub(crate) fn trigger_matches(
     state: &GameState,
 ) -> bool {
     match condition {
+        StandardTriggerV1::ControllerPrecombatMain => {
+            matches!(events[index],CommittedEvent::BeginningPrecombatMainV1{active_player} if active_player == state.objects.get(source).controller)
+        }
+        StandardTriggerV1::CastArtifactOrCreatureUsingSourceMana => {
+            let CommittedEvent::SpellCast { spell, controller } = events[index] else {
+                return false;
+            };
+            let live = state.objects.get(source);
+            let key = crate::state::ObjectLinkV4 {
+                object: source,
+                zone_change_count: live.zone_change_count,
+            };
+            let spell_key = crate::state::ObjectLinkV4 {
+                object: spell,
+                zone_change_count: state.objects.get(spell).zone_change_count,
+            };
+            controller == live.controller
+                && [CardType::Artifact, CardType::Creature]
+                    .into_iter()
+                    .any(|kind| crate::engine::object_has_type(state, spell, kind))
+                && state.standard_v1.as_ref().is_some_and(|value| {
+                    value
+                        .paid_spells
+                        .iter()
+                        .any(|(s, sources)| *s == spell_key && sources.contains(&key))
+                })
+        }
         StandardTriggerV1::ControllerBeginningOfCombat => {
             let live = state.objects.get(source);
             matches!(
@@ -1728,12 +1771,14 @@ pub(crate) fn mana_abilities_active(state: &GameState, object: ObjectId, def: &C
         // Everflame loses all other abilities.
         return !is_everflame(state, object);
     }
-    def.transform_face.is_none() || def.name != OJER || state.objects.get(object).v4.face_index == 1
+    !matches!(def.name, OJER | "Thousand Moons Smithy")
+        || state.objects.get(object).v4.face_index == 1
 }
 
 /// Triggered abilities of this module's cards, by registry name.
 pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
+        "Thousand Moons Smithy" => &SMITHY_TRIGGERS,
         "Etali, Primal Conqueror" => &ETALI_TRIGGERS,
         "Subterranean Schooner" => &SCHOONER_TRIGGERS,
         "Spring-Loaded Sawblades" => &SAWBLADES_TRIGGERS,
@@ -1770,7 +1815,11 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
 /// of single-faced cards report face 0.
 pub(crate) fn trigger_face(name: &str, ability_index: usize) -> u8 {
     match (name, ability_index) {
-        ("Etali, Primal Conqueror", 1) | (CECIL, 1) | (POLUKRANOS, 0) | (CLAY_FIRED_BRICKS, 1) => 1,
+        ("Thousand Moons Smithy", 2)
+        | ("Etali, Primal Conqueror", 1)
+        | (CECIL, 1)
+        | (POLUKRANOS, 0)
+        | (CLAY_FIRED_BRICKS, 1) => 1,
         _ => 0,
     }
 }
@@ -3317,6 +3366,16 @@ pub(crate) fn exile_cast_group_spent(state: &GameState, object: ObjectId) -> boo
 
 /// Marks the group a card cast from exile belonged to as spent.
 pub(crate) fn note_spell_cast(state: &mut GameState, spell: ObjectId) {
+    let key = crate::state::ObjectLinkV4 {
+        object: spell,
+        zone_change_count: state.objects.get(spell).zone_change_count,
+    };
+    if let Some(standard) = state.standard_v1.as_mut() {
+        let sources = std::mem::take(&mut standard.last_mana_sources);
+        if !sources.is_empty() {
+            standard.paid_spells.push((key, sources));
+        }
+    }
     let Some(standard) = state.standard_v1.as_mut() else {
         return;
     };
@@ -3878,3 +3937,121 @@ const ETALI_TRIGGERS: [TriggeredAbilityDef; 2] = [
         ..trigger(TriggerCondition::DealsCombatDamageToPlayer, etali_poison)
     },
 ];
+
+fn smithy_gnome() -> EffectOp {
+    EffectOp::CreateToken {
+        token_def: crate::card_def::card_id_by_name("Gnome Soldier Token").expect("Smithy token"),
+        controller: PlayerRef::Controller,
+    }
+}
+fn smithy_transform() -> EffectOp {
+    EffectOp::SelectObjectsV1 {
+        rule: crate::effect::ObjectSelectionRuleV1 {
+            player: PlayerRef::Controller,
+            zone: Zone::Battlefield,
+            any_player: false,
+            filter: crate::effect::ObjectSelectionFilterV1::UntappedArtifactOrCreature,
+            min: 0,
+            max: 5,
+            action: crate::effect::ObjectSelectionActionV1::TapFiveThenTransformSource,
+        },
+    }
+}
+const SMITHY_TRIGGERS: [TriggeredAbilityDef; 3] = [
+    trigger(TriggerCondition::Etb, smithy_gnome),
+    trigger(
+        TriggerCondition::StandardV1(StandardTriggerV1::ControllerPrecombatMain),
+        smithy_transform,
+    ),
+    TriggeredAbilityDef {
+        face_index: 1,
+        ..trigger(
+            TriggerCondition::StandardV1(StandardTriggerV1::CastArtifactOrCreatureUsingSourceMana),
+            smithy_gnome,
+        )
+    },
+];
+pub(crate) fn clear_payment_sources(state: &mut GameState) {
+    if let Some(value) = state.standard_v1.as_mut() {
+        value.last_mana_sources.clear();
+    }
+}
+pub(crate) fn remember_payment_sources(
+    state: &mut GameState,
+    player: PlayerId,
+    plan: &crate::mana::PaymentPlan,
+) {
+    let mut sources = plan
+        .taps
+        .iter()
+        .filter_map(|(id, _)| {
+            let live = state.objects.get(*id);
+            (CARD_DEFS[live.card_def as usize].name == "Thousand Moons Smithy"
+                && live.v4.face_index == 1)
+                .then_some(crate::state::ObjectLinkV4 {
+                    object: *id,
+                    zone_change_count: live.zone_change_count,
+                })
+        })
+        .collect::<Vec<_>>();
+    for &index in &plan.restricted_pool_used {
+        let unit = &state.players[player.index()].restricted_mana_pool.0[index];
+        if CARD_DEFS[unit.source_card_def as usize].name == "Thousand Moons Smithy"
+            && !sources.contains(&unit.source)
+        {
+            sources.push(unit.source);
+        }
+    }
+    if !sources.is_empty() {
+        state
+            .standard_v1
+            .get_or_insert_with(Default::default)
+            .last_mana_sources
+            .extend(sources);
+    }
+}
+pub(crate) fn record_floating_mana(
+    state: &mut GameState,
+    player: PlayerId,
+    source: ObjectId,
+    color: ManaColor,
+) {
+    let live = state.objects.get(source);
+    if CARD_DEFS[live.card_def as usize].name != "Thousand Moons Smithy" || live.v4.face_index != 1
+    {
+        return;
+    }
+    let unit = crate::mana::RestrictedManaUnitV1 {
+        color,
+        restriction: crate::card_def::ManaSpendRestrictionDef::Unrestricted,
+        source: crate::state::ObjectLinkV4 {
+            object: source,
+            zone_change_count: live.zone_change_count,
+        },
+        source_card_def: live.card_def,
+    };
+    state.players[player.index()].mana_pool[color.pool_index()] -= 1;
+    state.players[player.index()]
+        .restricted_mana_pool
+        .0
+        .push(unit);
+}
+pub(crate) fn gnome_base_stats(state: &GameState, id: ObjectId) -> Option<(i32, i32)> {
+    let live = state.objects.get(id);
+    if live.zone != Zone::Battlefield
+        || CARD_DEFS[live.card_def as usize].name != "Gnome Soldier Token"
+        || !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+    {
+        return None;
+    }
+    let count = state.players[live.controller.index()]
+        .battlefield
+        .iter()
+        .filter(|&&object| {
+            [CardType::Artifact, CardType::Creature]
+                .into_iter()
+                .any(|kind| crate::engine::object_has_type(state, object, kind))
+        })
+        .count() as i32;
+    Some((count, count))
+}

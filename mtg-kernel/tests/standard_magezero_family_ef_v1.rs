@@ -2950,3 +2950,63 @@ fn etali_free_casts_opponents_spell_then_transforms_and_poison_uses_damage_lki()
     resolve_stack(&mut state);
     assert_eq!(state.players[1].poison_counters.0, 4);
 }
+
+#[test]
+fn smithy_taps_exactly_five_and_barracks_tracks_floating_mana_after_untap() {
+    let mut state = game();
+    let smithy = put(&mut state, P0, "Thousand Moons Smithy", Zone::Battlefield);
+    resolve_stack(&mut state);
+    let gnome = battlefield_named(&state, P0, "Gnome Soldier")[0];
+    assert_eq!(engine::effective_power(&state, gnome), 2);
+    assert_eq!(engine::effective_toughness(&state, gnome), 2);
+    let mut pay = vec![smithy, gnome];
+    for _ in 0..3 {
+        pay.push(put(
+            &mut state,
+            P0,
+            "Quirion Beastcaller",
+            Zone::Battlefield,
+        ));
+    }
+    let marker = mtg_kernel::event::CommittedEvent::BeginningPrecombatMainV1 { active_player: P0 };
+    state.engine.event_log.push(marker.clone());
+    state.engine.event_history.push(marker);
+    loop {
+        match next(&mut state) {
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            Decision::ChooseEffectTargets {
+                ref legal_targets, ..
+            } => {
+                assert!(legal_targets.contains(&Target::Object(smithy)));
+                break;
+            }
+            other => panic!("Smithy transform {other:?}"),
+        }
+    }
+    act(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(smithy)),
+    );
+    for id in &pay[1..] {
+        if state
+            .engine
+            .pending_effect
+            .as_ref()
+            .is_some_and(|p| p.choice.is_some())
+        {
+            assert!(engine::step(&mut state, Action::FinishEffectSelection).is_err());
+            act(&mut state, Action::ChooseEffectTarget(Target::Object(*id)));
+        }
+    }
+    resolve_stack(&mut state);
+    assert_eq!(state.objects.get(smithy).v4.face_index, 1);
+    assert!(pay.iter().all(|id| state.objects.get(*id).tapped));
+    event::propose_and_commit(&mut state, ProposedEvent::untap(smithy));
+    act(&mut state, Action::ActivateManaAbility(smithy));
+    assert_eq!(state.players[0].restricted_mana_pool.0.len(), 1);
+    let recruit = put(&mut state, P0, "Recruitment Officer", Zone::Hand);
+    act(&mut state, Action::CastSpell(recruit));
+    resolve_stack(&mut state);
+    assert_eq!(battlefield_named(&state, P0, "Gnome Soldier").len(), 2);
+    assert!(state.players[0].restricted_mana_pool.0.is_empty());
+}

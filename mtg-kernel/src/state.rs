@@ -1132,11 +1132,13 @@ pub fn stack_target_contract_is_structurally_valid(
     } = contract
     {
         let allowed = matches!(spec, TargetSpec::StackObject)
-            || (matches!(spec, TargetSpec::StackAbility | TargetSpec::UpToOneStackAbility)
-                && matches!(
-                    kind,
-                    StackItemKind::ActivatedAbility | StackItemKind::TriggeredAbility
-                ));
+            || (matches!(
+                spec,
+                TargetSpec::StackAbility | TargetSpec::UpToOneStackAbility
+            ) && matches!(
+                kind,
+                StackItemKind::ActivatedAbility | StackItemKind::TriggeredAbility
+            ));
         return allowed
             && target_index == 0
             && stack_item_id.0 > 0

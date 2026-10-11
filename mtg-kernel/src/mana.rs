@@ -360,7 +360,7 @@ pub fn can_pay_owned(
     state: &GameState,
 ) -> Option<PaymentPlan> {
     let sources = gather_sources(player, state);
-    let pool = state.players[player.index()].mana_pool;
+    let pool = spell_floating_pool(state, player, false, false);
     let mut plan = PaymentPlan::default();
     let mut pool_remaining = pool;
     let mut used = vec![false; sources.len()];
@@ -375,6 +375,7 @@ pub fn can_pay_owned(
     {
         return None;
     }
+    separate_restricted_spending(&mut plan, state, player, false, false);
     life_payment_affordable(plan.life_paid, state.players[player.index()].life).then_some(plan)
 }
 
@@ -710,6 +711,7 @@ fn restriction_permits(
     legendary_spell: bool,
 ) -> bool {
     match restriction {
+        crate::card_def::ManaSpendRestrictionDef::Unrestricted => true,
         crate::card_def::ManaSpendRestrictionDef::CreatureSpell => creature_spell,
         crate::card_def::ManaSpendRestrictionDef::LegendarySpell => legendary_spell,
     }
@@ -790,13 +792,15 @@ pub fn can_pay_excluding_sources(
         .into_iter()
         .filter(|source| !excluded.contains(&source.id))
         .collect::<Vec<_>>();
-    solve(
+    let mut plan = solve(
         cost,
         x_value,
-        state.players[player.index()].mana_pool,
+        spell_floating_pool(state, player, false, false),
         &sources,
     )
-    .filter(|plan| life_payment_affordable(plan.life_paid, state.players[player.index()].life))
+    .filter(|plan| life_payment_affordable(plan.life_paid, state.players[player.index()].life))?;
+    separate_restricted_spending(&mut plan, state, player, false, false);
+    Some(plan)
 }
 
 /// One-source convenience wrapper for paid mana abilities whose own tap cost

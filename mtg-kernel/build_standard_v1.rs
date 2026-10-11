@@ -389,6 +389,7 @@ pub(super) fn activated_ability_face_for(name: &str, index: usize) -> Option<u8>
 /// card's supertypes.
 pub(super) fn transform_face_for(name: &str) -> &'static str {
     match name {
+        "Thousand Moons Smithy" => "Some(TransformFaceDef {name: \"Barracks of the Thousand\",types:&[CardType::Artifact,CardType::Land],subtypes:&[],colors:&[],power:None,toughness:None,keywords:Keywords::NONE})",
         "Etali, Primal Conqueror" => "Some(TransformFaceDef { name: \"Etali, Primal Sickness\", types: &[CardType::Creature], subtypes: &[Subtype::Phyrexian, Subtype::Elder, Subtype::Dinosaur], colors: &[ManaColor::R, ManaColor::G], power: Some(11), toughness: Some(11), keywords: Keywords(Keywords::TRAMPLE.0 | Keywords::INDESTRUCTIBLE.0) })",
         "Spring-Loaded Sawblades" => "Some(TransformFaceDef { name: \"Bladewheel Chariot\", types: &[CardType::Artifact], subtypes: &[Subtype::Vehicle], colors: &[ManaColor::W], power: Some(5), toughness: Some(5), keywords: Keywords::NONE })",
         "Cecil, Dark Knight" => "Some(TransformFaceDef { name: \"Cecil, Redeemed Paladin\", types: &[CardType::Creature], subtypes: &[Subtype::Human, Subtype::Knight], colors: &[ManaColor::W], power: Some(4), toughness: Some(4), keywords: Keywords::LIFELINK })",
@@ -411,6 +412,7 @@ pub(super) fn saga_for(name: &str) -> &'static str {
 
 pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
     match name {
+        "Thousand Moons Smithy" => Some("Barracks of the Thousand"),
         "Etali, Primal Conqueror" => Some("Etali, Primal Sickness"),
         "Spring-Loaded Sawblades" => Some("Bladewheel Chariot"),
         "Cecil, Dark Knight" => Some("Cecil, Redeemed Paladin"),
@@ -428,6 +430,8 @@ pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
 /// `standard_cards_v1::controlled_boost`.
 pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Thousand Moons Smithy" => "etb:create_gnome_soldier;precombat_main:may_tap_five_artifact_creatures_transform;back:cast_artifact_creature_using_source_mana:create_gnome_soldier",
+        "Gnome Soldier Token" => "power_toughness:count_artifact_or_creature_controlled",
         "Etali, Primal Conqueror" => "etb:each_player_exile_until_nonland_cast_any_free;9GP_transform_sorcery;back:combat_damage_player:that_many_poison",
         "Reckoner Bankbuster" => "enters_with_3_charge;draw_then_if_no_charge:create_treasure_and_pilot;crew_3",
         "Subterranean Schooner" => "attacks:target_creature_that_crewed_this_turn_explores;crew_1",
@@ -507,6 +511,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
 /// disambiguating suffix.
 pub(super) fn object_name_for(name: &str) -> Option<&'static str> {
     match name {
+        "Gnome Soldier Token" => Some("Gnome Soldier"),
         "Pilot Token" => Some("Pilot"),
         "Teferi Spirit Token" => Some("Spirit"),
         "Phyrexian Hydra Reach Token" | "Phyrexian Hydra Lifelink Token" => Some("Phyrexian Hydra"),

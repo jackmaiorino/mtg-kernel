@@ -1651,6 +1651,7 @@ pub enum ManaSpendRestrictionDef {
     /// "Spend this mana only to cast a creature spell."
     CreatureSpell,
     LegendarySpell,
+    Unrestricted,
 }
 
 /// A `{T}: Add one mana of a listed color` ability whose mana carries a

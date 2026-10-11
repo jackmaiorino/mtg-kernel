@@ -112,3 +112,28 @@ pub(crate) fn zero_loyalty(state: &GameState, object: ObjectId) -> bool {
     engine::object_has_type(state, object, CardType::Planeswalker)
         && loyalty(state, object).unwrap_or(0) == 0
 }
+
+/// Counters may be placed on a permanent even when it is not a planeswalker.
+pub(crate) fn add_loyalty_counters(state: &mut GameState, object: ObjectId, amount: i32) {
+    if amount <= 0 || state.objects.get(object).zone != Zone::Battlefield {
+        return;
+    }
+    if loyalty(state, object).is_none() {
+        let permanent = ObjectLinkV4 {
+            object,
+            zone_change_count: state.objects.get(object).zone_change_count,
+        };
+        state
+            .planeswalkers_v1
+            .get_or_insert_with(Default::default)
+            .loyalty
+            .insert(
+                object,
+                LoyaltyV1 {
+                    permanent,
+                    counters: 0,
+                },
+            );
+    }
+    change_loyalty(state, object, amount);
+}

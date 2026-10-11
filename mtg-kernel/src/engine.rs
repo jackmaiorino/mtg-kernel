@@ -3386,9 +3386,17 @@ fn legal_targets_for_controller_from_source(
             .filter(|&id| object_has_type(state, id, CardType::Land))
             .map(Target::Object)
             .collect(),
-        TargetSpec::UpToOneStackAbility => state.stack.iter()
-            .filter(|item| matches!(item.kind, StackItemKind::ActivatedAbility | StackItemKind::TriggeredAbility) && item.v4.stack_item_id != StackItemId::default())
-            .map(|item| Target::StackItem(item.v4.stack_item_id)).collect(),
+        TargetSpec::UpToOneStackAbility => state
+            .stack
+            .iter()
+            .filter(|item| {
+                matches!(
+                    item.kind,
+                    StackItemKind::ActivatedAbility | StackItemKind::TriggeredAbility
+                ) && item.v4.stack_item_id != StackItemId::default()
+            })
+            .map(|item| Target::StackItem(item.v4.stack_item_id))
+            .collect(),
         TargetSpec::CreatureWithStunCounter => battlefield_objects(state)
             .filter(|&id| {
                 object_has_type(state, id, CardType::Creature)
@@ -7947,6 +7955,7 @@ fn activate_mana_ability_for(
         let ctx = ExecCtx::no_targets(source, player);
         effect::execute(&program, &ctx, state);
     }
+    crate::standard_cards_v1::record_floating_mana(state, player, source, choice);
     if state.objects.get(source).zone_change_count == source_zone_change_count {
         state
             .objects
@@ -8044,11 +8053,7 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
             }
             // Printed activated abilities belong to the front face; no
             // back face in the pool has its own.
-            let transformed = state.objects.get(id).v4.face_index != 0;
             for (i, ability) in def.activated_abilities.iter().enumerate() {
-                if transformed {
-                    break;
-                }
                 if !crate::standard_creatures_v1::activation_allowed(state, id, i)
                     || ability.activation_zone != zone
                     || !activated_ability_face_active(state, id, ability)
@@ -13444,6 +13449,13 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             }
         }
         Step::Main1 => {
+            if cfg!(feature = "standard-magezero-fixtures") {
+                let marker = CommittedEvent::BeginningPrecombatMainV1 {
+                    active_player: state.active_player,
+                };
+                state.engine.event_log.push(marker.clone());
+                state.engine.event_history.push(marker);
+            }
             // 714.3b: as the precombat main phase begins, each front-face Saga
             // controlled by the active player receives one lore counter. All
             // chapter markers are logged before their triggers are collected.
@@ -13989,6 +14001,7 @@ pub fn effective_base_power(state: &GameState, id: ObjectId) -> Option<i32> {
     crate::continuous_characteristics_v1::base_power_toughness(state, id)
         .map(|(power, _)| i32::from(power))
         .or_else(|| obj.v4.face_down_v1.map(|_| 2))
+        .or_else(|| crate::standard_cards_v1::gnome_base_stats(state, id).map(|stats| stats.0))
         .or_else(characteristic_power)
         .or_else(|| {
             card_def::CARD_DEFS[obj.card_def as usize]
@@ -14010,6 +14023,7 @@ pub fn effective_base_toughness(state: &GameState, id: ObjectId) -> Option<i32> 
     let obj = state.objects.get(id);
     crate::continuous_characteristics_v1::base_power_toughness(state, id)
         .map(|(_, toughness)| i32::from(toughness))
+        .or_else(|| crate::standard_cards_v1::gnome_base_stats(state, id).map(|stats| stats.1))
         .or_else(|| {
             #[cfg(feature = "standard-magezero-fixtures")]
             {
@@ -18077,6 +18091,7 @@ fn finalize_owned_cast(
     } else {
         None
     };
+    crate::standard_cards_v1::clear_payment_sources(state);
     let mana_spent = payment.commit(state, pending.controller, pending.spell);
 
     let mut paid_cost_objects = object_cost_chosen;
@@ -18668,6 +18683,7 @@ fn move_to_stack(state: &mut GameState, id: ObjectId, from_zone: Zone) {
 /// newly tapped source's own mana plus every unit drawn from the pool), so a
 /// spell can record "the amount of mana spent to cast" it.
 pub(crate) fn pay_plan(state: &mut GameState, player: PlayerId, plan: &mana::PaymentPlan) -> u16 {
+    crate::standard_cards_v1::remember_payment_sources(state, player, plan);
     for &(id, color) in &plan.taps {
         event::propose_and_commit(state, ProposedEvent::tap(id));
         event::propose_and_commit(state, ProposedEvent::mana_add(player, vec![color]));

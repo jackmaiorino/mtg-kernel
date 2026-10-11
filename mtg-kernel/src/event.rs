@@ -604,6 +604,9 @@ pub enum CommittedEvent {
         object: ObjectId,
         zone_change_count: u32,
     },
+    BeginningPrecombatMainV1 {
+        active_player: PlayerId,
+    },
 }
 
 /// Remembers the counters of a departing permanent whose own leave ability
@@ -619,6 +622,7 @@ fn record_counter_lki(state: &mut GameState, object: ObjectId) {
         entry.source.object != object || entry.source.zone_change_count != live.zone_change_count
     });
     let extras = crate::standard_creatures_v1::CounterExtrasV1 {
+        loyalty: crate::planeswalker_v1::loyalty(state, object).unwrap_or(0),
         lifelink: live.v4.lifelink_keyword_counters,
         time: live.v4.time_counters_v1,
     };

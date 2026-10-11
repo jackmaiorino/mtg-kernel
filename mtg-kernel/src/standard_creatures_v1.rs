@@ -91,6 +91,8 @@ pub(crate) fn begin_turn(state: &mut GameState) {
 /// Counter families stored outside the ordinary counter structure.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CounterExtrasV1 {
+    #[serde(default)]
+    pub loyalty: u32,
     pub lifelink: i16,
     pub time: u8,
 }
@@ -156,6 +158,9 @@ fn apply_counter_transfer(
     let stun = live.counters.stun.checked_add(placed_i16(counters.stun)?)?;
     let lore = live.counters.lore.checked_add(placed_i16(counters.lore)?)?;
     let oil = live.counters.oil.checked_add(placed_i16(counters.oil)?)?;
+    let charge = live.counters.charge.checked_add(scale(counters.charge))?;
+    let net = live.counters.net.checked_add(scale(counters.net))?;
+    let loyalty = i32::try_from(snapshot.extras.loyalty).ok()?;
     let lifelink = live
         .v4
         .lifelink_keyword_counters
@@ -173,11 +178,14 @@ fn apply_counter_transfer(
     live.counters.stun = stun;
     live.counters.lore = lore;
     live.counters.oil = oil;
+    live.counters.charge = charge;
+    live.counters.net = net;
     live.v4.lifelink_keyword_counters = lifelink;
     live.v4.time_counters_v1 = time;
     if keyword_timestamp.is_some() {
         live.v4.lifelink_counter_timestamp = keyword_timestamp;
     }
+    crate::planeswalker_v1::add_loyalty_counters(state, target, loyalty);
     Some(())
 }
 

@@ -5,10 +5,12 @@ use super::*;
 pub enum ObjectSelectionFilterV1 {
     Creature,
     CreatureOrPlaneswalker,
+    UntappedArtifactOrCreature,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ObjectSelectionActionV1 {
     MoveTo(Zone),
+    TapFiveThenTransformSource,
     CountersAndKeyword { counters: u8, keyword: Keywords },
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -44,6 +46,11 @@ fn candidates(
             let live = state.objects.get(id);
             let creature = crate::engine::object_has_type(state, id, CardType::Creature);
             let matches = match rule.filter {
+                ObjectSelectionFilterV1::UntappedArtifactOrCreature => {
+                    !live.tapped
+                        && (creature
+                            || crate::engine::object_has_type(state, id, CardType::Artifact))
+                }
                 ObjectSelectionFilterV1::Creature => creature,
                 ObjectSelectionFilterV1::CreatureOrPlaneswalker => {
                     creature || crate::engine::object_has_type(state, id, CardType::Planeswalker)
@@ -57,6 +64,9 @@ fn candidates(
                 });
             }
         }
+    }
+    if rule.action == ObjectSelectionActionV1::TapFiveThenTransformSource && candidates.len() < 5 {
+        candidates.clear();
     }
     Ok(candidates)
 }
@@ -131,7 +141,14 @@ pub(super) fn validate_prompt(
         || chooser != player
         || path != canonical_path
         || ordered
-        || min != u16::from(rule.min).min(available)
+        || min
+            != if rule.action == ObjectSelectionActionV1::TapFiveThenTransformSource
+                && !selected.is_empty()
+            {
+                5
+            } else {
+                u16::from(rule.min).min(available)
+            }
         || max != u16::from(rule.max).min(available)
     {
         return Err("object selection prompt metadata changed".into());
@@ -166,6 +183,21 @@ pub(super) fn apply_selection(
     }
     canonicalize_binding_subset(original, selected)?;
     match rule.action {
+        ObjectSelectionActionV1::TapFiveThenTransformSource => {
+            if !selected.is_empty() {
+                if selected.len() != 5 {
+                    return Err("transformation requires exactly five tapped permanents".into());
+                }
+                for binding in selected {
+                    event::propose_and_commit(state, event::ProposedEvent::tap(binding.object));
+                }
+                super::execute(
+                    &crate::standard_cards_v1::transform_source(),
+                    &pending.ctx,
+                    state,
+                );
+            }
+        }
         ObjectSelectionActionV1::MoveTo(zone) => event::propose_and_commit_batch(
             state,
             selected

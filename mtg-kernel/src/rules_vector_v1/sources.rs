@@ -787,6 +787,7 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 );
             }
             match restricted.restriction {
+                crate::card_def::ManaSpendRestrictionDef::Unrestricted => {}
                 crate::card_def::ManaSpendRestrictionDef::CreatureSpell
                 | crate::card_def::ManaSpendRestrictionDef::LegendarySpell => {
                     out.control(ControlF::Conditional)
