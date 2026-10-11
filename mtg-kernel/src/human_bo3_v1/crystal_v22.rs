@@ -95,6 +95,8 @@ pub struct HumanCrystalOptionV22 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HumanCrystalMenuV22 {
     pub chooser: PlayerSeatV1,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_history: Option<crate::crystal_public_v1::SavedDamageSourceV1>,
     pub source: HumanCardRefV1,
     pub recipient: HumanCardRefV1,
     pub remaining_damage: i32,
@@ -150,6 +152,7 @@ fn state(
                 .collect::<Result<Vec<_>, Error>>()?;
             Ok::<_, Error>(HumanCrystalMenuV22 {
                 chooser: row.chooser,
+                source_history: row.source_history.clone(),
                 source: handles.get(&row.source)?.clone(),
                 recipient: handles.get(&row.recipient)?.clone(),
                 remaining_damage: row.remaining_damage,

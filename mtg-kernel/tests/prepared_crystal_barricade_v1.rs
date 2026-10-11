@@ -787,6 +787,118 @@ fn mixed_environment_keeps_real_generic_and_life_ward_payment_continuations() {
 }
 
 #[test]
+fn real_heartfire_sacrifice_uses_captured_power_with_mixed_prevention_and_restore() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for (choose_shield, reenter) in [false, true]
+            .into_iter()
+            .flat_map(|shield| [false, true].map(|reenter| (shield, reenter)))
+        {
+            let caster = actor.opponent();
+            let mut state = ready(caster);
+            let wall = source(&mut state, caster);
+            control_primitive(&mut state, wall, actor);
+            let fire = put(&mut state, caster, "Heartfire Immolator", Zone::Hand);
+            state.players[caster.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+            state.players[caster.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+            priority(&mut state, caster);
+            engine::step(&mut state, Action::CastSpell(fire)).unwrap();
+            finish(&mut state);
+            let target = put(&mut state, actor, "Shivan Dragon", Zone::Battlefield);
+            shield(&mut state, wall, target, 5);
+            state.objects.get_mut(fire).v4.lifelink_keyword_counters = 1;
+            state.players[caster.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+            priority(&mut state, caster);
+            engine::step(&mut state, Action::ActivateAbility(fire, 0)).unwrap();
+            assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+            let _ = next(&mut state);
+            assert_eq!(state.objects.get(fire).zone, Zone::Graveyard);
+            if reenter {
+                // Genuine zone-change primitive, followed by current-incarnation
+                // fixture control/counters. The original capture stays untouched.
+                event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(fire, Zone::Battlefield),
+                );
+                control_primitive(&mut state, fire, actor);
+                state.objects.get_mut(fire).counters.plus1_plus1 = 100;
+                assert!(engine::effective_power(&state, fire) > 2);
+            }
+            let life_before = state.players[caster.index()].life;
+            mixed_menu(&mut state);
+            let current = state.engine.pending_effect.as_ref().unwrap();
+            let mtg_kernel::effect::PendingEffectChoice::ChooseOption {
+                purpose:
+                    mtg_kernel::effect::EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                ..
+            } = current.choice.as_ref().unwrap()
+            else {
+                panic!("actual prevention menu");
+            };
+            assert_eq!(choice.original_amount, 2);
+            assert_eq!(
+                choice.historical_source,
+                Some(current.resolving_item.v4.stack_item_id)
+            );
+            let public = mtg_kernel::crystal_public_v1::observe_v1(
+                &state,
+                &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+                actor,
+                0,
+                0,
+                0,
+                1,
+            )
+            .unwrap();
+            let menu = public.prevention_menu.unwrap();
+            assert_eq!(menu.source.zone, Zone::Battlefield);
+            assert_eq!(menu.source.zone_change_count, 0);
+            let saved = menu.source_history.unwrap();
+            assert_eq!(saved.signed_power, 2);
+            assert_eq!(saved.captured_controller, caster.into());
+            assert!(saved.lifelink);
+            let mut malformed = restore(&state);
+            let mtg_kernel::effect::PendingEffectChoice::ChooseOption {
+                purpose:
+                    mtg_kernel::effect::EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                ..
+            } = malformed
+                .engine
+                .pending_effect
+                .as_mut()
+                .unwrap()
+                .choice
+                .as_mut()
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            choice.historical_source = None;
+            let before = serde_json::to_vec(&malformed).unwrap();
+            assert!(engine::step(&mut malformed, Action::ChooseEffectOption(0)).is_err());
+            assert_eq!(serde_json::to_vec(&malformed).unwrap(), before);
+            let mut replay = restore(&state);
+            for current in [&mut state, &mut replay] {
+                let selected = option(current, choose_shield);
+                engine::step(current, Action::ChooseEffectOption(selected)).unwrap();
+                finish(current);
+                assert_eq!(current.objects.get(target).damage, 0);
+                assert_eq!(current.players[caster.index()].life, life_before);
+                assert!(matches!(current.engine.active_replacements[0].kind,
+                    mtg_kernel::event::ReplacementEffectKind::PreventNextDamage { remaining, .. }
+                        if remaining == if choose_shield { 3 } else { 5 }));
+                assert_eq!(current.engine.event_history.iter().filter(|e| matches!(e,
+                    mtg_kernel::event::CommittedEvent::SourcePowerActivationFinishedV1 { .. })).count(), 1);
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&replay).unwrap()
+            );
+        }
+    }
+}
+
+#[test]
 fn answered_real_bolt_cannot_forge_closed_boundary_without_owned_execution() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);

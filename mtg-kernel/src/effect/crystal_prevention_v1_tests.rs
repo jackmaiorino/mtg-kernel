@@ -65,6 +65,41 @@ fn nondamage_classifier_requires_every_branch_and_never_guesses_unknown_leaves()
     )));
 }
 #[test]
+fn payment_comparison_never_accepts_an_unpublished_crystal_marker_on_registered_item() {
+    use crate::engine::{self, Action, Decision};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+        state.players[actor.index()].mana_pool[crate::mana::ManaColor::R.pool_index()] = 1;
+        engine::advance_until_decision(&mut state);
+        engine::step(&mut state, Action::CastSpell(bolt)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::ChooseTargets { .. }
+        ));
+        engine::step(
+            &mut state,
+            Action::ChooseTarget(Target::Player(actor.opponent())),
+        )
+        .unwrap();
+        engine::advance_until_decision(&mut state);
+        let original = state
+            .stack
+            .iter()
+            .find(|i| i.source == bolt)
+            .unwrap()
+            .clone();
+        assert!(source_power_payment_matches(&state, &original, &original));
+        let mut forged = original.clone();
+        forged.v4.crystal_prevention_started_v1 = CrystalPreventionStartedV1(Some(0));
+        let before = serde_json::to_vec(&state).unwrap();
+        assert!(!source_power_payment_matches(&state, &forged, &original));
+        assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+    }
+}
+#[test]
 fn absent_stack_wrapper_writes_no_hash_input_or_serialized_field() {
     #[derive(Default)]
     struct Writes(usize);

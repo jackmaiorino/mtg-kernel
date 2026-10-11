@@ -178,7 +178,9 @@ pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), S
     let (saved, power, toughness, captured_damage_source) = receipts
         .next()
         .ok_or("source-power activation lost committed payment")?;
-    if receipts.next().is_some() || saved.as_ref() != item {
+    if receipts.next().is_some()
+        || !crate::effect::crystal_prevention_v1::source_power_payment_matches(state, item, saved)
+    {
         return Err("source-power activation differs from its unique committed payment".into());
     }
     if state

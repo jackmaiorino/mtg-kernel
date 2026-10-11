@@ -13,6 +13,9 @@ pub enum PreventionV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ChoiceV1 {
     pub source: ObjectId,
+    /// Only the authenticated finalized source-power receipt may supply LKI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub historical_source: Option<StackItemId>,
     pub target: Target,
     pub original_amount: i32,
     pub remaining_amount: i32,
@@ -30,7 +33,7 @@ impl ChoiceV1 {
             amount: self.remaining_amount,
             touched_by: self.touched.clone(),
             is_combat: false,
-            historical_source: None,
+            historical_source: self.historical_source,
         }
     }
 }
@@ -202,7 +205,11 @@ impl OwnerV1 {
         event: &crate::event::ProposedEvent,
     ) -> bool {
         matches!(event, crate::event::ProposedEvent::Damage(d)
-            if d.source == self.expected.source && !d.is_combat && d.historical_source.is_none())
+            if d.source == self.expected.source && !d.is_combat
+                && (d.historical_source.is_none()
+                    || d.historical_source == Some(self.expected.v4.stack_item_id)
+                        && crate::source_power_activation_v1::damage_source(
+                            state, d.source, self.expected.v4.stack_item_id).is_ok()))
             && !state
                 .stack
                 .iter()
@@ -258,9 +265,96 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         _ => false,
     }
 }
+/// Reconstruct immutable source/amount from the actual definition-owned leaf.
+/// Current target legality is checked by the normal stack resolution boundary;
+/// historical replay must not sample a later battlefield incarnation.
+fn original_damage(
+    state: &GameState,
+    ctx: &ExecCtx,
+    op: &EffectOp,
+) -> Result<DamageProposed, String> {
+    let (target, amount, historical_source) = match op {
+        EffectOp::DealDamage { target, amount } => (ctx.resolve_target(*target), *amount, None),
+        EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1) => {
+            let id = ctx
+                .stack_item_id
+                .ok_or("Crystal historical damage lost stack identity")?;
+            crate::source_power_activation_v1::damage_source(state, ctx.source, id)?;
+            let mut matches = state.engine.event_history.iter().filter_map(|e| match e {
+                CommittedEvent::SourcePowerActivationCommittedV1 { item, power, .. }
+                    if item.v4.stack_item_id == id
+                        && item.source == ctx.source
+                        && item.controller == ctx.controller
+                        && item.v4.ability_source_contract == ctx.ability_source_contract =>
+                {
+                    Some(*power)
+                }
+                _ => None,
+            });
+            let power = matches
+                .next()
+                .ok_or("Crystal historical damage lost committed power")?;
+            if matches.next().is_some() {
+                return Err("Crystal historical damage duplicated committed power".into());
+            }
+            let target = ctx
+                .targets
+                .first()
+                .copied()
+                .ok_or("Crystal historical damage lost target")?;
+            (target, power.max(0), Some(id))
+        }
+        _ => return Err("Crystal damage instruction is not supported".into()),
+    };
+    Ok(DamageProposed {
+        source: ctx.source,
+        target,
+        amount,
+        touched_by: Vec::new(),
+        is_combat: false,
+        historical_source,
+    })
+}
+/// Source-power payment authority remains byte-exact except for this module's
+/// independently published start marker. This is not a generic stack rewrite.
+pub(crate) fn source_power_payment_matches(
+    state: &GameState,
+    item: &StackItem,
+    saved: &StackItem,
+) -> bool {
+    if item == saved {
+        return true;
+    }
+    let Some(index) = item.v4.crystal_prevention_started_v1.0 else {
+        return false;
+    };
+    let Some(CommittedEvent::CrystalPreventionBoundaryV1 { boundary }) =
+        state.engine.event_history.get(index as usize)
+    else {
+        return false;
+    };
+    let mut original = item.clone();
+    original.v4.crystal_prevention_started_v1 = CrystalPreventionStartedV1::default();
+    let mut initial = probe(item);
+    initial.frames.push(EffectFrame::Program {
+        op: boundary.root.clone(),
+        path: Vec::new(),
+    });
+    original == *saved
+        && boundary.history_index == index
+        && boundary.previous.is_none()
+        && boundary.answer.is_none()
+        && *boundary.item == *item
+        && boundary.pending.as_deref() == Some(&initial)
+        && boundary.root
+            == EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1)
+}
 fn has_damage(op: &EffectOp) -> bool {
     match op {
-        EffectOp::DealDamage { .. } => true,
+        EffectOp::DealDamage { .. }
+        | EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1) => {
+            true
+        }
         EffectOp::Sequence(ops) => ops.iter().any(has_damage),
         EffectOp::Conditional { then, else_, .. } => has_damage(then) || has_damage(else_),
         _ => false,
@@ -268,7 +362,10 @@ fn has_damage(op: &EffectOp) -> bool {
 }
 fn supported(op: &EffectOp) -> bool {
     match op {
-        EffectOp::DealDamage { .. } => true,
+        EffectOp::DealDamage { .. }
+        | EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1) => {
+            true
+        }
         EffectOp::Sequence(ops) => ops.iter().all(supported),
         EffectOp::Conditional { then, else_, .. } => supported(then) && supported(else_),
         _ => false,
@@ -537,19 +634,18 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
                 ..
             }) = p.choice.as_ref()
             {
-                let Some(EffectOp::DealDamage { target, amount }) =
-                    effect_op_at_structural_path(&b.root, &choice.path)
-                else {
-                    return Err("Crystal historical menu lost its printed instruction".into());
-                };
+                let op = effect_op_at_structural_path(&b.root, &choice.path)
+                    .ok_or("Crystal historical menu lost its printed instruction")?;
+                let damage = original_damage(state, &p.ctx, op)?;
                 let mut frames = Vec::new();
                 remaining(&b.root, &choice.path, &[], &mut frames)?;
                 if p.choice.as_ref() != Some(&menu((**choice).clone()))
-                    || choice.source != p.ctx.source
-                    || choice.target != p.ctx.resolve_target(*target)
-                    || choice.original_amount != *amount
+                    || choice.source != damage.source
+                    || choice.historical_source != damage.historical_source
+                    || choice.target != damage.target
+                    || choice.original_amount != damage.amount
                     || choice.remaining_amount <= 0
-                    || choice.remaining_amount > *amount
+                    || choice.remaining_amount > damage.amount
                     || p.frames != frames
                     || choice.remaining_frames != frames
                     || p.answered_choice_guard.is_some()
@@ -701,7 +797,15 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                     path: child,
                 });
             }
-            EffectOp::DealDamage { target, amount } => {
+            EffectOp::DealDamage { .. }
+            | EffectOp::StandardV1(
+                crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1,
+            ) => {
+                let damage = original_damage(state, &pending.ctx, op)?;
+                if damage.amount <= 0 {
+                    steps.push(step);
+                    continue;
+                }
                 if offer(state, &mut pending, op, path)? {
                     step.offered_menu = pending.choice.clone();
                     steps.push(step);
@@ -710,11 +814,7 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                 let start = state.engine.event_history.len();
                 crate::event::propose_and_commit_crystal_owned(
                     state,
-                    crate::event::ProposedEvent::damage(
-                        pending.ctx.source,
-                        pending.ctx.resolve_target(*target),
-                        *amount,
-                    ),
+                    crate::event::ProposedEvent::Damage(damage),
                     owner,
                 );
                 if state.engine.halted.is_some() {
@@ -837,7 +937,11 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                         path: child,
                     });
                 }
-                EffectOp::DealDamage { target, amount } => {
+                EffectOp::DealDamage { .. }
+                | EffectOp::StandardV1(
+                    crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1,
+                ) => {
+                    let damage = original_damage(state, &pending.ctx, op)?;
                     if step.conditional_result.is_some() {
                         return Err("Crystal damage carries a foreign branch".into());
                     }
@@ -857,10 +961,11 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                             return Err("Crystal execution offered a foreign menu".into());
                         };
                         if choice.path != *path
-                            || choice.source != pending.ctx.source
-                            || choice.target != pending.ctx.resolve_target(*target)
-                            || choice.original_amount != *amount
-                            || choice.remaining_amount != *amount
+                            || choice.source != damage.source
+                            || choice.historical_source != damage.historical_source
+                            || choice.target != damage.target
+                            || choice.original_amount != damage.amount
+                            || choice.remaining_amount != damage.amount
                             || !choice.touched.is_empty()
                             || choice.remaining_frames != pending.frames
                         {
@@ -883,9 +988,9 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                             }
                             if !matches!(state.engine.event_history.get(at),
                                 Some(CommittedEvent::Damage { source, target: recipient, amount: dealt, .. })
-                                if *source == pending.ctx.source
-                                    && *recipient == pending.ctx.resolve_target(*target)
-                                    && *dealt > 0 && *dealt <= *amount)
+                                if *source == damage.source
+                                    && *recipient == damage.target
+                                    && *dealt > 0 && *dealt <= damage.amount)
                             {
                                 return Err(
                                     "Crystal execution lost genuine committed damage".into()
@@ -931,7 +1036,14 @@ pub(crate) fn applicable(state: &GameState, damage: &DamageProposed) -> Vec<Prev
         .into_iter()
         .map(PreventionV1::Barricade)
         .collect::<Vec<_>>();
-    if crate::engine::damage_is_prevented_by_protection(state, damage.source, damage.target) {
+    let protected = match damage.historical_source {
+        Some(id) => crate::source_power_activation_v1::damage_source(state, damage.source, id)
+            .is_ok_and(|facts| crate::source_power_activation_v1::protected(state, facts, target)),
+        None => {
+            crate::engine::damage_is_prevented_by_protection(state, damage.source, damage.target)
+        }
+    };
+    if protected {
         let o = state.objects.get(target);
         options.push(PreventionV1::Protection(EffectObjectBinding {
             object: target,
@@ -984,17 +1096,7 @@ pub(crate) fn offer(
     op: &EffectOp,
     path: &[u16],
 ) -> Result<bool, String> {
-    let EffectOp::DealDamage { target, amount } = op else {
-        return Ok(false);
-    };
-    let damage = DamageProposed {
-        source: continuation.ctx.source,
-        target: continuation.ctx.resolve_target(*target),
-        amount: *amount,
-        touched_by: Vec::new(),
-        is_combat: false,
-        historical_source: None,
-    };
+    let damage = original_damage(state, &continuation.ctx, op)?;
     if !needs_choice(state, &damage) {
         return Ok(false);
     }
@@ -1012,6 +1114,7 @@ pub(crate) fn offer(
     };
     let choice = ChoiceV1 {
         source: damage.source,
+        historical_source: damage.historical_source,
         target: damage.target,
         original_amount: damage.amount,
         remaining_amount: damage.amount,
@@ -1071,22 +1174,21 @@ fn validate_choice(state: &GameState, pending: &EffectContinuation) -> Result<()
         return Ok(());
     };
     let root = validated_definition_owned_root_effect(state, pending)?;
-    let Some(EffectOp::DealDamage { target, amount }) =
-        effect_op_at_structural_path(&root, &choice.path)
-    else {
-        return Err("Crystal choice lost its actual fixed-damage instruction".into());
-    };
+    let op = effect_op_at_structural_path(&root, &choice.path)
+        .ok_or("Crystal choice lost its actual damage instruction")?;
+    let damage = original_damage(state, &pending.ctx, op)?;
     let mut expected_frames = Vec::new();
     remaining(&root, &choice.path, &[], &mut expected_frames)?;
     let Target::Object(recipient) = choice.target else {
         return Err("Crystal choice lost its affected permanent".into());
     };
     if pending.choice.as_ref() != Some(&menu((**choice).clone()))
-        || choice.source != pending.ctx.source
-        || choice.target != pending.ctx.resolve_target(*target)
-        || choice.original_amount != *amount
+        || choice.source != damage.source
+        || choice.historical_source != damage.historical_source
+        || choice.target != damage.target
+        || choice.original_amount != damage.amount
         || choice.remaining_amount <= 0
-        || choice.remaining_amount > *amount
+        || choice.remaining_amount > damage.amount
         || pending.frames != choice.remaining_frames
         || pending.frames != expected_frames
         || pending.answered_choice_guard.is_some()

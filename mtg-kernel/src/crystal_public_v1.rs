@@ -27,10 +27,24 @@ pub struct OptionV1 {
 #[serde(deny_unknown_fields)]
 pub struct MenuV1 {
     pub chooser: PlayerSeatV1,
+    /// Present only for publicly announced, receipt-authenticated sacrifice
+    /// damage. In that case source describes the captured incarnation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_history: Option<SavedDamageSourceV1>,
     pub source: CardStableRefV1,
     pub recipient: CardStableRefV1,
     pub remaining_damage: i32,
     pub options: Vec<OptionV1>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SavedDamageSourceV1 {
+    pub signed_power: i32,
+    pub captured_controller: PlayerSeatV1,
+    pub color_mask: u8,
+    pub lifelink: bool,
+    pub deathtouch: bool,
+    pub werewolf: bool,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -85,6 +99,10 @@ pub fn producer_sha256_v1() -> String {
         include_str!("continuous_characteristics_v1.rs"),
         include_str!("sower_restriction_capture_v1.rs"),
         include_str!("standard_cards_v1.rs"),
+        include_str!("source_power_activation_v1.rs"),
+        include_str!("rules_meaning_heartfire_v1.rs"),
+        include_str!("creature_stats_lki_v1.rs"),
+        include_str!("standard_legends_v1.rs"),
         include_str!("rules_meaning_crystal_ordering_v1.rs"),
         include_str!("card_def.rs"),
         include_str!("../build.rs"),
@@ -143,6 +161,64 @@ fn public_ref(
     }
     crate::sower_restriction_capture_v1::masked_ref(id, o)
 }
+fn damage_origin(
+    state: &GameState,
+    choice: &crate::effect::crystal_prevention_v1::ChoiceV1,
+) -> Result<(CardStableRefV1, Option<SavedDamageSourceV1>), RlContractError> {
+    let Some(id) = choice.historical_source else {
+        return Ok((public_ref(state, choice.source)?, None));
+    };
+    let item = state
+        .stack
+        .iter()
+        .find(|item| item.v4.stack_item_id == id)
+        .ok_or_else(|| RlContractError("Crystal historical source lost live owner".into()))?;
+    crate::source_power_activation_v1::validate_item(state, item).map_err(RlContractError)?;
+    let source = item.v4.ability_source_contract.ok_or_else(|| {
+        RlContractError("Crystal historical source lost captured identity".into())
+    })?;
+    let local = item
+        .v4
+        .activated_ability_index
+        .ok_or_else(|| RlContractError("Crystal historical source lost printed selector".into()))?;
+    crate::rules_meaning_heartfire_v1::root_meaning(source.card_def, u32::from(local)).map_err(
+        |_| RlContractError("Crystal historical source is not the printed power root".into()),
+    )?;
+    let facts = crate::source_power_activation_v1::damage_source(state, choice.source, id)
+        .map_err(RlContractError)?;
+    let power = state
+        .engine
+        .event_history
+        .iter()
+        .find_map(|e| match e {
+            crate::event::CommittedEvent::SourcePowerActivationCommittedV1 {
+                item, power, ..
+            } if item.v4.stack_item_id == id => Some(*power),
+            _ => None,
+        })
+        .ok_or_else(|| RlContractError("Crystal historical source lost power".into()))?;
+    // These are the publicly visible source facts at the genuine activation,
+    // not an inspection of a later hidden/reentered object's current identity.
+    let reference = CardStableRefV1 {
+        arena_id: source.source.0,
+        card_db_id: source.card_def,
+        owner: source.owner.into(),
+        controller: source.controller.into(),
+        zone: source.zone,
+        zone_change_count: source.zone_change_count,
+    };
+    Ok((
+        reference,
+        Some(SavedDamageSourceV1 {
+            signed_power: power,
+            captured_controller: facts.source.controller.into(),
+            color_mask: facts.color_mask,
+            lifelink: facts.lifelink,
+            deathtouch: facts.deathtouch,
+            werewolf: facts.werewolf,
+        }),
+    ))
+}
 fn menu(state: &GameState) -> Result<Option<MenuV1>, RlContractError> {
     use crate::effect::crystal_prevention_v1::PreventionV1;
     use crate::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
@@ -175,9 +251,11 @@ fn menu(state: &GameState) -> Result<Option<MenuV1>, RlContractError> {
         };
         Ok(OptionV1 { kind: kind.into(), source: public_ref(state, id)?, shield_remaining: amount })
     }).collect::<Result<Vec<_>, RlContractError>>()?;
+    let (source, source_history) = damage_origin(state, choice)?;
     Ok(Some(MenuV1 {
         chooser: choice.chooser.into(),
-        source: public_ref(state, choice.source)?,
+        source,
+        source_history,
         recipient: public_ref(state, recipient)?,
         remaining_damage: choice.remaining_amount,
         options,
