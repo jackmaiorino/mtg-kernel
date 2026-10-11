@@ -10,7 +10,10 @@ pub enum CreatureChoiceV1 {
     FrillbackPayment,
     ZoralinePayment,
     GlissaCounters(u8),
-    AegisCopy { host: crate::state::ObjectLinkV4, attachment_timestamp: u64 },
+    AegisCopy {
+        host: crate::state::ObjectLinkV4,
+        attachment_timestamp: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -106,9 +109,19 @@ fn remove_counter(state: &mut GameState, id: crate::ids::ObjectId, kind: Counter
 pub(crate) fn options(kind: CreatureChoiceV1, ctx: &ExecCtx, state: &GameState) -> Vec<EffectOp> {
     let mut answers = vec![0];
     match kind {
-        CreatureChoiceV1::AegisCopy { host, attachment_timestamp } => {
-            answers = (0..crate::standard_cards_v1::aegis_copy_candidates(state,ctx,host,attachment_timestamp).len())
-                .map(|index| u8::try_from(index).expect("Aegis choices fit the action vocabulary")).collect();
+        CreatureChoiceV1::AegisCopy {
+            host,
+            attachment_timestamp,
+        } => {
+            answers = (0..crate::standard_cards_v1::aegis_copy_candidates(
+                state,
+                ctx,
+                host,
+                attachment_timestamp,
+            )
+            .len())
+                .map(|index| u8::try_from(index).expect("Aegis choices fit the action vocabulary"))
+                .collect();
         }
         CreatureChoiceV1::FrillbackPayment => {
             answers.extend((1..=3).filter(|n| {
@@ -162,14 +175,28 @@ pub(crate) fn answer(
     if !options(kind, ctx, state).contains(&EffectOp::CreatureChoiceAnswerV1 { kind, answer }) {
         return Err("creature choice answer is no longer legal".into());
     }
-    if answer == 0 && !matches!(kind,CreatureChoiceV1::AegisCopy { .. }) {
+    if answer == 0 && !matches!(kind, CreatureChoiceV1::AegisCopy { .. }) {
         return Ok(None);
     }
     match kind {
-        CreatureChoiceV1::AegisCopy { host, attachment_timestamp } => {
-            let choices = crate::standard_cards_v1::aegis_copy_candidates(state,ctx,host,attachment_timestamp);
+        CreatureChoiceV1::AegisCopy {
+            host,
+            attachment_timestamp,
+        } => {
+            let choices = crate::standard_cards_v1::aegis_copy_candidates(
+                state,
+                ctx,
+                host,
+                attachment_timestamp,
+            );
             let chosen = choices[usize::from(answer)];
-            crate::standard_cards_v1::apply_aegis_copy(state,ctx,host,attachment_timestamp,chosen);
+            crate::standard_cards_v1::apply_aegis_copy(
+                state,
+                ctx,
+                host,
+                attachment_timestamp,
+                chosen,
+            );
         }
         CreatureChoiceV1::GlissaCounters(remaining) => {
             let Some(Target::Object(id)) = ctx.targets.first() else {
@@ -334,7 +361,14 @@ pub(crate) fn trigger_target_spec(card_def: u16, effect: &EffectOp) -> Option<Ta
         return Some(TargetSpec::None);
     }
     match crate::card_def::CARD_DEFS.get(card_def as usize)?.name {
-        "Assimilation Aegis" if matches!(effect,EffectOp::CreatureChoiceV1(CreatureChoiceV1::AegisCopy { .. })) => Some(TargetSpec::None),
+        "Assimilation Aegis"
+            if matches!(
+                effect,
+                EffectOp::CreatureChoiceV1(CreatureChoiceV1::AegisCopy { .. })
+            ) =>
+        {
+            Some(TargetSpec::None)
+        }
         "Glissa Sunslayer" => glissa_modes()
             .into_iter()
             .find(|(_, op)| op == effect)
@@ -361,7 +395,10 @@ pub enum CreatureChoiceOptionV1 {
 impl CreatureChoiceOptionV1 {
     pub fn label(self) -> String {
         match self {
-            Self::CopyExiledCreature { card_def } => format!("copy {}",crate::card_def::CARD_DEFS[usize::from(card_def)].name),
+            Self::CopyExiledCreature { card_def } => format!(
+                "copy {}",
+                crate::card_def::CARD_DEFS[usize::from(card_def)].name
+            ),
             Self::Decline => "decline or stop".into(),
             Self::PayGreen(n) => format!("pay {}", "{G}".repeat(usize::from(n))),
             Self::PayWhiteBlackAndTwoLife => "pay {W}{B} and 2 life".into(),
@@ -385,16 +422,28 @@ impl CreatureChoiceOptionV1 {
         }
     }
 }
-pub(crate) fn public_option(op: &EffectOp, ctx: &ExecCtx, state: &GameState) -> Option<CreatureChoiceOptionV1> {
+pub(crate) fn public_option(
+    op: &EffectOp,
+    ctx: &ExecCtx,
+    state: &GameState,
+) -> Option<CreatureChoiceOptionV1> {
     let EffectOp::CreatureChoiceAnswerV1 { kind, answer } = *op else {
         return None;
     };
-    if answer == 0 && !matches!(kind,CreatureChoiceV1::AegisCopy { .. }) {
+    if answer == 0 && !matches!(kind, CreatureChoiceV1::AegisCopy { .. }) {
         return Some(CreatureChoiceOptionV1::Decline);
     }
     match kind {
-        CreatureChoiceV1::AegisCopy { host, attachment_timestamp } => crate::standard_cards_v1::aegis_copy_candidates(state,ctx,host,attachment_timestamp)
-            .get(usize::from(answer)).map(|chosen| CreatureChoiceOptionV1::CopyExiledCreature { card_def: state.objects.get(chosen.object).card_def }),
+        CreatureChoiceV1::AegisCopy {
+            host,
+            attachment_timestamp,
+        } => {
+            crate::standard_cards_v1::aegis_copy_candidates(state, ctx, host, attachment_timestamp)
+                .get(usize::from(answer))
+                .map(|chosen| CreatureChoiceOptionV1::CopyExiledCreature {
+                    card_def: state.objects.get(chosen.object).card_def,
+                })
+        }
         CreatureChoiceV1::FrillbackPayment => Some(CreatureChoiceOptionV1::PayGreen(answer)),
         CreatureChoiceV1::ZoralinePayment => Some(CreatureChoiceOptionV1::PayWhiteBlackAndTwoLife),
         CreatureChoiceV1::GlissaCounters(_) => CounterKindV1::ALL

@@ -4263,6 +4263,7 @@ mod tests {
             .push(StackItemPublicV2 {
                 counter_distribution: None,
                 counter_transfer: None,
+                granted_ability: None,
                 stack_index: 0,
                 source: stack_source,
                 controller: actor,
@@ -4379,6 +4380,7 @@ mod tests {
             .push(StackItemPublicV2 {
                 counter_distribution: None,
                 counter_transfer: None,
+                granted_ability: None,
                 stack_index: 0,
                 source: stack_source,
                 controller: actor,
@@ -4467,6 +4469,7 @@ mod tests {
             .push(StackItemPublicV2 {
                 counter_distribution: None,
                 counter_transfer: None,
+                granted_ability: None,
                 stack_index: u32::try_from(observation.projection.surface.stack.len()).unwrap(),
                 source: synthetic_stable(90_029, 3, actor, actor, Zone::Stack),
                 controller: actor,

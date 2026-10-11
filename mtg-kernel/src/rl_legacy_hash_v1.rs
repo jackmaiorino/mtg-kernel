@@ -102,6 +102,10 @@ impl Hash for StackItemPublicV2 {
             "StackItemPublicV2/counter_transfer/v1".hash(state);
             value.hash(state);
         }
+        if let Some(value) = &self.granted_ability {
+            "StackItemPublicV2/granted_ability/v1".hash(state);
+            value.hash(state);
+        }
     }
 }
 
@@ -244,7 +248,7 @@ mod tests {
         preserves_legacy::<LegacyCountersV1>(&card.counters);
         preserves_legacy::<LegacyCardCharacteristicsV2>(&card.characteristics);
         preserves_legacy::<LegacyCardPublicV2>(&card);
-        let stack = StackItemPublicV2 {
+        let mut stack = StackItemPublicV2 {
             stack_index: 3,
             source: card.stable.clone(),
             controller: PlayerSeatV1::P1,
@@ -263,8 +267,17 @@ mod tests {
             paid_cost_refs: vec![card.stable.clone()],
             counter_distribution: None,
             counter_transfer: None,
+            granted_ability: None,
         };
         preserves_legacy::<LegacyStackItemPublicV2>(&stack);
+        let old_stack_hash = bytes(&stack);
+        stack.granted_ability = Some((card.stable.clone(), 3));
+        assert_ne!(bytes(&stack), old_stack_hash);
+        assert_eq!(
+            serde_json::from_str::<StackItemPublicV2>(&serde_json::to_string(&stack).unwrap())
+                .unwrap(),
+            stack
+        );
         let trigger = PendingTriggerSemanticV2 {
             source: Some(card.stable),
             controller: PlayerSeatV1::P1,

@@ -421,6 +421,8 @@ pub struct StackItemPublicV2 {
     pub counter_distribution: Option<CounterDistributionPublicV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub counter_transfer: Option<crate::standard_creatures_v1::CounterTransferV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub granted_ability: Option<(CardStableRefV1, u16)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -7785,6 +7787,7 @@ fn stack_item_public_v2(
         face_index: item.v4.face_index,
         x_value: item.v4.x_value,
         paid_cost_refs: paid_cost_card_refs(&item.v4.paid_cost_refs, acting_player),
+        granted_ability: public_granted_ability(item.v4.cauldron_grant),
         counter_transfer: public_counter_transfer(
             state,
             item.inline_effect.as_ref(),

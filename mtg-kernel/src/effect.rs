@@ -5422,8 +5422,17 @@ fn validated_definition_owned_root_effect(
     }
     crate::standard_legends_v1::jodah::validate_effect(state, &root, pending.ctx.controller)?;
     if pending.resolving_item.kind == crate::state::StackItemKind::TriggeredAbility {
-        let card_def = pending.resolving_item.v4.ability_source_contract.map(|source| source.card_def)
-            .or_else(|| state.objects.try_get(pending.resolving_item.source).map(|source| source.card_def))
+        let card_def = pending
+            .resolving_item
+            .v4
+            .ability_source_contract
+            .map(|source| source.card_def)
+            .or_else(|| {
+                state
+                    .objects
+                    .try_get(pending.resolving_item.source)
+                    .map(|source| source.card_def)
+            })
             .ok_or("answered trigger frame lost its source object")?;
         // A Saga's chapter abilities are definition-owned triggers too
         // (714.2b).

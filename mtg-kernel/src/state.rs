@@ -2507,7 +2507,9 @@ impl GameState {
             zone_change_count: target_zone_change_count,
         };
         let changed_host = source_live.v4.attached_to != Some(host_link);
-        if (cfg!(feature = "limited-fdn-fixtures") || cfg!(feature = "standard-magezero-fixtures")) && changed_host {
+        if (cfg!(feature = "limited-fdn-fixtures") || cfg!(feature = "standard-magezero-fixtures"))
+            && changed_host
+        {
             let timestamp = crate::engine::next_timestamp(self);
             self.objects.get_mut(source).v4.layer_timestamp = Some(timestamp);
         }
@@ -2524,7 +2526,9 @@ impl GameState {
         attachments.sort_unstable();
         attachments.dedup();
         crate::standard_cards_v1::refresh_aegis_copies(self);
-        if changed_host { crate::standard_cards_v1::aegis_attached(self,source,host_link); }
+        if changed_host {
+            crate::standard_cards_v1::aegis_attached(self, source, host_link);
+        }
         self.validate_attachment_relations()
     }
 

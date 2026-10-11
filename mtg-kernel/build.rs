@@ -6052,7 +6052,10 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
             "ability_effect_create_phyrexian_mite_token".to_string()
         }
         AbilityEffectRecipe::CreateToken(name) => {
-            panic!("no generated activated-ability token function for {name:?}")
+            format!(
+                "ability_effect_create_{}",
+                name.replace(' ', "_").to_lowercase()
+            )
         }
         AbilityEffectRecipe::DamageTarget(amount) => {
             format!("ability_effect_damage_target_{amount}")

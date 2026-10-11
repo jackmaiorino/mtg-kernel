@@ -3171,22 +3171,34 @@ fn innkeeper_doubles_oil_and_poison_placed_by_its_controller() {
     );
 }
 
-
 fn stop_with_aegis_copy_trigger(state: &mut GameState, aegis: ObjectId, creature: ObjectId) {
     use mtg_kernel::effect::EffectOp;
     use mtg_kernel::standard_creature_choices_v1::CreatureChoiceV1;
     state.players[0].mana_pool[ManaColor::W.pool_index()] = 2;
-    act(state,Action::ActivateAbility(aegis,0));
+    act(state, Action::ActivateAbility(aegis, 0));
     let mut targeted = false;
     loop {
         match next(state) {
             Decision::ChooseTargets { .. } if !targeted => {
-                act(state,Action::ChooseTarget(Target::Object(creature))); targeted = true;
+                act(state, Action::ChooseTarget(Target::Object(creature)));
+                targeted = true;
             }
-            Decision::OrderTriggers { pending, .. } => act(state,Action::OrderTriggers((0..pending.len()).collect())),
-            Decision::CastSpellOrPass { .. } if state.stack.iter().any(|item| matches!(item.inline_effect,
-                Some(EffectOp::CreatureChoiceV1(CreatureChoiceV1::AegisCopy { .. })))) => return,
-            Decision::CastSpellOrPass { .. } => act(state,Action::Pass),
+            Decision::OrderTriggers { pending, .. } => {
+                act(state, Action::OrderTriggers((0..pending.len()).collect()))
+            }
+            Decision::CastSpellOrPass { .. }
+                if state.stack.iter().any(|item| {
+                    matches!(
+                        item.inline_effect,
+                        Some(EffectOp::CreatureChoiceV1(
+                            CreatureChoiceV1::AegisCopy { .. }
+                        ))
+                    )
+                }) =>
+            {
+                return
+            }
+            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
             other => panic!("unexpected Aegis decision {other:?}"),
         }
     }
@@ -3195,61 +3207,69 @@ fn stop_with_aegis_copy_trigger(state: &mut GameState, aegis: ObjectId, creature
 #[test]
 fn aegis_waits_for_its_copy_trigger_and_does_nothing_after_detaching() {
     let mut state = game();
-    let elves = put(&mut state,P1,"Llanowar Elves",Zone::Battlefield);
-    let host = put(&mut state,P0,"Tolarian Terror",Zone::Battlefield);
-    let aegis = cast_aegis(&mut state,&[Target::Object(elves)]);
-    stop_with_aegis_copy_trigger(&mut state,aegis,host);
-    assert_eq!(state.objects.get(host).name,"Tolarian Terror");
-    event::propose_and_commit(&mut state,ProposedEvent::zone_change(aegis,Zone::Hand));
+    let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let host = put(&mut state, P0, "Tolarian Terror", Zone::Battlefield);
+    let aegis = cast_aegis(&mut state, &[Target::Object(elves)]);
+    stop_with_aegis_copy_trigger(&mut state, aegis, host);
+    assert_eq!(state.objects.get(host).name, "Tolarian Terror");
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(aegis, Zone::Hand));
     resolve_stack(&mut state);
-    assert_eq!(state.objects.get(host).name,"Tolarian Terror");
-    assert_eq!(state.objects.get(elves).zone,Zone::Battlefield);
+    assert_eq!(state.objects.get(host).name, "Tolarian Terror");
+    assert_eq!(state.objects.get(elves).zone, Zone::Battlefield);
 }
 
 #[test]
 fn copied_essence_channeler_dies_with_its_counter_transfer_ability() {
     let mut state = game();
-    let channeler = put(&mut state,P1,"Essence Channeler",Zone::Battlefield);
-    let host = put(&mut state,P0,"Tolarian Terror",Zone::Battlefield);
-    let recipient = put(&mut state,P0,"Gingerbrute",Zone::Battlefield);
-    let aegis = cast_aegis(&mut state,&[Target::Object(channeler)]);
-    equip_aegis(&mut state,aegis,host);
+    let channeler = put(&mut state, P1, "Essence Channeler", Zone::Battlefield);
+    let host = put(&mut state, P0, "Tolarian Terror", Zone::Battlefield);
+    let recipient = put(&mut state, P0, "Gingerbrute", Zone::Battlefield);
+    let aegis = cast_aegis(&mut state, &[Target::Object(channeler)]);
+    equip_aegis(&mut state, aegis, host);
     state.objects.get_mut(host).counters.plus1_plus1 = 3;
     state.objects.get_mut(host).counters.oil = 2;
-    event::propose_and_commit(&mut state,ProposedEvent::zone_change(host,Zone::Graveyard));
-    assert_eq!(state.objects.get(host).name,"Tolarian Terror");
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(host, Zone::Graveyard),
+    );
+    assert_eq!(state.objects.get(host).name, "Tolarian Terror");
     let serialized = serde_json::to_string(&state).unwrap();
     state = serde_json::from_str(&serialized).unwrap();
-    drive(&mut state,&[Target::Object(recipient)]);
-    assert_eq!(state.objects.get(recipient).counters.plus1_plus1,3);
-    assert_eq!(state.objects.get(recipient).counters.oil,2);
-    assert_eq!(state.objects.get(channeler).zone,Zone::Exile);
+    drive(&mut state, &[Target::Object(recipient)]);
+    assert_eq!(state.objects.get(recipient).counters.plus1_plus1, 3);
+    assert_eq!(state.objects.get(recipient).counters.oil, 2);
+    assert_eq!(state.objects.get(channeler).zone, Zone::Exile);
 }
 
 #[test]
 fn aegis_controller_chooses_among_exiled_cards_at_resolution() {
     let mut state = game();
-    let elves = put(&mut state,P1,"Llanowar Elves",Zone::Battlefield);
-    let host = put(&mut state,P0,"Tolarian Terror",Zone::Battlefield);
-    let aegis = cast_aegis(&mut state,&[Target::Object(elves)]);
-    let channeler = to_graveyard(&mut state,P1,"Essence Channeler");
-    event::propose_and_commit(&mut state,ProposedEvent::zone_change(channeler,Zone::Exile));
+    let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let host = put(&mut state, P0, "Tolarian Terror", Zone::Battlefield);
+    let aegis = cast_aegis(&mut state, &[Target::Object(elves)]);
+    let channeler = to_graveyard(&mut state, P1, "Essence Channeler");
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(channeler, Zone::Exile),
+    );
     state.objects.get_mut(channeler).v4.exiled_by = Some(mtg_kernel::state::ObjectLinkV4 {
-        object: aegis, zone_change_count: state.objects.get(aegis).zone_change_count,
+        object: aegis,
+        zone_change_count: state.objects.get(aegis).zone_change_count,
     });
-    stop_with_aegis_copy_trigger(&mut state,aegis,host);
+    stop_with_aegis_copy_trigger(&mut state, aegis, host);
     loop {
         match next(&mut state) {
             Decision::ChooseEffectOption { option_count, .. } => {
-                assert_eq!(option_count,2,"mandatory copy has no decline option");
+                assert_eq!(option_count, 2, "mandatory copy has no decline option");
                 let serialized = serde_json::to_string(&state).unwrap();
                 state = serde_json::from_str(&serialized).unwrap();
-                act(&mut state,Action::ChooseEffectOption(1)); break;
+                act(&mut state, Action::ChooseEffectOption(1));
+                break;
             }
-            Decision::CastSpellOrPass { .. } => act(&mut state,Action::Pass),
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
             other => panic!("unexpected copy decision {other:?}"),
         }
     }
     resolve_stack(&mut state);
-    assert_eq!(state.objects.get(host).name,"Essence Channeler");
+    assert_eq!(state.objects.get(host).name, "Essence Channeler");
 }

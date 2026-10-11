@@ -11772,7 +11772,12 @@ fn pending_trigger_modes(
     pending: &PendingTrigger,
 ) -> Option<Vec<(TargetSpec, EffectOp)>> {
     let source = state.objects.try_get(pending.source)?;
-    trigger::unselected_trigger_modes(pending.source_contract.map_or(source.card_def,|contract| contract.card_def), &pending.effect)
+    trigger::unselected_trigger_modes(
+        pending
+            .source_contract
+            .map_or(source.card_def, |contract| contract.card_def),
+        &pending.effect,
+    )
 }
 
 fn legal_pending_trigger_modes(
@@ -11817,8 +11822,13 @@ fn validate_pending_trigger(state: &GameState, pending: &PendingTrigger) -> Resu
         .objects
         .try_get(pending.source)
         .ok_or("pending targeted trigger source is missing")?;
-    let expected = trigger::target_spec_for_trigger(pending.source_contract.map_or(source.card_def,|contract| contract.card_def), &pending.effect)
-        .ok_or("pending targeted trigger has no matching definition-owned ability")?;
+    let expected = trigger::target_spec_for_trigger(
+        pending
+            .source_contract
+            .map_or(source.card_def, |contract| contract.card_def),
+        &pending.effect,
+    )
+    .ok_or("pending targeted trigger has no matching definition-owned ability")?;
     if pending.target_spec != expected {
         return Err("pending trigger target specification changed".to_string());
     }
@@ -12644,7 +12654,13 @@ pub(crate) fn validated_stack_item_target_spec(
                 .try_get(item.source)
                 .ok_or("trigger source is missing")?;
             if item.inline_effect.as_ref().is_some_and(|effect| {
-                trigger::unselected_trigger_modes(item.v4.ability_source_contract.map_or(source.card_def,|contract| contract.card_def), effect).is_some()
+                trigger::unselected_trigger_modes(
+                    item.v4
+                        .ability_source_contract
+                        .map_or(source.card_def, |contract| contract.card_def),
+                    effect,
+                )
+                .is_some()
             }) {
                 return Err(
                     "stacked triggered ability still carries its unselected modal root".into(),

@@ -1467,7 +1467,11 @@ pub(crate) fn departure_face(
                     face_index,
                     ..
                 } if *departed == object => Some(*face_index),
-                CommittedEvent::LeftBattlefieldCopyV1 { source, face_index } if source.source == object => Some(*face_index),
+                CommittedEvent::LeftBattlefieldCopyV1 { source, face_index }
+                    if source.source == object =>
+                {
+                    Some(*face_index)
+                }
                 _ => None,
             })
             .unwrap_or(0),
@@ -1867,10 +1871,9 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         AGATHAS_SOUL_CAULDRON => &CAULDRON_TRIGGERS,
         ASSIMILATION_AEGIS => &AEGIS_TRIGGERS,
         "Otter Prowess Token" => &PROWESS_TRIGGERS,
-        SEAM_RIP
-        | DUSK_ROSE_RELIQUARY
-        | SHELTERED_BY_GHOSTS
-        | HARDLIGHT_CONTAINMENT => &EXILE_UNTIL_LEAVES_TRIGGERS,
+        SEAM_RIP | DUSK_ROSE_RELIQUARY | SHELTERED_BY_GHOSTS | HARDLIGHT_CONTAINMENT => {
+            &EXILE_UNTIL_LEAVES_TRIGGERS
+        }
         _ => &[],
     }
 }
@@ -3509,31 +3512,60 @@ pub(crate) fn note_spell_cast(state: &mut GameState, spell: ObjectId) {
 
 const ASSIMILATION_AEGIS: &str = "Assimilation Aegis";
 fn aegis_copy_template() -> EffectOp {
-    EffectOp::CreatureChoiceV1(crate::standard_creature_choices_v1::CreatureChoiceV1::AegisCopy {
-        host: crate::state::ObjectLinkV4 { object: ObjectId(0), zone_change_count: 0 }, attachment_timestamp: 0,
-    })
+    EffectOp::CreatureChoiceV1(
+        crate::standard_creature_choices_v1::CreatureChoiceV1::AegisCopy {
+            host: crate::state::ObjectLinkV4 {
+                object: ObjectId(0),
+                zone_change_count: 0,
+            },
+            attachment_timestamp: 0,
+        },
+    )
 }
 const AEGIS_TRIGGERS: [TriggeredAbilityDef; 3] = [
-    trigger(TriggerCondition::Etb,exile_target_until_source_leaves),
-    TriggeredAbilityDef { condition: TriggerCondition::LeftBattlefield, home_zone: Zone::Graveyard,
-        intervening_if_kicked: false, intervening_if_controls_another_source_card: false,
-        face_index: 0, effect: return_exiled_by_source },
-    trigger(TriggerCondition::StandardV1(StandardTriggerV1::AegisAttached),aegis_copy_template),
+    trigger(TriggerCondition::Etb, exile_target_until_source_leaves),
+    TriggeredAbilityDef {
+        condition: TriggerCondition::LeftBattlefield,
+        home_zone: Zone::Graveyard,
+        intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
+        face_index: 0,
+        effect: return_exiled_by_source,
+    },
+    trigger(
+        TriggerCondition::StandardV1(StandardTriggerV1::AegisAttached),
+        aegis_copy_template,
+    ),
 ];
 
 pub(crate) fn active_aegis_copy(state: &GameState, object: ObjectId) -> bool {
-    state.standard_v1.as_ref().is_some_and(|standard| standard.aegis_copies.iter().any(|copy|
-        copy.host == (object,state.objects.get(object).zone_change_count)))
+    state.standard_v1.as_ref().is_some_and(|standard| {
+        standard
+            .aegis_copies
+            .iter()
+            .any(|copy| copy.host == (object, state.objects.get(object).zone_change_count))
+    })
 }
 
 /// Definition of a copied permanent immediately before this departure.
 /// The marker precedes the ordinary zone-change event and survives copies ending.
-pub(crate) fn copied_departure_at(events: &[CommittedEvent], index: usize, object: ObjectId)
-    -> Option<crate::state::AbilitySourceContractV4> {
-    if !matches!(events.get(index),Some(CommittedEvent::ZoneChange { object: moved, from: Zone::Battlefield, .. }) if *moved == object) { return None; }
-    events[..index].iter().rev().take_while(|event| !matches!(event,CommittedEvent::ZoneChange { .. }))
+pub(crate) fn copied_departure_at(
+    events: &[CommittedEvent],
+    index: usize,
+    object: ObjectId,
+) -> Option<crate::state::AbilitySourceContractV4> {
+    if !matches!(events.get(index),Some(CommittedEvent::ZoneChange { object: moved, from: Zone::Battlefield, .. }) if *moved == object)
+    {
+        return None;
+    }
+    events[..index]
+        .iter()
+        .rev()
+        .take_while(|event| !matches!(event, CommittedEvent::ZoneChange { .. }))
         .find_map(|event| match event {
-            CommittedEvent::LeftBattlefieldCopyV1 { source, .. } if source.source == object => Some(*source),
+            CommittedEvent::LeftBattlefieldCopyV1 { source, .. } if source.source == object => {
+                Some(*source)
+            }
             _ => None,
         })
 }
@@ -3544,63 +3576,128 @@ pub(crate) fn refresh_aegis_copies(state: &mut GameState) {
     while let Some(index) = state.standard_v1.as_ref().and_then(|standard| {
         standard.aegis_copies.iter().position(|copy| {
             state.objects.try_get(copy.aegis.0).is_none_or(|live| {
-                live.zone != Zone::Battlefield || live.zone_change_count != copy.aegis.1
-                    || live.v4.attached_to != Some(crate::state::ObjectLinkV4 { object: copy.host.0, zone_change_count: copy.host.1 })
+                live.zone != Zone::Battlefield
+                    || live.zone_change_count != copy.aegis.1
+                    || live.v4.attached_to
+                        != Some(crate::state::ObjectLinkV4 {
+                            object: copy.host.0,
+                            zone_change_count: copy.host.1,
+                        })
                     || live.v4.layer_timestamp.unwrap_or(0) != copy.attachment_timestamp
             })
         })
-    }) { end_aegis_copy(state,index); }
+    }) {
+        end_aegis_copy(state, index);
+    }
 }
 
-pub(crate) fn aegis_attached(state: &mut GameState, aegis: ObjectId, host: crate::state::ObjectLinkV4) {
+pub(crate) fn aegis_attached(
+    state: &mut GameState,
+    aegis: ObjectId,
+    host: crate::state::ObjectLinkV4,
+) {
     use crate::standard_creature_choices_v1::CreatureChoiceV1;
     let live = state.objects.get(aegis);
     if CARD_DEFS[live.card_def as usize].name != ASSIMILATION_AEGIS
-        || !crate::continuous_characteristics_v1::printed_abilities_active(state,aegis)
-        || !crate::engine::object_has_type(state,host.object,CardType::Creature) { return; }
-    let source = crate::state::AbilitySourceContractV4::capture(state,aegis);
+        || !crate::continuous_characteristics_v1::printed_abilities_active(state, aegis)
+        || !crate::engine::object_has_type(state, host.object, CardType::Creature)
+    {
+        return;
+    }
+    let source = crate::state::AbilitySourceContractV4::capture(state, aegis);
     let effect = EffectOp::CreatureChoiceV1(CreatureChoiceV1::AegisCopy {
-        host, attachment_timestamp: live.v4.layer_timestamp.unwrap_or(0),
+        host,
+        attachment_timestamp: live.v4.layer_timestamp.unwrap_or(0),
     });
-    state.legend_pending_v1.get_or_insert_with(Vec::new).push(crate::trigger::PendingTrigger {
-        controller: source.controller, source: aegis, effect,
-        target_spec: crate::card_def::TargetSpec::None, is_madness_offer: false, kicked: false,
-        targets: Vec::new(), target_contracts: Vec::new(), placement_ordered: false,
-        source_contract: Some(source), granted_by: None, optional_additional_cost_paid: None,
-        paid_cost_refs: Vec::new(),
-    });
+    state
+        .legend_pending_v1
+        .get_or_insert_with(Vec::new)
+        .push(crate::trigger::PendingTrigger {
+            controller: source.controller,
+            source: aegis,
+            effect,
+            target_spec: crate::card_def::TargetSpec::None,
+            is_madness_offer: false,
+            kicked: false,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
+            source_contract: Some(source),
+            granted_by: None,
+            optional_additional_cost_paid: None,
+            paid_cost_refs: Vec::new(),
+        });
 }
 
-pub(crate) fn aegis_copy_candidates(state: &GameState, ctx: &ExecCtx, host: crate::state::ObjectLinkV4, timestamp: u64) -> Vec<EffectObjectBinding> {
-    let Some(source) = ctx.ability_source_contract else { return Vec::new(); };
-    let source_link = crate::state::ObjectLinkV4 { object: source.source, zone_change_count: source.zone_change_count };
+pub(crate) fn aegis_copy_candidates(
+    state: &GameState,
+    ctx: &ExecCtx,
+    host: crate::state::ObjectLinkV4,
+    timestamp: u64,
+) -> Vec<EffectObjectBinding> {
+    let Some(source) = ctx.ability_source_contract else {
+        return Vec::new();
+    };
+    let source_link = crate::state::ObjectLinkV4 {
+        object: source.source,
+        zone_change_count: source.zone_change_count,
+    };
     if source.attached_to != Some(host)
         || state.objects.try_get(source.source).is_none_or(|live| {
-            live.zone != Zone::Battlefield || live.zone_change_count != source.zone_change_count
-                || live.v4.attached_to != Some(host) || live.v4.layer_timestamp.unwrap_or(0) != timestamp
-        }) || state.objects.try_get(host.object).is_none_or(|live| live.zone != Zone::Battlefield || live.zone_change_count != host.zone_change_count) {
+            live.zone != Zone::Battlefield
+                || live.zone_change_count != source.zone_change_count
+                || live.v4.attached_to != Some(host)
+                || live.v4.layer_timestamp.unwrap_or(0) != timestamp
+        })
+        || state.objects.try_get(host.object).is_none_or(|live| {
+            live.zone != Zone::Battlefield || live.zone_change_count != host.zone_change_count
+        })
+    {
         return Vec::new();
     }
-    state.exile.iter().filter_map(|&object| {
-        let card = state.objects.get(object);
-        (card.zone == Zone::Exile && card.v4.exiled_by == Some(source_link) && !card.v4.is_token
-            && CARD_DEFS[card.card_def as usize].has_type(CardType::Creature)).then_some(EffectObjectBinding {
-                object, expected_zone: Zone::Exile, expected_zone_change_count: card.zone_change_count,
+    state
+        .exile
+        .iter()
+        .filter_map(|&object| {
+            let card = state.objects.get(object);
+            (card.zone == Zone::Exile
+                && card.v4.exiled_by == Some(source_link)
+                && !card.v4.is_token
+                && CARD_DEFS[card.card_def as usize].has_type(CardType::Creature))
+            .then_some(EffectObjectBinding {
+                object,
+                expected_zone: Zone::Exile,
+                expected_zone_change_count: card.zone_change_count,
             })
-    }).collect()
+        })
+        .collect()
 }
 
-pub(crate) fn apply_aegis_copy(state: &mut GameState, ctx: &ExecCtx, host: crate::state::ObjectLinkV4, timestamp: u64, chosen: EffectObjectBinding) {
-    if !aegis_copy_candidates(state,ctx,host,timestamp).contains(&chosen) { return; }
+pub(crate) fn apply_aegis_copy(
+    state: &mut GameState,
+    ctx: &ExecCtx,
+    host: crate::state::ObjectLinkV4,
+    timestamp: u64,
+    chosen: EffectObjectBinding,
+) {
+    if !aegis_copy_candidates(state, ctx, host, timestamp).contains(&chosen) {
+        return;
+    }
     let source = ctx.ability_source_contract.expect("validated Aegis source");
     let copied = state.objects.get(chosen.object).card_def;
     let live = state.objects.get_mut(host.object);
     let record = AegisCopyV1 {
-        aegis: (source.source,source.zone_change_count), host: (host.object,host.zone_change_count), attachment_timestamp: timestamp,
-        card_def: live.card_def, name: std::mem::take(&mut live.name), face_index: live.v4.face_index,
-        color_mask: live.v4.effective_color_mask, subtype_ids: std::mem::take(&mut live.v4.effective_subtype_ids), ward_generic: live.v4.ward_generic,
+        aegis: (source.source, source.zone_change_count),
+        host: (host.object, host.zone_change_count),
+        attachment_timestamp: timestamp,
+        card_def: live.card_def,
+        name: std::mem::take(&mut live.name),
+        face_index: live.v4.face_index,
+        color_mask: live.v4.effective_color_mask,
+        subtype_ids: std::mem::take(&mut live.v4.effective_subtype_ids),
+        ward_generic: live.v4.ward_generic,
     };
-    let had = [record.card_def,copied].map(|def| (host.object,host.zone_change_count,def));
+    let had = [record.card_def, copied].map(|def| (host.object, host.zone_change_count, def));
     let base = crate::state::ObjectStateV4::from_card_def(copied);
     live.card_def = copied;
     live.name = CARD_DEFS[copied as usize].object_name.into();
@@ -3610,7 +3707,11 @@ pub(crate) fn apply_aegis_copy(state: &mut GameState, ctx: &ExecCtx, host: crate
     live.v4.ward_generic = base.ward_generic;
     let standard = state.standard_v1.get_or_insert_with(Default::default);
     standard.aegis_copies.push(record);
-    for entry in had { if !standard.copied_card_defs.contains(&entry) { standard.copied_card_defs.push(entry); } }
+    for entry in had {
+        if !standard.copied_card_defs.contains(&entry) {
+            standard.copied_card_defs.push(entry);
+        }
+    }
 }
 
 /// Whether `object`'s battlefield incarnation `zone_change_count` was ever
