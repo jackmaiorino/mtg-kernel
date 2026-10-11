@@ -2,7 +2,7 @@
   "schema": "search-buffer-reuse-state/v1",
   "pull_request": "https://github.com/jackmaiorino/mtg-kernel/pull/220",
   "baseline_commit": "1d2404775a141db4cd90d7579f8f765db37d55df",
-  "candidate_commit": "d362448588c1bae5a9ede4b7442fce7a5902e39b",
+  "candidate_commit": "a70a6b9db1d1148f8aab29d7da11b88bb5b1b63d",
   "baseline_build": {
     "state": "queued",
     "claim_id": "186897bc64444827b21f30edf3a6d06f",
@@ -26,7 +26,7 @@
     "record": "D:/search-buffer-reuse-20261010/pipeline-watcher.json",
     "errors": "D:/search-buffer-reuse-20261010/pipeline-watch-error.log",
     "deadline_hours": 12,
-    "pid": 39404,
+    "pid": 40980,
     "log": "D:/search-buffer-reuse-20261010/pipeline-watch.log",
     "state": "active; waiting for queued baseline build"
   },
@@ -41,6 +41,15 @@
     "diff_check": "passed",
     "source_review": "Separate read-only reviews of batching, reference reuse, common/extension serializers and context serializers found no material discrepancy",
     "native_checks": "queued",
-    "matched_search": "queued after native checks"
+    "matched_search": "queued after native checks",
+    "hosted_ci": "Prior candidate failed on two corrected source issues; rerun pending for the repaired candidate"
+  },
+  "superseded_combined": {
+    "candidate_commit": "d362448588c1bae5a9ede4b7442fce7a5902e39b",
+    "record_directory": "D:/search-buffer-reuse-20261010/superseded-combined-d3624485",
+    "reason": "Hosted CI found a redundant closure lint and an invalid test fixture type; both corrected before local candidate dispatch",
+    "candidate_build_started": false,
+    "measurement_started": false,
+    "ci_run": "https://github.com/jackmaiorino/mtg-kernel/actions/runs/38106513339"
   }
 }
