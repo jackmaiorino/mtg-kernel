@@ -7,6 +7,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+from run_rust_integration_tests import SUITES, run_suite, suite_modules
+
 
 TIMING_TEST = "snapshot::tests::snapshot_clone_cost_is_bounded"
 
@@ -28,10 +30,16 @@ def main() -> int:
             return subprocess.run([
                 executable, TIMING_TEST, "--exact", "--include-ignored", "--test-threads=1", "--nocapture",
             ], check=False, **timing_options).returncode
+        if any(Path(executable).name.startswith(suite + "-") for suite in SUITES):
+            if arguments:
+                raise ValueError("Grouped workspace runner expects no test arguments")
+            return run_suite(executable, allow_empty=True)
         return subprocess.run([executable, *arguments], check=False).returncode
 
     if sys.argv[1:] not in ([], ["--no-fail-fast"]):
         raise ValueError("Workspace suite runner accepts only --no-fail-fast")
+    for suite in SUITES:
+        suite_modules(Path(__file__).resolve().parents[2], suite)
     runner = [sys.executable, str(Path(__file__).resolve()), "--run"]
     configuration = "target.'cfg(all())'.runner=" + json.dumps(runner)
     return subprocess.run([
