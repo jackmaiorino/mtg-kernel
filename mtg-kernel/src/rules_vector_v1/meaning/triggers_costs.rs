@@ -66,6 +66,21 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
             );
             out.atoms.push(Atom::Opaque);
         }
+        TriggerCondition::BeginningControllerEndStepAfterControllerAttackedThisTurn => {
+            out.trigger(TrigF::StepBegins {
+                step: StepF::EndStep,
+                yours_only: true,
+            });
+            out.control(ControlF::Conditional);
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Typed(CardTypeF::Creature)),
+                AggF::EventThisTurn,
+            );
+            // Frozen EventThisTurn cannot encode successful declarations.
+            out.atoms.push(Atom::Opaque);
+        }
         TriggerCondition::StandardV1(_) => {
             // Its exact typed payload remains in the source record; these new
             // histories/Rooms/Cases are outside the frozen facet vocabulary.

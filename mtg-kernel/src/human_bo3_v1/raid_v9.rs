@@ -1,5 +1,13 @@
 //! Safe fixed-seat Raid successor. Rich observations, executable candidates
 //! and predecessor bindings remain backend-only behind an owned session.
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "searslicer_v9_tests.rs"]
+mod searslicer_v9_tests;
+
 use super::*;
 use crate::rl::RlContractError;
 use crate::rl_session::{FastActorResponseV1, FastActorSessionSnapshotV1};
