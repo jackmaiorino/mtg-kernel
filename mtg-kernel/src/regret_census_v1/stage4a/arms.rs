@@ -7,14 +7,17 @@ use super::play::{
     act, acting, apply, decision, observe, plain_to_end, terminal, Counters, End, Meter, PlayErr,
 };
 use super::seeds::{Purpose, RootSeeds};
-use super::tree::{canon, child_key, live_index, Found, Key, Node, Tree, MAX_DEPTH};
+use super::tree::{
+    canon, canon_values, child_key, live_index, raw_decision, Found, Key, Mapping, Node, Tree,
+    MAX_DEPTH,
+};
 use super::world::{sample, DeckPrior};
 use crate::ids::PlayerId;
 use crate::rl_session::{FastActorDecisionV1, FastActorSessionV1};
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
 use crate::state::SplitMix64;
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Instant;
 
 pub(crate) const SELECT_CAP: u64 = 512_000;
@@ -677,17 +680,21 @@ impl Roles {
         retain: usize,
         staged: &std::collections::HashSet<Key>,
         rec: &mut SimRecord,
+        mut capture: Option<&mut Capture>,
     ) -> Result<(Vec<(Key, usize)>, Vec<(Key, Node)>, End), PlayErr> {
         let mut path: Vec<(Key, usize)> = Vec::new();
         let mut new: Vec<(Key, Node)> = Vec::new();
         let mut parent: (Key, Vec<u8>) = ([0u8; 32], b"root".to_vec());
         let (spent0, calls0) = (meter.spent, c.inference);
+        let snap = |depth: u32, meter: &Meter, c: &Counters| Snap {
+            depth,
+            transitions: meter.spent - spent0,
+            calls: c.inference - calls0,
+        };
         let mut in_tree = true;
         let mut depth = 0u32;
         let mut last_phys: Option<u64> = None;
         loop {
-            rec.transitions = meter.spent - spent0;
-            rec.policy_calls = c.inference - calls0;
             if let Some(end) = terminal(&s, ctx.focal) {
                 return Ok((path, new, end));
             }
@@ -697,6 +704,11 @@ impl Roles {
                     if last_phys != Some(d.physical_decision_id) {
                         depth += 1;
                         last_phys = Some(d.physical_decision_id);
+                    }
+                    // Accounting only: the tree prefix ends at the first
+                    // choice past the depth limit when nothing expanded.
+                    if in_tree && depth > MAX_DEPTH && rec.depth_limit.is_none() {
+                        rec.depth_limit = Some(snap(depth, meter, c));
                     }
                     // Trace only: where this choice comes from.
                     let mut src = if in_tree {
@@ -719,6 +731,9 @@ impl Roles {
                             }
                             Found::Miss => {
                                 src = SelSrc::Expand;
+                                if let Some(cap) = capture.as_deref_mut() {
+                                    cap.see(key, &s, d, depth, &cn, &path)?;
+                                }
                                 if let Some(t) = trace.as_deref_mut() {
                                     t.node_created(
                                         &key,
@@ -740,8 +755,9 @@ impl Roles {
                                 let e = node.select_with(ctx.urgency);
                                 new.push((key, node));
                                 in_tree = false;
-                                rec.first_depth = depth;
-                                rec.before = (meter.spent - spent0, c.inference - calls0);
+                                // Boundary: before the expanded choice's
+                                // action is applied.
+                                rec.expansion = Some(snap(depth, meter, c));
                                 (e, cn.edges[e].clone())
                             }
                         };
@@ -763,6 +779,9 @@ impl Roles {
                             .ok_or_else(|| PlayErr::Fault("staged edge not in menu".into()))?;
                         let node =
                             Node::new(&key, parent.0, parent.1.clone(), cn, depth, ctx.seeds);
+                        if let Some(cap) = capture.as_deref_mut() {
+                            cap.pending_created.push(key);
+                        }
                         path.push((key, e));
                         new.push((key, node));
                         parent = (key, edge);
@@ -770,6 +789,9 @@ impl Roles {
                     } else {
                         act(&mut self.focal, &s, &d, c)?
                     };
+                    if let Some(cap) = capture.as_deref_mut() {
+                        cap.opp_since.clear();
+                    }
                     if let Some(t) = trace.as_deref_mut() {
                         let at = matches!(src, SelSrc::Tree | SelSrc::Expand)
                             .then(|| path.last())
@@ -792,7 +814,13 @@ impl Roles {
                     0
                 }
             } else {
-                act(&mut self.opps[ctx.opp], &s, &d, c)?
+                let a = act(&mut self.opps[ctx.opp], &s, &d, c)?;
+                if let Some(cap) = capture.as_deref_mut() {
+                    if cap.snapshot_sims.contains(&cap.sim) {
+                        cap.opp_since.push((s.clone(), d.step, a));
+                    }
+                }
+                a
             };
             apply(&mut s, &d, a, meter, ctx.focal, Some(suffix), &ctx.defs)?;
             if let Some(t) = trace.as_deref_mut() {
@@ -816,15 +844,27 @@ impl Roles {
         self.select_e_retaining(ctx, trace, 1, None)
     }
 
+    /// `select_e_capturing` without a capture.
+    pub(crate) fn select_e_retaining(
+        &mut self,
+        ctx: &RootCtx,
+        trace: Option<&mut Trace>,
+        retain: usize,
+        records: Option<&mut Vec<SimRecord>>,
+    ) -> (Selection, Tree) {
+        self.select_e_capturing(ctx, trace, retain, records, None)
+    }
+
     /// `select_e_traced` with up to `retain` new choice nodes per natural
     /// simulation (1 is B1, the formal rule) and optional per-simulation
     /// records. Selection, rollouts and sampling are otherwise unchanged.
-    pub(crate) fn select_e_retaining(
+    pub(crate) fn select_e_capturing(
         &mut self,
         ctx: &RootCtx,
         mut trace: Option<&mut Trace>,
         retain: usize,
         mut records: Option<&mut Vec<SimRecord>>,
+        mut capture: Option<&mut Capture>,
     ) -> (Selection, Tree) {
         let retain = retain.max(1);
         let mut staged: std::collections::HashSet<Key> = std::collections::HashSet::new();
@@ -851,6 +891,12 @@ impl Roles {
                     if let Some(t) = trace.as_deref_mut() {
                         t.sim_rejected(index);
                     }
+                    if let Some(v) = records.as_deref_mut() {
+                        v.push(SimRecord {
+                            outcome: SimRecord::REJECTED,
+                            ..SimRecord::default()
+                        });
+                    }
                     continue;
                 }
             };
@@ -861,6 +907,10 @@ impl Roles {
                 t.sim_begin(index, meter.spent);
             }
             let mut rec = SimRecord::default();
+            let (spent0, calls0) = (meter.spent, c.inference);
+            if let Some(cap) = capture.as_deref_mut() {
+                cap.begin(index);
+            }
             let r = self.simulate(
                 ctx,
                 &tree,
@@ -872,7 +922,14 @@ impl Roles {
                 retain,
                 &staged,
                 &mut rec,
+                capture.as_deref_mut(),
             );
+            if let Some(cap) = capture.as_deref_mut() {
+                cap.end(matches!(&r, Ok((_, _, End::Natural { .. }))));
+            }
+            // Every ending, including truncation or a fault after inference.
+            rec.transitions = meter.spent - spent0;
+            rec.policy_calls = c.inference - calls0;
             rec.outcome = match &r {
                 Ok((_, _, End::Natural { win: true })) => 1,
                 Ok((_, _, End::Natural { win: false })) => 2,
@@ -1162,25 +1219,162 @@ impl Roles {
     }
 }
 
+/// One captured node creation (diagnostic only): the raw actor-visible
+/// decision, its canonical mapping, where it was created, and (operator-only)
+/// private snapshots of the opponent decisions since the focal player's
+/// previous choice.
+pub(crate) struct Captured {
+    pub(crate) sim: u64,
+    pub(crate) step: u64,
+    pub(crate) physical_decision_id: u64,
+    pub(crate) substep: u32,
+    pub(crate) depth: u32,
+    pub(crate) raw_obs: Value,
+    pub(crate) raw_menu: Vec<Value>,
+    pub(crate) mapping: Mapping,
+    /// Canonical menu in live order (indices match `raw_menu`).
+    pub(crate) canon_menu: Vec<Vec<u8>>,
+    /// (key, edge index) of every tree node on the way to this one.
+    pub(crate) path: Vec<(Key, usize)>,
+    /// (state before the opponent acted, step, action), operator-only.
+    pub(crate) opp_since: Vec<(FastActorSessionV1, u64, u32)>,
+}
+
+/// Passive capture during selection: the creating simulation of every
+/// committed node, and full raw views for fixed keys. Nothing here is read by
+/// selection, backup, sampling or execution.
+#[derive(Default)]
+pub(crate) struct Capture {
+    pub(crate) keys: HashSet<Key>,
+    /// Simulations whose opponent decisions keep private state snapshots.
+    pub(crate) snapshot_sims: HashSet<u64>,
+    pub(crate) sim: u64,
+    pending_created: Vec<Key>,
+    pending: Vec<(Key, Captured)>,
+    pub(crate) opp_since: Vec<(FastActorSessionV1, u64, u32)>,
+    /// Committed node -> creating simulation index.
+    pub(crate) created: HashMap<Key, u64>,
+    pub(crate) committed: BTreeMap<Key, Captured>,
+}
+
+impl Capture {
+    pub(crate) fn new(keys: HashSet<Key>) -> Self {
+        Self {
+            keys,
+            ..Self::default()
+        }
+    }
+
+    fn begin(&mut self, sim: u64) {
+        self.sim = sim;
+        self.pending_created.clear();
+        self.pending.clear();
+        self.opp_since.clear();
+    }
+
+    fn see(
+        &mut self,
+        key: Key,
+        s: &FastActorSessionV1,
+        d: FastActorDecisionV1,
+        depth: u32,
+        cn: &super::tree::Canon,
+        path: &[(Key, usize)],
+    ) -> Result<(), PlayErr> {
+        self.pending_created.push(key);
+        if !self.keys.contains(&key) {
+            return Ok(());
+        }
+        let (raw_obs, raw_menu) = raw_decision(s, d)?;
+        let (again, mapping) = canon_values(raw_obs.clone(), raw_menu.clone())?;
+        if again != *cn {
+            return Err(PlayErr::Fault("capture: canonical view differs".into()));
+        }
+        self.pending.push((
+            key,
+            Captured {
+                sim: self.sim,
+                step: d.step,
+                physical_decision_id: d.physical_decision_id,
+                substep: d.substep_index,
+                depth,
+                raw_obs,
+                raw_menu,
+                mapping,
+                canon_menu: cn.menu.clone(),
+                path: path.to_vec(),
+                opp_since: std::mem::take(&mut self.opp_since),
+            },
+        ));
+        Ok(())
+    }
+
+    /// Commits this simulation's creations if its nodes were committed.
+    fn end(&mut self, natural: bool) {
+        if natural {
+            for k in self.pending_created.drain(..) {
+                self.created.insert(k, self.sim);
+            }
+            for (k, c) in self.pending.drain(..) {
+                self.committed.insert(k, c);
+            }
+        }
+        self.pending_created.clear();
+        self.pending.clear();
+        self.opp_since.clear();
+    }
+}
+
+/// Selection work at one point of a simulation, relative to its start:
+/// physical focal depth, transitions and inference calls.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Snap {
+    pub(crate) depth: u32,
+    pub(crate) transitions: u64,
+    pub(crate) calls: u64,
+}
+
 /// Per-simulation selection accounting (diagnostic only; never read by
 /// selection, backup or execution).
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct SimRecord {
-    /// 1 win, 2 natural nonwin, 3 nonnatural, 4 truncated, 5 fault.
+    /// 1 win, 2 natural nonwin, 3 nonnatural, 4 truncated, 5 fault,
+    /// 6 sampler rejection (no simulation ran).
     pub(crate) outcome: u8,
-    /// Selection transitions and policy calls in this simulation.
+    /// Selection transitions and policy calls in this simulation, measured
+    /// after it returned (every ending).
     pub(crate) transitions: u64,
     pub(crate) policy_calls: u64,
-    /// (transitions, policy calls) before the first expansion.
-    pub(crate) before: (u64, u64),
-    /// Physical focal depth of the first expansion (0: none).
-    pub(crate) first_depth: u32,
+    /// The first expansion, recorded before its chosen action is applied
+    /// (present even if the attempt then commits nothing).
+    pub(crate) expansion: Option<Snap>,
+    /// The first focal choice past the depth limit while still in the tree
+    /// (only without an expansion).
+    pub(crate) depth_limit: Option<Snap>,
     /// Existing tree nodes traversed before the first expansion.
     pub(crate) existing: u32,
     /// Of those, nodes first created as retained tail nodes.
     pub(crate) staged_hits: u32,
     /// Nodes committed by this simulation (natural endings only).
     pub(crate) new_nodes: usize,
+}
+
+impl SimRecord {
+    pub(crate) const REJECTED: u8 = 6;
+
+    /// Mutually exclusive (transitions, calls) buckets: the tree prefix
+    /// (before the first expansion, or before the first choice past the
+    /// depth limit, or the whole simulation when neither occurs), work after
+    /// the first expansion, and the depth-limit tail without an expansion.
+    pub(crate) fn buckets(&self) -> [(u64, u64); 3] {
+        let total = (self.transitions, self.policy_calls);
+        let rest = |s: Snap| (total.0 - s.transitions, total.1 - s.calls);
+        match (self.expansion, self.depth_limit) {
+            (Some(e), _) => [(e.transitions, e.calls), rest(e), (0, 0)],
+            (None, Some(l)) => [(l.transitions, l.calls), (0, 0), rest(l)],
+            (None, None) => [total, (0, 0), (0, 0)],
+        }
+    }
 }
 
 /// Trace only: the lookup key, the matched node with its frozen choice, and

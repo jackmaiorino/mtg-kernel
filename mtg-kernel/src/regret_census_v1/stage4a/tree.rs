@@ -245,10 +245,41 @@ fn rank_counters(v: &mut Value) {
 
 /// Canonical bytes of the current focal decision.
 pub(crate) fn canon(s: &FastActorSessionV1, d: FastActorDecisionV1) -> Result<Canon, PlayErr> {
+    let (obs, sem) = raw_decision(s, d)?;
+    Ok(canon_values(obs, sem)?.0)
+}
+
+/// The acting player's raw V4 observation and frozen-source menu, as JSON
+/// (before any canonical rewriting).
+pub(crate) fn raw_decision(
+    s: &FastActorSessionV1,
+    d: FastActorDecisionV1,
+) -> Result<(Value, Vec<Value>), PlayErr> {
     let (obs, sem) = s
         .actor_visible_decision_v4(d)
         .map_err(|e| PlayErr::Fault(format!("actor-visible decision: {e:?}")))?;
-    let mut obs = serde_json::to_value(&obs).map_err(|e| PlayErr::Fault(e.to_string()))?;
+    let obs = serde_json::to_value(&obs).map_err(|e| PlayErr::Fault(e.to_string()))?;
+    let sem: Vec<Value> = sem
+        .iter()
+        .map(|x| serde_json::to_value(x).map_err(|e| PlayErr::Fault(e.to_string())))
+        .collect::<Result<_, _>>()?;
+    Ok((obs, sem))
+}
+
+/// Raw-to-canonical handle mapping of one canonicalization (diagnostic):
+/// raw `arena_id` values in first-appearance order (canonical index = list
+/// position) and the smallest `zone_change_count` shown per raw handle.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Mapping {
+    pub(crate) order: Vec<u64>,
+    pub(crate) min_zcc: Vec<(u64, u64)>,
+}
+
+/// `canon` on a raw observation and menu, with its handle mapping.
+pub(crate) fn canon_values(
+    mut obs: Value,
+    mut sem: Vec<Value>,
+) -> Result<(Canon, Mapping), PlayErr> {
     if let Value::Object(m) = &mut obs {
         for k in [
             "step_index",
@@ -259,10 +290,6 @@ pub(crate) fn canon(s: &FastActorSessionV1, d: FastActorDecisionV1) -> Result<Ca
             m.remove(k);
         }
     }
-    let mut sem: Vec<Value> = sem
-        .iter()
-        .map(|x| serde_json::to_value(x).map_err(|e| PlayErr::Fault(e.to_string())))
-        .collect::<Result<_, _>>()?;
     rank_counters(&mut obs);
     for x in &mut sem {
         rank_counters(x);
@@ -300,7 +327,13 @@ pub(crate) fn canon(s: &FastActorSessionV1, d: FastActorDecisionV1) -> Result<Ca
     // the node's edge list is the sorted set of canonical actions.
     let mut edges = menu.clone();
     edges.sort();
-    Ok(Canon { obs, menu, edges })
+    let mut min_zcc: Vec<(u64, u64)> = handles.min_zcc.into_iter().collect();
+    min_zcc.sort_unstable();
+    let mapping = Mapping {
+        order: handles.order,
+        min_zcc,
+    };
+    Ok((Canon { obs, menu, edges }, mapping))
 }
 
 pub(crate) fn child_key(parent: &Key, edge: &[u8], c: &Canon) -> Key {

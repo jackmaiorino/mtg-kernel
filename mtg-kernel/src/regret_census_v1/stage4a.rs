@@ -918,23 +918,75 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
             Ok("D8") => 8,
             _ => return Err("BRANCH_ARM must be B1 or D8".into()),
         };
+        // Diagnostics (collab LANES/search-identity-audit-plan-20261011):
+        // BRANCH_EVAL=0 skips the frozen evaluation; BRANCH_GROUPS=n dumps
+        // the n largest child groups and BRANCH_CAPTURE_KEYS (hex keys, one
+        // per line) captures raw views, both to BRANCH_DUMP.
+        let opts = branch::RunOpts {
+            evaluate: std::env::var("BRANCH_EVAL").as_deref() != Ok("0"),
+            groups: std::env::var("BRANCH_GROUPS")
+                .ok()
+                .map(|v| v.parse().map_err(|_| "BRANCH_GROUPS must be a count"))
+                .transpose()?
+                .unwrap_or(0),
+            capture_keys: match std::env::var("BRANCH_CAPTURE_KEYS") {
+                Err(_) => Vec::new(),
+                Ok(path) => std::fs::read_to_string(&path)
+                    .map_err(|e| format!("{path}: {e}"))?
+                    .lines()
+                    .filter(|l| !l.trim().is_empty())
+                    .map(|l| {
+                        let l = l.trim();
+                        let mut k = [0u8; 32];
+                        if l.len() != 64 {
+                            return Err(format!("bad key {l}"));
+                        }
+                        for (i, b) in k.iter_mut().enumerate() {
+                            *b = u8::from_str_radix(&l[2 * i..2 * i + 2], 16)
+                                .map_err(|_| format!("bad key {l}"))?;
+                        }
+                        Ok(k)
+                    })
+                    .collect::<Result<_, String>>()?,
+            },
+        };
+        let dump_path = std::env::var("BRANCH_DUMP").ok();
+        if (opts.groups > 0 || !opts.capture_keys.is_empty()) && dump_path.is_none() {
+            return Err("BRANCH_DUMP is required with BRANCH_GROUPS or BRANCH_CAPTURE_KEYS".into());
+        }
         let first = cfg.first_game as usize;
         let end = (first + cfg.games as usize).min(specs.len());
-        let mut out = String::new();
+        let (mut out, mut dump) = (String::new(), String::new());
         for spec in &specs[first..end] {
-            let row = std::thread::scope(|scope| {
+            let r = std::thread::scope(|scope| {
                 std::thread::Builder::new()
                     .stack_size(256 << 20)
-                    .spawn_scoped(scope, || branch::root_arm(&sh, policy, spec, retain))
+                    .spawn_scoped(scope, || branch::root_arm(&sh, policy, spec, retain, &opts))
                     .map_err(|e| e.to_string())?
                     .join()
                     .map_err(|_| "branch worker panicked".to_owned())?
-            })
-            .unwrap_or_else(|e| json!({"kind":"error","root_id":spec.root_id,"error":e}));
+            });
+            let row = match r {
+                Ok((row, lines)) => {
+                    for l in lines {
+                        let mut l = l;
+                        l["root_id"] = json!(spec.root_id);
+                        dump.push_str(&format!(
+                            "{l}
+"
+                        ));
+                    }
+                    row
+                }
+                Err(e) => json!({"kind":"error","root_id":spec.root_id,"error":e}),
+            };
             out.push_str(&format!(
                 "{row}
 "
             ));
+        }
+        if let Some(p) = dump_path {
+            std::fs::write(&p, dump).map_err(|e| format!("{p}: {e}"))?;
         }
         return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
     }

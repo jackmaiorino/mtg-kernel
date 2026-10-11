@@ -17,7 +17,7 @@
 //! `world`), dispatched through arm label "E", with no refresh and no tree
 //! update. Nothing here feeds back into selection, backups or execution.
 
-use super::arms::{EvalOut, Limits, Roles, SamplerStats, SimRecord};
+use super::arms::{Capture, EvalOut, Limits, Roles, SamplerStats, SimRecord};
 use super::bank::{
     bank_roles, guide_ctx, plain_logged, source_session, walk, BankShared, SourceSpec,
 };
@@ -383,71 +383,295 @@ pub(super) fn tree_report(tree: &Tree, actor: usize) -> Value {
             "visits_in_repeated_views":repeated.iter().map(|v| v.iter().sum::<u64>()).sum::<u64>()}})
 }
 
-pub(super) fn sim_report(records: &[SimRecord], retain: usize) -> Value {
-    let mut outcomes: BTreeMap<u8, usize> = BTreeMap::new();
-    let mut first_depth: BTreeMap<u32, usize> = BTreeMap::new();
+/// Accounting schema of `sim_report`. v1 rows used a zero sentinel for "no
+/// expansion" (crediting a no-expansion simulation's work to "after
+/// expansion") and sampled counters only at loop entry; see the erratum in
+/// collab LANES/search-identity-audit-20261011.
+pub(super) const SIM_SCHEMA: &str = "branch-sim-accounting-v2";
+
+/// Selection accounting by outcome, in three mutually exclusive work
+/// buckets (transitions and inference calls, not CPU): the tree prefix, work
+/// after the first expansion (from its applied action on, including any
+/// retained tail), and the depth-limit tail of a simulation that never
+/// expanded. Pooled sums within one root; `reconciles` checks them against
+/// the selection totals.
+pub(super) fn sim_report(
+    records: &[SimRecord],
+    retain: usize,
+    selection_transitions: u64,
+    selection_calls: u64,
+    attempted: u64,
+) -> Value {
+    const NAMES: [&str; 6] = [
+        "win",
+        "nonwin",
+        "nonnatural",
+        "truncated",
+        "fault",
+        "sampler_rejection",
+    ];
+    let bucket_sums = |rs: &[&SimRecord]| {
+        let mut s = [[0u64; 2]; 3];
+        for r in rs {
+            for (b, (t, c)) in r.buckets().iter().enumerate() {
+                s[b][0] += t;
+                s[b][1] += c;
+            }
+        }
+        s
+    };
+    let pair = |s: &[[u64; 2]; 3], i: usize| {
+        json!({"tree_prefix":s[0][i],"after_expansion":s[1][i],"depth_tail_without_expansion":s[2][i],
+            "total":s[0][i] + s[1][i] + s[2][i]})
+    };
+    let mut by = serde_json::Map::new();
+    let mut bucket_ok = true;
+    for (i, name) in NAMES.iter().enumerate() {
+        let rs: Vec<&SimRecord> = records
+            .iter()
+            .filter(|r| usize::from(r.outcome) == i + 1)
+            .collect();
+        let s = bucket_sums(&rs);
+        let t: u64 = rs.iter().map(|r| r.transitions).sum();
+        let c: u64 = rs.iter().map(|r| r.policy_calls).sum();
+        bucket_ok &= s[0][0] + s[1][0] + s[2][0] == t && s[0][1] + s[1][1] + s[2][1] == c;
+        let expanded = rs.iter().filter(|r| r.expansion.is_some()).count();
+        let depth_only = rs
+            .iter()
+            .filter(|r| r.expansion.is_none() && r.depth_limit.is_some())
+            .count();
+        by.insert(
+            (*name).into(),
+            json!({"count":rs.len(),"expanded":expanded,"not_expanded":rs.len() - expanded,
+                "depth_limited_without_expansion":depth_only,"transitions":pair(&s, 0),"calls":pair(&s, 1)}),
+        );
+    }
+    let accepted = records
+        .iter()
+        .filter(|r| r.outcome != SimRecord::REJECTED)
+        .count();
+    let rejected = records.len() - accepted;
+    let total_t: u64 = records.iter().map(|r| r.transitions).sum();
+    let total_c: u64 = records.iter().map(|r| r.policy_calls).sum();
     let natural: Vec<&SimRecord> = records
         .iter()
         .filter(|r| r.outcome == 1 || r.outcome == 2)
         .collect();
-    for r in records {
-        *outcomes.entry(r.outcome).or_default() += 1;
-    }
+    let expanded: Vec<&SimRecord> = natural
+        .iter()
+        .copied()
+        .filter(|r| r.expansion.is_some())
+        .collect();
+    let mut first_depth: BTreeMap<String, usize> = BTreeMap::new();
     for r in &natural {
-        *first_depth.entry(r.first_depth).or_default() += 1;
+        let k = r
+            .expansion
+            .map_or_else(|| "none".to_owned(), |e| e.depth.to_string());
+        *first_depth.entry(k).or_default() += 1;
     }
-    let f = |g: &dyn Fn(&SimRecord) -> f64| mean(&natural.iter().map(|r| g(r)).collect::<Vec<_>>());
+    let ns = bucket_sums(&natural);
+    let share = |b: usize, i: usize| {
+        let tot = ns[0][i] + ns[1][i] + ns[2][i];
+        (tot > 0).then(|| ns[b][i] as f64 / tot as f64)
+    };
+    let es = bucket_sums(&expanded);
+    let cond = |b: usize, i: usize| {
+        (!expanded.is_empty()).then(|| es[b][i] as f64 / expanded.len() as f64)
+    };
     let new_total: usize = natural.iter().map(|r| r.new_nodes).sum();
-    let expanded = natural.iter().filter(|r| r.first_depth > 0).count();
-    json!({"retain":retain,"attempts":records.len(),
-        "outcomes":{"win":outcomes.get(&1).copied().unwrap_or(0),"nonwin":outcomes.get(&2).copied().unwrap_or(0),
-            "nonnatural":outcomes.get(&3).copied().unwrap_or(0),"truncated":outcomes.get(&4).copied().unwrap_or(0),
-            "fault":outcomes.get(&5).copied().unwrap_or(0)},
-        "natural":{"count":natural.len(),"mean_transitions":f(&|r| r.transitions as f64),
-            "mean_transitions_before_first_expansion":f(&|r| r.before.0 as f64),
-            "mean_transitions_after_first_expansion":f(&|r| (r.transitions - r.before.0) as f64),
-            "mean_policy_calls_before":f(&|r| r.before.1 as f64),
-            "mean_policy_calls_after":f(&|r| (r.policy_calls - r.before.1) as f64),
-            "mean_existing_nodes_traversed":f(&|r| r.existing as f64),
+    json!({"schema":SIM_SCHEMA,"retain":retain,
+        "attempts":attempted,"accepted":accepted,"sampler_rejections":rejected,
+        "by_outcome":by,
+        "reconciles":{"attempts_equal_accepted_plus_rejections":attempted == records.len() as u64,
+            "transitions_equal_selection_total":total_t == selection_transitions,
+            "calls_equal_selection_total":total_c == selection_calls,
+            "buckets_sum_to_totals":bucket_ok},
+        "natural":{"count":natural.len(),"expanded":expanded.len(),"not_expanded":natural.len() - expanded.len(),
+            "pooled_share_of_natural_work":{
+                "transitions":{"tree_prefix":share(0, 0),"after_expansion":share(1, 0),"depth_tail_without_expansion":share(2, 0)},
+                "calls":{"tree_prefix":share(0, 1),"after_expansion":share(1, 1),"depth_tail_without_expansion":share(2, 1)}},
+            "mean_among_expanded":{"transitions_tree_prefix":cond(0, 0),"transitions_after_expansion":cond(1, 0),
+                "calls_tree_prefix":cond(0, 1),"calls_after_expansion":cond(1, 1)},
+            "mean_existing_nodes_traversed":mean(&natural.iter().map(|r| f64::from(r.existing)).collect::<Vec<_>>()),
             "first_expansion_depth_histogram":first_depth,
-            "first_expansions":expanded,"retained_tail_nodes":new_total.saturating_sub(expanded),
-            "revisits_to_tail_nodes":natural.iter().map(|r| r.staged_hits as u64).sum::<u64>()}})
+            "retained_tail_nodes":new_total.saturating_sub(expanded.len()),
+            "revisits_to_tail_nodes":natural.iter().map(|r| u64::from(r.staged_hits)).sum::<u64>()}})
 }
 
-/// Per-world execution metrics from E's frozen decisions.
+/// Per-world execution metrics from E's frozen decisions. A group is one
+/// physical decision of the focal player with at least one nonforced choice;
+/// substeps keep their engine indices.
+/// - `L`: leading groups whose every nonforced substep executed a tree edge
+///   (a count of physical groups, not substeps).
+/// - `first_recorded_choice_*` (v1 `first_substep_*`): groups whose first
+///   recorded nonforced choice executed a tree edge; that choice need not be
+///   substep zero.
+/// - `substep0_*`: among groups with a nonforced choice at substep index 0,
+///   those where it executed a tree edge; the share is null with no such group.
+/// - `support_after_first_fallback`: structurally zero under exact-history
+///   lookup with a permanent miss fallback (expected, not a finding).
 pub(super) fn world_metrics(out: &EvalOut) -> Value {
-    // Groups of focal choices in order: (physical id, [sources]).
-    let mut groups: Vec<(u64, Vec<u8>)> = Vec::new();
-    for &(phys, _sub, src) in &out.decisions {
-        match groups.last_mut() {
-            Some((p, v)) if *p == phys => v.push(src),
-            _ => groups.push((phys, vec![src])),
-        }
-    }
-    let full = |v: &Vec<u8>| v.iter().all(|&s| s == 0);
+    let groups = choice_groups(&out.decisions);
+    let full = |v: &Vec<(u32, u8)>| v.iter().all(|&(_, s)| s == 0);
     let l = groups.iter().take_while(|(_, v)| full(v)).count();
-    let first_sub = groups.iter().filter(|(_, v)| v[0] == 0).count();
-    let descendants = groups.iter().skip(1).filter(|(_, v)| v[0] == 0).count();
+    let first_rec = groups.iter().filter(|(_, v)| v[0].1 == 0).count();
+    let descendants = groups.iter().skip(1).filter(|(_, v)| v[0].1 == 0).count();
     let first_fallback = groups.iter().position(|(_, v)| !full(v));
     let after = first_fallback.map_or(0, |i| {
-        groups.iter().skip(i + 1).filter(|(_, v)| v[0] == 0).count()
+        groups
+            .iter()
+            .skip(i + 1)
+            .filter(|(_, v)| v[0].1 == 0)
+            .count()
     });
-    let first_of = |code: u8| groups.iter().position(|(_, v)| v.contains(&code));
+    let (zero_groups, zero_controlled) = substep0(&groups);
+    let first_of = |code: u8| {
+        groups
+            .iter()
+            .position(|(_, v)| v.iter().any(|&(_, s)| s == code))
+    };
+    let choices: Vec<[u64; 3]> = groups
+        .iter()
+        .enumerate()
+        .flat_map(|(g, (_, v))| {
+            v.iter()
+                .map(move |&(sub, s)| [g as u64, u64::from(sub), u64::from(s)])
+        })
+        .collect();
     json!({"end":out.end,"win":out.w,"valid":!out.unknown,"transitions":out.transitions,
-        "groups":groups.len(),"L":l,"first_substep_controlled":first_sub,
-        "first_substep_share":if groups.is_empty() { 0.0 } else { first_sub as f64 / groups.len() as f64 },
-        "descendant_controlled":descendants,"support_after_first_fallback":after,
+        "groups":groups.len(),"L":l,
+        "first_recorded_choice_controlled":first_rec,
+        "first_recorded_choice_share":if groups.is_empty() { 0.0 } else { first_rec as f64 / groups.len() as f64 },
+        "substep0_groups":zero_groups,"substep0_controlled":zero_controlled,
+        "substep0_share":(zero_groups > 0).then(|| zero_controlled as f64 / zero_groups as f64),
+        "descendant_first_recorded_controlled":descendants,"support_after_first_fallback":after,
         "first_unsupported_group":first_of(1),"first_miss_group":first_of(2),
-        "spy":out.suffix.json()})
+        "choices":choices,"spy":out.suffix.json()})
 }
 
-/// One root, one arm: selection, passive tree summary, frozen evaluation.
+/// Focal nonforced choices grouped by physical decision, in order:
+/// (physical id, [(substep index, source)]).
+fn choice_groups(decisions: &[(u64, u32, u8)]) -> Vec<(u64, Vec<(u32, u8)>)> {
+    let mut groups: Vec<(u64, Vec<(u32, u8)>)> = Vec::new();
+    for &(phys, sub, src) in decisions {
+        match groups.last_mut() {
+            Some((p, v)) if *p == phys => v.push((sub, src)),
+            _ => groups.push((phys, vec![(sub, src)])),
+        }
+    }
+    groups
+}
+
+/// (groups with a nonforced choice at substep 0, of which tree-executed).
+fn substep0(groups: &[(u64, Vec<(u32, u8)>)]) -> (usize, usize) {
+    let zero: Vec<u8> = groups
+        .iter()
+        .filter_map(|(_, v)| v.iter().find(|&&(sub, _)| sub == 0).map(|&(_, s)| s))
+        .collect();
+    (zero.len(), zero.iter().filter(|&&s| s == 0).count())
+}
+
+/// Row schema of `root_arm` (v1 rows: no `schema` field).
+pub(super) const ROW_SCHEMA: &str = "branch-root-v2";
+
+/// Diagnostic options of one root run (collab
+/// LANES/search-identity-audit-plan-20261011). None changes selection.
+#[derive(Clone, Debug, Default)]
+pub(super) struct RunOpts {
+    /// Run the frozen 16-world evaluation (false: selection only).
+    pub(super) evaluate: bool,
+    /// Dump the `groups` largest (parent, edge) child groups, every child's
+    /// canonical view included.
+    pub(super) groups: usize,
+    /// Capture raw views for these node keys.
+    pub(super) capture_keys: Vec<Key>,
+}
+
+fn key_hex(k: &Key) -> String {
+    k.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn edge_text(e: &[u8]) -> String {
+    String::from_utf8_lossy(e).into_owned()
+}
+
+/// The `n` largest (parent, edge) child groups with each child's canonical
+/// view, visits and creating simulation.
+fn group_dump(tree: &Tree, created: &HashMap<Key, u64>, n: usize) -> Vec<Value> {
+    let mut children: BTreeMap<(Key, Vec<u8>), Vec<Key>> = BTreeMap::new();
+    for (k, node) in &tree.nodes {
+        if node.parent != [0u8; 32] {
+            children
+                .entry((node.parent, node.edge.clone()))
+                .or_default()
+                .push(*k);
+        }
+    }
+    let mut groups: Vec<(&Group, &Vec<Key>)> = children.iter().collect();
+    groups.sort_by_key(|(k, v)| (std::cmp::Reverse(v.len()), k.0, k.1.clone()));
+    groups
+        .into_iter()
+        .take(n)
+        .enumerate()
+        .map(|(rank, ((parent, edge), kids))| {
+            let p = &tree.nodes[parent];
+            let mut kids = kids.clone();
+            kids.sort_by_key(|k| (std::cmp::Reverse(tree.nodes[k].visits), *k));
+            let rows: Vec<Value> = kids
+                .iter()
+                .map(|k| {
+                    let c = &tree.nodes[k];
+                    let menu: Vec<u8> = c.canon.edges.concat();
+                    json!({"key":key_hex(k),"visits":c.visits,"n":c.n,"wins":c.wins,"physical_depth":c.depth,
+                        "obs_sha256":hex(&c.canon.obs),"menu_sha256":hex(&menu),
+                        "created_sim":created.get(k),
+                        "obs":serde_json::from_slice::<Value>(&c.canon.obs).unwrap_or(Value::Null),
+                        "edges":c.canon.edges.iter().map(|e| edge_text(e)).collect::<Vec<_>>()})
+                })
+                .collect();
+            json!({"kind":"group","rank":rank,"parent":key_hex(parent),"edge":edge_text(edge),
+                "edge_sha256":hex(edge),"parent_physical_depth":p.depth,"parent_visits":p.visits,
+                "parent_edge_backups":p.canon.edges.iter().position(|e| e == edge).map(|i| p.n[i]),
+                "parent_obs":serde_json::from_slice::<Value>(&p.canon.obs).unwrap_or(Value::Null),
+                "parent_edges":p.canon.edges.iter().map(|e| edge_text(e)).collect::<Vec<_>>(),
+                "children":rows})
+        })
+        .collect()
+}
+
+/// Raw captured views, with each node's visible parent/action chain.
+fn capture_dump(tree: &Tree, cap: &Capture) -> Vec<Value> {
+    cap.committed
+        .iter()
+        .map(|(k, c)| {
+            let chain: Vec<Value> = c
+                .path
+                .iter()
+                .map(|(pk, e)| {
+                    let n = &tree.nodes[pk];
+                    json!({"key":key_hex(pk),"physical_depth":n.depth,"obs_sha256":hex(&n.canon.obs),
+                        "edge_index":e,"edge":edge_text(&n.canon.edges[*e])})
+                })
+                .collect();
+            json!({"kind":"capture","key":key_hex(k),"in_tree":tree.nodes.contains_key(k),"sim":c.sim,
+                "step":c.step,"physical_decision_id":c.physical_decision_id,"substep":c.substep,
+                "physical_depth":c.depth,"raw_obs":c.raw_obs,"raw_menu":c.raw_menu,
+                "canon_menu":c.canon_menu.iter().map(|e| edge_text(e)).collect::<Vec<_>>(),
+                "mapping":{"order":c.mapping.order,"min_zcc":c.mapping.min_zcc},
+                "chain":chain,"private_snapshots_kept":c.opp_since.len()})
+        })
+        .collect()
+}
+
+/// One root, one arm: selection, passive tree summary, optional frozen
+/// evaluation, and optional group and capture dumps (second output).
 pub(super) fn root_arm(
     sh: &BankShared,
     policy: &FrozenPlayPolicyV1,
     spec: &RootSpec,
     retain: usize,
-) -> Result<Value, String> {
+    opts: &RunOpts,
+) -> Result<(Value, Vec<Value>), String> {
     let started = Instant::now();
     let src = sh
         .spec
@@ -476,13 +700,23 @@ pub(super) fn root_arm(
     let ctx = guide_ctx(&root, focal, opp, &seeds, &sh.prior, limits)?;
     let t0 = Instant::now();
     let mut records = Vec::new();
-    let (sel, tree) = roles.select_e_retaining(&ctx, None, retain, Some(&mut records));
+    let mut cap = Capture::new(opts.capture_keys.iter().copied().collect());
+    let (sel, tree) =
+        roles.select_e_capturing(&ctx, None, retain, Some(&mut records), Some(&mut cap));
     let selection_wall = t0.elapsed().as_secs_f64();
     let failed = sel.incomplete || !sel.faults.is_empty();
     let tree_hash = tree.hash();
     let t1 = Instant::now();
     let report = tree_report(&tree, src.seat as usize);
-    let sims = sim_report(&records, retain);
+    let sims = sim_report(
+        &records,
+        retain,
+        sel.transitions,
+        sel.inference,
+        sel.attempted,
+    );
+    let mut dump = group_dump(&tree, &cap.created, opts.groups);
+    dump.extend(capture_dump(&tree, &cap));
     let report_wall = t1.elapsed().as_secs_f64();
     // Frozen evaluation on 16 fresh lawful worlds.
     let eval_seeds = RootSeeds {
@@ -493,7 +727,7 @@ pub(super) fn root_arm(
     let t2 = Instant::now();
     let mut worlds = Vec::new();
     let mut sampler = SamplerStats::default();
-    if !failed {
+    if !failed && opts.evaluate {
         for e in 0..EVAL_WORLDS {
             let seed = eval_seeds.get(Purpose::EvalWorld, "", e, b"world");
             match sample(&root, seed, &sh.prior) {
@@ -512,16 +746,18 @@ pub(super) fn root_arm(
         }
     }
     let eval_wall = t2.elapsed().as_secs_f64();
-    Ok(
-        json!({"kind":"branch_root","root_id":spec.root_id,"source":spec.source,"lineage":sh.spec.lineage,
-        "own":src.own,"seat":src.seat,"arm":if retain == 1 { "B1" } else { "D8" },"retain":retain,
-        "budget":spec.budget,"root":identity,"selection":sel.json(),"selection_failed":failed,
+    let row = json!({"kind":"branch_root","schema":ROW_SCHEMA,"root_id":spec.root_id,"source":spec.source,
+        "lineage":sh.spec.lineage,"own":src.own,"seat":src.seat,"arm":if retain == 1 { "B1" } else { "D8" },
+        "retain":retain,"budget":spec.budget,"root":identity,"selection":sel.json(),"selection_failed":failed,
         "tree_hash":tree_hash,"expected_b1_tree":spec.expected_b1_tree,
         "b1_parity":(retain == 1).then(|| tree_hash == spec.expected_b1_tree),
-        "tree":report,"simulations":sims,"evaluation":worlds,
-        "timing":{"reconstruct":reconstruct,"selection":selection_wall,"report":report_wall,"evaluation":eval_wall,
-            "total":started.elapsed().as_secs_f64()}}),
-    )
+        "tree":report,"simulations":sims,"evaluated":opts.evaluate,"evaluation":worlds,
+        "dump":{"groups":opts.groups,"capture_keys":opts.capture_keys.len(),"captured":cap.committed.len()},
+        "timing":{"note":"elapsed wall seconds, not CPU; process CPU is in the launcher ledger",
+            "reconstruct_wall_seconds":reconstruct,"selection_wall_seconds":selection_wall,
+            "report_wall_seconds":report_wall,"evaluation_wall_seconds":eval_wall,
+            "total_wall_seconds":started.elapsed().as_secs_f64()}});
+    Ok((row, dump))
 }
 
 #[cfg(test)]
@@ -575,20 +811,8 @@ mod tests {
         let (_, d8, _) = select(8, 20_000);
         let (a, b) = (b1[0], d8[0]);
         assert_eq!(
-            (
-                a.outcome,
-                a.transitions,
-                a.policy_calls,
-                a.before,
-                a.first_depth
-            ),
-            (
-                b.outcome,
-                b.transitions,
-                b.policy_calls,
-                b.before,
-                b.first_depth
-            )
+            (a.outcome, a.transitions, a.policy_calls, a.expansion, a.depth_limit),
+            (b.outcome, b.transitions, b.policy_calls, b.expansion, b.depth_limit)
         );
     }
 
