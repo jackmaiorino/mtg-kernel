@@ -11,9 +11,11 @@ mod ooze_v11;
 mod raid_v9;
 pub mod variable_cast_v1;
 pub use ooze_v11::*;
+mod soul_shackled_zombie_v13;
 mod visible;
 pub use life_ward_v8::*;
 pub use raid_v9::*;
+pub use soul_shackled_zombie_v13::*;
 pub use visible::*;
 
 use crate::rl::PlayerSeatV1;

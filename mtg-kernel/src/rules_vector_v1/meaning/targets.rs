@@ -193,6 +193,13 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
             object(out, ObjF::Spell, None, ZoneF::Stack);
         }
         // Up to two distinct nontoken cards in either graveyard.
+        TargetSpec::UpToTwoCardsInSingleGraveyard => {
+            object(out, ObjF::AnyCard, None, ZoneF::Graveyard);
+            out.target(TargetAtom::MultipleTargets);
+            out.target(TargetAtom::UpTo);
+            // Shared physical graveyard has no frozen relational facet.
+            out.atoms.push(Atom::Opaque);
+        }
         TargetSpec::UpToTwoCardsInGraveyards => {
             object(out, ObjF::AnyCard, None, ZoneF::Graveyard);
             out.target(TargetAtom::MultipleTargets);
@@ -573,6 +580,7 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
         }
         TargetSpec::UpToTwoCardsInGraveyards
         | TargetSpec::UpToOneCardInGraveyards
+        | TargetSpec::UpToTwoCardsInSingleGraveyard
         | TargetSpec::CardInGraveyards => {
             let _ = slot; // Every slot is an unfiltered graveyard card.
             ObjF::AnyCard

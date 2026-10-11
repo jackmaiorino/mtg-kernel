@@ -625,6 +625,11 @@ pub enum CommittedEvent {
     ControlledCreatureDeathCaptureCollectedV1 {
         capture_history_index: u64,
     },
+    /// Independent actual-entry authority for the unregistered shared-graveyard ETB.
+    SingleGraveyardEntryV1 {
+        source_contract: crate::state::AbilitySourceContractV4,
+        entry_event_index: usize,
+    },
 }
 
 /// Remembers the counters of a departing permanent whose own leave ability
@@ -1352,6 +1357,15 @@ fn commit_with_ability_lki(
         } if *to != Zone::Battlefield => Some(*object),
         _ => None,
     };
+    let single_graveyard_entry = match &committed {
+        CommittedEvent::ZoneChange {
+            object,
+            to: Zone::Battlefield,
+            ..
+        }
+        | CommittedEvent::CreateToken { object, .. } => Some(*object),
+        _ => None,
+    };
     state.engine.event_log.push(committed.clone());
     let committed_death = matches!(
         committed,
@@ -1367,6 +1381,9 @@ fn commit_with_ability_lki(
             state.engine.event_log.push(capture.clone());
             state.engine.event_history.push(capture);
         }
+    }
+    if let Some(source) = single_graveyard_entry {
+        crate::soul_shackled_zombie_v1::record_entry(state, source);
     }
     if let Some(object) = left_battlefield {
         crate::standard_legends_v1::return_lagrella_exiles(

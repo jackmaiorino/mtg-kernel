@@ -1043,6 +1043,9 @@ pub enum TargetSpec {
     KickerControlledCreatures,
     /// Exactly one nontoken card in either player's graveyard.
     CardInGraveyards,
+    /// Zero to two distinct nontoken cards from one physical graveyard.
+    /// Stable id 66 is reserved for this unregistered FDN successor.
+    UpToTwoCardsInSingleGraveyard,
 }
 
 impl TargetSpec {
@@ -1134,6 +1137,7 @@ impl TargetSpec {
             TargetSpec::TwoCreaturesWithDifferentControllers => 62,
             TargetSpec::KickerControlledCreatures => 63,
             TargetSpec::CardInGraveyards => 65,
+            TargetSpec::UpToTwoCardsInSingleGraveyard => 66,
         }
     }
 }

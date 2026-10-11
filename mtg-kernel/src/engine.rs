@@ -1788,6 +1788,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::ExactlyTwoArtifactPermanents
         | TargetSpec::UpToTwoPlayers
         | TargetSpec::UpToTwoCardsInGraveyards
+        | TargetSpec::UpToTwoCardsInSingleGraveyard
         | TargetSpec::ControlledCreatureThenOpponentCreature
         | TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker => 2,
     }
@@ -1801,6 +1802,7 @@ fn target_min_count(spec: TargetSpec) -> u8 {
         | TargetSpec::UpToTwoCreatures
         | TargetSpec::UpToTwoPlayers
         | TargetSpec::UpToTwoCardsInGraveyards
+        | TargetSpec::UpToTwoCardsInSingleGraveyard
         | TargetSpec::UpToOneCardInGraveyards
         | TargetSpec::UpToOneOtherControlledPermanent
         | TargetSpec::UpToTwoOtherControlledCreatures
@@ -3683,6 +3685,9 @@ fn legal_targets_for_controller_from_source(
             })
             .map(Target::Object)
             .collect(),
+        TargetSpec::UpToTwoCardsInSingleGraveyard => {
+            crate::soul_shackled_zombie_v1::legal_targets(state, targets_chosen)
+        }
         TargetSpec::UpToTwoCardsInGraveyards | TargetSpec::UpToOneCardInGraveyards | TargetSpec::CardInGraveyards => {
             [PlayerId::P0, PlayerId::P1]
                 .into_iter()
@@ -12263,6 +12268,20 @@ fn legal_pending_trigger_modes(
         .collect()
 }
 
+pub(crate) fn validate_single_graveyard_public_pending(
+    state: &GameState,
+    pending: &PendingTrigger,
+) -> Result<(), String> {
+    if pending.effect != EffectOp::ExileSingleGraveyardTargetsThenDrainTwoV1 {
+        return Err("public single-graveyard context has an unrelated root".into());
+    }
+    validate_pending_trigger_identity(state, pending)?;
+    if pending.placement_ordered {
+        validate_pending_trigger(state, pending)?;
+    }
+    Ok(())
+}
+
 fn validate_pending_trigger(state: &GameState, pending: &PendingTrigger) -> Result<(), String> {
     if !pending.placement_ordered {
         return Err("pending trigger has not completed placement ordering".to_string());
@@ -12317,7 +12336,8 @@ fn validate_pending_trigger(state: &GameState, pending: &PendingTrigger) -> Resu
     for &target in &pending.targets {
         let legal = if matches!(
             expected,
-            TargetSpec::UpToOneOtherCreature
+            TargetSpec::UpToTwoCardsInSingleGraveyard
+                | TargetSpec::UpToOneOtherCreature
                 | TargetSpec::AnotherAttackingCreature
                 | TargetSpec::UpToOneOtherControlledPermanent
                 | TargetSpec::UpToTwoOtherControlledCreatures
@@ -12959,6 +12979,12 @@ fn triggered_stack_item_expected_target_spec(
         (None, Some(_)) => return Err("granted trigger lost its host contract".to_string()),
         (_, None) => false,
     };
+    if *inline_effect == EffectOp::ExileSingleGraveyardTargetsThenDrainTwoV1 {
+        crate::soul_shackled_zombie_v1::validate_source(
+            state,
+            ability_source_contract.ok_or("single-graveyard ETB lost its source capture")?,
+        )?;
+    }
     let definition_target_spec = trigger::target_spec_for_trigger(source_card_def, inline_effect);
     let expected_optional_cost =
         trigger::required_optional_additional_cost_for_trigger(source_card_def, inline_effect);
@@ -13227,6 +13253,9 @@ pub(crate) fn validated_stack_item_target_spec(
             None
         }
     };
+    if expected_spec == Some(TargetSpec::UpToTwoCardsInSingleGraveyard) {
+        crate::soul_shackled_zombie_v1::validate_target_contracts(&item.v4.target_contracts)?;
+    }
     let Some(spec) = expected_spec else {
         if item.v4.target_spec.is_some()
             || !item.targets.is_empty()

@@ -2067,6 +2067,13 @@ const CORI_STEEL_CUTTER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
     ..etb_trigger(cori_steel_cutter_flurry_effect)
 }];
 
+fn soul_shackled_zombie_effect() -> EffectOp {
+    EffectOp::ExileSingleGraveyardTargetsThenDrainTwoV1
+}
+
+const SOUL_SHACKLED_ZOMBIE_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(soul_shackled_zombie_effect)];
+
 fn graveyard_trespasser_effect() -> EffectOp {
     EffectOp::ExileGraveyardTargetsDrainPerCreature { max_targets: 1 }
 }
@@ -3348,6 +3355,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Elvish Regrower" => &ELVISH_REGROWER_TRIGGERS,
         "Vampire Soulcaller" => &VAMPIRE_SOULCALLER_TRIGGERS,
         "Affectionate Indrik" => &AFFECTIONATE_INDRIK_TRIGGERS,
+        "Soul-Shackled Zombie" => &SOUL_SHACKLED_ZOMBIE_TRIGGERS,
         "Ambush Wolf" => &AMBUSH_WOLF_TRIGGERS,
         "Tatyova, Benthic Druid" => &TATYOVA_BENTHIC_DRUID_TRIGGERS,
         "Dazzling Angel" => &DAZZLING_ANGEL_TRIGGERS,
@@ -3651,6 +3659,11 @@ fn standard_trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetS
                 TargetSpec::None
             },
         ),
+        "Soul-Shackled Zombie" => Some(if *effect == soul_shackled_zombie_effect() {
+            TargetSpec::UpToTwoCardsInSingleGraveyard
+        } else {
+            TargetSpec::None
+        }),
         "Graveyard Trespasser" => Some(match effect {
             EffectOp::ExileGraveyardTargetsDrainPerCreature { max_targets: 1 } => {
                 TargetSpec::UpToOneCardInGraveyards
