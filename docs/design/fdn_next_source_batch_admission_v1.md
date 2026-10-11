@@ -30,14 +30,24 @@ a named opponent library array. No tests, Standard check, lint or replays ran in
 these failed compile attempts. Exact12d460e7 removes one duplicate unreachable
 Ooze generator arm while retaining its original identical mapping.
 
-Native54 exact01912737 requests both all-test typechecks and297 selected checks,
-strict Limited all-test lint and complete Default/Standard replay artifacts.
-Its retained supported handle is81a76b6e26e44be0910273d173ce5f1f/supervisor137788.
-No passing result is recorded before it completes. Actualguard101 and exact
-owned post-terminal helper identity/membership were verified before target
-reuse for each retry. Shared research reservations and foreign processes remain
-preserved. Heartfire's intrinsic receipt-erasure repair435ae69d and its correct
-Cargo gate46b20832 are composed and await this actual gameplay qualification.
+Native54 exact01912737 completed101/101. Both all-test typechecks passed;
+source-power1, registered ordinary-activation1 and printed Heartfire8 passed,
+including the receipt-erasure regression. Human Heartfire passed5 and failed1:
+the fixture's pass-only priority menu auto-resolved damage before its saved-row
+assertion. Exact8a04bcf0 leaves one red mana for a genuine Bolt response, retaining
+all assertions; actual qualification of that test-only repair remains pending.
+Later groups, lint and replays did not run. The final logs and actualguard101
+are retained; exact owned helper membership, path and start time were verified
+before its post-terminal release. Shared research reservations remain preserved.
+
+Native55 exact605a3b5c requests303 selected checks, both all-test typechecks,
+strict Limited and Default all-test lint and complete Default/Standard replays.
+Its supported handle is6d070599a6394fba83c37c4a60e23a40/supervisor160460.
+After compile prerequisites it continues independent groups and aggregates
+failures. No overall pass is claimed before every requested count and check
+matches. Both all-test typechecks have passed. This composition includes the
+Limited-only Zombie test-accessor gate6014c85c and precise Self/Squad meaning
+successorsd0255799, source reviewed with frozen predecessor refusal retained.
 
 Native51 actual generator emitted404 definitions/hash ea06551203d063f8
 before the first compile failure. Its exact generated source is retained.
@@ -45,4 +55,4 @@ This new v77 profile appends beside immutable v76 and every older identity,
 retains historical Zombie readers, and refuses stale publisher/resume writes
 before store mutation. Only current Limited live canaries move. No earlier
 profile, formal measurement, feature/weight identity or runtime catalog file
-is repinned. Profile and gameplay qualification remain pending Native54.
+is repinned. Profile and remaining gameplay qualification are pending Native55.
