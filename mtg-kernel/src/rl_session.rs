@@ -38,8 +38,6 @@ use std::fmt;
 
 pub mod census_future_v2;
 pub(crate) mod human_opening_v1;
-// Source preparation: the safe Human V8 DTO/projector is a separate next step.
-#[allow(dead_code)]
 pub(crate) mod human_v8;
 
 pub const RL_SESSION_SCHEMA_VERSION: u32 = 5;

@@ -2,11 +2,13 @@
 
 Issue110 source design, based on 9aad32230f7178899ef298fb07ed9951af2b1610.
 Read-only source review confirms the boundaries below. The explicit session
-mode, life-aware installation, private input and complete binding are now
-implemented in source, with three registered backend test groups unrun.
-Safe human DTOs, labels, submission and retry handling, native qualification
-and actual Sire gameplay remain pending. This is an in-process human adapter,
-with no model, BO3 runner or evaluation claim.
+mode, life-aware installation, private input, complete binding, typed safe DTO,
+life labels and submission/retry handling are implemented in source. Three
+backend and five projector test groups remain unrun. Projector payment labels
+use an explicitly synthetic typed fixture; Cathar covers printed traits only,
+preserving its historical automatic back-face payment. Native qualification,
+actual front-life gameplay and further relation/combat fixtures remain pending.
+This is an in-process adapter, with no model, BO3 runner or evaluation claim.
 
 The current Human V1/V4 paths request V6. Session installation also obtains
 V6 extensions before candidate normalization, so replacing only the human

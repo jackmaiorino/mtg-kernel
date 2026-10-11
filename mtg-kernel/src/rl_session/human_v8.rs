@@ -1,6 +1,6 @@
 //! Private life-aware human session input. This is neither scorer admission
 //! nor the safe human DTO: typed observations and executable candidates stay
-//! backend-only. The future projector must resolve only visible handles.
+//! backend-only. The separate projector resolves only visible handles.
 
 use super::*;
 use crate::policy_observation_v8::ObservationV8;
@@ -53,9 +53,9 @@ pub(super) fn prepare_current(
 }
 
 impl FastActorSessionV1 {
-    /// Explicit backend opt-in before installing a Human V8 projector.
+    /// Explicit backend opt-in for the separate Human V8 projector.
     /// It consumes the session; predecessor adapters keep their old mode.
-    pub(crate) fn into_human_v8(mut self) -> Result<Self, RlContractError> {
+    pub fn into_human_v8(mut self) -> Result<Self, RlContractError> {
         self.flat_action_contract_mode = FlatActionContractModeV1::HumanV8;
         self.flat_action_cache_spare = None;
         self.flat_action_cache_spare_v2 = None;
@@ -65,6 +65,23 @@ impl FastActorSessionV1 {
             self.current = Some(current);
         }
         Ok(self)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_human_v8_fixture_state(state: GameState) -> Self {
+        let mut session = Self::reset_with_limits(23, 91, 10_000, 10_000);
+        session.state = state;
+        session.surface = PolicySurfaceV5::new_for_session();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.terminal = None;
+        session.flat_action_contract_mode = FlatActionContractModeV1::HumanV8;
+        session.flat_action_cache_spare = None;
+        session.flat_action_cache_spare_v2 = None;
+        session.advance_to_decision_or_terminal();
+        session
     }
 
     /// Actor-visible authority plus a complete ordered executable binding.
@@ -119,7 +136,7 @@ impl FastActorSessionV1 {
         Ok((observation, actions, binding))
     }
 
-    /// Revalidation is read-only. The projector must call this immediately
+    /// Revalidation is read-only. The projector calls this immediately
     /// before applying its privately mapped index through session.step.
     pub(crate) fn human_validate_bound_decision_v8(
         &self,

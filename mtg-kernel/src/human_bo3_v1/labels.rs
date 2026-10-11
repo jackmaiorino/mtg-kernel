@@ -17,6 +17,61 @@ use crate::rl::{
 };
 use crate::state::Zone;
 
+// Borrow only the common typed facts used by labels. A successor observation
+// is never converted into a V6 observation or assigned a predecessor identity.
+struct LabelInput<'a> {
+    projection: &'a crate::rl::PublicObservationProjectionV5,
+    pending_chosen_creature_cost:
+        Option<&'a crate::policy_observation_v6::PendingChosenCreatureCostV6>,
+    pending_ward_payment: Option<&'a crate::policy_observation_v6::WardPaymentV6>,
+    resolving_spell_sources: Vec<&'a CardStableRefV1>,
+}
+
+impl<'a> LabelInput<'a> {
+    fn from_v6(observation: &'a ObservationV6) -> Self {
+        Self {
+            projection: &observation.projection,
+            pending_chosen_creature_cost: observation
+                .extensions
+                .pending_chosen_creature_cost
+                .as_ref(),
+            pending_ward_payment: observation.extensions.pending_ward_payment.as_ref(),
+            resolving_spell_sources: observation
+                .extensions
+                .historical_public_sources
+                .iter()
+                .filter(|record| {
+                    record.context == HistoricalSourceContextV6::PendingEffect
+                        && record.stack_item_kind == StackItemKindV2::Spell
+                })
+                .map(|record| &record.source)
+                .collect(),
+        }
+    }
+
+    fn from_v8(observation: &'a crate::policy_observation_v8::ObservationV8) -> Self {
+        Self {
+            projection: &observation.projection,
+            pending_chosen_creature_cost: observation
+                .extensions
+                .pending_chosen_creature_cost
+                .as_ref(),
+            pending_ward_payment: observation.extensions.pending_ward_payment.as_ref(),
+            resolving_spell_sources: observation
+                .extensions
+                .historical_public_sources
+                .iter()
+                .filter(|record| {
+                    record.context
+                        == crate::policy_observation_v7::HistoricalSourceContextV7::PendingEffect
+                        && record.stack_item_kind == StackItemKindV2::Spell
+                })
+                .map(|record| &record.source)
+                .collect(),
+        }
+    }
+}
+
 fn color(color: ManaColor) -> &'static str {
     match color {
         ManaColor::W => "W",
@@ -221,18 +276,9 @@ fn program_at_path<'a>(mut program: &'a EffectOp, path: &[u16]) -> Result<&'a Ef
 fn pending_program(
     source: &CardStableRefV1,
     path: &[u16],
-    observation: &ObservationV6,
+    observation: &LabelInput<'_>,
 ) -> Result<EffectOp, Error> {
-    if !observation
-        .extensions
-        .historical_public_sources
-        .iter()
-        .any(|record| {
-            record.context == HistoricalSourceContextV6::PendingEffect
-                && record.source == *source
-                && record.stack_item_kind == StackItemKindV2::Spell
-        })
-    {
+    if !observation.resolving_spell_sources.contains(&source) {
         return Err(Error::UnsupportedPrompt);
     }
     let def = definition(source)?;
@@ -285,7 +331,7 @@ fn names(cards: &[CardStableRefV1], handles: &Handles) -> Result<String, Error> 
         .map(|names| names.join(", "))
 }
 
-fn optional_source(observation: &ObservationV6) -> Result<&CardStableRefV1, Error> {
+fn optional_source<'a>(observation: &LabelInput<'a>) -> Result<&'a CardStableRefV1, Error> {
     observation
         .projection
         .surface
@@ -340,6 +386,78 @@ fn actor(action: &A) -> Option<PlayerSeatV1> {
 pub(super) fn label(
     action: &A,
     observation: &ObservationV6,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    label_common(action, &LabelInput::from_v6(observation), handles, human)
+}
+
+pub(super) fn label_v8(
+    action: &A,
+    observation: &crate::policy_observation_v8::ObservationV8,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    if let Some(payment) = &observation.extensions.pending_ward_life_payment {
+        let A::ChooseEffectBoolean {
+            actor,
+            source,
+            value,
+        } = action
+        else {
+            return Err(Error::UnsupportedPrompt);
+        };
+        let pending = observation
+            .projection
+            .surface
+            .engine_context
+            .pending_effect
+            .as_ref()
+            .ok_or(Error::UnsupportedPrompt)?;
+        let Some(PendingEffectChoiceSemanticV4::Boolean {
+            player, purpose, ..
+        }) = &pending.choice
+        else {
+            return Err(Error::UnsupportedPrompt);
+        };
+        if *actor != human
+            || *player != human
+            || payment.payer != human
+            || *purpose != BooleanChoicePurposeV4::PayCost
+            || pending.source.as_ref() != Some(source)
+            || observation.extensions.pending_ward_payment.is_some()
+        {
+            return Err(Error::UnsupportedPrompt);
+        }
+        let targeter = observation
+            .projection
+            .surface
+            .stack
+            .get(payment.targeting_stack_index as usize)
+            .ok_or(Error::InvalidVisibleReference)?;
+        if targeter.stack_index != payment.targeting_stack_index || targeter.controller != human {
+            return Err(Error::InvalidVisibleReference);
+        }
+        return Ok(format!(
+            "{} {} life for Ward from {}, which targets stack item #{} ({}){}",
+            if *value { "Pay" } else { "Decline to pay" },
+            payment.life,
+            handles.name(source)?,
+            payment.targeting_stack_index + 1,
+            handles.name(&targeter.source)?,
+            if *value {
+                ""
+            } else {
+                "; Ward will attempt to counter that item"
+            },
+        ));
+    }
+    label_common(action, &LabelInput::from_v8(observation), handles, human)
+}
+
+fn label_common(
+    action: &A,
+    observation: &LabelInput<'_>,
     handles: &Handles,
     human: PlayerSeatV1,
 ) -> Result<String, Error> {
@@ -515,7 +633,6 @@ pub(super) fn label(
                 CostKind::ReturnPermanentsToHand => "Return to its owner's hand",
                 CostKind::ChooseCreatureOrRevealCreature => {
                     match observation
-                        .extensions
                         .pending_chosen_creature_cost
                         .as_ref()
                         .ok_or(Error::UnsupportedPrompt)?
@@ -685,7 +802,7 @@ pub(super) fn label(
                     handles.name(source)?
                 ));
             }
-            let Some(ward) = observation.extensions.pending_ward_payment.as_ref() else {
+            let Some(ward) = observation.pending_ward_payment.as_ref() else {
                 if *purpose != BooleanChoicePurposeV4::PayCost {
                     return Err(Error::UnsupportedPrompt);
                 }

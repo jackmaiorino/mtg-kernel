@@ -6,7 +6,9 @@
 //! remain backend-only. No opponent decision is projected to a human.
 
 mod labels;
+mod life_ward_v8;
 mod visible;
+pub use life_ward_v8::*;
 pub use visible::*;
 
 use crate::rl::PlayerSeatV1;
