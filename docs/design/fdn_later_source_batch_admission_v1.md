@@ -205,5 +205,33 @@ includes every Native66 failure, new catalog/owner/privacy/transformed-copy
 repairs, existing benchmark correctness cases and complete legacy exports.
 Helper/bundle SHA-256s, clean detached source, prior supervisor absence and
 Haley disk free70826487808 bytes were verified before guarded submission.
-Native67 and current PR CI are pending, not acceptance. Separate future
-Librarian/Raid/Crystal/Temporal preparations remain unregistered and native-unrun.
+Native67 finalized101/101 at exact e9e660: all three catalog all-target
+compiles and strict lints pass. Its25 executed groups contain136 passing
+cases and one failing actual Cerberus Human fixture. The benchmark selector
+ran27 cases rather than its stale12-case expectation. Two selected
+native-store groups never executed: debug invocations failed the required
+release-profile build capture. Seven cases therefore remain unqualified.
+Both complete legacy exports are byte-identical to Native33. Original
+attempts and corrected counts are preserved in the durable manifest.
+Exact terminal helper165068 was released after job588 membership, executable
+path and start verification; guard101 and supervisor156136/helper absence
+were observed before target reuse.
+
+At ea957831 the test-only Cerberus fixture selects the existing engine-priority
+surface while preserving the historical constructor and every assertion.
+An authority test module now has a literal cfg(test) annotation, preserving
+its compile conditions and allowing the existing production source audit
+to exclude it. Predecessor compatibility compares every supported V1 record,
+vector and vocabulary while independently testing Divine Resilience refusal.
+Whole formatting and diff checks pass. Native68 is submitted at exact
+ea957831 through supported handle796386a8640d4349b7375ced8996e95d,
+supervisor140908, four BelowNormal cores. It requests18 scoped cases,
+including seven correctly release-mode native-store cases, and all three
+catalog all-target compiles/lints. Results and current-head CI are pending.
+
+The separate future composition stages Librarian, Gorehorn Raider, Gutless
+Plunderer, Bloom Tender and Temporal Manipulation:416 candidate definitions
+and211 prospective Full markers. All86 affected Python cases pass; native
+typing, actual generated hash/profile and gameplay remain unqualified.
+Accepted default coverage remains193 Full/1 Partial/92 Missing. Crystal,
+Banishing Light and Juggernaut source preparations remain unregistered.
