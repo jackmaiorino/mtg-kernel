@@ -185,30 +185,15 @@ mod tests {
             let mut first = base.clone();
             let mut second = base;
             // Both spells are registered in the Limited and Standard catalogs.
-            put(
-                &mut first,
-                actor.opponent(),
-                "Snap",
-                Zone::Hand,
-            );
-            put(
-                &mut second,
-                actor.opponent(),
-                "Lightning Bolt",
-                Zone::Hand,
-            );
+            put(&mut first, actor.opponent(), "Snap", Zone::Hand);
+            put(&mut second, actor.opponent(), "Lightning Bolt", Zone::Hand);
             put(
                 &mut first,
                 actor.opponent(),
                 "Lightning Bolt",
                 Zone::Library,
             );
-            put(
-                &mut second,
-                actor.opponent(),
-                "Snap",
-                Zone::Library,
-            );
+            put(&mut second, actor.opponent(), "Snap", Zone::Library);
             assert_eq!(observe(&first, actor), observe(&second, actor));
         }
     }
