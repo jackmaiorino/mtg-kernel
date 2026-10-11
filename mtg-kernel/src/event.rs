@@ -751,7 +751,8 @@ pub(crate) fn log_plus_one_counters_added(
         count,
     };
     state.engine.event_log.push(committed.clone());
-    state.engine.event_history.push(committed);
+    state.engine.event_history.push(committed.clone());
+    crate::wildwood_scourge_v1::capture_counter_event(state, &committed);
 }
 
 /// Exact checked placement, shared by counter doubling and ordinary effects.

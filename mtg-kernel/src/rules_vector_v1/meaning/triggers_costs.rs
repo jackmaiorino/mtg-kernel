@@ -289,6 +289,10 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
             // The new complete printed rule has no frozen full-vector admission.
             out.atoms.push(Atom::Opaque);
         }
+        TriggerCondition::AnotherControlledNonHydraCreatureGetsPlusOneCounters => {
+            // Event-time recipient subtype/control and grouped counters are new semantics.
+            out.atoms.push(Atom::Opaque);
+        }
         TriggerCondition::BeginningControllerEndStepIfCreatureDied => {
             // The controller's end step begins, gated on the event's flag
             // that a creature (either player's) died this turn. Same read

@@ -3422,6 +3422,10 @@ fn special_for(name: &str) -> Special {
         "Felling Blow" => Special::FellingBlow,
         "Fleeting Flight" => Special::FleetingFlight,
         "Joust Through" => Special::JoustThrough,
+        "Wildwood Scourge" => Special::StandardProgram {
+            program: "crate::wildwood_scourge_v1::spell_program_v1",
+            target_spec: "TargetSpec::None",
+        },
         "Nyxborn Hydra" => Special::NyxbornHydra,
         "Heroic Reinforcements" => Special::CreateTokensThenBoostControlled {
             token: "Soldier Token",
@@ -6801,6 +6805,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Arbiter of Woe" => "etb:discard_opponent:1:lose_life_opponent:2:draw_controller:1:gain_life_controller:2:ordered_sequence",
         "Apothecary Stomper" => "etb:mode_before_targets:controlled_creature_plus_one_counters:2|gain_controller_life:4",
         "Celestial Armor" => "etb:target_controlled_creature:attach_exact_source:then_grant_hexproof_indestructible_until_end_of_turn",
+        "Wildwood Scourge" => "xg_zero_zero_hydra:enters_with_paid_x_plus_one_counters:counter_event_time:another_controlled_creature:exclude_effective_hydra:one_or_more_counters_one_trigger:regardless_counter_placing_player:one_counter_exact_bound_source_incarnation",
         "Mossborn Hydra" => "controlled_land_enters:double_plus_one_counters_on_bound_source",
         "Exemplar of Light" => "controller_gains_positive_life:counter_on_bound_source:1;controller_places_plus_one_counters_on_source:draw:1:limit_per_turn:1",
         "Vanguard Seraph" => "controller_first_positive_life_gain_each_turn:anchored_history:event_time_source_controller_incarnation_capture:unprocessed_positive_gain_suffix:after_resolution_apnap:surveil:1",

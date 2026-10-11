@@ -253,6 +253,8 @@ pub enum TriggerCondition {
     BeginningControllerEndStepAfterControllerAttackedThisTurn,
     /// Each end step, with an intervening creature-death gate.
     BeginningAnyEndStepIfCreatureDied,
+    /// Counter-placement-time capture, independent of the placing player's identity.
+    AnotherControlledNonHydraCreatureGetsPlusOneCounters,
 }
 
 pub struct TriggeredAbilityDef {
@@ -987,6 +989,11 @@ const KIORA_RISING_TIDE_TRIGGERS: [TriggeredAbilityDef; 2] = [
 const SLUMBERING_CERBERUS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::BeginningAnyEndStepIfCreatureDied,
     ..etb_trigger(crate::slumbering_cerberus_v1::program_v1)
+}];
+
+const WILDWOOD_SCOURGE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::AnotherControlledNonHydraCreatureGetsPlusOneCounters,
+    ..etb_trigger(crate::wildwood_scourge_v1::counter_program_v1)
 }];
 
 const CACKLING_PROWLER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
@@ -3406,6 +3413,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Koma, World-Eater" => &KOMA_WORLD_EATER_TRIGGERS,
         "Kiora, the Rising Tide" => &KIORA_RISING_TIDE_TRIGGERS,
         "Slumbering Cerberus" => &SLUMBERING_CERBERUS_TRIGGERS,
+        "Wildwood Scourge" => &WILDWOOD_SCOURGE_TRIGGERS,
         "Cackling Prowler" => &CACKLING_PROWLER_TRIGGERS,
         "Hare Apparent" => &HARE_APPARENT_TRIGGERS,
         "Needletooth Pack" => &NEEDLETOOTH_PACK_TRIGGERS,
@@ -4744,6 +4752,7 @@ fn triggers_from_events(
                     def.condition,
                     TriggerCondition::ControllerFirstLifeGain { .. }
                         | TriggerCondition::ThisOrControlledCreatureDies
+                        | TriggerCondition::AnotherControlledNonHydraCreatureGetsPlusOneCounters
                 ) {
                     continue;
                 }
@@ -5388,6 +5397,9 @@ fn trigger_matches(
                 && *zone_change_count == state.objects.get(source).zone_change_count
                 && *player == controller
                 && *count > 0
+        }
+        (TriggerCondition::AnotherControlledNonHydraCreatureGetsPlusOneCounters, event) => {
+            crate::wildwood_scourge_v1::matches_counter_event(state, source, controller, event)
         }
         (TriggerCondition::ControlledLandEnters, event) => battlefield_entry_object(event)
             .is_some_and(|object| {
