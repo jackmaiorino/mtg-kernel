@@ -5,10 +5,9 @@ Add the MageZero Standard catalog's non-creature permanent frameworks
 (family F) behind the `standard-magezero-fixtures` feature. Card behavior
 follows each card's XMage source. Every program is selected by printed
 card name through `build_standard_v1.rs` and `src/standard_cards_v1.rs`,
-so the Pauper and FDN catalogs keep their separate identities. The v7 completion
-candidate sets Full flags to enable all-deck acceptance checks. Native compilation,
-behavior tests and terminal public-session/replay verification remain pending in
-`docs/reports/standard_completion_v1.md`.
+so the Pauper and FDN catalogs keep their separate identities. The v7 catalog sets
+Full flags for all-deck admission. Native behavior tests and terminal public-session
+replay results are recorded in `docs/reports/standard_completion_v1.md`.
 
 ## Planeswalkers and attacks
 

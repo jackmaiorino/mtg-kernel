@@ -1,11 +1,11 @@
 # MageZero Standard lands v1
 
-The v7 completion candidate includes all 58 lands in families A and B of
+The v7 catalog includes all 58 lands in families A and B of
 `docs/reports/standard_magezero_inventory_v1.md`, including Soulstone Sanctuary,
 all seven Restless lands, all five channel lands and the remaining utility lands.
 Mirrex poison observations and restricted floating mana are implemented. All entries
-have Full admission flags for the combined acceptance checks; native/runtime
-verification remains pending in `docs/reports/standard_completion_v1.md`.
+have Full admission flags. Combined native results are recorded in
+`docs/reports/standard_completion_v1.md`.
 
 The original land batch established the reusable rules below; the completion adds
 its remaining consumers without reordering existing Standard definitions.
@@ -91,7 +91,7 @@ counters loses the game as a state-based action (704.5c). `Keywords::TOXIC_1` is
 keyword bit. "Can't block" reuses family D's name-keyed rule
 (`standard_keywords_v1::cant_block`, Forsaken Miner's). Poison is public rules state. Generic observations include poison counters for both
 players, omitting the extension when both counts are zero. The token and Mirrex are
-Full admission candidates. Melira's replacement and Innkeeper's Talent's counter
+marked Full. Melira's replacement and Innkeeper's Talent's counter
 doubling apply through the shared poison event path.
 
 Rockface Village's `{R}, {T}` sorcery-speed ability gives target Lizard, Mouse, Otter or
@@ -106,8 +106,7 @@ Sphere and Town append after it; family D already added Mouse. Assembly-Worker a
 are added to `CREATURE_TYPES` only under the Standard feature, and Otter is listed once. New `CardDef`
 fields are appended with empty defaults and enter the catalog contract only when a card
 sets them, so the Pauper (`kernel_carddb/v34`) and FDN Limited identities do not move. The
-completion catalog is `kernel_carddb_standard/v7`; its numeric hash is pending the
-native integration build. New object and player state
+completion catalog is `kernel_carddb_standard/v7`, hash `0xd237d07494e53952`. New object and player state
 (`animation_timestamp`, `entered_battlefield_this_turn`, `poison_counters`) is skipped on the wire
 and in state hashes while empty, so existing states keep their bytes.
 
@@ -133,5 +132,5 @@ payment as a cost, and Mishra's Foundry's animation in the definition record wit
 Completion coverage is in `standard_lands_spells_completion_v1.rs` and
 `standard_characteristics_completion_v1.rs`: restricted floating mana and provenance,
 poison projection, utility/channel/Restless abilities, permanent Soulstone animation,
-effective Room mana values and nonlegendary Temple of Power. Test source exists;
-combined native execution is pending.
+effective Room mana values and nonlegendary Temple of Power. Combined native results
+are recorded in `docs/reports/standard_completion_v1.md`.

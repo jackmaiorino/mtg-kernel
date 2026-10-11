@@ -30,13 +30,13 @@ Standard definitions appended after the unchanged 192-definition Pauper registry
 Burst Lightning, whose behavior is shared with the FDN build, then each Standard batch in merge
 order. FDN definitions are not included, so FDN batches never move Standard card ids.
 
-The completion candidate uses `kernel_carddb_standard/v7`: 253 appended definitions,
-including 32 token or masked-face definitions, after the frozen 192-definition Pauper prefix.
+The catalog uses `kernel_carddb_standard/v7`: 254 appended definitions,
+including 32 token or masked-face definitions and the shared FDN Witness Protection
+regression fixture, after the frozen 192-definition Pauper prefix.
 All 225 distinct nonbasic cards have source implementations and Full admission flags.
 Python fixture checks resolve all 16 decks, preserving the 62-card Mono-U fixture and empty
-sideboards. These admission checks do not establish complete runtime support. Native
-compilation, affected behavior tests, the observed v7 catalog hash, and deterministic terminal
-public-session/replay validation remain pending in
+sideboards. The catalog hash is `0xd237d07494e53952`. Native rules checks and deterministic
+terminal public-session/replay results are recorded in
 [`standard_completion_v1.md`](../../../docs/reports/standard_completion_v1.md).
 
 Build with the pinned toolchain and the host's supported guarded launcher:

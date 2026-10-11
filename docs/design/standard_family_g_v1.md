@@ -1,10 +1,9 @@
 # MageZero Standard family G v1: trigger and static creatures
 
 Family G of the MageZero Standard inventory covers creatures with triggered and
-static abilities. The v7 completion candidate includes all 48 listed family G cards,
-including shared FDN creatures and the two-color additions. The registry entries are
-Full admission candidates; combined native/runtime verification remains pending in
-`docs/reports/standard_completion_v1.md`.
+static abilities. The v7 catalog includes all 48 listed family G cards, including shared
+FDN creatures and the two-color additions. The registry entries have Full admission
+flags; combined native results are recorded in `docs/reports/standard_completion_v1.md`.
 
 Definitions keep their append order in `data/standard/magezero_v1/cards_v1.json`.
 The behavior tables in `build.rs`, triggers in `src/trigger/standard_family_g_v1.rs`,
@@ -104,4 +103,4 @@ regressions cover stale sources, declined choices, empty candidate sets, counter
 and LKI, uncounterable spells, priority-window casting with flash, and printed
 affordability when Bloodletter modifies a Phyrexian payment. CI runs this suite
 and the catalog suite, including the observed v7 identity and all-deck admission checks.
-Combined executable verification is pending.
+Combined executable results are recorded in `docs/reports/standard_completion_v1.md`.

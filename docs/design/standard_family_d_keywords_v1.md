@@ -1,11 +1,11 @@
 # MageZero Standard family D: new set keywords v1
 
-Family D of the MageZero Standard v7 completion candidate covers the set keywords
+Family D of the MageZero Standard v7 catalog covers the set keywords
 used by the unchanged deck pool. Printed behavior follows each card's XMage source
 (path in its registry entry) and official rules where needed. The completion includes
-all family D cards and Full admission flags; combined native/runtime verification is
-pending in `docs/reports/standard_completion_v1.md`. The original v4 batch identities
-are historical, and the v7 hash must be frozen from the integration build. Pauper and
+all family D cards and Full admission flags. Combined native results are recorded in
+`docs/reports/standard_completion_v1.md`. The original v4 batch identities are historical;
+the v7 hash is `0xd237d07494e53952`. Pauper and
 FDN registry files and catalog identities remain separate.
 
 ## Cards
@@ -126,13 +126,13 @@ Existing observations and hashes omit these fields when no face-down cards
 exist. Free casting uses the shared parent-resolution continuation and the
 ordinary target, mode, additional-cost, and tax pipeline.
 
-Full flags enable completion-candidate admission. Compilation and the combined
-behavior tests remain pending; source and inventory checks do not replace them.
+Full flags enable deck admission. The combined behavior and public-session results
+are recorded in `docs/reports/standard_completion_v1.md`.
 
 ## Tests
 
 `mtg-kernel/tests/standard_family_d_v1.rs` covers implemented behavior,
-candidate admission, all three Spree mode payments, two pending Incubator
+deck admission, all three Spree mode payments, two pending Incubator
 activations, battle cry across zone changes, Seedshark with an Omen spell,
 and a stolen Enduring creature's death trigger and owner return. Casualty's
 transformed-Incubator regression exercises effective creature eligibility

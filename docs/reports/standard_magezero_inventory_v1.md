@@ -1,16 +1,16 @@
 # MageZero Standard pool inventory
 
-The `standard-magezero-fixtures` completion candidate targets all 16 unchanged MageZero
+The `standard-magezero-fixtures` catalog covers all 16 unchanged MageZero
 Standard opponent decks in `data/standard/magezero_v1/`. Its v7 registry contains the
-192-definition Pauper prefix and 253 appended definitions, with all 225 distinct nonbasic
-deck cards marked Full for acceptance testing. Python admission resolves all 16 decks;
+192-definition Pauper prefix and 254 appended definitions, with all 225 distinct nonbasic
+deck cards marked Full. Python admission resolves all 16 decks;
 there are zero Partial or missing deck entries. The extension includes 32 token or
-masked-face definitions. Existing Standard IDs retain their append order.
+masked-face definitions and the shared FDN Witness Protection regression fixture.
+Existing Standard IDs retain their append order.
 
-**Runtime verification is pending.** Admission flags and source coverage do not prove
-complete gameplay support. The integration lead owns compilation, affected behavior tests,
-the observed catalog hash, terminal public-session execution/replay, and final review.
-The current verification record is `docs/reports/standard_completion_v1.md`.
+Admission flags are checked separately from gameplay behavior. Native rules regressions,
+the observed catalog hash, terminal public-session execution/replay and integration
+evidence are recorded in `docs/reports/standard_completion_v1.md`.
 
 ## Scope and ownership
 
@@ -96,5 +96,5 @@ randomized bottom order. See `docs/design/standard_family_g_v1.md`.
 
 Mirrex poison and restricted floating mana for Rockface Village and the other restricted
 sources are represented in generic observations. The remaining utility, channel and
-Restless lands and Soulstone Sanctuary are included in the candidate; see
+Restless lands and Soulstone Sanctuary are implemented; see
 `docs/design/standard_lands_v1.md`.
