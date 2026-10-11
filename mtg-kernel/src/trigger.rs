@@ -26,6 +26,8 @@ use serde::{Deserialize, Serialize};
 mod standard_family_g_v1;
 #[cfg(feature = "standard-magezero-fixtures")]
 mod standard_lands_v2;
+#[cfg(feature = "standard-magezero-fixtures")]
+mod standard_legends_v1;
 
 /// Trigger conditions this increment's kernel can match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3302,6 +3304,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         #[cfg(feature = "standard-magezero-fixtures")]
         "Sheoldred, the Apocalypse" => &standard_family_g_v1::SHEOLDRED_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
+        "Halana and Alena, Partners" => &standard_legends_v1::HALANA,
+        #[cfg(feature = "standard-magezero-fixtures")]
         "Restless Bivouac" => &standard_lands_v2::BIVOUAC,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Restless Cottage" => &standard_lands_v2::COTTAGE,
@@ -3357,6 +3361,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         return TargetSpec::None;
     };
     match card.name {
+        "Halana and Alena, Partners" => TargetSpec::AnotherControlledCreature,
         "Restless Bivouac" => TargetSpec::ControlledCreature,
         "Restless Cottage" => TargetSpec::UpToOneCardInGraveyards,
         "Restless Reef" => TargetSpec::AnyPlayer,

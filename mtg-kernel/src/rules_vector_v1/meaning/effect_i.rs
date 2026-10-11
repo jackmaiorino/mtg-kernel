@@ -8,6 +8,21 @@ use super::*;
 pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     let _ = env;
     match op {
+        EffectOp::StandardLegendV1(op) => {
+            use crate::standard_legends_v1::LegendEffectV1;
+            match op {
+                LegendEffectV1::CountersOnControlledCreatures
+                | LegendEffectV1::SourcePowerCountersAndHaste => out.effect(
+                    EffectAtom::new(EvF::PlaceCounter).obj(ObjF::Typed(CardTypeF::Creature)),
+                ),
+                LegendEffectV1::ProtectControlledLegendaryCreatures => out.effect(
+                    EffectAtom::new(EvF::SetCharacteristic)
+                        .player(RelF::You)
+                        .obj(ObjF::Typed(CardTypeF::Creature))
+                        .duration(DurF::EndOfTurn),
+                ),
+            }
+        }
         EffectOp::AnimateSource | EffectOp::AnimateSourcePermanentlyV1 => {
             // The source's exact battlefield incarnation becomes its
             // definition's `animation` creature until end of turn (514.2):

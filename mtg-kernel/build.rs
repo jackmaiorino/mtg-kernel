@@ -4235,6 +4235,10 @@ fn keywords_for(card: &CardJson) -> String {
 /// Names are disjoint from the Pauper and FDN tables above.
 fn standard_keywords_for(name: &str) -> &'static [&'static str] {
     match name {
+        "Halana and Alena, Partners" => &["Keywords::FIRST_STRIKE", "Keywords::REACH"],
+        "Shanna, Purifying Blade" => &["Keywords::LIFELINK"],
+        "Ertai Resurrected" => &["Keywords::FLASH"],
+        "Skrelv, Defector Mite" => &["Keywords::TOXIC_1"],
         "Emberheart Challenger" => &["Keywords::HASTE"],
         "Burnout Bashtronaut" => &["Keywords::MENACE"],
         "Nova Hellkite" => &["Keywords::FLYING", "Keywords::HASTE"],
@@ -4785,6 +4789,18 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             target_spec: "ControlledCreature",
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
+        }],
+        "Hajar, Loyal Bodyguard" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::SacrificeSelf],
+            effect: AbilityEffectRecipe::Program { name: "hajar_protection", effect: "EffectOp::StandardLegendV1(crate::standard_legends_v1::LegendEffectV1::ProtectControlledLegendaryCreatures)" },
+            activation_zone: "Battlefield", sorcery_speed_only: false,
+            target_spec: "None", activation_target_filter: "TargetSpecOnly", max_activations_per_turn: None,
+        }],
+        "Katilda, Dawnhart Prime" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana { colored: Some("G"), generic: 4 }, AbilityCostRecipe::Mana { colored: Some("W"), generic: 0 }, AbilityCostRecipe::Tap],
+            effect: AbilityEffectRecipe::Program { name: "katilda_counters", effect: "EffectOp::StandardLegendV1(crate::standard_legends_v1::LegendEffectV1::CountersOnControlledCreatures)" },
+            activation_zone: "Battlefield", sorcery_speed_only: false,
+            target_spec: "None", activation_target_filter: "TargetSpecOnly", max_activations_per_turn: None,
         }],
         "Hopeful Initiate" => &[ActivatedAbilityRecipe {
             cost: &[
@@ -10325,6 +10341,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Dog" => "Subtype::Dog",
         "Ox" => "Subtype::Ox",
         "Llama" => "Subtype::Llama",
+        "God" => "Subtype::God",
         "Horror" => "Subtype::Horror",
         "Nightmare" => "Subtype::Nightmare",
         "Clue" => "Subtype::Clue",

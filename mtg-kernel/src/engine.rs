@@ -3478,6 +3478,9 @@ fn legal_targets_for_controller_from_source(
             !has_effective_keyword(state, *object, Keywords::PROTECTION_FROM_MONOCOLORED)
         });
     }
+    if let Some(source) = source {
+        targets.retain(|target| !matches!(target,Target::Object(object) if crate::standard_legends_v1::katilda_protected_from(state,*object,source.object)));
+    }
     targets
 }
 
@@ -7467,6 +7470,13 @@ pub(crate) fn available_mana_ability_choices_into(
     let Some(def) = card_def::CARD_DEFS.get(object.card_def as usize) else {
         return;
     };
+    if !object.tapped
+        && !(object_has_type(state, source, CardType::Creature) && object.summoning_sick)
+    {
+        for color in crate::standard_legends_v1::katilda_mana_colors(state, source) {
+            out.push(color);
+        }
+    }
     if !def.has_mana_ability()
         || !crate::continuous_characteristics_v1::printed_abilities_active(state, source)
         || !crate::standard_cards_v1::mana_abilities_active(state, source, def)
@@ -7483,7 +7493,9 @@ pub(crate) fn available_mana_ability_choices_into(
     };
     if primary_payable {
         for &color in primary.as_slice() {
-            out.push(color);
+            if !out.contains(color) {
+                out.push(color);
+            }
         }
     }
 
@@ -7656,6 +7668,18 @@ fn activate_mana_ability_for(
     let card_def = state.objects.get(source).card_def;
     let chosen_color = state.objects.get(source).v4.chosen_color;
     let definition = &card_def::CARD_DEFS[card_def as usize];
+    if crate::standard_legends_v1::katilda_mana_colors(state, source).contains(&choice) {
+        if cost_target.is_some() {
+            return Err("Katilda's granted mana has no other cost target".into());
+        }
+        event::propose_and_commit(state, ProposedEvent::tap(source));
+        event::propose_and_commit(state, ProposedEvent::mana_add(player, vec![choice]));
+        state.engine.priority_passes = [false, false];
+        state.engine.mana_ability_activations += 1;
+        state.engine.last_mana_ability_activator = Some(player);
+        collect_and_queue_triggers(state);
+        return Ok(());
+    }
     let primary_choices = definition.primary_mana_ability_choices(chosen_color);
     if !primary_choices.contains(&choice)
         && !definition
@@ -8154,6 +8178,9 @@ fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
             if crate::standard_keywords_v1::cant_block(state, id)
                 || crate::standard_statics_v1::cant_attack_or_block(state, id)
             {
+                return false;
+            }
+            if crate::standard_legends_v1::katilda_protected_from(state, attacker, id) {
                 return false;
             }
             if has_effective_keyword(state, attacker, Keywords::PROTECTION_FROM_MONOCOLORED)
@@ -13806,8 +13833,9 @@ pub fn damage_is_prevented_by_protection(
     };
     state.objects.try_get(target).is_some_and(|object| {
         object.zone == Zone::Battlefield
-            && has_effective_keyword(state, target, Keywords::PROTECTION_FROM_MONOCOLORED)
-            && object_is_monocolored(state, source)
+            && ((has_effective_keyword(state, target, Keywords::PROTECTION_FROM_MONOCOLORED)
+                && object_is_monocolored(state, source))
+                || crate::standard_legends_v1::katilda_protected_from(state, target, source))
     })
 }
 
@@ -13897,6 +13925,7 @@ pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
         power += crate::standard_keywords_v1::controlled_forest_boost(state, id);
         power += crate::standard_statics_v1::self_counter_boost(state, id).0;
         power += crate::standard_cards_v1::controlled_boost(state, id).0;
+        power += crate::standard_legends_v1::jodah_bonus(state, id);
     }
     power += controlled_creature_boost_v1(state, id).0;
     if def.is_executable()
@@ -13960,6 +13989,7 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
         toughness += crate::standard_keywords_v1::controlled_forest_boost(state, id);
         toughness += crate::standard_statics_v1::self_counter_boost(state, id).1;
         toughness += crate::standard_cards_v1::controlled_boost(state, id).1;
+        toughness += crate::standard_legends_v1::jodah_bonus(state, id);
     }
     toughness += controlled_creature_boost_v1(state, id).1;
     if def.is_executable()

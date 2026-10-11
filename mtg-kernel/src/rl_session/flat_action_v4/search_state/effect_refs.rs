@@ -73,6 +73,7 @@ impl Scan<'_> {
             | DealDamage { .. }
             | DistributePlusOneCounters { .. }
             | CreatureUpgrade(_)
+            | StandardLegendV1(_)
             | ReturnTargetPermanentToBattlefield { .. }
             | GainLife { .. }
             | LoseLife { .. }

@@ -7162,6 +7162,364 @@
         "etb_search_library"
       ],
       "java_file": "Mage.Sets/src/mage/cards/b/BrightglassGearhulk.java"
+    },
+    {
+      "name": "Jodah, the Unifier",
+      "engine_capability": "partial",
+      "mana_cost": "{W}{U}{B}{R}{G}",
+      "mana_value": 5,
+      "colors": [
+        "W",
+        "U",
+        "B",
+        "R",
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Wizard"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 5,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-5C.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "standard_legend"
+      ]
+    },
+    {
+      "name": "Katilda, Dawnhart Prime",
+      "engine_capability": "partial",
+      "mana_cost": "{G}{W}",
+      "mana_value": 2,
+      "colors": [
+        "G",
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Warlock"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-5C.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "standard_legend"
+      ]
+    },
+    {
+      "name": "Lagrella, the Magpie",
+      "engine_capability": "partial",
+      "mana_cost": "{G}{W}{U}",
+      "mana_value": 3,
+      "colors": [
+        "G",
+        "W",
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Soldier"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 2,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-5C.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "standard_legend"
+      ]
+    },
+    {
+      "name": "Shanna, Purifying Blade",
+      "engine_capability": "partial",
+      "mana_cost": "{G}{W}{U}",
+      "mana_value": 3,
+      "colors": [
+        "G",
+        "W",
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Warrior"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-5C.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "standard_legend"
+      ]
+    },
+    {
+      "name": "Melira, the Living Cure",
+      "engine_capability": "partial",
+      "mana_cost": "{G}{W}",
+      "mana_value": 2,
+      "colors": [
+        "G",
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Scout"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-5C.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "standard_legend"
+      ]
+    },
+    {
+      "name": "Gwenna, Eyes of Gaea",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elf",
+        "Druid",
+        "Scout"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 2,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-5C.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "standard_legend"
+      ]
+    },
+    {
+      "name": "Hajar, Loyal Bodyguard",
+      "engine_capability": "full",
+      "mana_cost": "{R}{G}",
+      "mana_value": 2,
+      "colors": [
+        "R",
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Soldier"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-5C.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "standard_legend"
+      ]
+    },
+    {
+      "name": "Halana and Alena, Partners",
+      "engine_capability": "full",
+      "mana_cost": "{2}{R}{G}",
+      "mana_value": 4,
+      "colors": [
+        "R",
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Ranger"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 2,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-5C.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "standard_legend"
+      ]
+    },
+    {
+      "name": "Djeru and Hazoret",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{R}{R}{W}",
+      "mana_value": 5,
+      "colors": [
+        "R",
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "God"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 5,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-5C.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "standard_legend"
+      ]
+    },
+    {
+      "name": "Ertai Resurrected",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{U}{B}",
+      "mana_value": 4,
+      "colors": [
+        "U",
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Phyrexian",
+        "Human",
+        "Wizard"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 3,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-5C.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "standard_legend"
+      ]
+    },
+    {
+      "name": "Skrelv, Defector Mite",
+      "engine_capability": "partial",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Phyrexian",
+        "Mite"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-5C.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "standard_legend"
+      ]
     }
   ]
 }

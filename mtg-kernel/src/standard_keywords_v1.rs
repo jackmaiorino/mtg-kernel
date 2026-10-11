@@ -376,7 +376,7 @@ pub(crate) fn convoke_plan(
 fn needs_power_lki(card_def: u16) -> bool {
     CARD_DEFS
         .get(usize::from(card_def))
-        .is_some_and(|def| def.name == "Heartfire Hero")
+        .is_some_and(|def| matches!(def.name, "Heartfire Hero" | "Halana and Alena, Partners"))
 }
 
 /// Bookkeeping just before `object` changes zones: last-known power for

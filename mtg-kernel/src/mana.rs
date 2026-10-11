@@ -724,7 +724,10 @@ fn gather_sources_for_spell_restrictions_v1(
     let mut sources = Vec::new();
     for &id in &state.players[player.index()].battlefield {
         let obj = state.objects.get(id);
-        if obj.tapped || !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+        let granted_colors = crate::standard_legends_v1::katilda_mana_colors(state, id);
+        if obj.tapped
+            || (granted_colors.is_empty()
+                && !crate::continuous_characteristics_v1::printed_abilities_active(state, id))
         {
             continue;
         }
@@ -745,6 +748,11 @@ fn gather_sources_for_spell_restrictions_v1(
         } else {
             Vec::new()
         };
+        for color in granted_colors {
+            if !choices.contains(&color) {
+                choices.push(color);
+            }
+        }
         {
             for restricted in def.restricted_mana_abilities {
                 if !restriction_permits(restricted.restriction, creature_spell, legendary_spell) {

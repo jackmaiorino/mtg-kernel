@@ -38,6 +38,9 @@ pub(crate) fn conditional_self_keywords(state: &GameState, id: ObjectId) -> Keyw
     };
     let controller = state.objects.get(id).controller;
     match name {
+        "Djeru and Hazoret" if state.players[controller.index()].hand.len() <= 1 => {
+            Keywords(Keywords::VIGILANCE.0 | Keywords::HASTE.0)
+        }
         // "This creature has first strike during your turn."
         "Razorkin Needlehead" if state.active_player == controller => Keywords::FIRST_STRIKE,
         "Essence Channeler" if state.player_lost_life_this_turn_v1(controller) => Keywords(Keywords::FLYING.0 | Keywords::VIGILANCE.0),

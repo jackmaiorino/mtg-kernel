@@ -328,6 +328,7 @@ pub enum Subtype {
     /// Enchantment subtype of Role tokens. Not a creature type.
     Role,
     Kaito,
+    God,
 }
 
 impl Subtype {
@@ -542,6 +543,7 @@ impl Subtype {
         Subtype::Ox,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Llama,
+        Subtype::God,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Scout,
         #[cfg(feature = "standard-magezero-fixtures")]

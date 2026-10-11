@@ -1466,6 +1466,7 @@ pub enum EffectOp {
         rule: LibraryPickRule,
         pick_x: bool,
     },
+    StandardLegendV1(crate::standard_legends_v1::LegendEffectV1),
     AnimateSourcePermanentlyV1,
     SelectObjectsV1 {
         rule: ObjectSelectionRuleV1,
@@ -16980,6 +16981,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 }
             }
         }
+        EffectOp::StandardLegendV1(op) => crate::standard_legends_v1::execute(*op, ctx, state),
         EffectOp::BoostOtherControlledCreaturesUntilEndOfTurn { power, toughness } => {
             let objects: Vec<_> = state.players[ctx.controller.index()]
                 .battlefield

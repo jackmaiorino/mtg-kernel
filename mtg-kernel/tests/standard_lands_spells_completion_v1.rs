@@ -357,3 +357,177 @@ fn anoint_checks_corruption_at_resolution_and_gleeful_rewards_own_artifact() {
         .all(|&id| state.objects.get(id).card_def
             == card_id_by_name("Phyrexian Goblin Token").unwrap()));
 }
+
+#[test]
+fn united_battlefront_filters_optional_picks_and_puts_them_on_battlefield() {
+    let mut state = ready_with_library(
+        Step::Main1,
+        &[
+            "Forest",
+            "Experimental Synthesizer",
+            "Quirion Beastcaller",
+            "Cut Down",
+            "Experimental Synthesizer",
+            "Forest",
+            "Forest",
+            "Forest",
+        ],
+    );
+    let original = state.players[0].library.clone();
+    let spell = put(&mut state, PlayerId::P0, "United Battlefront", Zone::Hand);
+    state.players[0].mana_pool = pool(&[(ManaColor::W, 2)], 1);
+    cast(&mut state, spell, &[]);
+    let Some(Decision::ChooseEffectTargets {
+        min_targets,
+        max_targets,
+        legal_targets,
+        ..
+    }) = settle(&mut state)
+    else {
+        panic!("missing filtered pick")
+    };
+    assert_eq!((min_targets, max_targets), (0, 2));
+    assert_eq!(legal_targets.len(), 2);
+    assert!(legal_targets.iter().all(|target| matches!(target,Target::Object(id) if state.objects.get(*id).name=="Experimental Synthesizer")));
+    let Target::Object(chosen) = legal_targets[0] else {
+        panic!()
+    };
+    engine::step(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(chosen)),
+    )
+    .unwrap();
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectTargets {
+            can_finish: true,
+            ..
+        }
+    ));
+    engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(chosen).zone, Zone::Battlefield);
+    // Synthesizer's ETB exiles the unexamined eighth card, proving the
+    // random bottom operation did not disturb that library suffix.
+    assert_eq!(state.objects.get(original[7]).zone, Zone::Exile);
+    assert_eq!(state.players[0].library.len(), 6);
+}
+
+#[test]
+fn invoke_despair_sacrifices_each_type_or_loses_life_and_draws() {
+    let mut state = ready(Step::Main1);
+    let target = put(
+        &mut state,
+        PlayerId::P1,
+        "Quirion Beastcaller",
+        Zone::Battlefield,
+    );
+    let spell = put(&mut state, PlayerId::P0, "Invoke Despair", Zone::Hand);
+    state.players[0].mana_pool = pool(&[(ManaColor::B, 4)], 1);
+    let before = state.players[0].hand.len();
+    cast(&mut state, spell, &[Target::Player(PlayerId::P1)]);
+    if let Some(Decision::ChooseEffectTargets { legal_targets, .. }) = settle(&mut state) {
+        assert!(legal_targets.contains(&Target::Object(target)));
+        engine::step(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(target)),
+        )
+        .unwrap();
+        settled(&mut state);
+    }
+    assert_eq!(state.objects.get(target).zone, Zone::Graveyard);
+    assert_eq!(state.players[1].life, 16);
+    assert_eq!(state.players[0].hand.len(), before - 1 + 2);
+}
+
+#[test]
+fn hajar_locks_in_legendary_creatures_and_katilda_grants_colored_mana() {
+    let mut state = ready(Step::Main1);
+    let hajar = put(
+        &mut state,
+        PlayerId::P0,
+        "Hajar, Loyal Bodyguard",
+        Zone::Battlefield,
+    );
+    let katilda = put(
+        &mut state,
+        PlayerId::P0,
+        "Katilda, Dawnhart Prime",
+        Zone::Battlefield,
+    );
+    let ordinary = put(
+        &mut state,
+        PlayerId::P0,
+        "Quirion Beastcaller",
+        Zone::Battlefield,
+    );
+    next(&mut state);
+    engine::step(&mut state, Action::ActivateManaAbility(hajar, ManaColor::R)).unwrap();
+    assert!(state.objects.get(hajar).tapped);
+    assert_eq!(state.players[0].mana_pool[ManaColor::R.pool_index()], 1);
+    engine::step(&mut state, Action::ActivateAbility(hajar, 0)).unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(hajar).zone, Zone::Graveyard);
+    assert_eq!(engine::effective_power(&state, katilda), 2);
+    assert!(engine::has_effective_keyword(
+        &state,
+        katilda,
+        Keywords::INDESTRUCTIBLE
+    ));
+    assert!(!engine::has_effective_keyword(
+        &state,
+        ordinary,
+        Keywords::INDESTRUCTIBLE
+    ));
+    let later = put(
+        &mut state,
+        PlayerId::P0,
+        "Halana and Alena, Partners",
+        Zone::Battlefield,
+    );
+    assert!(!engine::has_effective_keyword(
+        &state,
+        later,
+        Keywords::INDESTRUCTIBLE
+    ));
+}
+
+#[test]
+fn halana_samples_source_power_on_resolution_and_uses_departure_lki() {
+    let mut state = ready(Step::Main1);
+    let source = put(
+        &mut state,
+        PlayerId::P0,
+        "Halana and Alena, Partners",
+        Zone::Battlefield,
+    );
+    let target = put(
+        &mut state,
+        PlayerId::P0,
+        "Quirion Beastcaller",
+        Zone::Battlefield,
+    );
+    // Enter combat through the normal turn walk so the trigger's event and
+    // source contract are produced by the engine.
+    for _ in 0..40 {
+        match next(&mut state) {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert!(legal_targets.contains(&Target::Object(target)));
+                assert!(!legal_targets.contains(&Target::Object(source)));
+                engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+                break;
+            }
+            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    state.objects.get_mut(source).counters.plus1_plus1 = 3;
+    move_to(&mut state, source, Zone::Graveyard);
+    settled(&mut state);
+    assert_eq!(state.objects.get(target).counters.plus1_plus1, 5);
+    assert!(engine::has_effective_keyword(
+        &state,
+        target,
+        Keywords::HASTE
+    ));
+}

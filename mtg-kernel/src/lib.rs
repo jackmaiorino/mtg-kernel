@@ -459,6 +459,7 @@ pub mod rl_session;
 pub mod runtime_decks;
 pub mod sideboard;
 pub mod snapshot;
+pub mod standard_legends_v1;
 pub mod state;
 #[cfg(test)]
 mod store_v2_resume_walk_timing_harness_v1;
