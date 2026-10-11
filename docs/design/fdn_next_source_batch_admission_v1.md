@@ -55,4 +55,30 @@ This new v77 profile appends beside immutable v76 and every older identity,
 retains historical Zombie readers, and refuses stale publisher/resume writes
 before store mutation. Only current Limited live canaries move. No earlier
 profile, formal measurement, feature/weight identity or runtime catalog file
-is repinned. Profile and remaining gameplay qualification are pending Native55.
+is repinned.
+
+Native55 exact605a completed101/101:298 passed and12 failed among310 actual
+selected cases. The original303 request's Self substring also selected four
+meaning cases in each catalog; Limited Squad selected1 because its other
+original primitive is Standard-only. Every observed group is retained. Both
+typechecks and both strict lints passed; complete Default/Standard outputs
+match Native33 bytes. Failures were Heartfire Human1/history1, Searslicer Human1,
+printed Self3/Squad5/Sower1. Final logs, manifests, outputs and actualguard101
+are cold mirrored. Exact owned post-terminal helper was verified and released.
+
+Squad4b50fd18 repairs genuine before-pop execution and erased continuation
+authority with a typed private removed-item owner and marked suspension;
+source review CLEAR. Sowerf42cef26 advances real queued Madness publication in
+its cleanup fixture. Root1faa1d7c preserves the opponent's genuine Heartfire
+response, excludes an unrelated equipment tap menu on the newly entered copy,
+and selects the existing engine-priority surface explicitly for Searslicer.
+Frozen production constructors remain unchanged;7bba9fde gates that separate
+test input to its sole owning catalog. Source review CLEAR; native still pending.
+
+Native56 exact7bba9fde requests41 affected cases, both all-test typechecks,
+strict Limited/Default lints and complete Default/Standard exports. Supported
+guard59511e5232bb4fab84c3886f8d877af6/supervisor161776 is retained. Its historical
+preparation filename prefix18c5 does not override the exact source commit.
+Compatible independent55 results remain reusable; Self repairs and Sower's
+new public/Human successor are separate until composed and qualified. Accepted
+default188 and prospective unaccepted201 remain distinct.
