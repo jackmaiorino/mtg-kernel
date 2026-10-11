@@ -19,6 +19,7 @@ pub enum InstallationOriginV1 {
 pub struct InstallationV1 {
     pub source: AbilitySourceContractV4,
     pub target: StackTargetContractV4,
+    pub recipient_snapshot: String,
     pub previous_controller: PlayerId,
     pub controller: PlayerId,
     pub timestamp: u64,
@@ -193,6 +194,8 @@ pub(super) fn install(state: &mut GameState, ctx: &ExecCtx, object: ObjectId, ti
     let capture = InstallationV1 {
         source,
         target: StackTargetContractV4::capture(state, Target::Object(object)),
+        recipient_snapshot: serde_json::to_string(state.objects.get(object))
+            .expect("recipient serializes"),
         previous_controller: state.objects.get(object).controller,
         controller: ctx.controller,
         timestamp,
@@ -344,6 +347,30 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             CommittedEvent::TemporaryControlInstalledV1 { installation } => {
                 let capture = installation.as_ref();
                 capture.record()?;
+                let snapshot: GameObject =
+                    serde_json::from_str(&capture.recipient_snapshot).map_err(|_| invalid())?;
+                let StackTargetContractV4::Object {
+                    card_def,
+                    owner,
+                    controller,
+                    zone,
+                    zone_change_count,
+                    spell_copy_origin,
+                    ..
+                } = capture.target
+                else {
+                    return Err(invalid());
+                };
+                if snapshot.card_def != card_def
+                    || snapshot.owner != owner
+                    || snapshot.controller != controller
+                    || snapshot.zone != zone
+                    || snapshot.zone_change_count != zone_change_count
+                    || snapshot.spell_copy_origin != spell_copy_origin
+                {
+                    return Err(invalid());
+                }
+
                 if capture.source.controller != capture.controller
                     || capture.timestamp >= state.engine.next_effect_timestamp
                     || installs
@@ -386,7 +413,8 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                         else {
                             return Err(invalid());
                         };
-                        if id != item.v4.stack_item_id
+                        if capture.recipient_snapshot != *recipient_snapshot
+                            || id != item.v4.stack_item_id
                             || capture.source.source != item.source
                             || capture.source.card_def != source.card_def
                             || capture.source.owner != source.owner

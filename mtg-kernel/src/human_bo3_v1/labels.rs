@@ -1345,6 +1345,32 @@ fn label_common(
     })
 }
 
+/// Separate exact printed control label; predecessor labels are unchanged.
+pub(super) fn label_employment_v18(
+    action: &A,
+    observation: &super::life_ward_v8::ProjectionPartsV8<'_>,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    if let A::CastSpell { source, .. } = action {
+        if definition(source)?.name == "Involuntary Employment" {
+            let selector = crate::rules_meaning_employment_v1::live_selector()
+                .map_err(|_| Error::UnsupportedPrompt)?;
+            crate::rules_meaning_employment_v1::meaning(
+                &selector,
+                source.card_db_id,
+                crate::rules_meaning_employment_v1::RootV1::PrintedSpell,
+            )
+            .map_err(|_| Error::UnsupportedPrompt)?;
+            if actor(action) != Some(human) {
+                return Err(Error::UnsupportedPrompt);
+            }
+            return Ok(format!("Cast {}: pay {{3}}{{R}}; gain control of one target creature until cleanup, untap it, grant haste until cleanup, then create a Treasure. An illegal target stops the entire spell", handles.name(source)?));
+        }
+    }
+    label_parts_v8(action, observation, handles, human)
+}
+
 #[cfg(test)]
 mod variable_target_refusal_tests {
     use super::*;

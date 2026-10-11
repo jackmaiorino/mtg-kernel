@@ -8,9 +8,11 @@
 mod heartfire_history_v1;
 mod heartfire_v12;
 pub use heartfire_history_v1::*;
+mod employment_v18;
 mod labels;
 mod life_ward_v8;
 mod ooze_v11;
+pub use employment_v18::*;
 mod sower_v14;
 pub use sower_v14::*;
 mod wildwood_v16;

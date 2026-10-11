@@ -78,6 +78,7 @@ pub mod authority_public_v1;
 #[allow(dead_code)]
 pub(crate) mod common_model_snapshot_v1;
 pub mod effect;
+pub mod employment_public_v1;
 pub mod engine;
 pub mod event;
 pub mod expanded_deck_training_v1;

@@ -1935,7 +1935,15 @@ fn build_observation_v2(
     step_index: u64,
     text_mode: ObservationTextModeV2,
 ) -> Result<ObservationV2> {
-    build_observation_common_v2(state, surface, acting_player, step_index, text_mode, false)
+    build_observation_common_v2(
+        state,
+        surface,
+        acting_player,
+        step_index,
+        text_mode,
+        false,
+        false,
+    )
 }
 
 fn build_observation_common_v2(
@@ -1945,9 +1953,14 @@ fn build_observation_common_v2(
     step_index: u64,
     text_mode: ObservationTextModeV2,
     accept_cant_block: bool,
+    accept_temporary_control: bool,
 ) -> Result<ObservationV2> {
-    crate::effect::temporary_control_v1::refuse_legacy_observation(state)
-        .map_err(RlContractError)?;
+    if accept_temporary_control {
+        crate::effect::temporary_control_v1::authority::validate(state).map_err(RlContractError)?;
+    } else {
+        crate::effect::temporary_control_v1::refuse_legacy_observation(state)
+            .map_err(RlContractError)?;
+    }
     let projection = PublicObservationProjectionV2 {
         turn: state.turn,
         phase: state.step.into(),
@@ -1976,7 +1989,12 @@ fn build_observation_common_v2(
         exile: public_cards_v2(state, &state.exile, text_mode)?,
         stack: stack_public_v2(state, acting_player)?,
         combat: combat_public_v2(state, acting_player)?,
-        continuous_effects: continuous_effects_common_v2(state, acting_player, accept_cant_block)?,
+        continuous_effects: continuous_effects_common_v2(
+            state,
+            acting_player,
+            accept_cant_block,
+            accept_temporary_control,
+        )?,
         object_relations: object_relations_public_v4(state, acting_player)?,
         exile_play_permissions: exile_play_permissions_public_v2(state)?,
         engine_context: engine_context_v2(state, acting_player)?,
@@ -2225,6 +2243,7 @@ fn build_policy_observation_parts(
         step_index,
         text_mode,
         false,
+        false,
     )
 }
 fn build_policy_observation_parts_common(
@@ -2234,6 +2253,7 @@ fn build_policy_observation_parts_common(
     step_index: u64,
     text_mode: ObservationTextModeV2,
     accept_cant_block: bool,
+    accept_temporary_control: bool,
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
     let base = build_observation_common_v2(
         state,
@@ -2242,6 +2262,7 @@ fn build_policy_observation_parts_common(
         step_index,
         text_mode,
         accept_cant_block,
+        accept_temporary_control,
     )?;
     let context = policy_surface_context_v5(
         state,
@@ -2410,7 +2431,7 @@ fn build_policy_observation_storage_v6(
     request: PolicyObservationBuildV5<'_>,
     accept_life_ward: bool,
 ) -> Result<PolicyObservationStorageV6> {
-    build_policy_observation_storage_common(request, accept_life_ward, false, false)
+    build_policy_observation_storage_common(request, accept_life_ward, false, false, false)
 }
 
 pub(crate) fn sower_observation_storage_v1(
@@ -2437,6 +2458,35 @@ pub(crate) fn sower_observation_storage_v1(
         true,
         true,
         false,
+        false,
+    )
+}
+
+pub(crate) fn employment_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::effect::temporary_control_v1::authority::validate(state).map_err(RlContractError)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_common(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
+        false,
+        false,
+        true,
     )
 }
 
@@ -2464,6 +2514,7 @@ pub(crate) fn wildwood_observation_storage_v1(
         true,
         false,
         true,
+        false,
     )
 }
 
@@ -2519,6 +2570,7 @@ pub(crate) fn frenzied_observation_storage_v1(
         true,
         true,
         false,
+        false,
     )
 }
 
@@ -2527,6 +2579,7 @@ fn build_policy_observation_storage_common(
     accept_life_ward: bool,
     accept_cant_block: bool,
     accept_wildwood: bool,
+    accept_temporary_control: bool,
 ) -> Result<PolicyObservationStorageV6> {
     if !accept_wildwood {
         crate::wildwood_capture_v1::refuse_legacy(request.state)?;
@@ -2555,6 +2608,7 @@ fn build_policy_observation_storage_common(
         step_index,
         text_mode,
         accept_cant_block,
+        accept_temporary_control,
     )?;
     if let Some(search) = &extensions.decision_local_library {
         let Some(PendingEffectChoiceSemanticV4::Targets { legal_targets, .. }) = base
@@ -6829,14 +6883,19 @@ fn continuous_effects_common_v2(
     state: &GameState,
     acting_player: PlayerId,
     accept_cant_block: bool,
+    accept_temporary_control: bool,
 ) -> Result<Vec<ContinuousEffectPublicV2>> {
     if crate::crystal_barricade_v1::active(state) {
         return Err(RlContractError(
             "player hexproof and controlled-creature noncombat prevention require a public successor".into(),
         ));
     }
-    crate::effect::temporary_control_v1::refuse_legacy_observation(state)
-        .map_err(RlContractError)?;
+    if accept_temporary_control {
+        crate::effect::temporary_control_v1::authority::validate(state).map_err(RlContractError)?;
+    } else {
+        crate::effect::temporary_control_v1::refuse_legacy_observation(state)
+            .map_err(RlContractError)?;
+    }
     state.validate_attachment_relations().map_err(|object| {
         RlContractError(format!(
             "invalid attachment relation at object {}",
@@ -6899,6 +6958,8 @@ fn continuous_effects_common_v2(
     }
     for effect in &state.engine.until_end_of_turn {
         match effect {
+            UntilEndOfTurnEffect::ResolvedObjectControlEffect { .. }
+                if accept_temporary_control => {}
             UntilEndOfTurnEffect::ResolvedObjectControlEffect { .. } => {
                 return Err(RlContractError(
                     "temporary creature control requires an explicit observation successor".into(),
