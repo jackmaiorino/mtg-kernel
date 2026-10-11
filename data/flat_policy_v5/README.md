@@ -49,3 +49,10 @@ boundary cases replace authenticated Generic relations with life fees to check
 multiple targeters, captured-controller divergence and an exact-life menu.
 These cases exercise encoding only; they do not authenticate life payments or
 their bindings. Actual Sire gameplay after registration remains pending.
+Native attempt1 stopped before Rust compilation at the V2 overlay source
+binding, because the shared implementation now includes the V5 sibling.
+The standard V2 generator refreshed only its overlay/composite source digests
+and dependent inventory/payload digests. Feature, encoding, descriptor, action
+contract and V3/V4 model identities remain unchanged. This follows earlier
+source-binding refreshes such as92270264. Attempt1 guard exited101 and released
+the shared target. Native compilation and tensor parity remain unqualified.
