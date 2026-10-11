@@ -2496,7 +2496,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     fn creature_type_choice_ids_preserve_pauper_and_foundations_profiles() {
-        // The ordered lists from ddff546a are also the changeling subtype
+        // Preserve the ordered lists from ddff546a, with Elder appended to
+        // Foundations by v68. These also define the changeling subtype
         // projection and creature-type choice surface in these profiles.
         let expected: &[u16] = &[
             0, 2, 3, 5, 6, 7, 8, 9, 10, 11, 13, 14, 18, 19, 20, 21, 22, 24, 25, 26, 27, 29, 30, 31,
@@ -2507,7 +2508,7 @@ mod tests {
         if cfg!(feature = "limited-fdn-fixtures") {
             expected.extend_from_slice(&[
                 79, 80, 81, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99,
-                100, 101, 102, 103, 104, 119, 124, 125, 126, 109,
+                100, 101, 102, 103, 104, 119, 124, 125, 126, 127, 109,
             ]);
         }
         assert_eq!(
