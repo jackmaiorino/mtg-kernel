@@ -5502,6 +5502,297 @@
       "java_file": "Mage.Sets/src/mage/cards/g/GhaltaPrimalHunger.java",
       "scryfall_id": "6a9c39e4-a8cf-42dd-8d0e-45634b335546",
       "oracle_id": "b0b6be0c-41cf-4757-9f0e-87227b6ba6b3"
+    },
+    {
+      "name": "Nessian Hornbeetle",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Insect"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_following_creatures_spells_and_hare.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [],
+      "java_file": "Mage.Sets/src/mage/cards/n/NessianHornbeetle.java",
+      "scryfall_id": "3d4d93de-85c6-4653-8ddd-d8bf21516d44",
+      "oracle_id": "ab097f46-a7bf-4cf1-a96c-36b681fe79da"
+    },
+    {
+      "name": "Micromancer",
+      "mana_cost": "{3}{U}",
+      "mana_value": 4,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Wizard"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_following_creatures_spells_and_hare.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [],
+      "java_file": "Mage.Sets/src/mage/cards/m/Micromancer.java",
+      "scryfall_id": "e6af54ea-b57a-4e50-8e46-1747cca14430",
+      "oracle_id": "d2605782-09f1-4d52-b3e7-5ec1442bd9b5"
+    },
+    {
+      "name": "Paradise Druid",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elf",
+        "Druid"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [
+        "W",
+        "U",
+        "B",
+        "R",
+        "G"
+      ],
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_following_creatures_spells_and_hare.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/p/ParadiseDruid.java",
+      "scryfall_id": "fa8f7b06-48cc-4b89-a3f8-27179aec9fc0",
+      "oracle_id": "e119869d-1f66-402b-8251-d351965cf0d3"
+    },
+    {
+      "name": "Bulk Up",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_following_creatures_spells_and_hare.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [],
+      "java_file": "Mage.Sets/src/mage/cards/b/BulkUp.java",
+      "scryfall_id": "977dcc50-da10-4281-b522-9240c1204f5d",
+      "oracle_id": "fade8af0-5fdb-4237-9dd6-48bfd1d62767"
+    },
+    {
+      "name": "Inspiring Call",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_following_creatures_spells_and_hare.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [],
+      "java_file": "Mage.Sets/src/mage/cards/i/InspiringCall.java",
+      "scryfall_id": "3e241642-5172-4437-b694-f6aa159d5cd9",
+      "oracle_id": "9b9a10ff-5a5d-4df8-88aa-18d84ff9117c"
+    },
+    {
+      "name": "Needletooth Pack",
+      "mana_cost": "{3}{G}{G}",
+      "mana_value": 5,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dinosaur"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [],
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_following_creatures_spells_and_hare.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [],
+      "java_file": "Mage.Sets/src/mage/cards/n/NeedletoothPack.java",
+      "scryfall_id": "993c1679-e02b-44f2-b34e-12fd6b5142e9",
+      "oracle_id": "ac68fe30-a4a5-45f6-8782-fed57718c42e"
+    },
+    {
+      "name": "Stroke of Midnight",
+      "mana_cost": "{2}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_following_creatures_spells_and_hare.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [],
+      "java_file": "Mage.Sets/src/mage/cards/s/StrokeOfMidnight.java",
+      "scryfall_id": "ab135925-d924-456d-851a-6ccdaaf27271",
+      "oracle_id": "9a107e48-3d50-4941-95b1-10f2b29a4245"
+    },
+    {
+      "name": "Hare Apparent",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Rabbit",
+        "Noble"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_following_creatures_spells_and_hare.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [],
+      "java_file": "Mage.Sets/src/mage/cards/h/HareApparent.java",
+      "scryfall_id": "9fc6f0e9-eb5f-4bc0-b3d7-756644b66d12",
+      "oracle_id": "3c1619bd-db5e-4df6-a196-0a9d62374f6d"
+    },
+    {
+      "name": "Human Token",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "engine_capability": "full",
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [],
+      "is_token": true,
+      "scryfall_id": "06af3d5a-7b38-42f6-822f-da4e04a7f265",
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/HumanToken.java"
+    },
+    {
+      "name": "Rabbit Token",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Rabbit"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "engine_capability": "full",
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [],
+      "is_token": true,
+      "scryfall_id": "63ae4f9c-ad6e-4d6a-89f1-653916bf5373",
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/RabbitToken.java"
     }
   ]
 }
