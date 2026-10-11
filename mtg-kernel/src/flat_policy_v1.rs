@@ -1720,7 +1720,8 @@ impl FlatDecisionEncoderV1 {
                 .iter()
                 .flatten()
                 .any(|card| {
-                    card.characteristics.effective_identity.is_some()
+                    card.creature_upgrade.is_some()
+                        || card.characteristics.effective_identity.is_some()
                         || card.characteristics.base_pt_until_end_of_turn.is_some()
                         || card.characteristics.legend_rules.is_some()
                         || card.characteristics.legend_return_sources.is_some()
@@ -1761,6 +1762,15 @@ impl FlatDecisionEncoderV1 {
         }
 
         let engine = &p.engine_context;
+        if engine.pending_activation.as_ref().is_some_and(|pending| {
+            pending.crew_finished
+                || pending.loyalty_x.is_some()
+                || pending.granted_ability.is_some()
+        }) || engine.pending_triggers.iter().any(|pending| {
+            pending.counter_distribution.is_some() || pending.counter_transfer.is_some()
+        }) {
+            return Err(FlatDecisionErrorV1::ObservationContract);
+        }
         let pending_cast = engine
             .pending_cast
             .as_ref()
@@ -1869,8 +1879,11 @@ impl FlatDecisionEncoderV1 {
                     player,
                     structural_path,
                     option_count,
-                    ..
+                    creature_options,
                 }) => {
+                    if creature_options.is_some() {
+                        return Err(FlatDecisionErrorV1::ObservationContract);
+                    }
                     let (path_start, path_count) = self.append_context_elements(
                         FlatContextKindV1::PendingEffect,
                         0,
