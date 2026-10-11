@@ -382,11 +382,18 @@ fn missing_duplicate_coherent_capture_and_expired_reinsertion_refuse_readonly() 
                 assert!(observe_v1(&restored, &surface, viewer, 0, 0, 0, 1).is_err());
             }
             assert_eq!(serde_json::to_vec(&bad).unwrap(), before);
+            let mut rejected =
+                crate::rl_session::FastActorSessionV1::from_sower_v14_fixture_state(bad);
             assert!(matches!(
-                crate::rl_session::FastActorSessionV1::from_sower_v14_fixture_state(bad)
-                    .current_response(),
+                rejected.current_response(),
                 crate::rl_session::FastActorResponseV1::Terminal(_)
             ));
+            // Constructor refusal must precede Cleanup, not repair the corruption
+            // by publishing an expiry while automatically advancing priority.
+            assert_eq!(
+                serde_json::to_vec(rejected.sower_fixture_state_mut()).unwrap(),
+                before
+            );
         }
     }
 }
