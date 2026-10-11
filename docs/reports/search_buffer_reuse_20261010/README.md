@@ -8,7 +8,9 @@ observation/extension JSON without temporary Value trees. Hash message bytes,
 feature contracts, arithmetic, activation selection and sampling stay the same.
 Both use Rust 1.94.1, MSVC linker 14.50.35725.0, release defaults and ordinary
 activation math. Build receipts bind source, toolchain and the actual binary.
-No speedup has been measured yet. Current status is in [STATE.json](STATE.json).
+The completed comparison measured 1.073869x queue throughput on the two fixed
+engineering roots. Timings, parity and scope are in [RESULTS.md](RESULTS.md);
+source and receipt bindings are in [STATE.json](STATE.json).
 
 Added parity coverage compares mixed menus against the sealed action goldens,
 all common observation fixtures against frozen JSON bytes, every V3/V4
@@ -16,7 +18,9 @@ extension member against the original builders, and populated engine/private
 contexts across effect-choice variants. Deferred digest tests cover ordering,
 duplicate actions, shrinking buffers and recovery after a late error. Separate
 read-only source reviews found no serialization, ordering or validation mismatch.
-These tests are prepared; their native execution remains pending in the queue.
+These tests passed in the retained native candidate checks. Current hosted CI
+passed 18 checks with one skipped on c9fa277; report publication requires fresh
+current-head checks.
 
 The earlier buffer-only candidate was superseded before its build or any
 measurement started. Its ready markers and watcher records are retained under
@@ -62,7 +66,7 @@ receipts are hash verified. The E: cold tree and independent D: SSD recovery
 copies are retained; no scratch pruning is authorized by this helper. Both
 artifact roots are registered through the owned collaboration worktree.
 
-The current [inventory](inventory.json) found both PCs reserved and RunPod's
+The preflight [inventory](inventory.json) found both PCs reserved and RunPod's
 read-only API unavailable with HTTP 403. No paid execution is authorized.
-The desktop reservation releases when bank-r1 completes or fails; it gives no
-reliable ETA. The queued baseline is the wake mechanism, not a recurring task.
+The existing guarded queue subsequently admitted cores 16-17 and completed all
+checks and measurements. No further workload is required for this comparison.
