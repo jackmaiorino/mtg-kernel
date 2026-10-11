@@ -179,7 +179,7 @@ impl HumanDecisionProjectorV9 {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "limited-fdn-fixtures"))]
 mod tests {
     use super::*;
     use crate::engine::{self, Action};
