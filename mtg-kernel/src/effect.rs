@@ -1609,6 +1609,10 @@ pub enum EffectOp {
     CerberusUntapV1 {
         capture_history_index: u64,
     },
+    /// Private Raid look: keep zero or one on top, move the remainder to graveyard.
+    LookTopMayKeepOneRestGraveyard {
+        count: u8,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -2998,6 +3002,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::ReturnTargetPermanentToBattlefield { .. }
         | EffectOp::ResolveUndercityThrone { .. }
         | EffectOp::LookAtTopMayRevealThen { .. }
+        | EffectOp::LookTopMayKeepOneRestGraveyard { .. }
         | EffectOp::Surveil { .. } => true,
         EffectOp::StandardV1(op) => op.contains_player_choice(),
         _ => false,
@@ -5112,6 +5117,9 @@ fn surveil_top_card(
     })
 }
 
+mod private_keep_one_v1;
+pub(crate) use private_keep_one_v1::selection_shape;
+pub use private_keep_one_v1::PrivateKeepOneBindingV1;
 mod surveil_many;
 
 fn validate_surveil_one_metadata(
@@ -7770,6 +7778,7 @@ fn validate_standard_choose_permanent_origin(
 }
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
+    crate::raid_entry_v1::validate_state(state)?;
     temporary_control_v1::authority::validate(state)?;
     crate::self_reflection_v1::validate_live_stack(state)?;
     crate::authority_of_the_consuls_v1::validate_state(state)?;
@@ -7835,6 +7844,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
             return Err("life Ward lost its payment choice or authenticated answer".into());
         }
     }
+    private_keep_one_v1::validate_required_stage(state, pending)?;
     validate_exact_spell_search_continuation(state, pending)?;
     crate::frenzied_goblin_v1::validate_continuation(state, pending)?;
     validate_answered_choice_guard(state, pending)?;
@@ -13232,6 +13242,13 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                 });
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::LookTopMayKeepOneRestGraveyard { count } => {
+                let player = continuation.ctx.controller;
+                if surveil_many::begin(state, &mut continuation, player, count, path)? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
             }
             EffectOp::Surveil { player, count } => {
                 let player = continuation.ctx.resolve_player(player, state);
@@ -19220,6 +19237,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. }
         | EffectOp::PutObjectInOwnersLibraryTopOrBottom { .. }
         | EffectOp::SurveilOne { .. }
+        | EffectOp::LookTopMayKeepOneRestGraveyard { .. }
         | EffectOp::PutBoundObjectInOwnersLibrary { .. }
         | EffectOp::CounterUnlessPaysGeneric { .. }
         | EffectOp::CounterUnlessPaysLifeWithChoice { .. }

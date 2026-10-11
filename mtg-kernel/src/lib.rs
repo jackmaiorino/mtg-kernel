@@ -92,6 +92,7 @@ mod fdn_raid_v1;
 pub mod frenzied_public_v1;
 pub mod human_opening_v1;
 pub mod native_expanded_training_run_v1;
+mod raid_entry_v1;
 mod source_power_activation_v1;
 pub mod sower_of_chaos_v1;
 pub mod sower_public_v1;
@@ -549,3 +550,6 @@ pub mod cauldron_grants_v1;
 mod crystal_barricade_v1;
 pub mod rules_meaning_cerberus_v1;
 pub mod rules_meaning_employment_v1;
+
+pub mod raid_entry_public_v1;
+pub mod rules_meaning_raid_entry_v1;

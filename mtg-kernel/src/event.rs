@@ -823,6 +823,16 @@ pub enum CommittedEvent {
     LibrarianActivationCounterRemovalV1 {
         item: Box<crate::state::StackItem>,
     },
+    PrivateKeepOneLibraryCapturedV1 {
+        binding: Box<crate::effect::PrivateKeepOneBindingV1>,
+    },
+    PrivateKeepOneLibraryConsumedV1 {
+        resolving_stack_item: StackItemId,
+    },
+    RaidEntrySourceV1 {
+        source: crate::state::AbilitySourceContractV4,
+        entry_history_index: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1702,6 +1712,7 @@ fn commit_with_ability_lki_and_entry_batch(
     if let Some(source) = single_graveyard_entry {
         crate::soul_shackled_zombie_v1::record_entry(state, source);
     }
+    crate::raid_entry_v1::record_entry(state, entry_history_index);
     if let Some(batch) = authority_batch.as_mut() {
         batch.record(entry_history_index);
     } else {

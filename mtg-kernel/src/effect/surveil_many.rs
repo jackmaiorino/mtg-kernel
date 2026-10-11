@@ -13,23 +13,31 @@ fn metadata(
     library: &[EffectObjectBinding],
     path: &[u16],
     remainder: &[EffectFrame],
-) -> Result<(), String> {
+) -> Result<Option<u16>, String> {
     let root = validated_definition_owned_root_effect(state, pending)?;
-    let EffectOp::Surveil {
-        player: printed_player,
-        count: printed_count,
-    } = *root
-    else {
-        return Err("surveil batch lost its definition-owned root program".into());
+    let max_kept = if private_keep_one_v1::is_recipe(&root) {
+        private_keep_one_v1::validate_recipe(state, pending, player, count, path, remainder)?;
+        private_keep_one_v1::validate_snapshot(state, pending, player, library)?;
+        Some(1)
+    } else {
+        let EffectOp::Surveil {
+            player: printed_player,
+            count: printed_count,
+        } = *root
+        else {
+            return Err("library partition lost its definition-owned root program".into());
+        };
+        if count <= 1
+            || printed_count != count
+            || pending.ctx.resolve_player(printed_player, state) != player
+            || !path.is_empty()
+            || !remainder.is_empty()
+        {
+            return Err("surveil batch changed its source, count or continuation".into());
+        }
+        None
     };
-    if count <= 1
-        || printed_count != count
-        || pending.ctx.resolve_player(printed_player, state) != player
-        || !path.is_empty()
-        || !remainder.is_empty()
-        || library != bind_library_exact(state, player)
-        || prefix(library, count).is_empty()
-    {
+    if library != bind_library_exact(state, player) || prefix(library, count).is_empty() {
         return Err("surveil batch changed its source, count, library or continuation".into());
     }
     for &binding in library {
@@ -40,7 +48,7 @@ fn metadata(
             return Err("surveil batch lost its private library binding".into());
         }
     }
-    Ok(())
+    Ok(max_kept)
 }
 
 fn kept(
@@ -71,6 +79,7 @@ fn stage(
     graveyard: Option<Vec<EffectObjectBinding>>,
     path: Vec<u16>,
     remainder: Vec<EffectFrame>,
+    max_kept: Option<u16>,
 ) -> Result<(), String> {
     let candidates = match &graveyard {
         None => prefix(&library, count).to_vec(),
@@ -89,7 +98,11 @@ fn stage(
                 expected_object: Some(binding),
             })
             .collect(),
-        min_targets: if graveyard.is_some() { maximum } else { 0 },
+        min_targets: if graveyard.is_some() {
+            maximum
+        } else {
+            max_kept.map_or(0, |limit| maximum.saturating_sub(limit))
+        },
         max_targets: maximum,
         ordered: true,
         purpose: EffectTargetSelectionPurpose::SurveilLibraryMany {
@@ -112,13 +125,22 @@ pub(super) fn begin(
     path: Vec<u16>,
 ) -> Result<bool, String> {
     let library = bind_library_exact(state, player);
-    if library.is_empty() {
+    let remainder = pending.frames.clone();
+    if private_keep_one_v1::is_recipe(&validated_definition_owned_root_effect(state, pending)?) {
+        private_keep_one_v1::validate_recipe(state, pending, player, count, &path, &remainder)?;
+        let binding = private_keep_one_v1::capture(state, &pending.ctx)?;
+        if library.is_empty() {
+            private_keep_one_v1::commit(state, &binding, &[])?;
+            return Ok(false);
+        }
+    } else if library.is_empty() {
         return Ok(false);
     }
-    let remainder = pending.frames.clone();
-    metadata(state, pending, player, count, &library, &path, &remainder)?;
+    let max_kept = metadata(state, pending, player, count, &library, &path, &remainder)?;
     state.reveal_library_top(player, player, prefix(&library, count).len());
-    stage(pending, player, count, library, None, path, remainder)?;
+    stage(
+        pending, player, count, library, None, path, remainder, max_kept,
+    )?;
     Ok(true)
 }
 
@@ -147,7 +169,7 @@ pub(super) fn validate_choice(
     else {
         return Err("surveil batch lost its typed choice".into());
     };
-    metadata(
+    let max_kept = metadata(
         state,
         pending,
         *player,
@@ -156,6 +178,9 @@ pub(super) fn validate_choice(
         canonical_path,
         expected_remaining_frames,
     )?;
+    if max_kept.is_some() && graveyard_order.is_some() {
+        return Err("keep-one look cannot acquire a retained-card ordering stage".into());
+    }
     let candidates = match graveyard_order {
         None => prefix(original_library, *requested_count).to_vec(),
         Some(cards) => kept(original_library, *requested_count, cards)?,
@@ -171,7 +196,7 @@ pub(super) fn validate_choice(
             != if graveyard_order.is_some() {
                 maximum
             } else {
-                0
+                max_kept.map_or(0, |limit| maximum.saturating_sub(limit))
             }
     {
         return Err("surveil batch prompt changed its player, path or selection shape".into());
@@ -215,7 +240,7 @@ pub(super) fn validate_frame(
     else {
         return Err("surveil batch guard changed frame kind".into());
     };
-    metadata(
+    let max_kept = metadata(
         state,
         pending,
         *player,
@@ -225,6 +250,11 @@ pub(super) fn validate_frame(
         expected_remaining_frames,
     )?;
     let expected = kept(original_library, *requested_count, graveyard_order)?;
+    if max_kept.is_some_and(|limit| expected.len() > usize::from(limit))
+        || (max_kept.is_some() && kept_order.is_some())
+    {
+        return Err("keep-one answer attempted multiple retained cards or an extra stage".into());
+    }
     if let Some(ordered) = kept_order {
         validate_exact_binding_permutation(&expected, ordered, "surveil kept order")?;
     }
@@ -258,6 +288,10 @@ pub(super) fn resume(
     }
     validate_frame(state, pending, &frame)?;
     pending.answered_choice_guard = None;
+    if private_keep_one_v1::is_recipe(&validated_definition_owned_root_effect(state, pending)?) {
+        private_keep_one_v1::commit_pending(state, pending, graveyard_order)?;
+        return Ok(false);
+    }
     let kept = kept(original_library, *requested_count, graveyard_order)?;
     if kept_order.is_none() && kept.len() >= 2 {
         stage(
@@ -268,6 +302,7 @@ pub(super) fn resume(
             Some(graveyard_order.clone()),
             path.clone(),
             expected_remaining_frames.clone(),
+            None,
         )?;
         return Ok(true);
     }

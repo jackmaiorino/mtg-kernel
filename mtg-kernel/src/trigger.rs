@@ -1545,6 +1545,31 @@ fn micromancer_effect() -> EffectOp {
 
 const MICROMANCER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(micromancer_effect)];
 
+pub(crate) fn gorehorn_raider_effect() -> EffectOp {
+    EffectOp::Conditional {
+        cond: EffectCond::ControllerAttackedThisTurn,
+        then: Box::new(EffectOp::DamageTarget {
+            target_index: 0,
+            amount: 2,
+        }),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    }
+}
+const GOREHORN_RAIDER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::EtbAfterControllerAttackedThisTurn,
+    ..etb_trigger(gorehorn_raider_effect)
+}];
+pub(crate) fn gutless_plunderer_effect() -> EffectOp {
+    EffectOp::Conditional {
+        cond: EffectCond::ControllerAttackedThisTurn,
+        then: Box::new(EffectOp::LookTopMayKeepOneRestGraveyard { count: 3 }),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    }
+}
+const GUTLESS_PLUNDERER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::EtbAfterControllerAttackedThisTurn,
+    ..etb_trigger(gutless_plunderer_effect)
+}];
 fn skyship_buccaneer_effect() -> EffectOp {
     EffectOp::Conditional {
         cond: EffectCond::ControllerAttackedThisTurn,
@@ -3452,6 +3477,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Nessian Hornbeetle" => &NESSIAN_HORNBEETLE_TRIGGERS,
         "Micromancer" => &MICROMANCER_TRIGGERS,
         "Skyship Buccaneer" => &SKYSHIP_BUCCANEER_TRIGGERS,
+        "Gorehorn Raider" => &GOREHORN_RAIDER_TRIGGERS,
+        "Gutless Plunderer" => &GUTLESS_PLUNDERER_TRIGGERS,
         "Searslicer Goblin" => &SEARSLICER_GOBLIN_TRIGGERS,
         "Authority of the Consuls" => &AUTHORITY_OF_THE_CONSULS_TRIGGERS,
         "Ruby, Daring Tracker" => &RUBY_DARING_TRACKER_TRIGGERS,
@@ -4064,6 +4091,8 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
             spec
         } else if card.name == "Soul-Shackled Zombie" && *effect == soul_shackled_zombie_effect() {
             TargetSpec::UpToTwoCardsInSingleGraveyard
+        } else if card.name == "Gorehorn Raider" && *effect == gorehorn_raider_effect() {
+            TargetSpec::AnyTarget
         } else if card.name == "Mesmeric Fiend" && *effect == mesmeric_fiend_exile_effect() {
             TargetSpec::TargetOpponent
         } else if card.name == "Journey to Nowhere" && *effect == journey_to_nowhere_etb_effect() {

@@ -167,6 +167,7 @@ impl Scan<'_> {
             | BindAuthorityEntryGainLifeV1
             | AuthorityEntryGainLifeV1 { .. }
             | CerberusUntapV1 { .. }
+            | LookTopMayKeepOneRestGraveyard { .. }
             | CreateControlledCreatureTargetCopyV1
             | DoubleTargetPowerUntilEndOfTurn { .. }
             | DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
@@ -1075,6 +1076,9 @@ pub(super) fn conflicts(
             | AuthorityEntryCompletedV1 { .. }
             | CerberusCollectedV1 { .. }
             | CerberusCompletedV1 { .. }
+            | PrivateKeepOneLibraryCapturedV1 { .. }
+            | PrivateKeepOneLibraryConsumedV1 { .. }
+            | RaidEntrySourceV1 { .. }
             | SquadRallierResolutionBoundaryV1 { .. }
             | SowerRestrictionInstalledV1 { .. }
             | SowerRestrictionExpiredV1 { .. }

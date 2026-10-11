@@ -665,6 +665,8 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Rabbit Token",
     "Micromancer",
     "Skyship Buccaneer",
+    "Gorehorn Raider",
+    "Gutless Plunderer",
     "Arbiter of Woe",
     "Armasaur Guide",
     "Mischievous Pup",

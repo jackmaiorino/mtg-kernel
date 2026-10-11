@@ -13176,6 +13176,13 @@ fn triggered_stack_item_expected_target_spec(
             ability_source_contract.ok_or("single-graveyard ETB lost its source capture")?,
         )?;
     }
+    if !granted_trigger {
+        crate::raid_entry_v1::validate_source_for_program(
+            state,
+            inline_effect,
+            ability_source_contract,
+        )?;
+    }
     let definition_target_spec = trigger::target_spec_for_trigger(source_card_def, inline_effect);
     let expected_optional_cost =
         trigger::required_optional_additional_cost_for_trigger(source_card_def, inline_effect);

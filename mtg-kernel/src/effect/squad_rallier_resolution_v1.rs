@@ -18,28 +18,46 @@ pub struct SquadRallierResolutionReceiptV1 {
 }
 
 pub(crate) fn owned_root(op: &EffectOp) -> bool {
-    matches!(op, EffectOp::LookTopSelectV1 { player: PlayerRef::Controller,
-    count: LibraryLookCount::Fixed(4), rule, pick_x: false }
-    if *rule == LibraryPickRule {
-        pick: 1, choose_rest_order: false,
-        selection: Some(LibraryPickSelectionV1 {
-            without_mana_cost: crate::engine::FreeCastV1(false),
-            filter: LibraryPickFilterV1::CreaturePowerAtMost(2),
-            optional: true, destination: Zone::Hand, reveal_selected: true,
-        }),
-    })
+    super::private_keep_one_v1::is_recipe(op)
+        || matches!(op, EffectOp::LookTopSelectV1 { player: PlayerRef::Controller,
+        count: LibraryLookCount::Fixed(4), rule, pick_x: false }
+        if *rule == LibraryPickRule {
+            pick: 1, choose_rest_order: false,
+            selection: Some(LibraryPickSelectionV1 {
+                without_mana_cost: crate::engine::FreeCastV1(false),
+                filter: LibraryPickFilterV1::CreaturePowerAtMost(2),
+                optional: true, destination: Zone::Hand, reveal_selected: true,
+            }),
+        })
 }
 fn source_owns_root(source: AbilitySourceContractV4, root: &EffectOp) -> bool {
     CARD_DEFS
         .get(usize::from(source.card_def))
         .is_some_and(|definition| {
-            definition.name == "Squad Rallier"
+            (definition.name == "Squad Rallier"
                 && definition
                     .activated_abilities
                     .iter()
                     .any(|ability| (ability.effect)() == *root)
-                && owned_root(root)
+                && !super::private_keep_one_v1::is_recipe(root)
+                && owned_root(root))
+                || (definition.name == "Gutless Plunderer"
+                    && super::private_keep_one_v1::is_recipe(root)
+                    && crate::trigger::triggers_for(source.card_def)
+                        .iter()
+                        .any(|ability| (ability.effect)() == *root))
         })
+}
+fn kind_owns(kind: crate::state::StackItemKind, root: Option<&EffectOp>) -> bool {
+    match kind {
+        crate::state::StackItemKind::ActivatedAbility => {
+            root.is_some_and(|root| !super::private_keep_one_v1::is_recipe(root))
+        }
+        crate::state::StackItemKind::TriggeredAbility => {
+            root.is_some_and(super::private_keep_one_v1::is_recipe)
+        }
+        _ => false,
+    }
 }
 /// A synchronous, nonserializable loan of an actually indexed stack item.
 /// Only this module constructs it, before engine removal; external restore
@@ -59,7 +77,7 @@ pub(crate) fn acquire_owner(
     item: &StackItem,
     initial: bool,
 ) -> Result<Option<SquadRallierResolutionOwnerV1>, String> {
-    let owns = item.kind == crate::state::StackItemKind::ActivatedAbility
+    let owns = kind_owns(item.kind, item.inline_effect.as_ref())
         && item.v4.ability_source_contract.is_some_and(|source| {
             item.inline_effect
                 .as_ref()
@@ -163,20 +181,20 @@ fn tracked(state: &GameState) -> Result<bool, String> {
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(false);
     };
-    Ok(
-        pending.resolving_item.kind == crate::state::StackItemKind::ActivatedAbility
-            && pending
+    Ok(kind_owns(
+        pending.resolving_item.kind,
+        pending.resolving_item.inline_effect.as_ref(),
+    ) && pending
+        .resolving_item
+        .v4
+        .ability_source_contract
+        .is_some_and(|source| {
+            pending
                 .resolving_item
-                .v4
-                .ability_source_contract
-                .is_some_and(|source| {
-                    pending
-                        .resolving_item
-                        .inline_effect
-                        .as_ref()
-                        .is_some_and(|root| source_owns_root(source, root))
-                }),
-    )
+                .inline_effect
+                .as_ref()
+                .is_some_and(|root| source_owns_root(source, root))
+        }))
 }
 
 fn history(state: &GameState) -> Result<Vec<&SquadRallierResolutionReceiptV1>, String> {
@@ -268,7 +286,7 @@ fn validate_with_owner(
             continue;
         };
         if started.stack_item_id != item.v4.stack_item_id
-            || item.kind != crate::state::StackItemKind::ActivatedAbility
+            || !kind_owns(item.kind, item.inline_effect.as_ref())
             || item.v4.ability_source_contract != Some(started.source)
             || item
                 .inline_effect
@@ -352,7 +370,7 @@ pub(super) fn preflight_begin(
     ctx: &ExecCtx,
     item: &StackItem,
 ) -> Result<bool, String> {
-    if item.kind != crate::state::StackItemKind::ActivatedAbility
+    if !kind_owns(item.kind, item.inline_effect.as_ref())
         || !item
             .v4
             .ability_source_contract
