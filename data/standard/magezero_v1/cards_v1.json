@@ -6902,6 +6902,106 @@
       ],
       "decks": [],
       "java_file": "Mage.Sets/src/mage/cards/k/KaitoBaneOfNightmares.java"
+    },
+    {
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "is_token": true,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [],
+      "name": "Face-down creature"
+    },
+    {
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "is_token": true,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [],
+      "name": "Face-down card"
+    },
+    {
+      "engine_capability": "partial",
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [
+        "Aura"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "aura",
+        "animation",
+        "discover"
+      ],
+      "name": "Zoetic Glyph",
+      "java_file": "Mage.Sets/src/mage/cards/z/ZoeticGlyph.java"
+    },
+    {
+      "engine_capability": "partial",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "hideaway",
+        "counter",
+        "free_cast"
+      ],
+      "name": "Collector's Cage",
+      "java_file": "Mage.Sets/src/mage/cards/c/CollectorsCage.java"
     }
   ]
 }

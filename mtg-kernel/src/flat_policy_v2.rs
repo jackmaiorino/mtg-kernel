@@ -63,6 +63,7 @@ struct FlatCommonObservationView<'a> {
     own_hand: &'a [CardPrivateV1],
     known_library_cards: &'a [Vec<KnownLibraryCardV4>; 2],
     known_hand_cards: &'a [Vec<CardPrivateV1>; 2],
+    known_face_down_cards: &'a [crate::rl::FaceDownCardKnowledgeV1],
 }
 
 trait FlatCommonObservation {
@@ -80,6 +81,7 @@ macro_rules! common_observation_view {
                     own_hand: &self.own_hand,
                     known_library_cards: &self.known_library_cards,
                     known_hand_cards: &self.known_hand_cards,
+                    known_face_down_cards: &self.known_face_down_cards,
                 }
             }
         }
@@ -1115,6 +1117,7 @@ pub struct FlatDecisionEncoderV2 {
     globals: FlatGlobalsV2,
     objects: Vec<FlatObjectCoreV2>,
     object_keys: Vec<Option<PrivateObjectKeyV2>>,
+    face_down_identities: Vec<crate::rl::FaceDownCardKnowledgeV1>,
     relations: Vec<FlatRelationV2>,
     object_subtypes: Vec<FlatObjectSubtypeV2>,
     ability_uses: Vec<FlatObjectAbilityUseV2>,
@@ -1423,6 +1426,7 @@ impl FlatDecisionEncoderV2 {
         self.globals = FlatGlobalsV2::default();
         self.objects.clear();
         self.object_keys.clear();
+        self.face_down_identities.clear();
         self.relations.clear();
         self.object_subtypes.clear();
         self.ability_uses.clear();
@@ -1440,14 +1444,20 @@ impl FlatDecisionEncoderV2 {
     }
 
     fn private_key(
+        &self,
         stable: &CardStableRefV1,
         actor: PlayerSeatV1,
         historical_kind: u8,
     ) -> PrivateObjectKeyV2 {
+        let definition = self
+            .face_down_identities
+            .iter()
+            .find(|known| known.object == *stable)
+            .map_or(stable.card_db_id, |known| known.card_db_id);
         PrivateObjectKeyV2 {
             arena_id: stable.arena_id,
             zone_change_count: stable.zone_change_count,
-            card_token: card_token(stable.card_db_id),
+            card_token: card_token(definition),
             owner: relative_player(stable.owner, actor),
             controller: relative_player(stable.controller, actor),
             zone: flat_zone(stable.zone),
@@ -1460,7 +1470,7 @@ impl FlatDecisionEncoderV2 {
         stable: &CardStableRefV1,
         actor: PlayerSeatV1,
     ) -> Result<u32, FlatDecisionErrorV2> {
-        let wanted = Self::private_key(stable, actor, 0);
+        let wanted = self.private_key(stable, actor, 0);
         let mut same_incarnation = false;
         for (index, key) in self.object_keys.iter().enumerate() {
             let Some(key) = key else { continue };
@@ -1490,7 +1500,7 @@ impl FlatDecisionEncoderV2 {
         stable: &CardStableRefV1,
         actor: PlayerSeatV1,
     ) -> Result<u32, FlatDecisionErrorV2> {
-        let wanted = Self::private_key(stable, actor, 0);
+        let wanted = self.private_key(stable, actor, 0);
         if self.v3_action_objects.is_some() {
             // A V3 historical source can capture an ability's controller
             // independently of the live permanent's controller. Resolve its
@@ -1550,7 +1560,7 @@ impl FlatDecisionEncoderV2 {
         } else {
             HISTORICAL_STACK_TARGET_KIND_V1
         };
-        let wanted = Self::private_key(stable, actor, kind);
+        let wanted = self.private_key(stable, actor, kind);
         let mut found = None;
         for (index, key) in self.object_keys.iter().enumerate() {
             let Some(key) = key else { continue };
@@ -1582,7 +1592,7 @@ impl FlatDecisionEncoderV2 {
         stable: &CardStableRefV1,
         actor: PlayerSeatV1,
     ) -> Result<u32, FlatDecisionErrorV2> {
-        let wanted = Self::private_key(stable, actor, HISTORICAL_PAID_COST_KIND_V1);
+        let wanted = self.private_key(stable, actor, HISTORICAL_PAID_COST_KIND_V1);
         let mut found = None;
         for (index, key) in self.object_keys.iter().enumerate() {
             let Some(key) = key else { continue };
@@ -1633,7 +1643,7 @@ impl FlatDecisionEncoderV2 {
         ordinal: u32,
         historical_kind: u8,
     ) -> Result<u32, FlatDecisionErrorV2> {
-        let wanted = Self::private_key(stable, actor, historical_kind);
+        let wanted = self.private_key(stable, actor, historical_kind);
         for (index, key) in self.object_keys.iter().enumerate() {
             let Some(key) = key else { continue };
             if key.arena_id == wanted.arena_id && key.zone_change_count == wanted.zone_change_count
@@ -2290,6 +2300,7 @@ impl FlatDecisionEncoderV2 {
         observation: &impl FlatCommonObservation,
     ) -> Result<(), FlatDecisionErrorV2> {
         let observation = observation.flat_common();
+        self.face_down_identities = observation.known_face_down_cards.to_vec();
         let actor = observation.acting_player;
         let opponent = opponent(actor);
         let p = &observation.projection.surface;
@@ -2346,6 +2357,7 @@ impl FlatDecisionEncoderV2 {
                 0,
             )?;
         }
+
         for order in 0..p.combat.ordered_attackers.len() {
             self.add_context_object(
                 FlatObjectGroupV2::Combat,
@@ -3677,7 +3689,7 @@ impl FlatDecisionEncoderV2 {
         actor: PlayerSeatV1,
         ordinal: u32,
     ) -> Result<(u32, bool), FlatDecisionErrorV2> {
-        let wanted = Self::private_key(stable, actor, HISTORICAL_PUBLIC_SOURCE_KIND_V3);
+        let wanted = self.private_key(stable, actor, HISTORICAL_PUBLIC_SOURCE_KIND_V3);
         for (index, key) in self.object_keys.iter().enumerate() {
             let Some(key) = key else { continue };
             if key.arena_id != wanted.arena_id || key.zone_change_count != wanted.zone_change_count
@@ -4019,7 +4031,7 @@ impl FlatDecisionEncoderV2 {
         };
         let stable = CardStableRefV1 {
             arena_id: source.0,
-            card_db_id: contract.card_def,
+            card_db_id: crate::rl::projected_card_def(state, source, contract.zone_change_count),
             owner: contract.owner.into(),
             controller: contract.controller.into(),
             zone: contract.zone,
@@ -4667,7 +4679,7 @@ impl FlatDecisionEncoderV2 {
         actor: PlayerSeatV1,
         ordinal: u32,
     ) -> Result<u32, FlatDecisionErrorV2> {
-        let wanted = Self::private_key(stable, actor, HISTORICAL_PUBLIC_SOURCE_KIND_V3);
+        let wanted = self.private_key(stable, actor, HISTORICAL_PUBLIC_SOURCE_KIND_V3);
         let index = usize_u32(self.objects.len())?;
         self.objects.push(FlatObjectCoreV2 {
             card_token: wanted.card_token,
@@ -5017,7 +5029,11 @@ impl FlatDecisionEncoderV2 {
                 .ok_or(FlatDecisionErrorV2::CheckedIntegerRange)?;
             let source = CardStableRefV1 {
                 arena_id: record.source.source.0,
-                card_db_id: record.source.card_def,
+                card_db_id: crate::rl::projected_card_def(
+                    state,
+                    record.source.source,
+                    record.source.zone_change_count,
+                ),
                 owner: record.source.owner.into(),
                 controller: record.source.controller.into(),
                 zone: record.source.zone,
@@ -5554,6 +5570,7 @@ mod tests {
             globals: FlatGlobalsV2::default(),
             objects: vec![FlatObjectCoreV2::default()],
             object_keys: vec![None],
+            face_down_identities: vec![],
             relations: vec![FlatRelationV2::default()],
             object_subtypes: vec![FlatObjectSubtypeV2::default()],
             ability_uses: vec![FlatObjectAbilityUseV2::default()],
@@ -5604,6 +5621,7 @@ mod tests {
             own_hand: observation.own_hand,
             known_library_cards: observation.known_library_cards,
             known_hand_cards: observation.known_hand_cards,
+            known_face_down_cards: observation.known_face_down_cards,
             extensions: Default::default(),
             visible_projection_hash: 0,
         }

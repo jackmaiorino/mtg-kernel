@@ -372,6 +372,27 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
             let amount = AmtF::fixed(i64::from(*max_targets));
             out.control(ControlF::ChooseObjects);
             match destination {
+                LibrarySearchDestinationV1::FirstBattlefieldTappedRestHand => {
+                    out.effect(
+                        EffectAtom::moving(Some(ZoneF::Library), ZoneF::Battlefield)
+                            .player(player)
+                            .obj(obj)
+                            .amount(AmtF::fixed(1)),
+                    );
+                    out.effect(
+                        EffectAtom::moving(Some(ZoneF::Library), ZoneF::Hand)
+                            .player(player)
+                            .obj(obj)
+                            .amount(AmtF::fixed(1)),
+                    );
+                    out.effect(
+                        EffectAtom::new(EvF::Tap)
+                            .player(player)
+                            .obj(obj)
+                            .amount(AmtF::fixed(1)),
+                    );
+                    out.effect(shuffle(player));
+                }
                 LibrarySearchDestinationV1::Battlefield { tapped } => {
                     // The selected cards enter the battlefield as one batch
                     // (tapped when `tapped`), then the library is shuffled.

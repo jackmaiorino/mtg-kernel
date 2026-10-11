@@ -2714,6 +2714,9 @@ fn stack_spell_has_type(state: &GameState, item: &StackItem, card_type: CardType
 /// alternative costs retain the ordinary value; Omen/Adventure select
 /// their own printed cost before substituting announced X.
 pub(crate) fn stack_spell_mana_value(state: &GameState, item: &StackItem) -> u16 {
+    if state.objects.get(item.source).v4.face_down_v1.is_some() {
+        return 0;
+    }
     let def = &card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize];
     if item.v4.cast_method == Some(CastMethodV4::Omen) {
         if let Some((cost, _)) = def.omen_spell_form() {
@@ -3989,7 +3992,13 @@ pub(crate) fn evaluate_dynamic_value(
                     && object.controller == controller
                     && !object_has_type(state, *id, CardType::Land)
             })
-            .map(|(_, object)| card_def::CARD_DEFS[object.card_def as usize].mana_value)
+            .map(|(_, object)| {
+                if object.v4.face_down_v1.is_some() {
+                    0
+                } else {
+                    card_def::CARD_DEFS[object.card_def as usize].mana_value
+                }
+            })
             .collect::<std::collections::BTreeSet<_>>()
             .len(),
         // UrzaTerrainValue's shape: every required conjunction must be
@@ -5687,7 +5696,8 @@ fn alt_cost_condition_met(
     match condition {
         card_def::AltCostCondition::Always => true,
         card_def::AltCostCondition::WarpFromHand
-        | card_def::AltCostCondition::ImpendingFromHand { .. } => origin_zone == Zone::Hand,
+        | card_def::AltCostCondition::ImpendingFromHand { .. }
+        | card_def::AltCostCondition::DisguiseFromHand => origin_zone == Zone::Hand,
         card_def::AltCostCondition::ControlsPermanentWithSubtype(subtype) => {
             let subtype_id = subtype.stable_id();
             state.players[player.index()].battlefield.iter().any(|&id| {
@@ -7841,6 +7851,36 @@ fn activate_mana_ability_for(
     Ok(())
 }
 
+/// Reserved ability index 255 is the turn-face-up special action. It never
+/// creates an activated ability, never uses the stack, and retains priority.
+fn can_turn_face_up(state: &GameState, player: PlayerId, id: ObjectId) -> bool {
+    let object = state.objects.get(id);
+    object.zone == Zone::Battlefield
+        && object.controller == player
+        && object.v4.face_down_v1.is_some_and(|face| face.disguised)
+        && crate::continuous_characteristics_v1::removal_timestamp(state, id).is_none()
+        && card_def::CARD_DEFS[object.card_def as usize].name == "Flourishing Bloom-Kin"
+        && can_pay_effect_mana(player, &[ManaColor::G], 4, state)
+}
+fn turn_face_up(state: &mut GameState, player: PlayerId, id: ObjectId) -> Result<(), String> {
+    if !can_turn_face_up(state, player, id) || !pay_effect_mana(player, &[ManaColor::G], 4, state) {
+        return Err("turn-face-up cost is not payable".into());
+    }
+    let object = state.objects.get_mut(id);
+    object.v4.face_down_v1 = None;
+    object.v4.ward_generic = 0;
+    let event = CommittedEvent::TurnedFaceUp {
+        object: id,
+        zone_change_count: object.zone_change_count,
+    };
+    state.engine.event_log.push(event.clone());
+    state.engine.event_history.push(event);
+    collect_and_queue_triggers(state);
+    state.engine.priority_passes = [false, false];
+    state.priority_player = player;
+    Ok(())
+}
+
 fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(ObjectId, u8)> {
     let mut out = Vec::new();
     // Preserve the historical battlefield and hand ordering, then append
@@ -7855,6 +7895,9 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
         (Zone::Graveyard, &state.players[player.index()].graveyard),
     ] {
         for &id in objects {
+            if zone == Zone::Battlefield && can_turn_face_up(state, player, id) {
+                out.push((id, 255));
+            }
             let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
             if !def.is_executable()
                 || !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
@@ -8126,7 +8169,40 @@ fn check_game_over(state: &GameState) -> Option<Decision> {
 /// Drives the state machine forward until a real decision point is
 /// reached. Never auto-passes and never skips a priority window that the
 /// comprehensive rules would actually grant.
+pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
+    let grants = state
+        .objects
+        .iter()
+        .filter_map(|(id, o)| {
+            let face = o.v4.face_down_v1?;
+            let controller = if face.disguised {
+                o.controller
+            } else {
+                let link = face.hidden_by?;
+                let source = state.objects.try_get(link.object)?;
+                if source.zone != Zone::Battlefield
+                    || source.zone_change_count != link.zone_change_count
+                {
+                    return None;
+                }
+                source.controller
+            };
+            Some((id, controller))
+        })
+        .collect::<Vec<_>>();
+    for (id, controller) in grants {
+        state
+            .objects
+            .get_mut(id)
+            .v4
+            .face_down_v1
+            .as_mut()
+            .expect("observed face down")
+            .lookers |= 1u8 << controller.index();
+    }
+}
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    refresh_face_down_lookers(state);
     loop {
         #[cfg(feature = "standard-magezero-fixtures")]
         crate::standard_statics_v1::expire_attack_block_restrictions(state);
@@ -12077,7 +12153,11 @@ fn triggered_stack_item_expected_target_spec(
                             && (source.zone_change_count != zone_change_count
                                 || source.zone == Zone::Battlefield)
                     );
-                    let printed_or_granted = source_def.ward_cost == Some(ward_cost);
+                    let printed_or_granted = source_def.ward_cost == Some(ward_cost)
+                        || ward_cost == crate::card_def::WardCostDef::Generic(2)
+                            && source_def.alt_cost.is_some_and(|alt| {
+                                alt.condition == card_def::AltCostCondition::DisguiseFromHand
+                            });
                     #[cfg(feature = "standard-magezero-fixtures")]
                     let printed_or_granted = printed_or_granted
                         || matches!(
@@ -12840,6 +12920,19 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     if convoked_creatures != 0 && state.objects.get(item.source).zone == Zone::Battlefield {
         state.objects.get_mut(item.source).v4.convoked_creatures_v1 = convoked_creatures;
     }
+    if state.objects.get(item.source).zone == Zone::Battlefield
+        && item.v4.cast_method == Some(CastMethodV4::Alternative)
+        && card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize]
+            .alt_cost
+            .is_some_and(|alt| alt.condition == card_def::AltCostCondition::DisguiseFromHand)
+    {
+        state.objects.get_mut(item.source).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
+            disguised: true,
+            lookers: 1 << item.controller.index(),
+            hidden_by: None,
+        });
+        state.objects.get_mut(item.source).v4.ward_generic = 2;
+    }
     // A permanent spell cast for its warp cost remembers that on the
     // battlefield incarnation it just became.
     if item.v4.cast_method == Some(CastMethodV4::Alternative)
@@ -13580,6 +13673,9 @@ fn bestow_host_counter_bonus(state: &GameState, host: ObjectId) -> i32 {
 /// Effective card-type query for one live object face. Nonbattlefield cards
 /// are always front-face objects because every zone change resets the face.
 pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> bool {
+    if let Some(face) = state.objects.get(id).v4.face_down_v1 {
+        return face.disguised && card_type == CardType::Creature;
+    }
     if crate::standard_cards_v1::kaito_is_creature(state, id) {
         return card_type == CardType::Creature;
     }
@@ -13638,10 +13734,13 @@ pub fn object_color_mask(state: &GameState, id: ObjectId) -> u8 {
             return card_def::mana_colors_mask(animation.colors);
         }
     }
-    state
-        .objects
-        .try_get(id)
-        .map_or(0, |object| object.v4.effective_color_mask)
+    state.objects.try_get(id).map_or(0, |object| {
+        if object.v4.face_down_v1.is_some() {
+            0
+        } else {
+            object.v4.effective_color_mask
+        }
+    })
 }
 
 pub fn object_is_monocolored(state: &GameState, id: ObjectId) -> bool {
@@ -13666,12 +13765,25 @@ pub fn damage_is_prevented_by_protection(
 
 pub fn effective_name(state: &GameState, id: ObjectId) -> &str {
     crate::continuous_characteristics_v1::creature_override(state, id).map_or(
-        state.objects.get(id).name.as_str(),
+        if state.objects.get(id).v4.face_down_v1.is_some() {
+            ""
+        } else {
+            state.objects.get(id).name.as_str()
+        },
         |(characteristics, _)| characteristics.name,
     )
 }
 
 pub fn effective_base_power(state: &GameState, id: ObjectId) -> Option<i32> {
+    if state
+        .objects
+        .get(id)
+        .v4
+        .face_down_v1
+        .is_some_and(|face| !face.disguised)
+    {
+        return None;
+    }
     let obj = state.objects.get(id);
     let characteristic_power = || -> Option<i32> {
         #[cfg(feature = "standard-magezero-fixtures")]
@@ -13685,6 +13797,7 @@ pub fn effective_base_power(state: &GameState, id: ObjectId) -> Option<i32> {
     };
     crate::continuous_characteristics_v1::base_power_toughness(state, id)
         .map(|(power, _)| i32::from(power))
+        .or_else(|| obj.v4.face_down_v1.map(|_| 2))
         .or_else(characteristic_power)
         .or_else(|| {
             card_def::CARD_DEFS[obj.card_def as usize]
@@ -13694,6 +13807,15 @@ pub fn effective_base_power(state: &GameState, id: ObjectId) -> Option<i32> {
 }
 
 pub fn effective_base_toughness(state: &GameState, id: ObjectId) -> Option<i32> {
+    if state
+        .objects
+        .get(id)
+        .v4
+        .face_down_v1
+        .is_some_and(|face| !face.disguised)
+    {
+        return None;
+    }
     let obj = state.objects.get(id);
     crate::continuous_characteristics_v1::base_power_toughness(state, id)
         .map(|(_, toughness)| i32::from(toughness))
@@ -13707,6 +13829,7 @@ pub fn effective_base_toughness(state: &GameState, id: ObjectId) -> Option<i32> 
                 None
             }
         })
+        .or_else(|| obj.v4.face_down_v1.map(|_| 2))
         .or_else(|| {
             card_def::CARD_DEFS[obj.card_def as usize]
                 .toughness_for_face(obj.v4.face_index)
@@ -14321,7 +14444,13 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
             return vec![card_def::Subtype::Ninja.stable_id()];
         }
         override_effect.map_or_else(
-            || object.v4.effective_subtype_ids.clone(),
+            || {
+                if object.v4.face_down_v1.is_some() {
+                    Vec::new()
+                } else {
+                    object.v4.effective_subtype_ids.clone()
+                }
+            },
             |(characteristics, _)| vec![characteristics.subtype.stable_id()],
         )
     });
@@ -15173,6 +15302,7 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
             if !available_activatable_abilities(p, state).contains(&(source, index)) {
                 return Err(format!("ability {index} on {source} is not activatable by {p:?} right now"));
             }
+            if index==255 { return turn_face_up(state,p,source); }
             begin_activation(state, p, source, index);
             Ok(())
         }
@@ -17570,6 +17700,17 @@ fn begin_cast_ex(
     // independently frozen pre-move evidence only after that reset, before
     // either the placeholder or its duplicate source contract is created.
     state.objects.get_mut(spell_id).v4.spell_cast_origin = Some(cast_origin);
+    if def
+        .alt_cost
+        .is_some_and(|alt| alt.condition == card_def::AltCostCondition::DisguiseFromHand)
+        && origin_zone == Zone::Hand
+    {
+        state.objects.get_mut(spell_id).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
+            disguised: true,
+            lookers: 1 << player.index(),
+            hidden_by: None,
+        });
+    }
     // A spell on the stack is controlled by the player who cast it, which
     // may differ from its owner when an exact exile-play permission names a
     // different holder. Freeze that controller into the source contract.
@@ -17810,6 +17951,17 @@ fn finalize_owned_cast(
         pending.mode_chosen.unwrap_or(0)
     };
     item.kicked = was_kicked;
+    if def
+        .alt_cost
+        .is_some_and(|alt| alt.condition == card_def::AltCostCondition::DisguiseFromHand)
+    {
+        state.objects.get_mut(pending.spell).v4.face_down_v1 =
+            (cast_method == CastMethodV4::Alternative).then_some(crate::state::FaceDownV1 {
+                disguised: true,
+                lookers: 1 << pending.controller.index(),
+                hidden_by: None,
+            });
+    }
     item.v4.paid_cost_refs = paid_cost_refs;
     item.v4.optional_additional_cost_paid = paid_optional_additional_cost;
     item.v4.x_value = u16::from(x_value);

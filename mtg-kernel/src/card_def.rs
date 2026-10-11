@@ -1321,9 +1321,17 @@ pub enum AttachmentDef {
     AuraCreatureOverride(CreatureCharacteristicsOverrideDef),
     /// Enchanted creature gets a static power/toughness bonus and keywords.
     AuraCreatureStatic(AuraCreatureStaticDef),
+    /// Enchant artifact; add creature characteristics without removing types.
+    AuraArtifactAnimation(AnimationDef),
 }
 
 impl AttachmentDef {
+    pub const fn enchanted_type(self) -> CardType {
+        match self {
+            Self::AuraArtifactAnimation(_) => CardType::Artifact,
+            _ => CardType::Creature,
+        }
+    }
     pub const fn is_creature_aura(self) -> bool {
         matches!(
             self,
@@ -1389,7 +1397,10 @@ pub enum AltCostCondition {
     /// Impending N: cast from hand for this cost, the permanent enters with
     /// N time counters and isn't a creature while it has any
     /// (`ObjectStateV4::time_counters_v1`, `standard_keywords_v1`).
-    ImpendingFromHand { time_counters: u8 },
+    ImpendingFromHand {
+        time_counters: u8,
+    },
+    DisguiseFromHand,
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback

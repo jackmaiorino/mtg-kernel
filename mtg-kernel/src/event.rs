@@ -600,6 +600,10 @@ pub enum CommittedEvent {
         zone_change_count: u32,
         level: u8,
     },
+    TurnedFaceUp {
+        object: ObjectId,
+        zone_change_count: u32,
+    },
 }
 
 /// Remembers the counters of a departing permanent whose own leave ability

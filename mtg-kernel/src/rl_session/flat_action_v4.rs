@@ -389,7 +389,8 @@ fn flat_visible_action_object_components_v4(
         .ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?;
     let owner: PlayerSeatV1 = object.owner.into();
     let controller: PlayerSeatV1 = object.controller.into();
-    if object.card_def != reference.card_db_id
+    if crate::rl::projected_card_def(state, object_id, object.zone_change_count)
+        != reference.card_db_id
         || owner != reference.owner
         || controller != reference.controller
         || object.zone != reference.zone

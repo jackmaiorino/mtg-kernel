@@ -33,6 +33,41 @@ fn exile_self(out: &mut Collector) {
 pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     let _ = env;
     match op {
+        EffectOp::Discover { limit: _ } => {
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Library), ZoneF::Exile)
+                    .player(RelF::You)
+                    .obj(ObjF::AnyCard),
+            );
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Exile), ZoneF::Hand)
+                    .player(RelF::You)
+                    .obj(ObjF::AnyCard)
+                    .amount(AmtF::fixed(1)),
+            );
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Exile), ZoneF::Library)
+                    .player(RelF::You)
+                    .obj(ObjF::AnyCard),
+            );
+        }
+        EffectOp::Hideaway { count } => {
+            let mut look = EffectAtom::new(EvF::Look)
+                .player(RelF::You)
+                .obj(ObjF::AnyCard)
+                .amount(AmtF::fixed(i64::from(*count)));
+            look.from = Some(ZoneF::Library);
+            out.effect(look);
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Library), ZoneF::Exile)
+                    .player(RelF::You)
+                    .obj(ObjF::AnyCard)
+                    .amount(AmtF::fixed(1)),
+            );
+        }
+        EffectOp::PlayHideawayIfThreeDistinctPowers => {
+            // The fixed vocabulary has no free-play or distinct-power atom.
+        }
         EffectOp::CopySpellSnapshot { .. } | EffectOp::IncreaseSpeed { .. } => { /* Runtime player ability, described by StartYourEnginesMaxSpeedDoubleStrike. */
         }
         EffectOp::CounterUnlessCollectsEvidence {

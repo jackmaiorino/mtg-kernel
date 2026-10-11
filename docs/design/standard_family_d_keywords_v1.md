@@ -94,62 +94,48 @@ Mouse offspring tokens, Incubator, Bat, Monk, White Insect and Spirit.
   the ops). Its name-keyed statics and Spree surcharges are read through
   `standard_keywords_v1::rules_vector_statics` and `spree_extra_generic`.
 
-## Simplifications
+## Completion implementation
 
-Incomplete printed behavior stays Partial. Full deck admission refuses:
+The completion branch replaces the earlier deterministic approximations with
+player choices: optional Ward payments and evidence/discard subsets, convoke
+subsets and Knight-Errant's zero-through-two selection, Hopeful Initiate counter
+payments, and a real casualty copy trigger with independent target choices.
+Cathar returns every card linked to the departing incarnation immediately;
+speed increases through an ordinary triggered ability. Effective creature
+eligibility is used for Enduring and impending sacrifice costs.
 
-| Card | Remaining work |
-| --- | --- |
-| Axebane Ferox | Decline ward or select an evidence subset |
-| Brutal Cathar | Choose ward life payment, allow legal lethal payment; correct until-leaves exile and multiple linked exiles |
-| Graveyard Trespasser | Decline ward or select the discarded card |
-| Hopeful Initiate | Choose the creatures and counters used to pay its activation |
-| Knight-Errant of Eos | Choose convoke creatures and mana; choose zero through two eligible revealed creatures |
-| Make Disappear | Put the casualty trigger on the stack and offer new copy targets |
-| Burnout Bashtronaut | Put the inherent speed trigger on the stack with its response and ordering window |
-| Enduring Curiosity, Enduring Innocence, Overlord of the Mistmoors | Use effective noncreature types throughout costs and effects; Gatekeeper's edict and Dread Return's sacrifice cost still read printed Creature |
-| Flourishing Bloom-Kin | Face-down disguise and its turned-face-up trigger |
+Monstrous Rage creates a Monster Role attached to its exact creature target.
+The Role rule keeps only the newest Role controlled by a player on that host.
+Zoetic Glyph uses the shared timestamped artifact animation profile and its
+death trigger discovers 3. Discover offers a real free cast, with the rejected
+exiles returned in random bottom order after casting completes.
 
-These development approximations remain in the recipes:
+Flourishing Bloom-Kin can be cast face down for three generic mana. Its
+face-down spell and permanent have the public 2/2 colorless creature profile
+and ward 2. The controller pays 4G to turn it face up as a special action,
+then its trigger offers zero through two Forests, choosing the first for the
+battlefield tapped and the second for hand. Index 255 in the existing
+ActivateAbility action envelope is reserved for this special action; it
+creates no activated ability, permits ordinary priority timing, and retains
+priority. Losing the face-up disguise ability prevents paying that cost.
 
-- **Ward payments are automatic.** The targeting player always pays a ward
-  cost they can pay: collect evidence exiles the smallest-total qualifying
-  subset, pay life pays when it leaves them above 0, and ward—discard
-  discards their lowest-mana-value card.
-- **Convoke and training costs are chosen deterministically.** Convoke taps
-  creatures in a fixed order, and Hopeful Initiate's counter removal takes
-  from the creature with the most +1/+1 counters.
-- **Casualty's copy keeps the original's targets** and is created immediately
-  as part of casting, not by a separate trigger. No new targets are offered.
-- **Speed increases immediately**, omitting the inherent trigger's response
-  window. A player can otherwise respond before speed 4 grants double strike.
-- **Cori-Steel Cutter's attach choice** is made when the trigger resolves,
-  before the Monk token exists.
-- **Overlord of the Mistmoors' end-step trigger** is only collected while it
-  has time counters.
-- **Not-a-creature permanents** (impending, Enduring enchantments) are handled
-  by the type query, attack and block checks. Other code that reads printed
-  types directly still sees a creature.
-- **Unearth's haste** lasts until end of turn rather than indefinitely, which
-  is equivalent since the creature is exiled at end of turn.
-- **Phantom Interference's both-modes set** creates its Spirit just before the
-  counter program runs, in printed order, because a counter-unless-pays
-  program must stay rooted.
-- **Flourishing Bloom-Kin has no disguise.** The engine has no face-down
-  objects, so it can only be hard-cast and its turned-face-up trigger never
-  fires. Because a printed ability is missing, its registry entry is
-  `partial` and full-deck admission refuses it.
+Collector's Cage privately chooses one of the top five cards, exiles it face
+down, and puts the rest on the bottom in random order. Its exact source link
+survives the source leaving. Each player who controlled that incarnation can
+look at the hidden card. Its activation adds the counter before checking for
+three distinct controlled creature powers and offering the linked card as a
+free spell or a legal land play.
 
-## Deferred
+Generic public references mask face-down definitions. Modern observations
+carry actual identities in a separate authorized-viewer knowledge list; flat
+model rows and action references use the same actor-authorized identity.
+Existing observations and hashes omit these fields when no face-down cards
+exist. Free casting uses the shared parent-resolution continuation and the
+ordinary target, mode, additional-cost, and tax pipeline.
 
-- **Monstrous Rage** needs the creature-Aura static profile from the FDN
-  token and Aura batch (#168). That batch has merged, so it is the next
-  follow-up.
-- **Zoetic Glyph** needs an artifact Aura that makes its host a creature.
-  Family E's vehicles need the same artifact-becomes-creature primitive, so
-  it waits for that batch rather than building it twice. Discover lands with
-  it.
-- **Collector's Cage** needs hideaway's face-down exile.
+This source checkpoint has passed formatting and diff checks. Its new tests
+and compilation await the combined guarded build; capability promotions are
+owned by that integration after observed results, not by this document.
 
 ## Tests
 

@@ -66,7 +66,10 @@ impl Scan<'_> {
             ResolveMonarchTrigger { binding } => self.a(&binding.source),
             StandardV1(op) => op.bound_objects().iter().any(|chosen| self.b(chosen)),
             // Other current leaf programs carry symbolic refs, not physical bindings.
-            IncreaseSpeed { .. }
+            Discover { .. }
+            | Hideaway { .. }
+            | PlayHideawayIfThreeDistinctPowers
+            | IncreaseSpeed { .. }
             | DealDamage { .. }
             | DistributePlusOneCounters { .. }
             | CreatureUpgrade(_)
@@ -230,6 +233,15 @@ impl Scan<'_> {
                         .as_ref()
                         .and_then(|candidate| candidate.expected_object)
                         .is_some_and(|b| self.b(&b))
+            }
+            Hideaway { choice, selected } => {
+                self.bs(&choice.prefix) || self.bs(selected) || self.fs(&choice.remaining)
+            }
+            ExilePlay { choice, .. } | DiscoverRemainder { choice } => {
+                choice.card.is_some_and(|b| self.b(&b))
+                    || self.bs(&choice.rejected)
+                    || self.bs(&choice.original_library)
+                    || self.fs(&choice.remaining)
             }
             ConvokeLook { choice, selected } => {
                 self.bs(&choice.prefix) || self.bs(selected) || self.fs(&choice.remaining)
@@ -447,6 +459,7 @@ impl Scan<'_> {
         use EffectTargetSelectionPurpose::*;
         match p {
             CopyTarget { choice } => self.copy(&choice.spell) || self.fs(&choice.remaining),
+            Hideaway { choice } => self.bs(&choice.prefix) || self.fs(&choice.remaining),
             ConvokeLook { choice } => self.bs(&choice.prefix) || self.fs(&choice.remaining),
             WardCards { choice } => self.bs(&choice.candidates) || self.fs(&choice.remaining),
             OrderIntoGraveyard { .. } | OrderMilledIntoGraveyard => false,
@@ -656,6 +669,12 @@ impl Scan<'_> {
             PendingEffectChoice::ChooseBoolean { purpose, .. } => {
                 use EffectBooleanChoicePurpose::*;
                 match purpose {
+                    ExilePlay { choice } => {
+                        choice.card.is_some_and(|b| self.b(&b))
+                            || self.bs(&choice.rejected)
+                            || self.bs(&choice.original_library)
+                            || self.fs(&choice.remaining)
+                    }
                     WardLife { choice } => {
                         self.bs(&choice.candidates) || self.fs(&choice.remaining)
                     }

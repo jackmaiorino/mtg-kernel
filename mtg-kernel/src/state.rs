@@ -274,6 +274,16 @@ pub struct ObjectStateV4 {
     /// Only Standard builds set it, so other catalogs keep their bytes.
     #[serde(default, skip_serializing_if = "bool_is_false")]
     pub entered_battlefield_this_turn: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub face_down_v1: Option<FaceDownV1>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FaceDownV1 {
+    pub disguised: bool,
+    /// Seats with continuing permission to look at this hidden identity.
+    pub lookers: u8,
+    pub hidden_by: Option<ObjectLinkV4>,
 }
 
 impl Hash for ObjectStateV4 {
@@ -337,6 +347,10 @@ impl Hash for ObjectStateV4 {
         if self.entered_battlefield_this_turn {
             "entered_battlefield_this_turn/v1".hash(state);
         }
+        if let Some(face_down) = self.face_down_v1 {
+            "face_down/v1".hash(state);
+            face_down.hash(state);
+        }
     }
 }
 
@@ -397,6 +411,7 @@ impl ObjectStateV4 {
             temporary_base_pt_v1: None,
             creature_upgrade: None,
             entered_battlefield_this_turn: false,
+            face_down_v1: None,
         }
     }
 

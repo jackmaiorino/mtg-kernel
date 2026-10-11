@@ -1335,6 +1335,18 @@ fn optional_cost_facts(cost: crate::card_def::OptionalAdditionalCostDef, out: &m
 
 fn attachment_facts(aura: AttachmentDef, out: &mut Collector) {
     match aura {
+        AttachmentDef::AuraArtifactAnimation(animation) => {
+            out.effect(EffectAtom::new(EvF::Attach).obj(ObjF::Typed(CardTypeF::Artifact)));
+            out.effect(
+                EffectAtom::new(EvF::SetCharacteristic)
+                    .obj(ObjF::AttachedObject)
+                    .amount(AmtF::stat(
+                        i64::from(animation.power),
+                        i64::from(animation.toughness),
+                    ))
+                    .duration(DurF::WhileOnBattlefield),
+            );
+        }
         AttachmentDef::AuraCreature { prevents_untap } => {
             out.effect(EffectAtom::new(EvF::Attach).obj(ObjF::Typed(CardTypeF::Creature)));
             if prevents_untap {

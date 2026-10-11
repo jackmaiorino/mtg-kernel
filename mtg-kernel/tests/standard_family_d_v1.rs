@@ -186,7 +186,7 @@ fn incomplete_keyword_cards_remain_partial() {
 }
 
 #[test]
-fn flourishing_bloom_kin_is_partial_without_disguise() {
+fn flourishing_bloom_kin_capability_awaits_combined_validation() {
     let id = card_id_by_name("Flourishing Bloom-Kin").expect("Flourishing Bloom-Kin");
     assert_eq!(CARD_DEFS[id as usize].capability, CardCapability::Partial);
 }
@@ -2735,4 +2735,205 @@ fn casualty_copy_survives_original_countering_and_can_retarget() {
         assert_eq!(state.players[0].life, 20);
     }
     assert_eq!(state, restored);
+}
+
+fn library_card(state: &mut GameState, position: usize, name: &str) -> ObjectId {
+    let id = state.players[0].library[position];
+    let definition = card_id_by_name(name).unwrap();
+    let card = state.objects.get_mut(id);
+    card.card_def = definition;
+    card.name = CARD_DEFS[definition as usize].object_name.into();
+    card.v4 = ObjectStateV4::from_card_def(definition);
+    id
+}
+fn disguised_bloom(state: &mut GameState) -> ObjectId {
+    let bloom = put(state, PlayerId::P0, "Flourishing Bloom-Kin", Zone::Hand);
+    add_mana(state, PlayerId::P0, &[], 3);
+    cast(state, bloom, &[]);
+    settled(state);
+    assert!(state.objects.get(bloom).v4.face_down_v1.is_some());
+    assert_eq!(power_toughness(state, bloom), (2, 2));
+    bloom
+}
+#[test]
+fn disguise_masks_all_public_characteristics_and_keeps_private_identity() {
+    let mut state = ready();
+    let bloom = disguised_bloom(&mut state);
+    let surface = mtg_kernel::surface_v2::HarnessSurfaceV2::new();
+    let own = mtg_kernel::rl::observe_v2(&state, &surface, PlayerId::P0, 0).unwrap();
+    assert_eq!(own.known_face_down_cards.len(), 1);
+    assert_eq!(
+        own.known_face_down_cards[0].card_db_id,
+        card_id_by_name("Flourishing Bloom-Kin").unwrap()
+    );
+    let opposing = mtg_kernel::rl::observe_v2(&state, &surface, PlayerId::P1, 0).unwrap();
+    assert!(opposing.known_face_down_cards.is_empty());
+    let json = serde_json::to_string(&opposing).unwrap();
+    assert!(!json.contains("Flourishing Bloom-Kin"));
+    let mut other = state.clone();
+    other.objects.get_mut(bloom).card_def = card_id_by_name("Axebane Ferox").unwrap();
+    other.objects.get_mut(bloom).name = "Axebane Ferox".into();
+    assert_eq!(
+        opposing,
+        mtg_kernel::rl::observe_v2(&other, &surface, PlayerId::P1, 0).unwrap()
+    );
+    assert_eq!(power_toughness(&other, bloom), (2, 2));
+    assert!(engine::effective_subtype_ids(&state, bloom).is_empty());
+    assert_eq!(engine::object_color_mask(&state, bloom), 0);
+}
+#[test]
+fn disguise_turns_face_up_as_special_action_and_chooses_both_forest_destinations() {
+    let mut state = ready_with("Forest");
+    put(&mut state, PlayerId::P0, "Forest", Zone::Battlefield);
+    let bloom = disguised_bloom(&mut state);
+    let first = state.players[0].library[0];
+    let second = state.players[0].library[1];
+    let spell = put(&mut state, PlayerId::P1, "Burst Lightning", Zone::Hand);
+    state.priority_player = PlayerId::P1;
+    add_mana(&mut state, PlayerId::P1, &[ManaColor::R], 0);
+    cast(&mut state, spell, &[Target::Player(PlayerId::P0)]);
+    next(&mut state);
+    state.priority_player = PlayerId::P0;
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::G], 4);
+    let original_len = state.stack.len();
+    assert!(
+        matches!(next(&mut state),Decision::CastSpellOrPass{activatable_abilities,..} if activatable_abilities.contains(&(bloom,255)))
+    );
+    engine::step(&mut state, Action::ActivateAbility(bloom, 255)).unwrap();
+    assert!(state.objects.get(bloom).v4.face_down_v1.is_none());
+    assert_eq!(state.priority_player, PlayerId::P0);
+    assert_eq!(state.stack.len(), original_len + 1);
+    assert_eq!(
+        state.stack.last().unwrap().kind,
+        mtg_kernel::state::StackItemKind::TriggeredAbility
+    );
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectTargets { .. })
+    ));
+    engine::step(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(first)),
+    )
+    .unwrap();
+    next(&mut state);
+    engine::step(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(second)),
+    )
+    .unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(first).zone, Zone::Battlefield);
+    assert!(state.objects.get(first).tapped);
+    assert_eq!(state.objects.get(second).zone, Zone::Hand);
+    assert_eq!(state.players[0].life, 18);
+}
+fn glyph_on_clue(state: &mut GameState) -> ObjectId {
+    let clue = put(state, PlayerId::P0, "Clue Token", Zone::Battlefield);
+    let glyph = put(state, PlayerId::P0, "Zoetic Glyph", Zone::Hand);
+    add_mana(state, PlayerId::P0, &[ManaColor::U], 2);
+    cast(state, glyph, &[Target::Object(clue)]);
+    settled(state);
+    assert_eq!(power_toughness(state, clue), (5, 4));
+    assert!(engine::object_has_type(
+        state,
+        clue,
+        mtg_kernel::card_def::CardType::Artifact
+    ));
+    assert!(engine::object_has_type(
+        state,
+        clue,
+        mtg_kernel::card_def::CardType::Creature
+    ));
+    glyph
+}
+#[test]
+fn zoetic_discover_can_decline_or_cast_without_changing_the_unseen_library_tail() {
+    for play in [false, true] {
+        let mut state = ready();
+        let skipped = library_card(&mut state, 0, "Mountain");
+        let hit = library_card(&mut state, 1, "Novice Inspector");
+        let tail = state.players[0].library[2..].to_vec();
+        let glyph = glyph_on_clue(&mut state);
+        mtg_kernel::event::propose_and_commit(
+            &mut state,
+            mtg_kernel::event::ProposedEvent::zone_change(glyph, Zone::Graveyard),
+        );
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectBoolean { .. })
+        ));
+        assert_eq!(state.objects.get(hit).zone, Zone::Exile);
+        let encoded = serde_json::to_string(&state).unwrap();
+        state = serde_json::from_str(&encoded).unwrap();
+        engine::step(&mut state, Action::ChooseEffectBoolean(play)).unwrap();
+        settled(&mut state);
+        assert_eq!(
+            state.objects.get(hit).zone,
+            if play { Zone::Battlefield } else { Zone::Hand }
+        );
+        assert_eq!(&state.players[0].library[..tail.len()], tail.as_slice());
+        assert_eq!(state.players[0].library.last(), Some(&skipped));
+    }
+}
+#[test]
+fn cage_hideaway_is_private_and_can_play_a_land_after_the_counter_creates_coven() {
+    let mut state = ready();
+    let hidden = library_card(&mut state, 1, "Forest");
+    let cage = put(&mut state, PlayerId::P0, "Collector's Cage", Zone::Hand);
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::W], 1);
+    cast(&mut state, cage, &[]);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectTargets { .. })
+    ));
+    engine::step(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(hidden)),
+    )
+    .unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(hidden).zone, Zone::Exile);
+    let surface = mtg_kernel::surface_v2::HarnessSurfaceV2::new();
+    let hidden_view = mtg_kernel::rl::observe_v2(&state, &surface, PlayerId::P1, 0).unwrap();
+    assert!(hidden_view.known_face_down_cards.is_empty());
+    let mut alternative = state.clone();
+    alternative.objects.get_mut(hidden).card_def = card_id_by_name("Axebane Ferox").unwrap();
+    alternative.objects.get_mut(hidden).name = "Axebane Ferox".into();
+    assert_eq!(
+        hidden_view,
+        mtg_kernel::rl::observe_v2(&alternative, &surface, PlayerId::P1, 0).unwrap()
+    );
+    let target = put(
+        &mut state,
+        PlayerId::P0,
+        "Novice Inspector",
+        Zone::Battlefield,
+    );
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Monastery Swiftspear",
+        Zone::Battlefield,
+    );
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Sanguine Evangelist",
+        Zone::Battlefield,
+    );
+    add_mana(&mut state, PlayerId::P0, &[], 1);
+    engine::step(&mut state, Action::ActivateAbility(cage, 0)).unwrap();
+    assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectBoolean { .. })
+    ));
+    engine::step(&mut state, Action::ChooseEffectBoolean(true)).unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(hidden).zone, Zone::Battlefield);
+    assert!(state.objects.get(hidden).v4.face_down_v1.is_none());
+    assert_eq!(state.objects.get(target).counters.plus1_plus1, 1);
+    assert!(state.objects.get(cage).tapped);
 }

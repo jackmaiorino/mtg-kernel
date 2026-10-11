@@ -230,6 +230,7 @@ pub enum TriggerCondition {
     AttacksIfControllerMostLife,
     AttacksPlayerWithMostLife,
     ControlledCreatureOrCreatureSpellBecomesTargetOfOpponent,
+    TurnedFaceUp,
 }
 
 pub struct TriggeredAbilityDef {
@@ -3064,6 +3065,31 @@ const DELVER_OF_SECRETS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
 /// static `CARD_DEFS` entry, but its by-name `match` is a long chain of string
 /// compares, and trigger collection calls it for every object in every zone on
 /// every committed event batch.
+fn zoetic_glyph_discover() -> EffectOp {
+    EffectOp::Discover { limit: 3 }
+}
+fn collectors_cage_hideaway() -> EffectOp {
+    EffectOp::Hideaway { count: 5 }
+}
+const ZOETIC_GLYPH_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::LeftBattlefieldToGraveyard,
+    home_zone: Zone::Graveyard,
+    ..etb_trigger(zoetic_glyph_discover)
+}];
+const COLLECTORS_CAGE_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(collectors_cage_hideaway)];
+fn bloom_kin_search() -> EffectOp {
+    EffectOp::SearchLibraryCardsToDestination {
+        player: PlayerRef::Controller,
+        filter: crate::effect::LibraryCardFilter::LandWithSubtype(Subtype::Forest),
+        max_targets: 2,
+        destination: crate::effect::LibrarySearchDestinationV1::FirstBattlefieldTappedRestHand,
+    }
+}
+const BLOOM_KIN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::TurnedFaceUp,
+    ..etb_trigger(bloom_kin_search)
+}];
+
 pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
     static TABLE: std::sync::OnceLock<Box<[&'static [TriggeredAbilityDef]]>> =
         std::sync::OnceLock::new();
@@ -3082,10 +3108,15 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
     if !card.is_executable() {
         return &[];
     }
+    if card.name == "Flourishing Bloom-Kin" {
+        return &BLOOM_KIN_TRIGGERS;
+    }
     if card.equipment.is_some_and(|equipment| equipment.job_select) {
         return &JOB_SELECT_TRIGGERS;
     }
     match card.name {
+        "Zoetic Glyph" => &ZOETIC_GLYPH_TRIGGERS,
+        "Collector's Cage" => &COLLECTORS_CAGE_TRIGGERS,
         "Celestial Armor" => &CELESTIAL_ARMOR_TRIGGERS,
         "Exemplar of Light" => &EXEMPLAR_OF_LIGHT_TRIGGERS,
         "Vanguard Seraph" => &VANGUARD_SERAPH_TRIGGERS,
@@ -3902,12 +3933,9 @@ fn sba_fixed_point_with_protected_triggers(
                     });
                     return (!valid).then_some(id);
                 }
-                if !definition
-                    .attachment
-                    .is_some_and(crate::card_def::AttachmentDef::is_creature_aura)
-                {
+                let Some(attachment) = definition.attachment else {
                     return None;
-                }
+                };
                 let valid = aura.v4.attached_to.is_some_and(|link| {
                     state.objects.try_get(link.object).is_some_and(|host| {
                         host.zone == Zone::Battlefield
@@ -3915,7 +3943,7 @@ fn sba_fixed_point_with_protected_triggers(
                             && crate::engine::object_has_type(
                                 state,
                                 link.object,
-                                crate::card_def::CardType::Creature,
+                                attachment.enchanted_type(),
                             )
                             && host.attachments.contains(&id)
                     })
@@ -4058,6 +4086,7 @@ pub(crate) fn collect_and_process_with_waiting(
     state: &mut GameState,
     mut waiting: Vec<PendingTrigger>,
 ) -> Vec<PendingTrigger> {
+    crate::engine::refresh_face_down_lookers(state);
     if state.pending_legend_rule_v1.is_some() {
         return Vec::new();
     }
@@ -4448,13 +4477,19 @@ fn triggers_from_events(
             }
         }
         if obj.zone == Zone::Battlefield
-            && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+            && (crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+                || obj.v4.face_down_v1.is_some_and(|face| face.disguised)
+                    && crate::continuous_characteristics_v1::removal_timestamp(state, id).is_none())
         {
-            let ward_cost = card.ward_cost.filter(|cost| match cost {
-                crate::card_def::WardCostDef::BackFacePayLife(_) => obj.v4.face_index == 1,
-                crate::card_def::WardCostDef::DiscardCard => true,
-                _ => obj.v4.face_index == 0,
-            });
+            let ward_cost = if obj.v4.face_down_v1.is_some_and(|face| face.disguised) {
+                Some(crate::card_def::WardCostDef::Generic(2))
+            } else {
+                card.ward_cost.filter(|cost| match cost {
+                    crate::card_def::WardCostDef::BackFacePayLife(_) => obj.v4.face_index == 1,
+                    crate::card_def::WardCostDef::DiscardCard => true,
+                    _ => obj.v4.face_index == 0,
+                })
+            };
             for ward_cost in ward_cost.into_iter().chain(
                 crate::standard_cards_v1::granted_wards(state, id)
                     .into_iter()
@@ -4816,6 +4851,13 @@ fn trigger_matches(
     draws_this_turn_at_event: u32,
 ) -> bool {
     match (cond, ev) {
+        (
+            TriggerCondition::TurnedFaceUp,
+            CommittedEvent::TurnedFaceUp {
+                object,
+                zone_change_count,
+            },
+        ) => *object == source && state.objects.get(source).zone_change_count == *zone_change_count,
         (TriggerCondition::ControllerGainsLife, CommittedEvent::LifeGain { player, amount }) => {
             *player == controller && *amount > 0
         }

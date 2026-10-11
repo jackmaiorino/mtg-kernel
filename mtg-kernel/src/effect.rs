@@ -21,6 +21,8 @@ mod standard_look;
 use standard_look::ConvokeLookChoice;
 mod standard_copy;
 use standard_copy::CopyTargetChoice;
+mod standard_exile;
+use standard_exile::{ExilePlayChoice, HideawayChoice};
 
 use crate::card_def::{
     CardType, DynamicValueDef, Keywords, OptionalAdditionalCostDef, PermanentFilter,
@@ -107,6 +109,8 @@ pub enum LibrarySearchDestinationV1 {
     Battlefield { tapped: bool },
     /// Reveal the selected card, shuffle, then put it on top of the library.
     LibraryTopAfterShuffle,
+    /// Selected order is significant: first enters tapped, others go to hand.
+    FirstBattlefieldTappedRestHand,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1474,6 +1478,13 @@ pub enum EffectOp {
         token_def: u16,
         count: u8,
     },
+    Discover {
+        limit: u16,
+    },
+    Hideaway {
+        count: u8,
+    },
+    PlayHideawayIfThreeDistinctPowers,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -1879,6 +1890,17 @@ pub enum EffectFrame {
         selected: Vec<EffectObjectBinding>,
         path: Vec<u16>,
     },
+    Hideaway {
+        choice: HideawayChoice,
+        selected: Vec<EffectObjectBinding>,
+    },
+    ExilePlay {
+        choice: ExilePlayChoice,
+        play: bool,
+    },
+    DiscoverRemainder {
+        choice: ExilePlayChoice,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -2217,6 +2239,9 @@ pub enum EffectTargetSelectionPurpose {
         original_candidates: Vec<EffectObjectBinding>,
         canonical_path: Vec<u16>,
     },
+    Hideaway {
+        choice: HideawayChoice,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -2327,6 +2352,9 @@ pub enum EffectBooleanChoicePurpose {
     },
     WardLife {
         choice: WardPaymentChoice,
+    },
+    ExilePlay {
+        choice: ExilePlayChoice,
     },
 }
 
@@ -2739,6 +2767,9 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::CastExiledWithoutMana { .. }
         | EffectOp::PlayExiledLand { .. }
         | EffectOp::CopySpellSnapshot { .. }
+        | EffectOp::Discover { .. }
+        | EffectOp::Hideaway { .. }
+        | EffectOp::PlayHideawayIfThreeDistinctPowers
         | EffectOp::CounterUnlessPaysLife { .. }
         | EffectOp::CounterUnlessDiscardsCard { .. }
         | EffectOp::CounterUnlessCollectsEvidence { .. }
@@ -3258,6 +3289,17 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
         } => {
             path.push(u16::from(value));
             match purpose {
+                EffectBooleanChoicePurpose::ExilePlay { choice } => {
+                    let frame = EffectFrame::ExilePlay {
+                        choice,
+                        play: value,
+                    };
+                    continuation.answered_choice_guard =
+                        Some(EffectAnsweredChoiceGuard::StandardSelection {
+                            frame: Box::new(frame.clone()),
+                        });
+                    continuation.frames.push(frame);
+                }
                 EffectBooleanChoicePurpose::WardLife { choice } => {
                     let frame = EffectFrame::WardPayment {
                         choice,
@@ -3883,6 +3925,17 @@ fn complete_resumable_target_selection(
         }
         EffectTargetSelectionPurpose::CopyTarget { .. } => {
             unreachable!("handled target choices before object conversion")
+        }
+        EffectTargetSelectionPurpose::Hideaway { choice } => {
+            let frame = EffectFrame::Hideaway {
+                choice,
+                selected: objects,
+            };
+            continuation.answered_choice_guard =
+                Some(EffectAnsweredChoiceGuard::StandardSelection {
+                    frame: Box::new(frame.clone()),
+                });
+            continuation.frames.push(frame);
         }
         EffectTargetSelectionPurpose::ConvokeLook { choice } => {
             let frame = EffectFrame::ConvokeLook {
@@ -5566,7 +5619,7 @@ fn returning_aura_hosts(
     if aura.expected_zone != Zone::Graveyard
         || !crate::card_def::CARD_DEFS[state.objects.get(aura.object).card_def as usize]
             .attachment
-            .is_some_and(crate::card_def::AttachmentDef::is_creature_aura)
+            .is_some()
     {
         return Err("returning Aura is not a creature Aura in its graveyard".to_string());
     }
@@ -5575,7 +5628,14 @@ fn returning_aura_hosts(
         .iter()
         .filter_map(|(object, live)| {
             (live.zone == Zone::Battlefield
-                && crate::engine::object_has_type(state, object, CardType::Creature)
+                && crate::engine::object_has_type(
+                    state,
+                    object,
+                    crate::card_def::CARD_DEFS[state.objects.get(aura.object).card_def as usize]
+                        .attachment
+                        .unwrap()
+                        .enchanted_type(),
+                )
                 && !(crate::engine::object_is_monocolored(state, aura.object)
                     && crate::engine::has_effective_keyword(
                         state,
@@ -6349,6 +6409,8 @@ fn validate_answered_choice_guard(
                     EffectFrame::WardPayment { .. }
                         | EffectFrame::ConvokeLook { .. }
                         | EffectFrame::CopyTarget { .. }
+                        | EffectFrame::Hideaway { .. }
+                        | EffectFrame::ExilePlay { .. }
                         | EffectFrame::OwnerLibraryPlacement { .. }
                         | EffectFrame::ResolveCounterUnlessPaysGeneric { .. }
                         | EffectFrame::ResolveCounterTargetUnlessPaysGeneric { .. }
@@ -6373,6 +6435,8 @@ fn validate_answered_choice_guard(
                     EffectFrame::WardPayment { .. }
                         | EffectFrame::ConvokeLook { .. }
                         | EffectFrame::CopyTarget { .. }
+                        | EffectFrame::Hideaway { .. }
+                        | EffectFrame::ExilePlay { .. }
                 )
             {
                 return Err("Standard selection lost its authenticated answer frame".into());
@@ -7292,6 +7356,27 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         return Err("chosen-permanent candidates changed".to_string());
                     }
                 }
+                EffectTargetSelectionPurpose::Hideaway { choice } => {
+                    standard_exile::validate_hideaway(state, pending, choice)?;
+                    let all = selected
+                        .iter()
+                        .chain(legal)
+                        .filter_map(|c| c.expected_object)
+                        .collect::<Vec<_>>();
+                    validate_exact_binding_permutation(
+                        &choice.prefix,
+                        &all,
+                        "hideaway candidates",
+                    )?;
+                    if *chooser != pending.ctx.controller
+                        || *path != choice.path
+                        || *ordered
+                        || *min_targets != 1
+                        || *max_targets != 1
+                    {
+                        return Err("hideaway choice shape changed".into());
+                    }
+                }
                 EffectTargetSelectionPurpose::CopyTarget { choice } => {
                     standard_copy::validate(state, pending, choice)?;
                     let mut all = selected.clone();
@@ -7957,6 +8042,14 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         || *max_targets != *purpose_max
                         || *min_targets != 0
                         || *ordered
+                            != matches!(
+                                purpose,
+                                EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
+                                    destination:
+                                        LibrarySearchDestinationV1::FirstBattlefieldTappedRestHand,
+                                    ..
+                                }
+                            )
                         || selected.len() >= usize::from(*max_targets)
                     {
                         return Err(
@@ -8334,6 +8427,15 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
             purpose,
             ..
         } => match purpose {
+            EffectBooleanChoicePurpose::ExilePlay { choice } => {
+                standard_exile::validate_play(state, pending, choice, false)?;
+                if *player != pending.ctx.controller
+                    || *path != choice.path
+                    || !standard_exile::can_play(state, *player, choice)
+                {
+                    return Err("exiled play choice changed".into());
+                }
+            }
             EffectBooleanChoicePurpose::WardLife { choice } => {
                 standard_ward::validate_choice(state, pending, choice)?;
                 if *player != choice.payer
@@ -8878,6 +8980,8 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
             EffectFrame::WardPayment { .. }
                 | EffectFrame::ConvokeLook { .. }
                 | EffectFrame::CopyTarget { .. }
+                | EffectFrame::Hideaway { .. }
+                | EffectFrame::ExilePlay { .. }
         ) {
             if continuation.answered_choice_guard.take()
                 != Some(EffectAnsweredChoiceGuard::StandardSelection {
@@ -8889,6 +8993,15 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
         }
         let EffectFrame::Program { op, path } = frame else {
             match frame {
+                EffectFrame::Hideaway { choice, selected } => {
+                    standard_exile::finish_hideaway(state, &continuation, &choice, &selected)?;
+                }
+                EffectFrame::ExilePlay { choice, play } => {
+                    standard_exile::finish_play(state, &mut continuation, &choice, play)?;
+                }
+                EffectFrame::DiscoverRemainder { choice } => {
+                    standard_exile::finish_remainder(state, &continuation, &choice)?;
+                }
                 EffectFrame::CopyTarget { choice, selected } => {
                     if standard_copy::finish(state, &mut continuation, choice, selected)? {
                         state.engine.pending_effect = Some(continuation);
@@ -9917,6 +10030,28 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         .preflight_library_shuffle(player)
                         .map_err(|error| error.to_string())?;
                     match destination {
+                        LibrarySearchDestinationV1::FirstBattlefieldTappedRestHand => {
+                            for (index, binding) in selected.iter().enumerate() {
+                                let event = if index == 0 {
+                                    event::ProposedEvent::zone_change_to_battlefield_tapped(
+                                        binding.object,
+                                    )
+                                } else {
+                                    event::ProposedEvent::zone_change(binding.object, Zone::Hand)
+                                };
+                                event::propose_and_commit(state, event);
+                                if state.objects.get(binding.object).zone == Zone::Hand {
+                                    for observer in [PlayerId::P0, PlayerId::P1] {
+                                        state
+                                            .reveal_hand_card(observer, player, binding.object)
+                                            .map_err(|error| error.to_string())?;
+                                    }
+                                }
+                            }
+                            state
+                                .commit_library_shuffle(player, shuffle_token)
+                                .map_err(|error| error.to_string())?;
+                        }
                         LibrarySearchDestinationV1::Battlefield { tapped } => {
                             for &binding in &selected {
                                 validate_effect_object_binding(state, binding)?;
@@ -10798,6 +10933,24 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
             EffectOp::PlayExiledLand { card } => {
                 crate::engine::resolution_cast_v1::stage(state, continuation, card, None, true)?;
                 return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::Discover { limit } => {
+                if standard_exile::discover(state, &mut continuation, limit, path)? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
+            EffectOp::Hideaway { count } => {
+                if standard_exile::hideaway(state, &mut continuation, count, path)? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
+            EffectOp::PlayHideawayIfThreeDistinctPowers => {
+                if standard_exile::offer_hideaway_play(state, &mut continuation, path)? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
             }
             EffectOp::CopySpellSnapshot { spell } => {
                 let choice = CopyTargetChoice {
@@ -13281,7 +13434,7 @@ fn stage_library_search_to_destination_choice(
             .collect(),
         min_targets: 0,
         max_targets,
-        ordered: false,
+        ordered: destination == LibrarySearchDestinationV1::FirstBattlefieldTappedRestHand,
         purpose: EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
             player,
             filter,
@@ -15156,7 +15309,13 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             let source_is_stack = state.objects.get(ctx.source).zone == Zone::Stack;
             let target_is_creature = ctx.target_incarnation_matches(target_index, state)
                 && state.objects.get(target).zone == Zone::Battlefield
-                && crate::engine::object_has_type(state, target, CardType::Creature);
+                && crate::engine::object_has_type(
+                    state,
+                    target,
+                    crate::card_def::CARD_DEFS[state.objects.get(ctx.source).card_def as usize]
+                        .attachment
+                        .map_or(CardType::Creature, |a| a.enchanted_type()),
+                );
             if !source_is_stack || !target_is_creature {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -15256,7 +15415,10 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         }
         EffectOp::CastExiledWithoutMana { .. }
         | EffectOp::PlayExiledLand { .. }
-        | EffectOp::CopySpellSnapshot { .. } => {
+        | EffectOp::CopySpellSnapshot { .. }
+        | EffectOp::Discover { .. }
+        | EffectOp::Hideaway { .. }
+        | EffectOp::PlayHideawayIfThreeDistinctPowers => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,

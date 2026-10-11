@@ -930,7 +930,16 @@ pub struct ObservationV2 {
     pub known_library_cards: [Vec<KnownLibraryCardV4>; 2],
     /// Acting-observer-only revealed hand identities, indexed by hand owner.
     pub known_hand_cards: [Vec<CardPrivateV1>; 2],
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub known_face_down_cards: Vec<FaceDownCardKnowledgeV1>,
     pub visible_projection_hash: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FaceDownCardKnowledgeV1 {
+    pub object: CardStableRefV1,
+    pub card_db_id: u16,
+    pub card_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1014,6 +1023,8 @@ pub struct ObservationV5 {
     pub own_hand: Vec<CardPrivateV1>,
     pub known_library_cards: [Vec<KnownLibraryCardV4>; 2],
     pub known_hand_cards: [Vec<CardPrivateV1>; 2],
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub known_face_down_cards: Vec<FaceDownCardKnowledgeV1>,
     pub visible_projection_hash: u64,
 }
 
@@ -1844,6 +1855,7 @@ fn build_observation_v2(
         own_hand,
         known_library_cards: known_library_cards_v4(state, acting_player, text_mode)?,
         known_hand_cards: known_hand_cards_v4(state, acting_player, text_mode)?,
+        known_face_down_cards: known_face_down_cards_v1(state, acting_player, text_mode)?,
         visible_projection_hash: 0,
     })
 }
@@ -1970,6 +1982,7 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
         known_hand_cards: base.known_hand_cards,
+        known_face_down_cards: base.known_face_down_cards,
         visible_projection_hash: 0,
     })
 }
@@ -2187,6 +2200,7 @@ fn build_policy_observation_v6(request: PolicyObservationBuildV5<'_>) -> Result<
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
         known_hand_cards: base.known_hand_cards,
+        known_face_down_cards: base.known_face_down_cards,
         extensions,
         visible_projection_hash: 0,
     })
@@ -5294,6 +5308,60 @@ fn player_status_v1(player: &crate::state::PlayerState) -> PlayerStatusV1 {
     }
 }
 
+pub(crate) fn projected_card_def(state: &GameState, id: ObjectId, generation: u32) -> u16 {
+    let object = state.objects.get(id);
+    if object.zone_change_count == generation {
+        if let Some(face) = object.v4.face_down_v1 {
+            return crate::card_def::card_id_by_name(if face.disguised {
+                "Face-down creature"
+            } else {
+                "Face-down card"
+            })
+            .expect("face-down sentinel registered");
+        }
+    }
+    object.card_def
+}
+pub(crate) fn actor_card_def(
+    state: &GameState,
+    object: crate::ids::ObjectId,
+    observer: PlayerId,
+) -> u16 {
+    let live = state.objects.get(object);
+    if live
+        .v4
+        .face_down_v1
+        .is_some_and(|face| face.lookers & (1u8 << observer.index()) != 0)
+    {
+        live.card_def
+    } else {
+        projected_card_def(state, object, live.zone_change_count)
+    }
+}
+fn known_face_down_cards_v1(
+    state: &GameState,
+    observer: PlayerId,
+    text_mode: ObservationTextModeV2,
+) -> Result<Vec<FaceDownCardKnowledgeV1>> {
+    state
+        .objects
+        .iter()
+        .filter(|(_, object)| {
+            object
+                .v4
+                .face_down_v1
+                .is_some_and(|face| face.lookers & (1 << observer.index()) != 0)
+        })
+        .map(|(id, object)| {
+            Ok(FaceDownCardKnowledgeV1 {
+                object: card_ref(state, id)?,
+                card_db_id: object.card_def,
+                card_name: text_mode.card_name(object.card_def),
+            })
+        })
+        .collect()
+}
+
 fn card_ref(state: &GameState, id: ObjectId) -> Result<CardStableRefV1> {
     let object = state
         .objects
@@ -5301,7 +5369,7 @@ fn card_ref(state: &GameState, id: ObjectId) -> Result<CardStableRefV1> {
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
     Ok(CardStableRefV1 {
         arena_id: id.0,
-        card_db_id: object.card_def,
+        card_db_id: projected_card_def(state, id, object.zone_change_count),
         owner: object.owner.into(),
         controller: object.controller.into(),
         zone: object.zone,
@@ -5534,7 +5602,9 @@ fn public_card(state: &GameState, id: ObjectId) -> Result<CardPublicV1> {
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
     Ok(CardPublicV1 {
         stable: card_ref(state, id)?,
-        card_name: if crate::continuous_characteristics_v1::creature_override(state, id).is_some() {
+        card_name: if object.v4.face_down_v1.is_some() {
+            card_name(projected_card_def(state, id, object.zone_change_count))
+        } else if crate::continuous_characteristics_v1::creature_override(state, id).is_some() {
             engine::effective_name(state, id).to_string()
         } else {
             card_name(object.card_def)
@@ -5570,7 +5640,9 @@ fn public_card_v2(
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
     Ok(CardPublicV2 {
         stable: card_ref(state, id)?,
-        card_name: if matches!(text_mode, ObservationTextModeV2::FullArtifact)
+        card_name: if object.v4.face_down_v1.is_some() {
+            text_mode.card_name(projected_card_def(state, id, object.zone_change_count))
+        } else if matches!(text_mode, ObservationTextModeV2::FullArtifact)
             && (object.v4.face_index == 1
                 || crate::continuous_characteristics_v1::creature_override(state, id).is_some())
         {
@@ -5759,9 +5831,11 @@ fn card_characteristics_v2(state: &GameState, id: ObjectId) -> CardCharacteristi
                 id,
                 Keywords::PROTECTION_FROM_MONOCOLORED,
             ),
-            ward_generic: if crate::continuous_characteristics_v1::printed_abilities_active(
-                state, id,
-            ) {
+            ward_generic: if object.v4.face_down_v1.is_some_and(|face| face.disguised)
+                && crate::continuous_characteristics_v1::removal_timestamp(state, id).is_none()
+            {
+                2
+            } else if crate::continuous_characteristics_v1::printed_abilities_active(state, id) {
                 object.v4.ward_generic
             } else {
                 0
@@ -6737,6 +6811,7 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::ScryLibrary { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryOne { .. }
                             | crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::Hideaway { .. }
                             | crate::effect::EffectTargetSelectionPurpose::WardCards { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand {
@@ -6773,6 +6848,7 @@ fn pending_effect_semantic_v4(
                     let redact_search_shape = matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::Hideaway { .. }
                             | crate::effect::EffectTargetSelectionPurpose::WardCards { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
@@ -6890,6 +6966,7 @@ fn pending_effect_semantic_v4(
                             },
                             crate::effect::EffectTargetSelectionPurpose::CopyTarget { .. }
                             | crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::Hideaway { .. }
                             | crate::effect::EffectTargetSelectionPurpose::WardCards { .. }
                             | crate::effect::EffectTargetSelectionPurpose::ExileOneFromGraveyard {
                                 ..
@@ -6958,7 +7035,8 @@ fn pending_effect_semantic_v4(
                         | crate::effect::EffectBooleanChoicePurpose::PayExileFromGraveyardThen {
                             ..
                         } => BooleanChoicePurposeV4::PayCost,
-                        crate::effect::EffectBooleanChoicePurpose::SearchLibraryToBattlefieldTapped {
+                        crate::effect::EffectBooleanChoicePurpose::ExilePlay { .. }
+                        | crate::effect::EffectBooleanChoicePurpose::SearchLibraryToBattlefieldTapped {
                             ..
                         }
                         | crate::effect::EffectBooleanChoicePurpose::LookAtTopMayRevealThen {
@@ -7449,7 +7527,7 @@ fn stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRef
     }
     Ok(CardStableRefV1 {
         arena_id: item.source.0,
-        card_db_id: card_def,
+        card_db_id: projected_card_def(state, item.source, zone_change_count),
         owner: owner.into(),
         controller: controller.into(),
         zone,
@@ -7507,7 +7585,7 @@ fn stack_target_refs(state: &GameState, item: &StackItem) -> Result<Vec<TargetRe
                     TargetRefV1::Object {
                         object: CardStableRefV1 {
                             arena_id: object.0,
-                            card_db_id: card_def,
+                            card_db_id: projected_card_def(state, object, zone_change_count),
                             owner: owner.into(),
                             controller: controller.into(),
                             zone,
@@ -7572,6 +7650,8 @@ fn visible_projection_hash_v2(observation: &ObservationV2) -> Result<u64> {
         own_hand: &'a [CardPrivateV1],
         known_library_cards: &'a [Vec<KnownLibraryCardV4>; 2],
         known_hand_cards: &'a [Vec<CardPrivateV1>; 2],
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        known_face_down_cards: &'a Vec<FaceDownCardKnowledgeV1>,
     }
 
     stable_hash_json(&ObservationHashInput {
@@ -7585,6 +7665,7 @@ fn visible_projection_hash_v2(observation: &ObservationV2) -> Result<u64> {
         own_hand: &observation.own_hand,
         known_library_cards: &observation.known_library_cards,
         known_hand_cards: &observation.known_hand_cards,
+        known_face_down_cards: &observation.known_face_down_cards,
     })
 }
 
@@ -7608,6 +7689,8 @@ fn visible_projection_hash_v5(observation: &ObservationV5) -> Result<u64> {
         own_hand: &'a [CardPrivateV1],
         known_library_cards: &'a [Vec<KnownLibraryCardV4>; 2],
         known_hand_cards: &'a [Vec<CardPrivateV1>; 2],
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        known_face_down_cards: &'a Vec<FaceDownCardKnowledgeV1>,
     }
 
     stable_hash_json(&ObservationHashInput {
@@ -7625,6 +7708,7 @@ fn visible_projection_hash_v5(observation: &ObservationV5) -> Result<u64> {
         own_hand: &observation.own_hand,
         known_library_cards: &observation.known_library_cards,
         known_hand_cards: &observation.known_hand_cards,
+        known_face_down_cards: &observation.known_face_down_cards,
     })
 }
 

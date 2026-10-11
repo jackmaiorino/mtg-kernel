@@ -225,7 +225,10 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. } => {
             effect_g::effect_op(op, env, out)
         }
-        EffectOp::CopySpellSnapshot { .. }
+        EffectOp::Discover { .. }
+        | EffectOp::Hideaway { .. }
+        | EffectOp::PlayHideawayIfThreeDistinctPowers
+        | EffectOp::CopySpellSnapshot { .. }
         | EffectOp::IncreaseSpeed { .. }
         | EffectOp::CounterUnlessCollectsEvidence { .. }
         | EffectOp::CounterUnlessPaysLife { .. }

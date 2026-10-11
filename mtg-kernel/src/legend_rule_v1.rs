@@ -129,14 +129,16 @@ fn prepare(state: &GameState, waiting: &[PendingTrigger]) -> PreparedPassV1 {
                 object.v4.deathtouch_damage,
                 engine::has_effective_keyword(state, id, Keywords::INDESTRUCTIBLE),
             );
-        let invalid_aura = definition
-            .attachment
-            .is_some_and(AttachmentDef::is_creature_aura)
+        let invalid_aura = definition.attachment.is_some()
             && !object.v4.attached_to.is_some_and(|host_link| {
                 state.objects.try_get(host_link.object).is_some_and(|host| {
                     host.zone == Zone::Battlefield
                         && host.zone_change_count == host_link.zone_change_count
-                        && engine::object_has_type(state, host_link.object, CardType::Creature)
+                        && engine::object_has_type(
+                            state,
+                            host_link.object,
+                            definition.attachment.unwrap().enchanted_type(),
+                        )
                         && host.attachments.contains(&id)
                 })
             });

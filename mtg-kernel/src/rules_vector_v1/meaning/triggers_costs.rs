@@ -389,7 +389,7 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
                 AggF::Characteristic,
             );
         }
-        TriggerCondition::TransformsIntoFrontFace => {
+        TriggerCondition::TransformsIntoFrontFace | TriggerCondition::TurnedFaceUp => {
             // The source transforms to face zero. Vocabulary gap: no
             // transform event; the gate is marked conditional.
             out.control(ControlF::Conditional);

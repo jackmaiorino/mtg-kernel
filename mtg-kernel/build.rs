@@ -3083,6 +3083,7 @@ enum AbilityEffectRecipe {
         name: &'static str,
         effect: &'static str,
     },
+    CounterThenPlayHideaway,
     DrawCards(u8),
     PumpSourceUntilEndOfTurn {
         power: i32,
@@ -3399,6 +3400,11 @@ fn special_for(name: &str) -> Special {
         "Bind the Monster" | "Witness Protection" | "Twinblade Blessing" | "Blanchwood Armor" => {
             Special::BindTheMonster
         }
+        "Zoetic Glyph" => program(
+            "ArtifactPermanent",
+            "PutSourceOntoBattlefieldAttachedToTarget(Target0)",
+            "EffectOp::PutSourceOntoBattlefieldAttachedToTarget { target: ObjectRef::Target(0) }",
+        ),
         "Snap" => Special::Snap,
         "Flaring Pain" => Special::DamageCannotBePreventedThisTurn,
         "Prismatic Strands" => Special::PrismaticStrands,
@@ -4475,6 +4481,7 @@ fn controlled_counter_keyword_for(name: &str) -> &'static str {
 /// Out's mana cost.").
 fn alt_cost_for(name: &str) -> &'static str {
     match name {
+        "Flourishing Bloom-Kin" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips:&[], generic:3, x_count:0 })], condition:AltCostCondition::DisguiseFromHand })",
         "Fireblast" => "Some(AltCostDef { components: &[CostComponent::SacrificeLands(2)], condition: AltCostCondition::Always })",
         "Land Grant" => "Some(AltCostDef { components: &[CostComponent::RevealHandIfNoCardsWithType(CardType::Land)], condition: AltCostCondition::Always })",
         "Snuff Out" => "Some(AltCostDef { components: &[CostComponent::PayLife(4)], condition: AltCostCondition::ControlsPermanentWithSubtype(Subtype::Swamp) })",
@@ -4760,6 +4767,21 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_zone: "Battlefield",
             sorcery_speed_only: false,
             target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Collector's Cage" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 1,
+                },
+                AbilityCostRecipe::Tap,
+            ],
+            effect: AbilityEffectRecipe::CounterThenPlayHideaway,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "ControlledCreature",
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
@@ -5795,6 +5817,7 @@ fn permanent_filter_token(filter: PermanentFilterRecipe) -> &'static str {
 fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
     match effect {
         AbilityEffectRecipe::Program { name, effect } => format!("program:{name}:{effect}"),
+        AbilityEffectRecipe::CounterThenPlayHideaway => "counter_then_play_hideaway_if_three_distinct_powers".to_string(),
         AbilityEffectRecipe::PumpSourceUntilEndOfTurn { power, toughness } => format!("pump_source_until_end_of_turn:{power}:{toughness}:exact_incarnation"),
         AbilityEffectRecipe::GrantTargetKeywordUntilEndOfTurn(keyword) => format!("grant_target_keyword_until_end_of_turn:{keyword}:exact_incarnation"),
         AbilityEffectRecipe::DrawCards(count) => format!("draw_cards:{count}"),
@@ -5948,6 +5971,9 @@ fn library_search_filter_src(filter: LibrarySearchFilterRecipe) -> String {
 fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
     match effect {
         AbilityEffectRecipe::Program { name, .. } => format!("ability_effect_{name}"),
+        AbilityEffectRecipe::CounterThenPlayHideaway => {
+            "ability_effect_counter_then_play_hideaway".to_string()
+        }
         AbilityEffectRecipe::PumpSourceUntilEndOfTurn { power, toughness } => {
             format!("ability_effect_pump_source_{power}_{toughness}")
         }
@@ -6503,6 +6529,7 @@ fn attachment_for(name: &str) -> &'static str {
         "Witness Protection" => "Some(AttachmentDef::AuraCreatureOverride(CreatureCharacteristicsOverrideDef { name: \"Legitimate Businessperson\", subtype: Subtype::Citizen, colors: &[ManaColor::G, ManaColor::W], power: 1, toughness: 1, loses_abilities: true }))",
         "Twinblade Blessing" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 0, toughness: 0, keywords: Keywords::DOUBLE_STRIKE, per_controlled_subtype: None }))",
         "Monster Role Token" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 1, toughness: 1, keywords: Keywords::TRAMPLE, per_controlled_subtype: None }))",
+        "Zoetic Glyph" => "Some(AttachmentDef::AuraArtifactAnimation(AnimationDef { power:5, toughness:4, artifact:false, colors:&[], subtypes:&[Subtype::Golem], keywords:Keywords::NONE }))",
         "Blanchwood Armor" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 1, toughness: 1, keywords: Keywords::NONE, per_controlled_subtype: Some(Subtype::Forest) }))",
         _ => "None",
     }
@@ -7418,6 +7445,9 @@ fn codegen(cards: &[CardJson]) -> String {
                     "    EffectOp::ReturnAbilitySourceFromGraveyard {{ tapped: {tapped} }}"
                 )
                 .unwrap();
+            }
+            AbilityEffectRecipe::CounterThenPlayHideaway => {
+                writeln!(out,"    EffectOp::Sequence(vec![EffectOp::AddCountersToTarget {{target_index:0,optional:false,plus1_plus1:1,lifelink:0,stun:0}},EffectOp::PlayHideawayIfThreeDistinctPowers])").unwrap();
             }
             AbilityEffectRecipe::AddPlusOnePlusOneCounters(count) => {
                 writeln!(out, "    EffectOp::AddCountersToTarget {{ target_index: 0, optional: false, plus1_plus1: {count}, lifelink: 0, stun: 0 }}").unwrap();
