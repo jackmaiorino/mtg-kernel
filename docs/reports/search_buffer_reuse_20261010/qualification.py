@@ -215,9 +215,21 @@ def case(plan, phase, label, variant, workers):
                'started_utc': now(), 'admitted_cores': os.environ['HOST_SLOTS_CORES'], 'complete': False}
     try:
         with (path / 'controller.log').open('x', encoding='utf-8') as log:
-            completed = subprocess.run(command, env=env, stdout=log, stderr=subprocess.STDOUT)
+            child = subprocess.Popen(command, env=env, stdout=log, stderr=subprocess.STDOUT)
+            while True:
+                try:
+                    code = child.wait(timeout=30)
+                    break
+                except subprocess.TimeoutExpired:
+                    try:
+                        storage()
+                    except Exception:
+                        subprocess.run(['taskkill.exe', '/pid', str(child.pid), '/t', '/f'],
+                                       capture_output=True, check=False)
+                        child.wait()
+                        raise
         receipt['whole_queue_elapsed_seconds'] = time.perf_counter() - started
-        require(completed.returncode == 0, 'Queue controller failed')
+        require(code == 0, 'Queue controller failed')
         jobs = json.loads((path / 'out/QUEUE-RESULTS.json').read_text())
         require(len(jobs) == 1 and jobs[0]['exit'] == 0 and jobs[0]['error_rows'] == 0, 'Native case failed')
         require(jobs[0]['rows_by_kind'] == {'s4a_root': len(ROOT_IDS)}, 'Incomplete native output')
