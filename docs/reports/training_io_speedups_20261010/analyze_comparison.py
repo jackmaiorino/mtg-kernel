@@ -536,6 +536,48 @@ def comparison(rows, field):
             "adjacent_paired_speedups": [rows[0][field] / rows[1][field], rows[3][field] / rows[2][field]]}
 
 
+def retry_provenance(reader, plan, state):
+    keys = ("helper", "qualification_plan", "qualification_state", "retry_staging_loader")
+    if not any(key in plan for key in keys[1:]):
+        return None
+    require(all(key in plan for key in keys), "partial sealed retry provenance")
+    refs = {key: plan[key] for key in keys}
+    for ref in refs.values():
+        require(ref in state["sources"], "sealed retry pin absent from execution source graph: " + ref["path"])
+        reader.verify(ref)
+    require(same_path(refs["qualification_plan"]["path"], ROOT / "qualification.plan.json"),
+            "retry must bind original qualification plan")
+    frozen = reader.json(refs["qualification_plan"])
+    index = reader.json(refs["qualification_state"])
+    labels = [f"qual-{variant}-w{workers}" for variant in ("baseline", "candidate") for workers in (1, 2, 4, 8)]
+    require(frozen["stage"] == "qualify" and frozen["helper"] == refs["helper"]
+            and [item["label"] for item in frozen["commands"]] == labels
+            and index["complete"] is True and not index.get("error") and index["plan"] == refs["qualification_plan"]
+            and [item["label"] for item in index["completed"]] == labels, "sealed qualification index binding differs")
+    runner = index["runner_source"]
+    require(runner in state["sources"] and same_path(runner["path"], BASE / "resume_qualifications_retry.py"),
+            "qualification admission runner absent from execution source graph")
+    reader.verify(runner)
+    implementation = next((ref for ref in state["sources"] if same_path(ref["path"], ROOT / "run_comparison_retry.py")), None)
+    require(implementation is not None, "retry coordinator implementation pin absent")
+    reader.verify(implementation)
+    for item, command in zip(index["completed"], frozen["commands"]):
+        for ref in (item["controller"], item["report"], command["request"]):
+            require(ref in state["sources"], "qualification child pin absent from execution source graph")
+        controller, report, request = reader.json(item["controller"]), reader.json(item["report"]), reader.json(command["request"])
+        require(controller["complete"] is True and controller["request"] == command["request"]
+                and controller["report"] == item["report"] and report["request"] == command["request"],
+                "qualification receipt index binding differs: " + item["label"])
+        for ref in (request["config"], request["runtime"]):
+            require(ref in state["sources"], "qualification input pin absent from execution source graph")
+            reader.verify(ref)
+        runtime = reader.json(request["runtime"])
+        require(runtime["binary"] in state["sources"], "qualification binary pin absent from execution source graph")
+        reader.verify(runtime["binary"])
+    return {**refs, "coordinator_implementation": implementation, "admission_runner": runner,
+            "scope": "All retry refs and nested qualification receipts/inputs verified against sealed pins and execution source graph. Original coordinator/helper bytes preserved; advisory admission remains outside case timing."}
+
+
 def analyze(state_path):
     reader = Reader()
     state_pin = pin(state_path)
@@ -551,6 +593,7 @@ def analyze(state_path):
             "sealed variants differ from ioABBA order")
     for ref in state["sources"]:
         reader.verify(ref)
+    retry_refs = retry_provenance(reader, plan, state)
     reader.verify(plan["python_pin"])
     require(pin(sys.executable)["sha256"] == plan["python_pin"]["sha256"], "pinned comparison Python required for analysis")
     devices_ref = next(ref for ref in state["sources"] if same_path(ref["path"], BASE / "helpers/desktop_devices.py"))
@@ -593,6 +636,7 @@ def analyze(state_path):
               "fingerprint_sha256": hashlib.sha256(json.dumps(fingerprints[0], sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
               "full_fingerprint_parity": True, "exposure_and_embedding_gate_parity": True,
               "recovered_output_parity": recovered_output_parity, "physical_reconciliation": reconciliation,
+              "retry_provenance": retry_refs,
               "comparisons": {field: comparison(rows, field) for field in FIELDS},
               "coordinator": {"started_utc": state["started_utc"], "finished_utc": state["finished_utc"],
                               "elapsed_seconds": elapsed, "raw_case_wall_sum_seconds": raw_sum,
@@ -643,6 +687,9 @@ def publish(result, devices, out, recovery_out):
     for name, row in result["comparisons"].items():
         lines.append(f"| {name} | {row['baseline_mean_seconds']:.3f} | {row['candidate_mean_seconds']:.3f} | {row['speedup_ratio_of_means']:.6f} | " + ", ".join(f"{x:.6f}" for x in row["adjacent_paired_speedups"]) + " |")
     lines += ["", result["accounting"], "", "```json", json.dumps(result["coordinator"], indent=2), "```", ""]
+    if result["retry_provenance"] is not None:
+        lines += ["Retry qualification and coordinator provenance:", "", "```json",
+                  json.dumps(result["retry_provenance"], indent=2), "```", ""]
     lines += [result["recovered_output_parity"]["definition"], "", result["recovered_output_parity"]["coverage_exception"], "",
               "Update timing/placement exclusions by case (all other fields compared):"]
     for row in result["cases"]:
