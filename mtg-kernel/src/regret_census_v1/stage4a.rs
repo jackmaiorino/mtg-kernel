@@ -24,7 +24,9 @@
 mod arms;
 mod bank;
 mod bank_trace;
+mod branch;
 mod diag;
+mod identity;
 mod labels;
 mod play;
 mod refresh;
@@ -61,6 +63,7 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-label-replay"
             | "s4a-bank-trace"
             | "s4a-refresh"
+            | "s4a-branch"
     )
 }
 
@@ -900,6 +903,148 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         prior: world::DeckPrior::new(&cfg.decks),
         limits: parse_limits()?,
     };
+    if cfg.mode == "s4a-branch" {
+        // Roots: BRANCH_ROOTS (JSONL of branch::RootSpec); this process plays
+        // roots [first_game, first_game + games) for arm BRANCH_ARM (B1 or D8).
+        sh.spec.validate()?;
+        let binding = bank::bank_binding(policy, &sh)?;
+        let path = std::env::var("BRANCH_ROOTS").map_err(|_| "BRANCH_ROOTS is required")?;
+        let specs: Vec<branch::RootSpec> = std::fs::read_to_string(&path)
+            .map_err(|e| format!("{path}: {e}"))?
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str(l).map_err(|e| format!("{path}: {e}")))
+            .collect::<Result<_, _>>()?;
+        let retain = match std::env::var("BRANCH_ARM").as_deref() {
+            Ok("B1") => 1,
+            Ok("D8") => 8,
+            _ => return Err("BRANCH_ARM must be B1 or D8".into()),
+        };
+        // Diagnostics (collab LANES/search-identity-audit-plan-20261011):
+        // BRANCH_EVAL=0 skips the frozen evaluation; BRANCH_GROUPS=n dumps
+        // the n largest child groups and BRANCH_CAPTURE_KEYS (hex keys, one
+        // per line) captures raw views, both to BRANCH_DUMP.
+        let opts = branch::RunOpts {
+            evaluate: std::env::var("BRANCH_EVAL").as_deref() != Ok("0"),
+            groups: std::env::var("BRANCH_GROUPS")
+                .ok()
+                .map(|v| v.parse().map_err(|_| "BRANCH_GROUPS must be a count"))
+                .transpose()?
+                .unwrap_or(0),
+            capture_keys: match std::env::var("BRANCH_CAPTURE_KEYS") {
+                Err(_) => Vec::new(),
+                Ok(path) => std::fs::read_to_string(&path)
+                    .map_err(|e| format!("{path}: {e}"))?
+                    .lines()
+                    .filter(|l| !l.trim().is_empty())
+                    .map(|l| {
+                        let l = l.trim();
+                        let mut k = [0u8; 32];
+                        if l.len() != 64 {
+                            return Err(format!("bad key {l}"));
+                        }
+                        for (i, b) in k.iter_mut().enumerate() {
+                            *b = u8::from_str_radix(&l[2 * i..2 * i + 2], 16)
+                                .map_err(|_| format!("bad key {l}"))?;
+                        }
+                        Ok(k)
+                    })
+                    .collect::<Result<_, String>>()?,
+            },
+            ..branch::RunOpts::default()
+        };
+        // BRANCH_PROBE: lines "KEY_A KEY_B SIM_A" (captured siblings and A's
+        // creating simulation, whose opponent decisions keep private
+        // snapshots for the paired engine probe).
+        let mut opts = opts;
+        opts.capture_up_to = match std::env::var("BRANCH_CAPTURE_UP_TO") {
+            Ok(v) => v
+                .parse()
+                .map_err(|_| "BRANCH_CAPTURE_UP_TO must be a depth")?,
+            Err(_) => 0,
+        };
+        if let Ok(path) = std::env::var("BRANCH_PROBE") {
+            let parse_key = |l: &str| -> Result<[u8; 32], String> {
+                let mut k = [0u8; 32];
+                if l.len() != 64 {
+                    return Err(format!("bad key {l}"));
+                }
+                for (i, b) in k.iter_mut().enumerate() {
+                    *b = u8::from_str_radix(&l[2 * i..2 * i + 2], 16)
+                        .map_err(|_| format!("bad key {l}"))?;
+                }
+                Ok(k)
+            };
+            for line in std::fs::read_to_string(&path)
+                .map_err(|e| format!("{path}: {e}"))?
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+            {
+                let f: Vec<&str> = line.split_whitespace().collect();
+                let [ka, kb, sim] = f[..] else {
+                    return Err(format!("{path}: bad line {line}"));
+                };
+                opts.probe_pairs.push((parse_key(ka)?, parse_key(kb)?));
+                opts.snapshot_sims
+                    .push(sim.parse().map_err(|_| format!("bad sim {sim}"))?);
+            }
+        }
+        let dump_path = std::env::var("BRANCH_DUMP").ok();
+        if (opts.groups > 0 || !opts.capture_keys.is_empty() || opts.capture_up_to > 0)
+            && dump_path.is_none()
+        {
+            return Err("BRANCH_DUMP is required with BRANCH_GROUPS or BRANCH_CAPTURE_KEYS".into());
+        }
+        let first = cfg.first_game as usize;
+        let end = (first + cfg.games as usize).min(specs.len());
+        let (mut out, mut dump) = (String::new(), String::new());
+        let mut probe_budget = identity::Budget {
+            pairs: branch::PROBE_PAIRS,
+            transitions: branch::PROBE_TRANSITIONS,
+        };
+        for spec in &specs[first..end] {
+            let r = std::thread::scope(|scope| {
+                std::thread::Builder::new()
+                    .stack_size(256 << 20)
+                    .spawn_scoped(scope, || {
+                        branch::root_arm(
+                            &sh,
+                            policy,
+                            spec,
+                            retain,
+                            &binding,
+                            &opts,
+                            &mut probe_budget,
+                        )
+                    })
+                    .map_err(|e| e.to_string())?
+                    .join()
+                    .map_err(|_| "branch worker panicked".to_owned())?
+            });
+            let row = match r {
+                Ok((row, lines)) => {
+                    for l in lines {
+                        let mut l = l;
+                        l["root_id"] = json!(spec.root_id);
+                        dump.push_str(&format!(
+                            "{l}
+"
+                        ));
+                    }
+                    row
+                }
+                Err(e) => json!({"kind":"error","root_id":spec.root_id,"error":e}),
+            };
+            out.push_str(&format!(
+                "{row}
+"
+            ));
+        }
+        if let Some(p) = dump_path {
+            std::fs::write(&p, dump).map_err(|e| format!("{p}: {e}"))?;
+        }
+        return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
+    }
     if cfg.mode == "s4a-refresh" {
         sh.spec.validate()?;
         let binding = bank::bank_binding(policy, &sh)?;
@@ -1011,7 +1156,9 @@ fn run_bank_parity(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<
 
 pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(), String> {
     match cfg.mode.as_str() {
-        "s4a-bank" | "s4a-bank-trace" | "s4a-refresh" => return run_bank_mode(cfg, policy),
+        "s4a-bank" | "s4a-bank-trace" | "s4a-refresh" | "s4a-branch" => {
+            return run_bank_mode(cfg, policy)
+        }
         "s4a-bank-parity" => return run_bank_parity(cfg, policy),
         "s4a-label-replay" => return replay_labels::run(cfg),
         _ => {}

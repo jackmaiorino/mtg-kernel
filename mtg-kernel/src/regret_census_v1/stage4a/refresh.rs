@@ -228,6 +228,7 @@ impl Searches<'_> {
         self.used += sel.transitions;
         let failed = sel.incomplete || !sel.faults.is_empty();
         self.records.push(json!({"search":k,"step":at_step,"reason":reason,"budget":budget,
+            "root":super::bank::decision_identity(s)?,
             "transitions":sel.transitions,"completed_natural":sel.completed,"attempted":sel.attempted,
             "nonnatural":sel.nonnatural,"incomplete":sel.incomplete,"faults":sel.faults,
             "tree":sel.extra["tree"].clone(),"wall":started.elapsed().as_secs_f64()}));
