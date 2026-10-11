@@ -23,19 +23,15 @@ pub struct PlaneswalkersV1 {
 
 pub fn loyalty(state: &GameState, object: ObjectId) -> Option<u32> {
     let live = state.objects.try_get(object)?;
-    if live.zone != Zone::Battlefield
-        || !engine::object_has_type(state, object, CardType::Planeswalker)
-    {
+    if live.zone != Zone::Battlefield {
         return None;
     }
-    Some(
-        state
-            .planeswalkers_v1
-            .as_ref()
-            .and_then(|state| state.loyalty.get(&object))
-            .filter(|entry| entry.permanent.zone_change_count == live.zone_change_count)
-            .map_or(0, |entry| entry.counters),
-    )
+    state
+        .planeswalkers_v1
+        .as_ref()
+        .and_then(|state| state.loyalty.get(&object))
+        .filter(|entry| entry.permanent.zone_change_count == live.zone_change_count)
+        .map(|entry| entry.counters)
 }
 
 pub(crate) fn after_zone_change(state: &mut GameState, object: ObjectId) {
@@ -113,5 +109,6 @@ pub fn change_loyalty(state: &mut GameState, object: ObjectId, delta: i32) {
 }
 
 pub(crate) fn zero_loyalty(state: &GameState, object: ObjectId) -> bool {
-    loyalty(state, object) == Some(0)
+    engine::object_has_type(state, object, CardType::Planeswalker)
+        && loyalty(state, object).unwrap_or(0) == 0
 }

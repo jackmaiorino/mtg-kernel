@@ -6871,6 +6871,37 @@
       ],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/KnightToken.java",
       "is_token": true
+    },
+    {
+      "name": "Kaito, Bane of Nightmares",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{U}{B}",
+      "mana_value": 4,
+      "colors": [
+        "U",
+        "B"
+      ],
+      "types": [
+        "Planeswalker"
+      ],
+      "subtypes": [
+        "Kaito"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "starting_loyalty": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "mechanics": [
+        "ninjutsu",
+        "loyalty",
+        "emblem"
+      ],
+      "decks": [],
+      "java_file": "Mage.Sets/src/mage/cards/k/KaitoBaneOfNightmares.java"
     }
   ]
 }

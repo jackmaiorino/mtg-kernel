@@ -93,6 +93,10 @@ pub struct StandardStateV1 {
     crew_members: Vec<((ObjectId, u32), Vec<EffectObjectBinding>)>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     last_charge: Vec<(ObjectId, u32, i32)>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ninja_emblems: Option<[u16; 2]>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    ninjutsu_targets: Vec<(crate::ids::StackItemId, crate::state::ObjectLinkV4)>,
 }
 
 /// One Assimilation Aegis copy effect: the Aegis and the creature, per exact
@@ -503,6 +507,8 @@ pub enum StandardOpV1 {
     /// Crew and the Chariot's alternate animation affect only types, not P/T.
     SourceBecomesArtifactCreatureUntilEndOfTurn,
     BankbusterAfterDraw,
+    KaitoEmblem,
+    DrawIfOpponentLostLifeThisTurn,
 }
 
 impl StandardOpV1 {
@@ -639,6 +645,34 @@ fn transform_resolving_source(ctx: &ExecCtx, state: &mut GameState) {
 
 pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        StandardOpV1::KaitoEmblem => {
+            let counts = state
+                .standard_v1
+                .get_or_insert_with(Default::default)
+                .ninja_emblems
+                .get_or_insert([0, 0]);
+            counts[ctx.controller.index()] = counts[ctx.controller.index()].saturating_add(1);
+        }
+        StandardOpV1::DrawIfOpponentLostLifeThisTurn => {
+            if state
+                .standard_v1
+                .as_ref()
+                .and_then(|s| s.life_this_turn)
+                .is_some_and(|(turn, _, lost)| {
+                    turn == state.turn && lost[ctx.controller.opponent().index()] > 0
+                })
+            {
+                crate::effect::execute(
+                    &EffectOp::DrawCards {
+                        player: PlayerRef::Controller,
+                        count: 1,
+                    },
+                    ctx,
+                    state,
+                );
+            }
+        }
+
         StandardOpV1::BankbusterAfterDraw => {
             let Some(contract) = ctx.ability_source_contract else {
                 return;
@@ -2214,7 +2248,14 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i32, i32
         return (0, 0);
     }
     let controller = live.controller;
-    let mut boost = (0, 0);
+    let emblem_boost = if crate::engine::has_effective_subtype(state, object, Subtype::Ninja)
+        || crate::engine::has_effective_subtype(state, object, Subtype::NinjaAllCaps)
+    {
+        i32::from(ninja_emblems(state).map_or(0, |counts| counts[controller.index()]))
+    } else {
+        0
+    };
+    let mut boost = (emblem_boost, emblem_boost);
     let mut artifacts = 0;
     for &id in &state.players[controller.index()].battlefield {
         if crate::engine::object_has_type(state, id, CardType::Artifact) {
@@ -3732,3 +3773,66 @@ const SCHOONER_TRIGGERS: [TriggeredAbilityDef; 1] =
     [trigger(TriggerCondition::Attacks, schooner_explore)];
 const SAWBLADES_TRIGGERS: [TriggeredAbilityDef; 1] =
     [trigger(TriggerCondition::Etb, sawblades_damage)];
+
+pub fn kaito_emblem() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::KaitoEmblem)
+}
+pub fn kaito_surveil_draw() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::Surveil {
+            player: PlayerRef::Controller,
+            count: 2,
+        },
+        EffectOp::StandardV1(StandardOpV1::DrawIfOpponentLostLifeThisTurn),
+    ])
+}
+pub fn kaito_stun() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::TapObject {
+            object: crate::effect::ObjectRef::Target(0),
+        },
+        EffectOp::AddCountersToTarget {
+            target_index: 0,
+            optional: false,
+            plus1_plus1: 0,
+            lifelink: 0,
+            stun: 2,
+        },
+    ])
+}
+pub(crate) fn kaito_is_creature(state: &GameState, id: ObjectId) -> bool {
+    state.objects.try_get(id).is_some_and(|o| {
+        o.zone == Zone::Battlefield
+            && CARD_DEFS[o.card_def as usize].name == "Kaito, Bane of Nightmares"
+            && state.active_player == o.controller
+            && crate::planeswalker_v1::loyalty(state, id).is_some_and(|n| n > 0)
+            && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+    })
+}
+pub(crate) fn ninja_emblems(state: &GameState) -> Option<[u16; 2]> {
+    state.standard_v1.as_ref().and_then(|s| s.ninja_emblems)
+}
+pub(crate) fn record_ninjutsu_target(
+    state: &mut GameState,
+    stack: crate::ids::StackItemId,
+    target: crate::state::ObjectLinkV4,
+) {
+    state
+        .standard_v1
+        .get_or_insert_with(Default::default)
+        .ninjutsu_targets
+        .push((stack, target));
+}
+pub(crate) fn ninjutsu_target(
+    state: &GameState,
+    stack: Option<crate::ids::StackItemId>,
+) -> Option<crate::state::ObjectLinkV4> {
+    let stack = stack?;
+    state
+        .standard_v1
+        .as_ref()?
+        .ninjutsu_targets
+        .iter()
+        .find(|(id, _)| *id == stack)
+        .map(|(_, target)| *target)
+}

@@ -15923,6 +15923,13 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     ctx.source,
                 ));
             }
+            if state.engine.combat.attackers.contains(&ctx.source) {
+                if let Some(target) =
+                    crate::standard_cards_v1::ninjutsu_target(state, ctx.stack_item_id)
+                {
+                    crate::attack_target_v1::inherit_ninjutsu_target(state, ctx.source, target);
+                }
+            }
         }
         EffectOp::ReturnAllGraveyardCreaturesUnderController => {
             let mut events = Vec::new();

@@ -199,3 +199,19 @@ pub(crate) fn remove_from_combat(targets: &mut Option<AttackTargetsV1>, id: Obje
         }
     }
 }
+
+pub(crate) fn inherit_ninjutsu_target(
+    state: &mut GameState,
+    attacker: ObjectId,
+    target: ObjectLinkV4,
+) {
+    let targets = state
+        .engine
+        .combat
+        .attack_targets_v1
+        .get_or_insert_with(Default::default);
+    targets
+        .planeswalker_attacks
+        .retain(|(id, _)| *id != attacker);
+    targets.planeswalker_attacks.push((attacker, target));
+}

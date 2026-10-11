@@ -970,6 +970,8 @@ pub struct PublicObservationProjectionV5 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creatures_attacked_this_turn: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ninja_emblems: Option<[u16; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub restricted_mana: Option<[Vec<PublicRestrictedManaV1>; 2]>,
     #[serde(flatten)]
     pub surface: PublicObservationProjectionV2,
@@ -1956,6 +1958,7 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
         substep_count,
         projection: PublicObservationProjectionV5 {
             poison_counters: public_poison_counters_v1(state),
+            ninja_emblems: crate::standard_cards_v1::ninja_emblems(state),
             creatures_attacked_this_turn: (state.creatures_attacked_this_turn_v1() != 0)
                 .then(|| state.creatures_attacked_this_turn_v1()),
             restricted_mana: public_restricted_mana_v1(state)?,
@@ -2172,6 +2175,7 @@ fn build_policy_observation_v6(request: PolicyObservationBuildV5<'_>) -> Result<
         substep_count,
         projection: PublicObservationProjectionV5 {
             poison_counters: public_poison_counters_v1(state),
+            ninja_emblems: crate::standard_cards_v1::ninja_emblems(state),
             creatures_attacked_this_turn: (state.creatures_attacked_this_turn_v1() != 0)
                 .then(|| state.creatures_attacked_this_turn_v1()),
             restricted_mana: public_restricted_mana_v1(state)?,

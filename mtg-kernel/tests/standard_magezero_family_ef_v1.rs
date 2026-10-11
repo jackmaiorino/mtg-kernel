@@ -13,6 +13,90 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
+#[test]
+fn kaito_changes_type_each_turn_retains_loyalty_and_stacks_emblems() {
+    let mut state = game();
+    let kaito = put(
+        &mut state,
+        P0,
+        "Kaito, Bane of Nightmares",
+        Zone::Battlefield,
+    );
+    assert_eq!(loyalty(&state, kaito), Some(4));
+    assert!(engine::object_has_type(&state, kaito, CardType::Creature));
+    assert!(!engine::object_has_type(
+        &state,
+        kaito,
+        CardType::Planeswalker
+    ));
+    assert_eq!(engine::effective_power(&state, kaito), 3);
+    assert_eq!(engine::effective_toughness(&state, kaito), 4);
+    assert!(engine::has_effective_keyword(
+        &state,
+        kaito,
+        Keywords::HEXPROOF
+    ));
+    act(&mut state, Action::ActivateAbility(kaito, 0));
+    resolve_stack(&mut state);
+    assert_eq!(loyalty(&state, kaito), Some(5));
+    assert_eq!(engine::effective_power(&state, kaito), 4);
+    state.active_player = P1;
+    assert!(!engine::object_has_type(&state, kaito, CardType::Creature));
+    assert!(engine::object_has_type(
+        &state,
+        kaito,
+        CardType::Planeswalker
+    ));
+    assert!(!engine::has_effective_keyword(
+        &state,
+        kaito,
+        Keywords::HEXPROOF
+    ));
+    assert_eq!(loyalty(&state, kaito), Some(5));
+    state.active_player = P0;
+    let ctx = mtg_kernel::effect::ExecCtx::no_targets(kaito, P0);
+    mtg_kernel::effect::execute(
+        &mtg_kernel::standard_cards_v1::kaito_emblem(),
+        &ctx,
+        &mut state,
+    );
+    assert_eq!(engine::effective_power(&state, kaito), 5);
+    let ninja = put(&mut state, P0, "Kaito, Bane of Nightmares", Zone::Hand);
+    assert_ne!(ninja, kaito);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(kaito, Zone::Graveyard),
+    );
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(ninja, Zone::Battlefield),
+    );
+    assert_eq!(
+        engine::effective_power(&state, ninja),
+        5,
+        "emblems survive their source"
+    );
+}
+
+#[test]
+fn kaito_minus_two_taps_and_places_two_stun_counters() {
+    let mut state = game();
+    let kaito = put(
+        &mut state,
+        P0,
+        "Kaito, Bane of Nightmares",
+        Zone::Battlefield,
+    );
+    let target = put(&mut state, P1, "Quirion Beastcaller", Zone::Battlefield);
+    act(&mut state, Action::ActivateAbility(kaito, 2));
+    assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
+    act(&mut state, Action::ChooseTarget(Target::Object(target)));
+    resolve_stack(&mut state);
+    assert_eq!(loyalty(&state, kaito), Some(2));
+    assert!(state.objects.get(target).tapped);
+    assert_eq!(state.objects.get(target).counters.stun, 2);
+}
+
 fn game() -> GameState {
     let island = card_id_by_name("Island").unwrap();
     let mut state = GameState::new_from_libraries(

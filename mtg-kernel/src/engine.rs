@@ -13580,6 +13580,9 @@ fn bestow_host_counter_bonus(state: &GameState, host: ObjectId) -> i32 {
 /// Effective card-type query for one live object face. Nonbattlefield cards
 /// are always front-face objects because every zone change resets the face.
 pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> bool {
+    if crate::standard_cards_v1::kaito_is_creature(state, id) {
+        return card_type == CardType::Creature;
+    }
     #[cfg(feature = "standard-magezero-fixtures")]
     if card_type == CardType::Creature && crate::standard_keywords_v1::not_a_creature(state, id) {
         return false;
@@ -13849,6 +13852,9 @@ pub(crate) fn static_graveyard_threshold_keyword_for(name: &str) -> Option<(u16,
 /// review: not a parallel mechanism) -- there is no combat- or SBA-specific
 /// shortcut anywhere else that reads power/toughness/keywords directly.
 pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> bool {
+    if kw == Keywords::HEXPROOF && crate::standard_cards_v1::kaito_is_creature(state, id) {
+        return true;
+    }
     let obj = state.objects.get(id);
     let def = &card_def::CARD_DEFS[obj.card_def as usize];
     if !def.is_executable() {
@@ -14311,6 +14317,9 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
         .map(|(_, timestamp)| *timestamp)
         .or_else(|| override_effect.map(|(_, timestamp)| timestamp));
     let mut subtype_ids = upgrade.map(|(types, _)| types).unwrap_or_else(|| {
+        if crate::standard_cards_v1::kaito_is_creature(state, id) {
+            return vec![card_def::Subtype::Ninja.stable_id()];
+        }
         override_effect.map_or_else(
             || object.v4.effective_subtype_ids.clone(),
             |(characteristics, _)| vec![characteristics.subtype.stable_id()],
@@ -14602,7 +14611,10 @@ pub(crate) fn put_ninjutsu_source_onto_battlefield_attacking(
     let definition = card_def::CARD_DEFS
         .get(object.card_def as usize)
         .ok_or("ninjutsu source definition is missing")?;
-    if object.owner != controller || !definition.has_type(CardType::Creature) {
+    if object.owner != controller
+        || (!definition.has_type(CardType::Creature)
+            && definition.name != "Kaito, Bane of Nightmares")
+    {
         return Err("ninjutsu source definition or owner changed".to_string());
     }
     // Mage's NinjutsuEffect returns without moving a source that left the
@@ -18039,6 +18051,13 @@ fn finalize_activation(state: &mut GameState) {
             return;
         }
     };
+    let ninjutsu_target = has_unblocked_attacker_return_cost(ability.cost)
+        .then(|| {
+            object_cost_ids
+                .first()
+                .and_then(|id| crate::attack_target_v1::attacked_planeswalker(state, *id))
+        })
+        .flatten();
     let paid = pay_cost_components_with_x(
         state,
         pending.controller,
@@ -18067,6 +18086,11 @@ fn finalize_activation(state: &mut GameState) {
         return;
     }
     push_paid_activation(state, pending, discarded);
+    if let Some(target) = ninjutsu_target {
+        if let Some(item) = state.stack.last() {
+            crate::standard_cards_v1::record_ninjutsu_target(state, item.v4.stack_item_id, target);
+        }
+    }
 }
 
 /// Installs an ability whose full cost has just committed. `discarded`

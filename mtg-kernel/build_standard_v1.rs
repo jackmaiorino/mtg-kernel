@@ -311,8 +311,39 @@ const STORMCHASERS_TALENT: [ActivatedAbilityRecipe; 2] = [
     ),
 ];
 
+const KAITO: [ActivatedAbilityRecipe; 4] = [
+    loyalty(
+        &[Loyalty(1)],
+        Program("crate::standard_cards_v1::kaito_emblem"),
+        "None",
+    ),
+    loyalty(
+        &[Loyalty(0)],
+        Program("crate::standard_cards_v1::kaito_surveil_draw"),
+        "None",
+    ),
+    loyalty(
+        &[Loyalty(-2)],
+        Program("crate::standard_cards_v1::kaito_stun"),
+        "Creature",
+    ),
+    ActivatedAbilityRecipe {
+        cost: &[
+            ManaCost("{1}{U}{B}"),
+            AbilityCostRecipe::ReturnControlledUnblockedAttacker,
+        ],
+        effect: AbilityEffectRecipe::PutSourceOntoBattlefieldTappedAndAttacking,
+        activation_zone: "Hand",
+        sorcery_speed_only: false,
+        target_spec: "None",
+        activation_target_filter: "TargetSpecOnly",
+        max_activations_per_turn: None,
+    },
+];
+
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
+        "Kaito, Bane of Nightmares" => &KAITO,
         "Reckoner Bankbuster" => &BANKBUSTER,
         "Subterranean Schooner" => &SCHOONER,
         "Spring-Loaded Sawblades" => &SAWBLADES,

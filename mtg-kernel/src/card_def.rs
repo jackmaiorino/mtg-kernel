@@ -327,6 +327,7 @@ pub enum Subtype {
     Llama,
     /// Enchantment subtype of Role tokens. Not a creature type.
     Role,
+    Kaito,
 }
 
 impl Subtype {

@@ -95,6 +95,9 @@ pub(crate) fn animation(
 pub(crate) fn base_power_toughness(state: &GameState, id: ObjectId) -> Option<(i16, i16)> {
     let object = state.objects.try_get(id)?;
     let mut settings = Vec::new();
+    if crate::standard_cards_v1::kaito_is_creature(state, id) {
+        settings.push((3, 4, object.v4.layer_timestamp.unwrap_or(0)));
+    }
     if let Some((override_, timestamp)) = creature_override(state, id) {
         settings.push((override_.power, override_.toughness, timestamp));
     }

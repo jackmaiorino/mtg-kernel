@@ -1690,6 +1690,7 @@ impl FlatDecisionEncoderV1 {
             .creatures_attacked_this_turn
             .is_some()
             || observation.projection.poison_counters.is_some()
+            || observation.projection.ninja_emblems.is_some()
             || observation.projection.restricted_mana.is_some()
             || observation
                 .projection
