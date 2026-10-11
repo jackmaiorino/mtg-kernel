@@ -23,6 +23,7 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
     const STACK: Option<ZoneF> = Some(ZoneF::Stack);
     const GRAVEYARD: Option<ZoneF> = Some(ZoneF::Graveyard);
     match spec {
+        TargetSpec::StandardV1(filter) => targets::standard_target_origin(filter),
         TargetSpec::None => (None, None),
         TargetSpec::CardInOwnGraveyardWithAnySubtype(_) => (GRAVEYARD, Some(RelF::You)),
         TargetSpec::OpponentArtifactEnchantmentOrNonbasicLand => {

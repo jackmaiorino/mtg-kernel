@@ -41,6 +41,11 @@ fn threshold(out: &mut Collector, player: RelF, zone: ZoneF, obj: ObjF, minimum:
 /// The event a triggered ability waits for, plus any intervening reads.
 pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector) {
     match condition {
+        TriggerCondition::StandardV1(_) => {
+            // Its exact typed payload remains in the source record; these new
+            // histories/Rooms/Cases are outside the frozen facet vocabulary.
+            out.atoms.push(Atom::Opaque);
+        }
         TriggerCondition::Etb => {
             // Any zone change of the source itself to the battlefield.
             out.trigger(TrigF::SelfEnters);
@@ -517,6 +522,13 @@ fn move_self_cost(out: &mut Collector, from: ZoneF, to: ZoneF) {
 /// One component of an activation, flashback or additional cost.
 pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
     match component {
+        CostComponent::Loyalty(_)
+        | CostComponent::ExileCraftArtifactMaterial
+        | CostComponent::RemoveNetCounterFromSelf => {
+            // Distinct loyalty/net counters and the craft zone union are not
+            // ordinary mana, tap or sacrifice costs in the frozen vocabulary.
+            out.atoms.push(Atom::Opaque);
+        }
         CostComponent::Tap => {
             // Taps the source (summoning-sickness rule checked to pay).
             out.cost(CostAtom::Tap);
@@ -572,6 +584,9 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
             out.atoms.push(Atom::Opaque);
         }
         CostComponent::SacrificeControlled { count, filter } => {
+            if filter == PermanentFilter::AnotherArtifact {
+                out.atoms.push(Atom::Opaque);
+            }
             // The component itself restricts candidates to the payer's
             // permanents, so the filter's relation adds nothing.
             let (obj, relation) = reads::permanent_filter(filter);

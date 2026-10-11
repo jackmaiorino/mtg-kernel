@@ -5239,10 +5239,6 @@ fn validate_cost_component_choices_v1(
         return None;
     }
 
-    // Derive the sole mana plan before applying any state-changing component.
-    // This keeps a restored or forward-generated unaffordable shape from
-    // partially paying life/discard-adjacent components before failing.
-    let mana_cost = activation_mana_payment(components, player, source, state);
     let mut reserved = Vec::new();
     if components
         .iter()
@@ -5282,9 +5278,8 @@ fn pay_cost_components_spending_mana(
     // Derive the sole mana plan before applying any state-changing component.
     // This keeps a restored or forward-generated unaffordable shape from
     // partially paying life/discard-adjacent components before failing.
-    let mana_cost = activation_mana_cost(components);
+    let mana_cost = activation_mana_payment(components, player, source, state);
     let mana_plan = mana_cost.map(|cost| {
-        let cost = &reduced_activation_mana_cost(cost, components, player, source, state);
         if reserved.is_empty() {
             mana::can_pay(&cost, x_value, player, state)
         } else {
@@ -7474,6 +7469,7 @@ fn rich_mana_ability_is_payable(
     state: &GameState,
 ) -> bool {
     let object = state.objects.get(source);
+    let def = &card_def::CARD_DEFS[object.card_def as usize];
     if rich.max_activations_per_turn.is_some_and(|limit| {
         mana_ability_use_count(state, source, ability_index) >= u16::from(limit)
     }) {
@@ -15853,9 +15849,14 @@ fn finish_optional_trigger_targets(state: &mut GameState) -> Result<(), String> 
     let TargetingProducer::Trigger(pending) = exact_targeting_producer(state)? else {
         return Err("no triggered ability is choosing targets".to_string());
     };
-    if pending.targets.len() < usize::from(target_min_count(pending.target_spec)) {
-        return Err("the triggered ability has not chosen its minimum targets".to_string());
+    validate_pending_trigger(state, &pending)?;
+    if target_min_count(pending.target_spec) >= target_count(pending.target_spec)
+        || !target_cardinality_is_complete(pending.target_spec, pending.targets.len())
+        || pending_trigger_modes(state, &pending).is_some()
+    {
+        return Err("the pending trigger target selection cannot finish".to_string());
     }
+    validate_pending_trigger_for_stack(state, &pending)?;
     // As when a trigger's targets complete in `drain_pending_triggers_or_decide`: a
     // trigger that cannot go on the stack halts rather than leaving `step`
     // to fail after the pending trigger was removed.
@@ -16055,27 +16056,6 @@ fn apply_choose_optional_activation_target(
     live.targets_chosen.push(target);
     live.target_contracts.push(contract);
     Ok(())
-}
-
-/// Puts the first pending triggered ability on the stack with fewer than
-/// its maximum number of "up to" targets (Assimilation Aegis).
-fn finish_optional_trigger_targets(state: &mut GameState) -> Result<(), String> {
-    let pending = state
-        .engine
-        .pending_triggers
-        .first()
-        .cloned()
-        .ok_or("no triggered ability is selecting optional targets")?;
-    validate_pending_trigger(state, &pending)?;
-    if target_min_count(pending.target_spec) >= target_count(pending.target_spec)
-        || !target_cardinality_is_complete(pending.target_spec, pending.targets.len())
-        || pending_trigger_modes(state, &pending).is_some()
-    {
-        return Err("the pending trigger target selection cannot finish".to_string());
-    }
-    validate_pending_trigger_for_stack(state, &pending)?;
-    let pending = state.engine.pending_triggers.remove(0);
-    push_trigger_onto_stack(state, pending)
 }
 
 fn finish_optional_activation_targets(state: &mut GameState) -> Result<(), String> {
@@ -19288,6 +19268,7 @@ mod tests {
             PlayerId::P0,
             PermanentFilter::Creature,
             false,
+            source,
             &state,
             &[],
         );
@@ -19305,6 +19286,7 @@ mod tests {
             PlayerId::P0,
             PermanentFilter::Creature,
             false,
+            source,
             &state,
             &[],
         );

@@ -17,6 +17,7 @@ use super::*;
 /// Legality facts of a target specification.
 pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
     match spec {
+        TargetSpec::StandardV1(filter) => standard_target_spec(filter, out),
         // Target count 0: nothing is announced.
         TargetSpec::None => {}
         TargetSpec::UpToOneOtherControlledPermanent => {
@@ -36,12 +37,13 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
             out.target(TargetAtom::UpTo);
             out.atoms.push(Atom::Opaque);
         }
-        // Both players, plus every creature on either battlefield (creatures
-        // only: planeswalkers are not in the engine's "any target" pool).
+        // Both players and creatures, plus planeswalkers in Standard.
         TargetSpec::AnyTarget => {
             out.target(TargetAtom::PlayerYou);
             out.target(TargetAtom::PlayerOpponent);
             object(out, creature(), None, ZoneF::Battlefield);
+            #[cfg(feature = "standard-magezero-fixtures")]
+            object(out, typed(CardType::Planeswalker), None, ZoneF::Battlefield);
         }
         // Either player; never an object.
         TargetSpec::AnyPlayer => {
@@ -395,6 +397,7 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
         | TargetSpec::StackAbility
         | TargetSpec::AnotherCreatureOrPlaneswalker => ObjF::AnyCard,
         TargetSpec::LegendaryCreature => creature(),
+        TargetSpec::StandardV1(filter) => standard_target_obj(filter),
         // No targets are chosen, so the engine's `resolve_object` would
         // panic on any `Target(slot)`; no well-formed program refers to one.
         // The unfiltered class keeps the extractor total.
@@ -596,6 +599,86 @@ fn mana_value_bucket(maximum: u16) -> u8 {
         | AmtF::Half
         | AmtF::Minus(_) => {
             unreachable!("AmtF::fixed returns Fixed for a non-negative count")
+        }
+    }
+}
+
+/// Exact target domains; keep new Standard payloads in the source record and
+/// explicitly mark refinements unavailable in the frozen facet vocabulary.
+fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> ObjF {
+    use crate::standard_cards_v1::StandardTargetV1 as S;
+    match filter {
+        S::OpponentNonlandPermanentManaValueAtMost(_)
+        | S::OpponentNonlandPermanent
+        | S::AnotherNonlandPermanent => ObjF::NonlandPermanent,
+        S::OpponentArtifactOrCreature => ObjF::Permanent,
+        S::ControlledArtifact => typed(CardType::Artifact),
+        S::InstantOrSorceryCardInOwnGraveyard | S::CardInAGraveyard => ObjF::AnyCard,
+        S::AnotherNonlegendaryControlledCreature | S::UpToOneCreature => creature(),
+        S::UpToTwoAnyTargets => ObjF::PlayerOrPermanent,
+    }
+}
+
+pub(super) fn standard_target_origin(
+    filter: crate::standard_cards_v1::StandardTargetV1,
+) -> (Option<ZoneF>, Option<RelF>) {
+    use crate::standard_cards_v1::StandardTargetV1 as S;
+    match filter {
+        S::InstantOrSorceryCardInOwnGraveyard => (Some(ZoneF::Graveyard), Some(RelF::You)),
+        S::CardInAGraveyard => (Some(ZoneF::Graveyard), None),
+        S::ControlledArtifact | S::AnotherNonlegendaryControlledCreature => {
+            (Some(ZoneF::Battlefield), Some(RelF::You))
+        }
+        S::OpponentNonlandPermanentManaValueAtMost(_)
+        | S::OpponentNonlandPermanent
+        | S::OpponentArtifactOrCreature => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
+        S::AnotherNonlandPermanent | S::UpToTwoAnyTargets | S::UpToOneCreature => {
+            (Some(ZoneF::Battlefield), None)
+        }
+    }
+}
+
+fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out: &mut Collector) {
+    use crate::standard_cards_v1::StandardTargetV1 as S;
+    let (zone, relation) = standard_target_origin(filter);
+    let zone = zone.expect("every Standard object target has a zone");
+    match filter {
+        S::OpponentNonlandPermanentManaValueAtMost(maximum) => {
+            out.target(TargetAtom::Object {
+                obj: ObjF::NonlandPermanent,
+                controller: relation,
+                zone,
+                color: None,
+                mana_value_at_most: Some(mana_value_bucket(u16::from(maximum))),
+                excludes: None,
+            });
+        }
+        S::OpponentNonlandPermanent | S::ControlledArtifact | S::CardInAGraveyard => {
+            object(out, standard_target_obj(filter), relation, zone);
+        }
+        S::OpponentArtifactOrCreature => {
+            object(out, typed(CardType::Artifact), relation, zone);
+            object(out, creature(), relation, zone);
+        }
+        S::InstantOrSorceryCardInOwnGraveyard => {
+            object(out, typed(CardType::Instant), relation, zone);
+            object(out, typed(CardType::Sorcery), relation, zone);
+        }
+        S::AnotherNonlandPermanent | S::AnotherNonlegendaryControlledCreature => {
+            object(out, standard_target_obj(filter), relation, zone);
+            out.atoms.push(Atom::Opaque); // Source exclusion and Legendary refinement.
+        }
+        S::UpToOneCreature => {
+            object(out, creature(), relation, zone);
+            out.target(TargetAtom::UpTo);
+        }
+        S::UpToTwoAnyTargets => {
+            out.target(TargetAtom::PlayerYou);
+            out.target(TargetAtom::PlayerOpponent);
+            object(out, creature(), None, zone);
+            object(out, typed(CardType::Planeswalker), None, zone);
+            out.target(TargetAtom::MultipleTargets);
+            out.target(TargetAtom::UpTo);
         }
     }
 }

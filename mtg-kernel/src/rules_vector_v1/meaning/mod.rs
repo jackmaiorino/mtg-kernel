@@ -84,6 +84,12 @@ pub(crate) fn target_ref(target: TargetRef, env: &Env) -> (Option<RelF>, ObjF) {
 /// Facets of one resolution program. Recurses through nested programs.
 pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
+        EffectOp::StandardV1(_) => {
+            // Preserve the exact serialized payload in the source record.
+            // Do not invent ordinary facets for new histories, counters,
+            // copy/control/type changes or Standard continuation semantics.
+            out.atoms.push(Atom::Opaque);
+        }
         EffectOp::Sequence(..)
         | EffectOp::Conditional { .. }
         | EffectOp::Choice { .. }
