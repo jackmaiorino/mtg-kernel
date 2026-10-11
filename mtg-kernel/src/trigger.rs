@@ -3298,6 +3298,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Monk Token" => &MONASTERY_SWIFTSPEAR_TRIGGERS,
         "Kellan, Planar Trailblazer" => &KELLAN_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
+        "Tishana's Tidebinder" => &standard_family_g_v1::TIDEBINDER_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
         "Brightglass Gearhulk" => &standard_family_g_v1::BRIGHTGLASS_GEARHULK_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Essence Channeler" => &standard_family_g_v1::ESSENCE_CHANNELER_TRIGGERS,
@@ -3430,6 +3432,8 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         "Extraction Specialist" => TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(2),
         #[cfg(feature = "standard-magezero-fixtures")]
         "Floodpits Drowner" => TargetSpec::OpponentControlledCreature,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Tishana's Tidebinder" => TargetSpec::UpToOneStackAbility,
         _ => TargetSpec::None,
     }
 }

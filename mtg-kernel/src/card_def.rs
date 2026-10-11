@@ -980,6 +980,7 @@ pub enum TargetSpec {
     StackObject,
     StackAbility,
     AnotherCreatureOrPlaneswalker,
+    UpToOneStackAbility,
 }
 
 impl TargetSpec {
@@ -1063,6 +1064,7 @@ impl TargetSpec {
             TargetSpec::StackObject => 98,
             TargetSpec::StackAbility => 99,
             TargetSpec::AnotherCreatureOrPlaneswalker => 100,
+            TargetSpec::UpToOneStackAbility => 73,
         }
     }
 }
@@ -2568,6 +2570,7 @@ mod tests {
             (TargetSpec::CounterDistribution, 70),
             (TargetSpec::ControlledNoncreatureArtifactPermanent, 71),
             (TargetSpec::CreatureWithStunCounter, 72),
+            (TargetSpec::UpToOneStackAbility, 73),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);

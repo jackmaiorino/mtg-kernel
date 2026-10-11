@@ -7592,6 +7592,39 @@
       ],
       "name": "Tersa Lightshatter",
       "java_file": "Mage.Sets/src/mage/cards/t/TersaLightshatter.java"
+    },
+    {
+      "name": "Tishana's Tidebinder",
+      "engine_capability": "full",
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Merfolk",
+        "Wizard"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UB.dck",
+        "Standard16-UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "high",
+      "mechanics": [
+        "flash",
+        "etb_counter_ability",
+        "lose_all_abilities"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/TishanasTidebinder.java"
     }
   ]
 }

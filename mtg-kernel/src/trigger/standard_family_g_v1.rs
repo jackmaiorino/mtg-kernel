@@ -485,3 +485,9 @@ fn brightglass_search_effect() -> EffectOp {
 }
 pub(super) const BRIGHTGLASS_GEARHULK_TRIGGERS: [TriggeredAbilityDef; 1] =
     [etb_trigger(brightglass_search_effect)];
+
+fn tidebinder_counter_effect() -> EffectOp {
+    EffectOp::CreatureUpgrade(crate::standard_creatures_v1::CreatureEffectV1::TidebinderCounter)
+}
+pub(super) const TIDEBINDER_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(tidebinder_counter_effect)];

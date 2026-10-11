@@ -199,6 +199,10 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
         }
         // An artifact without the creature type. No negated-type facet
         // exists; the nearest class is "an artifact".
+        TargetSpec::UpToOneStackAbility => {
+            object(out, ObjF::AnyCard, None, ZoneF::Stack);
+            out.target(TargetAtom::UpTo);
+        }
         TargetSpec::CreatureWithStunCounter => object(out, creature(), None, ZoneF::Battlefield),
         TargetSpec::ControlledNoncreatureArtifactPermanent => object(
             out,
@@ -410,6 +414,7 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
             let _ = slot; // Every slot is a player.
             ObjF::Player
         }
+        TargetSpec::UpToOneStackAbility => ObjF::AnyCard,
         TargetSpec::AnySpellOnStack
         | TargetSpec::BlueSpellOnStack
         | TargetSpec::RedSpellOnStack

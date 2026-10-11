@@ -31,6 +31,17 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
         EffectOp::CreatureUpgrade(effect) => {
             use crate::standard_creatures_v1::CreatureEffectV1;
+            if matches!(effect, CreatureEffectV1::TidebinderCounter) {
+                // The frozen vocabulary has CounterSpell but no separate ability-counter atom.
+                out.effect(EffectAtom::new(EvF::CounterSpell).obj(ObjF::AnyCard));
+                out.control(ControlF::Conditional);
+                out.read(
+                    RelF::You,
+                    Some(ZoneF::Battlefield),
+                    Some(ObjF::ThisObject),
+                    AggF::Characteristic,
+                );
+            }
             if matches!(effect, CreatureEffectV1::EssenceTransferCounters) {
                 plain_counter(
                     RelF::You,

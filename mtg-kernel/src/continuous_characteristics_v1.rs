@@ -44,6 +44,9 @@ pub(crate) fn removal_timestamp(state: &GameState, host: ObjectId) -> Option<u64
     creature_override(state, host)
         .filter(|(characteristics, _)| characteristics.loses_abilities)
         .map(|(_, timestamp)| timestamp)
+        .into_iter()
+        .chain(crate::standard_creatures_v1::removal_timestamp(state, host))
+        .max()
 }
 
 pub(crate) fn printed_abilities_active(state: &GameState, source: ObjectId) -> bool {

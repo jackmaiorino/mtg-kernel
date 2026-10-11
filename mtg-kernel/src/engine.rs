@@ -1645,6 +1645,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::UpToOneTappedCreature
         | TargetSpec::ControlledNoncreatureArtifactPermanent
         | TargetSpec::CreatureWithStunCounter
+        | TargetSpec::UpToOneStackAbility
         | TargetSpec::NoncreatureArtifactPermanent
         | TargetSpec::Land
         | TargetSpec::OpponentArtifactOrEnchantmentPermanent
@@ -1696,7 +1697,8 @@ fn target_min_count(spec: TargetSpec) -> u8 {
         | TargetSpec::UpToOneCardInGraveyards
         | TargetSpec::UpToOneOtherControlledPermanent
         | TargetSpec::UpToTwoOtherControlledCreatures
-        | TargetSpec::UpToOneTappedCreature => 0,
+        | TargetSpec::UpToOneTappedCreature
+        | TargetSpec::UpToOneStackAbility => 0,
         TargetSpec::StandardV1(filter) => filter.counts().1,
         _ => target_count(spec),
     }
@@ -3384,6 +3386,9 @@ fn legal_targets_for_controller_from_source(
             .filter(|&id| object_has_type(state, id, CardType::Land))
             .map(Target::Object)
             .collect(),
+        TargetSpec::UpToOneStackAbility => state.stack.iter()
+            .filter(|item| matches!(item.kind, StackItemKind::ActivatedAbility | StackItemKind::TriggeredAbility) && item.v4.stack_item_id != StackItemId::default())
+            .map(|item| Target::StackItem(item.v4.stack_item_id)).collect(),
         TargetSpec::CreatureWithStunCounter => battlefield_objects(state)
             .filter(|&id| {
                 object_has_type(state, id, CardType::Creature)

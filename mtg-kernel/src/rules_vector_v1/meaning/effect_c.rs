@@ -36,7 +36,8 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
         },
         TargetSpec::AnotherCreatureOrPlaneswalker => (BATTLEFIELD, None),
         TargetSpec::StackObject | TargetSpec::StackAbility => (STACK, None),
-        TargetSpec::AnySpellOnStack
+        TargetSpec::UpToOneStackAbility
+        | TargetSpec::AnySpellOnStack
         | TargetSpec::InstantSpellOnStack
         | TargetSpec::BlueSpellOnStack
         | TargetSpec::RedSpellOnStack

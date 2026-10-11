@@ -3317,3 +3317,64 @@ fn brightglass_search_is_optional_and_filters_two_revealed_cheap_permanents() {
     settled(&mut state);
     assert_eq!(state.players[0].library, library);
 }
+
+#[test]
+fn tidebinder_counters_exact_ability_and_suppresses_source_only_while_it_remains() {
+    for leave_before_resolution in [false, true] {
+        let mut state = ready(Step::Main1);
+        let ginger = put(&mut state, PlayerId::P0, "Gingerbrute", Zone::Battlefield);
+        state.players[0].mana_pool = pool(&[], 1);
+        activatable(&mut state);
+        engine::step(&mut state, Action::ActivateAbility(ginger, 0)).unwrap();
+        next(&mut state);
+        let ability = state.stack.last().unwrap().v4.stack_item_id;
+        let tidebinder = cast_creature(&mut state, "Tishana's Tidebinder");
+        assert!(
+            matches!(settle(&mut state), Some(Decision::ChooseTargets { legal_targets, can_finish: true, .. }) if legal_targets.contains(&Target::StackItem(ability)))
+        );
+        engine::step(&mut state, Action::ChooseTarget(Target::StackItem(ability))).unwrap();
+        next(&mut state);
+        if leave_before_resolution {
+            move_to(&mut state, tidebinder, Zone::Hand);
+        }
+        state = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+        settled(&mut state);
+        assert!(!state
+            .stack
+            .iter()
+            .any(|item| item.v4.stack_item_id == ability));
+        assert_eq!(
+            engine::has_effective_keyword(&state, ginger, Keywords::HASTE),
+            leave_before_resolution
+        );
+        assert!(!state
+            .objects
+            .get(ginger)
+            .v4
+            .creature_upgrade
+            .as_ref()
+            .is_some_and(|upgrade| upgrade.haste_blockers_only));
+        if !leave_before_resolution {
+            state.players[0].mana_pool = pool(&[], 1);
+            assert!(!activatable(&mut state).contains(&(ginger, 0)));
+            move_to(&mut state, tidebinder, Zone::Hand);
+            assert!(engine::has_effective_keyword(
+                &state,
+                ginger,
+                Keywords::HASTE
+            ));
+        }
+    }
+}
+
+#[test]
+fn tidebinder_may_target_nothing() {
+    let mut state = ready(Step::Main1);
+    let tidebinder = cast_creature(&mut state, "Tishana's Tidebinder");
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseTargets { legal_targets, can_finish: true, .. }) if legal_targets.is_empty())
+    );
+    engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(tidebinder).zone, Zone::Battlefield);
+}

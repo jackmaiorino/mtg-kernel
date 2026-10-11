@@ -11,6 +11,7 @@ use crate::state::{GameState, Zone};
 #[serde(default)]
 pub struct CreatureUpgradeV1 {
     pub temporary_creature: Option<(i16, i16, u64)>,
+    pub suppressed_by: Vec<TidebinderSuppressionV1>,
     pub graveyard_adventure: Option<GraveyardAdventurePermissionV1>,
     pub haste_blockers_only: bool,
     pub creature_types: Option<(Vec<u16>, u64)>,
@@ -39,6 +40,7 @@ pub enum CreatureEffectV1 {
     FloodpitsTapStun,
     FloodpitsShuffle,
     EssenceTransferCounters,
+    TidebinderCounter,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -177,6 +179,29 @@ fn apply_counter_transfer(
         live.v4.lifelink_counter_timestamp = keyword_timestamp;
     }
     Some(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TidebinderSuppressionV1 {
+    pub source: crate::state::ObjectLinkV4,
+    pub timestamp: u64,
+}
+
+pub(crate) fn removal_timestamp(state: &GameState, target: ObjectId) -> Option<u64> {
+    upgrade(state, target)?
+        .suppressed_by
+        .iter()
+        .filter(|effect| {
+            state
+                .objects
+                .try_get(effect.source.object)
+                .is_some_and(|source| {
+                    source.zone == Zone::Battlefield
+                        && source.zone_change_count == effect.source.zone_change_count
+                })
+        })
+        .map(|effect| effect.timestamp)
+        .max()
 }
 
 fn upgrade(state: &GameState, id: ObjectId) -> Option<&CreatureUpgradeV1> {
@@ -332,6 +357,81 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
 }
 
 pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameState) {
+    if effect == CreatureEffectV1::TidebinderCounter {
+        let Some(crate::state::Target::StackItem(target)) = ctx.targets.first().copied() else {
+            return;
+        };
+        let Some(source) = ctx.ability_source_contract else {
+            return;
+        };
+        if !ctx.target_contracts.first().is_some_and(|&contract| {
+            crate::engine::target_contract_matches_live(state, ctx.targets[0], contract)
+        }) {
+            return;
+        }
+        let Some(ability) = state
+            .stack
+            .iter()
+            .find(|item| item.v4.stack_item_id == target)
+        else {
+            return;
+        };
+        if !matches!(
+            ability.kind,
+            crate::state::StackItemKind::ActivatedAbility
+                | crate::state::StackItemKind::TriggeredAbility
+        ) {
+            return;
+        }
+        let permanent = ability.v4.ability_source_contract;
+        if crate::engine::counter_stack_item_by_id(state, target).is_err() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+            return;
+        }
+        if state
+            .stack
+            .iter()
+            .any(|item| item.v4.stack_item_id == target)
+        {
+            return;
+        }
+        let Some(permanent) = permanent else {
+            return;
+        };
+        if !state.objects.try_get(ctx.source).is_some_and(|live| {
+            live.zone == Zone::Battlefield && live.zone_change_count == source.zone_change_count
+        }) || !state.objects.try_get(permanent.source).is_some_and(|live| {
+            live.zone == Zone::Battlefield && live.zone_change_count == permanent.zone_change_count
+        }) || ![
+            crate::card_def::CardType::Artifact,
+            crate::card_def::CardType::Creature,
+            crate::card_def::CardType::Planeswalker,
+        ]
+        .into_iter()
+        .any(|kind| crate::engine::object_has_type(state, permanent.source, kind))
+        {
+            return;
+        }
+        let timestamp = crate::engine::next_timestamp(state);
+        state
+            .objects
+            .get_mut(permanent.source)
+            .v4
+            .creature_upgrade
+            .get_or_insert_with(Default::default)
+            .suppressed_by
+            .push(TidebinderSuppressionV1 {
+                source: crate::state::ObjectLinkV4 {
+                    object: ctx.source,
+                    zone_change_count: source.zone_change_count,
+                },
+                timestamp,
+            });
+        return;
+    }
     if effect == CreatureEffectV1::EssenceTransferCounters {
         let Some(crate::state::Target::Object(target)) = ctx.targets.first().copied() else {
             return;
@@ -632,6 +732,7 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
         .creature_upgrade
         .get_or_insert_with(Default::default);
     match effect {
+        CreatureEffectV1::TidebinderCounter => unreachable!("counter ability handled above"),
         CreatureEffectV1::EssenceTransferCounters => unreachable!("counter transfer handled above"),
         CreatureEffectV1::FloodpitsTapStun | CreatureEffectV1::FloodpitsShuffle => {
             unreachable!("targeted effect handled above")

@@ -1132,7 +1132,7 @@ pub fn stack_target_contract_is_structurally_valid(
     } = contract
     {
         let allowed = matches!(spec, TargetSpec::StackObject)
-            || (spec == TargetSpec::StackAbility
+            || (matches!(spec, TargetSpec::StackAbility | TargetSpec::UpToOneStackAbility)
                 && matches!(
                     kind,
                     StackItemKind::ActivatedAbility | StackItemKind::TriggeredAbility
