@@ -9,7 +9,7 @@ use mtg_kernel::effect::EffectOp;
 use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::event::{self, CommittedEvent, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
-use mtg_kernel::mana::ManaColor;
+use mtg_kernel::mana::{ManaColor, Pip};
 use mtg_kernel::state::{
     GameObject, GameState, ObjectStateV4, StackTargetContractV4, Step, Target, Zone,
 };
@@ -153,7 +153,7 @@ fn printed_definition_real_cast_and_zero_one_two_optional_targets_both_seats() {
         (Some(4), Some(2), 4)
     );
     assert_eq!(def.cost.generic, 3);
-    assert_eq!(def.cost.pips, &[ManaColor::B]);
+    assert_eq!(def.cost.pips, &[Pip::Colored(ManaColor::B)]);
     assert_eq!(def.subtypes, &[Subtype::Zombie]);
     assert_eq!(TargetSpec::UpToTwoCardsInSingleGraveyard.stable_id(), 66);
     for actor in [PlayerId::P0, PlayerId::P1] {
