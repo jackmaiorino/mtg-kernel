@@ -36,6 +36,9 @@ use crate::state::{
 use crate::surface_v2::{SurfaceAction, SurfaceDecision, H2_PREDICATE_VERSION};
 use crate::KERNEL_VERSION;
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
+#[path = "rl_legacy_hash_v1.rs"]
+mod legacy_hash_v1;
+
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeSet, HashSet};
 use std::fmt;
@@ -198,7 +201,7 @@ impl From<PlayerId> for PlayerSeatV1 {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CountersV1 {
     pub plus1_plus1: i16,
     pub minus1_minus1: i16,
@@ -347,7 +350,7 @@ pub struct GoadPublicV4 {
     pub expires_at_turn: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CardPublicV2 {
     pub stable: CardStableRefV1,
     pub card_name: String,
@@ -419,7 +422,7 @@ impl From<StackItemKind> for StackItemKindV2 {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StackItemPublicV2 {
     pub stack_index: u32,
     pub source: CardStableRefV1,
@@ -708,7 +711,7 @@ pub enum BooleanChoicePurposeV4 {
     PayCost,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "choice_kind", rename_all = "snake_case")]
 pub enum PendingEffectChoiceSemanticV4 {
     Options {
@@ -762,7 +765,7 @@ pub enum PendingTriggerKindV2 {
     MadnessOffer,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingTriggerSemanticV2 {
     pub source: Option<CardStableRefV1>,
     pub controller: PlayerSeatV1,

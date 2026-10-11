@@ -584,6 +584,7 @@ impl Subtype {
         Subtype::Pilot,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Elder,
+        #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Siren,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Praetor,
@@ -2452,6 +2453,32 @@ mod tests {
     use super::*;
     use crate::effect::{EffectCond, ObjectRef, PlayerRef, TargetRef};
     use crate::state::Zone;
+
+    #[test]
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
+    fn creature_type_choice_ids_preserve_pauper_and_foundations_profiles() {
+        // The ordered lists from ddff546a are also the changeling subtype
+        // projection and creature-type choice surface in these profiles.
+        let expected: &[u16] = &[
+            0, 2, 3, 5, 6, 7, 8, 9, 10, 11, 13, 14, 18, 19, 20, 21, 22, 24, 25, 26, 27, 29, 30, 31,
+            32, 33, 35, 36, 37, 38, 39, 41, 42, 43, 44, 45, 46, 48, 49, 50, 51, 52, 53, 54, 55, 56,
+            57, 58, 59, 60, 63, 64, 65, 66, 67, 70, 72, 73,
+        ];
+        let mut expected = expected.to_vec();
+        if cfg!(feature = "limited-fdn-fixtures") {
+            expected.extend_from_slice(&[
+                79, 80, 81, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99,
+                100, 101, 102, 103, 104, 119, 124, 125, 126, 109,
+            ]);
+        }
+        assert_eq!(
+            Subtype::CREATURE_TYPES
+                .iter()
+                .map(|value| value.stable_id())
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
 
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]

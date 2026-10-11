@@ -1731,13 +1731,28 @@ pub struct CreatureDeathTurnV1 {
 /// Each player's speed (Aetherdrift's Start your engines!), indexed by seat.
 /// Zero means the player has no speed. `last_increase` stamps the turn in
 /// which the active player's once-per-turn speed increase last happened.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SpeedV1 {
     pub speeds: [u8; 2],
     pub last_increase: Option<CreatureDeathTurnV1>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "speed_sources_empty")]
     pub sources: [Option<AbilitySourceContractV4>; 2],
+}
+
+fn speed_sources_empty(sources: &[Option<AbilitySourceContractV4>; 2]) -> bool {
+    sources.iter().all(Option::is_none)
+}
+
+impl Hash for SpeedV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.speeds.hash(state);
+        self.last_increase.hash(state);
+        if !speed_sources_empty(&self.sources) {
+            "speed-sources/v1".hash(state);
+            self.sources.hash(state);
+        }
+    }
 }
 
 impl SpeedV1 {
@@ -3264,6 +3279,30 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn absent_speed_source_bindings_preserve_the_legacy_encoding() {
+        #[derive(Hash, Serialize)]
+        struct LegacySpeed {
+            speeds: [u8; 2],
+            last_increase: Option<CreatureDeathTurnV1>,
+        }
+        let previous = LegacySpeed {
+            speeds: [2, 3],
+            last_increase: Some(CreatureDeathTurnV1 {
+                turn: 5,
+                active_player: PlayerId::P1,
+            }),
+        };
+        let wire = serde_json::to_string(&previous).unwrap();
+        let current: SpeedV1 = serde_json::from_str(&wire).unwrap();
+        assert_eq!(serde_json::to_string(&current).unwrap(), wire);
+        let mut old_hash = std::collections::hash_map::DefaultHasher::new();
+        let mut new_hash = std::collections::hash_map::DefaultHasher::new();
+        previous.hash(&mut old_hash);
+        current.hash(&mut new_hash);
+        assert_eq!(old_hash.finish(), new_hash.finish());
+    }
 
     fn two_card_libraries() -> (Vec<u16>, Vec<u16>) {
         (vec![1, 2, 3], vec![4, 5, 6, 7])
