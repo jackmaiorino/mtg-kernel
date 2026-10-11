@@ -5,6 +5,9 @@
 //! safe errors are transport data. The session, bindings, and source V6 input
 //! remain backend-only. No opponent decision is projected to a human.
 
+mod heartfire_history_v1;
+mod heartfire_v12;
+pub use heartfire_history_v1::*;
 mod labels;
 mod life_ward_v8;
 mod ooze_v11;
@@ -12,6 +15,7 @@ mod raid_v9;
 pub mod variable_cast_v1;
 pub use ooze_v11::*;
 mod soul_shackled_zombie_v13;
+pub use heartfire_v12::*;
 mod visible;
 pub use life_ward_v8::*;
 pub use raid_v9::*;

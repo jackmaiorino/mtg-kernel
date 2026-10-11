@@ -145,7 +145,7 @@ fn projected_card_sources(base: &crate::rl::PolicyObservationStorageV6) -> Vec<C
     sources
 }
 
-fn life_ward_card_traits(
+pub(crate) fn life_ward_card_traits(
     state: &GameState,
     sources: impl IntoIterator<Item = CardStableRefV1>,
 ) -> Result<Vec<WardLifeCardTraitV8>> {

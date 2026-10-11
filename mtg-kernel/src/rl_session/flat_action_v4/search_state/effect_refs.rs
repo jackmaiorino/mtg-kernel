@@ -990,6 +990,9 @@ pub(super) fn conflicts(
                 source_contract, ..
             } => s.a(*source_contract),
             LeftBattlefieldCopyV1 { source, .. } => s.raw(source.source),
+            SourcePowerActivationCommittedV1 { item, .. } => s.copy(item),
+            SourceDamageBeforeLeavingV1 { damage_source } => s.a(&damage_source.source),
+            SourcePowerActivationFinishedV1 { .. } => false,
             ZoneChange { object, .. }
             | Tap { object }
             | CreateToken { object, .. }

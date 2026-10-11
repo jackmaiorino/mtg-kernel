@@ -83,6 +83,7 @@ mod experimental_burn_net8_packed_v1;
 mod fdn_raid_v1;
 pub mod human_opening_v1;
 pub mod native_expanded_training_run_v1;
+mod source_power_activation_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 pub use experimental_burn_net8_packed_v1::run_public_entropy_gradient_probe_v1;
 pub mod fast_sampler;
@@ -92,6 +93,8 @@ pub mod flat_policy_v2;
 pub mod flat_policy_v3;
 pub mod flat_policy_v4;
 pub mod flat_policy_v5;
+pub mod heartfire_history_v1;
+pub mod heartfire_public_v1;
 pub mod ids;
 pub mod line_b_teacher_target_v1;
 pub mod ooze_public_v1;
@@ -105,6 +108,7 @@ pub mod policy_observation_v8;
 pub mod policy_observation_v9;
 pub mod policy_observation_variable_cast_v1;
 pub mod rl_variable_cast_v1;
+pub mod rules_meaning_heartfire_v1;
 pub mod rules_meaning_ooze_v1;
 pub mod unclamped_softmax_sampler_v1;
 // Calibration-only harness for the kernel-native search opponent: every

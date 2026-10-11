@@ -6,6 +6,8 @@
 //! deterministic Burn-mirror rollout helper. It does not make any learning or
 //! strength claim.
 
+pub(crate) mod heartfire_history_v1;
+
 use crate::card_def::{
     preflight_fully_supported_deck, CardType, DeckPreflightError, Keywords, CARD_DEFS,
     KERNEL_CARDDB_HASH,

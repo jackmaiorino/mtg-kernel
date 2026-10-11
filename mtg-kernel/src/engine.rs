@@ -3099,7 +3099,7 @@ fn triggered_ability_targeting_source(
     })
 }
 
-fn legal_targets_for_controller(
+pub(crate) fn legal_targets_for_controller(
     spec: TargetSpec,
     targets_chosen: &[Target],
     controller: PlayerId,
@@ -4104,6 +4104,13 @@ fn activation_legal_targets_with_source_lki(
     source_departed: bool,
     state: &GameState,
 ) -> Vec<Target> {
+    if matches!(
+        (ability.effect)(),
+        EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1)
+    ) && !source_departed
+    {
+        return crate::source_power_activation_v1::current_targets(state, source);
+    }
     let controller = state.objects.get(source).controller;
     legal_targets_for_controller_from_source(
         ability.target_spec,
@@ -11785,6 +11792,15 @@ pub(crate) fn validate_pending_activation(
     )
     .ok_or_else(|| "pending activation ability index changed".to_string())?;
     let ability = &ability;
+    if matches!(
+        (ability.effect)(),
+        EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1)
+    ) && !crate::source_power_activation_v1::needs_stats(state, pending.source)
+    {
+        return Err(
+            "granted source-power activation requires a departure-capture successor".into(),
+        );
+    }
     if pending.cauldron_grant
         != crate::standard_cards_v1::capture_cauldron_grant(
             state,
@@ -13110,6 +13126,7 @@ pub(crate) fn validated_stack_item_target_spec(
     state: &GameState,
 ) -> Result<Option<TargetSpec>, String> {
     validate_spell_stack_source(state, item)?;
+    crate::source_power_activation_v1::validate_item(state, item)?;
     if item.madness_offer != (item.kind == StackItemKind::MadnessOffer) {
         return Err("Madness-offer kind and flag disagree".to_string());
     }
@@ -13415,14 +13432,31 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
                     live.zone_change_count != source_contract.zone_change_count
                         || live.zone != source_contract.zone
                 });
-                activation_legal_targets_with_source_lki(
-                    item.source,
-                    &ability,
-                    &chosen,
-                    source_departed,
-                    state,
-                )
-                .contains(&target)
+                if matches!(
+                    item.inline_effect.as_ref(),
+                    Some(EffectOp::StandardV1(
+                        crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1
+                    ))
+                ) {
+                    crate::source_power_activation_v1::legal_targets(
+                        state,
+                        crate::source_power_activation_v1::damage_source(
+                            state,
+                            item.source,
+                            item.v4.stack_item_id,
+                        )?,
+                    )
+                    .contains(&target)
+                } else {
+                    activation_legal_targets_with_source_lki(
+                        item.source,
+                        &ability,
+                        &chosen,
+                        source_departed,
+                        state,
+                    )
+                    .contains(&target)
+                }
             }
             _ => legal_targets_for_controller_from_source(
                 spec,
@@ -13573,6 +13607,7 @@ pub(crate) fn counter_stack_item_by_id(
         None
     };
     state.stack.remove(position);
+    crate::source_power_activation_v1::finish(state, &item);
     if let Some(departure) = departure {
         apply_spell_departure(state, departure)?;
     }
@@ -13809,6 +13844,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
             return ResolutionProgress::Suspended;
         }
+        crate::source_power_activation_v1::finish(state, &item);
         return ResolutionProgress::Complete;
     }
 
@@ -13828,6 +13864,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     if let Some(effect) = item.inline_effect.clone() {
         let progress = execute_resolving_program(state, &item, &ctx, &effect);
         if progress == ResolutionProgress::Complete {
+            crate::source_power_activation_v1::finish(state, &item);
             keep_ability_on_stack_until_discarded(state, &item);
         }
         return progress;
@@ -19711,6 +19748,7 @@ fn push_paid_activation(
             ..StackStateV4::default()
         },
     });
+    crate::source_power_activation_v1::record_paid(state, stack_item_id);
     if log_final_targeting_events(state, stack_item_id).is_err() {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
