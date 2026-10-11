@@ -53,7 +53,96 @@ def compare(a, b):
     return report.compare(a, b, EXPECTED, BINDINGS, CASES)
 
 
+def attribution_panel(v2=True):
+    data = panel(3, 8, "B1")
+    for row in data.values():
+        row["tree"].update(max_topology_depth=5, by_physical_depth=[],
+                           links=dict(extra_action_groups=0, extra_observations_within_groups=0,
+                                      identity_holds=True, G_action_groups_with_children=1),
+                           action_groups=dict(with_several_children=0, observation_split=0,
+                                              menu_only_split=0, sibling_difference_tags={}),
+                           repeated_views=dict(views_reached_by_several_histories=0),
+                           unexpanded_backed_edges=dict(edges=0))
+        if v2:
+            row["schema"] = "branch-root-v2"
+            row["timing"] = {"selection_wall_seconds": 10.0}
+            row["simulations"] = dict(schema="branch-sim-accounting-v2",
+                reconciles={k: True for k in (
+                    "attempts_equal_accepted_plus_rejections", "transitions_equal_selection_total",
+                    "calls_equal_selection_total", "buckets_sum_to_totals", "snapshots_within_totals",
+                    "rejections_equal_sampler_count", "natural_expansion_iff_committed")},
+                natural=dict(count=4, expanded=2, not_expanded=2,
+                    pooled_share_of_natural_work=dict(transitions=dict(
+                        tree_prefix=0.25, after_expansion=0.5, depth_tail_without_expansion=0.25)),
+                    first_expansion_depth_histogram={"2": 1, "4": 1, "none": 2}))
+        else:
+            row["simulations"]["natural"].update(mean_transitions=10,
+                mean_transitions_after_first_expansion=5, first_expansion_depth_histogram={"2": 100})
+    return data
+
+
 class BranchReportTest(unittest.TestCase):
+    def test_complete_v2_attribution_uses_pooled_work_and_conditional_depth(self):
+        result = report.attribution(attribution_panel(), EXPECTED, BINDINGS, CASES)
+        self.assertTrue(result["complete"])
+        for lineage in result["lineages"].values():
+            self.assertEqual(lineage["pooled_natural_transitions_after_expansion_share"]["mean"], 0.5)
+            self.assertEqual(lineage["first_expansion_mean_depth_among_expanded"]["mean"], 3)
+            self.assertNotIn("first_expansion_mean_depth", lineage)
+
+    def test_v2_zero_work_no_expansion_stays_undefined(self):
+        data = attribution_panel()
+        for row in data.values():
+            natural = row["simulations"]["natural"]
+            natural.update(expanded=0, not_expanded=4, first_expansion_depth_histogram={"none": 4})
+            natural["pooled_share_of_natural_work"]["transitions"] = {
+                k: None for k in ("tree_prefix", "after_expansion", "depth_tail_without_expansion")}
+        result = report.attribution(data, EXPECTED, BINDINGS, CASES)
+        self.assertTrue(result["complete"])
+        for lineage in result["lineages"].values():
+            for label in ("pooled_natural_transitions_after_expansion_share",
+                          "first_expansion_mean_depth_among_expanded"):
+                self.assertEqual(lineage[label]["undefined_roots"], 18)
+                self.assertEqual(lineage[label]["defined_roots"], 0)
+                self.assertIsNone(lineage[label]["mean"])
+
+    def test_v2_invalid_accounting_is_incomplete(self):
+        for mode in range(6):
+            data = attribution_panel()
+            row = data[CASES[0]]
+            if mode == 0:
+                row["simulations"]["schema"] = "unknown"
+            elif mode == 1:
+                row["simulations"]["natural"]["first_expansion_depth_histogram"]["none"] = 1
+            elif mode == 2:
+                row["simulations"]["natural"]["expanded"] = 3
+            elif mode == 3:
+                row["simulations"]["reconciles"]["buckets_sum_to_totals"] = False
+            elif mode == 4:
+                row["simulations"]["natural"]["pooled_share_of_natural_work"]["transitions"]["after_expansion"] = None
+            else:
+                del row["simulations"]["natural"]["pooled_share_of_natural_work"]
+            self.assertIn(CASES[0], report.attribution(data, EXPECTED, BINDINGS, CASES)["incomplete"])
+
+    def test_legacy_attribution_retains_its_labels_and_values(self):
+        result = report.attribution(attribution_panel(False), EXPECTED, BINDINGS, CASES)
+        self.assertTrue(result["complete"])
+        for lineage in result["lineages"].values():
+            self.assertEqual(lineage["transitions_after_first_expansion_share"]["mean"], 0.5)
+            self.assertEqual(lineage["first_expansion_mean_depth"]["mean"], 2)
+
+    def test_v2_compare_uses_new_metric_names(self):
+        a, b = panel(3, 8, "B1"), panel(4, 8, "D8")
+        for row in [*a.values(), *b.values()]:
+            row["schema"] = "branch-root-v2"
+            row["timing"] = {"selection_wall_seconds": row["timing"]["selection"]}
+            for world in row["evaluation"]:
+                for old, new in (("first_substep_share", "first_recorded_choice_share"),
+                                 ("first_substep_controlled", "first_recorded_choice_controlled"),
+                                 ("descendant_controlled", "descendant_first_recorded_controlled")):
+                    world[new] = world.pop(old)
+        self.assertEqual(compare(a, b)["disposition"], "promising mechanism screen")
+
     def test_screen_requires_both_lineages(self):
         a, b = panel(3, 8, "B1"), panel(4, 8, "D8")
         self.assertEqual(compare(a, b)["disposition"], "promising mechanism screen")
