@@ -232,6 +232,9 @@ pub enum TriggerCondition {
     BeginningControllerCombatWithOtherCreaturePowerAtLeast(i32),
     /// Intervening Raid condition at capture; the effect rechecks at resolution.
     EtbAfterControllerAttackedThisTurn,
+    /// This source or another creature it controlled dies. Captured before
+    /// commitment, including all observers in a simultaneous death batch.
+    ThisOrControlledCreatureDies,
 }
 
 pub struct TriggeredAbilityDef {
@@ -667,6 +670,24 @@ const BATTLESONG_BERSERKER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilit
     condition: TriggerCondition::ControllerAttacks,
     ..etb_trigger(battlesong_berserker_effect)
 }];
+fn vengeful_bloodwitch_effect() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::LoseLife {
+            player: PlayerRef::Target(0),
+            amount: 1,
+        },
+        EffectOp::GainLife {
+            player: PlayerRef::Controller,
+            amount: 1,
+        },
+    ])
+}
+
+const VENGEFUL_BLOODWITCH_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ThisOrControlledCreatureDies,
+    ..etb_trigger(vengeful_bloodwitch_effect)
+}];
+
 const SCRAWLING_CRAWLER_TRIGGERS: [TriggeredAbilityDef; 2] = [
     TriggeredAbilityDef {
         condition: TriggerCondition::BeginningOfUpkeep {
@@ -3250,6 +3271,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Tragic Banshee" => &TRAGIC_BANSHEE_TRIGGERS,
         "Battlesong Berserker" => &BATTLESONG_BERSERKER_TRIGGERS,
         "Scrawling Crawler" => &SCRAWLING_CRAWLER_TRIGGERS,
+        "Vengeful Bloodwitch" => &VENGEFUL_BLOODWITCH_TRIGGERS,
         "Grappling Kraken" => &GRAPPLING_KRAKEN_TRIGGERS,
         "Rune-Scarred Demon" => &RUNE_SCARRED_DEMON_TRIGGERS,
         "Elvish Regrower" => &ELVISH_REGROWER_TRIGGERS,
@@ -3415,7 +3437,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         "Affectionate Indrik" => TargetSpec::OpponentControlledCreature,
         "Ambush Wolf" => TargetSpec::UpToOneCardInGraveyards,
         "Balustrade Spy" => TargetSpec::AnyPlayer,
-        "Lotleth Giant" => TargetSpec::TargetOpponent,
+        "Lotleth Giant" | "Vengeful Bloodwitch" => TargetSpec::TargetOpponent,
         "Harrier Strix" => TargetSpec::AnyPermanent,
         "Bojuka Bog" | "Angel of Finality" => TargetSpec::AnyPlayer,
         "Bigfin Bouncer" | "Nova Hellkite" | "Tragic Banshee" | "Grappling Kraken" => {
@@ -3920,11 +3942,8 @@ fn sba_fixed_point_with_protected_triggers(
                 dying.push(id);
             }
         }
-        for id in dying {
-            crate::event::commit(
-                state,
-                crate::event::ProposedEvent::zone_change(id, Zone::Graveyard),
-            );
+        if !dying.is_empty() {
+            crate::event::commit_sba_death_batch_v1(state, dying);
             changed = true;
         }
 
@@ -4177,6 +4196,41 @@ fn triggers_from_events(
     }
     let draws_this_turn_at = draws_this_turn_snapshot(events, state);
     let mut new_triggers = Vec::new();
+    let mut death_captures_seen = std::collections::BTreeSet::new();
+    for (index, event) in events.iter().enumerate() {
+        if let CommittedEvent::ControlledCreatureDeathCaptureV1 {
+            source,
+            ability_index,
+            died,
+            ..
+        } = event
+        {
+            if !death_captures_seen.insert((
+                source.source,
+                source.zone_change_count,
+                *ability_index,
+                died.object,
+                died.zone_change_count,
+            )) {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    source.source,
+                ));
+                return Vec::new();
+            }
+        }
+        match crate::creature_death_capture_v1::pending(state, events, index) {
+            Ok(Some(pending)) => new_triggers.push(pending),
+            Ok(None) => {}
+            Err(source) => {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    source,
+                ));
+                return Vec::new();
+            }
+        }
+    }
     let may_trigger = card_defs_with_event_triggers();
     for (id, obj) in state.objects.iter() {
         // Most objects (lands, vanilla creatures, every library card of a
@@ -4242,6 +4296,7 @@ fn triggers_from_events(
             if matches!(
                 def.condition,
                 TriggerCondition::ControllerFirstLifeGain { .. }
+                    | TriggerCondition::ThisOrControlledCreatureDies
             ) {
                 continue;
             }
