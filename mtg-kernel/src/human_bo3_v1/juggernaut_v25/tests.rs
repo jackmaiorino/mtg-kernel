@@ -184,17 +184,24 @@ fn actual_juggernaut_combat_scan_public_frozen_refusal_submit_and_stale_facts_bo
         )
         .unwrap();
         assert_eq!(manifest.roots.len(), 2);
-        assert_eq!(
-            manifest
-                .roots
-                .iter()
-                .map(|row| row.root)
-                .collect::<Vec<_>>(),
-            vec![
-                crate::rules_meaning_juggernaut_v1::RootV1::MustAttackEachCombat,
-                crate::rules_meaning_juggernaut_v1::RootV1::CannotBeBlockedByWalls
-            ]
-        );
+        let selector = crate::rules_meaning_juggernaut_v1::live_selector().unwrap();
+        for (index, root) in [
+            crate::rules_meaning_juggernaut_v1::RootV1::MustAttackEachCombat,
+            crate::rules_meaning_juggernaut_v1::RootV1::CannotBeBlockedByWalls,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let selected = crate::rules_meaning_juggernaut_v1::meaning(
+                &selector,
+                crate::card_def::card_id_by_name("Juggernaut").unwrap(),
+                root,
+            )
+            .unwrap();
+            assert_eq!(manifest.roots[index].card_id, selected.card_id);
+            assert_eq!(usize::from(manifest.roots[index].ability_index), index);
+            assert_eq!(manifest.roots[index].root_sha256, selected.root_sha256);
+        }
         let base = FastActorSessionV1::from_juggernaut_v25_fixture_state(state);
         let mut session = HumanJuggernautSessionV25::from_session(base).unwrap();
         let current = expected(&session);
