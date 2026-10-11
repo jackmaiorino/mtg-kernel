@@ -38,6 +38,7 @@ pub mod async_flat_scored_rollout_v1;
 pub mod async_flat_scored_rollout_v2;
 pub mod async_rollout;
 pub mod async_rollout_v2;
+pub mod attack_target_v1;
 pub mod bo3_match;
 pub mod bo3_session;
 pub mod bounded_staleness_async_harness_v1;
@@ -50,6 +51,9 @@ pub mod legend_rule_v1;
 pub mod native_search_collection_v3;
 pub mod native_search_trajectory_v3;
 pub mod planeswalker_v1;
+pub mod standard_cards_v1;
+pub mod standard_creature_choices_v1;
+pub mod standard_creatures_v1;
 #[cfg(feature = "standard-magezero-fixtures")]
 pub mod standard_keywords_v1;
 #[cfg(feature = "standard-magezero-fixtures")]
@@ -74,6 +78,7 @@ pub mod event;
 pub mod expanded_deck_training_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 mod experimental_burn_net8_packed_v1;
+mod fdn_raid_v1;
 pub mod human_opening_v1;
 pub mod native_expanded_training_run_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
@@ -84,6 +89,7 @@ pub mod flat_policy_v1;
 pub mod flat_policy_v2;
 pub mod flat_policy_v3;
 pub mod flat_policy_v4;
+pub mod flat_policy_v5;
 pub mod ids;
 pub mod line_b_teacher_target_v1;
 pub mod phase1_agent_v1;
@@ -92,6 +98,8 @@ pub mod phase1_bo3_learning_v1;
 pub mod phase1_registry_transfer_v1;
 pub mod policy_observation_v6;
 pub mod policy_observation_v7;
+pub mod policy_observation_v8;
+pub mod policy_observation_v9;
 pub mod unclamped_softmax_sampler_v1;
 // Calibration-only harness for the kernel-native search opponent: every
 // function in this module either is, or exists only to call,
@@ -215,6 +223,8 @@ pub mod native_flat_tensorizer_diagnostic_v1;
 pub(crate) mod native_flat_tensorizer_v2;
 pub(crate) mod native_flat_tensorizer_v3;
 pub(crate) mod native_flat_tensorizer_v4;
+pub mod native_flat_tensorizer_v5;
+pub mod native_flat_tensorizer_v6;
 // Multi-buffer SHA-512 for the tensorizer digest tails (byte-identical to sha2).
 pub(crate) mod sha512_multi_v1;
 // Deterministic-CPU-forward audit probe (model-guided-searcher design v1,
@@ -456,6 +466,7 @@ pub mod rl_session;
 pub mod runtime_decks;
 pub mod sideboard;
 pub mod snapshot;
+pub mod standard_legends_v1;
 pub mod state;
 #[cfg(test)]
 mod store_v2_resume_walk_timing_harness_v1;
@@ -491,3 +502,5 @@ pub fn run_experimental_burn_net8_packed_cuda_v1() -> Result<(), Box<dyn std::er
 pub fn run_experimental_burn_net8_cuda_train_v1() -> Result<(), Box<dyn std::error::Error>> {
     experimental_burn_net8_packed_v1::run_cuda_training_v1()
 }
+
+pub mod cauldron_grants_v1;

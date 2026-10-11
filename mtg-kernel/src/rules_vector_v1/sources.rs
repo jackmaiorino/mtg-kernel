@@ -73,6 +73,8 @@ pub enum PrintedF {
     ChoosesColorAsEnters,
     ManaAbilityAddsChosenColor,
     Delve,
+    /// Ward requiring a life payment on the printed front face.
+    WardPayLife(u8),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
@@ -126,7 +128,7 @@ fn printed_cost(cost: &Cost, out: &mut Vec<PrintedF>) {
         match *pip {
             Pip::Colored(color) => per_color[color as usize] += 1,
             Pip::Hybrid(_, _) => out.push(PrintedF::HybridPip),
-            Pip::Phyrexian(_) => out.push(PrintedF::PhyrexianPip),
+            Pip::Phyrexian(_) | Pip::PhyrexianAnyColor(_) => out.push(PrintedF::PhyrexianPip),
         }
     }
     for color in ManaColor::ALL {
@@ -331,6 +333,7 @@ fn mana_ability_condition_facts(
                 AggF::Any,
             );
         }
+        crate::card_def::ManaAbilityConditionDef::ControlledLegendaryPermanentHasColor(_) => out.read(RelF::You,Some(ZoneF::Battlefield),Some(ObjF::Permanent),AggF::Count),
         crate::card_def::ManaAbilityConditionDef::SourceEnteredThisTurn => out.read(
             RelF::You,
             Some(ZoneF::Battlefield),
@@ -349,8 +352,15 @@ fn activated(walk: &mut Walk, ctx: CtxF, key: &str, ability: &ActivatedAbilityDe
         sorcery_speed_only,
         activation_target_filter,
         max_activations_per_turn,
+        face,
     } = *ability;
     let program = effect();
+    if let Some(face) = face {
+        // Keep every historical single-faced record byte-identical.
+        walk.rec(&format!("{key}/face"), json!(face));
+        walk.opaque
+            .push("activated ability is restricted to a printed face");
+    }
     walk.rec(
         key,
         json!({
@@ -438,6 +448,8 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         madness_cost,
         mode2,
         mode3,
+        additional_modes,
+        kicked_target_spec,
         is_token,
         escape,
         mana_ability_choices,
@@ -541,6 +553,9 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 printed.push(PrintedF::WardBackFacePayLife(bucket(i64::from(*n))))
             }
             crate::card_def::WardCostDef::DiscardCard => printed.push(PrintedF::WardDiscardCard),
+            crate::card_def::WardCostDef::PayLife(n) => {
+                printed.push(PrintedF::WardPayLife(bucket(i64::from(*n))))
+            }
         }
     }
     if *minimum_blockers > 1 {
@@ -595,11 +610,20 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         }),
     );
 
+    if let Some(spec) = kicked_target_spec {
+        if let Some(op) = spell_effect() {
+            walk.program(CtxF::Mode, "kicked_spell", *spec, &op);
+        }
+    }
     // Resolution programs.
     if let Some(op) = spell_effect() {
         walk.program(CtxF::Spell, "spell", *target_spec, &op);
     }
-    for mode in [mode2, mode3].into_iter().flatten() {
+    for mode in [mode2, mode3]
+        .into_iter()
+        .flatten()
+        .chain(additional_modes.iter())
+    {
         let program = (mode.effect)();
         walk.program(CtxF::Mode, "mode", mode.target_spec, &program);
     }
@@ -775,7 +799,10 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 );
             }
             match restricted.restriction {
-                crate::card_def::ManaSpendRestrictionDef::CreatureSpell => {
+                crate::card_def::ManaSpendRestrictionDef::Unrestricted => {}
+                crate::card_def::ManaSpendRestrictionDef::CreatureSpell
+                | crate::card_def::ManaSpendRestrictionDef::CreatureSpellOrCreatureAbility
+                | crate::card_def::ManaSpendRestrictionDef::LegendarySpell => {
                     out.control(ControlF::Conditional)
                 }
             }
@@ -834,6 +861,7 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
     }
     if let Some(animation) = animation {
         let crate::card_def::AnimationDef {
+            until_end_of_turn,
             power,
             toughness,
             artifact,
@@ -847,6 +875,7 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 "power": power,
                 "toughness": toughness,
                 "artifact": artifact,
+                "until_end_of_turn": until_end_of_turn,
                 "colors": colors.iter().map(|c| format!("{c:?}")).collect::<Vec<_>>(),
                 "subtypes": subtypes.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>(),
                 "keywords": keywords.0,
@@ -985,6 +1014,91 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
     }
 
     // Static abilities the engine keys by name outside `CardDef`.
+    if let Some((minimum, keywords, subtype)) =
+        crate::engine::static_plus_one_counter_characteristics_for(name)
+    {
+        walk.rec(
+            "static_plus_one_counter_characteristics",
+            json!({"minimum": minimum, "keywords": keywords.0, "added_subtype": subtype}),
+        );
+        walk.opaque
+            .push("live source plus-one counter threshold and additional creature subtype");
+        walk.ability(CtxF::Static, |out| {
+            out.control(ControlF::Conditional);
+            out.atoms.push(Atom::Opaque);
+            for keyword in keyword_bits(keywords) {
+                out.effect(
+                    EffectAtom::new(EvF::GrantKeyword)
+                        .obj(ObjF::ThisObject)
+                        .duration(DurF::WhileOnBattlefield)
+                        .keyword(keyword),
+                );
+            }
+            out.effect(
+                EffectAtom::new(EvF::SetCharacteristic)
+                    .obj(ObjF::ThisObject)
+                    .duration(DurF::WhileOnBattlefield),
+            );
+        });
+    }
+    if let Some(keywords) = crate::engine::static_controller_turn_self_keyword_for(name) {
+        walk.rec("static_controller_turn_self_keyword", json!(keywords.0));
+        walk.opaque
+            .push("static self keyword during current controller turn");
+        walk.ability(CtxF::Static, |out| {
+            out.control(ControlF::Conditional);
+            out.atoms.push(Atom::Opaque);
+            for keyword in keyword_bits(keywords) {
+                out.effect(
+                    EffectAtom::new(EvF::GrantKeyword)
+                        .obj(ObjF::ThisObject)
+                        .duration(DurF::WhileOnBattlefield)
+                        .keyword(keyword),
+                );
+            }
+        });
+    }
+    if crate::engine::static_counter_keyword_controller_turn_only_for(name) {
+        walk.rec("static_counter_keyword_controller_turn_only", json!(true));
+        walk.opaque
+            .push("current controller turn and live positive plus-one counter predicate");
+        walk.ability(CtxF::Static, |out| {
+            out.control(ControlF::Conditional);
+            out.atoms.push(Atom::Opaque);
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Typed(CardTypeF::Creature)),
+                AggF::Any,
+            );
+            for keyword in keyword_bits(controlled_counter_keyword.expect("counter keyword")) {
+                out.effect(
+                    EffectAtom::new(EvF::GrantKeyword)
+                        .player(RelF::You)
+                        .obj(ObjF::Typed(CardTypeF::Creature))
+                        .duration(DurF::WhileOnBattlefield)
+                        .keyword(keyword),
+                );
+            }
+        });
+    }
+    if let Some(keywords) = crate::engine::static_untapped_self_keyword_for(name) {
+        walk.rec("static_untapped_self_keyword", json!(keywords.0));
+        walk.opaque
+            .push("static self keyword gated on source untapped");
+        walk.ability(CtxF::Static, |out| {
+            out.control(ControlF::Conditional);
+            out.atoms.push(Atom::Opaque);
+            for keyword in keyword_bits(keywords) {
+                out.effect(
+                    EffectAtom::new(EvF::GrantKeyword)
+                        .obj(ObjF::ThisObject)
+                        .duration(DurF::WhileOnBattlefield)
+                        .keyword(keyword),
+                );
+            }
+        });
+    }
     if let Some(boost) = crate::engine::static_self_boost_for(name) {
         let crate::engine::StaticSelfBoostDef {
             condition: _, // An opaque predicate; see `opaque_rules`.
@@ -1044,6 +1158,36 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                     .amount(AmtF::stat(i64::from(power), i64::from(toughness)))
                     .duration(DurF::WhileOnBattlefield),
             );
+        });
+    }
+
+    if crate::engine::static_controller_casts_with_flash_for_v1(name) {
+        walk.rec(
+            "static_controller_casts_as_though_flash",
+            json!({"nonland_spells": true, "grants_keyword": false}),
+        );
+        walk.opaque
+            .push("casting timing permission: controller nonland spells as though flash");
+        walk.ability(CtxF::Static, |out| {
+            out.atoms.push(Atom::Opaque);
+        });
+    }
+
+    if let Some(reduction) = crate::engine::static_instant_sorcery_reduction_for_v1(name) {
+        walk.rec(
+            "static_instant_sorcery_generic_reduction",
+            json!({"generic": reduction}),
+        );
+        walk.ability(CtxF::Static, |out| {
+            for card_type in [CardTypeF::Instant, CardTypeF::Sorcery] {
+                out.effect(
+                    EffectAtom::new(EvF::CostChange)
+                        .player(RelF::You)
+                        .obj(ObjF::Typed(card_type))
+                        .amount(AmtF::fixed(-i64::from(reduction)))
+                        .duration(DurF::WhileOnBattlefield),
+                );
+            }
         });
     }
 
@@ -1127,6 +1271,33 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
             out.atoms.push(Atom::Opaque);
         });
         walk.opaque.push("printed source cannot block");
+    }
+
+    if let Some(count) = crate::fdn_raid_v1::entry_counter_count_for(name) {
+        walk.rec(
+            "raid_entry_counter",
+            json!({"count":count,"if_controller_attacked_this_turn":true}),
+        );
+        walk.ability(CtxF::Static, |out| {
+            out.control(ControlF::Conditional);
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Typed(CardTypeF::Creature)),
+                AggF::EventThisTurn,
+            );
+            // The vocabulary cannot name Raid's exact declaration predicate.
+            out.atoms.push(Atom::Opaque);
+            for ev in [EvF::PlaceCounter, EvF::StatChange] {
+                out.effect(
+                    EffectAtom::new(ev)
+                        .player(RelF::You)
+                        .obj(ObjF::ThisObject)
+                        .amount(AmtF::fixed(i64::from(count)))
+                        .duration(DurF::Permanent),
+                );
+            }
+        });
     }
 
     #[cfg(feature = "standard-magezero-fixtures")]
@@ -1302,6 +1473,18 @@ fn optional_cost_facts(cost: crate::card_def::OptionalAdditionalCostDef, out: &m
 
 fn attachment_facts(aura: AttachmentDef, out: &mut Collector) {
     match aura {
+        AttachmentDef::AuraArtifactAnimation(animation) => {
+            out.effect(EffectAtom::new(EvF::Attach).obj(ObjF::Typed(CardTypeF::Artifact)));
+            out.effect(
+                EffectAtom::new(EvF::SetCharacteristic)
+                    .obj(ObjF::AttachedObject)
+                    .amount(AmtF::stat(
+                        i64::from(animation.power),
+                        i64::from(animation.toughness),
+                    ))
+                    .duration(DurF::WhileOnBattlefield),
+            );
+        }
         AttachmentDef::AuraCreature { prevents_untap } => {
             out.effect(EffectAtom::new(EvF::Attach).obj(ObjF::Typed(CardTypeF::Creature)));
             if prevents_untap {
@@ -1527,6 +1710,20 @@ fn standard_statics(name: &str, walk: &mut Walk) {
                         .player(RelF::You)
                         .obj(ObjF::Typed(CardTypeF::Creature))
                         .duration(DurF::WhileOnBattlefield),
+                );
+            }
+            StandardStaticV1::PowerToughnessEqualsControlledNonlandPermanents => {
+                out.read(
+                    RelF::You,
+                    Some(ZoneF::Battlefield),
+                    Some(ObjF::NonlandPermanent),
+                    AggF::Count,
+                );
+                out.effect(
+                    EffectAtom::new(EvF::SetCharacteristic)
+                        .obj(ObjF::ThisObject)
+                        .amount(AmtF::Dynamic)
+                        .duration(DurF::Permanent),
                 );
             }
             StandardStaticV1::PowerEqualsControlledCreatures => {

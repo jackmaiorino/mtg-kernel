@@ -21,7 +21,22 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
     const STACK: Option<ZoneF> = Some(ZoneF::Stack);
     const GRAVEYARD: Option<ZoneF> = Some(ZoneF::Graveyard);
     match spec {
+        TargetSpec::StandardV1(filter) => targets::standard_target_origin(filter),
         TargetSpec::None => (None, None),
+        TargetSpec::CardInOwnGraveyardWithAnySubtype(_) => (GRAVEYARD, Some(RelF::You)),
+        TargetSpec::OpponentArtifactEnchantmentOrNonbasicLand => {
+            (BATTLEFIELD, Some(RelF::Opponent))
+        }
+        TargetSpec::LegendaryCreature
+        | TargetSpec::AnotherArtifactOrCreature
+        | TargetSpec::UpToTwoOtherCreaturesDifferentControllers => (BATTLEFIELD, None),
+        TargetSpec::ArtifactOrEnchantmentThenPlayer => {
+            if slot == 0 {
+                (BATTLEFIELD, None)
+            } else {
+                (None, None)
+            }
+        }
         // Slot 0 is a creature or a player; only the creature has a zone.
         TargetSpec::AnyTarget => (BATTLEFIELD, None),
         // Slot 0 is the player, slot 1 a creature that player controls.
@@ -29,7 +44,10 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
             0 => (None, None),
             1..=u8::MAX => (BATTLEFIELD, Some(RelF::ChosenPlayer)),
         },
-        TargetSpec::AnySpellOnStack
+        TargetSpec::AnotherCreatureOrPlaneswalker => (BATTLEFIELD, None),
+        TargetSpec::StackObject | TargetSpec::StackAbility => (STACK, None),
+        TargetSpec::UpToOneStackAbility
+        | TargetSpec::AnySpellOnStack
         | TargetSpec::InstantSpellOnStack
         | TargetSpec::BlueSpellOnStack
         | TargetSpec::RedSpellOnStack
@@ -57,6 +75,7 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
         | TargetSpec::EnchantmentPermanent
         | TargetSpec::CreatureOtherThanSource
         | TargetSpec::UpToOneTappedCreature
+        | TargetSpec::CreatureWithStunCounter
         | TargetSpec::NoncreatureArtifactPermanent
         | TargetSpec::Land
         | TargetSpec::NonblackCreature
@@ -65,10 +84,17 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
         | TargetSpec::CreatureOrPlaneswalker
         | TargetSpec::ArtifactEnchantmentOrFlyingCreature
         | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour
+        | TargetSpec::CreaturePowerPlusToughnessAtMostFive
+        | TargetSpec::NonartifactCreature
+        | TargetSpec::UpToOneOtherCreature
+        | TargetSpec::AnotherAttackingCreature
         | TargetSpec::NonOutlawCreature
         | TargetSpec::CreatureToughnessAtLeastFour
+        | TargetSpec::ArtifactCreatureEnchantmentOrPlaneswalker
         | TargetSpec::CreatureEnchantmentOrPlaneswalker => (BATTLEFIELD, None),
-        TargetSpec::ControlledCreature
+        TargetSpec::ControlledNoncreatureArtifactPermanent
+        | TargetSpec::ControlledCreature
+        | TargetSpec::CounterDistribution
         | TargetSpec::AnotherControlledCreature
         | TargetSpec::UpToTwoOtherControlledCreatures
         | TargetSpec::UpToOneOtherControlledPermanent => (BATTLEFIELD, Some(RelF::You)),

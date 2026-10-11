@@ -1186,7 +1186,7 @@ pub(crate) fn pending_selection_hidden_objects_v1(
         .chain(legal)
         .filter_map(|candidate| match candidate.target {
             Target::Object(id) => Some(id),
-            Target::Player(_) => None,
+            Target::Player(_) | Target::StackItem(_) => None,
         })
         .filter(|&id| {
             state

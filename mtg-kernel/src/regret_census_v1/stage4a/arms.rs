@@ -910,6 +910,7 @@ impl Roles {
                 &mut suffix,
                 &mut stats,
                 trace,
+                None,
             );
             let mut out = finish(r, suffix, &meter, &c);
             out.fallback_root = !stats.root_qualified;
@@ -949,8 +950,10 @@ impl Roles {
     /// E's frozen tree executed on an evaluation world: at matching
     /// histories up to the same depth, the greatest-mean edge with at least
     /// eight backups; otherwise, and at every unseen history, plain policy.
+    /// `log`, when given, receives every applied action (both seats), so a
+    /// guide executed on its actual world can be replayed exactly.
     #[allow(clippy::too_many_arguments, reason = "explicit roles and accounting")]
-    fn frozen(
+    pub(crate) fn frozen(
         &mut self,
         ctx: &RootCtx,
         tree: &Tree,
@@ -960,6 +963,7 @@ impl Roles {
         suffix: &mut Suffix,
         stats: &mut EStats,
         mut trace: Option<&mut Trace>,
+        mut log: Option<&mut Vec<u32>>,
     ) -> Result<End, PlayErr> {
         let mut parent: (Key, Vec<u8>) = ([0u8; 32], b"root".to_vec());
         let mut matching = true;
@@ -1067,6 +1071,9 @@ impl Roles {
                 }
                 act(&mut self.opps[ctx.opp], s, &d, c)?
             };
+            if let Some(l) = log.as_deref_mut() {
+                l.push(a);
+            }
             apply(s, &d, a, meter, ctx.focal, Some(suffix), &ctx.defs)?;
             if let Some(t) = trace.as_deref_mut() {
                 t.event(meter.spent, acting(&d) == ctx.focal, suffix.last);
@@ -1092,7 +1099,7 @@ pub(crate) struct EStats {
 }
 
 impl EStats {
-    fn json(&self) -> Value {
+    pub(crate) fn json(&self) -> Value {
         json!({"root_qualified":self.root_qualified,"nonroot_lookups":self.nonroot_lookups,
             "nonroot_hits":self.nonroot_hits,"fallbacks":self.fallbacks,"max_hit_depth":self.max_hit_depth,
             "executed":self.executed})

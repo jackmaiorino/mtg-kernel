@@ -33,6 +33,175 @@ fn exile_self(out: &mut Collector) {
 pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     let _ = env;
     match op {
+        EffectOp::CreateTokensForOtherControlledCreaturesNamed { name: _, token_def } => {
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Typed(CardTypeF::Creature)),
+                AggF::Count,
+            );
+            out.effect(
+                EffectAtom::new(EvF::CreateToken)
+                    .player(RelF::You)
+                    .obj(ObjF::Token)
+                    .amount(AmtF::Dynamic),
+            );
+            out.created_tokens.push(*token_def);
+            // The fixed facets cannot express the name predicate or the
+            // captured source incarnation excluded from the live count.
+            out.atoms.push(Atom::Opaque);
+        }
+        EffectOp::DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { keyword } => {
+            let creatures = ObjF::Typed(CardTypeF::Creature);
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(creatures),
+                AggF::Count,
+            );
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Library), ZoneF::Hand)
+                    .player(RelF::You)
+                    .obj(ObjF::AnyCard)
+                    .amount(AmtF::Dynamic),
+            );
+            for bit in keyword_bits(*keyword) {
+                out.effect(
+                    EffectAtom::new(EvF::GrantKeyword)
+                        .player(RelF::You)
+                        .obj(creatures)
+                        .duration(DurF::EndOfTurn)
+                        .keyword(bit),
+                );
+            }
+            // The fixed vocabulary cannot encode a positive +1/+1-counter
+            // predicate or the shared draw/grant incarnation snapshot.
+            out.atoms.push(Atom::Opaque);
+        }
+        EffectOp::DoubleTargetPowerUntilEndOfTurn { target_index } => {
+            let (player, obj) = target_ref(TargetRef::Target(*target_index), env);
+            out.read(
+                RelF::ObjectController,
+                Some(ZoneF::Battlefield),
+                Some(obj),
+                AggF::Characteristic,
+            );
+            out.effect(
+                EffectAtom::new(EvF::StatChange)
+                    .maybe_player(player)
+                    .obj(obj)
+                    .amount(AmtF::Dynamic)
+                    .duration(DurF::EndOfTurn),
+            );
+        }
+        EffectOp::CastExiledWithoutMana {
+            card,
+            maximum_mana_value,
+        } => {
+            // This instruction casts during resolution, moving the exact
+            // exile card to the stack. It does not grant lasting permission.
+            let _ = (card, maximum_mana_value);
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Exile), ZoneF::Stack)
+                    .player(RelF::You)
+                    .obj(ObjF::AnyCard)
+                    .amount(AmtF::fixed(1)),
+            );
+            // The base mana waiver, X=0, selected-form value limit and
+            // resumed parent resolution have no facets in this vocabulary.
+            out.atoms.push(Atom::Opaque);
+        }
+        EffectOp::PlayExiledLand { card } => {
+            let _ = card;
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Exile), ZoneF::Battlefield)
+                    .player(RelF::You)
+                    .obj(ObjF::Typed(CardTypeF::Land))
+                    .amount(AmtF::fixed(1)),
+            );
+            // Uses a remaining land play on the controller's turn, inside
+            // resolution, including ordinary as-enters land choices.
+            out.atoms.push(Atom::Opaque);
+        }
+        EffectOp::DiscardUpToThenDraw { player, maximum } => {
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Hand), ZoneF::Graveyard)
+                    .player(player_ref(*player))
+                    .obj(ObjF::AnyCard)
+                    .amount(AmtF::fixed(i64::from(*maximum))),
+            );
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Library), ZoneF::Hand)
+                    .player(player_ref(*player))
+                    .obj(ObjF::AnyCard)
+                    .amount(AmtF::fixed(i64::from(*maximum))),
+            );
+        }
+        EffectOp::ExileRandomGraveyardCardPlayableThisTurn { player, .. } => {
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Graveyard), ZoneF::Exile)
+                    .player(player_ref(*player))
+                    .obj(ObjF::AnyCard)
+                    .amount(AmtF::fixed(1)),
+            );
+        }
+        EffectOp::ExileUntilThenCastV1 {
+            players,
+            return_rest_to_bottom,
+            ..
+        } => {
+            for player in players {
+                out.effect(
+                    EffectAtom::moving(Some(ZoneF::Library), ZoneF::Exile)
+                        .player(player_ref(*player))
+                        .obj(ObjF::AnyCard),
+                );
+                if *return_rest_to_bottom {
+                    out.effect(
+                        EffectAtom::moving(Some(ZoneF::Exile), ZoneF::Library)
+                            .player(player_ref(*player))
+                            .obj(ObjF::AnyCard),
+                    );
+                }
+            }
+        }
+        EffectOp::Discover { limit: _ } => {
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Library), ZoneF::Exile)
+                    .player(RelF::You)
+                    .obj(ObjF::AnyCard),
+            );
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Exile), ZoneF::Hand)
+                    .player(RelF::You)
+                    .obj(ObjF::AnyCard)
+                    .amount(AmtF::fixed(1)),
+            );
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Exile), ZoneF::Library)
+                    .player(RelF::You)
+                    .obj(ObjF::AnyCard),
+            );
+        }
+        EffectOp::Hideaway { count } => {
+            let mut look = EffectAtom::new(EvF::Look)
+                .player(RelF::You)
+                .obj(ObjF::AnyCard)
+                .amount(AmtF::fixed(i64::from(*count)));
+            look.from = Some(ZoneF::Library);
+            out.effect(look);
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Library), ZoneF::Exile)
+                    .player(RelF::You)
+                    .obj(ObjF::AnyCard)
+                    .amount(AmtF::fixed(1)),
+            );
+        }
+        EffectOp::PlayHideawayIfThreeDistinctPowers => {
+            // The fixed vocabulary has no free-play or distinct-power atom.
+        }
+        EffectOp::CopySpellSnapshot { .. } | EffectOp::IncreaseSpeed { .. } => { /* Runtime player ability, described by StartYourEnginesMaxSpeedDoubleStrike. */
+        }
         EffectOp::CounterUnlessCollectsEvidence {
             ward_target,
             targeting_stack_item,
@@ -45,6 +214,11 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
             let _ = minimum_mana_value; // comes from the definition's ward cost
         }
         EffectOp::CounterUnlessPaysLife {
+            ward_target,
+            targeting_stack_item,
+            life,
+        }
+        | EffectOp::CounterUnlessPaysLifeWithChoice {
             ward_target,
             targeting_stack_item,
             life,
@@ -164,8 +338,25 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                     .amount(AmtF::Dynamic)
                     .duration(DurF::Permanent),
             );
-            if let Some(incubator) = crate::card_def::card_id_by_name("Incubator Token") {
-                out.created_tokens.push(incubator);
+            // Token identity follows printed type data, never a card-name label.
+            // If a future profile has multiple matches, keep that identity opaque.
+            let mut tokens = crate::card_def::CARD_DEFS
+                .iter()
+                .enumerate()
+                .filter(|(_, definition)| {
+                    definition.is_token
+                        && definition.has_type(CardType::Artifact)
+                        && definition
+                            .subtypes
+                            .contains(&crate::card_def::Subtype::Incubator)
+                })
+                .map(|(id, _)| id as u16);
+            if let Some(token) = tokens.next() {
+                if tokens.next().is_none() {
+                    out.created_tokens.push(token);
+                } else {
+                    out.atoms.push(Atom::Opaque);
+                }
             }
         }
         EffectOp::Incubate { amount } => {

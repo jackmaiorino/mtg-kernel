@@ -1,0 +1,533 @@
+//! Registered v68 candidate; receipts are in fdn_conditional_flash_power_admission_v1.md.
+#![cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+
+use mtg_kernel::card_def::{
+    card_id_by_name, CardCapability, CardType, Keywords, Subtype, CARD_DEFS,
+};
+use mtg_kernel::combat_damage_v1::enable_foundations_combat_v1;
+use mtg_kernel::effect::EffectOp;
+use mtg_kernel::engine::{self, Action, Decision};
+use mtg_kernel::event::{self, ProposedEvent};
+use mtg_kernel::ids::{ObjectId, PlayerId};
+use mtg_kernel::mana::{self, ManaColor, Pip};
+use mtg_kernel::state::{GameObject, GameState, ObjectLinkV4, ObjectStateV4, Step, Target, Zone};
+
+fn ready(active: PlayerId) -> GameState {
+    let forest = card_id_by_name("Forest").unwrap();
+    let mut state = GameState::new_from_libraries_with_starting_player_v1(
+        &[forest; 40],
+        &[forest; 40],
+        |_| "Forest".into(),
+        1109,
+        active,
+    );
+    state.step = Step::Main1;
+    enable_foundations_combat_v1(&mut state).unwrap();
+    state
+}
+
+fn put(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -> ObjectId {
+    let card_def = card_id_by_name(name).unwrap();
+    let id = state.objects.push(GameObject {
+        card_def,
+        name: name.into(),
+        owner: player,
+        controller: player,
+        zone,
+        tapped: false,
+        summoning_sick: false,
+        damage: 0,
+        counters: Default::default(),
+        attachments: vec![],
+        v4: ObjectStateV4::from_card_def(card_def),
+        spell_copy_origin: None,
+        plotted_turn: None,
+        zone_change_count: 0,
+    });
+    match zone {
+        Zone::Hand => state.players[player.index()].hand.push(id),
+        Zone::Battlefield => state.players[player.index()].battlefield.push(id),
+        _ => panic!("fixture zone"),
+    }
+    id
+}
+
+fn next(state: &mut GameState) -> Decision {
+    let choice = engine::advance_until_decision(state);
+    assert!(!matches!(choice, Decision::Halted { .. }), "{choice:?}");
+    choice
+}
+
+fn cast(state: &mut GameState, spell: ObjectId, target: Option<Target>) {
+    assert!(
+        matches!(next(state), Decision::CastSpellOrPass { castable_spells, .. } if castable_spells.contains(&spell))
+    );
+    engine::step(state, Action::CastSpell(spell)).unwrap();
+    for _ in 0..16 {
+        match next(state) {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                let target = target.expect("fixture target");
+                assert!(legal_targets.contains(&target));
+                engine::step(state, Action::ChooseTarget(target)).unwrap();
+            }
+            Decision::OrderTriggers { pending, .. } => {
+                engine::step(state, Action::OrderTriggers((0..pending.len()).collect())).unwrap();
+            }
+            Decision::CastSpellOrPass { .. } if state.engine.pending_cast.is_none() => return,
+            choice => panic!("unexpected cast decision {choice:?}"),
+        }
+    }
+    panic!("cast did not finish");
+}
+
+fn settle(state: &mut GameState) {
+    for _ in 0..64 {
+        match next(state) {
+            Decision::CastSpellOrPass { .. }
+                if state.stack.is_empty() && state.engine.pending_triggers.is_empty() =>
+            {
+                return
+            }
+            Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
+            Decision::OrderTriggers { pending, .. } => {
+                engine::step(state, Action::OrderTriggers((0..pending.len()).collect())).unwrap();
+            }
+            choice => panic!("unexpected resolution decision {choice:?}"),
+        }
+    }
+    panic!("resolution did not settle");
+}
+
+fn restored(state: &GameState) -> GameState {
+    serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap()
+}
+
+fn same(state: &GameState, replay: &GameState) {
+    assert_eq!(
+        serde_json::to_value(state).unwrap(),
+        serde_json::to_value(replay).unwrap()
+    );
+}
+
+fn attack(state: &mut GameState, source: ObjectId) {
+    state.step = Step::DeclareAttackers;
+    assert!(
+        matches!(next(state), Decision::DeclareAttackers { eligible, .. } if eligible.contains(&source))
+    );
+    engine::step(state, Action::DeclareAttackers(vec![source])).unwrap();
+}
+
+fn cleanup(state: &mut GameState) {
+    assert!(state.stack.is_empty());
+    let active = state.active_player;
+    state.step = Step::End;
+    state.priority_player = active;
+    state.engine.priority_passes = [false, false];
+    for _ in 0..8 {
+        assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
+        if state.active_player != active {
+            return;
+        }
+        engine::step(state, Action::Pass).unwrap();
+    }
+    panic!("cleanup transition absent");
+}
+
+#[test]
+fn exact_definitions_colored_payment_and_ruby_haste_mana_choices() {
+    for (name, generic, colors, power, toughness, subtypes) in [
+        (
+            "Ruby, Daring Tracker",
+            0,
+            vec![ManaColor::R, ManaColor::G],
+            1,
+            2,
+            vec![Subtype::Human, Subtype::Scout],
+        ),
+        (
+            "Courageous Goblin",
+            1,
+            vec![ManaColor::R],
+            2,
+            2,
+            vec![Subtype::Goblin],
+        ),
+    ] {
+        let def = &CARD_DEFS[card_id_by_name(name).unwrap() as usize];
+        assert_eq!(def.capability, CardCapability::Full);
+        assert_eq!(def.types, &[CardType::Creature]);
+        assert_eq!(def.subtypes, subtypes);
+        assert_eq!((def.power, def.toughness), (Some(power), Some(toughness)));
+        assert_eq!(def.cost.generic, generic);
+        assert_eq!(
+            def.cost.pips,
+            colors.iter().copied().map(Pip::Colored).collect::<Vec<_>>()
+        );
+        assert_eq!(def.colors, colors);
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(player);
+            let source = put(&mut state, player, name, Zone::Hand);
+            state.players[player.index()].mana_pool[5] = 2;
+            next(&mut state);
+            let before = serde_json::to_vec(&state).unwrap();
+            assert!(engine::step(&mut state, Action::CastSpell(source)).is_err());
+            assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+            state.players[player.index()].mana_pool = [0; 6];
+            state.players[player.index()].mana_pool[5] = generic;
+            for color in &colors {
+                state.players[player.index()].mana_pool[color.pool_index()] += 1;
+            }
+            cast(&mut state, source, None);
+            settle(&mut state);
+            assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+            assert!(state.objects.get(source).summoning_sick);
+            assert_eq!(state.players[player.index()].mana_pool, [0; 6]);
+            if name == "Ruby, Daring Tracker" {
+                assert!(engine::has_effective_keyword(
+                    &state,
+                    source,
+                    Keywords::HASTE
+                ));
+                assert!(mana::gather_sources(player, &state)
+                    .iter()
+                    .any(|candidate| candidate.id == source
+                        && candidate.choices == vec![ManaColor::R, ManaColor::G]));
+                let before = serde_json::to_vec(&state).unwrap();
+                assert!(engine::step(
+                    &mut state,
+                    Action::ActivateManaAbilityChoice(source, ManaColor::U)
+                )
+                .is_err());
+                assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+                for color in [ManaColor::R, ManaColor::G] {
+                    let mut current = restored(&state);
+                    assert!(
+                        matches!(next(&mut current), Decision::CastSpellOrPass { mana_abilities, .. } if mana_abilities.contains(&source))
+                    );
+                    engine::step(
+                        &mut current,
+                        Action::ActivateManaAbilityChoice(source, color),
+                    )
+                    .unwrap();
+                    assert!(current.objects.get(source).tapped);
+                    let mut expected = [0; 6];
+                    expected[color.pool_index()] = 1;
+                    assert_eq!(current.players[player.index()].mana_pool, expected);
+                }
+                attack(&mut state, source);
+                assert!(state.objects.get(source).tapped);
+                assert!(state.engine.pending_triggers.is_empty());
+            }
+        }
+    }
+}
+
+#[test]
+fn actual_attack_threshold_uses_friendly_power_and_source_and_replays_cleanup() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for name in ["Ruby, Daring Tracker", "Courageous Goblin"] {
+            for (support_counters, own_counters, expected) in
+                [(0, 0, false), (2, 0, false), (3, 0, true), (0, 3, true)]
+            {
+                let mut state = ready(player);
+                let source = put(&mut state, player, name, Zone::Battlefield);
+                let support = put(&mut state, player, "Llanowar Elves", Zone::Battlefield);
+                state.objects.get_mut(support).counters.plus1_plus1 = support_counters;
+                state.objects.get_mut(source).counters.plus1_plus1 = own_counters;
+                put(
+                    &mut state,
+                    player.opponent(),
+                    "Tolarian Terror",
+                    Zone::Battlefield,
+                );
+                attack(&mut state, source);
+                assert_eq!(state.engine.pending_triggers.len(), usize::from(expected));
+                let mut replay = restored(&state);
+                for current in [&mut state, &mut replay] {
+                    settle(current);
+                    let delta = if expected {
+                        if name == "Ruby, Daring Tracker" {
+                            2
+                        } else {
+                            1
+                        }
+                    } else {
+                        0
+                    };
+                    let base = if name == "Ruby, Daring Tracker" { 1 } else { 2 };
+                    assert_eq!(
+                        engine::effective_power(current, source),
+                        base + own_counters + delta
+                    );
+                    assert_eq!(
+                        engine::has_effective_keyword(current, source, Keywords::MENACE),
+                        expected && name == "Courageous Goblin"
+                    );
+                    cleanup(current);
+                    assert_eq!(
+                        engine::effective_power(current, source),
+                        base + own_counters
+                    );
+                    assert!(!engine::has_effective_keyword(
+                        current,
+                        source,
+                        Keywords::MENACE
+                    ));
+                }
+                same(&state, &replay);
+            }
+        }
+    }
+}
+
+#[test]
+fn pending_attack_survives_qualifier_departure_and_control_change_but_not_source_reentry() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for name in ["Ruby, Daring Tracker", "Courageous Goblin"] {
+            for reenter in [false, true] {
+                let mut state = ready(player);
+                let source = put(&mut state, player, name, Zone::Battlefield);
+                let support = put(&mut state, player, "Tolarian Terror", Zone::Battlefield);
+                attack(&mut state, source);
+                assert_eq!(state.engine.pending_triggers.len(), 1);
+                // Materialize the actual printed trigger on the stack before changing zones.
+                assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+                assert_eq!(state.stack.len(), 1);
+                event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(support, Zone::Graveyard),
+                );
+                if reenter {
+                    event::propose_and_commit(
+                        &mut state,
+                        ProposedEvent::zone_change(source, Zone::Hand),
+                    );
+                    event::propose_and_commit(
+                        &mut state,
+                        ProposedEvent::zone_change(source, Zone::Battlefield),
+                    );
+                } else {
+                    state.players[player.index()]
+                        .battlefield
+                        .retain(|id| *id != source);
+                    state.players[player.opponent().index()]
+                        .battlefield
+                        .push(source);
+                    state.objects.get_mut(source).controller = player.opponent();
+                }
+                let mut replay = restored(&state);
+                for current in [&mut state, &mut replay] {
+                    settle(current);
+                    let base = if name == "Ruby, Daring Tracker" { 1 } else { 2 };
+                    let delta = if reenter {
+                        0
+                    } else if name == "Ruby, Daring Tracker" {
+                        2
+                    } else {
+                        1
+                    };
+                    assert_eq!(engine::effective_power(current, source), base + delta);
+                    assert_eq!(
+                        engine::has_effective_keyword(current, source, Keywords::MENACE),
+                        !reenter && name == "Courageous Goblin"
+                    );
+                }
+                same(&state, &replay);
+            }
+        }
+    }
+}
+
+#[test]
+fn courageous_menace_refuses_one_blocker_and_accepts_two_after_restore() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(player);
+        let source = put(&mut state, player, "Courageous Goblin", Zone::Battlefield);
+        put(&mut state, player, "Tolarian Terror", Zone::Battlefield);
+        let a = put(
+            &mut state,
+            player.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let b = put(
+            &mut state,
+            player.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        attack(&mut state, source);
+        settle(&mut state);
+        assert!(engine::has_effective_keyword(
+            &state,
+            source,
+            Keywords::MENACE
+        ));
+        for _ in 0..8 {
+            match next(&mut state) {
+                Decision::DeclareBlockers { .. } => break,
+                Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+                other => panic!("unexpected combat decision {other:?}"),
+            }
+        }
+        assert!(matches!(next(&mut state), Decision::DeclareBlockers { .. }));
+        let mut replay = restored(&state);
+        for current in [&mut state, &mut replay] {
+            let before = serde_json::to_vec(&*current).unwrap();
+            assert!(engine::step(current, Action::DeclareBlockers(vec![(a, source)])).is_err());
+            assert_eq!(serde_json::to_vec(&*current).unwrap(), before);
+            engine::step(
+                current,
+                Action::DeclareBlockers(vec![(a, source), (b, source)]),
+            )
+            .unwrap();
+        }
+        same(&state, &replay);
+    }
+}
+
+#[test]
+fn restored_actual_trigger_refuses_redirected_boost_zone_generation_or_missing_contract() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for name in ["Ruby, Daring Tracker", "Courageous Goblin"] {
+            let mut state = ready(player);
+            let source = put(&mut state, player, name, Zone::Battlefield);
+            put(&mut state, player, "Tolarian Terror", Zone::Battlefield);
+            let other = put(
+                &mut state,
+                player.opponent(),
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            attack(&mut state, source);
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            assert_eq!(state.stack.len(), 1);
+            for repair in 0..4 {
+                let mut forged = restored(&state);
+                if repair == 3 {
+                    forged.stack[0].v4.ability_source_contract = None;
+                } else {
+                    let effect = forged.stack[0].inline_effect.as_mut().unwrap();
+                    let effect = match effect {
+                        EffectOp::Sequence(steps) => &mut steps[0],
+                        other => other,
+                    };
+                    let EffectOp::BoostBoundObjectUntilEndOfTurn { object, .. } = effect else {
+                        panic!("printed bound boost absent")
+                    };
+                    match repair {
+                        0 => object.object = other,
+                        1 => object.expected_zone = Zone::Graveyard,
+                        2 => object.expected_zone_change_count += 1,
+                        _ => unreachable!(),
+                    }
+                }
+                let mut halted = false;
+                for _ in 0..8 {
+                    match engine::advance_until_decision(&mut forged) {
+                        Decision::Halted { .. } => {
+                            halted = true;
+                            break;
+                        }
+                        Decision::CastSpellOrPass { .. } => {
+                            engine::step(&mut forged, Action::Pass).unwrap()
+                        }
+                        other => panic!("unexpected forged resolution decision {other:?}"),
+                    }
+                }
+                assert!(halted, "forged source binding did not halt at resolution");
+                assert_eq!(
+                    engine::effective_power(&forged, source),
+                    if name == "Ruby, Daring Tracker" { 1 } else { 2 }
+                );
+                assert_eq!(engine::effective_power(&forged, other), 1);
+                assert!(!engine::has_effective_keyword(
+                    &forged,
+                    source,
+                    Keywords::MENACE
+                ));
+            }
+        }
+    }
+}
+
+fn witness_at_boundary(state: &mut GameState, source: ObjectId) {
+    // Install the registered Aura relationship at the chosen trigger boundary.
+    // Its ordinary cast/attachment behavior is independently qualified. Assign
+    // the next real layer timestamp so ordering against subsequent grants holds.
+    let aura = put(
+        state,
+        state.active_player.opponent(),
+        "Witness Protection",
+        Zone::Battlefield,
+    );
+    let timestamp = state.engine.next_effect_timestamp;
+    state.engine.next_effect_timestamp += 1;
+    let link = ObjectLinkV4 {
+        object: source,
+        zone_change_count: state.objects.get(source).zone_change_count,
+    };
+    state.objects.get_mut(aura).v4.attached_to = Some(link);
+    state.objects.get_mut(aura).v4.layer_timestamp = Some(timestamp);
+    state.objects.get_mut(source).attachments.push(aura);
+}
+
+#[test]
+fn ability_removal_prevents_new_attacks_and_pending_menace_respects_timestamps() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for name in ["Ruby, Daring Tracker", "Courageous Goblin"] {
+            let mut removed = ready(player);
+            let source = put(&mut removed, player, name, Zone::Battlefield);
+            put(&mut removed, player, "Tolarian Terror", Zone::Battlefield);
+            witness_at_boundary(&mut removed, source);
+            assert!(!engine::has_effective_keyword(
+                &removed,
+                source,
+                Keywords::HASTE
+            ));
+            assert!(mana::gather_sources(player, &removed)
+                .iter()
+                .all(|candidate| candidate.id != source));
+            assert!(
+                matches!(next(&mut removed), Decision::CastSpellOrPass { mana_abilities, .. } if !mana_abilities.contains(&source))
+            );
+            attack(&mut removed, source);
+            assert!(removed.engine.pending_triggers.is_empty());
+        }
+        for attach_before_resolution in [false, true] {
+            let mut state = ready(player);
+            let source = put(&mut state, player, "Courageous Goblin", Zone::Battlefield);
+            put(&mut state, player, "Tolarian Terror", Zone::Battlefield);
+            attack(&mut state, source);
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            assert_eq!(state.stack.len(), 1);
+            if attach_before_resolution {
+                witness_at_boundary(&mut state, source);
+            }
+            let mut replay = restored(&state);
+            for current in [&mut state, &mut replay] {
+                settle(current);
+                if !attach_before_resolution {
+                    witness_at_boundary(current, source);
+                }
+                assert_eq!(engine::effective_power(current, source), 2);
+                assert_eq!(engine::effective_toughness(current, source), 1);
+                assert_eq!(
+                    engine::has_effective_keyword(current, source, Keywords::MENACE),
+                    attach_before_resolution
+                );
+                cleanup(current);
+                assert_eq!(engine::effective_power(current, source), 1);
+                assert!(!engine::has_effective_keyword(
+                    current,
+                    source,
+                    Keywords::MENACE
+                ));
+            }
+            same(&state, &replay);
+        }
+    }
+}

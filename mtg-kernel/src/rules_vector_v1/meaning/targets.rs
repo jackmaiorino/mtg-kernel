@@ -17,13 +17,24 @@ use super::*;
 /// Legality facts of a target specification.
 pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
     match spec {
+        TargetSpec::StandardV1(filter) => standard_target_spec(filter, out),
         // Target count 0: nothing is announced.
         TargetSpec::None => {}
+        TargetSpec::ArtifactOrEnchantmentThenPlayer => {
+            target_spec(TargetSpec::ArtifactOrEnchantmentPermanent, out);
+            target_spec(TargetSpec::AnyPlayer, out);
+            out.target(TargetAtom::MultipleTargets);
+        }
         TargetSpec::UpToOneOtherControlledPermanent => {
             object(out, ObjF::Permanent, Some(RelF::You), ZoneF::Battlefield);
             out.target(TargetAtom::UpTo);
             // Vocabulary has no exact-source-incarnation exclusion facet.
             out.atoms.push(Atom::Opaque);
+        }
+        TargetSpec::CounterDistribution => {
+            object(out, creature(), Some(RelF::You), ZoneF::Battlefield);
+            out.target(TargetAtom::MultipleTargets);
+            out.target(TargetAtom::UpTo);
         }
         TargetSpec::UpToTwoOtherControlledCreatures => {
             object(out, creature(), Some(RelF::You), ZoneF::Battlefield);
@@ -31,12 +42,13 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
             out.target(TargetAtom::UpTo);
             out.atoms.push(Atom::Opaque);
         }
-        // Both players, plus every creature on either battlefield (creatures
-        // only: planeswalkers are not in the engine's "any target" pool).
+        // Both players and creatures, plus planeswalkers in Standard.
         TargetSpec::AnyTarget => {
             out.target(TargetAtom::PlayerYou);
             out.target(TargetAtom::PlayerOpponent);
             object(out, creature(), None, ZoneF::Battlefield);
+            #[cfg(feature = "standard-magezero-fixtures")]
+            object(out, typed(CardType::Planeswalker), None, ZoneF::Battlefield);
         }
         // Either player; never an object.
         TargetSpec::AnyPlayer => {
@@ -57,6 +69,12 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
             out.target(TargetAtom::MultipleTargets);
         }
         // Any spell stack item (abilities excluded by `StackItemKind::Spell`).
+        TargetSpec::StackObject | TargetSpec::StackAbility => {
+            object(out, ObjF::AnyCard, None, ZoneF::Stack)
+        }
+        TargetSpec::AnotherCreatureOrPlaneswalker => {
+            object(out, ObjF::Permanent, None, ZoneF::Battlefield);
+        }
         TargetSpec::AnySpellOnStack => object(out, ObjF::Spell, None, ZoneF::Stack),
         TargetSpec::InstantSpellOnStack => {
             object(out, typed(CardType::Instant), None, ZoneF::Stack)
@@ -188,6 +206,17 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
         }
         // An artifact without the creature type. No negated-type facet
         // exists; the nearest class is "an artifact".
+        TargetSpec::UpToOneStackAbility => {
+            object(out, ObjF::AnyCard, None, ZoneF::Stack);
+            out.target(TargetAtom::UpTo);
+        }
+        TargetSpec::CreatureWithStunCounter => object(out, creature(), None, ZoneF::Battlefield),
+        TargetSpec::ControlledNoncreatureArtifactPermanent => object(
+            out,
+            typed(CardType::Artifact),
+            Some(RelF::You),
+            ZoneF::Battlefield,
+        ),
         TargetSpec::NoncreatureArtifactPermanent => {
             object(out, typed(CardType::Artifact), None, ZoneF::Battlefield)
         }
@@ -280,11 +309,21 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
         ),
         // A creature without an outlaw type. No creature-type facet exists;
         // the nearest class is "a creature".
-        TargetSpec::NonOutlawCreature => object(out, creature(), None, ZoneF::Battlefield),
+        TargetSpec::CreaturePowerPlusToughnessAtMostFive
+        | TargetSpec::NonartifactCreature
+        | TargetSpec::UpToOneOtherCreature
+        | TargetSpec::AnotherAttackingCreature
+        | TargetSpec::NonOutlawCreature => object(out, creature(), None, ZoneF::Battlefield),
         // A creature with effective toughness >= 4. The toughness
         // requirement has no facet; the nearest class is "a creature".
         TargetSpec::CreatureToughnessAtLeastFour => {
             object(out, creature(), None, ZoneF::Battlefield)
+        }
+        TargetSpec::ArtifactCreatureEnchantmentOrPlaneswalker => {
+            object(out, creature(), None, ZoneF::Battlefield);
+            object(out, typed(CardType::Artifact), None, ZoneF::Battlefield);
+            object(out, typed(CardType::Enchantment), None, ZoneF::Battlefield);
+            object(out, typed(CardType::Planeswalker), None, ZoneF::Battlefield);
         }
         TargetSpec::CreatureEnchantmentOrPlaneswalker => {
             object(out, creature(), None, ZoneF::Battlefield);
@@ -333,6 +372,22 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
         }
         // One permanent the targeting player controls with any of these
         // effective subtypes. Vocabulary gap: no subtype filter.
+        TargetSpec::CardInOwnGraveyardWithAnySubtype(_) => {
+            object(out, ObjF::AnyCard, Some(RelF::You), ZoneF::Graveyard)
+        }
+        TargetSpec::OpponentArtifactEnchantmentOrNonbasicLand => object(
+            out,
+            ObjF::Permanent,
+            Some(RelF::Opponent),
+            ZoneF::Battlefield,
+        ),
+        TargetSpec::AnotherArtifactOrCreature => {
+            object(out, ObjF::Permanent, None, ZoneF::Battlefield)
+        }
+        TargetSpec::UpToTwoOtherCreaturesDifferentControllers => {
+            object(out, creature(), None, ZoneF::Battlefield)
+        }
+        TargetSpec::LegendaryCreature => object(out, creature(), None, ZoneF::Battlefield),
         TargetSpec::ControlledPermanentWithAnySubtype(subtypes) => {
             let _ = subtypes;
             object(out, ObjF::Permanent, Some(RelF::You), ZoneF::Battlefield)
@@ -347,6 +402,15 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
 /// (the engine never resolves a slot past `target_count`).
 pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
     match spec {
+        TargetSpec::CardInOwnGraveyardWithAnySubtype(_) => ObjF::AnyCard,
+        TargetSpec::OpponentArtifactEnchantmentOrNonbasicLand => ObjF::Permanent,
+        TargetSpec::StackObject
+        | TargetSpec::StackAbility
+        | TargetSpec::AnotherCreatureOrPlaneswalker => ObjF::AnyCard,
+        TargetSpec::AnotherArtifactOrCreature => ObjF::Permanent,
+        TargetSpec::UpToTwoOtherCreaturesDifferentControllers => creature(),
+        TargetSpec::LegendaryCreature => creature(),
+        TargetSpec::StandardV1(filter) => standard_target_obj(filter),
         // No targets are chosen, so the engine's `resolve_object` would
         // panic on any `Target(slot)`; no well-formed program refers to one.
         // The unfiltered class keeps the extractor total.
@@ -365,6 +429,14 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
         TargetSpec::AnyPlayer | TargetSpec::UpToTwoPlayers | TargetSpec::TargetOpponent => {
             let _ = slot; // Every slot is a player.
             ObjF::Player
+        }
+        TargetSpec::UpToOneStackAbility => ObjF::AnyCard,
+        TargetSpec::ArtifactOrEnchantmentThenPlayer => {
+            if slot == 0 {
+                ObjF::Permanent
+            } else {
+                ObjF::Player
+            }
         }
         TargetSpec::AnySpellOnStack
         | TargetSpec::BlueSpellOnStack
@@ -404,6 +476,7 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
         TargetSpec::ArtifactSpellOnStack
         | TargetSpec::ArtifactPermanent
         | TargetSpec::ExactlyTwoArtifactPermanents
+        | TargetSpec::ControlledNoncreatureArtifactPermanent
         | TargetSpec::NoncreatureArtifactPermanent => {
             let _ = slot; // Every slot is an artifact.
             typed(CardType::Artifact)
@@ -416,6 +489,7 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
         | TargetSpec::CreatureOrPlaneswalker
         | TargetSpec::ArtifactEnchantmentOrFlyingCreature
         | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour
+        | TargetSpec::ArtifactCreatureEnchantmentOrPlaneswalker
         | TargetSpec::CreatureEnchantmentOrPlaneswalker => {
             let _ = slot; // One target slot.
             ObjF::Permanent
@@ -434,8 +508,10 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
             ObjF::NonlandPermanent
         }
         TargetSpec::UpToTwoOtherControlledCreatures
+        | TargetSpec::CounterDistribution
         | TargetSpec::Creature
         | TargetSpec::NonlegendaryCreature
+        | TargetSpec::CreatureWithStunCounter
         | TargetSpec::ControlledCreature
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
@@ -446,6 +522,10 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
         | TargetSpec::NonblackCreature
         | TargetSpec::ControlledCreatureThenOpponentCreature
         | TargetSpec::AttackingOrBlockingCreature
+        | TargetSpec::CreaturePowerPlusToughnessAtMostFive
+        | TargetSpec::NonartifactCreature
+        | TargetSpec::UpToOneOtherCreature
+        | TargetSpec::AnotherAttackingCreature
         | TargetSpec::NonOutlawCreature
         | TargetSpec::CreatureToughnessAtLeastFour => {
             let _ = slot; // Every slot is a creature.
@@ -539,6 +619,99 @@ fn mana_value_bucket(maximum: u16) -> u8 {
         | AmtF::Half
         | AmtF::Minus(_) => {
             unreachable!("AmtF::fixed returns Fixed for a non-negative count")
+        }
+    }
+}
+
+/// Exact target domains; keep new Standard payloads in the source record and
+/// explicitly mark refinements unavailable in the frozen facet vocabulary.
+fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> ObjF {
+    use crate::standard_cards_v1::StandardTargetV1 as S;
+    match filter {
+        S::OpponentNonlandPermanentManaValueAtMost(_)
+        | S::OpponentNonlandPermanent
+        | S::AnotherNonlandPermanent => ObjF::NonlandPermanent,
+        S::OpponentArtifactOrCreature => ObjF::Permanent,
+        S::ControlledArtifact => typed(CardType::Artifact),
+        S::InstantOrSorceryCardInOwnGraveyard | S::CardInAGraveyard => ObjF::AnyCard,
+        S::AnotherNonlegendaryControlledCreature
+        | S::UpToOneCreature
+        | S::TappedOpponentCreature
+        | S::CrewedSourceThisTurn => creature(),
+        S::UpToTwoAnyTargets => ObjF::PlayerOrPermanent,
+    }
+}
+
+pub(super) fn standard_target_origin(
+    filter: crate::standard_cards_v1::StandardTargetV1,
+) -> (Option<ZoneF>, Option<RelF>) {
+    use crate::standard_cards_v1::StandardTargetV1 as S;
+    match filter {
+        S::InstantOrSorceryCardInOwnGraveyard => (Some(ZoneF::Graveyard), Some(RelF::You)),
+        S::CardInAGraveyard => (Some(ZoneF::Graveyard), None),
+        S::ControlledArtifact | S::AnotherNonlegendaryControlledCreature => {
+            (Some(ZoneF::Battlefield), Some(RelF::You))
+        }
+        S::OpponentNonlandPermanentManaValueAtMost(_)
+        | S::OpponentNonlandPermanent
+        | S::OpponentArtifactOrCreature
+        | S::TappedOpponentCreature => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
+        S::AnotherNonlandPermanent
+        | S::UpToTwoAnyTargets
+        | S::UpToOneCreature
+        | S::CrewedSourceThisTurn => {
+            // A crew member may have changed controller since it crewed.
+            (Some(ZoneF::Battlefield), None)
+        }
+    }
+}
+
+fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out: &mut Collector) {
+    use crate::standard_cards_v1::StandardTargetV1 as S;
+    let (zone, relation) = standard_target_origin(filter);
+    let zone = zone.expect("every Standard object target has a zone");
+    match filter {
+        S::OpponentNonlandPermanentManaValueAtMost(maximum) => {
+            out.target(TargetAtom::Object {
+                obj: ObjF::NonlandPermanent,
+                controller: relation,
+                zone,
+                color: None,
+                mana_value_at_most: Some(mana_value_bucket(u16::from(maximum))),
+                excludes: None,
+            });
+        }
+        S::OpponentNonlandPermanent | S::ControlledArtifact | S::CardInAGraveyard => {
+            object(out, standard_target_obj(filter), relation, zone);
+        }
+        S::OpponentArtifactOrCreature => {
+            object(out, typed(CardType::Artifact), relation, zone);
+            object(out, creature(), relation, zone);
+        }
+        S::InstantOrSorceryCardInOwnGraveyard => {
+            object(out, typed(CardType::Instant), relation, zone);
+            object(out, typed(CardType::Sorcery), relation, zone);
+        }
+        S::AnotherNonlandPermanent | S::AnotherNonlegendaryControlledCreature => {
+            object(out, standard_target_obj(filter), relation, zone);
+            out.atoms.push(Atom::Opaque); // Source exclusion and Legendary refinement.
+        }
+        S::TappedOpponentCreature | S::CrewedSourceThisTurn => {
+            object(out, creature(), relation, zone);
+            // Tapped status and exact-incarnation crew history have no facet.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::UpToOneCreature => {
+            object(out, creature(), relation, zone);
+            out.target(TargetAtom::UpTo);
+        }
+        S::UpToTwoAnyTargets => {
+            out.target(TargetAtom::PlayerYou);
+            out.target(TargetAtom::PlayerOpponent);
+            object(out, creature(), None, zone);
+            object(out, typed(CardType::Planeswalker), None, zone);
+            out.target(TargetAtom::MultipleTargets);
+            out.target(TargetAtom::UpTo);
         }
     }
 }

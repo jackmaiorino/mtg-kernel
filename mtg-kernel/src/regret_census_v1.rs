@@ -25,6 +25,8 @@ mod search;
 mod stage4a;
 mod validity;
 
+pub(crate) use stage4a::decision_replay_key;
+
 const MAX_PHYSICAL: u64 = 4096;
 
 #[derive(Clone, Debug)]

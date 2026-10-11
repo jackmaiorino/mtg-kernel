@@ -138,6 +138,33 @@ class LimitedDeckTest(unittest.TestCase):
         self.assertEqual(len(ids), 40)
         self.assertEqual(ids[:31], list(range(338, 369)))
 
+    def test_reference_instant_sorcery_reducers_resolves_all_forty_copies(self) -> None:
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_instant_sorcery_reducers.dck").read_text())
+        ids = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(ids), 40)
+        self.assertEqual(ids[:8], [369] * 4 + [370] * 4)
+
+    def test_reference_conditional_creatures_resolves_all_forty_copies(self) -> None:
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_conditional_flash_power_creatures.dck").read_text())
+        ids = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(ids), 40)
+        self.assertEqual(ids[:24], [371] * 4 + [372] * 4 + [373] * 4 + [374] * 4 + [375] * 4 + [376] * 4)
+
+    def test_reference_following_creatures_spells_hare_resolves_all_forty_copies(self) -> None:
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_following_creatures_spells_and_hare.dck").read_text(encoding="utf-8"))
+        ids = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(ids), 40)
+        self.assertEqual(ids[:16], [i for i in range(377, 385) for _ in range(2)])
+
+    def test_hare_copies_are_unrestricted_and_new_tokens_are_undeckable(self) -> None:
+        deck = limited.parse_dck("5 Hare Apparent\n35 Plains\n")
+        ids = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(ids), 40)
+        self.assertEqual(ids[:5], [384] * 5)
+        for name in ("Human Token", "Rabbit Token"):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "token"):
+                limited.resolve_mainboard(limited.parse_dck("39 Plains\n1 " + name), self.registry)
+
     def test_extension_rejects_duplicates_and_preserves_base_card_ids(self) -> None:
         base = (REPO_ROOT / "data/cards_v1.json").read_bytes()
         extension = (FIXTURES / "cards_v1.json").read_bytes()
@@ -151,6 +178,18 @@ class LimitedDeckTest(unittest.TestCase):
             limited.combined_registry(base, [extension, extension])
         with self.assertRaisesRegex(ValueError, "registry version 2"):
             limited.combined_registry(base, [b'{"version":3,"cards":[]}'])
+
+    def test_paladin_skyknight_sire_reference_and_appended_ids(self) -> None:
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_paladin_skyknight_sire.dck").read_text(encoding="utf-8"))
+        resolved = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(resolved), 40)
+        for name, card_id, copies in [
+            ("Inspiring Paladin", 387, 4),
+            ("Skyknight Squire", 388, 4),
+            ("Sire of Seven Deaths", 389, 2),
+        ]:
+            self.assertEqual(self.registry[name].card_id, card_id)
+            self.assertEqual(resolved.count(card_id), copies)
 
     def test_original_decks_are_40_cards_and_fully_resolve(self) -> None:
         for filename, supported_copies, source_sha256 in [
@@ -242,7 +281,7 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("FDN_top_*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
-        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 169)
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 188)
         self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
                              for card in report["cards"]), 0)
 

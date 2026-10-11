@@ -44,6 +44,53 @@ All23 final reviewed-head checks and35 affected Python cases on the actual
 default merge pass. Accepted coverage is138 full, one partial and147 missing
 names of286; live v65 identity is42bf6f9ca62d6615.
 
+Current accepted v69 integration: PR222 merged at actual default
+`a957c358db9326cb3eacff819d6bcea38678aeb3`. All23 final checks pass;
+actual tree `f57692fdaad90102c81f57cd5ae14df7fb4cc4b2` equals the reviewed
+composition and preserves launcher PR223. All40 affected Python cases pass
+on actual default. The actual frozen286-name inventory reports185 Full,
+1 Partial and100 Missing; accepted identity is `b0338cda1845f330`. Frozen
+membership/printing identities and24 token dependencies remain fixed.
+See [default acceptance](https://github.com/jackmaiorino/mtg-kernel/pull/222#issuecomment-6107089141).
+Both repaired Windows publisher cases and73 Limited production-profile cases
+pass in hosted CI. Failed Native1/2 and the additional suspended Native3
+remain retained; the suspended job is not a pass and remains guarded.
+The following v68 and preparation statuses are retained history.
+
+Prior accepted v68 integration: [PR216](https://github.com/jackmaiorino/mtg-kernel/pull/216)
+merged atf7d115fa66f2f1efaa49a0d3b52912021d3a2fa1. All23 final checks in
+CI38105979002 pass. Actual default treef037d21772cb8e944efacc92ef4254da0ba325d6
+matches reviewed headbbe4968146a03f206d9dec85e5d6c22bc1680493 exactly;
+all38 affected Python cases pass there. Accepted coverage is177 full, one
+partial and108 missing of286 names, plus24 dependency records. Live v68
+identity is645f2da1b223a18f. See [default receipt6105370378](https://github.com/jackmaiorino/mtg-kernel/pull/216#issuecomment-6105370378).
+
+Original v68 Native1 passed17 of22 new card groups and failed5 missing
+attack-declaration cases; its101 command/guard and logs remain retained.
+Repair5f0bdae2 passed all22 groups in actual Native2, plus48 definitions,
+23 rules cases(one existing ignore),151 native records(three existing
+ignores),69 production-profile cases, Limited strict lint and combined
+all-test typecheck/strict lint. Supported guardff99f2e7f20b4de4a50f66a41c9d1ed3
+ended0 and released its cores. The composed default preserves this code and
+concurrent PR206/219 changes. Historical v67 reads and stale writes/resumes
+remain qualified. Issue110 stays open for full-pool and Limited/DraftZero work.
+
+Next eight-card source2b624162 contains Nessian Hornbeetle, Micromancer,
+Paradise Druid, Bulk Up, Inspiring Call, Needletooth Pack, Stroke of Midnight
+and Hare Apparent. All eight are unregistered;41 actual gameplay groups
+remain unrun. Source Native1 failed two registered Hare setup cases and
+retains its101 receipt; fixture repair2b uses live printed names and actual
+token creation. Source Native2 is queued under actual supervisor37988 and
+supported host_slots, with no successful qualification claimed. The owned
+admission branch composes source2b with accepted defaultf7, preserving all
+19 default paths and27 source paths byte-for-byte before this receipt update.
+Registration and all admission/profile checks wait for successful source
+qualification. Prepared v69 would append IDs377-384, token IDs385-386,
+387 definitions and prospective185 full/1 partial/100 missing coverage.
+The prepared scripts are unexecuted. See the eight-card admission design.
+
+The following preparation order and receipts are retained history.
+
 Later prepared families remain retained in their original worktrees: v65
 Anthem of Champions/Empyrean Eagle (336-337), then one coherent admission
 for prepared IDs338-368, beginning with Balmor/Firespitter Whelp. The later

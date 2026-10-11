@@ -173,7 +173,7 @@ struct FlatResolvedActionObjectV4 {
 /// through unchanged: none of them can ever name a pending trigger's own
 /// source (they arise from engine stages -- casting, cost payment, effect
 /// resolution -- mutually exclusive with `EngineDecisionStageV2::PendingTriggers`).
-fn frozen_pending_trigger_semantic_v4(
+pub(super) fn frozen_pending_trigger_semantic_v4(
     state: &crate::state::GameState,
     semantic: ActionSemanticV1,
 ) -> ActionSemanticV1 {
@@ -389,7 +389,8 @@ fn flat_visible_action_object_components_v4(
         .ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?;
     let owner: PlayerSeatV1 = object.owner.into();
     let controller: PlayerSeatV1 = object.controller.into();
-    if object.card_def != reference.card_db_id
+    if crate::rl::projected_card_def(state, object_id, object.zone_change_count)
+        != reference.card_db_id
         || owner != reference.owner
         || controller != reference.controller
         || object.zone != reference.zone
@@ -635,7 +636,7 @@ fn extension_object_v4(
 /// `decision_local_library` search-position ordinal depends on `position`
 /// at all -- only [`pending_trigger_frozen_source_components_v4`], reached
 /// through the ordinary fallback, ever is.
-fn flat_visible_action_object_extension_aware_v4(
+pub(super) fn flat_visible_action_object_extension_aware_v4(
     state: &crate::state::GameState,
     actor: PlayerId,
     position: u32,

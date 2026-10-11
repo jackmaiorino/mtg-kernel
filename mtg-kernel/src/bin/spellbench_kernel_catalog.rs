@@ -73,7 +73,7 @@ fn spell_forms(def: &CardDef, face_index: u8) -> Value {
                 .pips
                 .iter()
                 .flat_map(|pip| match pip {
-                    Pip::Colored(c) | Pip::Phyrexian(c) => vec![*c],
+                    Pip::Colored(c) | Pip::Phyrexian(c) | Pip::PhyrexianAnyColor(c) => vec![*c],
                     Pip::Hybrid(a, b) => vec![*a, *b],
                 })
                 .filter_map(color)

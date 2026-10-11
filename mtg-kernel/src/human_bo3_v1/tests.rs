@@ -344,6 +344,7 @@ fn human_impulse_exile_state(
         };
         if let Some(expiry) = expiry {
             state.engine.exile_play_permissions.push(PlayPermission {
+                without_mana_cost: crate::engine::FreeCastV1::default(),
                 object: card,
                 holder,
                 zone_change_generation: state.objects.get(card).zone_change_count,

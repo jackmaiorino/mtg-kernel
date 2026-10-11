@@ -1,0 +1,55 @@
+# Ghalta and Elvish Archdruid source preparation
+
+Both names remain unregistered and add no accepted coverage. The pinned Mage
+constructors at a5c90fe180021e70e2a644ade00eeab07f857a40 define Ghalta as
+10GG, legendary Elder Dinosaur, 12/12 trample, with a generic discount equal
+to the total power of controlled creatures. Archdruid is 1GG, Elf Druid,
+2/2, other controlled Elf creatures get +1/+1, and tapping adds green for
+each controlled Elf permanent, including itself.
+
+Ghalta uses an appended dynamic-cost query. It scans live controlled effective
+creatures, sums signed effective power in i64, and floors the total at zero.
+The existing complete cost quote preserves colored pips and freezes the selected
+cost before payment. Elder is appended without renumbering existing subtype
+ids; the Limited creature-type list includes it for changeling. Rules facets
+mark the missing sum-of-power vocabulary as opaque.
+
+Archdruid reuses the live subtype-lord path and the rich TapSelf mana ability
+with ControlledPermanentsWithSubtype(Elf). Mana activation remains explicit,
+as for Priest of Titania; no generic solver admission or yield clamp is added.
+The rich activation path evaluates exact representable output and refuses a
+pool-capacity overflow before costs or ability-use mutations. The primary
+action offers apply the same refusal.
+
+Six unregistered fixture groups cover printed metadata, actual signed-power
+casts and colored payment, restored results, lord stacking/control/zone changes,
+nine-Elf mana production and the 255-mana boundary, effective noncreature Elf
+counts, and actual Witness Protection suppression/removal. A registered-card
+primitive test covers signed power, control, live zones and restore. Formatting
+and diff checks pass. Native compilation, gameplay, catalog/version/profile
+admission, CI, review and integration remain pending. The subtype extension
+belongs to a future catalog identity, and cannot be used as accepted v67.
+
+Read-only source and fixture review at63efd00c found no actionable issues.
+Composition54fd3f06 preserves the reviewed Brine, ferocious, global flash and
+power/Elf primitives, including effective-Haste admission and recursive bound
+trigger validation. The staged six-name admission is reviewed but unexecuted.
+It requires actual accepted v67 ancestry and exact registry equality before
+writing candidate IDs371-376, version68 or coverage177.
+
+Composed source check1 at6851e748 stopped during all-test type checking because
+the effective-subtype fixture used Frog, which is absent from the engine's
+subtype vocabulary. It now uses existing Goblin to exercise loss of Elf.
+No new primitive or gameplay result was reached. Guard1901f23e520f4bd490191245dd331a9d
+ended101 after removing only its verified idle compiler helper49580. Logs remain
+in E:/storage-records/fdn110/fdn110-six-creatures-source-native1.*.
+
+Composed native source2 at bbe6aeb2 passed all-test typechecks and strict
+all-target lint under Limited and combined Limited/Standard. The affected
+checks passed engine 141, ferocious 2 and mana 7 in each configuration, plus
+Limited rules 23 (one ignored) and combined rules 21 (one ignored). The actual
+guard 34bd02d6d2b44601b119ae0b4d336e8a ended with code 0 after releasing its
+completed compiler helper. The earlier Frog-subtype compilation failure is
+retained. All six prepared names remain unregistered; the 22 actual fixture
+groups are typechecked but unexecuted. Registration and gameplay acceptance
+remain gated on the prior catalog's actual default integration.

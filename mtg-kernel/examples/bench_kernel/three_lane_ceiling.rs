@@ -469,6 +469,7 @@ fn noncombat_action_count(decision: &Decision) -> Result<usize, String> {
         | Decision::ChooseMadnessCast { .. } => Ok(2),
         Decision::ChooseLegendPermanent { candidates, .. }
         | Decision::ChooseLondonBottom { candidates, .. } => Ok(candidates.len()),
+        Decision::ChooseAttackTarget { candidates, .. } => Ok(candidates.len()),
         Decision::ChooseSpellMode { legal_modes, .. }
         | Decision::ChooseTriggerMode { legal_modes, .. } => Ok(legal_modes.len()),
         Decision::ChooseEffectOption { option_count, .. } => Ok(*option_count as usize),
@@ -624,6 +625,11 @@ fn noncombat_action_by_index(decision: &Decision, index: usize) -> Result<Action
             *candidates
                 .get(index)
                 .ok_or("legend choice index out of range")?,
+        ),
+        Decision::ChooseAttackTarget { candidates, .. } => Action::ChooseAttackTarget(
+            *candidates
+                .get(index)
+                .ok_or("attack target index out of range")?,
         ),
         Decision::ChooseCombatDamageRange { .. } => Action::ChooseCombatDamageRange {
             upper_half: index == 1,

@@ -350,3 +350,43 @@ fn bridge_entry_and_indestructible_use_shared_zone_and_destroy_paths() {
         "indestructible does not prevent sacrifice or another ordinary move"
     );
 }
+
+#[test]
+fn effective_haste_enables_sick_mana_source_and_restore_preserves_both_payment_paths() {
+    let mut state = ready_main1();
+    let elf = put_object(&mut state, "Llanowar Elves", Zone::Battlefield, false, true);
+    assert!(mana_candidates(&state, elf).is_empty());
+    assert!(mana::gather_sources(PlayerId::P0, &state)
+        .iter()
+        .all(|source| source.id != elf));
+    effect::execute(
+        &EffectOp::GrantKeywordTargetUntilEndOfTurn {
+            object: ObjectRef::ThisSource,
+            keyword: Keywords::HASTE,
+        },
+        &ExecCtx::no_targets(elf, PlayerId::P0),
+        &mut state,
+    );
+    let mut replay: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    for current in [&mut state, &mut replay] {
+        assert!(current.objects.get(elf).summoning_sick);
+        assert_eq!(mana_candidates(current, elf).len(), 1);
+        assert!(mana::gather_sources(PlayerId::P0, current)
+            .iter()
+            .any(|source| source.id == elf));
+        let mut explicit = current.clone();
+        engine::step(&mut explicit, Action::ActivateManaAbility(elf)).unwrap();
+        assert!(explicit.objects.get(elf).tapped);
+        assert_eq!(explicit.players[0].mana_pool[ManaColor::G.pool_index()], 1);
+        let spell = put_object(current, "Elvish Mystic", Zone::Hand, false, false);
+        engine::step(current, Action::CastSpell(spell)).unwrap();
+        resolve_spell(current, spell);
+        assert!(current.objects.get(elf).tapped);
+        assert_eq!(current.players[0].mana_pool, [0; 6]);
+    }
+    assert_eq!(
+        serde_json::to_value(state).unwrap(),
+        serde_json::to_value(replay).unwrap()
+    );
+}

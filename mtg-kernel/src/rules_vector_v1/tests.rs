@@ -502,6 +502,42 @@ fn lightning_bolt_is_not_a_near_neighbour_of_spy() {
 // 7. Isolation: the extractor never reads labels, names or the registry file.
 
 #[test]
+fn incubate_marker_preserves_token_closure_and_counter_meaning() {
+    let mut out = Collector::default();
+    meaning::effect_op(
+        &EffectOp::BindIncubateToTriggerSpell,
+        &Env {
+            target_spec: TargetSpec::None,
+        },
+        &mut out,
+    );
+    // Names are allowed in test expectations, never extractor inputs. This
+    // checks both profiles without the token and Standard's actual token id.
+    let expected: Vec<_> = crate::card_def::card_id_by_name("Incubator Token")
+        .into_iter()
+        .collect();
+    assert_eq!(out.created_tokens, expected);
+    assert_eq!(
+        out.atoms,
+        vec![
+            Atom::Effect(
+                EffectAtom::new(EvF::CreateToken)
+                    .player(RelF::You)
+                    .obj(ObjF::Token)
+                    .amount(AmtF::fixed(1)),
+            ),
+            Atom::Effect(
+                EffectAtom::new(EvF::PlaceCounter)
+                    .player(RelF::You)
+                    .obj(ObjF::Token)
+                    .amount(AmtF::Dynamic)
+                    .duration(DurF::Permanent),
+            ),
+        ]
+    );
+}
+
+#[test]
 fn extractor_sources_read_no_labels_or_names() {
     let names: BTreeSet<&str> = CARD_DEFS.iter().map(|d| d.name).collect();
     for (path, text) in EXTRACTOR_SOURCES_V1 {
@@ -613,6 +649,16 @@ fn power_toughness_changes_keep_their_sign() {
 /// or `event_time_trigger_programs`; token names are reached through
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
+    "Archmage of Runes",
+    "Ruby, Daring Tracker",
+    "Courageous Goblin",
+    "Brineborn Cutthroat",
+    "Nessian Hornbeetle",
+    "Needletooth Pack",
+    "Hare Apparent",
+    "Rabbit Token",
+    "Micromancer",
+    "Skyship Buccaneer",
     "Arbiter of Woe",
     "Armasaur Guide",
     "Mischievous Pup",
@@ -675,6 +721,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Darkstar Augur Offspring Token",
     "Dauntless Veteran",
     "Dazzling Angel",
+    "Skyknight Squire",
     "Deep-Cavern Bat",
     "Delver of Secrets",
     "Dismal Backwater",
@@ -819,6 +866,46 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
     (
+        "fdn_raid_v1.rs",
+        "Goblin Boarders",
+        "read via entry_counter_count_for: conditional declaration history and permanent counter/stat change (exact Raid predicate opaque)",
+    ),
+    (
+        "effect.rs",
+        "Micromancer",
+        "definition-owned exact spell search continuation authentication",
+    ),
+    (
+        "engine.rs",
+        "Skyknight Squire",
+        "read via static_plus_one_counter_characteristics_for (counter predicate and added subtype opaque)",
+    ),
+    (
+        "engine.rs",
+        "Inspiring Paladin",
+        "read via engine controller-turn self and controlled-counter keyword descriptors (live turn and counter predicates opaque)",
+    ),
+    (
+        "engine.rs",
+        "Paradise Druid",
+        "read via engine::static_untapped_self_keyword_for (untapped predicate opaque)",
+    ),
+    (
+        "engine.rs",
+        "High Fae Trickster",
+        "read via engine::static_controller_casts_with_flash_for_v1 (timing opaque)",
+    ),
+    (
+        "engine.rs",
+        "Mocking Sprite",
+        "read via engine::static_instant_sorcery_reduction_for_v1",
+    ),
+    (
+        "engine.rs",
+        "Archmage of Runes",
+        "read via engine::static_instant_sorcery_reduction_for_v1",
+    ),
+    (
         "engine.rs",
         "Dreadwing Scavenger",
         "read via static_self_boost_for and static_graveyard_threshold_keyword_for",
@@ -846,6 +933,11 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
     (
         "engine.rs",
         "Dwynen, Gilt-Leaf Daen",
+        "read via engine::static_controlled_subtype_boost_for",
+    ),
+    (
+        "engine.rs",
+        "Elvish Archdruid",
         "read via engine::static_controlled_subtype_boost_for",
     ),
     (

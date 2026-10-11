@@ -463,6 +463,8 @@ mod tests {
                 postboard: false,
                 max_physical_decisions: 100_000,
                 max_policy_steps: 1_000_000,
+                runtime_rules: None,
+                reset: None,
             })
             .collect();
 
@@ -570,6 +572,8 @@ mod tests {
                 postboard: false,
                 max_physical_decisions: 100_000,
                 max_policy_steps: 1_000_000,
+                runtime_rules: None,
+                reset: None,
             })
             .collect();
         let context = || {
@@ -655,6 +659,8 @@ mod tests {
                 postboard: false,
                 max_physical_decisions: 100_000,
                 max_policy_steps: 1_000_000,
+                runtime_rules: None,
+                reset: None,
             })
             .collect();
         let run = |label: &str, sampler: CollectionSamplerV1, workers: usize| {

@@ -797,6 +797,7 @@ mod tests {
                 max_physical_decisions: 4000,
                 max_policy_steps: 40000,
                 opening_protocol: Bo3OpeningProtocolV1::KeepSevenV2,
+                runtime_rules: None,
             },
             registered: registered.clone(),
             postboard: Some(registered),

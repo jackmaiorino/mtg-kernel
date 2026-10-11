@@ -213,6 +213,7 @@ mod tests {
                 max_physical_decisions: 4000,
                 max_policy_steps: 40000,
                 opening_protocol: Default::default(),
+                runtime_rules: None,
             },
             registered: registrations[0].each_ref().map(|deck| ExpandedDeckListV1 {
                 label: deck.deck_id().to_owned(),
