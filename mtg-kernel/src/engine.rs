@@ -5391,6 +5391,8 @@ fn validate_cost_component_choices_v1(
         && tap_other_subtype.is_none()
         && tap_filter.is_none()
         && !craft_material
+        && crew_requirement(components).is_none()
+        && counter_removal_cost(components).is_none()
         && !object_cost_chosen.is_empty()
     {
         return None;
@@ -5406,7 +5408,11 @@ fn validate_cost_component_choices_v1(
     if tap_other_subtype.is_some() {
         reserved.extend(object_cost_chosen.iter().copied());
     }
-    if tap_filter.is_some() || tap_controlled.is_some() || craft_material {
+    if tap_filter.is_some()
+        || tap_controlled.is_some()
+        || craft_material
+        || crew_requirement(components).is_some()
+    {
         reserved.extend(object_cost_chosen.iter().copied());
     }
     Some(reserved)
@@ -5422,6 +5428,7 @@ fn pay_cost_components_spending_mana(
     object_cost_chosen: &[ObjectId],
     x_value: u8,
 ) -> Option<u16> {
+    let printed_components = components;
     let concrete: Vec<_> = components
         .iter()
         .map(|c| match c {
@@ -5435,7 +5442,9 @@ fn pay_cost_components_spending_mana(
     // Derive the sole mana plan before applying any state-changing component.
     // This keeps a restored or forward-generated unaffordable shape from
     // partially paying life/discard-adjacent components before failing.
-    let mana_cost = activation_mana_payment(components, player, source, state);
+    // Use the original slice for ability-specific reductions: concretizing
+    // loyalty X above must not erase the printed cost slice's identity.
+    let mana_cost = activation_mana_payment(printed_components, player, source, state);
     let mana_plan = mana_cost.map(|cost| {
         mana::plan_activation_mana_v1(&cost, x_value, player, state, source, &reserved)
     });
@@ -20079,6 +20088,123 @@ mod tests {
             &[],
         ));
         assert!(!state.objects.get(source).tapped);
+        assert_eq!(state.players[0].mana_pool, [0; 6]);
+    }
+
+    #[cfg(feature = "standard-magezero-fixtures")]
+    #[test]
+    fn channel_payment_preserves_printed_ability_discount_and_is_atomic_when_short() {
+        for (name, color, generic) in [
+            ("Eiganjo, Seat of the Empire", ManaColor::W, 1),
+            ("Otawara, Soaring City", ManaColor::U, 2),
+        ] {
+            let mut state = ready_game_in_main1(0);
+            let source = put_in_hand(&mut state, PlayerId::P0, name);
+            put_on_battlefield(&mut state, PlayerId::P0, "Adeline, Resplendent Cathar");
+            let components = card_def::CARD_DEFS[state.objects.get(source).card_def as usize]
+                .activated_abilities[0]
+                .cost;
+            state.players[0].mana_pool[color.pool_index()] = 1;
+            state.players[0].mana_pool[ManaColor::C.pool_index()] = generic - 1;
+            let before = state.clone();
+            assert!(!pay_cost_components(
+                &mut state,
+                PlayerId::P0,
+                source,
+                components,
+                &[]
+            ));
+            assert_eq!(
+                state, before,
+                "{name} cannot discard itself before mana is payable"
+            );
+
+            state.players[0].mana_pool[ManaColor::C.pool_index()] = generic;
+            assert!(pay_cost_components(
+                &mut state,
+                PlayerId::P0,
+                source,
+                components,
+                &[]
+            ));
+            assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
+            assert_eq!(state.players[0].mana_pool, [0; 6]);
+        }
+    }
+
+    #[cfg(feature = "standard-magezero-fixtures")]
+    #[test]
+    fn counter_removal_payment_accepts_repeated_creature_without_overdrawing_counters() {
+        let mut state = ready_game_in_main1(0);
+        let source = put_on_battlefield(&mut state, PlayerId::P0, "Hopeful Initiate");
+        let donor = put_on_battlefield(&mut state, PlayerId::P0, "Faerie Seer");
+        let components = card_def::CARD_DEFS[state.objects.get(source).card_def as usize]
+            .activated_abilities[0]
+            .cost;
+        state.objects.get_mut(donor).counters.plus1_plus1 = 1;
+        state.players[0].mana_pool[ManaColor::W.pool_index()] = 1;
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 2;
+        let before = state.clone();
+        assert!(!pay_cost_components(
+            &mut state,
+            PlayerId::P0,
+            source,
+            components,
+            &[donor, donor]
+        ));
+        assert_eq!(state, before);
+
+        state.objects.get_mut(donor).counters.plus1_plus1 = 2;
+        assert!(pay_cost_components(
+            &mut state,
+            PlayerId::P0,
+            source,
+            components,
+            &[donor, donor]
+        ));
+        assert_eq!(state.objects.get(donor).counters.plus1_plus1, 0);
+        assert_eq!(state.objects.get(donor).zone, Zone::Battlefield);
+        assert_eq!(state.players[0].mana_pool, [0; 6]);
+    }
+
+    #[cfg(feature = "standard-magezero-fixtures")]
+    #[test]
+    fn crew_payment_reserves_its_contributors_from_mana_payment() {
+        let mut state = ready_game_in_main1(0);
+        let source = put_on_battlefield(&mut state, PlayerId::P0, "Reckoner Bankbuster");
+        let elf = put_on_battlefield(&mut state, PlayerId::P0, "Llanowar Elves");
+        state.objects.get_mut(elf).summoning_sick = false;
+        let components = [
+            CostComponent::Mana(Cost {
+                pips: &[],
+                generic: 1,
+                x_count: 0,
+            }),
+            CostComponent::Crew(1),
+        ];
+        let before = state.clone();
+        assert!(!pay_cost_components(
+            &mut state,
+            PlayerId::P0,
+            source,
+            &components,
+            &[elf]
+        ));
+        assert_eq!(
+            state, before,
+            "one creature cannot tap for both mana and crew"
+        );
+
+        let land = put_on_battlefield(&mut state, PlayerId::P0, "Forest");
+        assert!(pay_cost_components(
+            &mut state,
+            PlayerId::P0,
+            source,
+            &components,
+            &[elf]
+        ));
+        assert!(state.objects.get(elf).tapped);
+        assert!(state.objects.get(land).tapped);
         assert_eq!(state.players[0].mana_pool, [0; 6]);
     }
 
