@@ -9773,6 +9773,7 @@ pub(crate) fn validate_pending_cast(
     state: &GameState,
     pending: &PendingCast,
 ) -> Result<(), String> {
+    resolution_cast_v1::validate_pending_child(state, pending)?;
     let source = state
         .objects
         .try_get(pending.spell)
@@ -18233,8 +18234,13 @@ fn play_land(
     }
     state.objects.get_mut(id).v4.chosen_color = chosen_color;
     state.players[player.index()].lands_played_this_turn += 1;
-    if resolution_cast_v1::finish_child(state) {
-        return;
+    match resolution_cast_v1::finish_child(state) {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(_) => {
+            state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, id));
+            return;
+        }
     }
     collect_and_queue_triggers(state);
     state.engine.priority_passes = [false, false];
@@ -18796,7 +18802,7 @@ fn finalize_owned_cast(
         });
     }
     crate::standard_cards_v1::note_spell_cast(state, pending.spell);
-    if resolution_cast_v1::finish_child(state) {
+    if resolution_cast_v1::finish_child(state)? {
         return Ok(());
     }
 
@@ -18922,8 +18928,16 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
             object.v4.on_adventure = true;
         }
     }
-    if resolution_cast_v1::finish_child(state) {
-        return;
+    match resolution_cast_v1::finish_child(state) {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                pending.spell,
+            ));
+            return;
+        }
     }
     if to_zone == Zone::Hand && !was_face_down {
         for observer in [PlayerId::P0, PlayerId::P1] {

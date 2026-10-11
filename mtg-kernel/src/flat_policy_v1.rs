@@ -4037,6 +4037,33 @@ mod tests {
     }
 
     #[test]
+    fn frozen_encoder_rejects_private_face_down_knowledge() {
+        let session = FastActorSessionV1::reset_with_limits(90_120, 127, 128, 16_384);
+        let base = session
+            .flat_policy_observation_v1(expected(&session))
+            .unwrap();
+        assert!(base.known_face_down_cards.is_empty());
+        assert_eq!(
+            FlatDecisionEncoderV1::default().build_globals(&base),
+            Ok(())
+        );
+        for owner in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+            let mut observation = base.clone();
+            observation
+                .known_face_down_cards
+                .push(crate::rl::FaceDownCardKnowledgeV1 {
+                    object: synthetic_stable(98_121, 1, owner, owner, Zone::Battlefield),
+                    card_db_id: 2,
+                    card_name: String::from("Known hidden identity"),
+                });
+            assert_eq!(
+                FlatDecisionEncoderV1::default().build_globals(&observation),
+                Err(FlatDecisionErrorV1::ObservationContract)
+            );
+        }
+    }
+
+    #[test]
     fn frozen_encoder_rejects_creature_upgrades_in_every_public_zone() {
         let session = FastActorSessionV1::reset_with_limits(90_120, 127, 128, 16_384);
         let base = session

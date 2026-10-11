@@ -2489,7 +2489,7 @@ fn policy_observation_extensions_with_text_v6(
                     stack_index: u32::try_from(index)
                         .map_err(|_| RlContractError("stack index exceeds u32".into()))?,
                     source: source.clone(),
-                    chosen: paid_cost_card_refs(&[*paid], acting_player)[0].clone(),
+                    chosen: paid_cost_card_refs(state, &[*paid], acting_player)[0].clone(),
                     power_lki,
                 });
             }
@@ -5626,13 +5626,48 @@ fn visible_card_refs(
     Ok(out)
 }
 
-fn paid_cost_card_refs(refs: &[PaidCostRefV4], acting_player: PlayerId) -> Vec<CardStableRefV1> {
+// A public reference must preserve its captured identity after an incarnation
+// changes. Disguise's Stack-to-Battlefield resolution is the exception to
+// revealing a departing face-down object: that next incarnation stays hidden.
+fn projected_captured_card_def(
+    state: &GameState,
+    id: ObjectId,
+    generation: u32,
+    zone: Zone,
+    captured_card_def: u16,
+) -> u16 {
+    if let Some(object) = state.objects.try_get(id) {
+        if let Some(face) = object.v4.face_down_v1 {
+            let same_incarnation = object.zone_change_count == generation;
+            let disguised_resolution = face.disguised
+                && zone == Zone::Stack
+                && object.zone == Zone::Battlefield
+                && generation.checked_add(1) == Some(object.zone_change_count);
+            if same_incarnation || disguised_resolution {
+                return projected_card_def(state, id, object.zone_change_count);
+            }
+        }
+    }
+    captured_card_def
+}
+
+fn paid_cost_card_refs(
+    state: &GameState,
+    refs: &[PaidCostRefV4],
+    acting_player: PlayerId,
+) -> Vec<CardStableRefV1> {
     refs.iter()
         .copied()
         .filter(|paid| paid.visible_to(acting_player))
         .map(|paid| CardStableRefV1 {
             arena_id: paid.object.0,
-            card_db_id: paid.card_def,
+            card_db_id: projected_captured_card_def(
+                state,
+                paid.object,
+                paid.zone_change_count,
+                paid.zone,
+                paid.card_def,
+            ),
             owner: paid.owner.into(),
             controller: paid.controller.into(),
             zone: paid.zone,
@@ -5671,7 +5706,13 @@ pub(crate) fn stack_item_target_ref_from_contract(
         kind: kind.into(),
         source: CardStableRefV1 {
             arena_id: source.0,
-            card_db_id: card_def,
+            card_db_id: projected_captured_card_def(
+                state,
+                source,
+                source_zone_change_count,
+                source_zone,
+                card_def,
+            ),
             owner: owner.into(),
             controller: controller.into(),
             zone: source_zone,
@@ -7788,7 +7829,7 @@ fn stack_item_public_v2(
         cast_method: item.v4.cast_method,
         face_index: item.v4.face_index,
         x_value: item.v4.x_value,
-        paid_cost_refs: paid_cost_card_refs(&item.v4.paid_cost_refs, acting_player),
+        paid_cost_refs: paid_cost_card_refs(state, &item.v4.paid_cost_refs, acting_player),
         granted_ability: public_granted_ability(item.v4.cauldron_grant),
         counter_transfer: public_counter_transfer(
             state,
@@ -8995,5 +9036,111 @@ mod adventure_and_monarch_rl_tests {
             applied.stack.iter().any(|item| item.source == fang_dragon),
             "the exile cast reached the stack"
         );
+    }
+
+    #[cfg(feature = "standard-magezero-fixtures")]
+    fn disguised_reference_fixture() -> (GameState, ObjectId, u16) {
+        let mut state = GameState::new_from_libraries(&[], &[], card_name, 0xface);
+        let source = put_object(&mut state, PlayerId::P0, "Delver of Secrets", Zone::Hand);
+        state.players[0].hand.clear();
+        state.players[0].battlefield.push(source);
+        state.objects.get_mut(source).zone = Zone::Battlefield;
+        let captured = state.objects.get(source).card_def;
+        state.objects.get_mut(source).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
+            disguised: true,
+            lookers: 1,
+            hidden_by: None,
+            hidden_by_source: None,
+        });
+        (state, source, captured)
+    }
+
+    #[test]
+    #[cfg(feature = "standard-magezero-fixtures")]
+    fn face_down_crew_payment_reference_masks_identity_and_preserves_revealed_history() {
+        let (mut state, source, captured) = disguised_reference_fixture();
+        let payment = PaidCostRefV4 {
+            object: source,
+            card_def: captured,
+            owner: PlayerId::P0,
+            controller: PlayerId::P0,
+            zone: Zone::Battlefield,
+            zone_change_count: 0,
+            visible_to_mask: 3,
+            power_lki: Some(2),
+        };
+        let sentinel = card_id_by_name("Face-down creature").unwrap();
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let projected = paid_cost_card_refs(&state, &[payment], actor);
+            assert_eq!(projected[0].card_db_id, sentinel);
+        }
+        let own =
+            known_face_down_cards_v1(&state, PlayerId::P0, ObservationTextModeV2::FullArtifact)
+                .unwrap();
+        assert_eq!(own[0].card_db_id, captured);
+        assert!(known_face_down_cards_v1(
+            &state,
+            PlayerId::P1,
+            ObservationTextModeV2::FullArtifact
+        )
+        .unwrap()
+        .is_empty());
+        crate::event::propose_and_commit(
+            &mut state,
+            crate::event::ProposedEvent::zone_change(source, Zone::Hand),
+        );
+        assert!(state.objects.get(source).v4.face_down_v1.is_none());
+        // The paid reference is historical even if the arena slot later has
+        // another printed identity. It must never follow the live definition.
+        state.objects.get_mut(source).card_def = card_id_by_name("Mountain").unwrap();
+        let projected = paid_cost_card_refs(&state, &[payment], PlayerId::P1);
+        assert_eq!(projected[0].card_db_id, captured);
+        assert_eq!(projected[0].zone_change_count, 0);
+        assert_eq!(projected[0].zone, Zone::Battlefield);
+    }
+
+    #[test]
+    #[cfg(feature = "standard-magezero-fixtures")]
+    fn captured_disguise_stack_target_stays_hidden_after_resolution() {
+        let (mut state, source, captured) = disguised_reference_fixture();
+        state.objects.get_mut(source).zone = Zone::Stack;
+        let contract = crate::state::StackTargetContractV4::StackItem {
+            stack_item_id: crate::ids::StackItemId(91),
+            source,
+            card_def: captured,
+            owner: PlayerId::P0,
+            controller: PlayerId::P0,
+            source_zone: Zone::Stack,
+            source_zone_change_count: 0,
+            kind: crate::state::StackItemKind::Spell,
+        };
+        let sentinel = card_id_by_name("Face-down creature").unwrap();
+        for resolved in [false, true] {
+            if resolved {
+                let object = state.objects.get_mut(source);
+                object.zone = Zone::Battlefield;
+                object.zone_change_count = 1;
+            }
+            let TargetRefV1::StackItem {
+                source: projected, ..
+            } = stack_item_target_ref_from_contract(&state, contract).unwrap()
+            else {
+                panic!("expected a stack target");
+            };
+            assert_eq!(projected.card_db_id, sentinel);
+            assert_eq!(projected.zone_change_count, 0);
+            assert_eq!(projected.zone, Zone::Stack);
+        }
+        // A later, unrelated hidden incarnation cannot rewrite the captured
+        // identity of the spell that was revealed when it left the battlefield.
+        state.objects.get_mut(source).zone_change_count = 3;
+        state.objects.get_mut(source).card_def = card_id_by_name("Mountain").unwrap();
+        let TargetRefV1::StackItem {
+            source: projected, ..
+        } = stack_item_target_ref_from_contract(&state, contract).unwrap()
+        else {
+            panic!("expected a stack target");
+        };
+        assert_eq!(projected.card_db_id, captured);
     }
 }

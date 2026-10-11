@@ -365,13 +365,57 @@ pub(crate) fn can_play_exiled_land(
         && card_def::CARD_DEFS[state.objects.get(card.object).card_def as usize].is_playable_land()
 }
 
-pub(super) fn finish_child(state: &mut GameState) -> bool {
+/// Called at the public pending-cast boundary, after the resolving parent
+/// has been reinserted below its child. Quote-only preflight has no parent.
+pub(super) fn validate_pending_child(
+    state: &GameState,
+    pending: &PendingCast,
+) -> Result<(), String> {
+    if !timing_override(state, pending.spell) {
+        return Ok(());
+    }
+    let context = context(state).ok_or("resolution cast lost its parent context")?;
+    let parent = context
+        .suspended
+        .as_ref()
+        .ok_or("resolution cast lost its suspended parent")?;
+    if parent.resolving_item.v4.stack_item_id != context.parent
+        || parent.ctx.stack_item_id != Some(context.parent)
+        || parent.ctx.source != parent.resolving_item.source
+        || parent.ctx.controller != parent.resolving_item.controller
+        || context
+            .parent_index
+            .checked_add(1)
+            .is_none_or(|index| index >= state.stack.len())
+        || state.stack.get(context.parent_index) != Some(&parent.resolving_item)
+        || state
+            .stack
+            .iter()
+            .filter(|item| item.v4.stack_item_id == context.parent)
+            .count()
+            != 1
+    {
+        return Err(
+            "resolution cast suspended parent no longer matches its stack incarnation".into(),
+        );
+    }
+    Ok(())
+}
+
+pub(super) fn finish_child(state: &mut GameState) -> Result<bool, String> {
     let Some(context) = context_mut(state) else {
-        return false;
+        return Ok(false);
     };
-    let Some(parent) = context.suspended.take() else {
-        return false;
-    };
+    let parent = context
+        .suspended
+        .as_ref()
+        .ok_or("resolution play lost its suspended parent")?;
+    if parent.resolving_item.v4.stack_item_id != context.parent
+        || parent.ctx.stack_item_id != Some(context.parent)
+    {
+        return Err("resolution play suspended parent incarnation changed".into());
+    }
+    let parent = context.suspended.take().unwrap();
     context.permission = None;
     let captures = trigger::capture_triggers_without_sba(state);
     let triggers = std::mem::take(&mut state.engine.pending_triggers);
@@ -379,7 +423,7 @@ pub(super) fn finish_child(state: &mut GameState) -> bool {
     context.deferred_triggers.extend(triggers);
     context.deferred_triggers.extend(captures);
     state.engine.pending_effect = Some(*parent);
-    true
+    Ok(true)
 }
 pub(super) fn defer_triggers(state: &mut GameState) -> bool {
     if !active(state) {
