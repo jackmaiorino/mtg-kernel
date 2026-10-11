@@ -6728,6 +6728,11 @@ fn continuous_effects_common_v2(
     acting_player: PlayerId,
     accept_cant_block: bool,
 ) -> Result<Vec<ContinuousEffectPublicV2>> {
+    if crate::crystal_barricade_v1::active(state) {
+        return Err(RlContractError(
+            "player hexproof and controlled-creature noncombat prevention require a public successor".into(),
+        ));
+    }
     state.validate_attachment_relations().map_err(|object| {
         RlContractError(format!(
             "invalid attachment relation at object {}",

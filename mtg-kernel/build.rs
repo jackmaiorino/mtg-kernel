@@ -10307,6 +10307,9 @@ fn codegen(cards: &[CardJson]) -> String {
             });
             canon.push('|');
         }
+        if c.name == "Crystal Barricade" && c.engine_capability != EngineCapabilityJson::NoEffect {
+            canon.push_str("fdn_static=controller_hexproof;prevent_all_noncombat_damage_to_other_controlled_effective_creatures:current_battlefield_source_and_abilities;cannot_prevent_overrides|");
+        }
         canon.push_str("trigger=");
         canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
             trigger_recipe_for(&c.name)

@@ -3802,6 +3802,10 @@ fn legal_targets_for_controller_from_source(
         .collect(),
     };
     targets.retain(|target| {
+        if let Target::Player(player) = *target {
+            return player == controller
+                || !crate::crystal_barricade_v1::controller_has_hexproof(state, player);
+        }
         let Target::Object(object) = *target else {
             return true;
         };

@@ -820,6 +820,9 @@ pub fn apply_replacements(
         crate::standard_cards_v1::replace_damage(state, damage);
     }
     if let ProposedEvent::Damage(damage) = &proposed {
+        if !damage_cannot_be_prevented && crate::crystal_barricade_v1::prevents(state, damage) {
+            return None;
+        }
         if !damage_cannot_be_prevented
             && damage.historical_source.map_or_else(
                 || {
