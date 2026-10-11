@@ -41,6 +41,17 @@ fn threshold(out: &mut Collector, player: RelF, zone: ZoneF, obj: ObjF, minimum:
 /// The event a triggered ability waits for, plus any intervening reads.
 pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector) {
     match condition {
+        TriggerCondition::EtbAfterControllerAttackedThisTurn => {
+            out.trigger(TrigF::SelfEnters);
+            out.control(ControlF::Conditional);
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Typed(CardTypeF::Creature)),
+                AggF::EventThisTurn,
+            );
+            out.atoms.push(Atom::Opaque);
+        }
         TriggerCondition::StandardV1(_) => {
             // Its exact typed payload remains in the source record; these new
             // histories/Rooms/Cases are outside the frozen facet vocabulary.

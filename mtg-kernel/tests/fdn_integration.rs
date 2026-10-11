@@ -62,6 +62,8 @@ mod fdn_hare_apparent_v1;
 mod fdn_homunculus_creature_v1;
 #[path = "fdn/fdn_inspiring_call_v1.rs"]
 mod fdn_inspiring_call_v1;
+#[path = "fdn/fdn_inspiring_paladin_v1.rs"]
+mod fdn_inspiring_paladin_v1;
 #[path = "fdn/fdn_instant_sorcery_reducers_v1.rs"]
 mod fdn_instant_sorcery_reducers_v1;
 #[path = "fdn/fdn_keyword_creatures_v1.rs"]
@@ -102,6 +104,8 @@ mod fdn_paradise_druid_v1;
 mod fdn_pilfer_v1;
 #[path = "fdn/fdn_prowler_creature_v1.rs"]
 mod fdn_prowler_creature_v1;
+#[path = "fdn/fdn_raid_entries_v1.rs"]
+mod fdn_raid_entries_v1;
 #[path = "fdn/fdn_raise_past_v1.rs"]
 mod fdn_raise_past_v1;
 #[path = "fdn/fdn_removal_tricks_v1.rs"]
@@ -112,8 +116,12 @@ mod fdn_rise_dark_realms_v1;
 mod fdn_second_rite_v1;
 #[path = "fdn/fdn_simple_triggers_v1.rs"]
 mod fdn_simple_triggers_v1;
+#[path = "fdn/fdn_sire_life_ward_v1.rs"]
+mod fdn_sire_life_ward_v1;
 #[path = "fdn/fdn_skeleton_v1.rs"]
 mod fdn_skeleton_v1;
+#[path = "fdn/fdn_skyknight_squire_v1.rs"]
+mod fdn_skyknight_squire_v1;
 #[path = "fdn/fdn_soulcaller_v1.rs"]
 mod fdn_soulcaller_v1;
 #[path = "fdn/fdn_static_team_boosts_v1.rs"]

@@ -1834,6 +1834,8 @@ pub enum WardCostDef {
     /// Wardâ€”Discard a card, printed on both faces (MageZero Standard,
     /// Graveyard Trespasser).
     DiscardCard,
+    /// Ward on the front face requiring a chosen life payment.
+    PayLife(u8),
 }
 
 /// Alternate battlefield characteristics for a transforming permanent's
@@ -2545,11 +2547,11 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 386 (following creatures, spells and tokens).
+        // batches append through id 389 (Paladin, Skyknight and Sire).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                387
+                390
             } else {
                 192
             }
@@ -2676,8 +2678,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v69_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0xb033_8cda_1845_f330;
+    fn card_db_hash_v70_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x2a7f_ae6a_5d9c_c7a5;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
@@ -2836,7 +2838,7 @@ mod tests {
                 WardCostDef::CollectEvidence(amount) => {
                     assert_ne!(amount, 0, "{} has Ward 0", def.name)
                 }
-                WardCostDef::BackFacePayLife(amount) => {
+                WardCostDef::BackFacePayLife(amount) | WardCostDef::PayLife(amount) => {
                     assert_ne!(amount, 0, "{} has Ward 0", def.name)
                 }
                 WardCostDef::DiscardCard => {}

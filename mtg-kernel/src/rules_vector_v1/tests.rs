@@ -658,6 +658,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Hare Apparent",
     "Rabbit Token",
     "Micromancer",
+    "Skyship Buccaneer",
     "Arbiter of Woe",
     "Armasaur Guide",
     "Mischievous Pup",
@@ -720,6 +721,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Darkstar Augur Offspring Token",
     "Dauntless Veteran",
     "Dazzling Angel",
+    "Skyknight Squire",
     "Deep-Cavern Bat",
     "Delver of Secrets",
     "Dismal Backwater",
@@ -864,9 +866,24 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
     (
+        "fdn_raid_v1.rs",
+        "Goblin Boarders",
+        "read via entry_counter_count_for: conditional declaration history and permanent counter/stat change (exact Raid predicate opaque)",
+    ),
+    (
         "effect.rs",
         "Micromancer",
         "definition-owned exact spell search continuation authentication",
+    ),
+    (
+        "engine.rs",
+        "Skyknight Squire",
+        "read via static_plus_one_counter_characteristics_for (counter predicate and added subtype opaque)",
+    ),
+    (
+        "engine.rs",
+        "Inspiring Paladin",
+        "read via engine controller-turn self and controlled-counter keyword descriptors (live turn and counter predicates opaque)",
     ),
     (
         "engine.rs",

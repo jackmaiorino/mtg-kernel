@@ -2252,6 +2252,13 @@ pub(crate) fn observe_policy_v6_unhashed_for_flat_policy(
 }
 
 fn build_policy_observation_v6(request: PolicyObservationBuildV5<'_>) -> Result<ObservationV6> {
+    build_policy_observation_common_v6(request, false)
+}
+
+fn build_policy_observation_common_v6(
+    request: PolicyObservationBuildV5<'_>,
+    accept_life_ward: bool,
+) -> Result<ObservationV6> {
     let PolicyObservationBuildV5 {
         state,
         surface,
@@ -2267,7 +2274,8 @@ fn build_policy_observation_v6(request: PolicyObservationBuildV5<'_>) -> Result<
             "invalid physical decision substep {substep_index}/{substep_count}"
         )));
     }
-    let extensions = policy_observation_extensions_with_text_v6(state, acting_player, text_mode)?;
+    let extensions =
+        policy_observation_extensions_common_v6(state, acting_player, text_mode, accept_life_ward)?;
     let (mut base, policy_surface_context) =
         build_policy_observation_parts(state, surface, acting_player, step_index, text_mode)?;
     if let Some(search) = &extensions.decision_local_library {
@@ -2339,6 +2347,71 @@ fn build_policy_observation_v6(request: PolicyObservationBuildV5<'_>) -> Result<
     })
 }
 
+/// Typed public successor for life-payment Ward. Frozen model encodings
+/// require their own successor before they may consume this transport.
+#[allow(clippy::too_many_arguments)]
+pub fn observe_policy_v8(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    acting_player: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep_index: u32,
+    substep_count: u32,
+) -> Result<crate::policy_observation_v8::ObservationV8> {
+    let base = build_policy_observation_common_v6(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player,
+            step_index,
+            physical_decision_id,
+            substep_index,
+            substep_count,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
+    )?;
+    let mut observation =
+        crate::policy_observation_v8::ObservationV8::from_base(state, acting_player, base)?;
+    let mut value = serde_json::to_value(&observation)?;
+    value
+        .as_object_mut()
+        .ok_or_else(|| RlContractError("V8 observation is not an object".into()))?
+        .remove("visible_projection_hash");
+    observation.visible_projection_hash = stable_hash_json(&value)?;
+    Ok(observation)
+}
+
+/// V8 native input omits forbidden text and the artifact-only JSON hash.
+/// The common builder supplies storage, then the V8 producer validates its
+/// own life Ward and captured-source authority before publication.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn observe_policy_v8_unhashed_for_flat_policy(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    acting_player: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep_index: u32,
+    substep_count: u32,
+) -> Result<crate::policy_observation_v8::ObservationV8> {
+    let base = build_policy_observation_common_v6(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player,
+            step_index,
+            physical_decision_id,
+            substep_index,
+            substep_count,
+            text_mode: ObservationTextModeV2::FlatForbiddenElided,
+        },
+        true,
+    )?;
+    crate::policy_observation_v8::ObservationV8::from_base(state, acting_player, base)
+}
+
 /// The action cache needs the same versioned authority once per decision,
 /// without constructing an observation or exposing private engine state.
 pub(crate) fn policy_observation_extensions_v6(
@@ -2352,11 +2425,52 @@ pub(crate) fn policy_observation_extensions_v6(
     )
 }
 
+/// Common extension storage used by the explicit Human V8 session path.
+/// This carries normalization authority, not a V6 observation or scorer
+/// identity. Life-payment fields remain in the complete typed V8 input.
+pub(crate) fn policy_observation_extensions_common_for_human_v8(
+    state: &GameState,
+    acting_player: PlayerId,
+) -> Result<PolicyObservationExtensionsV6> {
+    policy_observation_extensions_common_v6(
+        state,
+        acting_player,
+        ObservationTextModeV2::FlatForbiddenElided,
+        true,
+    )
+}
+
 fn policy_observation_extensions_with_text_v6(
     state: &GameState,
     acting_player: PlayerId,
     text_mode: ObservationTextModeV2,
 ) -> Result<PolicyObservationExtensionsV6> {
+    policy_observation_extensions_common_v6(state, acting_player, text_mode, false)
+}
+
+fn policy_observation_extensions_common_v6(
+    state: &GameState,
+    acting_player: PlayerId,
+    text_mode: ObservationTextModeV2,
+    accept_life_ward: bool,
+) -> Result<PolicyObservationExtensionsV6> {
+    let pending = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .map(|pending| &pending.resolving_item);
+    if !accept_life_ward
+        && state.stack.iter().chain(pending).any(|item| {
+            matches!(
+                item.inline_effect.as_ref(),
+                Some(crate::effect::EffectOp::CounterUnlessPaysLifeWithChoice { .. })
+            )
+        })
+    {
+        return Err(RlContractError(
+            "life-payment Ward requires its typed observation successor".into(),
+        ));
+    }
     let pending_cast_object_cost = if let Some(pending) = &state.engine.pending_cast {
         engine::validate_pending_cast(state, pending).map_err(RlContractError)?;
         if pending.source_contract.cast_method == CastMethodV4::Escape {
@@ -7368,6 +7482,9 @@ fn pending_effect_semantic_v4(
                         crate::effect::EffectBooleanChoicePurpose::CounterUnlessPaysGeneric {
                             ..
                         }
+                        | crate::effect::EffectBooleanChoicePurpose::CounterUnlessPaysLife {
+                            ..
+                        }
                         | crate::effect::EffectBooleanChoicePurpose::CounterTargetUnlessPaysGeneric {
                             ..
                         } => BooleanChoicePurposeV4::PayCost,
@@ -8172,7 +8289,7 @@ fn rng_below(rng: &mut SplitMix64, n: usize) -> usize {
     (rng.next_u64() % n as u64) as usize
 }
 
-fn stable_hash_json<T: Serialize>(value: &T) -> Result<u64> {
+pub(crate) fn stable_hash_json<T: Serialize>(value: &T) -> Result<u64> {
     let mut writer = Fnv1a64Writer::new();
     serde_json::to_writer(&mut writer, value)?;
     Ok(writer.finish())

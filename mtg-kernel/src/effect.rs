@@ -372,6 +372,8 @@ pub enum EffectCond {
         player: PlayerRef,
         card_type: CardType,
     },
+    /// Raid recheck uses the resolving ability's captured controller.
+    ControllerAttackedThisTurn,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1539,6 +1541,11 @@ pub enum EffectOp {
         kind: crate::standard_creature_choices_v1::CreatureChoiceV1,
         answer: u8,
     },
+    CounterUnlessPaysLifeWithChoice {
+        ward_target: StackTargetContractV4,
+        targeting_stack_item: StackItemId,
+        life: u8,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -1973,6 +1980,15 @@ pub enum EffectFrame {
         amount: u16,
         path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
+    },
+
+    ResolveCounterUnlessPaysLife {
+        ward_target: StackTargetContractV4,
+        targeting_stack_item: StackItemId,
+        player: PlayerId,
+        life: u8,
+        pay: bool,
+        path: Vec<u16>,
     },
 }
 
@@ -2435,6 +2451,13 @@ pub enum EffectBooleanChoicePurpose {
     ExilePlay {
         choice: ExilePlayChoice,
     },
+
+    CounterUnlessPaysLife {
+        ward_target: StackTargetContractV4,
+        targeting_stack_item: StackItemId,
+        player: PlayerId,
+        life: u8,
+    },
 }
 
 /// Internal completion contract for an option choice. Public schema-v4
@@ -2677,6 +2700,10 @@ pub enum EffectAnsweredChoiceGuard {
         path: Vec<u16>,
         remaining_frames: Vec<EffectFrame>,
     },
+
+    CounterUnlessPaysLife {
+        frame: Box<EffectFrame>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2881,6 +2908,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::CounterUnlessPaysLife { .. }
         | EffectOp::CounterUnlessDiscardsCard { .. }
         | EffectOp::CounterUnlessCollectsEvidence { .. }
+        | EffectOp::CounterUnlessPaysLifeWithChoice { .. }
         | EffectOp::CounterTargetUnlessPaysGeneric { .. }
         | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
         | EffectOp::LookTopPickToHandBottomRest { .. }
@@ -3518,6 +3546,46 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
                     };
                     continuation.answered_choice_guard =
                         Some(EffectAnsweredChoiceGuard::CounterUnlessPaysGeneric {
+                            frame: Box::new(frame.clone()),
+                        });
+                    continuation.frames.push(frame);
+                }
+                EffectBooleanChoicePurpose::CounterUnlessPaysLife {
+                    ward_target,
+                    targeting_stack_item,
+                    player: payer,
+                    life,
+                } => {
+                    let StackTargetContractV4::Object {
+                        object: ward_source,
+                        ..
+                    } = ward_target
+                    else {
+                        return Err("Ward Boolean choice lost its permanent binding".to_string());
+                    };
+                    if player != payer
+                        || continuation.resolving_item.source != ward_source
+                        || path.as_slice() != [u16::from(value)]
+                        || !continuation.frames.is_empty()
+                    {
+                        continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                            player,
+                            path,
+                            default,
+                            purpose,
+                        });
+                        return Err("Ward Boolean choice metadata is inconsistent".to_string());
+                    }
+                    let frame = EffectFrame::ResolveCounterUnlessPaysLife {
+                        ward_target,
+                        targeting_stack_item,
+                        player: payer,
+                        life,
+                        pay: value,
+                        path,
+                    };
+                    continuation.answered_choice_guard =
+                        Some(EffectAnsweredChoiceGuard::CounterUnlessPaysLife {
                             frame: Box::new(frame.clone()),
                         });
                     continuation.frames.push(frame);
@@ -5037,19 +5105,14 @@ fn generic_mana_cost(generic: u8) -> Cost {
 /// Ward trigger begins resolving, where an earlier Ward may already have
 /// countered the shared targeter.
 #[allow(clippy::too_many_arguments)]
-fn validate_counter_unless_pays_generic(
+fn validate_ward_targeter_provenance(
     state: &GameState,
     ward_target: StackTargetContractV4,
     ward_controller: PlayerId,
     targeting_stack_item: StackItemId,
     player: PlayerId,
-    generic: u8,
     allow_absent: bool,
-    require_payable: bool,
 ) -> Result<Option<StackItem>, String> {
-    if generic == 0 {
-        return Err("zero-mana Ward is outside the certified payment shape".to_string());
-    }
     if targeting_stack_item == StackItemId::default() {
         return Err("Ward targets an unstamped stack incarnation".to_string());
     }
@@ -5102,8 +5165,72 @@ fn validate_counter_unless_pays_generic(
             "the Ward-bound stack item no longer carries its triggering target".to_string(),
         );
     }
+    Ok(Some(item))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_counter_unless_pays_generic(
+    state: &GameState,
+    ward_target: StackTargetContractV4,
+    ward_controller: PlayerId,
+    targeting_stack_item: StackItemId,
+    player: PlayerId,
+    generic: u8,
+    allow_absent: bool,
+    require_payable: bool,
+) -> Result<Option<StackItem>, String> {
+    if generic == 0 {
+        return Err("zero-mana Ward is outside the certified payment shape".to_string());
+    }
+    let Some(item) = validate_ward_targeter_provenance(
+        state,
+        ward_target,
+        ward_controller,
+        targeting_stack_item,
+        player,
+        allow_absent,
+    )?
+    else {
+        return Ok(None);
+    };
     if require_payable
         && crate::mana::can_pay(&generic_mana_cost(generic), 0, player, state).is_none()
+    {
+        return Err("the staged Ward payment is no longer payable".to_string());
+    }
+    Ok(Some(item))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_counter_unless_pays_life(
+    state: &GameState,
+    ward_target: StackTargetContractV4,
+    ward_controller: PlayerId,
+    targeting_stack_item: StackItemId,
+    player: PlayerId,
+    life: u8,
+    allow_absent: bool,
+    require_payable: bool,
+) -> Result<Option<StackItem>, String> {
+    if life == 0 {
+        return Err("zero-life Ward is outside the certified payment shape".to_string());
+    }
+    let Some(item) = validate_ward_targeter_provenance(
+        state,
+        ward_target,
+        ward_controller,
+        targeting_stack_item,
+        player,
+        allow_absent,
+    )?
+    else {
+        return Ok(None);
+    };
+    if require_payable
+        && !crate::mana::life_payment_affordable(
+            i32::from(life),
+            state.players[player.index()].life,
+        )
     {
         return Err("the staged Ward payment is no longer payable".to_string());
     }
@@ -5146,6 +5273,39 @@ pub(crate) fn validated_ward_observation_targeter(
     .map(|item| (item, *generic)))
 }
 
+/// Authenticated public relation for the typed life-payment successor.
+pub(crate) fn validated_life_ward_observation_targeter(
+    state: &GameState,
+    trigger: &StackItem,
+) -> Result<Option<(StackItem, u8)>, String> {
+    let Some(EffectOp::CounterUnlessPaysLifeWithChoice {
+        ward_target,
+        targeting_stack_item,
+        life,
+    }) = trigger.inline_effect.as_ref()
+    else {
+        return Ok(None);
+    };
+    crate::engine::validated_stack_item_target_spec(trigger, state)?;
+    let payer = state
+        .stack
+        .iter()
+        .find(|item| item.v4.stack_item_id == *targeting_stack_item)
+        .map(|item| item.controller)
+        .unwrap_or(trigger.controller.opponent());
+    Ok(validate_counter_unless_pays_life(
+        state,
+        *ward_target,
+        trigger.controller,
+        *targeting_stack_item,
+        payer,
+        *life,
+        true,
+        false,
+    )?
+    .map(|item| (item, *life)))
+}
+
 /// Legacy observations can infer the binding only when exactly one live item
 /// targets the Ward source. Keep this coverage restriction at their boundary,
 /// rather than halting the rules engine for successor-aware consumers.
@@ -5156,6 +5316,12 @@ pub(crate) fn validate_legacy_ward_observation(state: &GameState) -> Result<(), 
         .as_ref()
         .map(|pending| &pending.resolving_item);
     for trigger in state.stack.iter().chain(pending) {
+        if matches!(
+            trigger.inline_effect.as_ref(),
+            Some(EffectOp::CounterUnlessPaysLifeWithChoice { .. })
+        ) {
+            return Err("life-payment Ward requires its typed observation successor".into());
+        }
         let Some((bound, _)) = validated_ward_observation_targeter(state, trigger)? else {
             continue;
         };
@@ -5227,6 +5393,54 @@ fn validate_counter_unless_pays_frame(
     Ok(())
 }
 
+fn validate_counter_unless_pays_life_frame(
+    state: &GameState,
+    pending: &EffectContinuation,
+    frame: &EffectFrame,
+) -> Result<(), String> {
+    let EffectFrame::ResolveCounterUnlessPaysLife {
+        ward_target,
+        targeting_stack_item,
+        player,
+        life,
+        pay,
+        path,
+    } = frame
+    else {
+        return Err("Ward answer guard does not contain its typed frame".to_string());
+    };
+    if path.as_slice() != [u16::from(*pay)]
+        || !pending.frames.ends_with(std::slice::from_ref(frame))
+    {
+        return Err("Ward answered Boolean path or frame position changed".to_string());
+    }
+    let StackTargetContractV4::Object {
+        object: ward_source,
+        ..
+    } = *ward_target
+    else {
+        return Err("Ward answer lost its permanent binding".to_string());
+    };
+    if pending.resolving_item.source != ward_source
+        || pending.ctx.source != ward_source
+        || pending.ctx.controller != pending.resolving_item.controller
+    {
+        return Err("Ward answer no longer matches its resolving trigger".to_string());
+    }
+    validate_life_ward_resolving_binding(pending, *ward_target, *targeting_stack_item, *life)?;
+    validate_counter_unless_pays_life(
+        state,
+        *ward_target,
+        pending.resolving_item.controller,
+        *targeting_stack_item,
+        *player,
+        *life,
+        false,
+        true,
+    )?;
+    Ok(())
+}
+
 fn validate_ward_resolving_binding(
     pending: &EffectContinuation,
     ward_target: StackTargetContractV4,
@@ -5238,6 +5452,24 @@ fn validate_ward_resolving_binding(
             ward_target,
             targeting_stack_item,
             generic,
+        })
+    {
+        return Err("Ward choice binding no longer matches its resolving trigger effect".into());
+    }
+    Ok(())
+}
+
+fn validate_life_ward_resolving_binding(
+    pending: &EffectContinuation,
+    ward_target: StackTargetContractV4,
+    targeting_stack_item: StackItemId,
+    life: u8,
+) -> Result<(), String> {
+    if pending.resolving_item.inline_effect.as_ref()
+        != Some(&EffectOp::CounterUnlessPaysLifeWithChoice {
+            ward_target,
+            targeting_stack_item,
+            life,
         })
     {
         return Err("Ward choice binding no longer matches its resolving trigger effect".into());
@@ -6754,6 +6986,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::DiscardDraw { .. }
                         | EffectFrame::OwnerLibraryPlacement { .. }
                         | EffectFrame::ResolveCounterUnlessPaysGeneric { .. }
+                        | EffectFrame::ResolveCounterUnlessPaysLife { .. }
                         | EffectFrame::ResolveCounterTargetUnlessPaysGeneric { .. }
                         | EffectFrame::ExileChosenGraveyardCard { .. }
                         | EffectFrame::ExileChosenMatchingGraveyardCard { .. }
@@ -6841,6 +7074,15 @@ fn validate_answered_choice_guard(
                 return Err("Ward answered continuation frame stack changed".to_string());
             }
             validate_counter_unless_pays_frame(state, pending, frame)?;
+        }
+        Some(EffectAnsweredChoiceGuard::CounterUnlessPaysLife { frame }) => {
+            if pending.choice.is_some() {
+                return Err("answered Ward guard still carries a live choice".to_string());
+            }
+            if pending.frames.as_slice() != [frame.as_ref().clone()] {
+                return Err("Ward answered continuation frame stack changed".to_string());
+            }
+            validate_counter_unless_pays_life_frame(state, pending, frame)?;
         }
         Some(EffectAnsweredChoiceGuard::CounterTargetUnlessPaysGeneric { frame }) => {
             if pending.choice.is_some() {
@@ -7484,6 +7726,26 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     }
     crate::engine::validated_stack_item_target_spec(&pending.resolving_item, state)
         .map_err(|error| format!("effect continuation has invalid stack provenance: {error}"))?;
+    if matches!(
+        pending.resolving_item.inline_effect.as_ref(),
+        Some(EffectOp::CounterUnlessPaysLifeWithChoice { .. })
+    ) {
+        let awaiting_payment = matches!(
+            pending.choice.as_ref(),
+            Some(PendingEffectChoice::ChooseBoolean {
+                purpose: EffectBooleanChoicePurpose::CounterUnlessPaysLife { .. },
+                ..
+            })
+        ) && pending.answered_choice_guard.is_none();
+        let answered_payment = pending.choice.is_none()
+            && matches!(
+                pending.answered_choice_guard.as_ref(),
+                Some(EffectAnsweredChoiceGuard::CounterUnlessPaysLife { .. })
+            );
+        if !awaiting_payment && !answered_payment {
+            return Err("life Ward lost its payment choice or authenticated answer".into());
+        }
+    }
     validate_exact_spell_search_continuation(state, pending)?;
     validate_answered_choice_guard(state, pending)?;
     if definition_has_nonterminal_discard(state, pending) {
@@ -8876,6 +9138,43 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     true,
                 )?;
             }
+            EffectBooleanChoicePurpose::CounterUnlessPaysLife {
+                ward_target,
+                targeting_stack_item,
+                player: payer,
+                life,
+            } => {
+                let StackTargetContractV4::Object {
+                    object: ward_source,
+                    ..
+                } = *ward_target
+                else {
+                    return Err("Ward Boolean choice lost its permanent binding".to_string());
+                };
+                if player != payer
+                    || pending.resolving_item.source != ward_source
+                    || !path.is_empty()
+                    || !pending.frames.is_empty()
+                {
+                    return Err("Ward Boolean choice metadata is inconsistent".to_string());
+                }
+                validate_life_ward_resolving_binding(
+                    pending,
+                    *ward_target,
+                    *targeting_stack_item,
+                    *life,
+                )?;
+                validate_counter_unless_pays_life(
+                    state,
+                    *ward_target,
+                    pending.resolving_item.controller,
+                    *targeting_stack_item,
+                    *payer,
+                    *life,
+                    false,
+                    true,
+                )?;
+            }
             EffectBooleanChoicePurpose::CounterTargetUnlessPaysGeneric {
                 target_contract,
                 target_stack_item,
@@ -9679,6 +9978,55 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                             crate::mana::can_pay(&generic_mana_cost(generic), 0, player, state)
                                 .ok_or("the accepted Ward payment became unpayable")?;
                         crate::engine::pay_plan(state, player, &plan);
+                    } else if crate::engine::counter_stack_item_by_id(state, targeting_stack_item)?
+                        .is_none()
+                    {
+                        return Err(
+                            "the declined Ward payment lost its bound stack item".to_string()
+                        );
+                    }
+                }
+                EffectFrame::ResolveCounterUnlessPaysLife {
+                    ward_target,
+                    targeting_stack_item,
+                    player,
+                    life,
+                    pay,
+                    path,
+                } => {
+                    let answered_frame = EffectFrame::ResolveCounterUnlessPaysLife {
+                        ward_target,
+                        targeting_stack_item,
+                        player,
+                        life,
+                        pay,
+                        path: path.clone(),
+                    };
+                    if !continuation.frames.is_empty()
+                        || continuation.answered_choice_guard.as_ref()
+                            != Some(&EffectAnsweredChoiceGuard::CounterUnlessPaysLife {
+                                frame: Box::new(answered_frame),
+                            })
+                        || path.as_slice() != [u16::from(pay)]
+                    {
+                        return Err("Ward answered frame/guard mismatch".to_string());
+                    }
+                    validate_counter_unless_pays_life(
+                        state,
+                        ward_target,
+                        continuation.resolving_item.controller,
+                        targeting_stack_item,
+                        player,
+                        life,
+                        false,
+                        true,
+                    )?;
+                    continuation.answered_choice_guard = None;
+                    if pay {
+                        event::propose_and_commit(
+                            state,
+                            event::ProposedEvent::life_payment(player, i32::from(life)),
+                        );
                     } else if crate::engine::counter_stack_item_by_id(state, targeting_stack_item)?
                         .is_none()
                     {
@@ -11648,6 +11996,76 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         targeting_stack_item,
                         player,
                         generic,
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::CounterUnlessPaysLifeWithChoice {
+                ward_target,
+                targeting_stack_item,
+                life,
+            } => {
+                let StackTargetContractV4::Object {
+                    object: ward_source,
+                    ..
+                } = ward_target
+                else {
+                    return Err("Ward effect lost its permanent binding".to_string());
+                };
+                if continuation.ctx.source != ward_source || !path.is_empty() {
+                    return Err("Ward effect no longer matches its root trigger".to_string());
+                }
+                let Some(bound) = validate_counter_unless_pays_life(
+                    state,
+                    ward_target,
+                    continuation.ctx.controller,
+                    targeting_stack_item,
+                    state
+                        .stack
+                        .iter()
+                        .find(|item| item.v4.stack_item_id == targeting_stack_item)
+                        .map(|item| item.controller)
+                        .unwrap_or(continuation.ctx.controller.opponent()),
+                    life,
+                    true,
+                    false,
+                )?
+                else {
+                    // Another Ward trigger already countered this targeter.
+                    continue;
+                };
+                let player = bound.controller;
+                if !crate::mana::life_payment_affordable(
+                    i32::from(life),
+                    state.players[player.index()].life,
+                ) {
+                    crate::engine::counter_stack_item_by_id(state, targeting_stack_item)?
+                        .ok_or("the unpayable Ward binding disappeared during resolution")?;
+                    continue;
+                }
+                if !continuation.frames.is_empty() {
+                    return Err("Ward payment is not a root-only generated effect".to_string());
+                }
+                validate_counter_unless_pays_life(
+                    state,
+                    ward_target,
+                    continuation.ctx.controller,
+                    targeting_stack_item,
+                    player,
+                    life,
+                    false,
+                    true,
+                )?;
+                continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                    player,
+                    path,
+                    default: Some(false),
+                    purpose: EffectBooleanChoicePurpose::CounterUnlessPaysLife {
+                        ward_target,
+                        targeting_stack_item,
+                        player,
+                        life,
                     },
                 });
                 state.engine.pending_effect = Some(continuation);
@@ -18564,6 +18982,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::SurveilOne { .. }
         | EffectOp::PutBoundObjectInOwnersLibrary { .. }
         | EffectOp::CounterUnlessPaysGeneric { .. }
+        | EffectOp::CounterUnlessPaysLifeWithChoice { .. }
         | EffectOp::CounterTargetUnlessPaysGeneric { .. }
         | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
         | EffectOp::LookTopPickToHandBottomRest { .. }
@@ -18814,6 +19233,9 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
             .hand
             .is_empty(),
         EffectCond::CreatureDiedThisTurn => state.creature_died_this_turn_v1(),
+        EffectCond::ControllerAttackedThisTurn => {
+            state.player_attacked_this_turn_v1(ctx.controller)
+        }
         EffectCond::ControlsOtherIncarnationCreaturePowerAtLeast(minimum) => {
             let generation = ctx.ability_source_contract.map_or_else(
                 || state.objects.get(ctx.source).zone_change_count,
