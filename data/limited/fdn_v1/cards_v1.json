@@ -5880,6 +5880,74 @@
       "java_file": "Mage.Sets/src/mage/cards/s/SireOfSevenDeaths.java",
       "scryfall_id": "8d8432a7-1c8a-4cfb-947c-ecf9791063eb",
       "oracle_id": "a15547d0-bbcb-41ee-a9ae-8325a9e7fe1f"
+    },
+    {
+      "name": "Skyship Buccaneer",
+      "mana_cost": "{3}{U}{U}",
+      "mana_value": 5,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Pirate"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_raid_entries.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "raid",
+        "flying",
+        "etb_trigger",
+        "draw"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SkyshipBuccaneer.java",
+      "scryfall_id": "62958fc3-55dc-4b97-a070-490d6ed27820",
+      "oracle_id": "5951f734-05d3-41ad-94ee-19bd310077d2"
+    },
+    {
+      "name": "Goblin Boarders",
+      "mana_cost": "{2}{R}",
+      "mana_value": 3,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Goblin",
+        "Pirate"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_raid_entries.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "raid",
+        "entry_counters"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GoblinBoarders.java",
+      "scryfall_id": "4409a063-bf2a-4a49-803e-3ce6bd474353",
+      "oracle_id": "4c64feae-95d7-426d-9e42-d3b0841d2054"
     }
   ]
 }
