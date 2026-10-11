@@ -584,17 +584,22 @@ def utc_interval(start, end, name):
     return seconds((last - first).total_seconds(), name)
 
 
-def continuation_provenance(reader, state, state_pin):
+def continuation_provenance(reader, state, state_pin, *, terminal_prefix=False):
     metadata = state.get("continuation")
     if metadata is None:
         return None
-    require(metadata["schema"] == "training-io-formal-continuation/v1"
-            and same_path(state_pin["path"], ROOT / "formal/continuation-coordinator/state.json"),
+    second = metadata["schema"] == "training-io-formal-continuation/v2"
+    coordinator = "continuation-coordinator-v2" if second else "continuation-coordinator"
+    require(metadata["schema"] in ("training-io-formal-continuation/v1", "training-io-formal-continuation/v2")
+            and not (second and terminal_prefix)
+            and same_path(state_pin["path"], ROOT / ("formal/" + coordinator + "/state.json")),
             "explicit fresh continuation state required")
     original_ref = metadata["prefix_state"]
     implementation = metadata["implementation"]
-    require(same_path(original_ref["path"], ROOT / "formal/coordinator/state.json")
-            and same_path(implementation["path"], ROOT / "run_comparison_continuation.py")
+    prefix_path = "formal/continuation-coordinator/state.json" if second else "formal/coordinator/state.json"
+    implementation_name = "run_comparison_continuation_v2.py" if second else "run_comparison_continuation.py"
+    require(same_path(original_ref["path"], ROOT / prefix_path)
+            and same_path(implementation["path"], ROOT / implementation_name)
             and original_ref in state["sources"] and implementation in state["sources"],
             "continuation source/state pins absent from execution source graph")
     reader.verify(implementation)
@@ -605,6 +610,12 @@ def continuation_provenance(reader, state, state_pin):
             and [entry["label"] for entry in original["completed"]] == LABELS[:2]
             and metadata["prefix_completed_labels"] == LABELS[:2]
             and metadata["remaining_labels"] == LABELS[2:], "continuation must preserve the interrupted two-case prefix")
+    inherited = None
+    if second:
+        require(original["continuation"]["schema"] == "training-io-formal-continuation/v1"
+                and metadata["prior_continuation"] == original["continuation"],
+                "immutable first continuation metadata differs")
+        inherited = continuation_provenance(reader, original, original_ref, terminal_prefix=True)
     fields = ("completed", "phases", "queue_waits", "canonical_fingerprint", "maintenance_parity",
               "initial_allocation_measurement", "first_block_reconciliation")
     prefix = {field: original[field] for field in fields}
@@ -620,12 +631,20 @@ def continuation_provenance(reader, state, state_pin):
             require(state[field] == original[field], "continuation altered inherited " + field)
     require(all(ref in state["sources"] for ref in original["sources"]),
             "continuation omitted original execution source graph")
+    if second:
+        require(state["sources"][:len(original["sources"])] == original["sources"],
+                "second continuation altered ordered inherited source graph")
     required_receipts = [original["initial_allocation_measurement"], original["first_block_reconciliation"]["measurement"]]
     for entry in original["completed"]:
         required_receipts += [entry[key] for key in ("report", "inspect", "transport", "retain", "late_copy", "late_copy_cold_receipt")]
     receipt_sources = metadata["prefix_receipt_sources"]
     require(all(ref in receipt_sources for ref in required_receipts), "continuation omitted preserved prefix receipts")
+    inherited_receipts = inherited["prefix_receipt_sources"] if second else []
+    require(not second or all(ref in receipt_sources for ref in inherited_receipts),
+            "second continuation omitted inherited receipt proof")
     for ref in receipt_sources:
+        if ref in inherited_receipts:
+            continue
         reader.verify(ref)
     prior_process = metadata["prior_process"]
     require(type(prior_process["pid"]) is int and prior_process["pid"] > 0
@@ -640,8 +659,9 @@ def continuation_provenance(reader, state, state_pin):
             and Path(additional_refs["prefix_recovery"]["path"]).is_relative_to(COLD),
             "independent failed-prefix state copy differs")
     prior_job = reader.json(additional_refs["prior_job"])
+    prior_implementation_name = "run_comparison_continuation.py" if second else "run_comparison_retry.py"
     original_implementation = next(ref for ref in original["sources"]
-                                   if same_path(ref["path"], ROOT / "run_comparison_retry.py"))
+                                   if same_path(ref["path"], ROOT / prior_implementation_name))
     require(prior_job["pid"] == prior_process["pid"]
             and prior_job["creation_filetime"] == prior_process["creation_time"]
             and prior_job["plan_sha256"] == state["plan"]["sha256"]
@@ -654,17 +674,26 @@ def continuation_provenance(reader, state, state_pin):
             and metadata["prefix_finished_utc"] == original["finished_utc"]
             and metadata["prior_error"] == original["error"]
             and metadata["prior_queue_waits"] == original["queue_waits"]
-            and metadata["prior_queue_waiting"] == original["queue_waiting"]
-            and metadata["finished_utc"] == state["finished_utc"], "continuation timing/error provenance differs")
+            and metadata["prior_queue_waiting"] == original["queue_waiting"], "continuation timing/error provenance differs")
+    if terminal_prefix:
+        require(state["complete"] is False and state.get("error") and state.get("finished_utc")
+                and metadata.get("finished_utc") is None,
+                "explicit terminal failed continuation without a success timestamp required")
+    else:
+        require(metadata["finished_utc"] == state["finished_utc"], "continuation final timestamp differs")
     gap = utc_interval(original["finished_utc"], metadata["resumed_utc"], "stopped coordinator gap")
-    interrupted = utc_interval(original["completed"][-1]["finished_utc"], original["finished_utc"],
+    interval_start = original["continuation"]["resumed_utc"] if second else original["completed"][-1]["finished_utc"]
+    if second:
+        require(metadata["interrupted_interval_started_utc"] == interval_start,
+                "second interrupted interval must start at first continuation resume")
+    interrupted = utc_interval(interval_start, original["finished_utc"],
                                "interrupted between-case UTC interval")
     require(abs(seconds(metadata["interruption_gap_seconds"], "recorded stopped gap") - gap) < 1e-6
             and abs(seconds(metadata["interrupted_between_case_utc_interval_seconds"], "recorded interrupted interval")
                     - interrupted) < 1e-6
-            and metadata["interrupted_admission_limit_seconds"] == 7200
+            and metadata["interrupted_admission_limit_seconds"] == (21600 if second else 7200)
             and metadata["admission_wait_limit_seconds"] == 21600, "continuation admission interval/bounds differ")
-    return {"prefix_state": original_ref, "implementation": implementation,
+    result = {"prefix_state": original_ref, "implementation": implementation,
             **additional_refs, "measurement_scope": metadata["scope"],
             "source_check_accounting": metadata["source_check_accounting"],
             "preserved_prefix_sha256": metadata["preserved_prefix_sha256"], "prefix_completed_labels": LABELS[:2],
@@ -676,11 +705,27 @@ def continuation_provenance(reader, state, state_pin):
                                      "elapsed_seconds": utc_interval(metadata["resumed_utc"], state["finished_utc"], "continuation coordinator elapsed")},
             "stopped_coordinator_gap_seconds": gap,
             "interrupted_between_case_utc_interval": {
-                "started_utc": original["completed"][-1]["finished_utc"], "finished_utc": original["finished_utc"],
-                "seconds": interrupted, "configured_admission_limit_seconds": 7200,
+                "started_utc": interval_start, "finished_utc": original["finished_utc"],
+                "seconds": interrupted, "configured_admission_limit_seconds": 21600 if second else 7200,
                 "scope": "UTC interval proxy after case two, including prequeue source checks/state writes. Exact failed monotonic queue duration was not recorded."},
             "continuation_admission_limit_seconds": 21600,
             "scope": "Original seal, failed state, source graph, two completed cases/phases/queues and scientific/allocation fields preserved exactly. All four matched case walls remain unchanged."}
+    if second:
+        newest_interval = result["interrupted_between_case_utc_interval"]
+        newest_interval["scope"] = "First continuation resume-to-terminal UTC proxy including prequeue validation/state writes. No case ran and no failed monotonic queue duration was recorded."
+        result.update(prior_continuation_provenance=inherited,
+                      original_segment=inherited["original_segment"],
+                      interrupted_continuation_segments=[inherited["continuation_segment"]],
+                      stopped_coordinator_gaps=[
+                          {"started_utc": inherited["original_segment"]["finished_utc"],
+                           "finished_utc": inherited["continuation_segment"]["started_utc"],
+                           "seconds": inherited["stopped_coordinator_gap_seconds"]},
+                          {"started_utc": original["finished_utc"], "finished_utc": metadata["resumed_utc"],
+                           "seconds": gap}],
+                      stopped_coordinator_gap_seconds=gap + inherited["stopped_coordinator_gap_seconds"],
+                      interrupted_between_case_utc_interval=inherited["interrupted_between_case_utc_interval"],
+                      interrupted_continuation_utc_intervals=[newest_interval])
+    return result
 
 
 def analyze(state_path):
@@ -745,14 +790,22 @@ def analyze(state_path):
     if continued is not None:
         gap = continued["stopped_coordinator_gap_seconds"]
         interrupted = continued["interrupted_between_case_utc_interval"]["seconds"]
-        require(elapsed + .1 >= raw_sum + queue + gap + interrupted,
+        interrupted_continuations = sum(interval["seconds"] for interval
+                                       in continued.get("interrupted_continuation_utc_intervals", []))
+        active = (continued["original_segment"]["elapsed_seconds"]
+                  + continued["continuation_segment"]["elapsed_seconds"]
+                  + sum(segment["elapsed_seconds"] for segment
+                        in continued.get("interrupted_continuation_segments", [])))
+        require(abs(elapsed - active - gap) < 1e-6,
+                "coordinator segments and stopped gaps do not partition full UTC span")
+        require(elapsed + .1 >= raw_sum + queue + gap + interrupted + interrupted_continuations,
                 "full coordinator UTC span smaller than cases, measured queues and interruption intervals")
         coordinator.update(stopped_coordinator_gap_seconds=gap,
                            interrupted_between_case_utc_interval_proxy_seconds=interrupted,
-                           remaining_coordinator_overhead_seconds=elapsed - raw_sum - queue - gap - interrupted,
-                           active_coordinator_segment_seconds=continued["original_segment"]["elapsed_seconds"]
-                                                             + continued["continuation_segment"]["elapsed_seconds"],
-                           accounting="Full UTC span includes interrupted interval and stopped gap. canonical_queue_wait_seconds covers only four successful measured admissions. The interrupted interval is a UTC proxy, not an exact measured queue. Remaining overhead subtracts those separately disclosed intervals; primary matched case totals are unchanged.")
+                           interrupted_continuation_utc_interval_proxy_seconds=interrupted_continuations,
+                           remaining_coordinator_overhead_seconds=elapsed - raw_sum - queue - gap - interrupted - interrupted_continuations,
+                           active_coordinator_segment_seconds=active,
+                           accounting="Full UTC span includes every interrupted interval and stopped gap once. canonical_queue_wait_seconds covers only four successful measured admissions. Failed intervals are UTC proxies, not exact measured queues. Remaining overhead subtracts those separately disclosed intervals; primary matched case totals are unchanged.")
     result = {"schema": SCHEMA, "complete": True, "state": state_pin, "cases": rows,
               "completed_updates": 648, "completed_games": 6480,
               "fingerprint_sha256": hashlib.sha256(json.dumps(fingerprints[0], sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
