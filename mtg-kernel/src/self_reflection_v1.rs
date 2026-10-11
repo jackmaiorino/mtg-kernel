@@ -203,8 +203,8 @@ pub(crate) fn execute(state: &mut GameState, ctx: &ExecCtx) {
         }
         CopyTokenValuesV1::Definition {
             card_def,
-            face_index,
-        } if face_index == 1 => {
+            face_index: 1,
+        } => {
             crate::event::propose_and_commit(
                 state,
                 crate::event::ProposedEvent::create_transformed_copy(card_def, ctx.controller),

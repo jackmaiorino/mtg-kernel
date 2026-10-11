@@ -176,7 +176,7 @@ impl VariableCastSessionV1 {
             .collect::<Vec<_>>();
         let commitment = digest(&(
             VARIABLE_CAST_SESSION_SCHEMA_V1,
-            self.authority,
+            Arc::as_ptr(&self.owner) as usize,
             self.episode,
             self.revision,
             self.step,
