@@ -5546,13 +5546,7 @@ mod tests {
             let attacker = put(&mut state, actor, "Guttersnipe", Zone::Battlefield);
             let entrant = put(&mut state, actor, "Guttersnipe", Zone::Hand);
             state.step = Step::DeclareAttackers;
-            engine::step(
-                &mut state,
-                Action::DeclareAttackers {
-                    attackers: vec![attacker],
-                },
-            )
-            .unwrap();
+            engine::step(&mut state, Action::DeclareAttackers(vec![attacker])).unwrap();
             crate::event::propose_and_commit(
                 &mut state,
                 crate::event::ProposedEvent::zone_change(entrant, Zone::Battlefield),
@@ -5610,7 +5604,7 @@ mod tests {
             state.active_player = actor;
             state.priority_player = actor;
             state.step = Step::DeclareAttackers;
-            engine::step(&mut state, Action::DeclareAttackers { attackers: vec![] }).unwrap();
+            engine::step(&mut state, Action::DeclareAttackers(vec![])).unwrap();
             let source = put(&mut state, actor, "Guttersnipe", Zone::Hand);
             crate::event::propose_and_commit(
                 &mut state,

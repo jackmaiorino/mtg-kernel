@@ -29,9 +29,11 @@ registration must generate and qualify the successor identity.
 Two primitive groups use registered Guttersnipe objects and actual engine
 attacker declarations/entry events to check capture source, both controllers,
 captured-controller draw, stale saved-game history, and empty declaration refusal.
-These are source-level primitives. Native compile/test/lint remain unrun. Actual
-Skyship/Boarders casting, suppression and entry timing groups are still required
-after registration. Goblin Boarders gameplay is not qualified by these primitives.
+These are source-level primitives. Native compile/test/lint remain unrun. Six registered-card groups are prepared for printed metadata, both-seat Raid
+entry/draw, legal off-turn Flash refusal, saved pending source departure and
+new-incarnation counters. These six groups remain unrun because the cards are
+unregistered. Suppression still needs a separate entry-characteristics fixture
+and registered gameplay verification. Goblin Boarders gameplay is not qualified by these primitives.
 
 The separate Raid history guard qualifies09284047; this source is not in that
 running or queued checkout. Public observation/tensor/Human disposition with
