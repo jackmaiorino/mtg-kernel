@@ -578,6 +578,91 @@ def retry_provenance(reader, plan, state):
             "scope": "All retry refs and nested qualification receipts/inputs verified against sealed pins and execution source graph. Original coordinator/helper bytes preserved; advisory admission remains outside case timing."}
 
 
+def utc_interval(start, end, name):
+    first, last = datetime.fromisoformat(start), datetime.fromisoformat(end)
+    require(first.utcoffset() is not None and last.utcoffset() is not None, "UTC offset required: " + name)
+    return seconds((last - first).total_seconds(), name)
+
+
+def continuation_provenance(reader, state, state_pin):
+    metadata = state.get("continuation")
+    if metadata is None:
+        return None
+    require(metadata["schema"] == "training-io-formal-continuation/v1"
+            and same_path(state_pin["path"], ROOT / "formal/continuation-coordinator/state.json"),
+            "explicit fresh continuation state required")
+    original_ref = metadata["prefix_state"]
+    implementation = metadata["implementation"]
+    require(same_path(original_ref["path"], ROOT / "formal/coordinator/state.json")
+            and same_path(implementation["path"], ROOT / "run_comparison_continuation.py")
+            and original_ref in state["sources"] and implementation in state["sources"],
+            "continuation source/state pins absent from execution source graph")
+    reader.verify(implementation)
+    original = reader.json(original_ref)
+    require(original["schema"] == state["schema"] and original["complete"] is False
+            and original.get("error") and original.get("finished_utc")
+            and original["plan"] == state["plan"]
+            and [entry["label"] for entry in original["completed"]] == LABELS[:2]
+            and metadata["prefix_completed_labels"] == LABELS[:2]
+            and metadata["remaining_labels"] == LABELS[2:], "continuation must preserve the interrupted two-case prefix")
+    fields = ("completed", "phases", "queue_waits", "canonical_fingerprint", "maintenance_parity",
+              "initial_allocation_measurement", "first_block_reconciliation")
+    prefix = {field: original[field] for field in fields}
+    require(canonical_digest(prefix) == metadata["preserved_prefix_sha256"], "preserved prefix digest differs")
+    require([(phase["case"], phase["phase"]) for phase in original["phases"]]
+            == [(label, phase) for label in LABELS[:2] for phase in ("dispatch", "inspect", "copy", "retain")]
+            and [wait["case"] for wait in original["queue_waits"]] == LABELS[:2],
+            "original completed phase/queue prefix differs")
+    for field in fields:
+        if field in ("completed", "phases", "queue_waits"):
+            require(state[field][:len(original[field])] == original[field], "continuation altered prefix " + field)
+        else:
+            require(state[field] == original[field], "continuation altered inherited " + field)
+    require(all(ref in state["sources"] for ref in original["sources"]),
+            "continuation omitted original execution source graph")
+    required_receipts = [original["initial_allocation_measurement"], original["first_block_reconciliation"]["measurement"]]
+    for entry in original["completed"]:
+        required_receipts += [entry[key] for key in ("report", "inspect", "transport", "retain", "late_copy", "late_copy_cold_receipt")]
+    receipt_sources = metadata["prefix_receipt_sources"]
+    require(all(ref in receipt_sources for ref in required_receipts), "continuation omitted preserved prefix receipts")
+    for ref in receipt_sources:
+        reader.verify(ref)
+    prior_process = metadata["prior_process"]
+    require(type(prior_process["pid"]) is int and prior_process["pid"] > 0
+            and type(prior_process["creation_time"]) is int and prior_process["creation_time"] > 0
+            and prior_process["state"] == "absent" and prior_process.get("observed_utc"),
+            "recorded terminal prior coordinator identity required")
+    require(metadata["prefix_started_utc"] == original["started_utc"] == state["started_utc"]
+            and metadata["prefix_finished_utc"] == original["finished_utc"]
+            and metadata["prior_error"] == original["error"]
+            and metadata["prior_queue_waits"] == original["queue_waits"]
+            and metadata["prior_queue_waiting"] == original["queue_waiting"]
+            and metadata["finished_utc"] == state["finished_utc"], "continuation timing/error provenance differs")
+    gap = utc_interval(original["finished_utc"], metadata["resumed_utc"], "stopped coordinator gap")
+    interrupted = utc_interval(original["completed"][-1]["finished_utc"], original["finished_utc"],
+                               "interrupted between-case UTC interval")
+    require(abs(seconds(metadata["interruption_gap_seconds"], "recorded stopped gap") - gap) < 1e-6
+            and abs(seconds(metadata["interrupted_between_case_utc_interval_seconds"], "recorded interrupted interval")
+                    - interrupted) < 1e-6
+            and metadata["interrupted_admission_limit_seconds"] == 7200
+            and metadata["admission_wait_limit_seconds"] == 21600, "continuation admission interval/bounds differ")
+    return {"prefix_state": original_ref, "implementation": implementation,
+            "preserved_prefix_sha256": metadata["preserved_prefix_sha256"], "prefix_completed_labels": LABELS[:2],
+            "remaining_labels": LABELS[2:], "prior_process": prior_process, "prior_error": original["error"],
+            "prior_queue_waiting": original["queue_waiting"], "prefix_receipt_sources": receipt_sources,
+            "original_segment": {"started_utc": original["started_utc"], "finished_utc": original["finished_utc"],
+                                 "elapsed_seconds": utc_interval(original["started_utc"], original["finished_utc"], "original coordinator elapsed")},
+            "continuation_segment": {"started_utc": metadata["resumed_utc"], "finished_utc": state["finished_utc"],
+                                     "elapsed_seconds": utc_interval(metadata["resumed_utc"], state["finished_utc"], "continuation coordinator elapsed")},
+            "stopped_coordinator_gap_seconds": gap,
+            "interrupted_between_case_utc_interval": {
+                "started_utc": original["completed"][-1]["finished_utc"], "finished_utc": original["finished_utc"],
+                "seconds": interrupted, "configured_admission_limit_seconds": 7200,
+                "scope": "UTC interval proxy after case two, including prequeue source checks/state writes. Exact failed monotonic queue duration was not recorded."},
+            "continuation_admission_limit_seconds": 21600,
+            "scope": "Original seal, failed state, source graph, two completed cases/phases/queues and scientific/allocation fields preserved exactly. All four matched case walls remain unchanged."}
+
+
 def analyze(state_path):
     reader = Reader()
     state_pin = pin(state_path)
@@ -593,6 +678,7 @@ def analyze(state_path):
             "sealed variants differ from ioABBA order")
     for ref in state["sources"]:
         reader.verify(ref)
+    continued = continuation_provenance(reader, state, state_pin)
     retry_refs = retry_provenance(reader, plan, state)
     reader.verify(plan["python_pin"])
     require(pin(sys.executable)["sha256"] == plan["python_pin"]["sha256"], "pinned comparison Python required for analysis")
@@ -625,25 +711,37 @@ def analyze(state_path):
     require([(p["case"], p["phase"]) for p in state["phases"]] == expected_phases
             and all(p["exit_code"] == 0 for p in state["phases"]), "coordinator phase completion differs")
     phase_seconds = sum(seconds(p["seconds"], "coordinator phase") for p in state["phases"])
-    elapsed = (datetime.fromisoformat(state["finished_utc"]) - datetime.fromisoformat(state["started_utc"])).total_seconds()
-    seconds(elapsed, "coordinator elapsed")
+    elapsed = utc_interval(state["started_utc"], state["finished_utc"], "coordinator elapsed")
     require([w["case"] for w in state["queue_waits"]] == LABELS, "queue wait coverage differs")
     queue = sum(seconds(wait["seconds"], "canonical resource queue") for wait in state["queue_waits"])
     raw_sum = sum(row["raw_case_wall_seconds"] for row in rows)
     require(elapsed + .1 >= raw_sum + queue, "coordinator elapsed smaller than cases plus queue")
+    coordinator = {"started_utc": state["started_utc"], "finished_utc": state["finished_utc"],
+                   "elapsed_seconds": elapsed, "raw_case_wall_sum_seconds": raw_sum,
+                   "matched_case_wall_sum_seconds": sum(row["matched_case_wall_seconds"] for row in rows),
+                   "canonical_queue_wait_seconds": queue, "one_time_allocation_audit_seconds": audit,
+                   "outside_case_and_queue_seconds": elapsed - raw_sum - queue,
+                   "recorded_subprocess_phase_seconds": phase_seconds}
+    if continued is not None:
+        gap = continued["stopped_coordinator_gap_seconds"]
+        interrupted = continued["interrupted_between_case_utc_interval"]["seconds"]
+        require(elapsed + .1 >= raw_sum + queue + gap + interrupted,
+                "full coordinator UTC span smaller than cases, measured queues and interruption intervals")
+        coordinator.update(stopped_coordinator_gap_seconds=gap,
+                           interrupted_between_case_utc_interval_proxy_seconds=interrupted,
+                           remaining_coordinator_overhead_seconds=elapsed - raw_sum - queue - gap - interrupted,
+                           active_coordinator_segment_seconds=continued["original_segment"]["elapsed_seconds"]
+                                                             + continued["continuation_segment"]["elapsed_seconds"],
+                           accounting="Full UTC span includes interrupted interval and stopped gap. canonical_queue_wait_seconds covers only four successful measured admissions. The interrupted interval is a UTC proxy, not an exact measured queue. Remaining overhead subtracts those separately disclosed intervals; primary matched case totals are unchanged.")
     result = {"schema": SCHEMA, "complete": True, "state": state_pin, "cases": rows,
               "completed_updates": 648, "completed_games": 6480,
               "fingerprint_sha256": hashlib.sha256(json.dumps(fingerprints[0], sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
               "full_fingerprint_parity": True, "exposure_and_embedding_gate_parity": True,
               "recovered_output_parity": recovered_output_parity, "physical_reconciliation": reconciliation,
               "retry_provenance": retry_refs,
+              "continuation_provenance": continued,
               "comparisons": {field: comparison(rows, field) for field in FIELDS},
-              "coordinator": {"started_utc": state["started_utc"], "finished_utc": state["finished_utc"],
-                              "elapsed_seconds": elapsed, "raw_case_wall_sum_seconds": raw_sum,
-                              "matched_case_wall_sum_seconds": sum(row["matched_case_wall_seconds"] for row in rows),
-                              "canonical_queue_wait_seconds": queue, "one_time_allocation_audit_seconds": audit,
-                              "outside_case_and_queue_seconds": elapsed - raw_sum - queue,
-                              "recorded_subprocess_phase_seconds": phase_seconds},
+              "coordinator": coordinator,
               "maintenance_reservations": {"cases": [{"label": row["label"], "started_utc": row["started_utc"],
                                                        "maintenance_started_utc": row["maintenance_started_utc"],
                                                        "finished_utc": row["finished_utc"], "timing_boundary": row["timing_boundary"],
@@ -690,6 +788,9 @@ def publish(result, devices, out, recovery_out):
     if result["retry_provenance"] is not None:
         lines += ["Retry qualification and coordinator provenance:", "", "```json",
                   json.dumps(result["retry_provenance"], indent=2), "```", ""]
+    if result["continuation_provenance"] is not None:
+        lines += ["Interrupted coordinator and preserved-prefix continuation provenance:", "", "```json",
+                  json.dumps(result["continuation_provenance"], indent=2), "```", ""]
     lines += [result["recovered_output_parity"]["definition"], "", result["recovered_output_parity"]["coverage_exception"], "",
               "Update timing/placement exclusions by case (all other fields compared):"]
     for row in result["cases"]:
