@@ -22,6 +22,8 @@ pub enum LegendEffectV1 {
     ShannaPayAndDraw,
     BindJodahCast,
     JodahCastSnapshot(jodah::JodahCastV1),
+    GwennaMana(crate::mana::ManaColor, crate::mana::ManaColor),
+    GwennaCounterAndUntap,
 }
 
 pub(crate) fn has_printed_ability(state: &GameState, object: ObjectId, name: &str) -> bool {
@@ -69,6 +71,27 @@ fn binding(state: &GameState, object: ObjectId) -> EffectObjectBinding {
 
 pub(crate) fn execute(op: LegendEffectV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        LegendEffectV1::GwennaMana(_, _) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        LegendEffectV1::GwennaCounterAndUntap => {
+            if ctx.ability_source_contract.is_some_and(|source| {
+                state.objects.try_get(source.source).is_some_and(|live| {
+                    live.zone == Zone::Battlefield
+                        && live.zone_change_count == source.zone_change_count
+                })
+            }) {
+                crate::event::add_plus_one_counters(state, ctx.source, ctx.controller, 1)
+                    .expect("live Gwenna");
+                crate::event::propose_and_commit(
+                    state,
+                    crate::event::ProposedEvent::untap(ctx.source),
+                );
+            }
+        }
         LegendEffectV1::ShannaPayAndDraw => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -630,4 +653,53 @@ mod tests {
         give_poison(&mut state, PlayerId::P0, 2);
         assert_eq!(state.players[0].poison_counters.0, 3);
     }
+}
+
+/// Fifteen canonical unordered color pairs are definition-owned choices for
+/// Gwenna's one mana ability. They resolve immediately, without using stack.
+pub(crate) fn activate_gwenna_mana(
+    state: &mut GameState,
+    player: crate::ids::PlayerId,
+    source: ObjectId,
+    index: u8,
+) -> Result<bool, String> {
+    if !has_printed_ability(state, source, "Gwenna, Eyes of Gaea") {
+        return Ok(false);
+    }
+    let live = state.objects.get(source);
+    let def = &CARD_DEFS[live.card_def as usize];
+    let ability = def
+        .activated_abilities
+        .get(usize::from(index))
+        .ok_or("Gwenna color pair is missing")?;
+    let EffectOp::StandardLegendV1(LegendEffectV1::GwennaMana(first, second)) = (ability.effect)()
+    else {
+        return Err("Gwenna mana choice changed definition".into());
+    };
+    let link = crate::state::ObjectLinkV4 {
+        object: source,
+        zone_change_count: live.zone_change_count,
+    };
+    let card_def = live.card_def;
+    crate::event::propose_and_commit(state, crate::event::ProposedEvent::tap(source));
+    crate::event::propose_and_commit(
+        state,
+        crate::event::ProposedEvent::mana_add(player, vec![first, second]),
+    );
+    for color in [first, second] {
+        state.players[player.index()].mana_pool[color.pool_index()] -= 1;
+        state.players[player.index()].restricted_mana_pool.0.push(
+            crate::mana::RestrictedManaUnitV1 {
+                color,
+                restriction:
+                    crate::card_def::ManaSpendRestrictionDef::CreatureSpellOrCreatureAbility,
+                source: link,
+                source_card_def: card_def,
+            },
+        );
+    }
+    state.engine.priority_passes = [false, false];
+    state.engine.mana_ability_activations += 1;
+    state.engine.last_mana_ability_activator = Some(player);
+    Ok(true)
 }

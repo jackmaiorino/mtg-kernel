@@ -894,3 +894,73 @@ fn djeru_exile_permission_casts_free_at_normal_timing() {
     settled(&mut state);
     assert_eq!(state.objects.get(chosen).zone, Zone::Battlefield);
 }
+
+#[test]
+fn gwenna_mixed_mana_resolves_immediately_and_obeys_both_spending_categories() {
+    let mut state = ready(Step::Main1);
+    let gwenna = put(
+        &mut state,
+        PlayerId::P0,
+        "Gwenna, Eyes of Gaea",
+        Zone::Battlefield,
+    );
+    let hajar = put(
+        &mut state,
+        PlayerId::P0,
+        "Hajar, Loyal Bodyguard",
+        Zone::Hand,
+    );
+    let boltwave = put(&mut state, PlayerId::P0, "Boltwave", Zone::Hand);
+    let bash = put(
+        &mut state,
+        PlayerId::P0,
+        "Burnout Bashtronaut",
+        Zone::Battlefield,
+    );
+    assert!(
+        matches!(next(&mut state),Decision::CastSpellOrPass{activatable_abilities,..} if activatable_abilities.iter().filter(|(id,_)|*id==gwenna).count()==15)
+    );
+    engine::step(&mut state, Action::ActivateAbility(gwenna, 13)).unwrap(); // RG
+    assert!(state.stack.is_empty());
+    assert!(state.objects.get(gwenna).tapped);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
+    assert_eq!(
+        state.players[0]
+            .restricted_mana_pool
+            .0
+            .iter()
+            .map(|unit| unit.color)
+            .collect::<Vec<_>>(),
+        vec![ManaColor::R, ManaColor::G]
+    );
+    assert!(
+        matches!(next(&mut state),Decision::CastSpellOrPass{castable_spells,activatable_abilities,..} if castable_spells.contains(&hajar) && !castable_spells.contains(&boltwave) && activatable_abilities.contains(&(bash,0)))
+    );
+    let mut creature_cast = state.clone();
+    cast(&mut creature_cast, hajar, &[]);
+    settled(&mut creature_cast);
+    assert_eq!(creature_cast.objects.get(hajar).zone, Zone::Battlefield);
+    assert!(creature_cast.players[0].restricted_mana_pool.0.is_empty());
+    assert_eq!(creature_cast.objects.get(gwenna).counters.plus1_plus1, 0);
+    engine::step(&mut state, Action::ActivateAbility(bash, 0)).unwrap();
+    settled(&mut state);
+    assert!(state.players[0].restricted_mana_pool.0.is_empty());
+}
+
+#[test]
+fn gwenna_untaps_and_grows_when_a_five_power_creature_spell_is_cast() {
+    let mut state = ready(Step::Main1);
+    let gwenna = put(
+        &mut state,
+        PlayerId::P0,
+        "Gwenna, Eyes of Gaea",
+        Zone::Battlefield,
+    );
+    state.objects.get_mut(gwenna).tapped = true;
+    let spell = put(&mut state, PlayerId::P0, "Djeru and Hazoret", Zone::Hand);
+    state.players[0].mana_pool = pool(&[(ManaColor::W, 1), (ManaColor::R, 2)], 2);
+    cast(&mut state, spell, &[]);
+    settled(&mut state);
+    assert!(!state.objects.get(gwenna).tapped);
+    assert_eq!(state.objects.get(gwenna).counters.plus1_plus1, 1);
+}

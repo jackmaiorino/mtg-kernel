@@ -67,3 +67,11 @@ pub(super) const DJERU: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Attacks,
     ..etb_trigger(djeru)
 }];
+
+fn gwenna() -> EffectOp {
+    EffectOp::StandardLegendV1(LegendEffectV1::GwennaCounterAndUntap)
+}
+pub(super) const GWENNA: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastCreatureSpellPowerAtLeast(5),
+    ..etb_trigger(gwenna)
+}];

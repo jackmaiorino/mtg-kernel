@@ -4495,8 +4495,15 @@ fn payable_activation_cost_object_candidates(
         .into_iter()
         .filter(|candidate| {
             activation_mana_payment(components, player, source, state).is_none_or(|cost| {
-                mana::can_pay_excluding_sources(&cost, 0, player, state, &[source, *candidate])
-                    .is_some()
+                mana::plan_activation_mana_v1(
+                    &cost,
+                    0,
+                    player,
+                    state,
+                    source,
+                    &[source, *candidate],
+                )
+                .is_some()
             })
         })
         .collect()
@@ -4755,14 +4762,15 @@ fn can_pay_activation_components_with_x(
         return !unblocked_attacker_return_candidates(player, state, &[]).is_empty();
     }
     if let Some(cost) = activation_mana_payment(components, player, source, state) {
-        let plan = if components
+        let excluded = if components
             .iter()
             .any(|component| matches!(component, CostComponent::Tap))
         {
-            mana::can_pay_excluding_source(&cost, x_value, player, state, source)
+            vec![source]
         } else {
-            mana::can_pay(&cost, x_value, player, state)
+            vec![]
         };
+        let plan = mana::plan_activation_mana_v1(&cost, x_value, player, state, source, &excluded);
         if plan.is_none() {
             return false;
         }
@@ -4918,7 +4926,7 @@ fn can_pay_components(
             CostComponent::ReturnControlledUnblockedAttackerToOwnersHand => {
                 !unblocked_attacker_return_candidates(player, state, &[]).is_empty()
             }
-            CostComponent::Mana(cost) => mana::can_pay(
+            CostComponent::Mana(cost) => mana::plan_activation_mana_v1(
                 &crate::standard_cards_v1::spend_as_any_color(
                     state,
                     player,
@@ -4928,6 +4936,8 @@ fn can_pay_components(
                 0,
                 player,
                 state,
+                source,
+                &[],
             )
             .is_some(),
             CostComponent::PayLife(amount) => {
@@ -5333,11 +5343,7 @@ fn pay_cost_components_spending_mana(
     // partially paying life/discard-adjacent components before failing.
     let mana_cost = activation_mana_payment(components, player, source, state);
     let mana_plan = mana_cost.map(|cost| {
-        if reserved.is_empty() {
-            mana::can_pay(&cost, x_value, player, state)
-        } else {
-            mana::can_pay_excluding_sources(&cost, x_value, player, state, &reserved)
-        }
+        mana::plan_activation_mana_v1(&cost, x_value, player, state, source, &reserved)
     });
     if mana_plan.as_ref().is_some_and(Option::is_none) {
         return None;
@@ -15578,7 +15584,9 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
                 return Err(format!("ability {index} on {source} is not activatable by {p:?} right now"));
             }
             if index==255 { return turn_face_up(state,p,source); }
-            begin_activation(state, p, source, index);
+            if crate::standard_legends_v1::activate_gwenna_mana(state,p,source,index)? {
+                collect_and_queue_triggers(state);
+            } else { begin_activation(state, p, source, index); }
             Ok(())
         }
         Action::CastSpell(id) => {

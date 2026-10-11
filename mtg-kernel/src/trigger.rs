@@ -235,6 +235,7 @@ pub enum TriggerCondition {
     TurnedFaceUp,
     CastSpellWithAnyColor(u8),
     ControlledCreatureWithSubtypeAttacks(Subtype),
+    CastCreatureSpellPowerAtLeast(i32),
 }
 
 pub struct TriggeredAbilityDef {
@@ -3345,6 +3346,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Lagrella, the Magpie" => &standard_legends_v1::LAGRELLA,
         "Shanna, Purifying Blade" => &standard_legends_v1::SHANNA,
         "Djeru and Hazoret" => &standard_legends_v1::DJERU,
+        "Gwenna, Eyes of Gaea" => &standard_legends_v1::GWENNA,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Ertai Resurrected" => &standard_legends_v1::ERTAI,
         #[cfg(feature = "standard-magezero-fixtures")]
@@ -5017,6 +5019,17 @@ fn trigger_matches(
                 object: Some(_),
             },
         ) => *player == controller,
+        (
+            TriggerCondition::CastCreatureSpellPowerAtLeast(minimum),
+            CommittedEvent::SpellCast {
+                spell,
+                controller: caster,
+            },
+        ) => {
+            *caster == controller
+                && selected_spell_types(state, *spell).contains(&CardType::Creature)
+                && crate::engine::effective_power(state, *spell) >= minimum
+        }
         (
             TriggerCondition::CastCreatureSpell,
             CommittedEvent::SpellCast {

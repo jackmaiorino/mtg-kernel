@@ -322,6 +322,12 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
                 AggF::Characteristic,
             );
         }
+        TriggerCondition::CastCreatureSpellPowerAtLeast(_) => {
+            out.trigger(TrigF::SpellCast {
+                by: RelF::You,
+                obj: ObjF::Typed(CardTypeF::Creature),
+            });
+        }
         TriggerCondition::CastSpellManaValueAtLeast(minimum) => {
             // A spell the controller casts whose mana value on the stack is
             // at least `minimum`. Vocabulary gap: the trigger carries no

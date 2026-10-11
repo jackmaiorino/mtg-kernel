@@ -1658,6 +1658,7 @@ pub enum ManaSpendRestrictionDef {
     CreatureSpell,
     LegendarySpell,
     Unrestricted,
+    CreatureSpellOrCreatureAbility,
 }
 
 /// A `{T}: Add one mana of a listed color` ability whose mana carries a

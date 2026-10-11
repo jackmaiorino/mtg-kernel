@@ -11,6 +11,17 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         EffectOp::StandardLegendV1(op) => {
             use crate::standard_legends_v1::LegendEffectV1;
             match op {
+                LegendEffectV1::GwennaMana(_, _) => {
+                    out.effect(
+                        EffectAtom::new(EvF::AddMana)
+                            .player(RelF::You)
+                            .amount(AmtF::fixed(2)),
+                    );
+                }
+                LegendEffectV1::GwennaCounterAndUntap => {
+                    out.effect(EffectAtom::new(EvF::PlaceCounter).obj(ObjF::ThisObject));
+                    out.effect(EffectAtom::new(EvF::Untap).obj(ObjF::ThisObject));
+                }
                 LegendEffectV1::ShannaPayAndDraw => {
                     out.control(ControlF::ChooseObjects);
                     out.effect(
