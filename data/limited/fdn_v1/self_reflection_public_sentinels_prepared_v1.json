@@ -1,0 +1,59 @@
+{
+  "schema": "mtg-kernel/fdn-unregistered-public-face-down-sentinels/v1",
+  "registration": "absent from FDN; documentation only, not generator input",
+  "accepted_source": {
+    "commit": "605a3b5c93222321007841874f7d5637002a4be2",
+    "path": "data/standard/magezero_v1/cards_v1.json",
+    "runtime_projection": "mtg-kernel/src/rl.rs::projected_card_def"
+  },
+  "registry_records": [
+    {
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "is_token": true,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [],
+      "name": "Face-down creature"
+    },
+    {
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "is_token": true,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [],
+      "name": "Face-down card"
+    }
+  ],
+  "scope": "Two internal observer sentinels, separate from the face-up nameless copy token; outside frozen286 booster names and24 external token inputs. No assigned ID or profile.",
+  "semantics": "Face-down creature labels the existing disguised public creature projection; Face-down card labels the existing non-disguised hidden permanent/card projection. They carry no underlying physical definition. Actual effective characteristics and authorized looker knowledge remain owned by existing engine/public extensions.",
+  "primary_reference_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "primary_reference_paths": [
+    "Mage/src/main/java/mage/abilities/keyword/DisguiseAbility.java",
+    "Mage/src/main/java/mage/abilities/keyword/MorphAbility.java"
+  ],
+  "admission": "Root must append actual internal definitions and generate/qualify a catalog/profile successor before claiming complete FDN face-down transport. The current missing-sentinel public reference path refuses without state mutation or hidden identity."
+}

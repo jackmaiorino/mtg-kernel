@@ -7582,6 +7582,19 @@ fn is_castable_now(
     // step-tracking bug (state.step really was Combat; the timing check
     // just didn't consult it for this card's type).
     let main_timing_ok = cast_form_timing_ok(def.types, def.keywords, player, state);
+    if def.name == "Self-Reflection"
+        && (def.spell_effect)() == Some(EffectOp::CreateControlledCreatureTargetCopyV1)
+        && completable_next_targets_for_controller_and_source(
+            def.target_spec,
+            &[],
+            player,
+            targeting_source_for_object(state, id),
+            state,
+        )
+        .is_empty()
+    {
+        return false;
+    }
     if cast_method != CastMethodV4::Normal && !main_timing_ok {
         return false;
     }
