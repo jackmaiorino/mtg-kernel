@@ -180,7 +180,7 @@ pub(super) fn preflight_begin(
         choice: None,
         answered_choice_guard: None,
     };
-    if validated_definition_owned_root_effect(state, &tentative)? != *op
+    if *validated_definition_owned_root_effect(state, &tentative)? != *op
         || ctx.source != item.source
         || ctx.controller != item.controller
         || ctx.stack_item_id != Some(item.v4.stack_item_id)
