@@ -811,9 +811,6 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests;
-
 fn validate_observed_entries(state: &GameState) -> Result<(), ObjectId> {
     if state
         .engine
@@ -879,3 +876,6 @@ fn validate_observed_entries(state: &GameState) -> Result<(), ObjectId> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
