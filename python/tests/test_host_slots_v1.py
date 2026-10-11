@@ -354,8 +354,10 @@ class HostSlotsTests(unittest.TestCase):
             mark = script(tmp_path, "mark.py", "open(sys.argv[1], 'a').write(sys.argv[2] + '\\n')\n")
             order = tmp_path / "order"
             waiters = []
+            # Full-capacity waiters make completion order an observable admission order.
+            # One-core waiters can run together and finish in either order after FIFO admission.
             for name in ("a", "b"):
-                waiters.append(cli("run", "--wait", "--lane", "l", "--work-id", name, "--cores", "1", "--",
+                waiters.append(cli("run", "--wait", "--lane", "l", "--work-id", name, "--cores", str(len(CPUS)), "--",
                                    sys.executable, mark, str(order), name))
                 assert wait_for(lambda n=len(waiters): len(list((host / "TESTHOST.slots").glob("queue-*.json"))) == n)
             status = slots.status()
