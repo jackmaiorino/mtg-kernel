@@ -1,7 +1,9 @@
-# Controller instant/sorcery cost reducers, source preparation
+# Controller instant/sorcery reducers and complete spell costs
 
-This separate issue #110 preparation supports the next cost-reducer admission. Neither
-Mocking Sprite nor Archmage of Runes is registered or accepted by this work.
+This issue #110 implementation registers Mocking Sprite and Archmage of Runes
+in the optional Limited catalog v67. Seven actual gameplay/restore cases pass;
+current-source profile, cross-family checks, CI and default acceptance remain
+pending. Candidate coverage171 is not yet accepted.
 
 The pinned Mage constructors at
 [a5c90fe1](https://github.com/jackmaiorino/mage/tree/a5c90fe180021e70e2a644ade00eeab07f857a40/Mage.Sets/src/mage/cards)
@@ -17,6 +19,11 @@ flashback, Escape, Madness and Plotted costs must use the same planner. Freeze
 the payment before a sacrifice can remove a reducer, pay mana once, and preserve
 nonmana costs, Delve/Convoke, source reservations and one combined life budget.
 Activation and resolution payments remain outside spell modifiers.
+
+## Retained qualification history
+
+The source-preparation observations below record their original scope and
+failures. The final admission and observed gameplay receipt are at the end.
 
 Source 8c3b9914 implements the u32 combined mana total without truncating at 255.
 Both Limited-only and Standard/Limited test compilations and all 15 mana tests

@@ -54,11 +54,16 @@ reference comparisons and broader fair Limited/DraftZero requirements.
 
 The next candidate admits Mocking Sprite369/Archmage of Runes370 into371
 card definitions after accepted v66. All37 affected Python cases pass.
-Native20 runs seven actual games and extracts the observed v67 identity;
-profile qualification, review, CI and default acceptance remain required.
+Native20 passed all seven actual games and observed v67 identity1b1e46ebfc30edb7;
+its supported guard ended0. Draft PR214 has no outstanding source-review
+findings. Native21 is running current-source profile and cross-family checks;
+CI and default acceptance remain required.
 Brine's four fixture groups compiled but are unexecuted and unregistered.
 Ferocious source for Ruby/Courageous has six unregistered gameplay groups,
-with Native15 primitive/registered regressions and fixture compilation pending.
+Native15 passed the Limited regressions, then failed a combined-catalog Koma
+test guard. Repairbded94c1 preserves the Limited case and passes all140
+combined engine cases; Native16's remaining checks and fixture compilation
+are running. All prepared names remain unaccepted.
 The following preparation order and receipts are retained history.
 
 Later prepared families remain retained in their original worktrees: v65
