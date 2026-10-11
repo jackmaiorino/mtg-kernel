@@ -233,7 +233,7 @@ mod fdn {
                 paid_cost_refs: vec![],
                 hidden_ability_source: None,
                 ability_source_contract: None,
-                cauldron_grant: None,
+                cauldron_grant: Default::default(),
                 kicked: false,
                 optional_additional_cost_paid: None,
                 x_value: 0,
