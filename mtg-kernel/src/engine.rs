@@ -12130,6 +12130,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 object.v4.entered_battlefield_this_turn = false;
             }
             state.trigger_uses_v1 = None;
+            state.attack_declaration_turn_v1 = None;
             #[cfg(feature = "limited-fdn-fixtures")]
             {
                 state.creature_death_turn_v1 = None;
@@ -15903,6 +15904,10 @@ fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> R
     }
     if !state.engine.combat.attackers.is_empty() {
         let attacker = state.active_player;
+        state.attack_declaration_turn_v1 = Some(crate::state::AttackDeclarationTurnV1 {
+            turn: state.turn,
+            active_player: attacker,
+        });
         for source in state.players[attacker.index()].battlefield.clone() {
             let object = state.objects.get(source);
             if trigger::triggers_for(object.card_def).iter().any(|def| {
@@ -15927,6 +15932,10 @@ fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> R
     reset_priority(state);
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "engine/raid_history_tests.rs"]
+mod raid_history_tests;
 
 pub(crate) fn validate_declare_blockers(
     state: &GameState,

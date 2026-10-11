@@ -330,6 +330,8 @@ pub enum EffectCond {
     },
     /// Exclude the captured source incarnation while checking current power.
     ControlsOtherIncarnationCreaturePowerAtLeast(i32),
+    /// Raid recheck uses the resolving ability's captured controller.
+    ControllerAttackedThisTurn,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -16172,6 +16174,9 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
             .hand
             .is_empty(),
         EffectCond::CreatureDiedThisTurn => state.creature_died_this_turn_v1(),
+        EffectCond::ControllerAttackedThisTurn => {
+            state.player_attacked_this_turn_v1(ctx.controller)
+        }
         EffectCond::ControlsOtherIncarnationCreaturePowerAtLeast(minimum) => {
             let generation = ctx.ability_source_contract.map_or_else(
                 || state.objects.get(ctx.source).zone_change_count,

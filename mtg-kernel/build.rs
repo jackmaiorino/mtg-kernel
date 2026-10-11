@@ -3984,7 +3984,8 @@ fn keywords_for(card: &CardJson) -> String {
         | "Vampire Soulcaller"
         | "Billowing Shriekmass"
         | "Dreadwing Scavenger"
-        | "Arbiter of Woe" => keywords.push("Keywords::FLYING"),
+        | "Arbiter of Woe"
+        | "Skyship Buccaneer" => keywords.push("Keywords::FLYING"),
         "Generous Ent"
         | "Writhing Chrysalis"
         | "Vitu-Ghazi Inspector"
@@ -6227,6 +6228,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Brineborn Cutthroat" => "controller_cast_spell_during_opponent_turn:plus_one_counter_on_bound_source:1",
         "Nessian Hornbeetle" => "beginning_controller_combat_if_other_creature_effective_power_at_least:4:recheck_at_resolution:plus_one_counter_on_bound_source:1",
         "Micromancer" => "etb:may_search_library:instant_or_sorcery_mana_value:1:reveal_to_hand:shuffle:fail_to_find_allowed",
+        "Skyship Buccaneer" => "self_etb:intervening_if_captured_controller_declared_attackers_this_turn:declaration_history_round_and_active_seat:recheck_at_resolution:draw_controller:1",
         "Ruby, Daring Tracker" => "source_attacks_while_controller_has_effective_power_at_least:4:bound_source_pump_until_end_of_turn:2:2",
         "Courageous Goblin" => "source_attacks_while_controller_has_effective_power_at_least:4:bound_source_pump_until_end_of_turn:1:0:menace_on_exact_trigger_source",
         "Wardens of the Cycle" => "controller_end_step:intervening_if_creature_died_this_turn:mode_at_placement:gain_controller_life:2|draw_controller:1_then_lose_controller_life:1:recheck_morbid_in_each_branch:untargeted",
@@ -9500,6 +9502,9 @@ fn codegen(cards: &[CardJson]) -> String {
         let entry_counters = enters_with_plus_one_counters_for(&c.name);
         if entry_counters != "None" {
             canon.push_str(&format!(";entry_counters={entry_counters}"));
+        }
+        if c.name == "Goblin Boarders" {
+            canon.push_str(";raid_entry_counters=controller_declared_attackers_this_turn:round_and_active_seat:printed_abilities_active:plus_one_counter:1:before_entry_events_and_sbas");
         }
         let counter_keyword = controlled_counter_keyword_for(&c.name);
         if counter_keyword != "None" {
