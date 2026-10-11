@@ -120,13 +120,19 @@ fn overlapping_control_effects_unwind_to_nonowner_baseline_and_survive_source_de
             crate::event::ProposedEvent::zone_change(source, Zone::Graveyard),
         );
         let mut restored = replay(&state);
+        let ending_turn = restored.turn;
         cleanup(&mut restored);
         assert_eq!(
             restored.objects.get(target).controller,
             controller.opponent()
         );
         assert_eq!(restored.objects.get(target).owner, controller);
-        assert!(restored.objects.get(target).summoning_sick);
+        // With no priority response available, the real engine advances through
+        // Cleanup and into the baseline controller's next Untap. Control expiry
+        // first restores that player; their new turn then clears sickness.
+        assert_eq!(restored.active_player, controller.opponent());
+        assert_eq!(restored.turn, ending_turn + 1);
+        assert!(!restored.objects.get(target).summoning_sick);
     }
 }
 #[test]
