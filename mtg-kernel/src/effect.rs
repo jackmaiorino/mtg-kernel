@@ -1583,6 +1583,10 @@ pub enum EffectOp {
     PreventTargetBlockingUntilEndOfTurn {
         target_index: u8,
     },
+    BindAuthorityEntryGainLifeV1,
+    AuthorityEntryGainLifeV1 {
+        capture_history_index: u64,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -7739,6 +7743,7 @@ fn validate_standard_choose_permanent_origin(
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::self_reflection_v1::validate_live_stack(state)?;
+    crate::authority_of_the_consuls_v1::validate_state(state)?;
     crate::soul_shackled_zombie_v1::validate_state(state)?;
     crate::source_power_activation_v1::validate_state(state)?;
     squad_rallier_resolution_v1::validate(state)?;
@@ -18477,6 +18482,17 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         }
         EffectOp::PreventTargetBlockingUntilEndOfTurn { target_index } => {
             crate::sower_of_chaos_v1::install(state, ctx, *target_index);
+        }
+        EffectOp::BindAuthorityEntryGainLifeV1 => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        EffectOp::AuthorityEntryGainLifeV1 {
+            capture_history_index,
+        } => {
+            crate::authority_of_the_consuls_v1::resolve(state, ctx, *capture_history_index);
         }
         EffectOp::GrantKeywordTargetUntilEndOfTurn { object, keyword } => {
             let object = ctx.resolve_object(*object);

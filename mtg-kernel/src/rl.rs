@@ -2295,6 +2295,12 @@ fn build_policy_observation_common_v6(
     request: PolicyObservationBuildV5<'_>,
     accept_life_ward: bool,
 ) -> Result<ObservationV6> {
+    if crate::authority_of_the_consuls_v1::requires_successor(request.state) {
+        return Err(RlContractError(
+            "opposing-creature tapped entry and captured gain require their observation successor"
+                .into(),
+        ));
+    }
     crate::engine::validate_legacy_variable_cast_targets(request.state).map_err(RlContractError)?;
     Ok(build_policy_observation_storage_v6(request, accept_life_ward)?.into_legacy())
 }

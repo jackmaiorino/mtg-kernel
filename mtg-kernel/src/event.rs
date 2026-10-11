@@ -8,6 +8,7 @@
 //! resulting `CommittedEvent` to `state.engine.event_log` for
 //! `trigger::collect_and_process` to drain after the resolution finishes.
 
+pub use crate::authority_of_the_consuls_v1::AuthorityEntryCaptureV1;
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::ManaColor;
 use crate::state::{GameState, PaidCostRefV4, StackItemKind, Target, Zone};
@@ -672,6 +673,12 @@ pub enum CommittedEvent {
         item: Box<crate::state::StackItem>,
         timestamp: u64,
         recipient_snapshot: String,
+    },
+    AuthorityEntryCaptureV1 {
+        capture: AuthorityEntryCaptureV1,
+    },
+    AuthorityEntryCollectedV1 {
+        capture_history_index: u64,
     },
 }
 
@@ -1393,7 +1400,8 @@ fn commit_with_ability_lki(
                 state.objects.get_mut(object).v4.layer_timestamp = Some(timestamp);
             }
             state.players[t.controller.index()].battlefield.push(object);
-            let enters_tapped = permanent_enters_battlefield_tapped(state, object, t.controller);
+            let enters_tapped = permanent_enters_battlefield_tapped(state, object, t.controller)
+                || crate::authority_of_the_consuls_v1::enters_tapped(state, object, t.controller);
             state.objects.get_mut(object).tapped = enters_tapped;
             initialize_entry_counters(state, object, false);
             CommittedEvent::CreateToken {
@@ -1502,6 +1510,7 @@ fn commit_with_ability_lki(
             ..
         }
     );
+    let entry_history_index = state.engine.event_history.len();
     state.engine.event_history.push(committed);
     if committed_death {
         for capture in death_captures {
@@ -1512,6 +1521,7 @@ fn commit_with_ability_lki(
     if let Some(source) = single_graveyard_entry {
         crate::soul_shackled_zombie_v1::record_entry(state, source);
     }
+    crate::authority_of_the_consuls_v1::record_entry(state, entry_history_index);
     if let Some(object) = left_battlefield {
         crate::standard_legends_v1::return_lagrella_exiles(
             state,
@@ -2069,6 +2079,13 @@ fn commit_zone_change(
         }
     }
     if to_zone == Zone::Battlefield {
+        // Evaluate this new static rule with the actual entering controller
+        // and initialized battlefield characteristics, preserving the earlier
+        // legacy entry checks and their order.
+        let controller = state.objects.get(id).controller;
+        if crate::authority_of_the_consuls_v1::enters_tapped(state, id, controller) {
+            state.objects.get_mut(id).tapped = true;
+        }
         if cfg!(feature = "limited-fdn-fixtures") {
             let timestamp = crate::engine::next_timestamp(state);
             state.objects.get_mut(id).v4.layer_timestamp = Some(timestamp);

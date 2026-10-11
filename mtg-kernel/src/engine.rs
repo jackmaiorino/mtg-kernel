@@ -12394,7 +12394,10 @@ pub(crate) fn validate_single_graveyard_public_pending(
     Ok(())
 }
 
-fn validate_pending_trigger(state: &GameState, pending: &PendingTrigger) -> Result<(), String> {
+pub(crate) fn validate_pending_trigger(
+    state: &GameState,
+    pending: &PendingTrigger,
+) -> Result<(), String> {
     if !pending.placement_ordered {
         return Err("pending trigger has not completed placement ordering".to_string());
     }
@@ -12659,7 +12662,7 @@ fn validate_pending_trigger_for_stack(
     Ok(())
 }
 
-fn validate_pending_trigger_identity(
+pub(crate) fn validate_pending_trigger_identity(
     state: &GameState,
     pending: &PendingTrigger,
 ) -> Result<(), String> {
@@ -12982,6 +12985,11 @@ fn triggered_stack_item_expected_target_spec(
     }
     validate_bound_trigger_source_objects(inline_effect, item.source, ability_source_contract)?;
     crate::frenzied_goblin_v1::validate_source(state, source_card_def, ability_source_contract)?;
+    crate::authority_of_the_consuls_v1::validate_source(
+        state,
+        inline_effect,
+        ability_source_contract,
+    )?;
     #[cfg(feature = "standard-magezero-fixtures")]
     if matches!(
         inline_effect,

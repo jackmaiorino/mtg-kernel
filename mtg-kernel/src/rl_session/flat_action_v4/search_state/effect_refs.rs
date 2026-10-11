@@ -159,6 +159,8 @@ impl Scan<'_> {
             | PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness { .. }
             | GrantKeywordToDeclaredTargetsUntilEndOfTurn { .. }
             | ReturnTwoDifferentControllerCreaturesToOwnersHands
+            | BindAuthorityEntryGainLifeV1
+            | AuthorityEntryGainLifeV1 { .. }
             | CreateControlledCreatureTargetCopyV1
             | DoubleTargetPowerUntilEndOfTurn { .. }
             | DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
@@ -1027,9 +1029,18 @@ pub(super) fn conflicts(
                     || s.raw(died.object)
                     || source.attached_to.is_some_and(|link| s.raw(link.object))
             }
+            AuthorityEntryCaptureV1 { capture } => {
+                s.raw(capture.source.source)
+                    || s.raw(capture.entrant.object)
+                    || capture
+                        .source
+                        .attached_to
+                        .is_some_and(|link| s.raw(link.object))
+            }
             InitiativeTrigger { binding } => s.raw(binding.source.source),
             MonarchTrigger { binding } => s.raw(binding.source.source),
             ControlledCreatureDeathCaptureCollectedV1 { .. }
+            | AuthorityEntryCollectedV1 { .. }
             | SquadRallierResolutionBoundaryV1 { .. }
             | SowerRestrictionInstalledV1 { .. }
             | SowerRestrictionExpiredV1 { .. }

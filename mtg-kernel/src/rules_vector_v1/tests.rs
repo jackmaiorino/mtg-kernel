@@ -652,6 +652,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Slumbering Cerberus",
     "Frenzied Goblin",
     "Wildwood Scourge",
+    "Authority of the Consuls",
     "Vengeful Bloodwitch",
     "Soul-Shackled Zombie",
     "Archmage of Runes",

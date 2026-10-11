@@ -144,7 +144,9 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
         | EffectOp::LookTopPickToHandBottomRest { .. }
         | EffectOp::LookTopSelectV1 { .. } => effect_b::effect_op(op, env, out),
-        EffectOp::PreventTargetBlockingUntilEndOfTurn { .. } => out.atoms.push(Atom::Opaque),
+        EffectOp::BindAuthorityEntryGainLifeV1
+        | EffectOp::AuthorityEntryGainLifeV1 { .. }
+        | EffectOp::PreventTargetBlockingUntilEndOfTurn { .. } => out.atoms.push(Atom::Opaque),
         EffectOp::GainLifeEqualToPaidCostManaValue { .. }
         | EffectOp::MoveAllTargets { .. }
         | EffectOp::ExploreTarget { .. }

@@ -255,6 +255,8 @@ pub enum TriggerCondition {
     BeginningAnyEndStepIfCreatureDied,
     /// Counter-placement-time capture, independent of the placing player's identity.
     AnotherControlledNonHydraCreatureGetsPlusOneCounters,
+    /// Scoped committed opposing-creature entry captures; generic matching is unused.
+    OpponentCreatureEntersV1,
 }
 
 pub struct TriggeredAbilityDef {
@@ -1570,6 +1572,18 @@ pub(crate) fn searslicer_goblin_effect() -> EffectOp {
         else_: Box::new(EffectOp::Sequence(vec![])),
     }
 }
+
+fn authority_entry_effect() -> EffectOp {
+    EffectOp::BindAuthorityEntryGainLifeV1
+}
+static AUTHORITY_OF_THE_CONSULS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::OpponentCreatureEntersV1,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    face_index: 0,
+    effect: authority_entry_effect,
+}];
 
 const SEARSLICER_GOBLIN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::BeginningControllerEndStepAfterControllerAttackedThisTurn,
@@ -3439,6 +3453,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Micromancer" => &MICROMANCER_TRIGGERS,
         "Skyship Buccaneer" => &SKYSHIP_BUCCANEER_TRIGGERS,
         "Searslicer Goblin" => &SEARSLICER_GOBLIN_TRIGGERS,
+        "Authority of the Consuls" => &AUTHORITY_OF_THE_CONSULS_TRIGGERS,
         "Ruby, Daring Tracker" => &RUBY_DARING_TRACKER_TRIGGERS,
         "Courageous Goblin" => &COURAGEOUS_GOBLIN_TRIGGERS,
         "Frenzied Goblin" => &FRENZIED_GOBLIN_TRIGGERS,
@@ -3829,6 +3844,7 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
                 ..
             },
         ) => count == actual_count && max_taken == actual_max_taken,
+        (EffectOp::BindAuthorityEntryGainLifeV1, EffectOp::AuthorityEntryGainLifeV1 { .. }) => true,
         _ => crate::standard_cards_v1::template_matches(template, effect),
     }
 }
@@ -4567,6 +4583,16 @@ fn triggers_from_events(
                 })
     });
     let mut new_triggers = state.legend_pending_v1.take().unwrap_or_default();
+    match crate::authority_of_the_consuls_v1::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
     if events.is_empty() {
         // Nothing can match an empty batch; only the use-ledger pruning
         // above is observable.
