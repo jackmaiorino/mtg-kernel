@@ -4,4 +4,5 @@ pub(crate) const FEATURE_REGISTRY_VERSION_V5: &str = "rust-observation-v8-action
 pub(crate) const FEATURE_CONTRACT_DIGEST_V5: &str = "fdef217d69a354b672b70519a8cc6ccd952004c2f26f7ebb03eedf5f30c46a78";
 pub(crate) const FEATURE_ENCODING_DIGEST_V5: &str = "574281249cf5999ab67bbfd77c758384bcd6ab90ad835c0ca34cc231a116baf0";
 pub(crate) const FEATURES_SOURCE_SHA256_V5: &str = "57c73e33e01f1f394300d7c2747a20dfffe169884f380848dae1cc1ba2477807";
+pub(crate) const MODEL_CONTRACT_VERSION_V5: &str = "kernel-policy-value-net-10";
 pub(crate) const FEATURE_DESCRIPTOR_SHA256_V5: &str = "9de2d826cdd52430ad9bb316f17bfb864b0051a6d02f963e54ca5d3ad118e1cd";

@@ -635,7 +635,7 @@ fn extension_object_v4(
 /// `decision_local_library` search-position ordinal depends on `position`
 /// at all -- only [`pending_trigger_frozen_source_components_v4`], reached
 /// through the ordinary fallback, ever is.
-fn flat_visible_action_object_extension_aware_v4(
+pub(super) fn flat_visible_action_object_extension_aware_v4(
     state: &crate::state::GameState,
     actor: PlayerId,
     position: u32,

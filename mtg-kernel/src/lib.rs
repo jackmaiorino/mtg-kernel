@@ -84,6 +84,7 @@ pub mod flat_policy_v1;
 pub mod flat_policy_v2;
 pub mod flat_policy_v3;
 pub mod flat_policy_v4;
+pub mod flat_policy_v5;
 pub mod ids;
 pub mod line_b_teacher_target_v1;
 pub mod phase1_agent_v1;
@@ -216,6 +217,7 @@ pub mod native_flat_tensorizer_diagnostic_v1;
 pub(crate) mod native_flat_tensorizer_v2;
 pub(crate) mod native_flat_tensorizer_v3;
 pub(crate) mod native_flat_tensorizer_v4;
+pub mod native_flat_tensorizer_v5;
 // Multi-buffer SHA-512 for the tensorizer digest tails (byte-identical to sha2).
 pub(crate) mod sha512_multi_v1;
 // Deterministic-CPU-forward audit probe (model-guided-searcher design v1,

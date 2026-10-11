@@ -2122,6 +2122,35 @@ pub fn observe_policy_v8(
     Ok(observation)
 }
 
+/// V8 native input omits forbidden text and the artifact-only JSON hash.
+/// The common builder supplies storage, then the V8 producer validates its
+/// own life Ward and captured-source authority before publication.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn observe_policy_v8_unhashed_for_flat_policy(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    acting_player: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep_index: u32,
+    substep_count: u32,
+) -> Result<crate::policy_observation_v8::ObservationV8> {
+    let base = build_policy_observation_common_v6(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player,
+            step_index,
+            physical_decision_id,
+            substep_index,
+            substep_count,
+            text_mode: ObservationTextModeV2::FlatForbiddenElided,
+        },
+        true,
+    )?;
+    crate::policy_observation_v8::ObservationV8::from_base(state, acting_player, base)
+}
+
 /// The action cache needs the same versioned authority once per decision,
 /// without constructing an observation or exposing private engine state.
 pub(crate) fn policy_observation_extensions_v6(

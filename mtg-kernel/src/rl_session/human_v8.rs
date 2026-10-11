@@ -14,7 +14,7 @@ pub(crate) struct HumanDecisionBindingV8 {
     observation: ObservationV8,
 }
 
-fn normalized_origin(
+pub(super) fn normalized_origin(
     session: &FastActorSessionV1,
     current: &FastActorCurrentDecisionV1,
 ) -> Result<Vec<CorePolicyActionCandidateV1>, FlatActionDecisionSliceErrorV1> {

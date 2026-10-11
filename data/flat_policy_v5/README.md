@@ -3,8 +3,10 @@
 This explicit sibling adds life Ward fees and printed card traits to typed
 schema8. Frozen feature files, descriptors, model contracts and loaders remain
 separate. Matching numeric dimensions do not establish checkpoint compatibility.
-Rust FlatPolicyV5/native V5, Rust/Python parity, actual front-life Sire gameplay
-and fresh model admission remain pending. Source preparation plays no games.
+Rust FlatPolicyV5/native V5 source now provides a sealed encoder and an explicit
+session mode. Native compilation, Rust/Python parity, actual front-life Sire
+gameplay and fresh model admission remain pending. Source preparation plays no
+games.
 
 Life fees use distinct pending38 and queued39 edges after existing Generic
 Ward36/37 edges. Source and target rows bind exact authorized incarnations;
@@ -37,3 +39,10 @@ the actual source. This covers payment bindings, trait suppression and
 captured-controller divergence, departed incarnations, both seats, single
 target selection, visible trigger modes, and shared hidden trigger sources.
 These JSON fixtures do not authenticate history or qualify native gameplay.
+
+Native tests cover stale/forged binding refusal, snapshot replay, exact hidden
+trigger positions, captured-controller divergence and printed-trait aliases.
+They export registered-state inputs and all thirteen tensors for the independent
+Python checker. These tests are prepared but have not yet run. Registered
+fixtures do not cover front-life payment relations; those require separate
+typed boundary checks and actual Sire gameplay after registration.

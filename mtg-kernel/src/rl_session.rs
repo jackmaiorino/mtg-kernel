@@ -292,6 +292,7 @@ pub(crate) use v3_spell_target_adapter_v1::{
     linked_exile_target_fixture_v1, pyroblast_target_fixture_v1,
 };
 mod flat_action_v4;
+mod flat_action_v5;
 #[cfg(test)]
 pub(crate) use flat_action_v3::{
     avenging_hunter_hidden_source_with_stack_historical_rows_state_v1,
@@ -309,6 +310,7 @@ pub(crate) use flat_action_v4::V4SearchStateErrorV1;
 pub(crate) use flat_action_v4::{
     hidden_order_triggers_shared_source_state_v1, hidden_order_triggers_state_v1,
 };
+pub use flat_action_v5::{FlatActionDecisionBindingV5, FlatActionDecisionSliceV5};
 
 pub const FLAT_ACTION_FLAG_PAY_V1: u16 = 1 << 0;
 pub const FLAT_ACTION_FLAG_CHANGE_TARGET_V1: u16 = 1 << 1;
@@ -4354,6 +4356,7 @@ enum FlatActionContractModeV1 {
     V2,
     V3,
     HumanV8,
+    V5,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -7181,6 +7184,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:human_v8:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::V5 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = flat_action_v5::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:flat_v5:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));
