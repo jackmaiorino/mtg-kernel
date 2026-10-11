@@ -1548,12 +1548,12 @@ pub struct GenericCostReductionDef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WardCostDef {
     Generic(u8),
-    /// Ward—Collect evidence N (MageZero Standard, Axebane Ferox).
+    /// Wardâ€”Collect evidence N (MageZero Standard, Axebane Ferox).
     CollectEvidence(u16),
-    /// Ward—Pay N life, printed on the transform back face only
+    /// Wardâ€”Pay N life, printed on the transform back face only
     /// (MageZero Standard, Moonrage Brute).
     BackFacePayLife(u8),
-    /// Ward—Discard a card, printed on both faces (MageZero Standard,
+    /// Wardâ€”Discard a card, printed on both faces (MageZero Standard,
     /// Graveyard Trespasser).
     DiscardCard,
 }
@@ -2210,11 +2210,11 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 370 (instant/sorcery cost reducers).
+        // batches append through id 376 (conditional, flash and power creatures).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                371
+                377
             } else {
                 192
             }
