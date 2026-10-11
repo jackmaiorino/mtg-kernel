@@ -17807,7 +17807,10 @@ mod tests {
         assert_eq!(state.players[0].mana_pool, [0; 6]);
     }
 
-    #[cfg(feature = "limited-fdn-fixtures")]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     #[test]
     fn bloodwitch_multi_creature_payment_order_preserves_existing_events_and_captures() {
         // Exercise the real generic payment preflight, not a printed-card

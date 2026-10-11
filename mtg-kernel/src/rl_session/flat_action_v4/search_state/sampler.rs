@@ -346,7 +346,10 @@ mod tests {
         assert!(redeterminize(&mut state, PlayerId::P0, 1).is_ok());
     }
 
-    #[cfg(feature = "limited-fdn-fixtures")]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     #[test]
     fn bloodwitch_hidden_return_refuses_resampling_of_historical_pending_and_stack_source() {
         use crate::engine::{self, Action, Decision};
