@@ -4141,3 +4141,70 @@ pub(crate) fn reflection_delayed_is_valid(
             .contains(&(object, source))
     })
 }
+
+impl StandardStateV1 {
+    /// Exact-incarnation references that prevent hidden-object resampling.
+    pub(crate) fn references_incarnation(&self, same: impl Fn(ObjectId, u32) -> bool) -> bool {
+        let link = |x: &crate::state::ObjectLinkV4| same(x.object, x.zone_change_count);
+        let ability = |x: &crate::state::AbilitySourceContractV4| {
+            same(x.source, x.zone_change_count) || x.attached_to.as_ref().is_some_and(&link)
+        };
+        self.last_mana_sources.iter().any(&link)
+            || self
+                .paid_spells
+                .iter()
+                .any(|(spell, sources)| link(spell) || sources.iter().any(&link))
+            || self
+                .rooms
+                .iter()
+                .any(|x| same(x.object, x.zone_change_count))
+            || self
+                .solved_cases
+                .iter()
+                .chain(&self.phyrexians)
+                .chain(&self.hasty_copies)
+                .chain(&self.everflames)
+                .chain(&self.net_locks)
+                .chain(&self.crewed_creatures)
+                .any(|&(id, generation)| same(id, generation))
+            || self
+                .class_levels
+                .iter()
+                .any(|&(id, generation, _)| same(id, generation))
+            || self
+                .graveyard_casts
+                .iter()
+                .any(|&(id, generation, _, _)| same(id, generation))
+            || self
+                .end_step_sacrifices
+                .iter()
+                .any(|&(id, generation, source)| same(id, generation) || ability(&source))
+            || self
+                .reflection_delayed_bindings
+                .iter()
+                .any(|(b, a)| same(b.object, b.expected_zone_change_count) || ability(a))
+            || self
+                .exile_cast_groups
+                .iter()
+                .any(|(cards, _)| cards.iter().any(|&(id, generation)| same(id, generation)))
+            || self
+                .aegis_copies
+                .iter()
+                .any(|x| same(x.aegis.0, x.aegis.1) || same(x.host.0, x.host.1))
+            || self
+                .copied_card_defs
+                .iter()
+                .any(|&(id, generation, _)| same(id, generation))
+            || self.crew_members.iter().any(|((id, generation), members)| {
+                same(*id, *generation)
+                    || members
+                        .iter()
+                        .any(|b| same(b.object, b.expected_zone_change_count))
+            })
+            || self
+                .last_charge
+                .iter()
+                .any(|&(id, generation, _)| same(id, generation))
+            || self.ninjutsu_targets.iter().any(|(_, target)| link(target))
+    }
+}

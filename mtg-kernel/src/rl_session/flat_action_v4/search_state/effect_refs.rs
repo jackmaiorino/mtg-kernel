@@ -30,12 +30,19 @@ impl Scan<'_> {
             || spell.targets.iter().any(|target| match target {
                 Target::Object(id) => self.raw(*id),
                 Target::Player(_) => false,
+                Target::StackItem(id) => self
+                    .state
+                    .stack
+                    .iter()
+                    .find(|item| item.v4.stack_item_id == *id)
+                    .is_some_and(|item| self.raw(item.source)),
             })
     }
     fn op(&self, op: &EffectOp) -> bool {
         use EffectOp::*;
         match op {
             CopySpellSnapshot { spell } => self.copy(spell),
+            CastExiledWithoutMana { card, .. } | PlayExiledLand { card } => self.b(card),
             Sequence(ops) | Choice { options: ops, .. } => ops.iter().any(|x| self.op(x)),
             Conditional { then, else_, .. } => self.op(then) || self.op(else_),
             MayPayCostThen {
@@ -70,6 +77,9 @@ impl Scan<'_> {
                 crate::standard_legends_v1::LegendEffectV1::ReturnBoundPermanent(object)
                 | crate::standard_legends_v1::LegendEffectV1::CountersOnReturnedPermanent(object) => {
                     self.b(object)
+                }
+                crate::standard_legends_v1::LegendEffectV1::JodahCastSnapshot(binding) => {
+                    self.same(binding.source.source, binding.source.zone_change_count)
                 }
                 _ => false,
             },
@@ -758,6 +768,132 @@ pub(super) fn op_conflicts(state: &GameState, pool: &[ObjectId], op: &EffectOp) 
     Scan { state, pool }.op(op)
 }
 
+fn continuation_conflicts(
+    s: &Scan<'_>,
+    p: &EffectContinuation,
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+) -> bool {
+    if s.fs(&p.frames)
+        || p.choice.as_ref().is_some_and(|c| {
+            if !plan.is_some_and(|p| p.matches(c)) {
+                return s.choice(c);
+            }
+            // Throne exempts only its private full-library snapshot. Public
+            // reveal, source and selected/legal references still cannot move.
+            if let PendingEffectChoice::SelectTargets {
+                purpose:
+                    EffectTargetSelectionPurpose::UndercityThroneCreature {
+                        binding,
+                        revealed_prefix,
+                        candidates,
+                        ..
+                    },
+                selected,
+                legal,
+                ..
+            } = c
+            {
+                s.a(&binding.source)
+                    || s.bs(revealed_prefix)
+                    || s.bs(candidates)
+                    || selected.iter().chain(legal).any(|c| {
+                        c.expected_object.as_ref().is_some_and(|b| s.b(b))
+                            || matches!(c.target,crate::state::Target::Object(id) if s.raw(id))
+                    })
+            } else {
+                false
+            }
+        })
+        || p.ctx.discarded.iter().any(|id| s.raw(*id))
+        || p.ctx
+            .targets
+            .iter()
+            .any(|t| matches!(t,crate::state::Target::Object(id) if s.raw(*id)))
+        || p.ctx
+            .hidden_ability_source
+            .is_some_and(|x| s.same(x.object, x.zone_change_count))
+        || p.ctx
+            .ability_source_contract
+            .as_ref()
+            .is_some_and(|a| s.a(a))
+    {
+        return true;
+    }
+    if let Some(g) = &p.answered_choice_guard {
+        use EffectAnsweredChoiceGuard::*;
+        let guard_conflicts = match g {
+            StandardSelection { frame } => s.f(frame),
+            CreatureChoiceV1 {
+                remaining_frames, ..
+            } => s.fs(remaining_frames),
+            OwnerLibrarySecondOrBottom { frame }
+            | CounterUnlessPaysGeneric { frame }
+            | CounterTargetUnlessPaysGeneric { frame }
+            | ExileOneFromGraveyard { frame }
+            | SurveilLibraryOne { frame }
+            | SurveilLibraryMany { frame }
+            | ExileOneMatchingFromGraveyard { frame }
+            | SacrificeCreature { frame }
+            | PayManaThen { frame }
+            | LinkedExileFromRevealedHand { frame }
+            | SearchLibraryToBattlefieldTapped { frame }
+            | UndercityRoute { frame }
+            | UndercityThrone { frame } => s.f(frame),
+            AttachReturningAura {
+                aura,
+                host,
+                remaining_frames,
+                ..
+            } => s.b(aura) || s.b(host) || s.fs(remaining_frames),
+            StandardChosenPermanentV1 {
+                chosen,
+                remaining_frames,
+                ..
+            } => s.b(chosen) || s.fs(remaining_frames),
+            StandardPilesSeparatedV1 {
+                pile_a,
+                pile_b,
+                remaining_frames,
+                ..
+            } => s.bs(pile_a) || s.bs(pile_b) || s.fs(remaining_frames),
+            StandardPileChosenV1 {
+                pile,
+                remaining_frames,
+                ..
+            } => s.bs(pile) || s.fs(remaining_frames),
+            StandardBreachChosenV1 {
+                cards,
+                remaining_frames,
+                ..
+            }
+            | StandardDiscardChosenV1 {
+                cards,
+                remaining_frames,
+                ..
+            } => s.bs(cards) || s.fs(remaining_frames),
+            StandardEverflameChosenV1 {
+                source,
+                remaining_frames,
+                ..
+            } => s.b(source) || s.fs(remaining_frames),
+            StandardCopyRetargetedV1 {
+                copy_source,
+                target,
+                remaining_frames,
+                ..
+            } => {
+                s.raw(*copy_source)
+                    || matches!(target, crate::state::Target::Object(id) if s.raw(*id))
+                    || s.fs(remaining_frames)
+            }
+        };
+        if guard_conflicts {
+            return true;
+        }
+    }
+    false
+}
+
 pub(super) fn conflicts(
     state: &GameState,
     pool: &[ObjectId],
@@ -773,122 +909,31 @@ pub(super) fn conflicts(
             return true;
         }
     }
-    if let Some(p) = &state.engine.pending_effect {
-        if s.fs(&p.frames)
-            || p.choice.as_ref().is_some_and(|c| {
-                if !plan.is_some_and(|p| p.matches(c)) {
-                    return s.choice(c);
-                }
-                // Throne exempts only its private full-library snapshot. Public
-                // reveal, source and selected/legal references still cannot move.
-                if let PendingEffectChoice::SelectTargets {
-                    purpose:
-                        EffectTargetSelectionPurpose::UndercityThroneCreature {
-                            binding,
-                            revealed_prefix,
-                            candidates,
-                            ..
-                        },
-                    selected,
-                    legal,
-                    ..
-                } = c
-                {
-                    s.a(&binding.source)
-                        || s.bs(revealed_prefix)
-                        || s.bs(candidates)
-                        || selected.iter().chain(legal).any(|c| {
-                            c.expected_object.as_ref().is_some_and(|b| s.b(b))
-                                || matches!(c.target,crate::state::Target::Object(id) if s.raw(id))
-                        })
-                } else {
-                    false
-                }
-            })
-            || p.ctx.discarded.iter().any(|id| s.raw(*id))
-            || p.ctx
-                .targets
-                .iter()
-                .any(|t| matches!(t,crate::state::Target::Object(id) if s.raw(*id)))
-            || p.ctx
-                .hidden_ability_source
-                .is_some_and(|x| s.same(x.object, x.zone_change_count))
-            || p.ctx
-                .ability_source_contract
-                .as_ref()
-                .is_some_and(|a| s.a(a))
-        {
+    if state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(|p| continuation_conflicts(&s, p, plan))
+    {
+        return true;
+    }
+    if let Some(standard) = &state.standard_v1 {
+        if standard.references_incarnation(|id, generation| s.same(id, generation)) {
             return true;
         }
-        if let Some(g) = &p.answered_choice_guard {
-            use EffectAnsweredChoiceGuard::*;
-            let guard_conflicts = match g {
-                StandardSelection { frame } => s.f(frame),
-                CreatureChoiceV1 {
-                    remaining_frames, ..
-                } => s.fs(remaining_frames),
-                OwnerLibrarySecondOrBottom { frame }
-                | CounterUnlessPaysGeneric { frame }
-                | CounterTargetUnlessPaysGeneric { frame }
-                | ExileOneFromGraveyard { frame }
-                | SurveilLibraryOne { frame }
-                | SurveilLibraryMany { frame }
-                | ExileOneMatchingFromGraveyard { frame }
-                | SacrificeCreature { frame }
-                | PayManaThen { frame }
-                | LinkedExileFromRevealedHand { frame }
-                | SearchLibraryToBattlefieldTapped { frame }
-                | UndercityRoute { frame }
-                | UndercityThrone { frame } => s.f(frame),
-                AttachReturningAura {
-                    aura,
-                    host,
-                    remaining_frames,
-                    ..
-                } => s.b(aura) || s.b(host) || s.fs(remaining_frames),
-                StandardChosenPermanentV1 {
-                    chosen,
-                    remaining_frames,
-                    ..
-                } => s.b(chosen) || s.fs(remaining_frames),
-                StandardPilesSeparatedV1 {
-                    pile_a,
-                    pile_b,
-                    remaining_frames,
-                    ..
-                } => s.bs(pile_a) || s.bs(pile_b) || s.fs(remaining_frames),
-                StandardPileChosenV1 {
-                    pile,
-                    remaining_frames,
-                    ..
-                } => s.bs(pile) || s.fs(remaining_frames),
-                StandardBreachChosenV1 {
-                    cards,
-                    remaining_frames,
-                    ..
-                }
-                | StandardDiscardChosenV1 {
-                    cards,
-                    remaining_frames,
-                    ..
-                } => s.bs(cards) || s.fs(remaining_frames),
-                StandardEverflameChosenV1 {
-                    source,
-                    remaining_frames,
-                    ..
-                } => s.b(source) || s.fs(remaining_frames),
-                StandardCopyRetargetedV1 {
-                    copy_source,
-                    target,
-                    remaining_frames,
-                    ..
-                } => {
-                    s.raw(*copy_source)
-                        || matches!(target, crate::state::Target::Object(id) if s.raw(*id))
-                        || s.fs(remaining_frames)
-                }
-            };
-            if guard_conflicts {
+        if let Some(resolution) = &standard.resolution_play {
+            if resolution.permission.as_ref().is_some_and(|p| s.b(&p.card))
+                || resolution.kicked_source.is_some_and(|id| s.raw(id))
+                || resolution
+                    .suspended
+                    .as_ref()
+                    .is_some_and(|p| continuation_conflicts(&s, p, None))
+                || resolution.deferred_triggers.iter().any(|t| {
+                    s.op(&t.effect)
+                        || t.source_contract.as_ref().is_some_and(|a| s.a(a))
+                        || t.granted_by.as_ref().is_some_and(|a| s.a(a))
+                })
+            {
                 return true;
             }
         }
@@ -932,7 +977,8 @@ pub(super) fn conflicts(
             | UpkeepBegan { .. }
             | CrimeCommitted { .. }
             | BeginningOfCombat { .. }
-            | BeginningEndStep { .. } => false,
+            | BeginningEndStep { .. }
+            | BeginningPrecombatMainV1 { .. } => false,
         }
     })
 }

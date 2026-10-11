@@ -553,7 +553,7 @@ pub struct PendingCastSemanticV2 {
     pub kicked: Option<bool>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingActivationSemanticV2 {
     pub source: Option<CardStableRefV1>,
     pub controller: PlayerSeatV1,
@@ -562,6 +562,29 @@ pub struct PendingActivationSemanticV2 {
     pub cost_discard_paid: Option<Vec<CardStableRefV1>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub object_cost_chosen: Vec<CardStableRefV1>,
+    #[serde(default, skip_serializing_if = "crate::engine::bool_is_false")]
+    pub crew_finished: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loyalty_x: Option<u8>,
+}
+
+impl std::hash::Hash for PendingActivationSemanticV2 {
+    fn hash<H: std::hash::Hasher>(&self, hash: &mut H) {
+        std::hash::Hash::hash(&self.source, hash);
+        std::hash::Hash::hash(&self.controller, hash);
+        std::hash::Hash::hash(&self.ability_index, hash);
+        std::hash::Hash::hash(&self.chosen_targets, hash);
+        std::hash::Hash::hash(&self.cost_discard_paid, hash);
+        std::hash::Hash::hash(&self.object_cost_chosen, hash);
+        if self.crew_finished {
+            std::hash::Hash::hash(b"crew_finished_v1", hash);
+            std::hash::Hash::hash(&true, hash);
+        }
+        if let Some(x) = self.loyalty_x {
+            std::hash::Hash::hash(b"loyalty_x_v1", hash);
+            std::hash::Hash::hash(&x, hash);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -7328,6 +7351,8 @@ fn pending_activation_semantic_v2(
             None => None,
         },
         object_cost_chosen: visible_card_refs(state, &object_cost_chosen, acting_player)?,
+        crew_finished: p.crew_finished,
+        loyalty_x: p.loyalty_x,
     })
 }
 
