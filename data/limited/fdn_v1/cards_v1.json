@@ -6097,6 +6097,37 @@
         "exact_source_counter",
         "captured_controller_gain"
       ]
+    },
+    {
+      "name": "Soul-Shackled Zombie",
+      "mana_cost": "{3}{B}",
+      "mana_value": 4,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Zombie"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/s/SoulShackledZombie.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_soul_shackled_zombie.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "shared_graveyard_optional_targets",
+        "successful_creature_exile_conditional_drain",
+        "captured_entry_controller"
+      ]
     }
   ]
 }
