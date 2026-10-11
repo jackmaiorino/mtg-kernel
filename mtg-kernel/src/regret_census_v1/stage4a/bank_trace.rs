@@ -152,7 +152,18 @@ pub(super) fn trace_source(
                         act_plain(&mut roles.focal, &s, &d, &mut c)?
                     }
                 };
-                parent = (key, cn.menu[live as usize].clone());
+                let edge = cn.menu[live as usize].clone();
+                // The chosen edge's position and support in this node (a
+                // missing child below an edge with backups would be an
+                // identity problem; below an untried edge it is not).
+                let e = cn.edges.iter().position(|x| *x == edge);
+                rec["edge_index"] = json!(e);
+                if let (Some(e), Found::Hit(node)) =
+                    (e, tree.find(&key, &parent.0, &parent.1, &cn).map_err(err)?)
+                {
+                    rec["edge_backups"] = json!(node.n[e]);
+                }
+                parent = (key, edge);
                 live
             } else {
                 rec["source"] = json!(if matching {
