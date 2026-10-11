@@ -38,7 +38,7 @@ Means across the two cases of each variant. Rows at different nesting levels mus
 
 The largest observed reduction is inspection and exposure processing; late recovery also fell. Candidate B1 initial recovery took 199.591 seconds versus 36.777 seconds in B2, and retention took 67.707 versus 28.673 seconds. This variability is included in the total and limits generalization. No timing outlier was excluded.
 
-The package reuses SHA-bound exposure projections while rehashing source trajectories, reduces duplicate checkpoint validation during the existing typed continuation read, reuses publication receipts, and reads pinned trajectories in parallel while preserving ordered numeric updates. The STORE ZIP batches the complete late controller/maintenance metadata inventory. Native archive and raw trajectory recovery continue through their existing independent copy path. Candidate recovery additionally includes its pinned exposure-input sidecar, so payload sizes need not match. Individual causal effects cannot be isolated by this comparison.
+The package reuses SHA-bound exposure projections while rehashing source trajectories, reduces duplicate checkpoint validation during the existing typed continuation read, reuses publication receipts, and reads pinned trajectories in parallel while preserving ordered numeric updates. The STORE ZIP batches the complete late controller/maintenance inventory, including retained sample payloads. Primary native archive and initial raw trajectory recovery continue through their existing independent copy path. Candidate recovery additionally includes its pinned exposure-input sidecar, so payload sizes need not match. Individual causal effects cannot be isolated by this comparison.
 
 ## Verification and placement
 
