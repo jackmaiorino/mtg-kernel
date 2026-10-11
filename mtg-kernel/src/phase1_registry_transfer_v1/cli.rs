@@ -119,6 +119,8 @@ fn inference_only_episode() -> Result<ExpandedEpisodeV1, String> {
         postboard: false,
         max_physical_decisions: 100,
         max_policy_steps: 100,
+        runtime_rules: None,
+        reset: None,
     })
 }
 

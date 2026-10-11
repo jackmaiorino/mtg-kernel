@@ -74,6 +74,8 @@ fn episode(learner_seat: u8) -> ExpandedEpisodeV1 {
         postboard: false,
         max_physical_decisions: 100_000,
         max_policy_steps: 1_000_000,
+        runtime_rules: None,
+        reset: None,
     }
 }
 

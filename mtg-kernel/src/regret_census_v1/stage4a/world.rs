@@ -32,7 +32,7 @@ pub(crate) const SAMPLER_VERSION: &str =
     "stage4a-sampler-v1: V4 FutureChanceV3 whole-object determinization + uniform public deck prior";
 
 /// The registered experiment decks the prior ranges over.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub(crate) struct DeckPrior {
     /// Sorted card-definition multiset per deck.
     decks: Vec<Vec<u16>>,
