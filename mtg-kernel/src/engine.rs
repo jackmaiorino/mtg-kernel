@@ -488,6 +488,14 @@ pub enum UntilEndOfTurnEffect {
         timestamp: u64,
         duration: EffectDuration,
     },
+    /// Rule-changing restriction, not a granted or removable creature ability.
+    /// Reuses the shared cleanup vector and exact target-incarnation contract.
+    ResolvedObjectCantBlock {
+        object_id: ObjectId,
+        object_zone_change_count: u32,
+        timestamp: u64,
+        duration: EffectDuration,
+    },
 }
 
 /// Whether an `effect::EffectOp::ImpulseDraw`-exiled card's `PlayPermission`
@@ -8610,7 +8618,9 @@ fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
             if !def.is_executable() || !object_has_type(state, id, CardType::Creature) {
                 return false;
             }
-            if crate::continuous_characteristics_v1::printed_cant_block(state, id) {
+            if crate::sower_of_chaos_v1::cant_block(state, id)
+                || crate::continuous_characteristics_v1::printed_cant_block(state, id)
+            {
                 return false;
             }
             #[cfg(feature = "standard-magezero-fixtures")]
@@ -13769,6 +13779,19 @@ fn advance_step(state: &mut GameState) {
         reset_priority(state);
         return;
     }
+    // Cleanup priority can install a fresh rule-changing restriction. CR 514.3
+    // repeats cleanup before the player flip, including these new records.
+    if state.step == Step::Cleanup
+        && state
+            .engine
+            .until_end_of_turn
+            .iter()
+            .any(|effect| matches!(effect, UntilEndOfTurnEffect::ResolvedObjectCantBlock { .. }))
+    {
+        run_step_entry_action(state, Step::Cleanup);
+        reset_priority(state);
+        return;
+    }
     let cur_idx = STEP_ORDER
         .iter()
         .position(|&s| s == state.step)
@@ -15057,7 +15080,8 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
                 }
                 UntilEndOfTurnEffect::ResolvedObjectKeywordEffect { .. } => false,
                 UntilEndOfTurnEffect::SyntheticMarker(_) => false,
-                UntilEndOfTurnEffect::DamageCannotBePrevented { .. } => false,
+                UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
+                | UntilEndOfTurnEffect::ResolvedObjectCantBlock { .. } => false,
             };
             if grants {
                 return true;
@@ -18161,6 +18185,14 @@ pub(crate) fn finish_declare_attackers(state: &mut GameState, attackers: Vec<Obj
 ))]
 #[path = "engine/raid_history_tests.rs"]
 mod raid_history_tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "engine/sower_of_chaos_v1_tests.rs"]
+mod sower_of_chaos_v1_tests;
 
 #[cfg(test)]
 #[path = "engine/anytarget_planeswalker_tests.rs"]

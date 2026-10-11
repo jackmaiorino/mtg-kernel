@@ -334,6 +334,11 @@ pub enum Subtype {
     Wurm,
     Artificer,
     Orc,
+    // Prepared composition prefix; no creature-choice array admission yet.
+    Juggernaut,
+    Minotaur,
+    Ooze,
+    Devil,
 }
 
 impl Subtype {
@@ -796,6 +801,10 @@ impl Subtype {
                 | Subtype::Siren
                 | Subtype::Praetor
                 | Subtype::Elder
+                | Subtype::Juggernaut
+                | Subtype::Minotaur
+                | Subtype::Ooze
+                | Subtype::Devil
         )
     }
 }

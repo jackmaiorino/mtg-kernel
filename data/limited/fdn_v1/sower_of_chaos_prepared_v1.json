@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "admission": "unregistered",
+  "source_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "java_file": "Mage.Sets/src/mage/cards/s/SowerOfChaos.java",
+  "name": "Sower of Chaos",
+  "mana_cost": "{3}{R}",
+  "mana_value": 4,
+  "colors": ["R"],
+  "types": ["Creature"],
+  "subtypes": ["Devil"],
+  "supertypes": [],
+  "power": 4,
+  "toughness": 3,
+  "is_land": false,
+  "produces_mana": [],
+  "mechanics": [],
+  "rules": "{2}{R}: Target creature can't block this turn.",
+  "qualification": "Prepared definition-owned source only, unregistered with no catalog ID, Full/profile/model claim."
+}

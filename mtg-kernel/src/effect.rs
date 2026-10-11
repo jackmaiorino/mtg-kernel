@@ -1556,6 +1556,10 @@ pub enum EffectOp {
     /// Run Away Together: freeze both current target legalities before returning
     /// all legal original incarnations to their owners' hands in one batch.
     ReturnTwoDifferentControllerCreaturesToOwnersHands,
+    /// Sower of Chaos: rule-changing restriction on the legal original target.
+    PreventTargetBlockingUntilEndOfTurn {
+        target_index: u8,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -18375,6 +18379,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     },
                 );
             }
+        }
+        EffectOp::PreventTargetBlockingUntilEndOfTurn { target_index } => {
+            crate::sower_of_chaos_v1::install(state, ctx, *target_index);
         }
         EffectOp::GrantKeywordTargetUntilEndOfTurn { object, keyword } => {
             let object = ctx.resolve_object(*object);

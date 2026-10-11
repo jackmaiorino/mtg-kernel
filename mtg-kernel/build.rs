@@ -3198,6 +3198,7 @@ enum AbilityEffectRecipe {
     /// card-specific abilities whose shape no structured recipe covers; the
     /// path is part of the card-database token.
     StandardProgram(&'static str),
+    PreventTargetBlockingUntilEndOfTurn,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4728,6 +4729,18 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
         return recipes;
     }
     match name {
+        "Sower of Chaos" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: Some("R"),
+                generic: 2,
+            }],
+            effect: AbilityEffectRecipe::PreventTargetBlockingUntilEndOfTurn,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "Creature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Reassembling Skeleton" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Mana {
                 colored: Some("B"),
@@ -5997,6 +6010,9 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::Unearth => "unearth".to_string(),
         AbilityEffectRecipe::ReturnSourceFromGraveyard { tapped } =>
             format!("return_ability_source_from_graveyard:exact_incarnation:tapped={tapped}:owners_control"),
+        AbilityEffectRecipe::PreventTargetBlockingUntilEndOfTurn => {
+            "prevent_target_blocking_until_end_of_turn:exact_incarnation:rule_changing_not_ability:cleanup".to_string()
+        }
         AbilityEffectRecipe::PutPlusOneCounterOnSource => {
             "put_plus_one_counter_on_source".to_string()
         }
@@ -6211,6 +6227,9 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::Unearth => "ability_effect_unearth".to_string(),
         AbilityEffectRecipe::ReturnSourceFromGraveyard { tapped } => {
             format!("ability_effect_return_source_from_graveyard_tapped_{tapped}")
+        }
+        AbilityEffectRecipe::PreventTargetBlockingUntilEndOfTurn => {
+            "ability_effect_prevent_target_blocking_until_end_of_turn".to_string()
         }
         AbilityEffectRecipe::PutPlusOneCounterOnSource => {
             "ability_effect_put_plus_one_counter_on_source".to_string()
@@ -7633,6 +7652,13 @@ fn codegen(cards: &[CardJson]) -> String {
                 writeln!(
                     out,
                     "    EffectOp::AddMinusOneMinusOneCounter {{ object: ObjectRef::Target(0) }}"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::PreventTargetBlockingUntilEndOfTurn => {
+                writeln!(
+                    out,
+                    "    EffectOp::PreventTargetBlockingUntilEndOfTurn {{ target_index: 0 }}"
                 )
                 .unwrap();
             }
@@ -10478,6 +10504,10 @@ fn subtype_variant(t: &str) -> &'static str {
         "Wurm" => "Subtype::Wurm",
         "Artificer" => "Subtype::Artificer",
         "Orc" => "Subtype::Orc",
+        "Juggernaut" => "Subtype::Juggernaut",
+        "Minotaur" => "Subtype::Minotaur",
+        "Ooze" => "Subtype::Ooze",
+        "Devil" => "Subtype::Devil",
         "Horror" => "Subtype::Horror",
         "Nightmare" => "Subtype::Nightmare",
         "Clue" => "Subtype::Clue",

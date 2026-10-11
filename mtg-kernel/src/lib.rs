@@ -82,6 +82,7 @@ mod experimental_burn_net8_packed_v1;
 mod fdn_raid_v1;
 pub mod human_opening_v1;
 pub mod native_expanded_training_run_v1;
+pub mod sower_of_chaos_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 pub use experimental_burn_net8_packed_v1::run_public_entropy_gradient_probe_v1;
 pub mod fast_sampler;
@@ -484,6 +485,7 @@ pub const KERNEL_VERSION: &str = "0.0.4-spike";
 
 pub mod public_cost_features_v1;
 pub(crate) mod public_stack_features_v1;
+pub mod rules_meaning_sower_v1;
 pub mod rules_meaning_v2;
 /// Engine-derived per-card rules features (no names or registry labels).
 pub mod rules_vector_v1;
