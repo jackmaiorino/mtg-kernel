@@ -442,9 +442,77 @@ pub fn load_expanded_inference_v1(
         let receipt = inference_identity_v1(source, &policy, &state)?;
         return Ok((policy, receipt));
     }
-    let (policy, state) = initialize(source)?;
+    let (policy, state, _) = initialize_from_source_bytes_v1(source, &bytes, None)?;
     let receipt = inference_identity_v1(source, &policy, &state)?;
     Ok((policy, receipt))
+}
+
+/// Validate the update's input binding during the typed continuation read.
+/// Ordinary checkpoints are decoded once; transfer loaders retain their full
+/// validation and use a small metadata projection for this additional check.
+pub(crate) fn load_expanded_update_inference_v1(
+    source: &ExpandedModelSourceV1,
+    trajectories: &[PinnedFileV1],
+    learning_rate: f32,
+    value_coefficient: f32,
+) -> Result<ExpandedInferenceIdentityV1, String> {
+    let bytes = read_pinned_bytes(&source.play_import)?;
+    let inputs = CheckpointInputExpectationV1 {
+        trajectories,
+        learning_rate_bits: learning_rate.to_bits(),
+        value_coefficient_bits: value_coefficient.to_bits(),
+    };
+    let (policy, state, _) = initialize_from_source_bytes_v1(source, &bytes, Some(&inputs))?;
+    inference_identity_v1(source, &policy, &state)
+}
+
+struct CheckpointInputExpectationV1<'a> {
+    trajectories: &'a [PinnedFileV1],
+    learning_rate_bits: u32,
+    value_coefficient_bits: u32,
+}
+
+impl CheckpointInputExpectationV1<'_> {
+    fn validate_v1(
+        &self,
+        trajectories: &[PinnedFileV1],
+        learning_rate_bits: u32,
+        value_coefficient_bits: u32,
+    ) -> Result<(), String> {
+        ensure(
+            trajectories.len() == self.trajectories.len()
+                && trajectories
+                    .iter()
+                    .zip(self.trajectories)
+                    .all(|(actual, expected)| {
+                        actual.path.as_os_str() == expected.path.as_os_str()
+                            && actual.sha256 == expected.sha256
+                    })
+                && learning_rate_bits == self.learning_rate_bits
+                && value_coefficient_bits == self.value_coefficient_bits,
+            "checkpoint inputs or optimizer settings differ",
+        )
+    }
+
+    fn validate_transfer_v1(&self, source: &ExpandedModelSourceV1) -> Result<(), String> {
+        #[derive(Deserialize)]
+        struct Inputs {
+            trajectories: Vec<PinnedFileV1>,
+            learning_rate_bits: u32,
+            value_coefficient_bits: u32,
+        }
+        let saved: Inputs = read_pinned(
+            source
+                .checkpoint
+                .as_ref()
+                .ok_or("update requires checkpoint")?,
+        )?;
+        self.validate_v1(
+            &saved.trajectories,
+            saved.learning_rate_bits,
+            saved.value_coefficient_bits,
+        )
+    }
 }
 
 pub(crate) fn inference_identity_v1(
@@ -1141,30 +1209,59 @@ fn initialize_with_transfer_context(
     String,
 > {
     let bytes = read_pinned_bytes(&source.play_import)?;
-    let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
+    initialize_from_source_bytes_v1(source, &bytes, None)
+}
+
+fn initialize_from_source_bytes_v1(
+    source: &ExpandedModelSourceV1,
+    bytes: &[u8],
+    inputs: Option<&CheckpointInputExpectationV1<'_>>,
+) -> Result<
+    (
+        FrozenPlayPolicyV1,
+        NativePolicyValueTrainStateV1,
+        Option<TransferContextV1>,
+    ),
+    String,
+> {
+    let probe: Value = serde_json::from_slice(bytes).map_err(err)?;
     if probe.get("schema").and_then(Value::as_str) == Some(registry_transfer_source::SOURCE_SCHEMA)
     {
-        let (policy, state, context) = registry_transfer_source::initialize(source, &bytes)?;
+        let (policy, state, context) = registry_transfer_source::initialize(source, bytes)?;
+        if let Some(inputs) = inputs {
+            inputs.validate_transfer_v1(source)?;
+        }
         return Ok((policy, state, context.map(TransferContextV1::Imported)));
     }
     if probe.get("schema").and_then(Value::as_str)
         == Some(fresh_registry_transfer_source::SOURCE_SCHEMA)
     {
-        let (policy, state, context) = fresh_registry_transfer_source::initialize(source, &bytes)?;
+        let (policy, state, context) = fresh_registry_transfer_source::initialize(source, bytes)?;
+        if let Some(inputs) = inputs {
+            inputs.validate_transfer_v1(source)?;
+        }
         return Ok((policy, state, context.map(TransferContextV1::Fresh)));
     }
     if probe.get("schema").and_then(Value::as_str) == Some(REGISTRY_EVOLUTION_IMPORT_SCHEMA_V1) {
         return Err(REGISTRY_EVOLUTION_LEARNER_REFUSAL_V1.into());
     }
-    let mut policy = load_ordinary_policy_v1(source, &bytes)?;
+    let mut policy = load_ordinary_policy_v1(source, bytes)?;
     // The validated policy already owns the exact contract model. A private
     // clone retains every bit and derived transpose without rebuilding a
     // deterministic template and converting/installing all parameters again.
     let model = policy.training_model_v3();
     let state = if let Some(pin) = &source.checkpoint {
         let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
+        if let Some(inputs) = inputs {
+            inputs.validate_v1(
+                &saved.trajectories,
+                saved.learning_rate_bits,
+                saved.value_coefficient_bits,
+            )?;
+        }
         restore_checkpoint_state_v1(&saved, &mut policy, model)?
     } else {
+        ensure(inputs.is_none(), "update requires checkpoint")?;
         NativePolicyValueTrainStateV1::new_v1(model).map_err(err)?
     };
     Ok((policy, state, None))
@@ -2801,11 +2898,11 @@ fn execute_update_v1(
         source: source.clone(),
         identity: inference_identity_v1(&source, &policy, &state)?,
     };
-    let mut episodes = Vec::new();
     let mut ids = BTreeSet::new();
     let mut hashes = BTreeSet::new();
     let mut total_bytes = 0u64;
     for pin in &trajectories {
+        ensure(hashes.insert(&pin.sha256), "duplicate trajectory bytes")?;
         total_bytes = total_bytes
             .checked_add(fs::metadata(&pin.path).map_err(err)?.len())
             .ok_or("batch size overflow")?;
@@ -2814,10 +2911,9 @@ fn execute_update_v1(
             "trajectory batch exceeds 512 MiB CPU ingestion bound",
         )?;
     }
-    for pin in &trajectories {
-        ensure(hashes.insert(&pin.sha256), "duplicate trajectory bytes")?;
-        let episode: ExpandedTrajectoryV1 = read_pinned(pin)?;
-        validate_trajectory(&episode)?;
+    let episodes = read_trajectory_batch_v1(&trajectories, preparation_workers.unwrap_or(1))?;
+    for episode in &episodes {
+        validate_trajectory(episode)?;
         ensure(
             ids.insert(episode.episode.id.clone()),
             "duplicate episode id",
@@ -2830,7 +2926,6 @@ fn execute_update_v1(
             episode.source_import == *policy.identity_v1(),
             "trajectory source import differs",
         )?;
-        episodes.push(episode);
     }
     if let Some(context) = &transfer {
         let batch: Vec<_> = episodes
@@ -3555,6 +3650,24 @@ fn sha(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
 }
 
+fn read_trajectory_batch_v1(
+    pins: &[PinnedFileV1],
+    workers: usize,
+) -> Result<Vec<ExpandedTrajectoryV1>, String> {
+    let decoded = ordered_update_preparation::read_trajectories_v1(pins, workers)?;
+    let mut total = 0u64;
+    let mut episodes = Vec::with_capacity(decoded.len());
+    for (bytes, episode) in decoded {
+        total = total.checked_add(bytes).ok_or("batch size overflow")?;
+        ensure(
+            total <= MAX_BATCH_BYTES,
+            "trajectory batch exceeds 512 MiB CPU ingestion bound",
+        )?;
+        episodes.push(episode);
+    }
+    Ok(episodes)
+}
+
 fn read_pinned<T: for<'de> Deserialize<'de>>(pin: &PinnedFileV1) -> Result<T, String> {
     let bytes = read_pinned_bytes(pin)?;
     serde_json::from_slice(&bytes).map_err(err)
@@ -3586,10 +3699,11 @@ fn publish_json<T: Serialize>(
     )?;
     let parent = capture_existing_publication_parent_v1(directory).map_err(err)?;
     let expected = DurableFileExpectationV1::from_bytes(&bytes).map_err(err)?;
-    publish_new_file_v1(&parent, format!(".{name}.stage"), name, &bytes, expected).map_err(err)?;
+    let receipt = publish_new_file_v1(&parent, format!(".{name}.stage"), name, &bytes, expected)
+        .map_err(err)?;
     Ok(PinnedFileV1 {
         path: directory.join(name),
-        sha256: sha(&bytes),
+        sha256: hex(&receipt.sha256()),
     })
 }
 
@@ -3626,6 +3740,95 @@ pub(crate) mod tests {
         "037ef43b1b0bd4eb247790378957fa37591cc5e9b19b1bb99ac2c394cd59f1a5";
     use super::*;
     use crate::sideboard::checked_in_pauper_registered_deck_by_id_v1;
+
+    #[test]
+    fn trajectory_input_workers_preserve_order_and_reject_mutated_or_unknown_bytes() {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let (trajectory, _, _) = replay_fixture(&mut policy, None, 0, &[0, 1]);
+        let root =
+            std::env::temp_dir().join(format!("trajectory-input-workers-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let pins: Vec<_> = (0..5)
+            .map(|index| {
+                let mut episode = trajectory.clone();
+                episode.episode.id = format!("episode-{index}");
+                publish_json(&root, &format!("{index}.json"), &episode).unwrap()
+            })
+            .collect();
+        let serial = read_trajectory_batch_v1(&pins, 1).unwrap();
+        let canonical = serde_json::to_vec(&serial).unwrap();
+        for workers in [2, 4, 8] {
+            let parallel = read_trajectory_batch_v1(&pins, workers).unwrap();
+            assert_eq!(serde_json::to_vec(&parallel).unwrap(), canonical);
+        }
+        fs::write(&pins[1].path, b"{}").unwrap();
+        assert!(read_trajectory_batch_v1(&pins, 4)
+            .unwrap_err()
+            .contains("input file SHA differs"));
+        let mut unknown = serde_json::to_value(&trajectory).unwrap();
+        unknown["unrecognized"] = json!(true);
+        let unknown_pin = publish_json(&root, "unknown.json", &unknown).unwrap();
+        assert!(read_trajectory_batch_v1(&[unknown_pin], 4)
+            .unwrap_err()
+            .contains("unknown field"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn checkpoint_input_binding_checks_order_and_exact_scalar_bits() {
+        let (_, _, mut saved) = checkpoint_fixture_v1();
+        saved.trajectories = (0..2)
+            .map(|index| PinnedFileV1 {
+                path: format!("batch/trajectory-{index}.json").into(),
+                sha256: format!("{index:064x}"),
+            })
+            .collect();
+        let inputs = CheckpointInputExpectationV1 {
+            trajectories: &saved.trajectories,
+            learning_rate_bits: saved.learning_rate_bits,
+            value_coefficient_bits: saved.value_coefficient_bits,
+        };
+        assert!(inputs
+            .validate_v1(
+                &saved.trajectories,
+                saved.learning_rate_bits,
+                saved.value_coefficient_bits
+            )
+            .is_ok());
+        let mut reordered = saved.trajectories.clone();
+        let mut differently_spelled = saved.trajectories.clone();
+        differently_spelled[0].path = "batch/./trajectory-0.json".into();
+        assert_eq!(differently_spelled[0].path, saved.trajectories[0].path);
+        assert!(inputs
+            .validate_v1(
+                &differently_spelled,
+                saved.learning_rate_bits,
+                saved.value_coefficient_bits
+            )
+            .is_err());
+        reordered.reverse();
+        assert!(inputs
+            .validate_v1(
+                &reordered,
+                saved.learning_rate_bits,
+                saved.value_coefficient_bits
+            )
+            .is_err());
+        assert!(inputs
+            .validate_v1(
+                &saved.trajectories,
+                saved.learning_rate_bits ^ 1,
+                saved.value_coefficient_bits
+            )
+            .is_err());
+        assert!(inputs
+            .validate_v1(
+                &saved.trajectories,
+                saved.learning_rate_bits,
+                saved.value_coefficient_bits ^ 1
+            )
+            .is_err());
+    }
 
     #[test]
     fn opponent_cache_retains_alternating_pins_and_evicts_lru() {
