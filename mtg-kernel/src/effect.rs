@@ -1556,6 +1556,11 @@ pub enum EffectOp {
     /// Run Away Together: freeze both current target legalities before returning
     /// all legal original incarnations to their owners' hands in one batch.
     ReturnTwoDifferentControllerCreaturesToOwnersHands,
+    /// Grant separately to each still-legal declared incarnation, using usize slots.
+    GrantKeywordToDeclaredTargetsUntilEndOfTurn {
+        target_spec: crate::card_def::TargetSpec,
+        keyword: Keywords,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -5320,6 +5325,7 @@ pub(crate) fn validated_life_ward_observation_targeter(
 /// targets the Ward source. Keep this coverage restriction at their boundary,
 /// rather than halting the rules engine for successor-aware consumers.
 pub(crate) fn validate_legacy_ward_observation(state: &GameState) -> Result<(), String> {
+    crate::engine::validate_legacy_variable_cast_targets(state)?;
     let pending = state
         .engine
         .pending_effect
@@ -18227,6 +18233,35 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 );
             }
         }
+        EffectOp::GrantKeywordToDeclaredTargetsUntilEndOfTurn {
+            target_spec,
+            keyword,
+        } => {
+            for index in 0..ctx.targets.len() {
+                if !ctx.target_incarnation_matches(index, state)
+                    || !crate::engine::effect_target_is_legal(
+                        state,
+                        ctx.source,
+                        ctx.controller,
+                        *target_spec,
+                        &ctx.targets,
+                        index,
+                    )
+                {
+                    continue;
+                }
+                let Some(Target::Object(object)) = ctx.targets.get(index).copied() else {
+                    continue;
+                };
+                let live = state.objects.get(object);
+                let binding = EffectObjectBinding {
+                    object,
+                    expected_zone: Zone::Battlefield,
+                    expected_zone_change_count: live.zone_change_count,
+                };
+                install_temporary_boost(state, binding, 0, 0, *keyword);
+            }
+        }
         EffectOp::DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { keyword } => {
             let objects: Vec<_> = state
                 .objects
@@ -21269,3 +21304,10 @@ mod condemn_tests;
 #[cfg(test)]
 #[path = "effect/run_away_together_tests.rs"]
 mod run_away_together_tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod divine_variable_targets_tests;

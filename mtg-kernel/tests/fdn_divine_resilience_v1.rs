@@ -145,7 +145,7 @@ fn choose_kicker(
     kicked: bool,
 ) {
     assert!(
-        matches!(next(surface, state), Decision::ChooseKicker { player, .. } if player == actor)
+        matches!(next(surface, state), Decision::ChooseVariableCastKicker { player, can_decline, .. } if player == actor && (kicked || can_decline))
     );
     apply(surface, state, Action::ChooseKicker(kicked));
 }
@@ -159,6 +159,7 @@ fn target(
 ) {
     assert!(
         matches!(next(surface, state), Decision::ChooseTargets { player, legal_targets, can_finish: offered_finish, .. }
+            | Decision::ChooseVariableCastTargets { player, legal_targets, can_finish: offered_finish, .. }
         if player == actor && offered_finish == can_finish && legal_targets.contains(&Target::Object(object)))
     );
     apply(surface, state, Action::ChooseTarget(Target::Object(object)));
@@ -166,7 +167,7 @@ fn target(
 
 fn finish_kicked(surface: &mut HarnessSurfaceV2, state: &mut GameState, actor: PlayerId) {
     assert!(
-        matches!(next(surface, state), Decision::ChooseTargets { player, can_finish: true, .. } if player == actor)
+        matches!(next(surface, state), Decision::ChooseVariableCastTargets { player, can_finish: true, .. } if player == actor)
     );
     apply(surface, state, Action::FinishEffectSelection);
     assert!(matches!(
@@ -259,7 +260,7 @@ fn divine_kicked_zero_one_and_three_distinct_creatures_are_actual_announced_targ
                     serde_json::to_vec(&replay).unwrap()
                 );
                 assert!(
-                    matches!(next(&mut surface, &mut state), Decision::ChooseTargets { ref legal_targets, can_finish: true, .. }
+                    matches!(next(&mut surface, &mut state), Decision::ChooseVariableCastTargets { ref legal_targets, can_finish: true, .. }
                     if !legal_targets.contains(&Target::Object(object)) && !legal_targets.contains(&Target::Object(opponent)))
                 );
                 let before = serde_json::to_vec(&state).unwrap();
@@ -456,5 +457,150 @@ fn divine_announced_target_prefix_cannot_restore_as_unkicked_after_three_choices
             .iter()
             .all(|&object| protected(&state, object)));
         assert!(!protected(&state, creatures[3]));
+    }
+}
+
+#[test]
+fn divine_any_number_uses_more_than_255_exact_targets_and_restores_finish() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let creatures: Vec<_> = (0..300)
+            .map(|_| put(&mut state, actor, "Llanowar Elves", Zone::Battlefield))
+            .collect();
+        let mut surface = surface();
+        let spell = announce(&mut surface, &mut state, actor, "Divine Resilience");
+        choose_kicker(&mut surface, &mut state, actor, true);
+        for &object in &creatures {
+            target(&mut surface, &mut state, actor, object, true);
+        }
+        assert!(
+            matches!(next(&mut surface, &mut state), Decision::ChooseVariableCastTargets { selected_count: 300, can_finish: true, legal_targets, .. } if legal_targets.is_empty())
+        );
+        let mut replay = restored(&state);
+        finish_kicked(&mut surface, &mut state, actor);
+        finish_kicked(&mut self::surface(), &mut replay, actor);
+        assert_eq!(
+            state
+                .stack
+                .iter()
+                .find(|item| item.source == spell)
+                .unwrap()
+                .targets
+                .len(),
+            300
+        );
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+        drain_restored(&mut surface, &mut state);
+        assert!(creatures.iter().all(|&object| protected(&state, object)));
+    }
+}
+
+#[test]
+fn divine_pending_and_finalized_kicker_bindings_reject_unilateral_restore_rewrites() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let creature = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        let mut surface = surface();
+        let spell = announce(&mut surface, &mut state, actor, "Divine Resilience");
+        choose_kicker(&mut surface, &mut state, actor, true);
+        target(&mut surface, &mut state, actor, creature, true);
+        let mut forged = restored(&state);
+        forged.engine.pending_cast.as_mut().unwrap().kicked = Some(false);
+        let before = serde_json::to_vec(&forged).unwrap();
+        assert!(engine::step(&mut forged, Action::ChooseTarget(Target::Object(creature))).is_err());
+        assert_eq!(before, serde_json::to_vec(&forged).unwrap());
+        finish_kicked(&mut surface, &mut state, actor);
+        for erase in [false, true] {
+            let mut forged = restored(&state);
+            let item = forged
+                .stack
+                .iter_mut()
+                .find(|item| item.source == spell)
+                .unwrap();
+            if erase {
+                forged.objects.get_mut(spell).v4.finalized_cast_binding = None;
+                forged.objects.get_mut(spell).v4.variable_targeting_kicked = None;
+                item.v4
+                    .source_contract
+                    .as_mut()
+                    .unwrap()
+                    .finalized_cast_binding = None;
+            } else {
+                item.kicked = false;
+            }
+            assert!(matches!(
+                engine::advance_until_decision(&mut forged),
+                Decision::Halted { .. }
+            ));
+            assert!(!protected(&forged, creature));
+        }
+    }
+}
+
+#[test]
+fn divine_no_creature_kicker_cannot_decline_and_legacy_consumers_refuse() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let mut surface = surface();
+        let spell = announce(&mut surface, &mut state, actor, "Divine Resilience");
+        let decision = next(&mut surface, &mut state);
+        assert!(
+            matches!(decision, Decision::ChooseVariableCastKicker { player, can_decline: false, .. } if player == actor)
+        );
+        let before = serde_json::to_vec(&state).unwrap();
+        assert!(engine::step(&mut state, Action::ChooseKicker(false)).is_err());
+        assert_eq!(before, serde_json::to_vec(&state).unwrap());
+        assert!(mtg_kernel::rl::observe_v1(&state, actor, 0)
+            .unwrap_err()
+            .to_string()
+            .contains("successor"));
+        let policy = mtg_kernel::policy_surface_v5::PolicySurfaceV5::new_with_engine_priority_v1();
+        for viewer in [actor, actor.opponent()] {
+            assert!(mtg_kernel::rl::observe_v2(&state, &surface, viewer, 0).is_err());
+            assert!(
+                mtg_kernel::rl::observe_policy_v5(&state, &policy, viewer, 0, 0, 0, 1).is_err()
+            );
+            assert!(
+                mtg_kernel::rl::observe_policy_v6(&state, &policy, viewer, 0, 0, 0, 1).is_err()
+            );
+            assert!(
+                mtg_kernel::rl::observe_policy_v8(&state, &policy, viewer, 0, 0, 0, 1).is_err()
+            );
+            let error = mtg_kernel::rl::observe_v1(&state, viewer, 0)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("successor"));
+            assert!(!error.contains("Divine") && !error.contains("Island"));
+        }
+        let offered = SurfaceDecision::Decision(decision);
+        assert!(mtg_kernel::rl::legal_action_candidates_v1(&offered, &state).is_err());
+        apply(&mut surface, &mut state, Action::ChooseKicker(true));
+        finish_kicked(&mut surface, &mut state, actor);
+        assert!(mtg_kernel::rl::observe_v1(&state, actor, 0).is_err());
+        drain_restored(&mut surface, &mut state);
+        assert_eq!(state.objects.get(spell).zone, Zone::Graveyard);
+    }
+}
+
+#[test]
+fn divine_empty_creature_pool_requires_payable_kicked_total_before_cast_offer() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let spell = put(&mut state, actor, "Divine Resilience", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::W.pool_index()] = 1;
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, castable_spells, .. } if player == actor && !castable_spells.contains(&spell))
+        );
+        let before = serde_json::to_vec(&state).unwrap();
+        assert!(engine::step(&mut state, Action::CastSpell(spell)).is_err());
+        assert_eq!(before, serde_json::to_vec(&state).unwrap());
+        state.players[actor.index()].mana_pool[ManaColor::W.pool_index()] = 2;
+        state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 2;
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, castable_spells, .. } if player == actor && castable_spells.contains(&spell))
+        );
     }
 }

@@ -209,6 +209,9 @@ pub struct ObjectStateV4 {
     /// restored state reject a unilateral rewrite of either value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finalized_cast_binding: Option<FinalizedCastBindingV1>,
+    /// Cast-time choice owned by this exact physical source incarnation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variable_targeting_kicked: Option<bool>,
     /// Timestamp of entering the battlefield or becoming attached to a new host.
     /// Absent in legacy/default-profile states.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -313,6 +316,10 @@ impl Hash for ObjectStateV4 {
         self.landwalk_mask.hash(state);
         self.spell_cast_origin.hash(state);
         self.finalized_cast_binding.hash(state);
+        if let Some(kicked) = self.variable_targeting_kicked {
+            "variable_targeting_kicked/v1".hash(state);
+            kicked.hash(state);
+        }
         self.on_adventure.hash(state);
         if let Some(timestamp) = self.layer_timestamp {
             "layer_timestamp/v1".hash(state);
@@ -415,6 +422,7 @@ impl ObjectStateV4 {
             landwalk_mask: 0,
             spell_cast_origin: None,
             finalized_cast_binding: None,
+            variable_targeting_kicked: None,
             layer_timestamp: None,
             lifelink_counter_timestamp: None,
             on_adventure: false,
@@ -1029,11 +1037,25 @@ pub struct PaidCostRefV4 {
 /// is used by additional costs that choose a controlled creature or reveal a
 /// creature card from hand; its power is refreshed as LKI immediately before
 /// that exact battlefield incarnation leaves.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FinalizedCastBindingV1 {
     pub x_value: u16,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chosen_creature_cost: Option<PaidCostRefV4>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variable_targeting_kicked: Option<bool>,
+}
+
+impl std::hash::Hash for FinalizedCastBindingV1 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        use std::hash::Hash;
+        self.x_value.hash(state);
+        self.chosen_creature_cost.hash(state);
+        if let Some(kicked) = self.variable_targeting_kicked {
+            "variable_targeting_kicked/v1".hash(state);
+            kicked.hash(state);
+        }
+    }
 }
 
 /// Historical contract for one announced stack target. Unlike the live
@@ -1201,6 +1223,7 @@ pub fn stack_target_contract_is_structurally_valid(
         }
     }
     let shape_is_valid = matches!(spec, TargetSpec::StandardV1(_))
+        || matches!((spec, target_index, contract), (TargetSpec::KickerControlledCreatures, _, StackTargetContractV4::Object { zone: Zone::Battlefield, .. }))
         || matches!(
             (spec, target_index, contract),
             (

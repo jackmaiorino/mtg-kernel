@@ -1025,6 +1025,9 @@ pub enum TargetSpec {
     AttackingCreature,
     /// Exactly two distinct effective creatures with different current controllers.
     TwoCreaturesWithDifferentControllers,
+    /// Unkicked exactly one controlled creature; kicked any finite number.
+    /// Appended after composed Condemn60 and Run Away Together61.
+    KickerControlledCreatures,
 }
 
 impl TargetSpec {
@@ -1114,6 +1117,7 @@ impl TargetSpec {
             TargetSpec::ArtifactOrEnchantmentThenPlayer => 74,
             TargetSpec::AttackingCreature => 61,
             TargetSpec::TwoCreaturesWithDifferentControllers => 62,
+            TargetSpec::KickerControlledCreatures => 63,
         }
     }
 }
@@ -2691,6 +2695,7 @@ mod tests {
             (TargetSpec::ArtifactOrEnchantmentThenPlayer, 74),
             (TargetSpec::AttackingCreature, 61),
             (TargetSpec::TwoCreaturesWithDifferentControllers, 62),
+            (TargetSpec::KickerControlledCreatures, 63),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);

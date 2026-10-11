@@ -2678,7 +2678,9 @@ fn flat_validate_origin_decision_v1(
                 }
             }
         }
-        Decision::ChooseCombatDamageRange { .. }
+        Decision::ChooseVariableCastTargets { .. }
+        | Decision::ChooseVariableCastKicker { .. }
+        | Decision::ChooseCombatDamageRange { .. }
         | Decision::ChooseLegendPermanent { .. }
         | Decision::ChooseLondonMulligan { .. }
         | Decision::ChooseLondonBottom { .. }

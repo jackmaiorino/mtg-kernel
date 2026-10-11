@@ -1525,6 +1525,21 @@ pub enum Decision {
         attacker: ObjectId,
         candidates: Vec<Target>,
     },
+    /// Definition-owned unbounded cast selection. No fixed-width maximum.
+    /// Frozen action/observation consumers explicitly refuse this successor.
+    ChooseVariableCastTargets {
+        player: PlayerId,
+        spell: ObjectId,
+        selected_count: usize,
+        legal_targets: Vec<Target>,
+        can_finish: bool,
+    },
+    /// Kicker can be mandatory for this cast when the unkicked target pool is empty.
+    ChooseVariableCastKicker {
+        player: PlayerId,
+        spell: ObjectId,
+        can_decline: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1658,10 +1673,44 @@ fn step_grants_priority(step: Step) -> bool {
     !matches!(step, Step::Untap | Step::Cleanup)
 }
 
+/// Frozen consumers have no cardinality or action semantics for this successor.
+pub(crate) fn validate_legacy_variable_cast_targets(state: &GameState) -> Result<(), String> {
+    let pending = state
+        .engine
+        .pending_cast
+        .as_ref()
+        .is_some_and(|pending| pending.target_spec == TargetSpec::KickerControlledCreatures);
+    let active = state
+        .stack
+        .iter()
+        .chain(
+            state
+                .engine
+                .pending_effect
+                .as_ref()
+                .map(|pending| &pending.resolving_item),
+        )
+        .any(|item| {
+            state
+                .objects
+                .try_get(item.source)
+                .and_then(|source| card_def::CARD_DEFS.get(source.card_def as usize))
+                .is_some_and(|def| def.target_spec == TargetSpec::KickerControlledCreatures)
+        });
+    if pending || active {
+        Err("variable cast targeting requires an explicit consumer successor".into())
+    } else {
+        Ok(())
+    }
+}
+
 pub(crate) fn target_count(spec: TargetSpec) -> u8 {
     match spec {
         TargetSpec::None | TargetSpec::CounterDistribution => 0,
         TargetSpec::ArtifactOrEnchantmentThenPlayer => 2,
+        TargetSpec::KickerControlledCreatures => {
+            panic!("variable cast targets require their cardinality successor")
+        }
         TargetSpec::AnyTarget
         | TargetSpec::AnyPlayer
         | TargetSpec::AnySpellOnStack
@@ -1767,7 +1816,31 @@ fn target_cardinality_is_complete(spec: TargetSpec, count: usize) -> bool {
             && count <= usize::from(target_count(spec)))
 }
 
+fn cast_target_bounds(spec: TargetSpec, kicked: bool) -> (usize, Option<usize>) {
+    if spec == TargetSpec::KickerControlledCreatures {
+        if kicked {
+            (0, None)
+        } else {
+            (1, Some(1))
+        }
+    } else {
+        (
+            usize::from(target_min_count(spec)),
+            Some(usize::from(target_count(spec))),
+        )
+    }
+}
+
 fn pending_cast_targeting_is_complete(pending: &PendingCast, spec: TargetSpec) -> bool {
+    if spec == TargetSpec::KickerControlledCreatures {
+        return if pending.kicked == Some(true) {
+            pending.target_selection_finished
+        } else {
+            pending.kicked == Some(false)
+                && pending.targets_chosen.len() == 1
+                && !pending.target_selection_finished
+        };
+    }
     let count = pending.targets_chosen.len();
     let min = usize::from(target_min_count(spec));
     let max = usize::from(target_count(spec));
@@ -1942,12 +2015,27 @@ fn validate_physical_spell_cast_origin(
     let def = card_def::CARD_DEFS
         .get(source.card_def as usize)
         .ok_or("spell cast-origin definition is missing")?;
+    if !is_pending_placeholder
+        && def.target_spec == TargetSpec::KickerControlledCreatures
+        && (source.v4.variable_targeting_kicked != Some(item.kicked)
+            || source.v4.finalized_cast_binding.is_none())
+    {
+        return Err("variable spell lost its finalized physical-source kicker authority".into());
+    }
     match (is_pending_placeholder, source.v4.finalized_cast_binding) {
         (true, None) => {}
         (true, Some(_)) => {
             return Err("pending spell already carries finalized dynamic choices".to_string())
         }
         (false, Some(binding)) => {
+            if binding.variable_targeting_kicked
+                != (def.target_spec == TargetSpec::KickerControlledCreatures).then_some(item.kicked)
+                || binding.variable_targeting_kicked != source.v4.variable_targeting_kicked
+            {
+                return Err(
+                    "spell kicker targeting disagrees with its finalized source binding".into(),
+                );
+            }
             if binding.x_value != item.v4.x_value {
                 return Err("spell X disagrees with its finalized source binding".to_string());
             }
@@ -2254,6 +2342,11 @@ fn validate_spell_source_contract_fields(
         }
     }
     if is_virtual_copy {
+        if def.target_spec == TargetSpec::KickerControlledCreatures {
+            return Err(
+                "variable-cardinality spell copies require a copy-targeting successor".into(),
+            );
+        }
         if item.is_flashback
             || !matches!(
                 cast_method,
@@ -3312,7 +3405,7 @@ fn legal_targets_for_controller_from_source(
             })
             .map(Target::Object)
             .collect(),
-        TargetSpec::ControlledCreature => state
+        TargetSpec::ControlledCreature | TargetSpec::KickerControlledCreatures => state
             .objects
             .iter()
             .filter_map(|(id, object)| {
@@ -3715,6 +3808,9 @@ fn legal_targets_for_controller_from_source(
         targets.retain(|target| !matches!(target,Target::Object(object) if crate::standard_legends_v1::katilda_protected_from(state,*object,source.object)
             || crate::standard_legends_v1::hexproof_from_color(state,*object,source.object,source.card_def,source.zone_change_count,controller)));
     }
+    if spec == TargetSpec::KickerControlledCreatures {
+        targets.retain(|target| !targets_chosen.contains(target));
+    }
     targets
 }
 
@@ -3886,6 +3982,12 @@ fn target_prefix_can_complete_for_controller_and_source(
     source: Option<TargetingSource>,
     state: &GameState,
 ) -> bool {
+    if spec == TargetSpec::KickerControlledCreatures {
+        let legal = legal_targets_for_controller_from_source(spec, &[], controller, source, state);
+        return targets_chosen.iter().enumerate().all(|(index, target)| {
+            legal.contains(target) && !targets_chosen[..index].contains(target)
+        });
+    }
     let max = target_count(spec) as usize;
     if spec != TargetSpec::CounterDistribution && targets_chosen.len() > max {
         return false;
@@ -3953,6 +4055,15 @@ fn completable_next_targets_for_controller_and_source(
     source: Option<TargetingSource>,
     state: &GameState,
 ) -> Vec<Target> {
+    if spec == TargetSpec::KickerControlledCreatures {
+        return legal_targets_for_controller_from_source(
+            spec,
+            targets_chosen,
+            controller,
+            source,
+            state,
+        );
+    }
     legal_targets_for_controller_from_source(spec, targets_chosen, controller, source, state)
         .into_iter()
         .filter(|candidate| {
@@ -4144,6 +4255,36 @@ fn viable_printed_spell_modes(
     controller: PlayerId,
     state: &GameState,
 ) -> Vec<u8> {
+    if def.target_spec == TargetSpec::KickerControlledCreatures {
+        let has_target = !legal_targets_for_controller_from_source(
+            def.target_spec,
+            &[],
+            controller,
+            targeting_source_for_object(state, source),
+            state,
+        )
+        .is_empty();
+        let kicked_payable = spell_costs_v1::selected_spell_quote_v1(
+            def,
+            source,
+            state.objects.get(source).zone,
+            CastMethodV4::Normal,
+            true,
+            0,
+            0,
+            &[],
+            &[],
+            controller,
+            state,
+            &[],
+        )
+        .is_some();
+        return if has_target || kicked_payable {
+            vec![0]
+        } else {
+            vec![]
+        };
+    }
     let mut modes =
         Vec::with_capacity(1 + usize::from(def.mode2.is_some()) + usize::from(def.mode3.is_some()));
     let spell = source;
@@ -7125,6 +7266,19 @@ fn viable_pending_spell_forms(
             }
         }
         return forms;
+    }
+    if def.target_spec == TargetSpec::KickerControlledCreatures && pending.kicked == Some(false) {
+        return if target_prefix_can_complete_for_controller_and_source(
+            TargetSpec::ControlledCreature,
+            &pending.targets_chosen,
+            pending.controller,
+            targeting_source_for_object(state, pending.spell),
+            state,
+        ) {
+            vec![0]
+        } else {
+            vec![]
+        };
     }
     let mut modes = viable_printed_spell_modes(def, pending.spell, pending.controller, state);
     if def.mode2.is_some() || def.mode3.is_some() || !def.additional_modes.is_empty() {
@@ -10119,8 +10273,10 @@ pub(crate) fn validate_pending_cast(
                 .ok_or("pending cast selected a nonexistent spell form".to_string())
         })
         .transpose()?;
-    let required_targets = active_spec.map_or(0, |spec| usize::from(target_count(spec)));
-    if pending.targets_chosen.len() > required_targets
+    let (min_targets, required_targets) = active_spec.map_or((0, Some(0)), |spec| {
+        cast_target_bounds(spec, pending.kicked == Some(true))
+    });
+    if required_targets.is_some_and(|max| pending.targets_chosen.len() > max)
         || !target_contracts_are_structurally_valid(
             state,
             &pending.targets_chosen,
@@ -10130,30 +10286,59 @@ pub(crate) fn validate_pending_cast(
         return Err("pending cast target prefix or contracts are malformed".to_string());
     }
     if pending.target_selection_finished {
-        let spec = active_spec.ok_or("pending cast finished targets without an active form")?;
-        let min = usize::from(target_min_count(spec));
-        if min == required_targets
-            || pending.targets_chosen.len() < min
-            || pending.targets_chosen.len() >= required_targets
+        active_spec.ok_or("pending cast finished targets without an active form")?;
+        if Some(min_targets) == required_targets
+            || pending.targets_chosen.len() < min_targets
+            || required_targets.is_some_and(|max| pending.targets_chosen.len() >= max)
         {
             return Err("pending cast target-finish marker is noncanonical".to_string());
         }
     }
     if let Some(spec) = active_spec {
-        let mut prefix = Vec::new();
-        for &target in &pending.targets_chosen {
-            if !completable_next_targets_for_controller_and_source(
+        if spec == TargetSpec::KickerControlledCreatures {
+            if !target_prefix_can_complete_for_controller_and_source(
                 spec,
-                &prefix,
+                &pending.targets_chosen,
                 pending.controller,
                 targeting_source_for_object(state, pending.spell),
                 state,
-            )
-            .contains(&target)
-            {
-                return Err("pending cast carries an illegal target prefix".to_string());
+            ) {
+                return Err(
+                    "pending variable cast carries an illegal or duplicate target prefix".into(),
+                );
             }
-            prefix.push(target);
+        } else {
+            let mut prefix = Vec::new();
+            for &target in &pending.targets_chosen {
+                if !completable_next_targets_for_controller_and_source(
+                    spec,
+                    &prefix,
+                    pending.controller,
+                    targeting_source_for_object(state, pending.spell),
+                    state,
+                )
+                .contains(&target)
+                {
+                    return Err("pending cast carries an illegal target prefix".to_string());
+                }
+                prefix.push(target);
+            }
+        }
+    }
+    if def.target_spec == TargetSpec::KickerControlledCreatures {
+        if def.kicker_cost.is_none()
+            || def.mode2.is_some()
+            || def.mode3.is_some()
+            || state
+                .objects
+                .get(pending.spell)
+                .v4
+                .variable_targeting_kicked
+                != pending.kicked
+            || (pending.kicked.is_none()
+                && (!pending.targets_chosen.is_empty() || pending.target_selection_finished))
+        {
+            return Err("variable cast targeting lost its definition-owned kicker binding".into());
         }
     }
     if def.kicker_cost.is_none() {
@@ -10658,10 +10843,31 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             return drain_pending_cast_or_decide(state);
         }
         if payable {
+            if def.target_spec == TargetSpec::KickerControlledCreatures {
+                return Some(Decision::ChooseVariableCastKicker {
+                    player: pending.controller,
+                    spell: pending.spell,
+                    can_decline: !legal_targets_for_controller_from_source(
+                        def.target_spec,
+                        &[],
+                        pending.controller,
+                        targeting_source_for_object(state, pending.spell),
+                        state,
+                    )
+                    .is_empty(),
+                });
+            }
             return Some(Decision::ChooseKicker {
                 player: pending.controller,
                 spell: pending.spell,
             });
+        }
+        if def.target_spec == TargetSpec::KickerControlledCreatures {
+            state
+                .objects
+                .get_mut(pending.spell)
+                .v4
+                .variable_targeting_kicked = Some(false);
         }
         state.engine.pending_cast.as_mut().unwrap().kicked = Some(false);
         return drain_pending_cast_or_decide(state);
@@ -10732,15 +10938,28 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     )
     .expect("mode shape validated at drain entry");
 
-    let need = target_count(active_target_spec);
+    if active_target_spec == TargetSpec::KickerControlledCreatures
+        && pending.kicked == Some(true)
+        && !pending.target_selection_finished
+    {
+        return Some(Decision::ChooseVariableCastTargets {
+            player: pending.controller,
+            spell: pending.spell,
+            selected_count: pending.targets_chosen.len(),
+            legal_targets: completable_next_cast_targets(def, &pending, active_target_spec, state),
+            can_finish: true,
+        });
+    }
+    let (minimum, maximum) = cast_target_bounds(active_target_spec, pending.kicked == Some(true));
     if !pending_cast_targeting_is_complete(&pending, active_target_spec) {
+        let need = maximum.expect("unfinished unbounded selection handled above");
         return Some(Decision::ChooseTargets {
             player: pending.controller,
             spell: pending.spell,
-            remaining: need - pending.targets_chosen.len() as u8,
+            remaining: u8::try_from(need - pending.targets_chosen.len())
+                .expect("fixed target count"),
             legal_targets: completable_next_cast_targets(def, &pending, active_target_spec, state),
-            can_finish: pending.targets_chosen.len()
-                >= usize::from(target_min_count(active_target_spec)),
+            can_finish: pending.targets_chosen.len() >= minimum,
         });
     }
 
@@ -11535,6 +11754,11 @@ pub(crate) fn validate_pending_activation(
     state: &GameState,
     pending: &PendingActivation,
 ) -> Result<(), String> {
+    if pending.target_spec == TargetSpec::KickerControlledCreatures {
+        return Err(
+            "variable targeting is supported only by its definition-owned spell cast".into(),
+        );
+    }
     let object = state
         .objects
         .try_get(pending.source)
@@ -12059,6 +12283,11 @@ fn validate_pending_trigger(state: &GameState, pending: &PendingTrigger) -> Resu
             return Err("untargeted pending trigger carries targets".to_string());
         }
         return Ok(());
+    }
+    if pending.target_spec == TargetSpec::KickerControlledCreatures {
+        return Err(
+            "variable targeting is supported only by its definition-owned spell cast".into(),
+        );
     }
     let source = state
         .objects
@@ -13033,7 +13262,16 @@ pub(crate) fn validated_stack_item_target_spec(
             return Err("stack counter distribution allocation is malformed".into());
         }
     }
-    if !target_cardinality_is_complete(spec, item.targets.len())
+    let cardinality_complete = if spec == TargetSpec::KickerControlledCreatures {
+        let (minimum, maximum) = cast_target_bounds(spec, item.kicked);
+        item.kind == StackItemKind::Spell
+            && item.targets.len() >= minimum
+            && maximum.is_none_or(|maximum| item.targets.len() <= maximum)
+            && item.targets.iter().enumerate().all(|(index, target)| !item.targets[..index].contains(target))
+    } else {
+        target_cardinality_is_complete(spec, item.targets.len())
+    };
+    if !cardinality_complete
         || item.v4.target_contracts.len() != item.targets.len()
     {
         return Err("stack target and contract cardinalities are malformed".to_string());
@@ -15838,7 +16076,11 @@ fn pending_cast_action_stage(
     .ok_or("pending cast selected a nonexistent spell form")?;
     if !pending_cast_targeting_is_complete(pending, active_target_spec) {
         return Ok(
-            if target_min_count(active_target_spec) < target_count(active_target_spec) {
+            if {
+                let (min, max) =
+                    cast_target_bounds(active_target_spec, pending.kicked == Some(true));
+                max.is_none_or(|max| min < max)
+            } {
                 PendingCastActionStage::ChooseOptionalTarget
             } else {
                 PendingCastActionStage::ChooseTarget
@@ -16244,8 +16486,11 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
                     .ok_or("cast mode chosen before the spell form completed")?, pending.kicked == Some(true))
             .ok_or("pending cast selected a nonexistent spell form")?;
             if pending.kicked.is_none()
-                || pending.targets_chosen.len()
-                    != usize::from(target_count(active_target_spec))
+                || if active_target_spec == TargetSpec::KickerControlledCreatures {
+                    !pending_cast_targeting_is_complete(&pending, active_target_spec)
+                } else {
+                    pending.targets_chosen.len() != usize::from(target_count(active_target_spec))
+                }
                 || pending.target_contracts.len() != pending.targets_chosen.len()
             {
                 return Err("cast mode chosen before prior cast stages completed".to_string());
@@ -16284,6 +16529,12 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
             }
             if def.kicked_target_spec.is_some() && !kicker_targets_complete(state, def, &pending, kicked) {
                 return Err("chosen kicker option has no legal target completion".into());
+            }
+            if def.target_spec == TargetSpec::KickerControlledCreatures {
+                if !kicked && legal_targets_for_controller_from_source(def.target_spec, &[], pending.controller, targeting_source_for_object(state, pending.spell), state).is_empty() {
+                    return Err("unkicked variable spell requires one legal controlled creature".into());
+                }
+                state.objects.get_mut(pending.spell).v4.variable_targeting_kicked = Some(kicked);
             }
             state
                 .engine
@@ -16692,12 +16943,11 @@ fn finish_optional_cast_targets(state: &mut GameState) -> Result<(), String> {
         pending.kicked == Some(true),
     )
     .ok_or("pending cast selected a nonexistent spell form")?;
-    let min = usize::from(target_min_count(spec));
-    let max = usize::from(target_count(spec));
-    if min >= max
+    let (min, max) = cast_target_bounds(spec, pending.kicked == Some(true));
+    if max.is_some_and(|max| min >= max)
         || pending.target_selection_finished
         || pending.targets_chosen.len() < min
-        || pending.targets_chosen.len() >= max
+        || max.is_some_and(|max| pending.targets_chosen.len() >= max)
     {
         return Err("the pending cast target selection cannot finish".to_string());
     }
@@ -18946,6 +19196,8 @@ fn finalize_owned_cast(
     source_v4.finalized_cast_binding = Some(FinalizedCastBindingV1 {
         x_value: u16::from(x_value),
         chosen_creature_cost,
+        variable_targeting_kicked: (def.target_spec == TargetSpec::KickerControlledCreatures)
+            .then_some(was_kicked),
     });
     let finalized_source_contract =
         StackSourceContractV4::capture(state, pending.spell, cast_method);
@@ -26482,3 +26734,10 @@ mod tests {
         );
     }
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod divine_variable_targeting_tests;

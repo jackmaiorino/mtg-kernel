@@ -2868,7 +2868,7 @@ impl Special {
     /// formatting-only codegen edits must not churn the card-database hash.
     fn canonical_token(self) -> String {
         match self {
-            Special::DivineResiliencePrepared => "divine_resilience:unexecutable_prepared_source:base_W:kicker_2W:unkicked_one_controlled_creature:kicked_any_number_distinct_controlled_creatures:grant_indestructible_to_each_legal_incarnation_until_cleanup".to_string(),
+            Special::DivineResiliencePrepared => "divine_resilience:variable_target_successor_v1:base_W:kicker_2W:unkicked_one_controlled_creature:kicked_any_number_distinct_controlled_creatures:grant_indestructible_to_each_legal_incarnation_until_cleanup".to_string(),
             Special::None => "none".to_string(),
             Special::StandardProgram {
                 target_spec,
@@ -3851,7 +3851,7 @@ fn program_function_suffix(name: &str) -> String {
 /// data hash.
 fn effect_recipe_for(card: &CardJson) -> String {
     match special_for(&card.name) {
-        Special::DivineResiliencePrepared => "target=None;spell=None;mana=None;unsupported=kicker_dependent_variable_target_cardinality;desired=GrantKeywordToEachLegalAnnouncedControlledCreatureUntilEndOfTurn(Indestructible)".to_string(),
+        Special::DivineResiliencePrepared => "target=KickerControlledCreatures;spell=GrantKeywordToDeclaredTargetsUntilEndOfTurn(Indestructible,eachLegalExactIncarnation,usizeSlots);mana=None;kicker=2W;cardinality=unkickedExactlyOne,kickedAnyFiniteNumberIncludingZero;consumer=explicitSuccessorRequired".to_string(),
         Special::None => {
             let executable = card.engine_capability != EngineCapabilityJson::NoEffect;
             let spell = if executable && is_ordinary_permanent(card) {
@@ -9152,6 +9152,9 @@ fn codegen(cards: &[CardJson]) -> String {
     }
 
     for card in cards {
+        if let Special::DivineResiliencePrepared = special_for(&card.name) {
+            writeln!(out, "fn spell_effect_divine_resilience_variable_v1() -> EffectOp {{ EffectOp::GrantKeywordToDeclaredTargetsUntilEndOfTurn {{ target_spec: TargetSpec::KickerControlledCreatures, keyword: Keywords::INDESTRUCTIBLE }} }}").unwrap();
+        }
         if let Special::Program { effect, mode2, .. } = special_for(&card.name) {
             let suffix = program_function_suffix(&card.name);
             writeln!(
@@ -9221,8 +9224,8 @@ fn codegen(cards: &[CardJson]) -> String {
 
         let (target_spec_src, mut spell_effect_src, mut mana_ability_src) = match special {
             Special::DivineResiliencePrepared => (
-                "TargetSpec::None",
-                "no_effect".to_string(),
+                "TargetSpec::KickerControlledCreatures",
+                "spell_effect_divine_resilience_variable_v1".to_string(),
                 "no_effect".to_string(),
             ),
             Special::None => (

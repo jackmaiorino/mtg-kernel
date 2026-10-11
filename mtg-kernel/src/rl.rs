@@ -2259,6 +2259,7 @@ fn build_policy_observation_common_v6(
     request: PolicyObservationBuildV5<'_>,
     accept_life_ward: bool,
 ) -> Result<ObservationV6> {
+    crate::engine::validate_legacy_variable_cast_targets(request.state).map_err(RlContractError)?;
     let PolicyObservationBuildV5 {
         state,
         surface,
@@ -3076,6 +3077,13 @@ fn core_surface_action_candidates_v1(
             } => {
                 let actor = (*player).into();
                 for &id in castable_spells {
+                    if CARD_DEFS[state.objects.get(id).card_def as usize].target_spec
+                        == crate::card_def::TargetSpec::KickerControlledCreatures
+                    {
+                        return Err(RlContractError(
+                            "variable cast targeting requires its legal-action successor".into(),
+                        ));
+                    }
                     push_action(
                         &mut out,
                         ActionSemanticV1::CastSpell {
@@ -3176,6 +3184,12 @@ fn core_surface_action_candidates_v1(
                     ActionSemanticV1::Pass { actor },
                     SurfaceAction::Action(Action::Pass),
                 )?;
+            }
+            Decision::ChooseVariableCastTargets { .. }
+            | Decision::ChooseVariableCastKicker { .. } => {
+                return Err(RlContractError(
+                    "variable cast targeting requires its legal-action successor".into(),
+                ))
             }
             Decision::ChooseTargets {
                 player,
@@ -3783,6 +3797,8 @@ pub fn acting_player_for_surface_decision(
             | Decision::ChooseLondonMulligan { player, .. }
             | Decision::ChooseLondonBottom { player, .. }
             | Decision::ChooseAttackTarget { player, .. }
+            | Decision::ChooseVariableCastTargets { player, .. }
+            | Decision::ChooseVariableCastKicker { player, .. }
             | Decision::ChooseOptionalCost { player, .. }
             | Decision::ChooseSpellCopyPayment { player, .. }
             | Decision::ChooseSpellCopyRetarget { player, .. }

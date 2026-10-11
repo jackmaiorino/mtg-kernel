@@ -18,6 +18,9 @@ use super::*;
 pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
     match spec {
         TargetSpec::StandardV1(filter) => standard_target_spec(filter, out),
+        TargetSpec::KickerControlledCreatures => {
+            panic!("variable cast cardinality requires a RulesMeaning successor")
+        }
         // Target count 0: nothing is announced.
         TargetSpec::None => {}
         TargetSpec::ArtifactOrEnchantmentThenPlayer => {
@@ -422,6 +425,9 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
         TargetSpec::UpToTwoOtherCreaturesDifferentControllers => creature(),
         TargetSpec::LegendaryCreature => creature(),
         TargetSpec::StandardV1(filter) => standard_target_obj(filter),
+        TargetSpec::KickerControlledCreatures => {
+            panic!("variable cast cardinality requires a RulesMeaning successor")
+        }
         // No targets are chosen, so the engine's `resolve_object` would
         // panic on any `Target(slot)`; no well-formed program refers to one.
         // The unfiltered class keeps the extractor total.

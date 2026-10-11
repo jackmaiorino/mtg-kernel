@@ -157,6 +157,7 @@ impl Scan<'_> {
             | CreateTokensWithHasteUntilEndOfTurnV1 { .. }
             | PumpTargetUntilEndOfTurnDynamic { .. }
             | PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness { .. }
+            | GrantKeywordToDeclaredTargetsUntilEndOfTurn { .. }
             | ReturnTwoDifferentControllerCreaturesToOwnersHands
             | DoubleTargetPowerUntilEndOfTurn { .. }
             | DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }

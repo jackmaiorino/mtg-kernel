@@ -90,6 +90,10 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
             // copy/control/type changes or Standard continuation semantics.
             out.atoms.push(Atom::Opaque);
         }
+        EffectOp::GrantKeywordToDeclaredTargetsUntilEndOfTurn {
+            target_spec: _,
+            keyword: _,
+        } => panic!("variable cast target effects require a RulesMeaning successor"),
         EffectOp::Sequence(..)
         | EffectOp::Conditional { .. }
         | EffectOp::Choice { .. }

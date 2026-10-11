@@ -197,6 +197,7 @@ fn effect_condition(condition: &EffectCond) -> Result<String, Error> {
 fn describe_effect(effect: &EffectOp) -> Result<String, Error> {
     Ok(match effect {
         EffectOp::StandardLegendV1(crate::standard_legends_v1::LegendEffectV1::GwennaMana(first,second)) => format!("add {{{}}}{{{}}}; spend only on creature spells or abilities of creatures",color(*first),color(*second)),
+        EffectOp::GrantKeywordToDeclaredTargetsUntilEndOfTurn { .. } => return Err(Error::UnsupportedPrompt),
         EffectOp::Sequence(ops) if ops.is_empty() => "do nothing".into(),
         EffectOp::Sequence(ops) => ops.iter().map(describe_effect).collect::<Result<Vec<_>, _>>()?.join("; then "),
         EffectOp::Conditional { cond, then, else_ } => format!("if {}, {}; otherwise {}", effect_condition(cond)?, describe_effect(then)?, describe_effect(else_)?),
@@ -1075,4 +1076,21 @@ fn label_common(
         | A::ChooseAttackTarget { .. }
         | A::Ambiguous { .. } => return Err(Error::UnsupportedPrompt),
     })
+}
+
+#[cfg(test)]
+mod variable_target_refusal_tests {
+    use super::*;
+
+    #[test]
+    fn human_legacy_prompt_refuses_variable_declared_target_grant() {
+        let op = EffectOp::GrantKeywordToDeclaredTargetsUntilEndOfTurn {
+            target_spec: card_def::TargetSpec::KickerControlledCreatures,
+            keyword: card_def::Keywords::INDESTRUCTIBLE,
+        };
+        assert!(matches!(
+            describe_effect(&op),
+            Err(Error::UnsupportedPrompt)
+        ));
+    }
 }
