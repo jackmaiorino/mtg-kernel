@@ -329,6 +329,10 @@ pub enum Subtype {
     Role,
     Kaito,
     Elder,
+    /// Appended for the completed Standard catalog, preserving all prior ids.
+    Wurm,
+    Artificer,
+    Orc,
 }
 
 impl Subtype {
@@ -588,6 +592,14 @@ impl Subtype {
         Subtype::Siren,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Praetor,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Skeleton,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Wurm,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Artificer,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Orc,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -596,7 +608,10 @@ impl Subtype {
     pub const OUTLAW_TYPES: &'static [Subtype] = &[
         Subtype::Pirate,
         Subtype::Rogue,
-        #[cfg(feature = "limited-fdn-fixtures")]
+        #[cfg(any(
+            feature = "limited-fdn-fixtures",
+            feature = "standard-magezero-fixtures"
+        ))]
         Subtype::Warlock,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Assassin,
@@ -654,6 +669,23 @@ impl Subtype {
     /// materializes every true entry into an object's effective subtype set;
     /// card, artifact, enchantment, and land subtypes remain excluded.
     pub const fn is_creature_type(self) -> bool {
+        // Extend the Standard choice surface without changing the frozen
+        // Pauper/FDN changeling projections or their subtype hashes.
+        if cfg!(feature = "standard-magezero-fixtures")
+            && matches!(
+                self,
+                Subtype::Skeleton
+                    | Subtype::God
+                    | Subtype::Gnome
+                    | Subtype::Pilot
+                    | Subtype::Elder
+                    | Subtype::Wurm
+                    | Subtype::Artificer
+                    | Subtype::Orc
+            )
+        {
+            return true;
+        }
         matches!(
             self,
             Subtype::Ape

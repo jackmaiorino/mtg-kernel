@@ -6,7 +6,8 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use mtg_kernel::card_def::{
-    card_id_by_name, preflight_fully_supported_deck, CardCapability, CARD_DEFS, KERNEL_CARDDB_HASH,
+    card_id_by_name, preflight_fully_supported_deck, CardCapability, CardType, Subtype, CARD_DEFS,
+    KERNEL_CARDDB_HASH,
 };
 use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::ids::{ObjectId, PlayerId};
@@ -1287,4 +1288,32 @@ fn all_standard_tokens_are_full_token_definitions() {
         assert!(definition.is_token, "{name}");
         assert_eq!(definition.capability, CardCapability::Full, "{name}");
     }
+}
+
+#[test]
+fn standard_creature_subtypes_are_available_to_type_choices_and_changeling() {
+    for name in STANDARD_APPENDED {
+        let definition = &CARD_DEFS[card_id_by_name(name).expect(name) as usize];
+        if !definition.has_type(CardType::Creature) {
+            continue;
+        }
+        for &subtype in definition.subtypes {
+            // Food remains an artifact type on Gingerbrute and Tough Cookie.
+            if subtype == Subtype::Food {
+                assert!(!subtype.is_creature_type());
+                assert!(!Subtype::CREATURE_TYPES.contains(&subtype));
+                continue;
+            }
+            assert!(subtype.is_creature_type(), "{name}: {subtype:?}");
+            assert!(
+                Subtype::CREATURE_TYPES.contains(&subtype),
+                "{name}: {subtype:?}"
+            );
+        }
+    }
+    assert!(Subtype::OUTLAW_TYPES.contains(&Subtype::Warlock));
+    assert_eq!(Subtype::Elder.stable_id(), 143);
+    assert_eq!(Subtype::Wurm.stable_id(), 144);
+    assert_eq!(Subtype::Artificer.stable_id(), 145);
+    assert_eq!(Subtype::Orc.stable_id(), 146);
 }
