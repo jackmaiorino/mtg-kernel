@@ -16,6 +16,29 @@ requires its assigned repair before this composition's full qualification.
 PR226327f0315 repair is composed, but exact-current-head delivery is pending.
 No experiment, formal measurement, learned strength or full-pool claim occurs.
 
+Actual native compile attempts preserve original Git provenance and failed logs
+at E:/storage-records/fdn110. Native50 source74b7 failed before native1/1 due to
+Windows CMD child path syntax; guarded harmless native-backslash probe passed0.
+Native51 sourcea1e4 generated404/ea06551203d063f8, then failed Limited all-test
+compile101/101 on the missing Squad CARD_DEFS import and Result-return inside a
+bool closure. Exactfc9eed1c repairs both without changing the selected filter.
+Native52 sourcecf0 failed that compile101/101 on a moving borrowed flashback
+assertion;1c32feef uses as_ref with identical expected cost. Native53 source1c32
+failed101/101 on private randomness access and branch-array temporary lifetime
+in Squad's external fixture. Exact01912737 uses the public legacy_rng view and
+a named opponent library array. No tests, Standard check, lint or replays ran in
+these failed compile attempts. Exact12d460e7 removes one duplicate unreachable
+Ooze generator arm while retaining its original identical mapping.
+
+Native54 exact01912737 requests both all-test typechecks and297 selected checks,
+strict Limited all-test lint and complete Default/Standard replay artifacts.
+Its retained supported handle is81a76b6e26e44be0910273d173ce5f1f/supervisor137788.
+No passing result is recorded before it completes. Actualguard101 and exact
+owned post-terminal helper identity/membership were verified before target
+reuse for each retry. Shared research reservations and foreign processes remain
+preserved. Heartfire's intrinsic receipt-erasure repair435ae69d and its correct
+Cargo gate46b20832 are composed and await this actual gameplay qualification.
+
 Native51 actual generator emitted404 definitions/hash ea06551203d063f8
 before the first compile failure. Its exact generated source is retained.
 This new v77 profile appends beside immutable v76 and every older identity,
