@@ -2407,7 +2407,7 @@ fn source_card_def_matches(
         )
 }
 
-fn validate_historical_ability_source_contract(
+pub(crate) fn validate_historical_ability_source_contract(
     state: &GameState,
     contract: AbilitySourceContractV4,
 ) -> Result<(), String> {

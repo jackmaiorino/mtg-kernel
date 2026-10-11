@@ -15,10 +15,7 @@ pub(super) fn execute(ctx: &ExecCtx, state: &mut GameState) {
     if source.source != ctx.source
         || source.controller != ctx.controller
         || source.zone != Zone::Battlefield
-        || !state
-            .objects
-            .try_get(ctx.source)
-            .is_some_and(|live| live.card_def == source.card_def && live.owner == source.owner)
+        || crate::engine::validate_historical_ability_source_contract(state, source).is_err()
     {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -53,7 +50,6 @@ pub(super) fn execute(ctx: &ExecCtx, state: &mut GameState) {
     if state.objects.try_get(source.source).is_some_and(|live| {
         live.zone == Zone::Battlefield
             && live.zone_change_count == source.zone_change_count
-            && live.card_def == source.card_def
             && live.owner == source.owner
     }) {
         if event::add_plus_one_counters(state, source.source, ctx.controller, 1).is_err() {
@@ -276,6 +272,76 @@ mod tests {
                 );
                 assert_eq!(branch.objects.get(card).zone, Zone::Exile);
                 assert_eq!(branch.objects.get(ctx.source).counters.plus1_plus1, 2);
+                assert_eq!(branch.players[actor.index()].life, life + 1);
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&replay).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "standard-magezero-fixtures")]
+    fn registered_aegis_copy_preserves_same_incarnation_ooze_primitive_source() {
+        use crate::effect::EffectObjectBinding;
+        use crate::state::ObjectLinkV4;
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, ctx, card) = physical(actor, actor.opponent(), "Llanowar Elves");
+            let original = ctx.ability_source_contract.unwrap();
+            let aegis = put(&mut state, actor, "Assimilation Aegis", Zone::Battlefield);
+            let donor = put(
+                &mut state,
+                actor.opponent(),
+                "Tolarian Terror",
+                Zone::Graveyard,
+            );
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(donor, Zone::Exile));
+            let host = ObjectLinkV4 {
+                object: ctx.source,
+                zone_change_count: original.zone_change_count,
+            };
+            // Existing typed registered copy executor, not an admitted Ooze
+            // or a Standard printed Ooze ability producer.
+            state.objects.get_mut(aegis).v4.attached_to = Some(host);
+            state.objects.get_mut(aegis).v4.layer_timestamp = Some(17);
+            let aegis_source = AbilitySourceContractV4::capture(&state, aegis);
+            state.objects.get_mut(donor).v4.exiled_by = Some(ObjectLinkV4 {
+                object: aegis,
+                zone_change_count: aegis_source.zone_change_count,
+            });
+            let mut copy_ctx = ExecCtx::no_targets(aegis, actor);
+            copy_ctx.ability_source_contract = Some(aegis_source);
+            let chosen = EffectObjectBinding {
+                object: donor,
+                expected_zone: Zone::Exile,
+                expected_zone_change_count: state.objects.get(donor).zone_change_count,
+            };
+            assert!(
+                crate::standard_cards_v1::aegis_copy_candidates(&state, &copy_ctx, host, 17)
+                    .contains(&chosen)
+            );
+            crate::standard_cards_v1::apply_aegis_copy(&mut state, &copy_ctx, host, 17, chosen);
+            assert_ne!(state.objects.get(ctx.source).card_def, original.card_def);
+            assert_eq!(
+                state.objects.get(ctx.source).zone_change_count,
+                original.zone_change_count
+            );
+            assert!(
+                crate::engine::validate_historical_ability_source_contract(&state, original)
+                    .is_ok()
+            );
+            let mut replay = restored(&state);
+            for branch in [&mut state, &mut replay] {
+                let life = branch.players[actor.index()].life;
+                crate::effect::execute(
+                    &EffectOp::ExileGraveyardTargetThenGrowSourceIfCreature,
+                    &ctx,
+                    branch,
+                );
+                assert!(branch.engine.halted.is_none());
+                assert_eq!(branch.objects.get(card).zone, Zone::Exile);
+                assert_eq!(branch.objects.get(ctx.source).counters.plus1_plus1, 1);
                 assert_eq!(branch.players[actor.index()].life, life + 1);
             }
             assert_eq!(
