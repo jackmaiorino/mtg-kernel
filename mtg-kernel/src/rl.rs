@@ -6290,22 +6290,26 @@ fn object_relations_public_v4(
 
 fn validate_linked_exile_records_public_v4(state: &GameState) -> Result<()> {
     for (index, record) in state.engine.linked_exile_records.iter().enumerate() {
+        let definition = crate::card_def::CARD_DEFS
+            .get(record.source.card_def as usize)
+            .ok_or_else(|| RlContractError("linked-exile source definition is missing".into()))?;
+        let until_leaves =
+            crate::effect::battlefield_exile_until_source_leaves(record.source.card_def);
+        let hand_exile = crate::effect::linked_hand_exile_kind(record.source.card_def).is_some();
         if record.source.zone != Zone::Battlefield
-            || record.source.attached_to.is_some()
-            || crate::card_def::CARD_DEFS
-                .get(record.source.card_def as usize)
-                .is_none_or(|definition| {
-                    !matches!(
-                        definition.name,
-                        "Mesmeric Fiend" | "Journey to Nowhere" | "Lagrella, the Magpie"
-                    )
-                })
+            || (record.source.attached_to.is_some()
+                && !definition.subtypes.contains(&crate::card_def::Subtype::Aura))
+            || !(until_leaves
+                || hand_exile
+                || matches!(definition.name, "Journey to Nowhere" | "Lagrella, the Magpie"))
             || state.engine.linked_exile_records[..index]
                 .iter()
                 .any(|other| {
-                    other.source == record.source
-                        && crate::card_def::CARD_DEFS[record.source.card_def as usize].name
-                            != "Lagrella, the Magpie"
+                    (other.exiled == record.exiled
+                        && other.exiled_zone_change_count == record.exiled_zone_change_count)
+                        || (other.source == record.source
+                            && !until_leaves
+                            && definition.name != "Lagrella, the Magpie")
                 })
         {
             return Err(RlContractError(
