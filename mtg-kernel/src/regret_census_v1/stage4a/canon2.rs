@@ -40,7 +40,7 @@ use super::tree::{
 use crate::rl_session::{FastActorDecisionV1, FastActorSessionV1};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Instant;
 
 /// Most canonicalizations tried to resolve one frame's qualifying ties
@@ -118,9 +118,11 @@ pub(crate) fn child_key_v2(parent: &Key, edge: &[u8], c: &Canon) -> Key {
     hash_key(b"stage4a-node-v2", &parts)
 }
 
-/// The fallback key: the complete legacy history key, separately tagged.
-pub(crate) fn fallback_key(legacy: &Key) -> Key {
-    hash_key(b"stage4a-node-v2-fallback", &[legacy])
+/// The fallback key: the complete legacy history key (and the repaired
+/// parent, so a fallback never shares a node across repaired ancestries),
+/// separately tagged.
+pub(crate) fn fallback_key(legacy: &Key, repaired_parent: &Key) -> Key {
+    hash_key(b"stage4a-node-v2-fallback", &[legacy, repaired_parent])
 }
 
 /// Every handle occurrence (`arena_id` values and `attachments` items).
@@ -411,6 +413,10 @@ fn permutations(items: &[u64]) -> Vec<Vec<u64>> {
     out
 }
 
+/// The repaired view and the members it resolved by exchange, or why the
+/// frame falls back.
+pub(crate) type ViewOutcome = Result<(Canon, Vec<u64>), Fallback>;
+
 /// The repaired canonical view of one frame, or why it falls back; with the
 /// number of canonicalizations used.
 pub(crate) fn repaired_view(
@@ -418,11 +424,12 @@ pub(crate) fn repaired_view(
     menu: &[Value],
     legacy: &Canon,
     prefix: &[Frame],
+    resolved: &HashSet<u64>,
     bound: usize,
-) -> Result<(Result<Canon, Fallback>, usize, usize), PlayErr> {
+) -> Result<(ViewOutcome, usize, usize), PlayErr> {
     let classes = tie_classes(obs);
     if classes.is_empty() {
-        return Ok((Ok(legacy.clone()), 0, 0));
+        return Ok((Ok((legacy.clone(), Vec::new())), 0, 0));
     }
     let mut total: HashMap<u64, usize> = HashMap::new();
     let mut all = Vec::new();
@@ -434,14 +441,30 @@ pub(crate) fn repaired_view(
         .iter()
         .filter(|c| matters(c, &total, menu))
         .collect();
+    // A class whose members an earlier frame of this path resolved by
+    // exchange must stay exchangeable along the prefix even when it does
+    // not matter here: its engine order would otherwise label the members
+    // inconsistently with that earlier exchange.
+    for c in classes
+        .iter()
+        .filter(|c| c.members.iter().any(|m| resolved.contains(m)))
+    {
+        if let Err(f) = qualifies(c, obs, prefix) {
+            return Ok((Err(f), 0, mattering.len().max(1)));
+        }
+    }
     if mattering.is_empty() {
-        return Ok((Ok(legacy.clone()), 0, 0));
+        return Ok((Ok((legacy.clone(), Vec::new())), 0, 0));
     }
     for c in &mattering {
         if let Err(f) = qualifies(c, obs, prefix) {
             return Ok((Err(f), 0, mattering.len()));
         }
     }
+    let members: Vec<u64> = mattering
+        .iter()
+        .flat_map(|c| c.members.iter().copied())
+        .collect();
     let work = mattering
         .iter()
         .fold(1usize, |a, c| a.saturating_mul(factorial(c.members.len())));
@@ -472,7 +495,11 @@ pub(crate) fn repaired_view(
         let mut i = 0;
         loop {
             if i == idx.len() {
-                return Ok((Ok(best.expect("one order")), tried, mattering.len()));
+                return Ok((
+                    Ok((best.expect("one order"), members)),
+                    tried,
+                    mattering.len(),
+                ));
             }
             idx[i] += 1;
             if idx[i] < per[i].len() {
@@ -496,6 +523,17 @@ pub(crate) struct KeyStats {
 }
 
 impl KeyStats {
+    pub(crate) fn merge(&mut self, o: &Self) {
+        self.frames += o.frames;
+        self.frames_with_mattering_ties += o.frames_with_mattering_ties;
+        self.exact_resolved += o.exact_resolved;
+        self.canonicalizations_for_ties += o.canonicalizations_for_ties;
+        for (k, v) in &o.fallbacks {
+            *self.fallbacks.entry(k).or_default() += v;
+        }
+        self.seconds += o.seconds;
+    }
+
     pub(crate) fn json(&self) -> Value {
         serde_json::json!({"frames":self.frames,"frames_with_mattering_ties":self.frames_with_mattering_ties,
             "exact_resolved":self.exact_resolved,"canonicalizations_for_ties":self.canonicalizations_for_ties,
@@ -512,25 +550,30 @@ pub(crate) struct Step {
     pub(crate) repaired: Canon,
     obs: Value,
     menu: Vec<Value>,
+    /// Members of classes this frame resolved by exchange.
+    resolved: Vec<u64>,
 }
 
 /// Keys along one path from the root; selection and frozen execution use it
 /// identically.
-pub(crate) struct Keyer<'s> {
+pub(crate) struct Keyer<S: std::borrow::BorrowMut<KeyStats>> {
     pub(crate) mode: KeyMode,
     legacy: (Key, Vec<u8>),
     repaired: (Key, Vec<u8>),
     frames: Vec<Frame>,
-    pub(crate) stats: &'s mut KeyStats,
+    /// Members of every class resolved by exchange earlier on this path.
+    resolved: HashSet<u64>,
+    pub(crate) stats: S,
 }
 
-impl<'s> Keyer<'s> {
-    pub(crate) fn new(mode: KeyMode, stats: &'s mut KeyStats) -> Self {
+impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
+    pub(crate) fn new(mode: KeyMode, stats: S) -> Self {
         Self {
             mode,
             legacy: ([0u8; 32], b"root".to_vec()),
             repaired: ([0u8; 32], b"root".to_vec()),
             frames: Vec::new(),
+            resolved: HashSet::new(),
             stats,
         }
     }
@@ -562,15 +605,22 @@ impl<'s> Keyer<'s> {
                 legacy,
                 obs,
                 menu,
+                resolved: Vec::new(),
             }
         } else {
-            let (view, tried, mattering) =
-                repaired_view(&obs, &menu, &legacy, &self.frames, TIE_WORK_BOUND)?;
-            self.stats.frames_with_mattering_ties += u64::from(mattering > 0);
-            self.stats.canonicalizations_for_ties += tried as u64;
+            let (view, tried, mattering) = repaired_view(
+                &obs,
+                &menu,
+                &legacy,
+                &self.frames,
+                &self.resolved,
+                TIE_WORK_BOUND,
+            )?;
+            self.stats.borrow_mut().frames_with_mattering_ties += u64::from(mattering > 0);
+            self.stats.borrow_mut().canonicalizations_for_ties += tried as u64;
             match view {
-                Ok(c) => {
-                    self.stats.exact_resolved += u64::from(mattering > 0);
+                Ok((c, members)) => {
+                    self.stats.borrow_mut().exact_resolved += u64::from(mattering > 0);
                     Step {
                         legacy_key,
                         repaired_key: child_key_v2(&self.repaired.0, &self.repaired.1, &c),
@@ -578,23 +628,30 @@ impl<'s> Keyer<'s> {
                         legacy,
                         obs,
                         menu,
+                        resolved: members,
                     }
                 }
                 Err(f) => {
-                    *self.stats.fallbacks.entry(f.label()).or_default() += 1;
+                    *self
+                        .stats
+                        .borrow_mut()
+                        .fallbacks
+                        .entry(f.label())
+                        .or_default() += 1;
                     Step {
                         legacy_key,
-                        repaired_key: fallback_key(&legacy_key),
+                        repaired_key: fallback_key(&legacy_key, &self.repaired.0),
                         repaired: legacy.clone(),
                         legacy,
                         obs,
                         menu,
+                        resolved: Vec::new(),
                     }
                 }
             }
         };
-        self.stats.frames += 1;
-        self.stats.seconds += t0.elapsed().as_secs_f64();
+        self.stats.borrow_mut().frames += 1;
+        self.stats.borrow_mut().seconds += t0.elapsed().as_secs_f64();
         Ok(step)
     }
 
@@ -645,6 +702,7 @@ impl<'s> Keyer<'s> {
         self.legacy = (st.legacy_key, st.legacy.menu[i].clone());
         self.repaired = (st.repaired_key, st.repaired.menu[i].clone());
         if self.mode != KeyMode::Legacy {
+            self.resolved.extend(st.resolved.iter().copied());
             let taken = st.menu[i].clone();
             self.frames.push(Frame {
                 obs: st.obs,
@@ -725,7 +783,7 @@ mod tests {
         m
     }
 
-    fn keyer(mode: KeyMode, stats: &mut KeyStats) -> Keyer<'_> {
+    fn keyer(mode: KeyMode, stats: &mut KeyStats) -> Keyer<&mut KeyStats> {
         Keyer::new(mode, stats)
     }
 
@@ -943,7 +1001,11 @@ mod tests {
         let exact = |r: Vec<Value>| {
             let (o, m) = prepare(view(bf4.clone(), vec![], r), menu(&[]));
             let (l, _) = canon_prepared(o.clone(), m.clone(), None).unwrap();
-            repaired_view(&o, &m, &l, &[], 1000).unwrap().0.unwrap()
+            repaired_view(&o, &m, &l, &[], &HashSet::new(), 1000)
+                .unwrap()
+                .0
+                .unwrap()
+                .0
         };
         let pairs = vec![rel(11, 12), rel(12, 11), rel(13, 14), rel(14, 13)];
         let cycle = vec![rel(11, 12), rel(12, 13), rel(13, 14), rel(14, 11)];
@@ -976,15 +1038,15 @@ mod tests {
                     menu(&[]),
                 )
                 .unwrap();
-            (r1, f2.repaired_key, f2.legacy_key, s.fallbacks.clone())
+            (r1, f2.repaired_key, f2.legacy_key, s.fallbacks.clone(), r1)
         };
-        let (a1, a2, al, fa) = run(11);
-        let (b1, b2, bl, _) = run(12);
+        let (a1, a2, al, fa, ar) = run(11);
+        let (b1, b2, bl, _, _) = run(12);
         assert_eq!(a1, b1, "frame 1 merges");
         assert_eq!(fa.get("prefix_asymmetric"), Some(&1));
         assert_ne!(al, bl);
         assert_ne!(a2, b2, "fallback keeps the legacy separation");
-        assert_eq!(a2, fallback_key(&al));
+        assert_eq!(a2, fallback_key(&al, &ar));
     }
 
     /// The shadow arm's tie order maps, action by action, to the repaired
@@ -1034,5 +1096,37 @@ mod tests {
         let (c, _) = canon_values(view(vec![x(), y()], vec![], vec![]), menu(&[11])).unwrap();
         assert_eq!(st.legacy_key, child_key(&[0u8; 32], b"root", &c));
         assert_eq!(st.repaired_key, st.legacy_key);
+    }
+
+    /// Review finding: a class resolved by exchange earlier on the path must
+    /// stay exchangeable even where it no longer matters. Frame 1 targets one
+    /// copy (resolved, merging the two histories); frame 2 shows the copies
+    /// tied and unreferenced with a symmetric attack menu, so its legacy
+    /// labels follow engine order. It must fall back, keeping the histories
+    /// apart instead of letting "attack with the first copy" mean the targeted
+    /// copy in one history and the other copy in the other.
+    #[test]
+    fn earlier_exchange_guards_later_unreferenced_ties() {
+        let run = |target: u64| {
+            let mut s = KeyStats::default();
+            let mut kr = keyer(KeyMode::Repaired, &mut s);
+            let f1 = kr
+                .key_raw(
+                    view(vec![x(), y()], vec![obj(target, 19, 3)], vec![]),
+                    menu(&[]),
+                )
+                .unwrap();
+            let r1 = f1.repaired_key;
+            kr.advance(f1, 0);
+            let f2 = kr
+                .key_raw(view(vec![x(), y()], vec![], vec![]), menu(&[11, 12]))
+                .unwrap();
+            (r1, f2.repaired_key, s.fallbacks.clone())
+        };
+        let (a1, a2, fa) = run(11);
+        let (b1, b2, _) = run(12);
+        assert_eq!(a1, b1, "frame 1 merges");
+        assert_eq!(fa.get("prefix_asymmetric"), Some(&1));
+        assert_ne!(a2, b2, "the later tie is not relabeled by engine order");
     }
 }
