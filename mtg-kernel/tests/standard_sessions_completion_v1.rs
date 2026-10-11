@@ -55,7 +55,10 @@ fn rank(action: &Value) -> u8 {
     }
 }
 
-fn play(decks: [CustomDeckV1; 2], seed: u64) -> (String, Value, BTreeMap<String, usize>) {
+fn play(
+    decks: [CustomDeckV1; 2],
+    seed: u64,
+) -> (String, Value, BTreeMap<String, usize>, [usize; 2]) {
     let mut server = LimitedJsonlServerV1::new_with_london_mulligans_v1();
     let mut request = json!({"schema_version":4,"request_type":"reset","request_id":"reset",
         "decks":decks,"episode_id":seed,"env_seed":seed,
@@ -63,6 +66,7 @@ fn play(decks: [CustomDeckV1; 2], seed: u64) -> (String, Value, BTreeMap<String,
     .to_string();
     let mut transcript = Sha256::new();
     let mut counts = BTreeMap::new();
+    let mut casts_by_seat = [0; 2];
     for index in 0..32768 {
         let raw = server.handle_line(&request);
         transcript.update(request.as_bytes());
@@ -83,11 +87,25 @@ fn play(decks: [CustomDeckV1; 2], seed: u64) -> (String, Value, BTreeMap<String,
                 reply["terminal"]["terminal_code"], "natural_game_over",
                 "seed={seed}: {reply}"
             );
-            return (format!("{:x}", transcript.finalize()), reply, counts);
+            return (
+                format!("{:x}", transcript.finalize()),
+                reply,
+                counts,
+                casts_by_seat,
+            );
         }
         let decision = &reply["decision"];
         let actions = decision["legal_actions"].as_array().unwrap();
         let action = actions.iter().min_by_key(|a| rank(a)).unwrap();
+        if action["semantic"]["action_kind"] == "cast_spell" {
+            let actor: mtg_kernel::rl::PlayerSeatV1 =
+                serde_json::from_value(action["semantic"]["actor"].clone()).unwrap();
+            let seat = match actor {
+                mtg_kernel::rl::PlayerSeatV1::P0 => 0,
+                mtg_kernel::rl::PlayerSeatV1::P1 => 1,
+            };
+            casts_by_seat[seat] += 1;
+        }
         *counts
             .entry(
                 action["semantic"]["action_kind"]
@@ -121,14 +139,17 @@ fn all_sixteen_source_decks_finish_and_replay_through_public_sessions() {
         let first = play(decks.clone(), seed);
         let replay = play(decks, seed);
         assert_eq!(first, replay, "{} / {}", fixtures[0].0, fixtures[1].0);
-        assert!(
-            first.2.get("cast_spell").copied().unwrap_or_default() > 0,
-            "no casting: {:?}",
-            first.2
-        );
+        for (seat, casts) in first.3.iter().enumerate() {
+            assert!(
+                *casts > 0,
+                "{} cast no spells in seat {seat}, seed={seed}: {:?}",
+                fixtures[seat].0,
+                first.2
+            );
+        }
         println!(
-            "{} / {} seed={seed} transcript_sha256={} actions={:?}",
-            fixtures[0].0, fixtures[1].0, first.0, first.2
+            "{} / {} seed={seed} transcript_sha256={} actions={:?} casts_by_seat={:?}",
+            fixtures[0].0, fixtures[1].0, first.0, first.2, first.3
         );
     }
 }
