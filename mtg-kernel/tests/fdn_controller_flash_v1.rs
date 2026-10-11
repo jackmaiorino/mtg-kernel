@@ -268,3 +268,50 @@ fn witness_protection_removes_static_permission_but_pending_aura_cast_completes(
         );
     }
 }
+
+#[test]
+fn restored_adventure_form_choice_retains_flash_permission_for_both_forms() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for mode in [0, 1] {
+            let mut state = ready(player.opponent());
+            put(&mut state, player, "High Fae Trickster", Zone::Battlefield);
+            let dragon = put(&mut state, player, "Fang Dragon", Zone::Hand);
+            state.players[player.index()].mana_pool = [0, 0, 0, 2, 0, 5];
+            priority(&mut state, player);
+            assert!(offered(&mut state, dragon));
+            engine::step(&mut state, Action::CastSpell(dragon)).unwrap();
+            match next(&mut state) {
+                Decision::ChooseSpellMode { legal_modes, .. } => {
+                    assert_eq!(legal_modes, vec![0, 1]);
+                }
+                other => panic!("expected Adventure form choice {other:?}"),
+            }
+            let mut resumed = restored(&state);
+            for game in [&mut state, &mut resumed] {
+                engine::step(game, Action::ChooseSpellMode(mode)).unwrap();
+                settle(game);
+                assert_eq!(
+                    game.objects.get(dragon).zone,
+                    if mode == 0 {
+                        Zone::Battlefield
+                    } else {
+                        Zone::Exile
+                    }
+                );
+                assert_eq!(game.active_player, player.opponent());
+                if mode == 1 {
+                    priority(game, player);
+                    game.players[player.index()].mana_pool = [0, 0, 0, 2, 0, 5];
+                    assert!(offered(game, dragon));
+                    engine::step(game, Action::CastSpell(dragon)).unwrap();
+                    settle(game);
+                    assert_eq!(game.objects.get(dragon).zone, Zone::Battlefield);
+                }
+            }
+            assert_eq!(
+                serde_json::to_value(state).unwrap(),
+                serde_json::to_value(resumed).unwrap()
+            );
+        }
+    }
+}
