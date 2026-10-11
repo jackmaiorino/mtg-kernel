@@ -496,6 +496,15 @@ pub enum UntilEndOfTurnEffect {
         timestamp: u64,
         duration: EffectDuration,
     },
+    /// One exact incarnation's resolved control effect. The former controller
+    /// is restored at cleanup after newer effects on that incarnation unwind.
+    ResolvedObjectControlEffect {
+        object_id: ObjectId,
+        object_zone_change_count: u32,
+        previous_controller: PlayerId,
+        controller: PlayerId,
+        timestamp: u64,
+    },
 }
 
 /// Whether an `effect::EffectOp::ImpulseDraw`-exiled card's `PlayPermission`
@@ -14614,6 +14623,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             }
             crate::standard_creatures_v1::cleanup(state);
             crate::sower_restriction_capture_v1::expire(state);
+            crate::effect::temporary_control_v1::expire_at_cleanup(state);
             state.engine.until_end_of_turn.clear();
             state.engine.active_replacements.retain(|replacement| {
                 !matches!(
@@ -15558,7 +15568,9 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
                 UntilEndOfTurnEffect::ResolvedObjectKeywordEffect { .. } => false,
                 UntilEndOfTurnEffect::SyntheticMarker(_) => false,
                 UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
-                | UntilEndOfTurnEffect::ResolvedObjectCantBlock { .. } => false,
+                | UntilEndOfTurnEffect::ResolvedObjectCantBlock { .. }
+
+                | UntilEndOfTurnEffect::ResolvedObjectControlEffect { .. } => false,
             };
             if grants {
                 return true;

@@ -1837,6 +1837,8 @@ pub fn observe_v1(
     step_index: u64,
 ) -> Result<ObservationV1> {
     crate::effect::validate_legacy_ward_observation(state).map_err(RlContractError)?;
+    crate::effect::temporary_control_v1::refuse_legacy_observation(state)
+        .map_err(RlContractError)?;
     let projection = PublicObservationProjectionV1 {
         turn: state.turn,
         phase: state.step.into(),
@@ -1891,6 +1893,8 @@ pub fn observe_v2(
     step_index: u64,
 ) -> Result<ObservationV2> {
     crate::effect::validate_legacy_ward_observation(state).map_err(RlContractError)?;
+    crate::effect::temporary_control_v1::refuse_legacy_observation(state)
+        .map_err(RlContractError)?;
     let mut observation = build_observation_v2(
         state,
         surface,
@@ -1942,6 +1946,8 @@ fn build_observation_common_v2(
     text_mode: ObservationTextModeV2,
     accept_cant_block: bool,
 ) -> Result<ObservationV2> {
+    crate::effect::temporary_control_v1::refuse_legacy_observation(state)
+        .map_err(RlContractError)?;
     let projection = PublicObservationProjectionV2 {
         turn: state.turn,
         phase: state.step.into(),
@@ -2069,6 +2075,8 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
         text_mode,
     } = request;
     crate::effect::validate_legacy_ward_observation(state).map_err(RlContractError)?;
+    crate::effect::temporary_control_v1::refuse_legacy_observation(state)
+        .map_err(RlContractError)?;
     #[cfg(test)]
     TEST_POLICY_V5_OBSERVATIONS.with(|calls| calls.set(calls.get().saturating_add(1)));
 
@@ -6801,6 +6809,11 @@ fn continuous_effects_common_v2(
     }
     for effect in &state.engine.until_end_of_turn {
         match effect {
+            UntilEndOfTurnEffect::ResolvedObjectControlEffect { .. } => {
+                return Err(RlContractError(
+                    "temporary creature control requires an explicit observation successor".into(),
+                ));
+            }
             UntilEndOfTurnEffect::SyntheticMarker(_) => {}
             UntilEndOfTurnEffect::ResolvedSetEffect {
                 object_ids,

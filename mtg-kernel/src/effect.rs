@@ -1358,7 +1358,7 @@ pub enum EffectOp {
     /// which drives its end-step exile and its leave-the-battlefield exile
     /// replacement.
     ReturnSourceFromGraveyardUnearthed,
-    /// Ward—Discard a card: counters the exact stack incarnation that
+    /// Wardâ€”Discard a card: counters the exact stack incarnation that
     /// targeted the bound Ward permanent unless its controller discards a
     /// card. Like the other Standard ward costs it never asks: the payer
     /// pays whenever their hand is not empty, discarding its lowest mana
@@ -1586,6 +1586,10 @@ pub enum EffectOp {
     BindAuthorityEntryGainLifeV1,
     AuthorityEntryGainLifeV1 {
         capture_history_index: u64,
+    },
+    /// Gain control of one legal, exact targeted creature until cleanup.
+    GainControlOfTargetCreatureUntilEndOfTurn {
+        target_index: u8,
     },
 }
 
@@ -17453,6 +17457,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             let object = ctx.resolve_object(*object);
             event::propose_and_commit(state, event::ProposedEvent::tap(object));
         }
+        EffectOp::GainControlOfTargetCreatureUntilEndOfTurn { target_index } => {
+            temporary_control_v1::gain_control(ctx, usize::from(*target_index), state);
+        }
         EffectOp::UntapObject { object } => {
             let object = ctx.resolve_object(*object);
             crate::engine::attempt_untap(state, object);
@@ -21394,3 +21401,4 @@ mod run_away_together_tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 mod divine_variable_targets_tests;
+pub(crate) mod temporary_control_v1;

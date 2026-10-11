@@ -148,6 +148,7 @@ impl Scan<'_> {
             | CounterTargetUnlessPaysGeneric { .. }
             | GainLifeDynamic { .. }
             | UntapObject { .. }
+            | GainControlOfTargetCreatureUntilEndOfTurn { .. }
             | AnimateSource
             | AnimateSourcePermanentlyV1
             | LookTopSelectV1 { .. }

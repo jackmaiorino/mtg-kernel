@@ -3548,6 +3548,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
             "DrawCardsDynamic(Controller,DistinctManaValuesAmongControlledNonlandPermanents,resolutionSample)",
             "EffectOp::DrawCardsDynamic { player: PlayerRef::Controller, count: DynamicValueDef::DistinctManaValuesAmongControlledNonlandPermanents }",
         ),
+        "Involuntary Employment" => program(
+            "Creature",
+            "Sequence(GainControlTargetCreatureUntilEndOfTurn(Target0,Controller,exactIncarnation,reverseCleanup),Untap(Target0),GrantKeywordTargetUntilEndOfTurn(Target0,Haste),CreateToken(Treasure Token,Controller))",
+            "EffectOp::Sequence(vec![EffectOp::GainControlOfTargetCreatureUntilEndOfTurn { target_index: 0 }, EffectOp::UntapObject { object: ObjectRef::Target(0) }, EffectOp::GrantKeywordTargetUntilEndOfTurn { object: ObjectRef::Target(0), keyword: Keywords::HASTE }, EffectOp::CreateToken { token_def: crate::card_def::card_id_by_name(\"Treasure Token\").expect(\"Treasure Token in CARD_DEFS\"), controller: PlayerRef::Controller }])",
+        ),
         "Inspiring Call" => program(
             "None",
             "DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn(Controller,Creature,PlusOneCounterCountGreaterThanZero,oneDrawPerCreature,Indestructible,exactIncarnations,resolutionSnapshot)",

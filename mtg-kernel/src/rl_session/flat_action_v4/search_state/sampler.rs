@@ -133,6 +133,11 @@ fn conflicts(
                 object_id,
                 object_zone_change_count,
                 ..
+            }
+            | ResolvedObjectControlEffect {
+                object_id,
+                object_zone_change_count,
+                ..
             } => same(*object_id, *object_zone_change_count),
             DamageCannotBePrevented { .. } => false,
         }
