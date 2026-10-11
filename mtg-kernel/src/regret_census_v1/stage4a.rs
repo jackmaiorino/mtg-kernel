@@ -923,8 +923,17 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
                 .iter()
                 .find(|s| &s.id == id)
                 .ok_or_else(|| format!("unknown case {id}"))?;
-            let row = refresh::source_arms(&sh, policy, src, parity)
-                .unwrap_or_else(|e| json!({"kind":"error","id":id,"error":e}));
+            // A worker thread with a large stack, as the bank's workers run
+            // (the main thread's default stack overflowed here).
+            let row = std::thread::scope(|scope| {
+                std::thread::Builder::new()
+                    .stack_size(256 << 20)
+                    .spawn_scoped(scope, || refresh::source_arms(&sh, policy, src, parity))
+                    .map_err(|e| e.to_string())?
+                    .join()
+                    .map_err(|_| "refresh worker panicked".to_owned())?
+            })
+            .unwrap_or_else(|e| json!({"kind":"error","id":id,"error":e}));
             out.push_str(&format!(
                 "{row}
 "
