@@ -179,14 +179,33 @@ fn actual_copy_of_hidden_creature_uses_neutral_pre_entry_definition_and_public_n
                     "hidden printed Healer ETB must not be copied"
                 );
                 assert_eq!(current.objects.get(source).zone, Zone::Graveyard);
-                // The FDN registry has no printed face-down producer or its
-                // public sentinels. A live hidden original must refuse the
-                // predecessor projection without leaking its definition.
+                // The current FDN registry lacks the observer sentinel. Its
+                // separate serial admission must enable the exact existing
+                // neutral projection; until then the public view refuses.
                 let before = serde_json::to_vec(current).unwrap();
                 for viewer in [actor, actor.opponent()] {
-                    let refusal = mtg_kernel::rl::observe_v1(current, viewer, 0).unwrap_err();
-                    assert!(refusal.to_string().contains("neutral sentinel"));
-                    assert!(!refusal.to_string().contains(hidden_name));
+                    if let Some(sentinel) = card_id_by_name("Face-down creature") {
+                        let observation = mtg_kernel::rl::observe_v1(current, viewer, 0).unwrap();
+                        let original = observation.projection.battlefield[actor.index()]
+                            .iter()
+                            .find(|card| card.stable.arena_id == target.0)
+                            .unwrap();
+                        assert_eq!(original.stable.card_db_id, sentinel);
+                        assert!(!serde_json::to_string(original)
+                            .unwrap()
+                            .contains(hidden_name));
+                        let copy = observation.projection.battlefield[actor.index()]
+                            .iter()
+                            .find(|card| card.stable.arena_id == token.0)
+                            .unwrap();
+                        assert_eq!(copy.stable.card_db_id, neutral);
+                        assert!(copy.card_name.is_empty());
+                        assert!(!serde_json::to_string(copy).unwrap().contains(hidden_name));
+                    } else {
+                        let refusal = mtg_kernel::rl::observe_v1(current, viewer, 0).unwrap_err();
+                        assert!(refusal.to_string().contains("neutral sentinel"));
+                        assert!(!refusal.to_string().contains(hidden_name));
+                    }
                 }
                 assert_eq!(serde_json::to_vec(current).unwrap(), before);
                 event::propose_and_commit(current, ProposedEvent::zone_change(target, Zone::Hand));
