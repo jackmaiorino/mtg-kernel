@@ -73,6 +73,8 @@ pub fn producer_sha256() -> String {
         include_str!("slumbering_cerberus_v1.rs"),
         include_str!("trigger.rs"),
         include_str!("engine.rs"),
+        include_str!("effect.rs"),
+        include_str!("state.rs"),
         include_str!("event.rs"),
         include_str!("standard_cards_v1.rs"),
         include_str!("continuous_characteristics_v1.rs"),
