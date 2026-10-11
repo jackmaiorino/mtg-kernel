@@ -168,3 +168,18 @@ mod fdn_vengeful_bloodwitch_v1;
 mod fdn_wardens_cycle_v1;
 #[path = "fdn/fdn_witness_protection_v1.rs"]
 mod fdn_witness_protection_v1;
+
+#[path = "fdn/fdn_authority_of_the_consuls_v1.rs"]
+mod fdn_authority_of_the_consuls_v1;
+
+#[path = "fdn/fdn_involuntary_employment_v1.rs"]
+mod fdn_involuntary_employment_v1;
+
+#[path = "fdn/fdn_frenzied_goblin_v1.rs"]
+mod fdn_frenzied_goblin_v1;
+
+#[path = "fdn/fdn_slumbering_cerberus_v1.rs"]
+mod fdn_slumbering_cerberus_v1;
+
+#[path = "fdn/fdn_wildwood_scourge_v1.rs"]
+mod fdn_wildwood_scourge_v1;
