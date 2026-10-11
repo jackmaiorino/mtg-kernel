@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
+from pathlib import Path
 import unittest
 
 import torch
@@ -102,6 +105,18 @@ class FeaturesV9Tests(unittest.TestCase):
             v8.encode_decision(obs, legal_actions())
         with self.assertRaises(v9.FeatureSchemaError):
             v9.encode_decision(observation_v8(), legal_actions())
+
+    def test_pinned_descriptor_binds_successor_and_predecessor_sources(self):
+        root = Path(__file__).resolve().parents[2]
+        raw = (root / "data/flat_policy_v6/feature_contract_v6.json").read_bytes()
+        descriptor = json.loads(raw)
+        self.assertEqual(descriptor["features_source_sha256"], hashlib.sha256(Path(v9.__file__).read_bytes()).hexdigest())
+        self.assertEqual(descriptor["predecessor_source_sha256"], hashlib.sha256(Path(v8.__file__).read_bytes()).hexdigest())
+        self.assertEqual(descriptor["feature_contract_digest"], v9.feature_contract_fingerprint())
+        self.assertEqual(descriptor["feature_encoding_digest"], v9.encoding_contract_fingerprint())
+        self.assertEqual(descriptor["dimensions"]["state"], 221)
+        identity = (root / "data/flat_policy_v6/feature_identity.rs").read_text(encoding="utf-8")
+        self.assertIn(hashlib.sha256(raw).hexdigest(), identity)
 
 
 if __name__ == "__main__":
