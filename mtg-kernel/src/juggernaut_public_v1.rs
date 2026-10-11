@@ -6,7 +6,7 @@ use crate::rl::{
     CardPrivateV1, CardStableRefV1, KnownLibraryCardV4, PlayerSeatV1,
     PublicObservationProjectionV5, RlContractError,
 };
-use crate::state::{GameState, Zone};
+use crate::state::GameState;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 

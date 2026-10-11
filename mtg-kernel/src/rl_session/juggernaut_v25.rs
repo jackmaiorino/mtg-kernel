@@ -79,18 +79,6 @@ impl FastActorSessionV1 {
         )
     }
 
-    #[cfg(all(
-        test,
-        feature = "limited-fdn-fixtures",
-        not(feature = "standard-magezero-fixtures")
-    ))]
-    pub(crate) fn from_juggernaut_v25_engine_priority_fixture_state(state: GameState) -> Self {
-        Self::from_juggernaut_v25_fixture_state_and_surface(
-            state,
-            PolicySurfaceV5::new_with_engine_priority_v1(),
-        )
-    }
-
     #[cfg(test)]
     fn from_juggernaut_v25_fixture_state_and_surface(
         state: GameState,
