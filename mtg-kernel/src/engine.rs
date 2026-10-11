@@ -2731,7 +2731,14 @@ fn legal_targets_for_controller_from_source(
             let mut out = vec![Target::Player(PlayerId::P0), Target::Player(PlayerId::P1)];
             for p in [PlayerId::P0, PlayerId::P1] {
                 for &id in &state.players[p.index()].battlefield {
-                    if object_has_type(state, id, CardType::Creature) {
+                    // FDN uses the existing object target contract and loyalty damage path.
+                    // Match catalog precedence: Standard wins when both flags are present.
+                    if object_has_type(state, id, CardType::Creature)
+                        || (cfg!(all(
+                            feature = "limited-fdn-fixtures",
+                            not(feature = "standard-magezero-fixtures")
+                        )) && object_has_type(state, id, CardType::Planeswalker))
+                    {
                         out.push(Target::Object(id));
                     }
                 }
@@ -16040,6 +16047,10 @@ fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> R
 ))]
 #[path = "engine/raid_history_tests.rs"]
 mod raid_history_tests;
+
+#[cfg(test)]
+#[path = "engine/anytarget_planeswalker_tests.rs"]
+mod anytarget_planeswalker_tests;
 
 #[cfg(all(
     test,
