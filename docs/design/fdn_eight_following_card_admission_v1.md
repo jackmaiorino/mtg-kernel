@@ -7,7 +7,7 @@ paths and27 source paths were disjoint and byte-equal to their parents.
 Actual default coverage is177 full/1 partial/108 missing of286 booster names;
 frozen printing identities and24 token dependencies remain unchanged.
 
-Register one coherent v69 batch after the source check succeeds: Nessian
+Candidate f029ec46 registers one coherent v69 batch after source success: Nessian
 Hornbeetle377, Micromancer378, Paradise Druid379, Bulk Up380, Inspiring Call381,
 Needletooth Pack382, Stroke of Midnight383 and Hare Apparent384. Human385 and
 Rabbit386 are undeckable dependencies, giving387 definitions. The40-card
@@ -27,9 +27,17 @@ Source Native1 failed two registered Hare setup cases because battlefield
 entry restores printed names. Its101 command/guard and earlier primitive
 passes remain retained. Repair2b uses live printed names, a post-entry
 noncreature alias and actual token events; production code is unchanged.
-Source Native2 supervisor37988 is queued through `host_slots_v1.py run --wait`.
-Registration requires its actual successful command and released guard.
-No registration,41 actual new-card groups or admission check has run.
+Source Native2 passed both configurations, affected primitives and strict
+lint; guard d8d462c188d3464fa107dbce8ecf07d6 exited0 and released16-17.
+Candidate f029ec46 registered all eight names and two tokens, preserving the
+old377-definition prefix. All34 affected Python cases pass. Admission Native1
+actually generated identity b0338cda1845f330 and executed41 groups:39 passed,
+two failed. Micromancer wrongly expected redundant own-hand knowledge, and
+Hare tried casting an Aura while its entry ability was on the stack without
+flash. The repairs assert the actual own-hand roster/opponent reveal and use
+preexisting registered High Fae Trickster for legal response timing. Native1
+command/guard101 and its immutable generated source are retained. Lint and
+combined qualification did not execute after that failure.
 
 Prepared registration validates accepted-default ancestry, unchanged frozen
 metadata and current registry before writing. Its admission CMD/prerequisite
@@ -39,9 +47,10 @@ generated hash/file SHA and execute all eight targets with `--no-fail-fast`,
 then run Limited/combined strict lint. Source/shared target reuse requires
 actual guard termination; a watcher timeout is not termination.
 
-After the generated identity and admission guard termination, migrate the
-successor production profile using that actual hash. Preserve historical
-v68 reads and reject stale writes/resumes. Native2 then qualifies the41
+After Native1's generated identity and actual guard101 termination, the
+successor production profile is migrated using that actual hash. Its new
+readability/publication/resume cases are prepared but unrun. Preserve historical
+v68 reads and reject stale writes/resumes. Native2 must qualify the repaired41
 actual groups, definitions, RulesMeaning, native records and production-store
 cases. Reuse compatible unaffected checks. Record observed counts and failures;
 do not infer a pass from a prepared script or a compilable fixture. Finish

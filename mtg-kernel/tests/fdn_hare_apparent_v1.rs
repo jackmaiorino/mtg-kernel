@@ -1,4 +1,4 @@
-//! Unregistered Hare Apparent fixtures; actual gameplay admission remains pending.
+//! Registered candidate; full gameplay/profile admission remains pending.
 #![cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
@@ -337,6 +337,7 @@ fn effective_name_and_already_queued_ability_survive_witness_and_forged_roots_re
     for player in [PlayerId::P0, PlayerId::P1] {
         for remove_source_ability in [false, true] {
             let mut state = ready(player);
+            put(&mut state, player, "High Fae Trickster", Zone::Battlefield);
             let other = put(&mut state, player, "Hare Apparent", Zone::Battlefield);
             let source = announce(&mut state, player);
             trigger_ready(&mut state, source);

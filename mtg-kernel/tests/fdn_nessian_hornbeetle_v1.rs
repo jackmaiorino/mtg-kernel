@@ -1,4 +1,4 @@
-//! Source preparation. Registration and actual card qualification remain pending.
+//! Registered candidate; full gameplay/profile admission remains pending.
 #![cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")

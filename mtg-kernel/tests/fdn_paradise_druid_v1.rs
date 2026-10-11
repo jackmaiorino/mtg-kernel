@@ -1,4 +1,4 @@
-//! Unregistered Paradise Druid fixtures; actual gameplay admission remains pending.
+//! Registered candidate; full gameplay/profile admission remains pending.
 #![cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
