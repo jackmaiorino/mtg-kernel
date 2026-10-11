@@ -249,4 +249,77 @@ mod tests {
             assert_eq!(session.inner.privileged_core_environment_hash(), after);
         }
     }
+
+    #[test]
+    fn v6_exports_all_tensors_for_real_declarations_and_both_observers() {
+        let mut cases = Vec::new();
+        for declaring in [PlayerId::P0, PlayerId::P1] {
+            for actor in [PlayerId::P0, PlayerId::P1] {
+                let mut state = declared(declaring);
+                state.priority_player = actor;
+                if actor != declaring {
+                    put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+                    state.players[actor.index()].mana_pool
+                        [crate::mana::ManaColor::R.pool_index()] = 1;
+                }
+                let session = RaidFlatSessionV6::from_session(
+                    FastActorSessionV1::from_v5_fixture_state(state),
+                )
+                .unwrap();
+                let e = expected(&session);
+                assert_eq!(e.acting_player, PlayerSeatV1::from(actor));
+                let observation = session.inner.flat_raid_observation_v9(e).unwrap();
+                let (_, semantics) = session.inner.flat_rich_current_input_v5(e).unwrap();
+                let actions = semantics
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, semantic)| {
+                        crate::rl::make_legal_action_v5(index as u32, semantic, None).unwrap()
+                    })
+                    .collect::<Vec<_>>();
+                let output = NativeFlatPolicyEncoderV6::default()
+                    .encode(&session, e)
+                    .unwrap();
+                assert_eq!(
+                    &output.state()[output.state().len() - 2..],
+                    if actor == declaring {
+                        &[1.0, 0.0]
+                    } else {
+                        &[0.0, 1.0]
+                    }
+                );
+                cases.push(serde_json::json!({
+                    "name": format!("declared_cleared_p{}_observer_p{}", declaring.index(), actor.index()),
+                    "observation": observation, "legal_actions": actions,
+                    "tensors": {
+                        "state": output.state(), "object_features": output.object_features(),
+                        "object_card_ids": output.object_card_ids(), "object_groups": output.object_groups(),
+                        "object_node_ids": output.object_node_ids(), "edge_features": output.edge_features(),
+                        "edge_source_indices": output.edge_source_indices(), "edge_target_indices": output.edge_target_indices(),
+                        "action_features": output.action_features(), "action_ref_features": output.action_ref_features(),
+                        "action_ref_card_ids": output.action_ref_card_ids(),
+                        "action_ref_action_indices": output.action_ref_action_indices(),
+                        "action_ref_node_indices": output.action_ref_node_indices()
+                    }
+                }));
+            }
+        }
+        if let Ok(path) = std::env::var("MTG_FLAT_V6_PARITY_EXPORT") {
+            use std::io::Write;
+            let artifact = serde_json::json!({
+                "schema": "flat-v6-native-python-parity-1",
+                "feature_contract_digest": FEATURE_CONTRACT_DIGEST_V6,
+                "feature_encoding_digest": FEATURE_ENCODING_DIGEST_V6,
+                "cases": cases
+            });
+            let mut file = std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(path)
+                .unwrap();
+            file.write_all(&serde_json::to_vec(&artifact).unwrap())
+                .unwrap();
+            file.sync_all().unwrap();
+        }
+    }
 }
