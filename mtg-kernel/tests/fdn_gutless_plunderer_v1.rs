@@ -577,6 +577,23 @@ fn manufactured_closed_boundary_cannot_skip_the_actual_private_graveyard_operati
             Some(Decision::ChooseEffectTargets { .. })
         ));
         let original_library = state.players[actor.index()].library.clone();
+        let private_capture = state
+            .engine
+            .event_history
+            .iter()
+            .find(|event| {
+                matches!(
+                    event,
+                    event::CommittedEvent::PrivateKeepOneLibraryCapturedV1 { .. }
+                )
+            })
+            .unwrap()
+            .clone();
+        let mut injected = replay(&state);
+        injected.engine.event_log.push(private_capture);
+        let before = serde_json::to_vec(&injected).unwrap();
+        assert!(engine::step(&mut injected, Action::Pass).is_err());
+        assert_eq!(before, serde_json::to_vec(&injected).unwrap());
         let last = state
             .engine
             .event_history

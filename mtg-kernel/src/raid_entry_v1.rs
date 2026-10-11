@@ -125,6 +125,17 @@ pub(crate) fn validate_source_for_program(
 }
 
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    if state.engine.event_log.iter().any(|event| {
+        matches!(
+            event,
+            CommittedEvent::RaidEntrySourceV1 { .. }
+                | CommittedEvent::PrivateKeepOneLibraryCapturedV1 { .. }
+                | CommittedEvent::PrivateKeepOneLibraryConsumedV1 { .. }
+                | CommittedEvent::PrivateKeepOneRaidSkippedV1 { .. }
+        )
+    }) {
+        return Err("private Raid entry authority cannot enter the public event log".into());
+    }
     for pending in state
         .engine
         .pending_triggers
