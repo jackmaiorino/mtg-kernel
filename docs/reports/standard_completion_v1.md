@@ -11,28 +11,39 @@ the public session interface. Preserve the 62-card blue fixture and empty
 sideboards. Passing inventory alone is insufficient. Existing frozen Pauper
 and FDN identities and checkpoint interfaces remain unchanged.
 
-## Work in progress
+## Integrated implementation
 
-- Root: integrate the existing E/F branch `f3895c802`, repair its known rules
-  limitations, add remaining noncreature permanents and planeswalkers, and
-  integrate, verify, review and deliver the complete change.
-- Keywords: family D missing cards and incomplete payment/targeting/timing
-  choices, with shared face-down mechanics.
-- Creatures: families G/H, last-known characteristics and restriction
-  lifetimes, random bottom order, and shared FDN creature imports.
-- Lands/spells: families B/C, utility lands, restricted mana, and public
-  poison observations, including shared FDN spell imports.
+The canonical draft PR is #218, tracking #217. The change integrates the older
+E/F source and implements the remaining B/C/D/G/H cards, Vehicles and crew,
+loyalty X, ninjutsu, disguise, discover, hideaway, alternative cast forms,
+resolution-time casting, linked exile, restricted mana and effective Room and
+transform characteristics. All original deck files are preserved.
 
-The integrated E/F source is development work. Its imported capability flags
-are not a verified support result. Catalog admission and the fixed hash must be
-reconciled after rules review and affected tests. No new training, benchmark
-campaign, paid compute, or playing-strength claim is part of this assignment.
+The generic public interface now carries the new payment and effect choices,
+poison/counter state, source links and effective identities. Suspended parent
+resolutions retain their incarnation-bound references, defer triggers until
+resolution finishes, and resume below spells cast during that resolution.
+Frozen policy encoders refuse unsupported Standard extensions instead of
+dropping them. A separate Standard policy training task is outside this scope.
+
+Source review found and repaired missing Phyrexian payment alternatives,
+Blue Sun's Twilight target admission without taxes/reductions, Djeru's free-cast
+timing, and unlocked Room characteristics. Aegis/Cauldron final repairs and the
+catalog admission reconciliation remain in progress. Capability flags are
+implementation candidates until the affected checks and public sessions pass.
+
+The new public-session acceptance test resolves all sixteen decks, preserves
+the 62-card blue fixture and empty sideboards, plays eight fixed paired-deck
+games to natural terminals, and repeats them with identical transcript hashes.
+This is rules/harness verification, not a playing-strength experiment.
 
 ## Verification and resources
 
-Rust toolchain remains pinned at 1.94.1. Each worker queues at most one
-BelowNormal core through `python/tools/host_slots_v1.py`, with its own Cargo
-cache on D:. Existing host reservations remain binding. Root scratch is
+Rust toolchain remains pinned at 1.94.1. The root queues one combined BelowNormal verification core through
+`python/tools/host_slots_v1.py`, with Cargo `-j1` and its cache on D:. Earlier
+worker checks were canceled to avoid duplicate compilation. A bounded local
+verification process releases its slot after five minutes without another
+check; it is not a recurring automation. Existing host reservations remain binding. Root scratch is
 `D:/e-scratch/magezero-standard-completion`; its code/build logs are reproducible,
 with a 20 GiB cap and at least 60 GiB free reserved on D:. Current tests are
 pending, not passed. Source references and tests stay in Git; bulk caches do not.
@@ -40,3 +51,9 @@ pending, not passed. Source references and tests stay in Git; bulk caches do not
 Generic public decision observations must describe the supported rules state.
 Frozen Pauper policy encoders may refuse new Standard state rather than silently
 drop it. Training a new Standard policy is a separate research task.
+
+The first combined check failed in the build script on duplicated cost/program
+variants and a stale helper call. Those integration defects are fixed in source.
+The next check is queued behind existing reservations. Formatting and diff
+checks pass; native compilation, executable regressions, frozen identity checks,
+public-session acceptance and current-head CI remain pending.
