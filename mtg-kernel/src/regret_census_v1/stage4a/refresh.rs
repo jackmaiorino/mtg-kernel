@@ -386,22 +386,28 @@ fn guide(
                 }
             }
             let sem = s.diagnostic_current_action_semantics().unwrap_or_default();
-            let (mut own_offered, mut dr_offered) = (false, false);
+            let (mut cast_offered, mut own_offered, mut dr_offered) = (false, false, false);
             for x in &sem {
-                let (_, own, dr) = classify(x, s.game_state(), focal, &defs);
+                let (cast, own, dr) = classify(x, s.game_state(), focal, &defs);
+                cast_offered |= cast;
                 own_offered |= own;
                 dr_offered |= dr;
             }
-            let (_, own_chosen, dr_chosen) =
+            let (cast_chosen, own_chosen, dr_chosen) =
                 sem.get(a as usize).map_or((false, false, false), |x| {
                     classify(x, s.game_state(), focal, &defs)
                 });
+            // The passive sequence tracker watches a chosen Spy cast or
+            // self-target through the next transition (the same rule as
+            // selection, frozen execution and label replay).
+            super::play::observe(suffix.as_mut(), &s, a, focal, &defs);
             decisions.push(
                 json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
                 "substep":d.substep_index,"k":d.legal_action_count,"chooser":chooser,
                 "search":cursor.search,"lookup":lookup.reason(),"refreshed":refreshed,
                 "edge_backups":edge_backups,"remaining_before":remaining_before,
                 "remaining_after":allocation.total.saturating_sub(searches.used),
+                "spy_cast_offered":cast_offered,"spy_cast_chosen":cast_chosen,
                 "spy_self_offered":own_offered,"spy_self_chosen":own_chosen,
                 "dr_giant_offered":dr_offered,"dr_giant_chosen":dr_chosen}),
             );
