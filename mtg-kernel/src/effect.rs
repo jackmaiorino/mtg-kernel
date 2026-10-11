@@ -1307,7 +1307,7 @@ pub enum EffectOp {
     /// which drives its end-step exile and its leave-the-battlefield exile
     /// replacement.
     ReturnSourceFromGraveyardUnearthed,
-    /// Wardâ€”Discard a card: counters the exact stack incarnation that
+    /// Ward—Discard a card: counters the exact stack incarnation that
     /// targeted the bound Ward permanent unless its controller discards a
     /// card. Like the other Standard ward costs it never asks: the payer
     /// pays whenever their hand is not empty, discarding its lowest mana
