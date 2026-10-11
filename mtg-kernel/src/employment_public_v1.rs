@@ -91,6 +91,8 @@ pub fn producer_sha256_v1() -> String {
         include_str!("human_bo3_v1/life_ward_v8.rs"),
         include_str!("sower_restriction_capture_v1.rs"),
         include_str!("engine.rs"),
+        include_str!("continuous_characteristics_v1.rs"),
+        include_str!("standard_cards_v1.rs"),
         include_str!("event.rs"),
         include_str!("effect.rs"),
         include_str!("rl_session.rs"),

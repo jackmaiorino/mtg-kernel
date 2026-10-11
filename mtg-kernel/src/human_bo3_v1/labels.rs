@@ -1365,7 +1365,7 @@ pub(super) fn label_employment_v18(
             if actor(action) != Some(human) {
                 return Err(Error::UnsupportedPrompt);
             }
-            return Ok(format!("Cast {}: pay {{3}}{{R}}; gain control of one target creature until cleanup, untap it, grant haste until cleanup, then create a Treasure. An illegal target stops the entire spell", handles.name(source)?));
+            return Ok(format!("Begin casting {} (printed cost {{3}}{{R}}): gain control of one target creature until cleanup, untap it, grant haste until cleanup, then create a Treasure. An illegal target stops the entire spell", handles.name(source)?));
         }
     }
     label_parts_v8(action, observation, handles, human)

@@ -476,6 +476,11 @@ fn actual_short_payment_refuses_without_mutation_and_counterspell_prevents_every
             .unwrap()
             .v4
             .stack_item_id;
+        // EngineWindowsV1 retains the caster's real priority after finalization.
+        assert!(matches!(next(&mut surface, &mut state),
+            Decision::CastSpellOrPass { player, .. } if player == actor));
+        assert_eq!(state.stack.len(), 1);
+        apply(&mut surface, &mut state, Action::Pass);
         let d = next(&mut surface, &mut state);
         assert!(
             matches!(d, Decision::CastSpellOrPass { player, castable_spells, .. }
@@ -765,7 +770,10 @@ fn employment_cast_during_real_madness_cleanup_priority_expires_before_turn_chan
                     count,
                     choices,
                 } => {
-                    assert_eq!((player, count), (actor, 2));
+                    // The surface presents one pick while retaining the genuine
+                    // two-card engine obligation and accepting its whole batch.
+                    assert_eq!((player, count), (actor, 1));
+                    assert_eq!(HarnessSurfaceV2::pending_discard_total(&state), Some(2));
                     assert_eq!(state.step, Step::Cleanup);
                     assert!(choices.contains(&temper) && choices.contains(&forest));
                     apply(
