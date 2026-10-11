@@ -1,0 +1,158 @@
+{
+  "source_commit": "6f0bb03a2cfc830ede813ce6c28e110451ffa0e9",
+  "source_archive_sha256": "ec3943b78e668554b900bb4dfcd8caeaa037da823f3668ea1f73679faff0dc23",
+  "toolchain": {
+    "rustc": "1.94.1 (e408947bf 2026-03-25)",
+    "llvm": "21.1.8",
+    "linker": "MSVC 14.50.35725.0",
+    "python_checks": "3.13.14"
+  },
+  "execution": {
+    "host": "HaleysPC",
+    "guard": "python/tools/host_slots_v1.py run",
+    "work_id": "haley-standard-verify-003",
+    "claim": "c7ac69fdaa8a495aa46f7879677212c8",
+    "cores": [
+      14,
+      15
+    ],
+    "priority": "below_normal",
+    "cargo_jobs": 2,
+    "gpu_ordinal": null,
+    "incremental": false,
+    "debug_info": 0,
+    "target_cap_gib": 3,
+    "disk_free_floor_gib": 60
+  },
+  "checks": {
+    "standard_integration": 349,
+    "standard_library": 80,
+    "default_compatibility": 69,
+    "python": 43,
+    "default_source_commit": "1a7cdcedb507ad8d154364c564903dea05f34c33",
+    "default_source_compatibility": "Final source changes only the Standard integration test; production Rust and data inputs are identical."
+  },
+  "input_archive_file_sha256": {
+    "data/cards_v1.json": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
+    "data/limited/fdn_v1/cards_v1.json": "ed340c7c4ec59812b61516338abce2d9e7ea36dc6d4a4c5ef48013adcef74a28",
+    "data/standard/magezero_v1/cards_v1.json": "577a51fd8f0490a74ffeb49ac1e39d6675955fc53960a7b40a21e684057d9f37",
+    "data/standard/magezero_v1/decks/Standard-MonoB.dck": "f0019124eef0f11a5458b7289344bd4dfbc99fc0fa1343c30ac93112594f17a6",
+    "data/standard/magezero_v1/decks/Standard-MonoG.dck": "093d5c57c20ccaf79c48b8707712a0e260eb578a148f31b864610e17e167f50b",
+    "data/standard/magezero_v1/decks/Standard-MonoR.dck": "68dac8d49eb93096eee27e5db2582f441334db0bc14345a69894ff089593e386",
+    "data/standard/magezero_v1/decks/Standard-MonoU.dck": "e2f14a69fa9a36a0fe7e57bc803ec0034efecfdcd6c6ea8736c8f4ceba35b02b",
+    "data/standard/magezero_v1/decks/Standard-MonoW.dck": "b8b416e6acd7e3004a364ace019a5d38d8bc7f0d9c23981efa0dd365e3213ed6",
+    "data/standard/magezero_v1/decks/Standard16-5C.dck": "95f90fd18ebac5d293166f4dddef71e93172ffc076f4e461d1b528011c66e6c8",
+    "data/standard/magezero_v1/decks/Standard16-BW.dck": "aa160d0ebd6c9aceb9463db60ce9c92713fe5d2254b4674c95ae060a180ec86b",
+    "data/standard/magezero_v1/decks/Standard16-GB.dck": "5005a49d5f33498a904c234fae3f18fa1e0117f406f3778cf487033514fe2f76",
+    "data/standard/magezero_v1/decks/Standard16-GW.dck": "d04f29eff80ecf1d03cc1382bc061f11ad1428685f2997db3c21cb56f6f215e6",
+    "data/standard/magezero_v1/decks/Standard16-RB.dck": "183d4f053aada5112ff42cbcf13e827fe37917d3cb82dd68ab6c8912ce852212",
+    "data/standard/magezero_v1/decks/Standard16-RG.dck": "5eeae760a2f7c85117717e8153dd54104a400e2537f18f25b343d1af6b174edd",
+    "data/standard/magezero_v1/decks/Standard16-RW.dck": "b32cd25712aa472e75851696e9d944a31184a5402485825923fda5c7a0677a13",
+    "data/standard/magezero_v1/decks/Standard16-UB.dck": "246accf8e03e0e1d07fbadef6631118d5b7b06f548216a8e90c07c6e3bb73c00",
+    "data/standard/magezero_v1/decks/Standard16-UG.dck": "2d604993eaecdd0a91550d1bdfdf54e65421877f315da751e6f7f2d66f83d444",
+    "data/standard/magezero_v1/decks/Standard16-UR.dck": "9fe5248d3c83db907094f0d729c66a32bc5be0aa746adc1c480e729654813fe9",
+    "data/standard/magezero_v1/decks/Standard16-UW.dck": "63a3e09868434432e532aeec8562c7d6ea49be2f377a00dd22518a70715b30c3"
+  },
+  "logs": {
+    "test-standard-candidate-haley-008.log": "d99f0f0ad97da27ffb920aa3e90b7f98e886654531ddd47db8165797169a5fdb",
+    "test-default-haley-003.log": "8d195dbca3eaae78a0952b5c583713d18a14ce94f3425b2dc6b2d4d944ef24a1"
+  },
+  "sessions": [
+    {
+      "decks": [
+        "Standard-MonoB",
+        "Standard-MonoG"
+      ],
+      "seed": 91621388255232,
+      "transcript_sha256": "a3cff333f8b04c38e4e1d6804fdd50acc083c63ca0df4b45731a1ea7a55e5912",
+      "casts_by_seat": [
+        5,
+        7
+      ]
+    },
+    {
+      "decks": [
+        "Standard-MonoR",
+        "Standard-MonoU"
+      ],
+      "seed": 91621388255233,
+      "transcript_sha256": "91375e1a73f3efaa946baf5576fe260acb118c13e272cdb18bf5aefed2255fc1",
+      "casts_by_seat": [
+        9,
+        6
+      ]
+    },
+    {
+      "decks": [
+        "Standard-MonoW",
+        "Standard16-5C"
+      ],
+      "seed": 91621388255234,
+      "transcript_sha256": "4fe38a48ed5b2a88179588f7c41c3028b9dc33153ece7b3b910447c1a91fad9d",
+      "casts_by_seat": [
+        10,
+        6
+      ]
+    },
+    {
+      "decks": [
+        "Standard16-BW",
+        "Standard16-GB"
+      ],
+      "seed": 91621388255235,
+      "transcript_sha256": "a2f1b39c8251bdc49ff603cea2ce5b5d4867e6c548b2ea3c86126efd21be5c6b",
+      "casts_by_seat": [
+        16,
+        7
+      ]
+    },
+    {
+      "decks": [
+        "Standard16-GW",
+        "Standard16-RB"
+      ],
+      "seed": 91621388255236,
+      "transcript_sha256": "0b5ac74405c896f49dbec628c5c71507231d73372500b250079b2d6e8ac7e624",
+      "casts_by_seat": [
+        11,
+        8
+      ]
+    },
+    {
+      "decks": [
+        "Standard16-RG",
+        "Standard16-RW"
+      ],
+      "seed": 91621388255237,
+      "transcript_sha256": "f50c2d614b62611d5e60715534743b0531723444236af732c453adfc1a1dfeec",
+      "casts_by_seat": [
+        5,
+        10
+      ]
+    },
+    {
+      "decks": [
+        "Standard16-UB",
+        "Standard16-UG"
+      ],
+      "seed": 91621388255238,
+      "transcript_sha256": "64d65add557e590a10469ce57c75e1cc95ef71f33310dcdacc5a46c7f09f6ee1",
+      "casts_by_seat": [
+        9,
+        13
+      ]
+    },
+    {
+      "decks": [
+        "Standard16-UR",
+        "Standard16-UW"
+      ],
+      "seed": 91621388255239,
+      "transcript_sha256": "a0a4f47233e9d596d8b2817adda3e0acf1f2c22929d8c0416538a4062a4a173b",
+      "casts_by_seat": [
+        13,
+        10
+      ]
+    }
+  ]
+}
