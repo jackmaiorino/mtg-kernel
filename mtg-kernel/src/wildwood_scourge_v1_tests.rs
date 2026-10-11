@@ -65,6 +65,7 @@ fn recipient_control_type_and_incarnation_determine_match_not_placing_player() {
         let hydra = card_id_by_name("Nyxborn Hydra").unwrap();
         // A typed matcher operand; no invented printed copy history or stack root.
         state.objects.get_mut(recipient).card_def = hydra;
+        state.objects.get_mut(recipient).v4 = crate::state::ObjectStateV4::from_card_def(hydra);
         assert!(!matches_counter_event(&state, source, actor, &earlier));
         event::propose_and_commit(
             &mut state,

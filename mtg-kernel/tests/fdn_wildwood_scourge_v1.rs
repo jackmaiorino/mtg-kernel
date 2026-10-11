@@ -111,14 +111,27 @@ fn counters(state: &mut GameState, placing: PlayerId, recipient: ObjectId, count
         state,
         Target::Object(recipient),
     )];
-    mtg_kernel::effect::execute(
-        &EffectOp::AddPlusOnePlusOneCounters {
+    let binding = mtg_kernel::effect::EffectObjectBinding {
+        object: recipient,
+        expected_zone: Zone::Battlefield,
+        expected_zone_change_count: state.objects.get(recipient).zone_change_count,
+    };
+    // The creature-only positive-count producer rejects noncreatures and zero.
+    // Use real supported bounded counter producers for those two boundaries.
+    let op = if count == 0 {
+        assert_eq!(state.objects.get(recipient).counters.plus1_plus1, 0);
+        EffectOp::DoublePlusOneCountersOnBoundObject { object: binding }
+    } else if !engine::object_has_type(state, recipient, mtg_kernel::card_def::CardType::Creature) {
+        assert_eq!(count, 1);
+        EffectOp::PutPlusOnePlusOneCounterOnBoundObject { object: binding }
+    } else {
+        EffectOp::AddPlusOnePlusOneCounters {
             object: ObjectRef::Target(0),
             count,
-        },
-        &ctx,
-        state,
-    );
+        }
+    };
+    mtg_kernel::effect::execute(&op, &ctx, state);
+    assert!(state.engine.halted.is_none());
 }
 fn queued(state: &GameState, source: ObjectId) -> usize {
     state
