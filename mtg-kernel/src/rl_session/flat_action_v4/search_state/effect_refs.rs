@@ -1078,6 +1078,7 @@ pub(super) fn conflicts(
             | CerberusCompletedV1 { .. }
             | PrivateKeepOneLibraryCapturedV1 { .. }
             | PrivateKeepOneLibraryConsumedV1 { .. }
+            | PrivateKeepOneRaidSkippedV1 { .. }
             | RaidEntrySourceV1 { .. }
             | SquadRallierResolutionBoundaryV1 { .. }
             | SowerRestrictionInstalledV1 { .. }

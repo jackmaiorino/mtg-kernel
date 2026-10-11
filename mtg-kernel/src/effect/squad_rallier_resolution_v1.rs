@@ -257,6 +257,26 @@ fn history(state: &GameState) -> Result<Vec<&SquadRallierResolutionReceiptV1>, S
                 return Err("paid look receipt source or stack identity changed".into());
             }
         }
+        if receipt.pending.is_none() {
+            let first = receipts
+                .iter()
+                .find(|r| r.stack_item_id == receipt.stack_item_id)
+                .ok_or("closed paid look lost its initial boundary")?;
+            if first
+                .pending
+                .as_ref()
+                .and_then(|pending| pending.resolving_item.inline_effect.as_ref())
+                .is_some_and(super::private_keep_one_v1::is_recipe)
+            {
+                super::private_keep_one_v1::validate_closed(
+                    state,
+                    receipt.stack_item_id,
+                    receipt.source,
+                    first.history_index,
+                    receipt.history_index,
+                )?;
+            }
+        }
         receipts.push(receipt);
     }
     Ok(receipts)
@@ -476,6 +496,48 @@ pub(super) fn record_boundary(state: &mut GameState) -> Result<(), String> {
     }) else {
         return Ok(());
     };
+    if state.engine.pending_effect.is_none()
+        && previous
+            .pending
+            .as_ref()
+            .and_then(|pending| pending.resolving_item.inline_effect.as_ref())
+            .is_some_and(super::private_keep_one_v1::is_recipe)
+        && !state.engine.event_history.iter().any(|event| {
+            matches!(event,
+            CommittedEvent::PrivateKeepOneLibraryCapturedV1 { binding }
+                if binding.stack_item_id == Some(previous.stack_item_id))
+        })
+    {
+        if previous.ordinal != 0 || state.player_attacked_this_turn_v1(previous.source.controller) {
+            return Err("keep-one completion skipped a required private operation".into());
+        }
+        let stack_item_id = previous.stack_item_id;
+        let first_index = previous.history_index;
+        // End the immutable history borrow before publishing the actual skipped outcome.
+        let source = previous.source;
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::PrivateKeepOneRaidSkippedV1 {
+                resolving_stack_item: stack_item_id,
+                initial_boundary_history_index: first_index,
+            });
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::SquadRallierResolutionBoundaryV1 {
+                receipt: SquadRallierResolutionReceiptV1 {
+                    history_index: u32::try_from(state.engine.event_history.len())
+                        .map_err(|_| "resolution history exceeds u32")?,
+                    previous_history_index: Some(first_index),
+                    ordinal: 1,
+                    stack_item_id,
+                    source,
+                    pending: None,
+                },
+            });
+        return Ok(());
+    }
     let receipt = SquadRallierResolutionReceiptV1 {
         history_index: u32::try_from(state.engine.event_history.len())
             .map_err(|_| "resolution history exceeds u32")?,

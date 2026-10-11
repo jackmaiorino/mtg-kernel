@@ -130,6 +130,19 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         .pending_triggers
         .iter()
         .chain(state.legend_pending_v1.iter().flatten())
+        .chain(
+            state
+                .pending_legend_rule_v1
+                .iter()
+                .flat_map(|pending| pending.waiting_triggers()),
+        )
+        .chain(
+            state
+                .standard_v1
+                .iter()
+                .filter_map(|standard| standard.resolution_play.as_ref())
+                .flat_map(|resolution| resolution.deferred_triggers.iter()),
+        )
     {
         if pending.granted_by.is_none()
             && (pending.effect == crate::trigger::gorehorn_raider_effect()

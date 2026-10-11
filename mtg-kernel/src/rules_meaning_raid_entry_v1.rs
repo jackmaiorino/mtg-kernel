@@ -55,6 +55,7 @@ pub fn producer_sha256_v1() -> String {
         SCHEMA,
         include_str!("rules_meaning_raid_entry_v1.rs"),
         include_str!("raid_entry_v1.rs"),
+        include_str!("card_def.rs"),
         include_str!("trigger.rs"),
         include_str!("effect.rs"),
         include_str!("effect/private_keep_one_v1.rs"),

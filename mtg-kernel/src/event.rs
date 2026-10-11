@@ -828,10 +828,17 @@ pub enum CommittedEvent {
     },
     PrivateKeepOneLibraryConsumedV1 {
         resolving_stack_item: StackItemId,
+        graveyard: Vec<crate::effect::EffectObjectBinding>,
+        move_history_indices: Vec<usize>,
     },
     RaidEntrySourceV1 {
         source: crate::state::AbilitySourceContractV4,
         entry_history_index: usize,
+    },
+    /// History-only actual initial Raid-false completion, never a public event.
+    PrivateKeepOneRaidSkippedV1 {
+        resolving_stack_item: StackItemId,
+        initial_boundary_history_index: u32,
     },
 }
 

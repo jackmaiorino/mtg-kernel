@@ -565,3 +565,167 @@ fn actual_ability_removal_suppresses_deathtouch_and_keeps_already_captured_raid_
         assert_eq!(state.players[actor.index()].graveyard, cards);
     }
 }
+
+#[test]
+fn manufactured_closed_boundary_cannot_skip_the_actual_private_graveyard_operation() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor, 5);
+        raid(&mut state, actor, true);
+        cast(&mut state, actor);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { .. })
+        ));
+        let original_library = state.players[actor.index()].library.clone();
+        let last = state
+            .engine
+            .event_history
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                event::CommittedEvent::SquadRallierResolutionBoundaryV1 { receipt } => {
+                    Some(receipt.clone())
+                }
+                _ => None,
+            })
+            .unwrap();
+        let mut corrupt = replay(&state);
+        corrupt
+            .stack
+            .retain(|item| item.v4.stack_item_id != last.stack_item_id);
+        corrupt.engine.pending_effect = None;
+        let mut forged = last.clone();
+        forged.history_index = u32::try_from(corrupt.engine.event_history.len()).unwrap();
+        forged.previous_history_index = Some(last.history_index);
+        forged.ordinal += 1;
+        forged.pending = None;
+        corrupt
+            .engine
+            .event_history
+            .push(event::CommittedEvent::SquadRallierResolutionBoundaryV1 { receipt: forged });
+        for _ in 0..2 {
+            let mut restored = replay(&corrupt);
+            let before = serde_json::to_vec(&restored).unwrap();
+            assert!(effect::validate_pending_effect_choice(&restored).is_err());
+            assert!(engine::step(&mut restored, Action::Pass).is_err());
+            assert_eq!(before, serde_json::to_vec(&restored).unwrap());
+            assert_eq!(restored.players[actor.index()].library, original_library);
+        }
+        let selected = original_library[..2].to_vec();
+        choose(&mut state, &selected);
+        assert!(settle(&mut state).is_none());
+        effect::validate_pending_effect_choice(&replay(&state)).unwrap();
+        for mutation in 0..3 {
+            let mut corrupt = replay(&state);
+            match mutation {
+                0 => corrupt.engine.event_history.retain(|event| {
+                    !matches!(
+                        event,
+                        event::CommittedEvent::PrivateKeepOneLibraryConsumedV1 { .. }
+                    )
+                }),
+                1 => {
+                    let event = corrupt
+                        .engine
+                        .event_history
+                        .iter_mut()
+                        .find(|event| {
+                            matches!(
+                                event,
+                                event::CommittedEvent::PrivateKeepOneLibraryConsumedV1 { .. }
+                            )
+                        })
+                        .unwrap();
+                    if let event::CommittedEvent::PrivateKeepOneLibraryConsumedV1 {
+                        move_history_indices,
+                        ..
+                    } = event
+                    {
+                        move_history_indices.clear();
+                    }
+                }
+                2 => {
+                    let event = corrupt
+                        .engine
+                        .event_history
+                        .iter_mut()
+                        .find(|event| {
+                            matches!(
+                                event,
+                                event::CommittedEvent::PrivateKeepOneLibraryConsumedV1 { .. }
+                            )
+                        })
+                        .unwrap();
+                    if let event::CommittedEvent::PrivateKeepOneLibraryConsumedV1 {
+                        graveyard,
+                        ..
+                    } = event
+                    {
+                        graveyard[0] = graveyard[1];
+                    }
+                }
+                _ => unreachable!(),
+            }
+            let mut restored = replay(&corrupt);
+            let before = serde_json::to_vec(&restored).unwrap();
+            assert!(engine::step(&mut restored, Action::Pass).is_err());
+            assert_eq!(before, serde_json::to_vec(&restored).unwrap());
+        }
+    }
+}
+
+#[test]
+fn genuine_legend_waiting_raid_trigger_keeps_its_original_controller_before_legend_moves() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor, 5);
+        raid(&mut state, actor, true);
+        put(
+            &mut state,
+            actor,
+            "Dwynen, Gilt-Leaf Daen",
+            Zone::Battlefield,
+        );
+        let second_legend = put(&mut state, actor, "Dwynen, Gilt-Leaf Daen", Zone::Hand);
+        let source = put(&mut state, actor, "Gutless Plunderer", Zone::Hand);
+        event::propose_and_commit_batch(
+            &mut state,
+            vec![
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+                ProposedEvent::zone_change(second_legend, Zone::Battlefield),
+            ],
+        );
+        let Decision::ChooseLegendPermanent { candidates, .. } = next(&mut state) else {
+            panic!("actual duplicate legends must hold genuine entry triggers");
+        };
+        // Physical control-transfer boundary after the actual entry and capture.
+        state.players[actor.index()]
+            .battlefield
+            .retain(|id| *id != source);
+        state.players[actor.opponent().index()]
+            .battlefield
+            .push(source);
+        state.objects.get_mut(source).controller = actor.opponent();
+        let mut json = serde_json::to_value(&state).unwrap();
+        let waiting = json["pending_legend_rule_v1"]["waiting_triggers"]
+            .as_array_mut()
+            .unwrap();
+        let row = waiting
+            .iter_mut()
+            .find(|row| row["source"] == serde_json::to_value(source).unwrap())
+            .unwrap();
+        assert_eq!(row["controller"], serde_json::to_value(actor).unwrap());
+        row["controller"] = serde_json::to_value(actor.opponent()).unwrap();
+        row["source_contract"]["controller"] = serde_json::to_value(actor.opponent()).unwrap();
+        let mut corrupt: GameState = serde_json::from_value(json).unwrap();
+        let before = serde_json::to_vec(&corrupt).unwrap();
+        assert!(engine::step(&mut corrupt, Action::ChooseLegendPermanent(candidates[0])).is_err());
+        assert_eq!(before, serde_json::to_vec(&corrupt).unwrap());
+        let mut restored = replay(&corrupt);
+        assert!(engine::step(&mut restored, Action::ChooseLegendPermanent(candidates[0])).is_err());
+        assert_eq!(before, serde_json::to_vec(&restored).unwrap());
+        engine::step(&mut state, Action::ChooseLegendPermanent(candidates[0])).unwrap();
+        assert!(
+            matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { player, .. }) if player == actor)
+        );
+    }
+}

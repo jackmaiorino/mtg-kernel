@@ -52,6 +52,7 @@ fn captured(state: &GameState, stack: StackItemId) -> Result<&PrivateKeepOneBind
             }
             event::CommittedEvent::PrivateKeepOneLibraryConsumedV1 {
                 resolving_stack_item,
+                ..
             } if *resolving_stack_item == stack => {
                 return Err("keep-one look already consumed its capture authority".into());
             }
@@ -161,15 +162,35 @@ pub(super) fn commit(
             "keep-one answer must leave exactly zero or one distinct looked-at card on top".into(),
         );
     }
+    let start = state.engine.event_history.len();
+    commit_zone_change_batch(state, graveyard, Zone::Graveyard, true)?;
+    let move_history_indices: Vec<_> = state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .skip(start)
+        .filter_map(|(index, event)| {
+            matches!(event, event::CommittedEvent::ZoneChange {
+            object, from: Zone::Library, to: Zone::Graveyard, ..
+        } if graveyard.iter().any(|binding| binding.object == *object))
+            .then_some(index)
+        })
+        .collect();
+    if move_history_indices.len() != graveyard.len() {
+        return Err("keep-one graveyard operation did not commit every selected move".into());
+    }
     if let Some(resolving_stack_item) = binding.stack_item_id {
         state
             .engine
             .event_history
             .push(event::CommittedEvent::PrivateKeepOneLibraryConsumedV1 {
                 resolving_stack_item,
+                graveyard: graveyard.to_vec(),
+                move_history_indices,
             });
     }
-    commit_zone_change_batch(state, graveyard, Zone::Graveyard, true)
+    Ok(())
 }
 pub(super) fn commit_pending(
     state: &mut GameState,
@@ -236,6 +257,84 @@ pub(super) fn validate_required_stage(
     }
     Ok(())
 }
+/// A terminal progress snapshot cannot substitute for the actual private operation.
+pub(super) fn validate_closed(
+    state: &GameState,
+    stack: StackItemId,
+    source: crate::state::AbilitySourceContractV4,
+    first_index: u32,
+    closed_index: u32,
+) -> Result<(), String> {
+    let mut captures = Vec::new();
+    let mut consumed = Vec::new();
+    let mut skipped = Vec::new();
+    for (index, event) in state.engine.event_history.iter().enumerate() {
+        match event {
+            event::CommittedEvent::PrivateKeepOneLibraryCapturedV1 { binding }
+                if binding.stack_item_id == Some(stack) =>
+            {
+                captures.push((index, binding.as_ref()))
+            }
+            event::CommittedEvent::PrivateKeepOneLibraryConsumedV1 {
+                resolving_stack_item,
+                graveyard,
+                move_history_indices,
+            } if *resolving_stack_item == stack => {
+                consumed.push((index, graveyard, move_history_indices))
+            }
+            event::CommittedEvent::PrivateKeepOneRaidSkippedV1 {
+                resolving_stack_item,
+                initial_boundary_history_index,
+            } if *resolving_stack_item == stack => {
+                skipped.push((index, *initial_boundary_history_index))
+            }
+            _ => {}
+        }
+    }
+    let first = first_index as usize;
+    let closed = closed_index as usize;
+    if let [(index, initial)] = skipped.as_slice() {
+        if *initial == first_index
+            && first < *index
+            && *index < closed
+            && captures.is_empty()
+            && consumed.is_empty()
+        {
+            return Ok(());
+        }
+    }
+    let ([(capture_index, binding)], [(consume_index, graveyard, moves)]) =
+        (captures.as_slice(), consumed.as_slice())
+    else {
+        return Err("keep-one closure lacks a unique actual capture and consumption".into());
+    };
+    let top = &binding.original_library[..binding.original_library.len().min(3)];
+    if !skipped.is_empty()
+        || binding.source != source.source
+        || binding.player != source.controller
+        || first >= *capture_index
+        || capture_index >= consume_index
+        || *consume_index >= closed
+        || graveyard.len() < top.len().saturating_sub(1)
+        || graveyard.len() > top.len()
+        || graveyard.len() != moves.len()
+    {
+        return Err("keep-one closed operation changed its source, batch or lifecycle".into());
+    }
+    for (position, (card, index)) in graveyard.iter().zip(moves.iter()).enumerate() {
+        if !top.contains(card) || graveyard[..position].contains(card)
+            || card.expected_zone != Zone::Library || *index <= *capture_index || *index >= *consume_index
+            || (position > 0 && moves[position - 1] >= *index)
+            || !matches!(state.engine.event_history.get(*index), Some(event::CommittedEvent::ZoneChange {
+                object, from: Zone::Library, to: Zone::Graveyard, ..
+            }) if *object == card.object)
+            || state.engine.event_history[*capture_index + 1..*index].iter().any(|event|
+                matches!(event, event::CommittedEvent::ZoneChange { object, .. } if *object == card.object))
+        { return Err("keep-one closure lacks each exact committed selected graveyard move".into()); }
+    }
+    Ok(())
+}
+
 pub(crate) fn selection_shape(state: &GameState) -> Result<Option<(u16, u16)>, String> {
     validate_pending_effect_choice(state)?;
     let Some(pending) = state.engine.pending_effect.as_ref() else {
