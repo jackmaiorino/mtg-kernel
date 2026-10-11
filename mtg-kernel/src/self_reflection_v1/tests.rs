@@ -9,7 +9,7 @@ use crate::state::Zone;
 
 fn fixture(actor: PlayerId) -> (GameState, ObjectId, ExecCtx) {
     let mut state = ready_state();
-    let source = put(&mut state, actor, "Think Twice", Zone::Hand);
+    let source = put(&mut state, actor, "Counterspell", Zone::Hand);
     let creature = put(&mut state, actor.opponent(), "Llanowar Elves", Zone::Hand);
     event::propose_and_commit(
         &mut state,
