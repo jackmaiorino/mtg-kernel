@@ -19,7 +19,8 @@
 
 use super::arms::{EvalOut, Limits, Roles, SamplerStats, SimRecord};
 use super::bank::{
-    bank_roles, guide_ctx, plain_logged, source_session, walk, BankShared, SourceSpec,
+    bank_roles, decision_identity, guide_ctx, plain_logged, source_identity, source_session, walk,
+    BankShared, SourceSpec,
 };
 use super::play::{acting, decision};
 use super::seeds::{Purpose, RootSeeds};
@@ -43,6 +44,9 @@ pub(super) const EVAL_CAP: u64 = 65_536;
 pub(super) struct NamedRoot {
     /// Saved row holding the R guide (`arms.R.actions`, `arms.R.searches`).
     pub(super) row: String,
+    /// Pins authenticate the saved producer, independently of the current build.
+    pub(super) row_sha256: String,
+    pub(super) bank_binding_sha256: String,
     pub(super) search: usize,
     pub(super) step: u64,
 }
@@ -62,6 +66,59 @@ pub(super) struct RootSpec {
 /// A (parent key, parent action) link group.
 type Group = (Key, Vec<u8>);
 
+/// Authenticate one saved guide before any replay or selection. Older witness-free
+/// pilot rows are preserved but cannot qualify this prospective strict consumer.
+fn saved_guide(bytes: &[u8], n: &NamedRoot, identity: &Value) -> Result<Value, String> {
+    if n.row_sha256.len() != 64 || sha(bytes) != n.row_sha256 {
+        return Err("saved row SHA-256 differs".into());
+    }
+    let row: Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    if n.bank_binding_sha256.len() != 64 || row["bank_binding_sha256"] != n.bank_binding_sha256 {
+        return Err("saved producer binding differs".into());
+    }
+    for key in [
+        "id",
+        "lineage",
+        "own",
+        "other",
+        "seat",
+        "opp",
+        "seed",
+        "starting_player",
+        "runtime_rules",
+        "select_rule",
+        "limits",
+        "source",
+        "anchor",
+    ] {
+        if identity.get(key).is_none() || row.get(key) != identity.get(key) {
+            return Err(format!("saved source/anchor witness differs: {key}"));
+        }
+    }
+    let search = row["arms"]["R"]["searches"]
+        .get(n.search)
+        .ok_or("missing saved search")?;
+    if search["search"].as_u64() != Some(n.search as u64)
+        || search["step"].as_u64() != Some(n.step)
+        || !search["root"].is_object()
+        || search["incomplete"] != false
+        || search["faults"].as_array().is_none_or(|v| !v.is_empty())
+    {
+        return Err("saved search is invalid or lacks root witnesses".into());
+    }
+    Ok(row)
+}
+
+fn replay_prefix(actions: &[u32], step: u64, anchor: u64) -> Result<&[u32], String> {
+    let count = step
+        .checked_sub(anchor)
+        .ok_or("named step precedes anchor")?;
+    let count = usize::try_from(count).map_err(|_| "named replay length overflows")?;
+    actions
+        .get(..count)
+        .ok_or_else(|| "named replay exceeds saved actions".into())
+}
+
 /// The root position, its selection label and identity witnesses.
 fn root_session(
     sh: &BankShared,
@@ -69,6 +126,7 @@ fn root_session(
     src: &SourceSpec,
     opp: usize,
     spec: &RootSpec,
+    binding: &str,
 ) -> Result<(FastActorSessionV1, String, Value), String> {
     let focal = PlayerId(src.seat);
     let mut f = policy.fork_for_collection_v3()?;
@@ -95,24 +153,40 @@ fn root_session(
         &actions[..anchor_step as usize],
         |_, _, _| Ok(()),
     )?;
+    let source = source_identity(
+        sh,
+        src,
+        &s,
+        &actions,
+        &anchor,
+        index,
+        eligible.len(),
+        binding,
+    )?;
+    let mut saved_root = None;
     let (root, label) = match &spec.named {
         None => (anchor, src.search_root.clone()),
         Some(n) => {
-            let text = std::fs::read_to_string(&n.row).map_err(|e| format!("{}: {e}", n.row))?;
-            let row: Value = serde_json::from_str(text.lines().next().ok_or("empty saved row")?)
-                .map_err(|e| e.to_string())?;
-            if row["id"] != src.id {
-                return Err("saved row is for another source".into());
-            }
+            let bytes = std::fs::read(&n.row).map_err(|e| format!("{}: {e}", n.row))?;
+            let row = saved_guide(&bytes, n, &source)?;
             let r = &row["arms"]["R"];
-            if r["searches"][n.search]["step"].as_u64() != Some(n.step) {
-                return Err("saved search does not start at the named step".into());
+            if r["searches"][n.search]["budget"].as_u64() != Some(spec.budget) {
+                return Err("named selection allowance differs from saved search".into());
             }
+            saved_root = Some(r["searches"][n.search]["root"].clone());
             let saved: Vec<u32> =
                 serde_json::from_value(r["actions"].clone()).map_err(|e| e.to_string())?;
-            let k = (n.step - anchor_step) as usize;
-            let root = walk(anchor, &saved[..k], |_, _, _| Ok(()))?;
-            (root, format!("{}/refresh{}", src.search_root, n.search))
+            let root = walk(
+                anchor,
+                replay_prefix(&saved, n.step, anchor_step)?,
+                |_, _, _| Ok(()),
+            )?;
+            let label = if n.search == 0 {
+                src.search_root.clone()
+            } else {
+                format!("{}/refresh{}", src.search_root, n.search)
+            };
+            (root, label)
         }
     };
     let d = decision(&root).ok_or("root is terminal")?;
@@ -124,11 +198,18 @@ fn root_session(
             return Err("reconstructed root step differs".into());
         }
     }
+    if let Some(expected) = saved_root {
+        if decision_identity(&root)? != expected {
+            return Err("named root public decision witnesses differ".into());
+        }
+    }
     let (obs, menu) = replay_key(&root, d)?;
     let identity = json!({"anchor_step":anchor_step,"step":d.step,"physical_decision_id":d.physical_decision_id,
         "substep":d.substep_index,"k":d.legal_action_count,"obs_hash":obs,"menu_hash":menu,
         "state_hash":format!("{:016x}", root.diagnostic_state_hash()),"selection_root":label,
         "source_actions_sha256":sha(&actions.iter().flat_map(|a| a.to_le_bytes()).collect::<Vec<u8>>())});
+    let mut identity = identity;
+    identity["source_identity"] = source;
     Ok((root, label, identity))
 }
 
@@ -447,6 +528,7 @@ pub(super) fn root_arm(
     policy: &FrozenPlayPolicyV1,
     spec: &RootSpec,
     retain: usize,
+    binding: &str,
 ) -> Result<Value, String> {
     let started = Instant::now();
     let src = sh
@@ -461,7 +543,10 @@ pub(super) fn root_arm(
         .position(|l| *l == src.opp)
         .ok_or("unknown guide opponent")?;
     let focal = PlayerId(src.seat);
-    let (root, label, identity) = root_session(sh, policy, src, opp, spec)?;
+    if !matches!(retain, 1 | 8) || spec.budget == 0 {
+        return Err("invalid branch arm or zero selection budget".into());
+    }
+    let (root, label, identity) = root_session(sh, policy, src, opp, spec, binding)?;
     let reconstruct = started.elapsed().as_secs_f64();
     let mut roles: Roles = bank_roles(policy, &sh.opponents)?;
     let seeds = RootSeeds {
@@ -515,7 +600,9 @@ pub(super) fn root_arm(
     Ok(
         json!({"kind":"branch_root","root_id":spec.root_id,"source":spec.source,"lineage":sh.spec.lineage,
         "own":src.own,"seat":src.seat,"arm":if retain == 1 { "B1" } else { "D8" },"retain":retain,
-        "budget":spec.budget,"root":identity,"selection":sel.json(),"selection_failed":failed,
+        "budget":spec.budget,"bank_binding_sha256":binding,"root":identity,"selection":sel.json(),"selection_failed":failed,
+        "named_input":spec.named.as_ref().map(|n| json!({"row_sha256":n.row_sha256,
+            "bank_binding_sha256":n.bank_binding_sha256,"search":n.search,"step":n.step})),
         "tree_hash":tree_hash,"expected_b1_tree":spec.expected_b1_tree,
         "b1_parity":(retain == 1).then(|| tree_hash == spec.expected_b1_tree),
         "tree":report,"simulations":sims,"evaluation":worlds,
@@ -529,6 +616,53 @@ mod tests {
     use super::super::world::DeckPrior;
     use super::*;
     use crate::runtime_decks::RUNTIME_DECKS;
+
+    #[test]
+    fn saved_guide_authentication_and_replay_bounds_fail_closed() {
+        let identity = json!({"id":"test","lineage":"r1","own":4,"other":5,"seat":0,
+            "opp":"other","seed":12,"starting_player":0,"runtime_rules":"rules",
+            "select_rule":"rule","limits":{"select_cap":128000},
+            "source":{"end":"win","actions_sha256":"source"},"anchor":{"step":50}});
+        let mut row = identity.clone();
+        row["bank_binding_sha256"] = json!("a".repeat(64));
+        row["arms"] = json!({"R":{"actions":[1,2],"searches":[{"search":0,"step":51,
+            "root":{"step":51},"incomplete":false,"faults":[]}]}});
+        let mut n = NamedRoot {
+            row: "unused".into(),
+            row_sha256: String::new(),
+            bank_binding_sha256: "a".repeat(64),
+            search: 0,
+            step: 51,
+        };
+        let bytes = serde_json::to_vec(&row).unwrap();
+        n.row_sha256 = sha(&bytes);
+        assert!(saved_guide(&bytes, &n, &identity).is_ok());
+        let mut bad_bytes = bytes.clone();
+        bad_bytes.push(b' ');
+        assert!(saved_guide(&bad_bytes, &n, &identity).is_err());
+        for key in ["source", "anchor", "bank_binding_sha256"] {
+            let mut bad = row.clone();
+            bad[key] = Value::Null;
+            let bytes = serde_json::to_vec(&bad).unwrap();
+            n.row_sha256 = sha(&bytes);
+            assert!(saved_guide(&bytes, &n, &identity).is_err(), "{key}");
+        }
+        let mut bad = row.clone();
+        bad["arms"]["R"]["searches"][0]["root"] = Value::Null;
+        let bytes = serde_json::to_vec(&bad).unwrap();
+        n.row_sha256 = sha(&bytes);
+        assert!(saved_guide(&bytes, &n, &identity).is_err());
+        let twice = [
+            serde_json::to_vec(&row).unwrap(),
+            serde_json::to_vec(&row).unwrap(),
+        ]
+        .concat();
+        n.row_sha256 = sha(&twice);
+        assert!(saved_guide(&twice, &n, &identity).is_err());
+        assert!(replay_prefix(&[1, 2], 49, 50).is_err());
+        assert!(replay_prefix(&[1, 2], 53, 50).is_err());
+        assert_eq!(replay_prefix(&[1, 2], 51, 50).unwrap(), &[1]);
+    }
 
     fn root() -> FastActorSessionV1 {
         let decks = [&RUNTIME_DECKS[4], &RUNTIME_DECKS[5]];

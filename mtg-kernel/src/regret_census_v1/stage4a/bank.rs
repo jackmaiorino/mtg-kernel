@@ -496,6 +496,17 @@ pub(super) fn bank_binding(policy: &FrozenPlayPolicyV1, sh: &BankShared) -> Resu
     ))
 }
 
+/// Public decision witnesses for authenticated replay consumers.
+pub(super) fn decision_identity(s: &FastActorSessionV1) -> Result<Value, String> {
+    let d = decision(s).ok_or("decision is terminal")?;
+    let (obs, menu) = replay_key(s, d)?;
+    Ok(
+        json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
+        "substep":d.substep_index,"k":d.legal_action_count,"obs_hash":obs,"menu_hash":menu,
+        "state_hash":format!("{:016x}",s.diagnostic_state_hash())}),
+    )
+}
+
 /// Witnesses for new paired consumers. Historical bank rows remain untouched.
 #[allow(
     clippy::too_many_arguments,
