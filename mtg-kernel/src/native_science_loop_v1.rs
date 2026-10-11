@@ -636,7 +636,9 @@ fn run_native_science_loop_with_opponents_v1(
         | NativeRunCatalogProfileV1::FdnGraveyardTriggers
         | NativeRunCatalogProfileV1::FdnStaticTeamBoosts
         | NativeRunCatalogProfileV1::FdnPreparedFamilies
-        | NativeRunCatalogProfileV1::FdnInstantSorceryReducers => {}
+        | NativeRunCatalogProfileV1::FdnInstantSorceryReducers
+        | NativeRunCatalogProfileV1::FdnConditionalFlashPowerCreatures
+        | NativeRunCatalogProfileV1::FdnFollowingCreaturesBulkUp => {}
     }
 
     if ladder_opponent.is_some() && population_opponent.is_some() {

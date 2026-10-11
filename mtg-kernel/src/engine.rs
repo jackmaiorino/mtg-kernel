@@ -12235,7 +12235,10 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
         }
         Step::BeginCombat => {
             state.engine.combat.reset_preserving_rules();
-            #[cfg(feature = "standard-magezero-fixtures")]
+            #[cfg(any(
+                feature = "standard-magezero-fixtures",
+                feature = "limited-fdn-fixtures"
+            ))]
             {
                 let marker = event::CommittedEvent::BeginningOfCombat {
                     active_player: state.active_player,
@@ -12814,6 +12817,13 @@ pub(crate) fn static_graveyard_threshold_keyword_for(name: &str) -> Option<(u16,
     }
 }
 
+pub(crate) fn static_untapped_self_keyword_for(name: &str) -> Option<Keywords> {
+    match name {
+        "Paradise Druid" => Some(Keywords::HEXPROOF),
+        _ => None,
+    }
+}
+
 /// Whether `id` currently has `kw`, folding in every source this kernel
 /// models: the card's own static `Keywords`, `static_self_boost_for`'s
 /// conditional self-grant (Goblin Tomb Raider's haste), and any active
@@ -12847,6 +12857,14 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
         return true;
     }
     if printed_active && def.keywords_for_face(obj.v4.face_index).has(kw) {
+        return true;
+    }
+    if printed_active
+        && obj.zone == Zone::Battlefield
+        && obj.v4.face_index == 0
+        && !obj.tapped
+        && static_untapped_self_keyword_for(def.name).is_some_and(|keyword| keyword.has(kw))
+    {
         return true;
     }
     if crate::continuous_characteristics_v1::animation(state, id)
@@ -15810,6 +15828,7 @@ fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> R
                 trigger::TriggerCondition::Attacks
                     | trigger::TriggerCondition::AttacksWithControllerGraveyardCardCountAtLeast(_)
                     | trigger::TriggerCondition::AttacksWithGreaterPowerAttacker
+                    | trigger::TriggerCondition::AttacksWhileControllerHasPowerFourCreature
             )
         }) {
             let event = CommittedEvent::DeclaredAttacker {

@@ -990,6 +990,23 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
     }
 
     // Static abilities the engine keys by name outside `CardDef`.
+    if let Some(keywords) = crate::engine::static_untapped_self_keyword_for(name) {
+        walk.rec("static_untapped_self_keyword", json!(keywords.0));
+        walk.opaque
+            .push("static self keyword gated on source untapped");
+        walk.ability(CtxF::Static, |out| {
+            out.control(ControlF::Conditional);
+            out.atoms.push(Atom::Opaque);
+            for keyword in keyword_bits(keywords) {
+                out.effect(
+                    EffectAtom::new(EvF::GrantKeyword)
+                        .obj(ObjF::ThisObject)
+                        .duration(DurF::WhileOnBattlefield)
+                        .keyword(keyword),
+                );
+            }
+        });
+    }
     if let Some(boost) = crate::engine::static_self_boost_for(name) {
         let crate::engine::StaticSelfBoostDef {
             condition: _, // An opaque predicate; see `opaque_rules`.
