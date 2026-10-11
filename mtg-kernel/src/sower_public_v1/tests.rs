@@ -132,10 +132,7 @@ fn actual_registered_installation_current_control_departure_restore_and_cleanup(
             assert!(!bytes.contains("recipient_snapshot"));
             assert!(!bytes.contains("SowerRestrictionInstalled"));
         }
-        event::propose_and_commit(
-            &mut state,
-            ProposedEvent::zone_change(source, Zone::Battlefield, Zone::Exile),
-        );
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Exile));
         state.players[actor.opponent().index()]
             .battlefield
             .retain(|id| *id != recipient);
@@ -157,11 +154,11 @@ fn actual_registered_installation_current_control_departure_restore_and_cleanup(
         );
         event::propose_and_commit(
             &mut state,
-            ProposedEvent::zone_change(recipient, Zone::Battlefield, Zone::Exile),
+            ProposedEvent::zone_change(recipient, Zone::Exile),
         );
         event::propose_and_commit(
             &mut state,
-            ProposedEvent::zone_change(recipient, Zone::Exile, Zone::Battlefield),
+            ProposedEvent::zone_change(recipient, Zone::Battlefield),
         );
         let public = observe_v1(&state, &surface, actor, 0, 0, 0, 1).unwrap();
         assert!(!public.restrictions[0].effective);
