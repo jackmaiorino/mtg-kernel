@@ -210,7 +210,7 @@ pub(super) fn walk(
 
 /// Focal physical decision starts (forced included) and Spy menu witnesses
 /// of a guide continuation from `anchor`.
-fn guide_record(
+pub(super) fn guide_record(
     anchor: &FastActorSessionV1,
     focal: PlayerId,
     actions: &[u32],
