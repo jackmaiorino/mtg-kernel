@@ -15801,6 +15801,7 @@ fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> R
                 trigger::TriggerCondition::Attacks
                     | trigger::TriggerCondition::AttacksWithControllerGraveyardCardCountAtLeast(_)
                     | trigger::TriggerCondition::AttacksWithGreaterPowerAttacker
+                    | trigger::TriggerCondition::AttacksWhileControllerHasPowerFourCreature
             )
         }) {
             let event = CommittedEvent::DeclaredAttacker {

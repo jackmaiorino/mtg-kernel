@@ -25,8 +25,15 @@ MSVC19.50.35725/14.50.35717, assertions and optimization pins are preserved.
 The22 new card groups were typechecked without registration. Failed predecessor
 6851e748 remains retained; its nonexistent Frog fixture now uses Goblin.
 
-All38 affected Python cases pass after registration. Actual22 card games,
-generated v68 hash/profile, historical v67 reads/stale mutator refusal, native
-checks, CI, exact-head review and default acceptance remain pending. Current
+All38 affected Python cases pass after registration. Native admission1 at
+source062b33c6 generated identity645f2da1b223a18f and file SHA256
+6f0fb6bd1e159d8a46bd5359f576144f90e44627db631fd5d1872e523b10ffb4.
+Brine4, High Fae6 and power/Elf6 actual cases pass. Ferocious1 passes and5 fail:
+real attacker declaration omitted the new condition and emitted no trigger.
+The declaration match now includes it. Guard1f0ecb81d52740aab996cb500b172283
+ended101; the failed receipt remains retained. The live profile now uses the
+generated hash and preserves historical v67 readability/stale mutator refusal.
+Rerunning22 card games and qualifying the profile, strict native checks, CI,
+exact-head review and default acceptance remain pending. Current
 accepted coverage remains171; candidate177 is engineering preparation, with
 no strength, search, evaluation or training result.
