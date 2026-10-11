@@ -12,4 +12,6 @@ Unconditional registered foreign-definition and Default/Standard refusal fixture
 
 Frozen RulesMeaning vectors remain Opaque for the new leaf/condition, with all old IDs and fields untouched. The existing full policy observation refusal remains in place for active observers and unclosed captured entry work. This precise companion grants no public or Human projection. A public successor must carry active static observer facts and authenticated captured dispatch relations across every real waiting owner. A Human successor must expose safe canonical handles and regenerate complete input/menu/restore bindings. Sampler occurrence retention and actual copying/arena-renumbering privacy require separate qualification. Feature, tensor, native transport and model vocabulary/weights remain separate successors; no old V9 input is relabeled or fabricated.
 
+The ordinary enchantment spell is checked against the generator's exact `MoveObject { object: ThisSource, to: Battlefield }` program and an X-free {W} cost. An absent spell effect is not a valid ordinary permanent recipe.
+
 Only pinned rustfmt and static diff checks are authorized here. Root owns serial actual registration, catalog/profile derivation, affected native tests and delivery.

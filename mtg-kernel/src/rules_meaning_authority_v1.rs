@@ -1,6 +1,6 @@
 //! Selected printed meanings only. Frozen observations, vectors and models remain unadmitted.
 use crate::card_def::{CardType, Keywords, TargetSpec, CARD_DEFS};
-use crate::effect::EffectOp;
+use crate::effect::{EffectOp, ObjectRef};
 use crate::mana::{ManaColor, Pip};
 use crate::state::Zone;
 use crate::trigger::{self, TriggerCondition};
@@ -133,6 +133,7 @@ pub fn meaning_v1(
         || !def.is_executable()
         || def.is_token
         || def.cost.generic != 0
+        || def.cost.x_count != 0
         || def.cost.pips != [Pip::Colored(ManaColor::W)]
         || def.mana_value != 1
         || def.colors != [ManaColor::W]
@@ -151,7 +152,11 @@ pub fn meaning_v1(
         || def.records_mana_spent
         || def.target_spec != TargetSpec::None
         || def.keywords != Keywords::NONE
-        || (def.spell_effect)().is_some()
+        || (def.spell_effect)()
+            != Some(EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to: Zone::Battlefield,
+            })
         || !def.activated_abilities.is_empty()
         || def.alt_cost.is_some()
         || def.additional_cost.is_some()
