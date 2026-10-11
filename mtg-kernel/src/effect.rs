@@ -39,6 +39,8 @@ use crate::state::{
     StackSourceContractV4, StackTargetContractV4, Target, UndercityRoomV1, Zone,
 };
 use serde::{Deserialize, Serialize};
+mod squad_rallier_resolution_v1;
+pub use squad_rallier_resolution_v1::SquadRallierResolutionReceiptV1;
 pub(crate) mod library_choice_search_v2;
 mod standard_payment_v1;
 pub mod standard_selection_v1;
@@ -1592,6 +1594,8 @@ pub enum LibraryPickFilterV1 {
     ArtifactOrCreatureManaValueAtMost(u16),
     AnySubtype([Subtype; 4]),
     LegendaryCreature,
+    /// Library cards use their front-face power, including accepted CDAs.
+    CreaturePowerAtMost(i32),
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LibraryPickSelectionV1 {
@@ -2963,6 +2967,8 @@ pub fn begin_resumable_resolution(
         return Err("cannot begin an effect while another continuation is pending".to_string());
     }
     validate_resumable_program(op)?;
+    let owned_squad_look =
+        squad_rallier_resolution_v1::preflight_begin(state, op, ctx, &resolving_item)?;
     state.engine.pending_effect = Some(EffectContinuation {
         resolving_item,
         ctx: ctx.clone(),
@@ -2973,6 +2979,9 @@ pub fn begin_resumable_resolution(
         choice: None,
         answered_choice_guard: None,
     });
+    if owned_squad_look {
+        squad_rallier_resolution_v1::record_begin(state)?;
+    }
     drive_resumable(state)
 }
 
@@ -3321,6 +3330,7 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
     if selected.len() == usize::from(*max_targets) {
         complete_resumable_target_selection(continuation)?;
     }
+    squad_rallier_resolution_v1::record_boundary(state)?;
     Ok(())
 }
 
@@ -3387,7 +3397,8 @@ pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), St
             .map_err(|error| error.to_string())?;
         drop(token);
     }
-    complete_resumable_target_selection(state.engine.pending_effect.as_mut().unwrap())
+    complete_resumable_target_selection(state.engine.pending_effect.as_mut().unwrap())?;
+    squad_rallier_resolution_v1::record_boundary(state)
 }
 
 /// Records one generic Boolean answer without executing its consequence.
@@ -7701,6 +7712,7 @@ fn validate_standard_choose_permanent_origin(
 }
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
+    squad_rallier_resolution_v1::validate(state)?;
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(());
     };
@@ -9727,6 +9739,10 @@ pub(crate) fn validate_resolution_play_authorization(
 }
 
 fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
+    squad_rallier_resolution_v1::drive(state)
+}
+
+fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, String> {
     let mut continuation = state
         .engine
         .pending_effect
@@ -15167,6 +15183,19 @@ fn library_partition_matching_prefix(
                 rule.selection
                     .is_none_or(|selection| match selection.filter {
                         LibraryPickFilterV1::Any => true,
+                        LibraryPickFilterV1::CreaturePowerAtMost(max) => {
+                            if object.v4.face_index != 0 || object.v4.face_down_v1.is_some() {
+                                return Err("library power selection requires the card's public front face".into());
+                            }
+                            if definition.has_type(CardType::Creature) {
+                                if crate::engine::effective_base_power(state, binding.object).is_none() {
+                                    return Err("library creature power has no accepted characteristic authority".into());
+                                }
+                                crate::engine::effective_power(state, binding.object) <= max
+                            } else {
+                                false
+                            }
+                        }
                         LibraryPickFilterV1::LegendaryCreature => {
                             definition.has_type(CardType::Creature)
                                 && definition

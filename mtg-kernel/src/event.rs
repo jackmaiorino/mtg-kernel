@@ -625,6 +625,11 @@ pub enum CommittedEvent {
     ControlledCreatureDeathCaptureCollectedV1 {
         capture_history_index: u64,
     },
+    /// Private committed lifecycle ownership for the new paid look-four root.
+    /// Never placed in the public trigger event log.
+    SquadRallierResolutionBoundaryV1 {
+        receipt: crate::effect::SquadRallierResolutionReceiptV1,
+    },
 }
 
 /// Remembers the counters of a departing permanent whose own leave ability

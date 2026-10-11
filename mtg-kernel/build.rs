@@ -4728,6 +4728,18 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
         return recipes;
     }
     match name {
+        "Squad Rallier" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ManaCost("{2}{W}")],
+            effect: AbilityEffectRecipe::Program {
+                name: "squad_rallier_look_four",
+                effect: "EffectOp::LookTopSelectV1 { player: PlayerRef::Controller, count: crate::effect::LibraryLookCount::Fixed(4), rule: crate::effect::LibraryPickRule { pick: 1, choose_rest_order: false, selection: Some(crate::effect::LibraryPickSelectionV1 { without_mana_cost: crate::engine::FreeCastV1(false), filter: crate::effect::LibraryPickFilterV1::CreaturePowerAtMost(2), optional: true, destination: Zone::Hand, reveal_selected: true }) }, pick_x: false }",
+            },
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Reassembling Skeleton" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Mana {
                 colored: Some("B"),
