@@ -1,0 +1,348 @@
+{
+  "schema": "mtg-kernel-search-source-audit/v1",
+  "scope": "Read-only source and retained cost-evidence audit. No new execution, outcomes, CP7 reads, optimization code or edits to active worktrees.",
+  "pins": {
+    "main": "ddff546aeac448143cd1b37193357b035ccd622e",
+    "pr206_integration": "b61c9d49c47f6ab0ad3125c4da310237ced29cd7",
+    "phase_profiler": "59418e4cf16b7f39e0205a032308bab4ae615f99",
+    "merged_policy_speedup": "1d7b89e7f371a61696e490a73b91b7a2d46e4743",
+    "pr206_initial_speedup": "bc012d65a6d80490e4e2986a373aad05497317b2"
+  },
+  "source_root": "mtg-kernel/src/",
+  "call_map": [
+    {
+      "stage": "Root reconstruction and role setup",
+      "ref": "pr206_integration",
+      "path": "regret_census_v1/stage4a.rs",
+      "lines": [
+        512,
+        529,
+        548,
+        553,
+        796,
+        810
+      ],
+      "detail": "Replay the frozen root with ordinary forward; switch back to declared search mode; score root once; run E, A, D selection sequentially within a worker; evaluate paired worlds. Each policy role is a fork, with separate sampling streams."
+    },
+    {
+      "stage": "Persistent E selection",
+      "ref": "pr206_integration",
+      "path": "regret_census_v1/stage4a/arms.rs",
+      "lines": [
+        665,
+        698,
+        738,
+        761,
+        773,
+        795,
+        815,
+        840
+      ],
+      "detail": "Each simulation lawfully samples a world, resets role RNGs, chooses UCB actions along information-history nodes, expands at most one node, then uses policy rollout; every engine transition charges the same meter."
+    },
+    {
+      "stage": "A and D selection",
+      "ref": "pr206_integration",
+      "path": "regret_census_v1/stage4a/arms.rs",
+      "lines": [
+        371,
+        419,
+        432,
+        470,
+        514,
+        525,
+        551,
+        572,
+        583
+      ],
+      "detail": "Sample one world per round and clone per root candidate. A continues plain play; D first samples a focal policy action, rescores the unchanged decision for candidate probabilities, and runs inner candidate continuations."
+    },
+    {
+      "stage": "Policy decision",
+      "ref": "pr206_integration",
+      "path": "regret_census_v1/stage4a/play.rs",
+      "lines": [
+        89,
+        95,
+        98,
+        145,
+        172
+      ],
+      "detail": "Forced single-option choices already bypass policy and RNG. Other choices call select_fast_session_v1; apply performs engine step and optional labels/history."
+    },
+    {
+      "stage": "Inference pipeline",
+      "ref": "pr206_integration",
+      "path": "sideboard_play_policy_v1.rs",
+      "lines": [
+        1349,
+        1489,
+        1493,
+        1504,
+        1511,
+        1521,
+        1553
+      ],
+      "detail": "Encode actor-visible decision into reusable owned encoding buffers; tensorize V3/V4; validate and run policy/value network; sample logits with the declared role RNG."
+    },
+    {
+      "stage": "Tensorization",
+      "ref": "pr206_integration",
+      "path": "native_flat_tensorizer_v2.rs",
+      "lines": [
+        813,
+        883,
+        894,
+        901,
+        1123,
+        1134,
+        1141
+      ],
+      "detail": "V3/V4 rebuild projections, feature vectors and canonical JSON scratch per call; state hashes already use multi-buffer SHA-512 and exact prefix cache. New DigestBatch is constructed per state digest invocation."
+    },
+    {
+      "stage": "Network forward",
+      "ref": "pr206_integration",
+      "path": "native_policy_value_net_v1.rs",
+      "lines": [
+        708,
+        741,
+        803,
+        818,
+        945,
+        962,
+        967,
+        1335,
+        1355,
+        1413,
+        1432
+      ],
+      "detail": "Validated forward builds intermediate vectors, uses transposed weights and shared state-prefix sums; PR206 adds fixed-width register accumulation/AVX2 and opt-in approximate tanh. Value head is always computed."
+    },
+    {
+      "stage": "Information-history key",
+      "ref": "pr206_integration",
+      "path": "regret_census_v1/stage4a/tree.rs",
+      "lines": [
+        247,
+        251,
+        266,
+        275,
+        284,
+        306
+      ],
+      "detail": "Build actor-visible V4 observation/menu, normalize permitted handles/counters/order, serialize canonical bytes, hash with parent history. This is separate from tensorizer canonical JSON."
+    }
+  ],
+  "retained_profile": {
+    "path": "D:/stage4a-20261009/prof/prof-r1.jsonl",
+    "launcher": "D:/stage4a-20261009/prof/run-prof.bat",
+    "completion": "D:/stage4a-20261009/prof/claim.out",
+    "binary": "D:/stage4a-20261009/target-prof/release/regret_census_v1.exe",
+    "source_ref": "phase_profiler",
+    "completion_observed": "claim.out exit_code=0; prof-r1.log two item completion lines and exit 0",
+    "roots": [
+      "r1-cast-A48-g3757-s97",
+      "r1-target-A48-g2506-s133"
+    ],
+    "placement": {
+      "workers": 2,
+      "cores": "16-17",
+      "select_transitions_per_arm_per_root": 512000
+    },
+    "allowed_read_fields": [
+      "root_id",
+      "timing",
+      "cost",
+      "config.limits",
+      "arms.D.selection.inference_calls",
+      "arms.D.selection.d_continuation.improved_decisions"
+    ],
+    "pooled_selection": [
+      {
+        "arm": "E",
+        "wall_seconds": 1134.040838,
+        "policy_pipeline_seconds": 1064.7634567000127,
+        "policy_pipeline_percent": 93.89110347893951,
+        "policy_calls_timed": 969133,
+        "canonicalization_seconds": 35.66123449999993,
+        "canonicalization_percent": 3.144616428707476,
+        "engine_step_seconds": 26.919274899998477,
+        "engine_step_percent": 2.3737482811883077,
+        "sampler_seconds": 3.780199600000002,
+        "sampler_percent": 0.3333389304274775
+      },
+      {
+        "arm": "A",
+        "wall_seconds": 1225.7438882000001,
+        "policy_pipeline_seconds": 1195.6986947000005,
+        "policy_pipeline_percent": 97.54881963603988,
+        "policy_calls_timed": 999299
+      },
+      {
+        "arm": "D",
+        "wall_seconds": 1315.5488647,
+        "policy_pipeline_seconds": 1279.6252270999958,
+        "policy_pipeline_percent": 97.26930419964323,
+        "policy_calls_timed": 998747,
+        "policy_calls_counter": 1002725,
+        "direct_untimed_rescores": 3978
+      }
+    ],
+    "limits": [
+      "Two engineering roots, both A48 opponent; full transition caps but not a representative population estimate.",
+      "These are per-worker elapsed scopes under two-core concurrency, not isolated CPU-cycle shares and not job wall time.",
+      "Profile predates PR206; use it to locate work, not as current post-PR206 percentages.",
+      "INFER contains encode, tensorize, network forward and action sampling. It is not pure neural arithmetic.",
+      "The real profile log loads actor-relative-v7 policies. PR206's finer phase fixture is V3-only and cannot establish the same split for these V4 roots."
+    ]
+  },
+  "timer_audit": {
+    "source_ref": "phase_profiler",
+    "module": "regret_census_v1/stage4a/prof.rs",
+    "lines": [
+      9,
+      18,
+      22,
+      27,
+      42
+    ],
+    "availability": "Only claude/stage4a-profile branch contains this profiler; absent from inspected origin/main and PR206 integration.",
+    "enable_semantics": "Any presence of S4A_PROFILE enables timing, even value 0; leave unset to disable.",
+    "reset": "stage4a.rs:351 clears counters after replay/root scoring; :353/:356/:359 take and reset after E/A/D; :419 after eval.",
+    "scopes": [
+      {
+        "name": "inference",
+        "location": "play.rs:99",
+        "includes": "Entire select_fast_session_v1",
+        "omits": "Direct improve scorer in arms.rs:381-387 and initial root score at stage4a.rs:333."
+      },
+      {
+        "name": "engine_step",
+        "location": "play.rs:145",
+        "includes": "FastActorSessionV1.step",
+        "omits": "Meter checks and labels/history work around step."
+      },
+      {
+        "name": "sampler",
+        "location": "arms.rs:98",
+        "includes": "world::sample including hidden-state clone/redeterminization",
+        "omits": "Top-level eval world::sample in stage4a.rs:368."
+      },
+      {
+        "name": "session_clone",
+        "location": "arms.rs:429,580,797",
+        "includes": "Explicit world.clone calls outside sampler",
+        "omits": "Cloning inside world::sample; E zero clone calls is not absence of cloning."
+      },
+      {
+        "name": "canon_key",
+        "location": "arms.rs:685,881",
+        "includes": "canon during E selection/execution",
+        "omits": "child_key hashing, initial A/D root canon."
+      },
+      {
+        "name": "tree",
+        "location": "arms.rs:687,760",
+        "includes": "E tree.find and tree.backup",
+        "omits": "child_key, UCB select, node construction, frozen execution lookup."
+      },
+      {
+        "name": "labels",
+        "location": "play.rs:115,148,164",
+        "includes": "Before::take, observe_menu, events/apply",
+        "omits": "History semantic serialization/hash and ancillary watch work."
+      }
+    ],
+    "nesting": "Existing category wrappers are not nested with one another. Sampler internally includes cloning, so do not describe session_clone as all cloning cost or add separate conceptual clone estimates. Rounded category sums leave uninstrumented residual and timer overhead.",
+    "d_rescore_reconciliation": [
+      {
+        "root_id": "r1-cast-A48-g3757-s97",
+        "all_inference_calls": 498993,
+        "timed_inference_calls": 497931,
+        "improved_decisions": 1062
+      },
+      {
+        "root_id": "r1-target-A48-g2506-s133",
+        "all_inference_calls": 503732,
+        "timed_inference_calls": 500816,
+        "improved_decisions": 2916
+      }
+    ]
+  },
+  "already_applied": [
+    {
+      "ref": "merged_policy_speedup",
+      "detail": "Exact transposed-weight SIMD-friendly accumulation, shared state half of action scorer, V3/V4 multi-buffer state hashes/prefix cache and streaming canonical observation JSON."
+    },
+    {
+      "ref": "pr206_integration",
+      "detail": "Exact fixed-width register-held sums and AVX2 dispatch; search-only opt-in approximate tanh; frozen-root replay remains ordinary forward."
+    },
+    {
+      "ref": "main",
+      "detail": "Forced-action inference/RNG bypass; persistent per-role policy encoders; E tree reuse across simulations; no extra neural scoring for UCB-selected focal tree actions."
+    }
+  ],
+  "candidates": [
+    {
+      "priority": 1,
+      "name": "Persistent tensorization and forward scratch",
+      "kind": "Exact-work candidate; unmeasured speed",
+      "source": [
+        "native_flat_tensorizer_v3.rs:26",
+        "native_flat_tensorizer_v2.rs:894",
+        "native_flat_tensorizer_v2.rs:1134",
+        "native_flat_tensorizer_v2.rs:818",
+        "native_policy_value_net_v1.rs:818",
+        "native_policy_value_net_v1.rs:945",
+        "native_policy_value_net_v1.rs:1335"
+      ],
+      "reason": "The measured dominant policy pipeline still creates full tensor/intermediate vectors each call. Reuse per-role buffers without changing numerical order or contracts.",
+      "limit": "No allocation cost share or speedup measured in retained real-root profiles; existing owned encoding buffers do not make all tensor/forward work allocation-free."
+    },
+    {
+      "priority": 2,
+      "name": "Measure residual tensorization versus forward after PR206",
+      "kind": "Profiling need, no claimed optimization",
+      "source": [
+        "sideboard_play_policy_v1.rs:1398",
+        "regret_census_v1/stage4a/tests.rs:849"
+      ],
+      "reason": "Existing phase splitter is test-only V3 fixture. Need V4 real-root phase split to choose between further forward work and canonicalization/hash construction.",
+      "limit": "Do not extrapolate fixture 0.50ms or hot-cache 6% into a real-root speed guarantee or conclusion about GPU batching."
+    },
+    {
+      "priority": 3,
+      "name": "Reuse D sampled-action logits",
+      "kind": "Small exact cleanup; unmeasured speed",
+      "source": [
+        "regret_census_v1/stage4a/arms.rs:514",
+        "regret_census_v1/stage4a/arms.rs:525",
+        "regret_census_v1/stage4a/arms.rs:385",
+        "regret_census_v1/stage4a.rs:810"
+      ],
+      "reason": "D samples using focal policy, then same-model scorer re-encodes/re-scores the same unchanged session. Carry sampled logits/probabilities into improve while preserving exactly one RNG draw, candidate order and charged transitions.",
+      "observed_extra_calls": 3978,
+      "share_of_d_calls_percent": 0.39671894088608545,
+      "share_of_all_selection_calls_percent": 0.13388723652099166,
+      "limit": "Only about 0.397% of D policy calls and 0.134% of all selection calls in this cohort. This is not the largest lever; calls may have different costs."
+    },
+    {
+      "priority": 4,
+      "name": "Optimize canonical key construction only if residual warrants",
+      "kind": "Exact-byte candidate; unmeasured speed",
+      "source": [
+        "regret_census_v1/stage4a/tree.rs:247"
+      ],
+      "reason": "E canonicalization is measured at 3.145% of selection wall in retained roots, using Value trees, sorting and serialization.",
+      "limit": "At this profile share eliminating the entire category yields only about 1.0325x E selection. Preserve ordered zones, canonical bytes and information-history identity; no unordered-state approximation implied."
+    }
+  ],
+  "smallest_additional_profile": {
+    "needed_for_current_audit": false,
+    "reason": "Retained real-root scopes already establish the policy decision pipeline as dominant.",
+    "if_implementation_is_later_assigned": "Use an engineering-only opt-in phase split at the common FrozenPlayPolicy scoring entry, covering both V3/V4 and direct D rescoring. Split encoding, tensorization, validated forward, sampling and any cache/allocation counts; retain arm attribution and an explicit residual. Reuse existing engineering roots and fixed transition budgets with actual post-PR206 binary, unchanged seeds, ordinary/fast mode declared. Sampling instrumentation can limit observer overhead. No new simulation or build was performed in this audit.",
+    "preserve": "Existing formal records and active runs remain untouched; use supported guarded allocation for any future timing."
+  }
+}
