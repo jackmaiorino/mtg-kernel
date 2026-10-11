@@ -461,6 +461,18 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
             // StepF has no combat step; the gate is marked conditional.
             out.control(ControlF::Conditional);
         }
+        TriggerCondition::BeginningControllerCombatWithOtherCreaturePowerAtLeast(minimum) => {
+            let _ = minimum;
+            out.control(ControlF::Conditional);
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Typed(CardTypeF::Creature)),
+                AggF::Characteristic,
+            );
+            // Combat step, threshold and source exclusion exceed this vocabulary.
+            out.atoms.push(Atom::Opaque);
+        }
         TriggerCondition::BeginningEndStepAfterUnearth => {
             // The next end step after the source returned by unearth.
             out.trigger(TrigF::StepBegins {

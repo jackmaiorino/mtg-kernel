@@ -431,16 +431,25 @@ class Mutex:
             try:
                 self.path.mkdir()
             except FileExistsError:
+                if time.monotonic() > deadline:
+                    raise TimeoutError(f"slot mutex {self.path} stayed held for {MUTEX_TIMEOUT_SECONDS} s")
                 if self._stale():
                     stale = self.path.with_name(f".mutex.stale-{uuid.uuid4().hex}")
                     try:
                         os.rename(self.path, stale)
                         shutil.rmtree(stale, ignore_errors=True)
                     except OSError:
-                        pass
+                        time.sleep(0.05)
                     continue
+                time.sleep(0.05)
+                continue
+            except PermissionError as error:
+                # Windows can transiently deny directory recreation. Never
+                # admit work until atomic mkdir succeeds within the deadline.
+                if os.name != "nt" or getattr(error, "winerror", None) != 5:
+                    raise
                 if time.monotonic() > deadline:
-                    raise TimeoutError(f"slot mutex {self.path} stayed held for {MUTEX_TIMEOUT_SECONDS} s")
+                    raise
                 time.sleep(0.05)
                 continue
             write_json(self.path / "owner.json", {"pid": pid, "creation_time": creation})
