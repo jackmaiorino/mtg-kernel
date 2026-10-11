@@ -729,7 +729,8 @@ fn resume_native_training_store_impl_v1(
         | NativeRunCatalogProfileV1::FdnInstantSorceryReducers
         | NativeRunCatalogProfileV1::FdnConditionalFlashPowerCreatures
         | NativeRunCatalogProfileV1::FdnFollowingCreaturesBulkUp
-        | NativeRunCatalogProfileV1::FdnPaladinSkyknightSire => {
+        | NativeRunCatalogProfileV1::FdnPaladinSkyknightSire
+        | NativeRunCatalogProfileV1::FdnRaidEntries => {
             if !current_profile_matches_live_build_identity_v1(run.record().environment()) {
                 return Err(resume_error_v2(
                     NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch,
@@ -2252,6 +2253,23 @@ mod windows_resume_tests {
             .into_root();
         let run =
             decode_train_run_v2(&test_fixture_bytes_fdn_following_creatures_bulk_up_v1()).unwrap();
+        let result = resume_native_training_store_v2(&root, &run, execution_config_v2(&run));
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn resume_rejects_prior_fdn_batch_paladin_skyknight_sire_before_interacting_with_store_contents(
+    ) {
+        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_paladin_skyknight_sire_v1;
+        let parent = TestParentV2::new("prior-fdn-paladin_skyknight_sire");
+        let root = bootstrap_native_training_store_v2(parent.path(), "store")
+            .unwrap()
+            .into_root();
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_paladin_skyknight_sire_v1()).unwrap();
         let result = resume_native_training_store_v2(&root, &run, execution_config_v2(&run));
         assert_eq!(
             result.unwrap_err().kind(),

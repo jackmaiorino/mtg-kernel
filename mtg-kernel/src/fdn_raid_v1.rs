@@ -26,7 +26,11 @@ pub(crate) fn apply_entry_counters(state: &mut GameState, id: ObjectId) {
     }
 }
 
-#[cfg(all(test, feature = "limited-fdn-fixtures"))]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 mod printed_entry_predicate_tests {
     use super::*;
     use crate::engine::{self, Action};

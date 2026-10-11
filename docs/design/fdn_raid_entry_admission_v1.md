@@ -1,6 +1,6 @@
 # Raid entry admission source
 
-Base: `fadf23ff53b70c12e2d0c441d4c90166f430c9a6`, parent draft PR224.
+Composed base: `846f15756d5d88646a679209b66eff3ebaa34ed6`, parent draft PR224.
 Only Skyship Buccaneer and Goblin Boarders append to the Limited extension,
 as IDs390 and391 after Paladin, Skyknight and Sire387-389. The Limited-only
 registry has392 definitions. Earlier rows, IDs and frozen pool inputs remain
@@ -56,3 +56,18 @@ strict lint, changed-root byte/hash compatibility and consumer qualification
 remain unexecuted by this lane. Static formatting/diff and Python registry/deck
 checks are the available evidence. Parent serial integration owns the next
 qualification. No simulation, experiment, PR or full-pool support claim follows.
+
+Actual Windows source `fc24a40c21a15493446523a1d9414cc897a83343`
+passes all-test typecheck and all six registered gameplay groups. The initial
+suppression filter matched zero tests; that attempt remains unqualified.
+The corrected fully qualified filter executes one registered-source suppression
+case and passes. Its module selects the FDN catalog, excluding Standard.
+Actual generated catalog is `43034e663039d50f`, generated source SHA256
+`4c9ddaa70f544aa8377c934d3f0efc50ed3030e62f696a614aeb5876264850f6`.
+Runtime deck catalog remains
+`68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851`.
+The v71 FdnRaidEntries tuple appends these actual identities. Historical v70
+and earlier tuples remain readable; stale v70 publication/resume guards precede
+store access. Current-record profile checks move to v71. Full native record,
+publisher/resume/science, public consumer and lint qualification remains pending.
+Neither this tuple nor these fixture results admit a model or training launch.
