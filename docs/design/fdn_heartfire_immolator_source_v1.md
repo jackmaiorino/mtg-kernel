@@ -25,3 +25,28 @@ Existing ordinary activation/target public actions are sufficient to express the
 Frozen RulesMeaning emits `Atom::Opaque` for `EffectOp::StandardV1` (`rules_vector_v1/meaning/mod.rs`), retaining the payload but lacking typed semantic coverage. A rooted successor must describe signed source power at departure, nonnegative damage, source sacrifice and creature-or-planeswalker targeting. No frozen meaning vocabulary is widened here. Granted copies of this activation on definitions without the departure-capture hook are explicitly refused at pending validation; a grant/copy capture successor is separate. Existing damage proposals and Standard/default trajectories retain their old source rules when the ephemeral historical extension is absent.
 
 Parent admission must install the actual printed FDN definition, run native all-test typechecking and the printed/primitive fixtures, qualify source/target sampling and privacy, and choose current successor catalog/profile identities. No frozen evidence is edited by this preparation.
+
+## Mandatory receipt repair after Native49
+
+At current composition 95bedc54d1eab8c14cc89f024963c8eefa54a0e7, Native49's
+printed forgery fixture failed case4: erasing SourcePowerActivationCommittedV1
+allowed Action::Pass. The shared action validator enumerated only surviving
+receipts, so no receipt meant no validation until later resolution.
+
+The repair independently validates each live stack item before receipt-ledger
+reconciliation. SourceLastPowerDamageV1 intrinsically requires its unique
+committed payment; absence is an error before any action changes state.
+Captured definition and selected activation index identify the same operation
+if its mutable inline effect is erased or replaced. A retained immutable
+receipt likewise prevents erasing both mutable selectors to escape authority.
+Ordinary unrelated activations retain the predecessor path, without new events,
+serialized fields, schema/profile identities or state mutation during checks.
+
+The printed both-seat forgery fixture now restores each damaged snapshot,
+checks readonly refusal, and retries against the identical retained state.
+Added erasure/replacement of the inline root together with receipt removal,
+and erasure of both inline/source selectors while a receipt remains.
+A real registered Shivan Dragon activation verifies unrelated receipt-free
+validation, unchanged bytes/hash, and identical ordinary pass after restore.
+Pinned formatting and diff checks are run in the owned repair tree.
+Native rerun remains parent-owned; this repair does not claim a runtime pass.

@@ -108,8 +108,37 @@ pub(crate) fn record_paid(state: &mut GameState, id: StackItemId) {
         });
 }
 
+/// The captured printed definition still selects this mandatory authority even
+/// when a restored item erases its redundant inline program.
+fn selected_definition_uses_program(item: &StackItem) -> bool {
+    if item.kind != StackItemKind::ActivatedAbility {
+        return false;
+    }
+    let Some(source) = item.v4.ability_source_contract else {
+        return false;
+    };
+    let Some(index) = item.v4.activated_ability_index else {
+        return false;
+    };
+    CARD_DEFS
+        .get(usize::from(source.card_def))
+        .and_then(|def| def.activated_abilities.get(usize::from(index)))
+        .is_some_and(|ability| is_program(Some(&(ability.effect)())))
+}
+
 pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), String> {
     if !is_program(item.inline_effect.as_ref()) {
+        if selected_definition_uses_program(item)
+            || state.engine.event_history.iter().any(|event| {
+                matches!(event,
+                CommittedEvent::SourcePowerActivationCommittedV1 { item: saved, .. }
+                if saved.v4.stack_item_id == item.v4.stack_item_id)
+            })
+        {
+            return Err(
+                "source-power activation changed its selected definition-owned program".into(),
+            );
+        }
         return Ok(());
     }
     if state.engine.event_history.iter().any(|event|matches!(event,
@@ -222,6 +251,12 @@ pub(crate) fn finish(state: &mut GameState, item: &StackItem) {
 }
 
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    // The operation owns a mandatory payment receipt. Receipt presence cannot
+    // decide whether its live activation is validated: deletion must refuse
+    // before any action mutates priority, mana, targets or continuation state.
+    for item in &state.stack {
+        validate_item(state, item)?;
+    }
     if state.engine.event_log.iter().any(|event| {
         matches!(
             event,
@@ -415,6 +450,10 @@ pub(crate) fn execute(ctx: &ExecCtx, state: &mut GameState) {
         event::propose_and_commit(state, proposal);
     }
 }
+
+#[cfg(test)]
+#[path = "source_power_activation_v1_legacy_tests.rs"]
+mod legacy_tests;
 
 #[cfg(test)]
 mod tests {
