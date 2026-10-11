@@ -53,7 +53,7 @@ legends. Generic observations represent the added public state and decision boun
 
 **Runtime verification is pending.** The integration lead still owns the combined
 compile, affected executable tests, final untap/granted-trigger repairs,
-terminal public-session/replay execution, source review and delivery. The native v7 build generator reports `0x0c47aa2c109fedc2`, now bound by the catalog test. Full flags and Python admission alone are
+terminal public-session/replay execution, source review and delivery. The native v7 build generator reports `0x020d7a9c4c45b4e2`, now bound by the catalog test. Full flags and Python admission alone are
 not a verified support result. No training, benchmark campaign, paid compute or
 playing-strength claim is part of this assignment.
 

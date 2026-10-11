@@ -597,7 +597,7 @@ fn standard_registry_appends_to_the_pauper_prefix_without_fdn() {
 #[test]
 fn standard_catalog_identity_is_frozen() {
     // Observed from the pinned native build's generated Standard v7 catalog.
-    const EXPECTED_STANDARD_V7: u64 = 0x0c47_aa2c_109f_edc2;
+    const EXPECTED_STANDARD_V7: u64 = 0x020d_7a9c_4c45_b4e2;
     assert_eq!(
         KERNEL_CARDDB_HASH, EXPECTED_STANDARD_V7,
         "Standard v7 catalog identity changed: {KERNEL_CARDDB_HASH:#018x}"

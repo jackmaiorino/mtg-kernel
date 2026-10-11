@@ -3160,7 +3160,13 @@ fn smithy_taps_exactly_five_and_barracks_tracks_floating_mana_after_untap() {
     resolve_stack(&mut state);
     assert_eq!(state.objects.get(smithy).v4.face_index, 1);
     assert!(pay.iter().all(|id| state.objects.get(*id).tapped));
-    event::propose_and_commit(&mut state, ProposedEvent::untap(smithy));
+    mtg_kernel::effect::execute(
+        &mtg_kernel::effect::EffectOp::UntapObject {
+            object: mtg_kernel::effect::ObjectRef::ThisSource,
+        },
+        &mtg_kernel::effect::ExecCtx::no_targets(smithy, P0),
+        &mut state,
+    );
     act(&mut state, Action::ActivateManaAbility(smithy));
     assert_eq!(state.players[0].restricted_mana_pool.0.len(), 1);
     let recruit = put(&mut state, P0, "Recruitment Officer", Zone::Hand);
@@ -3309,7 +3315,6 @@ fn cauldron_granted_sacrifice_ability_keeps_its_frozen_identity() {
     .unwrap();
     let grant = observation
         .projection
-        .surface
         .stack
         .last()
         .unwrap()
