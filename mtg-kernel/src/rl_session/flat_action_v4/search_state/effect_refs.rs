@@ -100,6 +100,7 @@ impl Scan<'_> {
             | AnimateSource
             | PumpTargetUntilEndOfTurnDynamic { .. }
             | DoubleTargetPowerUntilEndOfTurn { .. }
+            | DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
             | LookTopSelectByTypeToHandBottomRest { .. }
             | LookTopPickToHandBottomRest { .. }
             | DrawCardsDynamic { .. }

@@ -3449,6 +3449,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
             "DrawCardsDynamic(Controller,DistinctManaValuesAmongControlledNonlandPermanents,resolutionSample)",
             "EffectOp::DrawCardsDynamic { player: PlayerRef::Controller, count: DynamicValueDef::DistinctManaValuesAmongControlledNonlandPermanents }",
         ),
+        "Inspiring Call" => program(
+            "None",
+            "DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn(Controller,Creature,PlusOneCounterCountGreaterThanZero,oneDrawPerCreature,Indestructible,exactIncarnations,resolutionSnapshot)",
+            "EffectOp::DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { keyword: Keywords::INDESTRUCTIBLE }",
+        ),
         "Brass's Bounty" => program(
             "None",
             "CreateTokensDynamic(Treasure Token,Controller,ControlledPermanentsWithType(Land),untapped)",

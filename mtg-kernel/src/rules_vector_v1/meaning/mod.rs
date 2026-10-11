@@ -242,6 +242,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::ReturnOwnGraveyardCreaturesManaValueAtMost { .. }
         | EffectOp::ReturnAllGraveyardCreaturesUnderController
         | EffectOp::DoubleTargetPowerUntilEndOfTurn { .. }
+        | EffectOp::DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
         | EffectOp::CounterTargetSpellThenCreateTokens { .. }
         | EffectOp::ExileGraveyardTargetsDrainPerCreature { .. }
         | EffectOp::RemoveTimeCounterFromSource

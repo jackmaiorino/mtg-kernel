@@ -1307,7 +1307,7 @@ pub enum EffectOp {
     /// which drives its end-step exile and its leave-the-battlefield exile
     /// replacement.
     ReturnSourceFromGraveyardUnearthed,
-    /// Ward—Discard a card: counters the exact stack incarnation that
+    /// Wardâ€”Discard a card: counters the exact stack incarnation that
     /// targeted the bound Ward permanent unless its controller discards a
     /// card. Like the other Standard ward costs it never asks: the payer
     /// pays whenever their hand is not empty, discarding its lowest mana
@@ -1399,6 +1399,13 @@ pub enum EffectOp {
     /// add that amount until cleanup. Subsequent changes are not doubled.
     DoubleTargetPowerUntilEndOfTurn {
         target_index: u8,
+    },
+    /// Capture controlled battlefield creatures with at least one +1/+1
+    /// counter, draw once per captured creature, then grant the keyword to
+    /// those exact incarnations until cleanup. Later counters and control
+    /// changes do not change the captured set.
+    DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn {
+        keyword: Keywords,
     },
 }
 
@@ -14721,6 +14728,29 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 event::ProposedEvent::damage(ctx.source, Target::Player(controller), *amount),
             );
         }
+        EffectOp::DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { keyword } => {
+            let objects: Vec<_> = state
+                .objects
+                .iter()
+                .filter_map(|(object, live)| {
+                    (live.zone == Zone::Battlefield
+                        && live.controller == ctx.controller
+                        && live.counters.plus1_plus1 > 0
+                        && crate::engine::object_has_type(state, object, CardType::Creature))
+                    .then_some(EffectObjectBinding {
+                        object,
+                        expected_zone: Zone::Battlefield,
+                        expected_zone_change_count: live.zone_change_count,
+                    })
+                })
+                .collect();
+            for _ in &objects {
+                event::propose_and_commit(state, event::ProposedEvent::draw(ctx.controller));
+            }
+            for object in objects {
+                install_temporary_boost(state, object, 0, 0, *keyword);
+            }
+        }
         EffectOp::DoubleTargetPowerUntilEndOfTurn { target_index } => {
             let index = usize::from(*target_index);
             if !ctx.target_incarnation_matches(index, state) {
@@ -17357,6 +17387,86 @@ mod sampled_target_power_tests {
                     serde_json::to_value(replay).unwrap()
                 );
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod countered_creature_draw_tests {
+    use super::*;
+
+    #[test]
+    fn one_draw_per_positive_counter_creature_and_sticky_keyword_restore() {
+        let elf = crate::card_def::card_id_by_name("Llanowar Elves").unwrap();
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let cards = [elf, elf, elf, forest, elf, elf, elf, elf];
+            let mut state = GameState::new_from_libraries(
+                &cards,
+                &cards,
+                |id| crate::card_def::CARD_DEFS[id as usize].name.into(),
+                1116,
+            );
+            let own = state.players[player.index()].library.clone();
+            let other = state.players[player.opponent().index()].library[0];
+            for object in own.iter().copied().take(4).chain([other]) {
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change(object, Zone::Battlefield),
+                );
+            }
+            state.objects.get_mut(own[0]).counters.plus1_plus1 = 1;
+            state.objects.get_mut(own[1]).counters.plus1_plus1 = 5;
+            state.objects.get_mut(own[3]).counters.plus1_plus1 = 8;
+            state.objects.get_mut(other).counters.plus1_plus1 = 9;
+            let op = EffectOp::DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn {
+                keyword: Keywords::INDESTRUCTIBLE,
+            };
+            let ctx = ExecCtx::no_targets(own[0], player);
+            let mut replay: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for current in [&mut state, &mut replay] {
+                let before = current.players[player.index()].hand.len();
+                execute(&op, &ctx, current);
+                assert_eq!(current.players[player.index()].hand.len(), before + 2);
+                for object in [own[0], own[1]] {
+                    assert!(crate::engine::has_effective_keyword(
+                        current,
+                        object,
+                        Keywords::INDESTRUCTIBLE
+                    ));
+                }
+                for object in [own[2], own[3], other] {
+                    assert!(!crate::engine::has_effective_keyword(
+                        current,
+                        object,
+                        Keywords::INDESTRUCTIBLE
+                    ));
+                }
+                current.objects.get_mut(own[0]).counters.plus1_plus1 = 0;
+                assert!(crate::engine::has_effective_keyword(
+                    current,
+                    own[0],
+                    Keywords::INDESTRUCTIBLE
+                ));
+                event::propose_and_commit(
+                    current,
+                    event::ProposedEvent::zone_change(own[0], Zone::Graveyard),
+                );
+                event::propose_and_commit(
+                    current,
+                    event::ProposedEvent::zone_change(own[0], Zone::Battlefield),
+                );
+                assert!(!crate::engine::has_effective_keyword(
+                    current,
+                    own[0],
+                    Keywords::INDESTRUCTIBLE
+                ));
+            }
+            assert_eq!(
+                serde_json::to_value(state).unwrap(),
+                serde_json::to_value(replay).unwrap()
+            );
         }
     }
 }
