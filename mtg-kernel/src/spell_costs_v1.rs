@@ -118,10 +118,10 @@ pub(super) fn prepare_spell_nonmana_v1(
                 return None;
             }
             let action = match component {
-                CostComponent::RemovePlusOneCountersFromControlledCreatures(amount) => {
-                    PreparedNonmanaActionV1::CounterRemovals(
-                        super::controlled_plus_one_counter_removals(player, &projected, amount)?,
-                    )
+                CostComponent::RemovePlusOneCountersFromControlledCreatures(_) => {
+                    // Validation bound the exact selected counters above. Do
+                    // not replace the player's selection with arena order.
+                    PreparedNonmanaActionV1::CounterRemovals(chosen.to_vec())
                 }
                 CostComponent::RevealHandIfNoCardsWithType(_) => {
                     let hand = projected.players[player.index()].hand.clone();
@@ -1619,6 +1619,12 @@ mod tests {
             CostComponent::PayLife(2),
             CostComponent::RemovePlusOneCountersFromControlledCreatures(2),
         ] {
+            let chosen = match component {
+                CostComponent::RemovePlusOneCountersFromControlledCreatures(_) => {
+                    vec![object, object]
+                }
+                _ => Vec::new(),
+            };
             assert!(super::super::can_pay_components(
                 &[component],
                 PlayerId::P0,
@@ -1629,7 +1635,7 @@ mod tests {
                 &state,
                 PlayerId::P0,
                 object,
-                &[(&[component], &[]), (&[component], &[])],
+                &[(&[component], &chosen), (&[component], &chosen)],
             )
             .is_none());
             assert_eq!(serde_json::to_value(&state).unwrap(), before);
@@ -1643,13 +1649,13 @@ mod tests {
                     &[CostComponent::RemovePlusOneCountersFromControlledCreatures(
                         1,
                     )],
-                    &[],
+                    &[object],
                 ),
                 (
                     &[CostComponent::RemovePlusOneCountersFromControlledCreatures(
                         1,
                     )],
-                    &[],
+                    &[object],
                 ),
             ],
         )
@@ -1658,6 +1664,35 @@ mod tests {
         prepared.commit(&mut state, PlayerId::P0, object);
         assert_eq!(state.objects.get(object).counters.plus1_plus1, 0);
         assert_eq!(state.players[0].life, 3);
+    }
+
+    #[test]
+    fn prepared_counter_payment_preserves_the_selected_creature() {
+        let elf = card_def::card_id_by_name("Llanowar Elves").unwrap();
+        let mut state = GameState::new_from_libraries(&[elf, elf], &[], |_| "elf".into(), 953);
+        let first = state.draw_card(PlayerId::P0).unwrap();
+        let selected = state.draw_card(PlayerId::P0).unwrap();
+        for object in [first, selected] {
+            assert!(state.move_hand_to_battlefield(PlayerId::P0, object));
+            state.objects.get_mut(object).counters.plus1_plus1 = 1;
+        }
+        let before = state.clone();
+        let payment = prepare_spell_nonmana_v1(
+            &state,
+            PlayerId::P0,
+            first,
+            &[(
+                &[CostComponent::RemovePlusOneCountersFromControlledCreatures(
+                    1,
+                )],
+                &[selected],
+            )],
+        )
+        .unwrap();
+        assert_eq!(state, before);
+        payment.commit(&mut state, PlayerId::P0, first);
+        assert_eq!(state.objects.get(first).counters.plus1_plus1, 1);
+        assert_eq!(state.objects.get(selected).counters.plus1_plus1, 0);
     }
 
     #[test]
@@ -1687,7 +1722,7 @@ mod tests {
                     &[CostComponent::RemovePlusOneCountersFromControlledCreatures(
                         1
                     )],
-                    &[]
+                    &[creature]
                 ),
             ],
         )
