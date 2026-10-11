@@ -1,0 +1,190 @@
+//! Registered physical primitive fixtures, not printed Self-Reflection admission.
+use super::*;
+use crate::card_def::{card_id_by_name, DynamicValueDef, Keywords};
+use crate::effect::{ObjectRef, TargetRef};
+use crate::event::{self, ProposedEvent};
+use crate::ids::{ObjectId, PlayerId};
+use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::state::Zone;
+
+fn fixture(actor: PlayerId) -> (GameState, ObjectId, ExecCtx) {
+    let mut state = ready_state();
+    let source = put(&mut state, actor, "Think Twice", Zone::Hand);
+    let creature = put(&mut state, actor.opponent(), "Llanowar Elves", Zone::Hand);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change_to_battlefield_under_controller(creature, actor),
+    );
+    let mut ctx = ExecCtx::no_targets(source, actor);
+    ctx.targets = vec![Target::Object(creature)];
+    ctx.target_contracts = vec![StackTargetContractV4::capture(&state, ctx.targets[0])];
+    (state, creature, ctx)
+}
+#[test]
+fn controlled_copy_uses_current_values_and_new_token_owner_without_copying_incidental_state() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, creature, ctx) = fixture(actor);
+        state.objects.get_mut(creature).tapped = true;
+        state.objects.get_mut(creature).damage = 1;
+        state.objects.get_mut(creature).counters.plus1_plus1 = 2;
+        crate::effect::execute(
+            &EffectOp::PumpTargetUntilEndOfTurnDynamic {
+                target: TargetRef::Target(0),
+                power: DynamicValueDef::Fixed(3),
+                toughness: DynamicValueDef::Fixed(3),
+            },
+            &ctx,
+            &mut state,
+        );
+        crate::effect::execute(
+            &EffectOp::GrantKeywordTargetUntilEndOfTurn {
+                object: ObjectRef::Target(0),
+                keyword: Keywords::HASTE,
+            },
+            &ctx,
+            &mut state,
+        );
+        let saved = serde_json::to_vec(&state).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&saved).unwrap();
+        for current in [&mut state, &mut restored] {
+            let before = current.players[actor.index()].battlefield.len();
+            execute(current, &ctx);
+            assert_eq!(current.players[actor.index()].battlefield.len(), before + 1);
+            let token = *current.players[actor.index()].battlefield.last().unwrap();
+            let live = current.objects.get(token);
+            assert_eq!(live.card_def, card_id_by_name("Llanowar Elves").unwrap());
+            assert_eq!((live.owner, live.controller), (actor, actor));
+            assert!(live.v4.is_token && live.summoning_sick);
+            assert!(!live.tapped);
+            assert_eq!(live.damage, 0);
+            assert_eq!(live.counters.plus1_plus1, 0);
+            assert!(live.attachments.is_empty());
+            assert_eq!(crate::engine::effective_power(current, token), 1);
+            assert!(!crate::engine::has_effective_keyword(
+                current,
+                token,
+                Keywords::HASTE
+            ));
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+    }
+}
+#[test]
+fn exact_target_departure_reentry_control_change_and_monocolored_protection_refuse_before_copy() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for failure in 0..4 {
+            let (mut state, creature, ctx) = fixture(actor);
+            match failure {
+                0 => {
+                    event::propose_and_commit(
+                        &mut state,
+                        ProposedEvent::zone_change(creature, Zone::Hand),
+                    );
+                }
+                1 => {
+                    event::propose_and_commit(
+                        &mut state,
+                        ProposedEvent::zone_change(creature, Zone::Hand),
+                    );
+                    event::propose_and_commit(
+                        &mut state,
+                        ProposedEvent::zone_change_to_battlefield_under_controller(creature, actor),
+                    );
+                }
+                2 => crate::standard_cards_v1::gain_control(&mut state, creature, actor.opponent()),
+                _ => crate::effect::execute(
+                    &EffectOp::GrantKeywordTargetUntilEndOfTurn {
+                        object: ObjectRef::Target(0),
+                        keyword: Keywords::PROTECTION_FROM_MONOCOLORED,
+                    },
+                    &ctx,
+                    &mut state,
+                ),
+            }
+            let before = serde_json::to_vec(&state).unwrap();
+            execute(&mut state, &ctx);
+            assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+        }
+    }
+}
+
+#[cfg(feature = "standard-magezero-fixtures")]
+#[test]
+fn accepted_aegis_copy_changes_values_without_losing_physical_target_incarnation() {
+    use crate::effect::EffectObjectBinding;
+    use crate::state::{AbilitySourceContractV4, ObjectLinkV4};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, host, ctx) = fixture(actor);
+        let aegis = put(&mut state, actor, "Assimilation Aegis", Zone::Battlefield);
+        let exiled = put(&mut state, actor.opponent(), "Tolarian Terror", Zone::Hand);
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(exiled, Zone::Exile));
+        // Genuine registered Aegis physical attachment/copy primitives. The
+        // original creature spell/root is not replaced by the prepared spell.
+        state
+            .attach_object_exact(aegis, 0, host, state.objects.get(host).zone_change_count)
+            .unwrap();
+        let source = AbilitySourceContractV4::capture(&state, aegis);
+        state.objects.get_mut(exiled).v4.exiled_by = Some(ObjectLinkV4 {
+            object: aegis,
+            zone_change_count: source.zone_change_count,
+        });
+        let mut copy_ctx = ExecCtx::no_targets(aegis, actor);
+        copy_ctx.ability_source_contract = Some(source);
+        let host_link = ObjectLinkV4 {
+            object: host,
+            zone_change_count: state.objects.get(host).zone_change_count,
+        };
+        let timestamp = state.objects.get(aegis).v4.layer_timestamp.unwrap();
+        let exiled_generation = state.objects.get(exiled).zone_change_count;
+        crate::standard_cards_v1::apply_aegis_copy(
+            &mut state,
+            &copy_ctx,
+            host_link,
+            timestamp,
+            EffectObjectBinding {
+                object: exiled,
+                expected_zone: Zone::Exile,
+                expected_zone_change_count: exiled_generation,
+            },
+        );
+        assert_eq!(
+            state.objects.get(host).card_def,
+            card_id_by_name("Tolarian Terror").unwrap()
+        );
+        assert!(!crate::engine::target_contract_matches_live(
+            &state,
+            ctx.targets[0],
+            ctx.target_contracts[0]
+        ));
+        assert!(target_matches_live(
+            &state,
+            ctx.targets[0],
+            ctx.target_contracts[0]
+        ));
+        let saved = serde_json::to_vec(&state).unwrap();
+        let mut state: GameState = serde_json::from_slice(&saved).unwrap();
+        execute(&mut state, &ctx);
+        let token = *state.players[actor.index()].battlefield.last().unwrap();
+        assert_eq!(
+            state.objects.get(token).card_def,
+            card_id_by_name("Tolarian Terror").unwrap()
+        );
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(aegis, Zone::Hand));
+        assert_eq!(
+            state.objects.get(host).card_def,
+            card_id_by_name("Llanowar Elves").unwrap()
+        );
+        assert_eq!(
+            state.objects.get(token).card_def,
+            card_id_by_name("Tolarian Terror").unwrap()
+        );
+        let mut forged = ctx.target_contracts[0];
+        if let StackTargetContractV4::Object { card_def, .. } = &mut forged {
+            *card_def = card_id_by_name("Forest").unwrap();
+        }
+        assert!(!target_matches_live(&state, ctx.targets[0], forged));
+    }
+}

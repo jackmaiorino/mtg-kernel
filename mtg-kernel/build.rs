@@ -3454,6 +3454,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         mode2: None,
     };
     Some(match name {
+        "Self-Reflection" => program(
+            "ControlledCreature",
+            "CreateControlledCreatureTargetCopyV1(Target0,currentController,exactPhysicalIncarnation,currentCopiableDefinitionAndFace,tokenOwnerController=spellController,ordinaryETB,noHasteOrDelayedSacrifice)",
+            "EffectOp::CreateControlledCreatureTargetCopyV1",
+        ),
         "Run Away Together" => program(
             "TwoCreaturesWithDifferentControllers",
             "ReturnTwoDifferentControllerCreaturesToOwnersHands(exactlyTwo,distinctObjects,currentDifferentControllers,exactIncarnations,simultaneousLegalitySnapshot,batchOwnerHandMove,partialLegalTargets)",
@@ -4649,6 +4654,13 @@ fn flashback_for(name: &str) -> String {
         }
         "Think Twice" => {
             let (pips, generic, x_count) = parse_cost("{2}{U}");
+            format!(
+                "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})] }})",
+                pips.join(", ")
+            )
+        }
+        "Self-Reflection" => {
+            let (pips, generic, x_count) = parse_cost("{3}{U}");
             format!(
                 "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})] }})",
                 pips.join(", ")

@@ -465,6 +465,7 @@ pub mod regret_census_v1;
 pub mod rl;
 pub mod rl_session;
 pub mod runtime_decks;
+mod self_reflection_v1;
 pub mod sideboard;
 pub mod snapshot;
 pub mod standard_legends_v1;

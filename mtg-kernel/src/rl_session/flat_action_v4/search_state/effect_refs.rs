@@ -158,6 +158,7 @@ impl Scan<'_> {
             | PumpTargetUntilEndOfTurnDynamic { .. }
             | PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness { .. }
             | ReturnTwoDifferentControllerCreaturesToOwnersHands
+            | CreateControlledCreatureTargetCopyV1
             | DoubleTargetPowerUntilEndOfTurn { .. }
             | DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
             | CreateTokensForOtherControlledCreaturesNamed { .. }
