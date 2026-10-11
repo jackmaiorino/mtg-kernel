@@ -592,7 +592,7 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
                 controller: relation,
                 zone,
                 color: None,
-                mana_value_at_most: Some(mana_value_bucket(maximum)),
+                mana_value_at_most: Some(mana_value_bucket(u16::from(maximum))),
                 excludes: None,
             });
         }
