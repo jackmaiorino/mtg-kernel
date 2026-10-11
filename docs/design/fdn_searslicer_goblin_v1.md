@@ -50,9 +50,10 @@ or changed label; there is no Searslicer target or optional decision. Future
 tests consume the genuine V9 session and safe projector, check flags, safe
 handles, immediate retry and exact pending-snapshot replay with fresh selectors.
 They do not claim that the frozen V9 adapter has the owning-rollback generation
-protection provided by later separately versioned consumers. Same-source
-ChooseTriggerOrderNext remains explicitly refused by predecessor Human labels.
-Any admission requiring that larger menu or owning-rollback transport must
+protection provided by later separately versioned consumers. Duplicate-source trigger ordering and all incremental ChooseTriggerOrderNext
+menus remain explicitly refused by predecessor Human labels. Ordinary core
+permutations retain the existing seven-trigger cap; an oversized group needs a
+separate transport. Any admission requiring that larger menu or owning-rollback transport must
 select a separate successor instead of relabeling frozen V9.
 
 Two registered-operand primitive groups use actual declarations, the typed
