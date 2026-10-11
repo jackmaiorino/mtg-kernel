@@ -71,7 +71,47 @@ fn next(state: &mut GameState) -> Decision {
 fn until_selection(state: &mut GameState) -> Decision {
     for _ in 0..40 {
         match next(state) {
-            d @ Decision::ChooseEffectTargets { .. } => return d,
+            d @ Decision::ChooseEffectTargets {
+                player,
+                selected_count,
+                min_targets,
+                max_targets,
+                ..
+            } => {
+                let purpose = state
+                    .engine
+                    .pending_effect
+                    .as_ref()
+                    .unwrap()
+                    .choice
+                    .as_ref()
+                    .unwrap();
+                match purpose {
+                    PendingEffectChoice::SelectTargets {
+                        purpose: EffectTargetSelectionPurpose::SelectObjectsV1 { .. },
+                        ..
+                    } => return d,
+                    PendingEffectChoice::SelectTargets {
+                        purpose: EffectTargetSelectionPurpose::OrderMilledIntoGraveyard,
+                        ..
+                    } => {
+                        assert_eq!(
+                            player,
+                            state.engine.pending_effect.as_ref().unwrap().ctx.controller
+                        );
+                        assert_eq!((min_targets, max_targets), (3, 3));
+                        let chosen =
+                            state.players[player.index()].library[usize::from(selected_count)];
+                        // Preserve both private order-prompt and accepted partial
+                        // answer snapshots before the public graveyard move.
+                        *state = restore(state);
+                        engine::step(state, Action::ChooseEffectTarget(Target::Object(chosen)))
+                            .unwrap();
+                        *state = restore(state);
+                    }
+                    _ => panic!("unexpected typed selection stage"),
+                }
+            }
             Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
             other => panic!("resolution choice: {other:?}"),
         }
@@ -135,6 +175,8 @@ fn actual_cast_mill_three_mandatory_non_target_return_and_restore_both_seats() {
         cast(&mut state, actor, source, false);
         state = restore(&state);
         let decision = until_selection(&mut state);
+        state.engine.event_log.clear();
+        effect::validate_pending_effect_choice(&state).unwrap();
         assert!(
             matches!(decision, Decision::ChooseEffectTargets { player, min_targets: 1, max_targets: 1, can_finish: false, ref legal_targets, .. }
             if player == actor && legal_targets.contains(&Target::Object(prior))
@@ -231,9 +273,40 @@ fn selection_restore_refuses_coherent_rule_candidate_and_incarnation_forgeries_b
         let source = put(&mut state, actor, "Inspiration from Beyond", Zone::Hand);
         cast(&mut state, actor, source, false);
         until_selection(&mut state);
-        for forgery in 0..5 {
+        for forgery in 0..11 {
             let mut altered = restore(&state);
-            if forgery == 4 {
+            if forgery == 10 {
+                altered
+                    .engine
+                    .event_log
+                    .push(altered.engine.event_history.last().unwrap().clone());
+            } else if forgery == 9 {
+                altered
+                    .engine
+                    .event_history
+                    .push(altered.engine.event_history.last().unwrap().clone());
+            } else if forgery == 8 {
+                altered.engine.pending_effect = None;
+            } else if forgery == 7 {
+                assert!(matches!(
+                    altered.engine.event_history.pop(),
+                    Some(event::CommittedEvent::InspirationResolutionBoundaryV1 { .. })
+                ));
+            } else if forgery == 6 {
+                let pending = altered.engine.pending_effect.as_mut().unwrap();
+                pending.choice = None;
+                pending.answered_choice_guard = None;
+                pending.frames = vec![effect::EffectFrame::Program {
+                    op: (CARD_DEFS[altered.objects.get(source).card_def as usize].spell_effect)()
+                        .unwrap(),
+                    path: Vec::new(),
+                }];
+            } else if forgery == 5 {
+                let pending = altered.engine.pending_effect.as_mut().unwrap();
+                pending.choice = None;
+                pending.frames.clear();
+                pending.answered_choice_guard = None;
+            } else if forgery == 4 {
                 let chosen = altered.players[actor.index()].graveyard[0];
                 event::propose_and_commit(
                     &mut altered,
@@ -288,7 +361,86 @@ fn selection_restore_refuses_coherent_rule_candidate_and_incarnation_forgeries_b
             )
             .is_err());
             assert_eq!(altered, before);
+            assert!(engine::step(&mut altered, Action::Pass).is_err());
+            assert_eq!(altered, before);
         }
+    }
+}
+
+#[test]
+fn empty_library_mill_has_authenticated_empty_return_and_cannot_restart_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = GameState::new_from_libraries_with_starting_player_v1(
+            &[],
+            &[],
+            |_| "Forest".into(),
+            110_308,
+            actor,
+        );
+        state.step = Step::Main1;
+        let source = put(&mut state, actor, "Inspiration from Beyond", Zone::Hand);
+        cast(&mut state, actor, source, false);
+        assert!(matches!(
+            until_selection(&mut state),
+            Decision::ChooseEffectTargets {
+                min_targets: 0,
+                max_targets: 0,
+                can_finish: true,
+                ..
+            }
+        ));
+        state = restore(&state);
+        let mut erased = state.clone();
+        let pending = erased.engine.pending_effect.as_mut().unwrap();
+        pending.choice = None;
+        pending.frames.clear();
+        pending.answered_choice_guard = None;
+        let before = erased.clone();
+        assert!(engine::step(&mut erased, Action::Pass).is_err());
+        assert_eq!(erased, before);
+        engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+        state = restore(&state);
+        settle(&mut state);
+        assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
+        assert!(state.players[actor.index()].hand.is_empty());
+    }
+}
+
+#[test]
+fn same_physical_card_can_flash_back_after_its_closed_normal_resolution_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor, true);
+        let source = put(&mut state, actor, "Inspiration from Beyond", Zone::Hand);
+        let first = state.players[actor.index()].library[0];
+        let second = state.players[actor.index()].library[2];
+        cast(&mut state, actor, source, false);
+        let original_stack = state.stack.last().unwrap().v4.stack_item_id;
+        until_selection(&mut state);
+        engine::step(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(first)),
+        )
+        .unwrap();
+        settle(&mut state);
+        assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
+        cast(&mut state, actor, source, true);
+        assert_ne!(state.stack.last().unwrap().v4.stack_item_id, original_stack);
+        state = restore(&state);
+        assert!(
+            matches!(until_selection(&mut state), Decision::ChooseEffectTargets { ref legal_targets, can_finish: false, .. }
+            if legal_targets == &[Target::Object(second)])
+        );
+        engine::step(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(second)),
+        )
+        .unwrap();
+        state = restore(&state);
+        settle(&mut state);
+        assert_eq!(state.objects.get(source).zone, Zone::Exile);
+        assert_eq!(state.objects.get(first).zone, Zone::Hand);
+        assert_eq!(state.objects.get(second).zone, Zone::Hand);
+        assert_eq!(state.players[actor.index()].library.len(), 34);
     }
 }
 

@@ -611,6 +611,12 @@ pub enum CommittedEvent {
         source: crate::state::AbilitySourceContractV4,
         face_index: u8,
     },
+    /// Independent engine-published lifecycle boundary for the exact
+    /// mill-three/mandatory instant-or-sorcery return definition program.
+    /// History-only: never projected as a trigger event or public card fact.
+    InspirationResolutionBoundaryV1 {
+        receipt: crate::effect::InspirationResolutionReceiptV1,
+    },
 }
 
 /// Remembers the counters of a departing permanent whose own leave ability
