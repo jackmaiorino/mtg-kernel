@@ -659,6 +659,7 @@ fn initialize_entry_counters(state: &mut GameState, object: ObjectId, kicked: bo
             }
         }
     }
+    crate::fdn_raid_v1::apply_entry_counters(state, object);
     #[cfg(feature = "standard-magezero-fixtures")]
     crate::standard_statics_v1::apply_conditional_entry_counters(state, object);
 }

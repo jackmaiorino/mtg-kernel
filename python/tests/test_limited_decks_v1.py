@@ -179,6 +179,18 @@ class LimitedDeckTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "registry version 2"):
             limited.combined_registry(base, [b'{"version":3,"cards":[]}'])
 
+    def test_paladin_skyknight_sire_reference_and_appended_ids(self) -> None:
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_paladin_skyknight_sire.dck").read_text(encoding="utf-8"))
+        resolved = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(resolved), 40)
+        for name, card_id, copies in [
+            ("Inspiring Paladin", 387, 4),
+            ("Skyknight Squire", 388, 4),
+            ("Sire of Seven Deaths", 389, 2),
+        ]:
+            self.assertEqual(self.registry[name].card_id, card_id)
+            self.assertEqual(resolved.count(card_id), copies)
+
     def test_original_decks_are_40_cards_and_fully_resolve(self) -> None:
         for filename, supported_copies, source_sha256 in [
             ("FDN_top_04956_UG.dck", 40, "bb618d6eaddf04b0a9e51e9a88cd512a04635e99ebca91b11ace4c305d634c86"),
@@ -269,7 +281,7 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("FDN_top_*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
-        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 185)
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 188)
         self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
                              for card in report["cards"]), 0)
 

@@ -94,6 +94,14 @@ pub(crate) fn policy_observation_extensions_v7(
     acting_player: PlayerId,
 ) -> Result<PolicyObservationExtensionsV7> {
     let v6 = crate::rl::policy_observation_extensions_v6(state, acting_player)?;
+    policy_observation_extensions_v7_from_v6(state, acting_player, v6)
+}
+
+pub(crate) fn policy_observation_extensions_v7_from_v6(
+    state: &GameState,
+    acting_player: PlayerId,
+    v6: crate::policy_observation_v6::PolicyObservationExtensionsV6,
+) -> Result<PolicyObservationExtensionsV7> {
     let mut historical_public_sources: Vec<HistoricalPublicSourceV7> = v6
         .historical_public_sources
         .into_iter()

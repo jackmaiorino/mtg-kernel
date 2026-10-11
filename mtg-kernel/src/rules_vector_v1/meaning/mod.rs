@@ -245,6 +245,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::IncreaseSpeed { .. }
         | EffectOp::CounterUnlessCollectsEvidence { .. }
         | EffectOp::CounterUnlessPaysLife { .. }
+        | EffectOp::CounterUnlessPaysLifeWithChoice { .. }
         | EffectOp::CounterUnlessDiscardsCard { .. }
         | EffectOp::BindConvokedCreatureCountToLookTop { .. }
         | EffectOp::LookTopTakeCreaturesManaValueAtMostThenShuffle { .. }

@@ -663,6 +663,10 @@ mod tests {
         }
     }
 
+    #[cfg(not(any(
+        feature = "limited-fdn-fixtures",
+        feature = "standard-magezero-fixtures"
+    )))]
     #[test]
     fn v4_structured_public_features_use_visible_nodes_and_explicit_colors() {
         use crate::event::install_color_damage_prevention;
@@ -774,6 +778,20 @@ mod tests {
             )
             .unwrap();
         }
+    }
+
+    #[cfg(any(
+        feature = "limited-fdn-fixtures",
+        feature = "standard-magezero-fixtures"
+    ))]
+    #[test]
+    fn v4_structured_public_features_refuse_unqualified_catalogs() {
+        // The auxiliary contract is pinned to the default Pauper registry.
+        // Limited/Standard must never inherit its feature admission.
+        assert_eq!(
+            crate::public_cost_features_v1::catalog_v1().unwrap_err(),
+            "structured-feature contract registry differs"
+        );
     }
 
     /// The pre-fix aliasing reproduction is preserved in commit 4877f86f.
