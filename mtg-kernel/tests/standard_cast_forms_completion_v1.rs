@@ -1,6 +1,6 @@
 //! Completion regressions for MageZero Standard removal, selection, and public counters.
 #![cfg(feature = "standard-magezero-fixtures")]
-use mtg_kernel::card_def::{card_id_by_name, CardCapability, Keywords, TargetSpec, CARD_DEFS};
+use mtg_kernel::card_def::{card_id_by_name, TargetSpec, CARD_DEFS};
 use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};

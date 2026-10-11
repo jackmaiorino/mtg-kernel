@@ -531,7 +531,7 @@ fn evolving_wilds_fetches_only_a_basic_land_tapped() {
             let mut legal = legal_targets.clone();
             legal.sort_by_key(|target| match target {
                 Target::Object(object) => object.0,
-                Target::Player(_) => u32::MAX,
+                Target::Player(_) | Target::StackItem(_) => u32::MAX,
             });
             assert_eq!(legal, vec![Target::Object(plains), Target::Object(island)]);
             for illegal in [other_wilds, creature] {
