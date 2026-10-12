@@ -337,11 +337,19 @@ fn fiery_printed_metadata_real_equip_optional_target_and_pending_stack_restore()
                 );
                 assert!(context.selected_targets.is_empty());
                 assert!(!context.can_finish_without_equipment);
-                let mut forged = copy(&state);
-                forged.engine.pending_cast.as_mut().unwrap().target_spec = TargetSpec::None;
-                let before = serde_json::to_vec(&forged).unwrap();
-                assert!(mtg_kernel::fiery_public_v1::facts_v1(&forged).is_err());
-                assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
+                for rewrite_source in [false, true] {
+                    let mut forged = copy(&state);
+                    let pending = forged.engine.pending_cast.as_mut().unwrap();
+                    pending.target_spec = TargetSpec::None;
+                    if rewrite_source {
+                        pending.source_contract.card_def =
+                            card_id_by_name("Lightning Bolt").unwrap();
+                    }
+                    let forged = copy(&forged);
+                    let before = serde_json::to_vec(&forged).unwrap();
+                    assert!(mtg_kernel::fiery_public_v1::facts_v1(&forged).is_err());
+                    assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
+                }
                 engine::step(&mut state, Action::ChooseTarget(Target::Object(creature))).unwrap();
                 let public = mtg_kernel::fiery_public_v1::facts_v1(&state).unwrap();
                 let context = public.pending_cast_targets.as_ref().unwrap();

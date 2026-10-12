@@ -58,6 +58,12 @@ incarnation relations. Candidate real-cast tests check both genuine choices,
 restore equality and read-only refusal when the target specification is erased.
 The full observation and owning V33 session/projector remain pending.
 
+Review found that simultaneously rewriting cached target spec and source
+definition could hide the pending facts before validation. The producer now
+authenticates every actual pending cast before classifying whether it is Fiery;
+the restored two-field negative retains the real announced spell and placeholder
+and checks read-only rejection. Native execution remains pending.
+
 Existing TargetSpec, EffectOp, ReplacementEffectKind and CommittedEvent variants
 remain an unchanged prefix. The optional dependent target appends physically and
 uses the already reserved stable target ID64; Condemn61, Run Away62, Divine63,

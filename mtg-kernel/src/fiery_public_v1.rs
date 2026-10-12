@@ -63,17 +63,21 @@ pub struct FactsV1 {
 }
 
 fn pending_targets(state: &GameState) -> Result<Option<PendingCastTargetsV1>, RlContractError> {
-    let Some(pending) = state.engine.pending_cast.as_ref().filter(|pending| {
+    let Some(pending) = state.engine.pending_cast.as_ref() else {
+        return Ok(None);
+    };
+    crate::engine::validate_pending_cast(state, pending).map_err(RlContractError)?;
+    let is_fiery = {
         pending.target_spec == crate::card_def::TargetSpec::CreatureThenUpToOneAttachedEquipment
             || crate::card_def::CARD_DEFS
                 .get(pending.source_contract.card_def as usize)
                 .is_some_and(|definition| {
                     (definition.spell_effect)() == Some(crate::effect::EffectOp::FieryAnnihilation)
                 })
-    }) else {
-        return Ok(None);
     };
-    crate::engine::validate_pending_cast(state, pending).map_err(RlContractError)?;
+    if !is_fiery {
+        return Ok(None);
+    }
     let source = pending.source_contract;
     let selector = crate::rules_meaning_fiery_v1::live_selector().map_err(|_| {
         RlContractError("Fiery pending targets require selected Limited catalog".into())
