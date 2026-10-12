@@ -14071,7 +14071,6 @@ pub(crate) fn apply_live_stack_spell_departure(
     };
     validate_spell_stack_source(state, &item)?;
     let departure = plan_spell_departure(state, &item, requested_zone)?;
-    let gorehorn_owner = crate::gorehorn_damage_v1::acquire_owner(state, &item)?;
     let temporal_owner = crate::extra_turn_v1::acquire_counter(state, &item)?;
     apply_spell_departure(state, departure)?;
     crate::extra_turn_v1::record_other_departure(state, temporal_owner);
