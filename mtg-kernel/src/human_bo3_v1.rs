@@ -278,8 +278,10 @@ impl HumanDecisionProjectorV1 {
     }
 }
 
+mod banner_v36;
 mod fiery_v33;
 mod zul_ashur_v35;
+pub use banner_v36::*;
 pub use fiery_v33::*;
 mod krenko_v34;
 pub use krenko_v34::*;

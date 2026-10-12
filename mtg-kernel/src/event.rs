@@ -1246,6 +1246,25 @@ pub enum CommittedEvent {
     ZulAshurRemovalInputV1 {
         input: Box<crate::zul_ashur_v1::RemovalInputV1>,
     },
+    BannerEntryOperationStartedV1 {
+        operation: Box<crate::linked_aura_operation_v1::OperationV1>,
+        original_sha256: String,
+    },
+    BannerEntryColorCapturedV1 {
+        operation: u32,
+        choice: Box<crate::heraldic_banner_v1::ChoiceV1>,
+    },
+    BannerEntryColorChosenV1 {
+        capture: u32,
+        color: crate::mana::ManaColor,
+    },
+    BannerEntryColorCommittedV1 {
+        entered: Box<crate::heraldic_banner_v1::EnteredV1>,
+    },
+    BannerEntryOperationCompletedV1 {
+        operation: u32,
+        entries: Vec<u32>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -2264,6 +2283,19 @@ fn commit_with_ability_lki_and_entry_batch(
         bool,
     ),
 ) {
+    match crate::linked_aura_operation_v1::prepare_entry_colors(state, std::slice::from_ref(&event))
+    {
+        Ok(true) => {}
+        Ok(false) => return,
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        }
+    }
+    let entry_color_proposal = event.clone();
     let (entering_characteristics, defer_raid_entry) = entry_context;
     let (mut garruk_batch, mut arahbo_batch) = entry_batches;
     let mut event = event;
@@ -2717,6 +2749,22 @@ fn commit_with_ability_lki_and_entry_batch(
     );
     let entry_history_index = state.engine.event_history.len();
     state.engine.event_history.push(committed);
+    if let Some(object) = entry_counter_object {
+        if crate::linked_aura_operation_v1::commit_entry_color(
+            state,
+            &entry_color_proposal,
+            object,
+            entry_history_index,
+        )
+        .is_err()
+        {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                object,
+            ));
+            return;
+        }
+    }
     crate::banishing_light_v1::record_entry(state, entry_history_index);
     crate::life_loss_turn_v1::capture_committed_loss_at(state, entry_history_index);
     if committed_death {
@@ -2891,6 +2939,17 @@ fn commit_batch_survivors(
     mut authority_batch: Option<crate::authority_of_the_consuls_v1::EntryBatchV1>,
     context: EntryBatchCommitContextV1,
 ) {
+    match crate::linked_aura_operation_v1::prepare_entry_colors(state, &survivors) {
+        Ok(true) => {}
+        Ok(false) => return,
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        }
+    }
     let EntryBatchCommitContextV1 {
         mut garruk_batch,
         mut arahbo_batch,

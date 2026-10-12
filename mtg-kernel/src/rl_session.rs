@@ -40,6 +40,7 @@ pub(crate) mod arahbo_v31;
 pub(crate) mod ashroot_v27;
 pub(crate) mod authority_v17;
 pub(crate) mod banishing_v26;
+pub(crate) mod banner_v36;
 mod bloom_tender_v24;
 pub mod census_future_v2;
 pub(crate) mod cerberus_v19;
@@ -1178,7 +1179,8 @@ where
         ActionSemanticV1::ChooseLegendPermanent { .. }
         | ActionSemanticV1::ChooseLondonMulligan { .. }
         | ActionSemanticV1::ChooseLondonBottom { .. }
-        | ActionSemanticV1::ChooseAttackTarget { .. } => {
+        | ActionSemanticV1::ChooseAttackTarget { .. }
+        | ActionSemanticV1::ChooseEntryColorV36 { .. } => {
             return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
         }
         #[cfg(feature = "limited-fdn-fixtures")]
@@ -2707,6 +2709,7 @@ fn flat_validate_origin_decision_v1(
         }
         Decision::ChooseVariableCastTargets { .. }
         | Decision::ChooseVariableCastKicker { .. }
+        | Decision::ChooseEntryColorV36 { .. }
         | Decision::ChooseCombatDamageRange { .. }
         | Decision::ChooseLegendPermanent { .. }
         | Decision::ChooseLondonMulligan { .. }
@@ -2856,7 +2859,8 @@ fn flat_validate_semantic_policy_pair_v1(
             ActionSemanticV1::ChooseLegendPermanent { .. }
             | ActionSemanticV1::ChooseLondonMulligan { .. }
             | ActionSemanticV1::ChooseLondonBottom { .. }
-            | ActionSemanticV1::ChooseAttackTarget { .. },
+            | ActionSemanticV1::ChooseAttackTarget { .. }
+            | ActionSemanticV1::ChooseEntryColorV36 { .. },
             _,
         ) => return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic),
         (
@@ -4337,6 +4341,8 @@ fn flat_validate_expected_decision_v1(
     if (crate::krenko_v1::requires_successor(&session.state)
         && session.flat_action_contract_mode != FlatActionContractModeV1::KrenkoV34)
         || (crate::zul_ashur_v1::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::ZulAshurV35)
+        || (crate::heraldic_banner_v1::requires_successor(&session.state)
+        && session.flat_action_contract_mode != FlatActionContractModeV1::BannerV36)
         || (crate::fiery_annihilation_v1::requires_successor(&session.state)
         && session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33)
         || (crate::combat_static_rules_v1::requires_successor(&session.state)
@@ -4475,6 +4481,7 @@ enum FlatActionContractModeV1 {
     FieryV33,
     KrenkoV34,
     ZulAshurV35,
+    BannerV36,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -5429,6 +5436,21 @@ impl RlEpisodeSessionV1 {
         &mut self,
         mut profile: Option<&mut RlPhaseProfileV1>,
     ) {
+        if crate::heraldic_banner_v1::validate_state(&self.state).is_err()
+            || crate::heraldic_banner_v1::requires_successor(&self.state)
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:banner_v36_authority_or_transport".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+
         self.current = None;
         if crate::krenko_v1::requires_successor(&self.state) {
             self.terminal = Some(halted_terminal(
@@ -7186,6 +7208,25 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
+        if crate::heraldic_banner_v1::validate_state(&self.state).is_err()
+            || (self.flat_action_contract_mode == FlatActionContractModeV1::BannerV36
+                && crate::banner_observation_v1::validate_projection_authority(&self.state)
+                    .is_err())
+            || (crate::heraldic_banner_v1::requires_successor(&self.state)
+                && self.flat_action_contract_mode != FlatActionContractModeV1::BannerV36)
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:banner_v36_authority_or_transport".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+
         if crate::krenko_v1::requires_successor(&self.state)
             && self.flat_action_contract_mode != FlatActionContractModeV1::KrenkoV34
         {
@@ -7351,7 +7392,12 @@ impl FastActorSessionV1 {
             ));
             return;
         };
-        let candidates = core_policy_action_candidates_v5(&surfaced, &self.state).and_then(|raw| {
+        let raw = if self.flat_action_contract_mode == FlatActionContractModeV1::BannerV36 {
+            banner_v36::actual_candidates(&surfaced, &self.state)
+        } else {
+            core_policy_action_candidates_v5(&surfaced, &self.state)
+        };
+        let candidates = raw.and_then(|raw| {
             if self.flat_action_contract_mode == FlatActionContractModeV1::V2 {
                 flat_scan_menu_v2(&self.surface, &self.state, &surfaced, raw)
                     .map_err(RlContractError)
@@ -7563,6 +7609,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:strongbox_v32:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::BannerV36 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = banner_v36::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:banner_v36:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));

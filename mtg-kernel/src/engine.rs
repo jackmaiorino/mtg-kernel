@@ -1570,6 +1570,12 @@ pub enum Decision {
         spell: ObjectId,
         can_decline: bool,
     },
+    /// Genuine as-enters replacement choice, before any entry roster commits.
+    ChooseEntryColorV36 {
+        player: PlayerId,
+        entry_ordinal: u32,
+        colors: [ManaColor; 5],
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -8274,6 +8280,11 @@ pub(crate) fn available_mana_ability_choices_into(
         return;
     }
 
+    if crate::heraldic_banner_v1::owns_definition(object.card_def)
+        && crate::heraldic_banner_v1::authenticated_color(state, source).is_err()
+    {
+        return;
+    }
     let mut primary = ManaColorSetV1::new();
     def.primary_mana_ability_choices_into(object.v4.chosen_color, &mut primary);
     let primary_payable = if let Some(rich) = def.mana_ability_def {
@@ -8283,6 +8294,13 @@ pub(crate) fn available_mana_ability_choices_into(
     };
     if primary_payable {
         for &color in primary.as_slice() {
+            if crate::heraldic_banner_v1::owns_definition(object.card_def)
+                && state.players[player.index()].mana_pool[color.pool_index()]
+                    .checked_add(1)
+                    .is_none()
+            {
+                continue;
+            }
             if let Some(rich) = def.mana_ability_def {
                 if rich.amount == ManaAbilityAmountDef::EachControlledPermanentColor {
                     if rich.cost != ManaAbilityCostDef::TapSelf
@@ -9116,6 +9134,12 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    if crate::heraldic_banner_v1::validate_state(state).is_err() {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
     if let Err(source) = event::validate_exile_if_dies_replacements(state) {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         state.engine.halted = Some((mechanic, source));
@@ -16273,6 +16297,7 @@ pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
         power += crate::standard_legends_v1::jodah_bonus(state, id);
     }
     power += controlled_creature_boost_v1(state, id).0;
+    power += crate::heraldic_banner_v1::controlled_boost(state, id).0;
     if def.is_executable()
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     {
@@ -16337,6 +16362,7 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
         toughness += crate::standard_legends_v1::jodah_bonus(state, id);
     }
     toughness += controlled_creature_boost_v1(state, id).1;
+    toughness += crate::heraldic_banner_v1::controlled_boost(state, id).1;
     if def.is_executable()
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     {

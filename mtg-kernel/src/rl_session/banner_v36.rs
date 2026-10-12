@@ -1,0 +1,372 @@
+//! Private Banner binding, separate from frozen observation/session modes.
+
+use super::*;
+use crate::banner_observation_v1::BannerObservationV1;
+#[cfg(test)]
+use crate::state::GameState;
+
+fn is_entry_color(origin: &PolicyDecisionV5) -> bool {
+    matches!(
+        origin,
+        PolicyDecisionV5::Surface(crate::surface::SurfaceDecision::Decision(
+            Decision::ChooseEntryColorV36 { .. }
+        ))
+    )
+}
+pub(super) fn actual_candidates(
+    origin: &PolicyDecisionV5,
+    state: &crate::state::GameState,
+) -> Result<Vec<CorePolicyActionCandidateV1>, RlContractError> {
+    if let PolicyDecisionV5::Surface(crate::surface::SurfaceDecision::Decision(
+        Decision::ChooseEntryColorV36 {
+            player,
+            entry_ordinal,
+            colors,
+        },
+    )) = origin
+    {
+        crate::banner_observation_v1::validate_projection_authority(state)?;
+        let pending = state
+            .engine
+            .linked_aura_operation_v1
+            .pending_general_v36
+            .as_ref()
+            .ok_or_else(|| RlContractError("Banner actual choice lost owner".into()))?;
+        let crate::linked_aura_operation_v1::GeneralChoiceV36::Color { choice, .. } =
+            &pending.choice
+        else {
+            return Err(RlContractError(
+                "Banner candidate origin changed family".into(),
+            ));
+        };
+        if choice.controller != *player
+            || choice.ordinal != *entry_ordinal
+            || *colors != crate::heraldic_banner_v1::COLORS
+        {
+            return Err(RlContractError("Banner actual color origin changed".into()));
+        }
+        return Ok(colors
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, color)| CorePolicyActionCandidateV1 {
+                semantic: ActionSemanticV1::ChooseEntryColorV36 {
+                    actor: (*player).into(),
+                    entry_ordinal: *entry_ordinal,
+                    color,
+                },
+                policy_action: PolicyActionV5::Surface(crate::surface::SurfaceAction::Action(
+                    crate::engine::Action::ChooseEffectOption(index as u16),
+                )),
+            })
+            .collect());
+    }
+    core_policy_action_candidates_v5(origin, state)
+}
+
+// No Debug/Serialize: executable candidates and the transport observation
+// must never become a user-facing receipt or request.
+#[derive(Clone, PartialEq)]
+pub(crate) struct BannerDecisionBindingV36 {
+    expected: FastActorDecisionV1,
+    candidates: Vec<CorePolicyActionCandidateV1>,
+    observation: BannerObservationV1,
+}
+
+pub(super) fn normalized_origin(
+    session: &FastActorSessionV1,
+    current: &FastActorCurrentDecisionV1,
+) -> Result<Vec<CorePolicyActionCandidateV1>, FlatActionDecisionSliceErrorV1> {
+    crate::banner_observation_v1::validate_projection_authority(&session.state)
+        .map_err(|_| FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
+    let mut original = current.clone();
+    original.flat_action_cache = None;
+    original.flat_action_cache_error = None;
+    original.flat_action_cache_v2 = None;
+    original.flat_action_cache_error_v2 = None;
+    original.candidates = actual_candidates(&current.origin_decision, &session.state)
+        .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
+    flat_validate_current_binding_header_v1(session, &original)?;
+    if is_entry_color(&original.origin_decision) {
+        let candidates = actual_candidates(&original.origin_decision, &session.state)
+            .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
+        if candidates != original.candidates {
+            return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+        }
+    } else {
+        flat_validate_origin_decision_v1(&original, &session.state)?;
+    }
+    let common =
+        crate::rl::policy_observation_extensions_common_for_human_v8(&session.state, current.actor)
+            .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
+    if !is_entry_color(&original.origin_decision) {
+        super::flat_action_v3::normalize_candidates(
+            &mut original.candidates,
+            &common,
+            session,
+            &original.origin_decision,
+        )?;
+    }
+    Ok(original.candidates)
+}
+
+pub(super) fn prepare_current(
+    session: &FastActorSessionV1,
+    current: &mut FastActorCurrentDecisionV1,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    current.candidates = normalized_origin(session, current)?;
+    current.flat_action_cache = None;
+    current.flat_action_cache_error = None;
+    current.flat_action_cache_v2 = None;
+    current.flat_action_cache_error_v2 = None;
+    crate::banner_observation_v1::observe_v1(
+        &session.state,
+        &session.surface,
+        current.actor,
+        session.policy_step_count,
+        current.physical_decision_id,
+        current.substep_index,
+        current.substep_count,
+    )
+    .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
+    Ok(())
+}
+
+impl FastActorSessionV1 {
+    pub(crate) fn banner_restore_v36(
+        &mut self,
+        snapshot: &FastActorSessionSnapshotV1,
+    ) -> Result<(), RlContractError> {
+        let mut restored = snapshot.0.clone();
+        if restored.flat_action_contract_mode != FlatActionContractModeV1::BannerV36
+            || restored.episode_id != self.episode_id
+        {
+            return Err(RlContractError("wrong Banner snapshot".into()));
+        }
+        crate::banner_observation_v1::validate_projection_authority(&restored.state)?;
+        if let Some(mut current) = restored.current.take() {
+            prepare_current(&restored, &mut current)
+                .map_err(|_| RlContractError("invalid restored Banner menu".into()))?;
+            restored.current = Some(current);
+        }
+        *self = restored;
+        Ok(())
+    }
+    /// Explicit backend opt-in for the separate Banner projector.
+    /// It consumes the session; predecessor adapters keep their old mode.
+    pub fn into_banner_v36(mut self) -> Result<Self, RlContractError> {
+        // Validate before any advancement can expire a malformed active marker.
+        crate::banner_observation_v1::validate_projection_authority(&self.state)?;
+        self.flat_action_contract_mode = FlatActionContractModeV1::BannerV36;
+        self.flat_action_cache_spare = None;
+        self.flat_action_cache_spare_v2 = None;
+        if let Some(mut current) = self.current.take() {
+            prepare_current(&self, &mut current)
+                .map_err(|error| RlContractError(format!("banner_v36:{error:?}")))?;
+            self.current = Some(current);
+        }
+        Ok(self)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_banner_v36_fixture_state(state: GameState) -> Self {
+        let mut session = Self::reset_with_limits(23, 91, 10_000, 10_000);
+        session.state = state;
+        session.surface = PolicySurfaceV5::new_for_session();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.terminal = None;
+        session.flat_action_contract_mode = FlatActionContractModeV1::BannerV36;
+        session.flat_action_cache_spare = None;
+        session.flat_action_cache_spare_v2 = None;
+        if let Err(error) =
+            crate::banner_observation_v1::validate_projection_authority(&session.state)
+        {
+            session.terminal = Some(halted_terminal(
+                &session.deck_ids,
+                session.deck_hashes,
+                session.episode_id,
+                format!("fail_closed:banner_v36:{error}"),
+                session.policy_step_count,
+                session.physical_decision_count,
+            ));
+            return session;
+        }
+        session.advance_to_decision_or_terminal();
+        session
+    }
+
+    #[cfg(test)]
+    pub(crate) fn banner_fixture_state_mut(&mut self) -> &mut GameState {
+        &mut self.state
+    }
+
+    /// Actor-visible authority plus a complete ordered executable binding.
+    /// No predecessor cache or observation constructor is consulted.
+    pub(crate) fn banner_current_decision_input_v36(
+        &self,
+        expected: FastActorDecisionV1,
+        human_seat: PlayerSeatV1,
+    ) -> Result<
+        (
+            BannerObservationV1,
+            Vec<ActionSemanticV1>,
+            BannerDecisionBindingV36,
+        ),
+        FlatActionDecisionSliceErrorV1,
+    > {
+        if self.flat_action_contract_mode != FlatActionContractModeV1::BannerV36 {
+            return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+        }
+        let current = self
+            .current
+            .as_ref()
+            .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
+        flat_validate_expected_decision_v1(self, current, expected)?;
+        if PlayerSeatV1::from(current.actor) != human_seat {
+            return Err(FlatActionDecisionSliceErrorV1::ActingPlayerMismatch);
+        }
+        let candidates = normalized_origin(self, current)?;
+        if candidates != current.candidates {
+            return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
+        }
+        let observation = crate::banner_observation_v1::observe_v1(
+            &self.state,
+            &self.surface,
+            current.actor,
+            self.policy_step_count,
+            current.physical_decision_id,
+            current.substep_index,
+            current.substep_count,
+        )
+        .map_err(|_| FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
+        let actions = candidates
+            .iter()
+            .map(|candidate| {
+                super::flat_action_v4::frozen_pending_trigger_semantic_v4(
+                    &self.state,
+                    candidate.semantic.clone(),
+                )
+            })
+            .collect();
+        let binding = BannerDecisionBindingV36 {
+            expected,
+            candidates,
+            observation: observation.clone(),
+        };
+        Ok((observation, actions, binding))
+    }
+
+    /// Revalidation is read-only. The projector calls this immediately
+    /// before applying its privately mapped index through session.step.
+    pub(crate) fn banner_validate_bound_decision_v36(
+        &self,
+        expected: FastActorDecisionV1,
+        human_seat: PlayerSeatV1,
+        binding: &BannerDecisionBindingV36,
+    ) -> Result<(), FlatActionDecisionSliceErrorV1> {
+        let (_, _, current) = self.banner_current_decision_input_v36(expected, human_seat)?;
+        if &current != binding {
+            return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::policy_observation_v6::tests::{put, ready_state};
+
+    #[test]
+    fn complete_ordered_binding_observation_identity_seat_and_menu_changes_refuse_readonly() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state();
+            state.active_player = actor;
+            state.priority_player = actor;
+            put(&mut state, actor, "Forest", Zone::Hand);
+            put(&mut state, actor, "Mountain", Zone::Hand);
+            let mut session = FastActorSessionV1::from_banner_v36_fixture_state(state);
+            let FastActorResponseV1::Decision(expected) = session.current_response() else {
+                panic!("real priority decision");
+            };
+            let (_, _, binding) = session
+                .banner_current_decision_input_v36(expected, actor.into())
+                .unwrap();
+            let before = session.privileged_core_environment_hash();
+            let mut forged = binding.clone();
+            forged.candidates.reverse();
+            assert!(session
+                .banner_validate_bound_decision_v36(expected, actor.into(), &forged)
+                .is_err());
+            let mut forged = binding.clone();
+            forged.observation.prior_entry_colors.push(
+                crate::banner_observation_v1::PriorEntryColorV36 {
+                    entry_ordinal: 0,
+                    chooser: actor.into(),
+                    printed_card_db_id: crate::card_def::card_id_by_name("Forest").unwrap(),
+                    chosen_color: crate::mana::ManaColor::G,
+                },
+            );
+            assert!(session
+                .banner_validate_bound_decision_v36(expected, actor.into(), &forged)
+                .is_err());
+            let mut forged = binding.clone();
+            forged.observation.producer_sha256.clear();
+            assert!(session
+                .banner_validate_bound_decision_v36(expected, actor.into(), &forged)
+                .is_err());
+            assert!(session
+                .banner_current_decision_input_v36(expected, actor.opponent().into())
+                .is_err());
+            assert_eq!(session.privileged_core_environment_hash(), before);
+            session.banner_fixture_state_mut().players[actor.index()].life += 1;
+            let before = session.privileged_core_environment_hash();
+            assert!(session
+                .banner_validate_bound_decision_v36(expected, actor.into(), &binding)
+                .is_err());
+            assert_eq!(session.privileged_core_environment_hash(), before);
+        }
+    }
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    #[ignore = "requires genuine Heraldic Banner registration; actual predecessor advancement refusal"]
+    fn genuine_pending_entry_refuses_episode_and_old_fast_actor_before_automatic_work() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state();
+            state.active_player = actor;
+            state.priority_player = actor;
+            let banner = put(&mut state, actor, "Heraldic Banner", Zone::Hand);
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(banner, Zone::Battlefield),
+            );
+            crate::heraldic_banner_v1::validate_state(&state).unwrap();
+            assert!(crate::linked_aura_operation_v1::has_banner_pending(&state));
+            let before = serde_json::to_vec(&state).unwrap();
+            let mut episode = RlEpisodeSessionV1::reset_with_limits(23, 91, 10_000, 10_000);
+            episode.state = state.clone();
+            episode.terminal = None;
+            episode.advance_to_decision_or_terminal_profiled(None);
+            assert!(episode.terminal.is_some() && episode.current.is_none());
+            assert_eq!(serde_json::to_vec(&episode.state).unwrap(), before);
+            for mode in [
+                FlatActionContractModeV1::V1,
+                FlatActionContractModeV1::HumanV8,
+            ] {
+                let mut old = FastActorSessionV1::reset_with_limits(23, 91, 10_000, 10_000);
+                old.state = state.clone();
+                old.flat_action_contract_mode = mode;
+                old.terminal = None;
+                old.advance_to_decision_or_terminal();
+                assert!(old.terminal.is_some() && old.current.is_none());
+                assert_eq!(serde_json::to_vec(&old.state).unwrap(), before);
+            }
+        }
+    }
+}

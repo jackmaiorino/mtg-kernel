@@ -966,7 +966,12 @@ pub(super) fn conflicts(
     if state.engine.event_history.iter().any(|event| {
         matches!(
             event,
-            crate::event::CommittedEvent::LibrarianActivationCommittedV1 { .. }
+            crate::event::CommittedEvent::BannerEntryOperationStartedV1 { .. }
+                | crate::event::CommittedEvent::BannerEntryColorCapturedV1 { .. }
+                | crate::event::CommittedEvent::BannerEntryColorChosenV1 { .. }
+                | crate::event::CommittedEvent::BannerEntryColorCommittedV1 { .. }
+                | crate::event::CommittedEvent::BannerEntryOperationCompletedV1 { .. }
+                | crate::event::CommittedEvent::LibrarianActivationCommittedV1 { .. }
                 | crate::event::CommittedEvent::LibrarianActivationCounterRemovalV1 { .. }
                 | crate::event::CommittedEvent::LibrarianActivationOperationV1 { .. }
                 | crate::event::CommittedEvent::LibrarianActivationFinishedV1 { .. }
@@ -1101,7 +1106,12 @@ pub(super) fn conflicts(
             | StromkirkCompletedV2 { .. } => true,
             // These are history-only owning records. Reject malformed log
             // transport too, rather than implying sampler admission.
-            CrystalPreventionBoundaryV1 { .. }
+            BannerEntryOperationStartedV1 { .. }
+            | BannerEntryColorCapturedV1 { .. }
+            | BannerEntryColorChosenV1 { .. }
+            | BannerEntryColorCommittedV1 { .. }
+            | BannerEntryOperationCompletedV1 { .. }
+            | CrystalPreventionBoundaryV1 { .. }
             | CrystalShieldOperationV1 { .. }
             | CrystalExecutionV1 { .. }
             | CrystalDamageOperationV3 { .. }

@@ -2009,6 +2009,21 @@ impl CombatStaticRulesDef {
     };
 }
 
+/// A genuine pre-entry choice. `None` on CardDef means no such choice and
+/// remains distinct from the older land descriptor's excluded color.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum AsEntersColorChoiceDefV1 {
+    AnyWubrg,
+}
+
+/// A printed continuous power/toughness modification using the source's
+/// own pre-entry color choice and its current controller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ChosenColorCreatureBoostDefV1 {
+    pub power: i16,
+    pub toughness: i16,
+}
+
 pub struct CardDef {
     pub name: &'static str,
     pub capability: CardCapability,
@@ -2224,6 +2239,8 @@ pub struct CardDef {
     pub activated_ability_generic_reductions: &'static [ActivatedAbilityGenericReductionDef],
     /// Printed combat rules, active only on the live front-face creature.
     pub combat_static_rules: CombatStaticRulesDef,
+    pub as_enters_color_choice_v1: Option<AsEntersColorChoiceDefV1>,
+    pub chosen_color_creature_boost_v1: Option<ChosenColorCreatureBoostDefV1>,
 }
 
 impl CardDef {

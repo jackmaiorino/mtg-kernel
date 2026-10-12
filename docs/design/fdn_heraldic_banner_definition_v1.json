@@ -1,0 +1,22 @@
+{
+  "name": "Heraldic Banner",
+  "mana_cost": "{3}",
+  "types": [
+    "Artifact"
+  ],
+  "colors": [],
+  "subtypes": [],
+  "power": null,
+  "toughness": null,
+  "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "mage_source": "Mage.Sets/src/mage/cards/h/HeraldicBanner.java",
+  "mage_source_bytes": 2739,
+  "mage_source_sha256": "1d9cc1bbc53db1ed859703745c3910752197979aafc2f063686e351ee1ebd8d0",
+  "registered": false,
+  "native_qualified": false,
+  "printed_rules": [
+    "As Heraldic Banner enters, choose a color.",
+    "Creatures you control of the chosen color get +1/+0.",
+    "{T}: Add one mana of the chosen color."
+  ]
+}
