@@ -723,6 +723,9 @@ fn decision_candidates(
 /// continuation -- see `BranchOracle.java`'s doc for why.
 fn fixed_continuation_action(decision: &SurfaceDecision) -> Result<SurfaceAction, String> {
     match decision {
+        SurfaceDecision::Decision(Decision::ChooseEntryColorV36 { .. }) => {
+            Err("continuation:unsupported-banner-entry-color-protocol".to_string())
+        }
         SurfaceDecision::Decision(Decision::ChooseVariableCastTargets { .. })
         | SurfaceDecision::Decision(Decision::ChooseVariableCastKicker { .. }) => {
             Err("continuation:unsupported-variable-cast-protocol".to_string())
@@ -1170,6 +1173,7 @@ fn decision_player_for(d: &SurfaceDecision, state: &GameState) -> Option<PlayerI
     match d {
         SurfaceDecision::Decision(Decision::CastSpellOrPass { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseTargets { player, .. })
+        | SurfaceDecision::Decision(Decision::ChooseEntryColorV36 { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseCostTargets { player, .. })
         | SurfaceDecision::Decision(Decision::DeclareAttackers { player, .. })
         | SurfaceDecision::Decision(Decision::DeclareBlockers { player, .. })

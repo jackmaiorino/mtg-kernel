@@ -58,6 +58,9 @@ enum Kind {
 
 fn kind_of(d: &Decision) -> Kind {
     match d {
+        Decision::ChooseEntryColorV36 { .. } => {
+            unreachable!("this fixed roster has no Heraldic Banner; its script cannot answer the V36 entry choice")
+        }
         Decision::CastSpellOrPass { player, .. } => Kind::CastOrPass(*player),
         Decision::ChooseTargets { player, .. } => Kind::ChooseTargets(*player),
         Decision::OrderTriggers { player, .. } => Kind::OrderTriggers(*player),
@@ -150,6 +153,9 @@ fn run_goldfish(state: &mut GameState) -> (Vec<Kind>, Vec<i32>) {
         }
 
         match decision {
+            Decision::ChooseEntryColorV36 { .. } => {
+                unreachable!("this fixed roster has no Heraldic Banner; its script cannot answer the V36 entry choice")
+            }
             Decision::ChooseVariableCastTargets { .. }
             | Decision::ChooseVariableCastKicker { .. } => {
                 unreachable!("burn goldfish's fixed roster has no variable-target spell; its script cannot answer this successor")

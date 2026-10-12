@@ -55,6 +55,9 @@ enum Kind {
 
 fn kind_of(d: &Decision) -> Kind {
     match d {
+        Decision::ChooseEntryColorV36 { .. } => {
+            unreachable!("this fixed roster has no Heraldic Banner; its script cannot answer the V36 entry choice")
+        }
         Decision::CastSpellOrPass { player, .. } => Kind::CastOrPass(*player),
         Decision::ChooseTargets { player, .. } => Kind::ChooseTargets(*player),
         Decision::ChooseCastMode { player, .. } => Kind::ChooseCastMode(*player),
@@ -171,6 +174,9 @@ fn run_combat_game(state: &mut GameState) -> (Vec<Kind>, u32) {
         log.push(kind_of(&decision));
 
         match decision {
+            Decision::ChooseEntryColorV36 { .. } => {
+                unreachable!("this fixed roster has no Heraldic Banner; its script cannot answer the V36 entry choice")
+            }
             Decision::ChooseVariableCastTargets { .. }
             | Decision::ChooseVariableCastKicker { .. } => {
                 unreachable!("burn combat's fixed roster has no variable-target spell; its script cannot answer this successor")

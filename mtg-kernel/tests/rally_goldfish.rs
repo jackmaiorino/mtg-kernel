@@ -197,6 +197,9 @@ fn run_goldfish(state: &mut GameState) -> RunResult {
         }
 
         match decision {
+            Decision::ChooseEntryColorV36 { .. } => {
+                unreachable!("this fixed roster has no Heraldic Banner; its script cannot answer the V36 entry choice")
+            }
             Decision::GameOver { winner } => {
                 assert_eq!(
                     winner,
