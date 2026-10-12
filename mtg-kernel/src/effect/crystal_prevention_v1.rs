@@ -686,8 +686,7 @@ fn owned_root(state: &GameState, pending: &EffectContinuation) -> Result<Box<Eff
     }
     let item = &pending.resolving_item;
     if pending.ctx != context(item)
-        || crate::engine::validated_stack_item_target_spec(item, state)?
-            != Some(crate::card_def::TargetSpec::None)
+        || crate::engine::validated_stack_item_target_spec(item, state)?.is_some()
     {
         return Err("Crystal equipment damage lost actual historical grant/context".into());
     }

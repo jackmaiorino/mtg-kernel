@@ -4166,7 +4166,7 @@ fn crystal_rod_fixture(actor: PlayerId) -> (GameState, ObjectId, ObjectId, Objec
         .unwrap();
     assert_eq!(grant.source, host);
     assert_eq!(grant.controller, actor);
-    assert_eq!(grant.v4.target_spec, Some(TargetSpec::None));
+    assert_eq!(grant.v4.target_spec, None);
     assert!(grant.v4.gorehorn_published_v1.is_empty());
     (state, host, rod, bolt)
 }
