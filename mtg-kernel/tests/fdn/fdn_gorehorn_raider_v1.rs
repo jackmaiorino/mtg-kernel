@@ -152,8 +152,8 @@ fn printed_raid_root_and_precise_meaning_are_exact_and_rewrites_refuse() {
         (mtg_kernel::trigger::triggers_for(id)[0].effect)(),
         EffectOp::Conditional {
             cond: EffectCond::ControllerAttackedThisTurn,
-            then: Box::new(EffectOp::DamageTarget {
-                target_index: 0,
+            then: Box::new(EffectOp::DealDamage {
+                target: mtg_kernel::effect::TargetRef::Target(0),
                 amount: 2
             }),
             else_: Box::new(EffectOp::Sequence(vec![]))
