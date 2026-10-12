@@ -3,12 +3,30 @@ import fixture from './fixtures/actor-visible.json';
 import native from './fixtures/native-root-excerpt.json';
 import replayFixture from './fixtures/search-replay.json';
 import graphFixture from './fixtures/search-graph.json';
+import retained from './fixtures/retained-search.json';
 import { graphAt, graphLayout } from '../src/search-graph';
 import { initialSearchPlayback, searchReducer, searchEvents, rootHistory } from '../src/search-playback';
 import { comparePolicyMasses, policyFavorite, parseRecording, verifySearchDigests } from '../src/recording';
 import { initialPlayback, playbackReducer } from '../src/playback';
 
 const copy = () => structuredClone(fixture);
+describe('retained search-controlled decisions',()=>{
+  it('loads a bound root table and continuation without inventing optional diagnostics',async()=>{
+    const r=parseRecording(retained);await verifySearchDigests(r);
+    expect(r.frames[0].search?.algorithm).toBe('persistent-uct');
+    expect(r.frames[1].decisionSource?.root).toBe(r.frames[0].id);
+    expect(r.frames.every(f=>f.policy===null)).toBe(true);
+    expect(r.frames[0].search?.replay).toBeUndefined();
+  });
+  it('rejects missing roots, changed tree identities and older format provenance',()=>{
+    const missing=structuredClone(retained);missing.frames[1].decisionSource!.root='absent';
+    expect(()=>parseRecording(missing)).toThrow(/binding/);
+    const mismatch=structuredClone(retained);mismatch.frames[1].decisionSource!.treeDigest='c'.repeat(64);
+    expect(()=>parseRecording(mismatch)).toThrow(/binding/);
+    const old=structuredClone(retained);old.schema='mtg-kernel-viewer-recording/v2';
+    expect(()=>parseRecording(old)).toThrow(/format v3/);
+  });
+});
 describe('growing search graph',()=>{
   it('reveals evaluated positions at expansion and updates visits only at backup',async()=>{
     const r=parseRecording(graphFixture);await verifySearchDigests(r);const replay=r.frames[0].search!.replay!;

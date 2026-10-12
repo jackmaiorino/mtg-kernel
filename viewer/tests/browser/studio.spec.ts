@@ -3,6 +3,7 @@ import fixture from '../fixtures/actor-visible.json' with { type: 'json' };
 import native from '../fixtures/native-root-excerpt.json' with { type: 'json' };
 import replay from '../fixtures/search-replay.json' with { type: 'json' };
 import graph from '../fixtures/search-graph.json' with {type:'json'};
+import retained from '../fixtures/retained-search.json' with {type:'json'};
 import { createHash } from 'node:crypto';
 
 async function openFixture(page: import('@playwright/test').Page) {
@@ -11,6 +12,26 @@ async function openFixture(page: import('@playwright/test').Page) {
   await page.locator('input[type=file]').setInputFiles({name:'recording.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(fixture))});
   await expect(page.getByRole('region', { name:'Game replay' })).toBeVisible();
 }
+
+test('retained search choices link to roots and show legal moves without fabricated scores',async({page})=>{
+  await openFixture(page);
+  await page.locator('input[type=file]').setInputFiles({name:'retained.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(retained))});
+  await expect(page.locator('.decision-evidence')).toContainText('A search chose this move');
+  await page.getByRole('tab',{name:'Search'}).click();
+  await expect(page.locator('.action-list')).toContainText('completed rollouts');
+  await expect(page.getByRole('button',{name:'Watch this search unfold'})).toHaveCount(0);
+  await page.getByRole('button',{name:'Next decision',exact:true}).click();
+  await expect(page.locator('.decision-evidence')).toContainText('Chosen from a searched continuation');
+  await expect(page.locator('.action-list .action-probability')).toHaveCount(0);
+  await expect(page.locator('.action-list .probability-track')).toHaveCount(0);
+  await expect(page.locator('.action-list .action-option')).toHaveCount(retained.frames[1].actions.length);
+  await page.getByRole('button',{name:'Inspect the source search'}).focus();await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/decision=d15/);
+  await expect(page.locator('.action-list')).toContainText('completed rollouts');
+  await page.setViewportSize({width:320,height:900});await page.emulateMedia({reducedMotion:'reduce'});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+  await page.screenshot({path:'test-results/retained-search-320.png',fullPage:true});
+});
 
 test('a hash link switches manifest games and restores its search event', async ({page}) => {
   const games = [fixture, replay].map(recording => {

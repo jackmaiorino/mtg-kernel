@@ -54,15 +54,18 @@ const searchSchema = z.object({
   digest: hash, stats: z.array(z.object({ index: u32, visits: u32, valueSum: i64, meanValue: i64 }).strict()),
   simulations: u32, transitions: u32, nodes: u32, tier: text, stabilityHalves: z.boolean(), valueScale: text,
   replay: replaySchema.optional(),
+  algorithm: z.literal('persistent-uct').optional(), digestOrigin: z.literal('exported-table').optional(),
 }).strict();
 const frameSchema = z.object({
   id: text, key: keySchema, board: boardSchema, after: boardSchema,
   actions: z.array(actionSchema).min(1).max(65536), executed: integer,
   policy: policySchema.nullable(), search: searchSchema.nullable(),
   terminal: z.object({ kind: text, winner: seat.nullable() }).strict().nullable(),
+  decisionSource: z.object({ kind: z.enum(['search-root','search-continuation']), root: text,
+    treeDigest: hash, artifactSha256: hash }).strict().optional(),
 }).strict();
 const recordingSchema = z.object({
-  schema: z.enum([SCHEMA,'mtg-kernel-viewer-recording/v2']), id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,95}$/), title: text,
+  schema: z.enum([SCHEMA,'mtg-kernel-viewer-recording/v2','mtg-kernel-viewer-recording/v3']), id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,95}$/), title: text,
   description: text, perspective: seat, complete: z.boolean(), coverage: z.enum(['every-step', 'decision-snapshots']),
   identity: z.object({ source: text, runtime: text, checkpoint: text, cardDatabase: text, sourceSha256: hash }).strict(),
   seats: z.tuple([z.object({ name: text, deck: text }).strict(), z.object({ name: text, deck: text }).strict()]),
@@ -98,6 +101,8 @@ export function parseRecording(raw: unknown): Recording {
   for (const f of r.frames) {
     if (ids.has(f.id) || keys.has(frameKey(f.key))) throw new Error('Duplicate decision identity');
     ids.add(f.id); keys.add(frameKey(f.key));
+    if ((f.decisionSource || f.search?.algorithm || f.search?.digestOrigin) && r.schema !== 'mtg-kernel-viewer-recording/v3') throw new Error('Recorded decision provenance requires recording format v3');
+    if (f.decisionSource && f.key.actor !== r.perspective) throw new Error('Recorded search choice belongs to a different perspective');
     if (f.key.actor !== r.perspective && (f.policy || f.search || f.actions.length !== 1)) throw new Error('Opposing private decision diagnostics are not permitted');
     if (f.actions.some((a, i) => a.index !== i) || f.executed >= f.actions.length) throw new Error('Executed action or engine order is invalid');
     for (const b of [f.board, f.after]) {
@@ -116,6 +121,7 @@ export function parseRecording(raw: unknown): Recording {
       if (f.key.actor !== r.perspective) throw new Error('Policy belongs to a different viewing perspective');
     }
     if (f.search) {
+      if (Boolean(f.search.algorithm) !== Boolean(f.search.digestOrigin)) throw new Error('Search algorithm or table provenance is missing');
       const indices = f.search.stats.map(s => s.index);
       if (indices.length !== f.actions.length || new Set(indices).size !== indices.length || indices.some(i => i >= f.actions.length)) throw new Error('Search action mapping is invalid');
       if (f.search.stats.some(s => s.meanValue !== (s.visits ? BigInt(s.valueSum) / BigInt(s.visits) : 0n).toString())) throw new Error('Search mean differs from captured visit/value sum');
@@ -124,6 +130,15 @@ export function parseRecording(raw: unknown): Recording {
         validateReplay(f, r);
       }
     }
+  }
+  const byId = new Map(r.frames.map(f => [f.id,f]));
+  for (const f of r.frames) if (f.decisionSource) {
+    const source=f.decisionSource, root=byId.get(source.root);
+    if (!root?.search || root.search.algorithm !== 'persistent-uct' || root.key.actor !== r.perspective ||
+        !root.decisionSource || root.decisionSource.kind !== 'search-root' || root.decisionSource.root !== root.id ||
+        root.key.step > f.key.step || root.decisionSource.treeDigest !== source.treeDigest ||
+        root.decisionSource.artifactSha256 !== source.artifactSha256 ||
+        (source.kind==='search-root') !== (f.id===root.id)) throw new Error('Recorded search continuation has a broken root or source binding');
   }
   if (r.bookmarks.some(b => !ids.has(b.frame))) throw new Error('Bookmark points to a missing decision');
   if (r.complete && !r.frames.at(-1)?.terminal) throw new Error('Complete game has no recorded terminal state');
