@@ -1217,6 +1217,12 @@ pub enum CommittedEvent {
     KrenkoCompletedV1 {
         completed: Box<crate::krenko_v1::CompletedV1>,
     },
+    KrenkoRemovalInputV1 {
+        input: Box<crate::krenko_v1::RemovalInputV1>,
+    },
+    KrenkoPaymentInputV1 {
+        input: Box<crate::krenko_v1::PaymentInputV1>,
+    },
     ZulAshurPublishedV1 {
         publication: Box<crate::zul_ashur_v1::PublicationV1>,
     },

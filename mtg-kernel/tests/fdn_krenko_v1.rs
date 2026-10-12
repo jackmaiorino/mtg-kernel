@@ -169,6 +169,14 @@ fn printed_cast_metadata_tap_sickness_natural_untap_and_repeat_resolution_both_s
     assert_eq!(ability.target_spec, TargetSpec::None);
     assert!(!ability.sorcery_speed_only && ability.max_activations_per_turn.is_none());
     for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut short = ready(actor);
+        let unaffordable = put(&mut short, actor, "Krenko, Mob Boss", Zone::Hand);
+        short.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 3;
+        assert!(
+            matches!(next(&mut short), Decision::CastSpellOrPass { castable_spells, .. }
+            if !castable_spells.contains(&unaffordable))
+        );
+        refuses(&mut short, Action::CastSpell(unaffordable));
         let mut state = ready(actor);
         let source = cast(&mut state, actor);
         refuses(&mut state, Action::ActivateAbility(source, 0));
@@ -310,5 +318,123 @@ fn paid_owner_source_metadata_payment_and_token_occurrence_forgeries_refuse_read
         };
         *controller = actor.opponent();
         refuses(&mut forged, Action::Pass);
+    }
+}
+
+#[test]
+#[ignore = "Requires genuine parent Krenko registration"]
+fn real_witness_response_suppression_uses_current_members_without_cancelling_paid_source_both_seats(
+) {
+    use mtg_kernel::state::Target;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for paid in [false, true] {
+            let mut state = ready(actor);
+            let source = cast(&mut state, actor);
+            naturally_ready(&mut state, actor, source);
+            if paid {
+                activate(&mut state, actor, source);
+            }
+            let witness = put(&mut state, actor, "Witness Protection", Zone::Hand);
+            state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 1;
+            engine::step(&mut state, Action::CastSpell(witness)).unwrap();
+            assert!(
+                matches!(next(&mut state), Decision::ChooseTargets { legal_targets, .. }
+                if legal_targets.contains(&Target::Object(source)))
+            );
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(source))).unwrap();
+            finish(&mut state);
+            assert_eq!(state.objects.get(witness).zone, Zone::Battlefield);
+            assert!(!engine::has_effective_subtype(
+                &state,
+                source,
+                Subtype::Goblin
+            ));
+            assert_eq!(tokens(&state, actor), 0);
+            if paid {
+                assert!(state.engine.event_history.iter().any(|e| matches!(e,
+                    CommittedEvent::KrenkoSampleV1 { sample } if sample.members.is_empty())));
+            }
+            refuses(&mut state, Action::ActivateAbility(source, 0));
+        }
+    }
+}
+
+#[test]
+#[ignore = "Requires genuine parent Krenko registration"]
+fn real_large_permanent_roster_never_narrows_through_u8_and_restores_same_complete_batch_both_seats(
+) {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let source = cast(&mut state, actor);
+        naturally_ready(&mut state, actor, source);
+        let token = card_id_by_name("Goblin Token").unwrap();
+        event::propose_and_commit_batch(
+            &mut state,
+            (0..300)
+                .map(|_| ProposedEvent::create_token(token, actor))
+                .collect(),
+        );
+        activate(&mut state, actor, source);
+        let mut replay = restore(&state);
+        finish(&mut state);
+        finish(&mut replay);
+        assert_eq!(tokens(&state, actor), 601);
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+        assert!(state.engine.event_history.iter().any(|e| matches!(e,
+            CommittedEvent::KrenkoSampleV1 { sample } if sample.members.len() == 301)));
+    }
+}
+
+#[test]
+#[ignore = "Requires genuine parent Krenko registration"]
+fn actual_kicked_bushwhacker_haste_and_bolt_response_keep_resolution_time_count_both_seats() {
+    use mtg_kernel::state::Target;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for kill_source in [false, true] {
+            let mut state = ready(actor);
+            let source = cast(&mut state, actor);
+            assert!(state.objects.get(source).summoning_sick);
+            let bushwhacker = put(&mut state, actor, "Goblin Bushwhacker", Zone::Hand);
+            state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 2;
+            engine::step(&mut state, Action::CastSpell(bushwhacker)).unwrap();
+            assert!(matches!(next(&mut state), Decision::ChooseKicker { .. }));
+            engine::step(&mut state, Action::ChooseKicker(true)).unwrap();
+            finish(&mut state);
+            assert!(engine::has_effective_keyword(
+                &state,
+                source,
+                Keywords::HASTE
+            ));
+            activate(&mut state, actor, source);
+            if kill_source {
+                let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+                state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+                engine::step(&mut state, Action::CastSpell(bolt)).unwrap();
+                assert!(
+                    matches!(next(&mut state), Decision::ChooseTargets { legal_targets, .. }
+                    if legal_targets.contains(&Target::Object(source)))
+                );
+                engine::step(&mut state, Action::ChooseTarget(Target::Object(source))).unwrap();
+            }
+            let mut replay = restore(&state);
+            finish(&mut state);
+            finish(&mut replay);
+            assert_eq!(tokens(&state, actor), if kill_source { 1 } else { 2 });
+            assert_eq!(
+                state.objects.get(source).zone,
+                if kill_source {
+                    Zone::Graveyard
+                } else {
+                    Zone::Battlefield
+                }
+            );
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&replay).unwrap()
+            );
+        }
     }
 }

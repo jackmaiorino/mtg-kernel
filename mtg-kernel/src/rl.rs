@@ -1948,7 +1948,7 @@ fn build_observation_v2(
         step_index,
         text_mode,
         (
-            false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
         ),
     )
 }
@@ -1960,6 +1960,7 @@ fn build_observation_common_v2(
     step_index: u64,
     text_mode: ObservationTextModeV2,
     capabilities: (
+        bool,
         bool,
         bool,
         bool,
@@ -1984,8 +1985,14 @@ fn build_observation_common_v2(
         accept_arahbo,
         accept_strongbox,
         accept_fiery,
+        accept_krenko,
         accept_zul,
     ) = capabilities;
+    if !accept_krenko && crate::krenko_v1::requires_successor(state) {
+        return Err(RlContractError(
+            "Krenko requires selected V34 transport".into(),
+        ));
+    }
     if !accept_zul && crate::zul_ashur_v1::requires_successor(state) {
         return Err(RlContractError(
             "Zul requires selected V35 transport".into(),
@@ -2310,7 +2317,7 @@ fn build_policy_observation_parts(
         step_index,
         text_mode,
         (
-            false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
         ),
     )
 }
@@ -2321,6 +2328,7 @@ fn build_policy_observation_parts_common(
     step_index: u64,
     text_mode: ObservationTextModeV2,
     capabilities: (
+        bool,
         bool,
         bool,
         bool,
@@ -2345,8 +2353,14 @@ fn build_policy_observation_parts_common(
         accept_arahbo,
         accept_strongbox,
         accept_fiery,
+        accept_krenko,
         accept_zul,
     ) = capabilities;
+    if !accept_krenko && crate::krenko_v1::requires_successor(state) {
+        return Err(RlContractError(
+            "Krenko requires selected V34 transport".into(),
+        ));
+    }
     if !accept_zul && crate::zul_ashur_v1::requires_successor(state) {
         return Err(RlContractError(
             "Zul requires selected V35 transport".into(),
@@ -2379,6 +2393,7 @@ fn build_policy_observation_parts_common(
             accept_arahbo,
             accept_strongbox,
             accept_fiery,
+            accept_krenko,
             accept_zul,
         ),
     )?;
@@ -2557,7 +2572,7 @@ fn build_policy_observation_storage_v6(
         false,
         false,
         (
-            false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
         ),
     )
 }
@@ -2589,7 +2604,7 @@ pub(crate) fn extra_turn_observation_storage_v1(
         false,
         false,
         (
-            false, true, false, false, false, false, false, false, false, false, false,
+            false, true, false, false, false, false, false, false, false, false, false, false,
         ),
     )
 }
@@ -2648,7 +2663,7 @@ pub(crate) fn sower_observation_storage_v1(
         false,
         false,
         (
-            false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
         ),
     )
 }
@@ -2680,7 +2695,7 @@ pub(crate) fn employment_observation_storage_v1(
         true,
         false,
         (
-            false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
         ),
     )
 }
@@ -2712,7 +2727,7 @@ pub(crate) fn wildwood_observation_storage_v1(
         false,
         false,
         (
-            false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
         ),
     )
 }
@@ -2744,7 +2759,7 @@ pub(crate) fn cerberus_observation_storage_v1(
         false,
         true,
         (
-            false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
         ),
     )
 }
@@ -2776,7 +2791,7 @@ pub(crate) fn authority_observation_storage_v1(
         false,
         false,
         (
-            true, false, false, false, false, false, false, false, false, false, false,
+            true, false, false, false, false, false, false, false, false, false, false, false,
         ),
     )
 }
@@ -2808,7 +2823,7 @@ pub(crate) fn frenzied_observation_storage_v1(
         false,
         false,
         (
-            false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
         ),
     )
 }
@@ -2840,7 +2855,7 @@ pub(crate) fn juggernaut_observation_storage_v1(
         false,
         false,
         (
-            false, false, true, false, false, false, false, false, false, false, false,
+            false, false, true, false, false, false, false, false, false, false, false, false,
         ),
     )
 }
@@ -2872,7 +2887,7 @@ pub(crate) fn banishing_observation_storage_v1(
         false,
         false,
         (
-            false, false, false, true, false, false, false, false, false, false, false,
+            false, false, false, true, false, false, false, false, false, false, false, false,
         ),
     )
 }
@@ -2904,7 +2919,7 @@ pub(crate) fn gourmand_observation_storage_v1(
         false,
         false,
         (
-            false, false, false, false, true, false, false, false, false, false, false,
+            false, false, false, false, true, false, false, false, false, false, false, false,
         ),
     )
 }
@@ -2935,7 +2950,7 @@ pub(crate) fn strongbox_observation_storage_v1(
         false,
         false,
         (
-            false, false, false, false, false, false, false, false, true, false, false,
+            false, false, false, false, false, false, false, false, true, false, false, false,
         ),
     )
 }
@@ -2966,7 +2981,38 @@ pub(crate) fn fiery_observation_storage_v1(
         false,
         false,
         (
-            false, false, false, false, false, false, false, false, false, true, false,
+            false, false, false, false, false, false, false, false, false, true, false, false,
+        ),
+    )
+}
+pub(crate) fn krenko_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::krenko_observation_v1::validate_projection_authority(state)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_common(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
+        false,
+        false,
+        false,
+        false,
+        (
+            false, false, false, false, false, false, false, false, false, false, true, false,
         ),
     )
 }
@@ -2997,7 +3043,7 @@ pub(crate) fn zul_ashur_observation_storage_v1(
         false,
         false,
         (
-            false, false, false, false, false, false, false, false, false, false, true,
+            false, false, false, false, false, false, false, false, false, false, false, true,
         ),
     )
 }
@@ -3028,7 +3074,7 @@ pub(crate) fn garruk_observation_storage_v1(
         false,
         false,
         (
-            false, false, false, true, false, true, false, false, false, false, false,
+            false, false, false, true, false, true, false, false, false, false, false, false,
         ),
     )
 }
@@ -3060,7 +3106,7 @@ pub(crate) fn crystal_observation_storage_v1(
         false,
         false,
         (
-            false, false, false, false, false, false, true, false, false, false, false,
+            false, false, false, false, false, false, true, false, false, false, false, false,
         ),
     )
 }
@@ -3093,7 +3139,7 @@ pub(crate) fn arahbo_observation_storage_v1(
         false,
         false,
         (
-            false, false, false, true, false, true, false, true, false, false, false,
+            false, false, false, true, false, true, false, true, false, false, false, false,
         ),
     )
 }
@@ -3106,6 +3152,7 @@ fn build_policy_observation_storage_common(
     accept_temporary_control: bool,
     accept_cerberus: bool,
     accepted_statics: (
+        bool,
         bool,
         bool,
         bool,
@@ -3130,8 +3177,14 @@ fn build_policy_observation_storage_common(
         accept_arahbo,
         accept_strongbox,
         accept_fiery,
+        accept_krenko,
         accept_zul,
     ) = accepted_statics;
+    if !accept_krenko && crate::krenko_v1::requires_successor(request.state) {
+        return Err(RlContractError(
+            "Krenko requires selected V34 transport".into(),
+        ));
+    }
     if !accept_zul && crate::zul_ashur_v1::requires_successor(request.state) {
         return Err(RlContractError(
             "Zul requires selected V35 transport".into(),
@@ -3223,6 +3276,7 @@ fn build_policy_observation_storage_common(
             accept_arahbo,
             accept_strongbox,
             accept_fiery,
+            accept_krenko,
             accept_zul,
         ),
     )?;

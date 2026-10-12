@@ -14197,6 +14197,7 @@ pub(crate) fn counter_stack_item_by_id(
     state: &mut GameState,
     stack_item_id: StackItemId,
 ) -> Result<Option<StackItem>, String> {
+    crate::krenko_v1::validate_state(state)?;
     if stack_item_id == StackItemId::default() {
         return Err("cannot counter an unstamped stack incarnation".to_string());
     }
@@ -14250,6 +14251,11 @@ pub(crate) fn counter_stack_item_by_id(
     } else {
         state.stack.remove(position);
     }
+    crate::krenko_v1::record_input(
+        state,
+        krenko_counter_owner.as_ref(),
+        crate::krenko_v1::RemovalV1::Countered,
+    )?;
     if let Some(owner) = arahbo_counter_owner {
         crate::arahbo_v1::record_counter_input(state, &owner)?;
         crate::arahbo_v1::counter_removed(state, owner)?;
@@ -14533,6 +14539,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         .stack
         .last()
         .expect("resolve_top_of_stack called with an empty stack");
+    if crate::krenko_v1::record_input(
+        state,
+        krenko_owner.as_ref(),
+        crate::krenko_v1::RemovalV1::Resolving,
+    )
+    .is_err()
+    {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+        return ResolutionProgress::Suspended;
+    }
     let resolving_source = item.source;
     let targets_legal = match stack_targets_still_legal(item, state) {
         Ok(legal) => legal,
@@ -17619,6 +17635,7 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    crate::krenko_v1::validate_state(state)?;
     event::validate_exile_if_dies_replacements(state)
         .map_err(|source| format!("invalid exile-if-dies replacement authority for {source:?}"))?;
     crate::linked_aura_operation_v1::step(state, action)
@@ -21118,7 +21135,13 @@ fn push_paid_activation(
     });
     crate::source_power_activation_v1::record_paid(state, stack_item_id);
     crate::librarian_activation_v1::record_paid(state, stack_item_id);
-    if crate::krenko_v1::record_paid(state, stack_item_id, frozen.payment_history_start).is_err()
+    if crate::krenko_v1::record_paid(
+        state,
+        stack_item_id,
+        frozen.payment_history_start,
+        frozen.source,
+    )
+    .is_err()
         || crate::zul_ashur_v1::publish(state, stack_item_id).is_err()
     {
         state.engine.halted = Some((

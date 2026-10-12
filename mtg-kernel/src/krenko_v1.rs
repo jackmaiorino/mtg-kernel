@@ -20,9 +20,11 @@ pub(crate) fn selected_definition(id: u16) -> bool {
         .is_some_and(|d| d.is_executable() && d.name == "Krenko, Mob Boss")
 }
 fn selected(item: &StackItem) -> bool {
-    item.v4
-        .ability_source_contract
-        .is_some_and(|s| selected_definition(s.card_def))
+    item.v4.activated_ability_index == Some(0)
+        && item
+            .v4
+            .ability_source_contract
+            .is_some_and(|s| selected_definition(s.card_def))
 }
 pub(crate) fn token_definition() -> Result<u16, String> {
     let id = crate::card_def::card_id_by_name("Goblin Token")
@@ -62,6 +64,13 @@ fn shape(state: &GameState, item: &StackItem) -> Result<(), String> {
     let [ability] = def.activated_abilities else {
         return Err("Krenko activation count changed".into());
     };
+    let expected = crate::state::StackStateV4 {
+        stack_item_id: item.v4.stack_item_id,
+        ability_source_contract: Some(source),
+        activated_ability_index: Some(0),
+        target_spec: Some(TargetSpec::None),
+        ..Default::default()
+    };
     if !selected(item)
         || item.kind != StackItemKind::ActivatedAbility
         || item.source != source.source
@@ -91,6 +100,8 @@ fn shape(state: &GameState, item: &StackItem) -> Result<(), String> {
         || item.v4.granted_by.is_some()
         || item.v4.cauldron_grant.0.is_some()
         || item.v4.source_contract.is_some()
+        || item.mode_chosen != 0
+        || item.v4 != expected
     {
         return Err("Krenko paid activation metadata changed".into());
     }
@@ -99,8 +110,16 @@ fn shape(state: &GameState, item: &StackItem) -> Result<(), String> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PaidV1 {
     pub index: u64,
+    pub input: u64,
     pub tap_history_index: u64,
     pub item: Box<StackItem>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct PaymentInputV1 {
+    pub index: u64,
+    pub stack_item_id: StackItemId,
+    pub source: crate::state::AbilitySourceContractV4,
+    pub tap_history_index: u64,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RemovalV1 {
@@ -113,6 +132,16 @@ pub struct RemovedV1 {
     pub paid: u64,
     pub item: Box<StackItem>,
     pub kind: RemovalV1,
+    pub input: u64,
+}
+/// Independent original input captured only by the actual engine removal hook.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RemovalInputV1 {
+    pub index: u64,
+    pub paid: u64,
+    pub item: Box<StackItem>,
+    pub kind: RemovalV1,
+    pub members: Option<Vec<EffectObjectBinding>>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SampleV1 {
@@ -147,6 +176,29 @@ fn paid(state: &GameState, id: StackItemId) -> Result<&PaidV1, String> {
     let [p] = rows.as_slice() else {
         return Err("Krenko lost unique actual payment".into());
     };
+    let inputs = state
+        .engine
+        .event_history
+        .iter()
+        .filter_map(|e| match e {
+            CommittedEvent::KrenkoPaymentInputV1 { input } if input.stack_item_id == id => {
+                Some(input.as_ref())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let [input] = inputs.as_slice() else {
+        return Err("Krenko payment lost independent original source input".into());
+    };
+    if input.index != p.input
+        || input.index.checked_add(1) != Some(p.index)
+        || input.tap_history_index >= input.index
+        || input.tap_history_index != p.tap_history_index
+        || Some(input.source) != p.item.v4.ability_source_contract
+        || !matches!(state.engine.event_history.get(input.index as usize),Some(CommittedEvent::KrenkoPaymentInputV1 { input: original }) if original.as_ref() == *input)
+    {
+        return Err("Krenko payment rewrote original captured source/controller".into());
+    }
     if !matches!(state.engine.event_history.get(p.index as usize),Some(CommittedEvent::KrenkoPaidV1 {paid}) if paid.as_ref()==*p)
         || p.tap_history_index >= p.index
         || !matches!(state.engine.event_history.get(p.tap_history_index as usize),Some(CommittedEvent::Tap {object}) if *object==p.item.source)
@@ -160,6 +212,7 @@ pub(crate) fn record_paid(
     state: &mut GameState,
     id: StackItemId,
     start: usize,
+    captured_source: crate::state::AbilitySourceContractV4,
 ) -> Result<(), String> {
     let item = state
         .stack
@@ -170,6 +223,9 @@ pub(crate) fn record_paid(
         return Ok(());
     }
     shape(state, item)?;
+    if item.v4.ability_source_contract != Some(captured_source) {
+        return Err("Krenko full publication changed the private prepayment source".into());
+    }
     let taps = state.engine.event_history[start..]
         .iter()
         .enumerate()
@@ -188,10 +244,24 @@ pub(crate) fn record_paid(
     {
         return Err("Krenko publication did not pay tap on original source".into());
     }
+    let original_item = item.clone();
+    let input = state.engine.event_history.len() as u64;
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::KrenkoPaymentInputV1 {
+            input: Box::new(PaymentInputV1 {
+                index: input,
+                stack_item_id: id,
+                source: captured_source,
+                tap_history_index: *tap as u64,
+            }),
+        });
     let p = PaidV1 {
         index: state.engine.event_history.len() as u64,
+        input,
         tap_history_index: *tap as u64,
-        item: Box::new(item.clone()),
+        item: Box::new(original_item),
     };
     state
         .engine
@@ -200,8 +270,17 @@ pub(crate) fn record_paid(
     Ok(())
 }
 pub(crate) fn tracked(state: &GameState, item: &StackItem) -> bool {
-    selected(item) || item.inline_effect==Some(program()) || state.engine.event_history.iter().any(|e|
-        matches!(e,CommittedEvent::KrenkoPaidV1 {paid} if paid.item.v4.stack_item_id==item.v4.stack_item_id))
+    selected(item)
+        || item.inline_effect == Some(program())
+        || state.engine.event_history.iter().any(|e| match e {
+            CommittedEvent::KrenkoPaidV1 { paid } => {
+                paid.item.v4.stack_item_id == item.v4.stack_item_id
+            }
+            CommittedEvent::KrenkoPaymentInputV1 { input } => {
+                input.stack_item_id == item.v4.stack_item_id
+            }
+            _ => false,
+        })
 }
 pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), String> {
     if !tracked(state, item) {
@@ -237,6 +316,61 @@ pub(crate) fn acquire(state: &GameState, item: &StackItem) -> Result<Option<Owne
         paid: paid(state, item.v4.stack_item_id)?.index,
     }))
 }
+pub(crate) fn record_input(
+    state: &mut GameState,
+    owner: Option<&OwnerV1>,
+    kind: RemovalV1,
+) -> Result<(), String> {
+    let Some(owner) = owner else {
+        return Ok(());
+    };
+    if state
+        .stack
+        .iter()
+        .any(|i| i.v4.stack_item_id == owner.item.v4.stack_item_id)
+        || paid(state, owner.item.v4.stack_item_id)?.item.as_ref() != &owner.item
+    {
+        return Err("Krenko input lacks actual removed private owner".into());
+    }
+    let input = RemovalInputV1 {
+        index: state.engine.event_history.len() as u64,
+        paid: owner.paid,
+        item: Box::new(owner.item.clone()),
+        kind,
+        members: (kind == RemovalV1::Resolving).then(|| members(state, owner.item.controller)),
+    };
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::KrenkoRemovalInputV1 {
+            input: Box::new(input),
+        });
+    Ok(())
+}
+fn original_input<'a>(
+    state: &'a GameState,
+    owner: &OwnerV1,
+    kind: RemovalV1,
+) -> Result<&'a RemovalInputV1, String> {
+    let inputs = state
+        .engine
+        .event_history
+        .iter()
+        .filter_map(|e| match e {
+            CommittedEvent::KrenkoRemovalInputV1 { input } if input.paid == owner.paid => {
+                Some(input.as_ref())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let [input] = inputs.as_slice() else {
+        return Err("Krenko operation lost independent actual removal input".into());
+    };
+    if input.item.as_ref() != &owner.item || input.kind != kind {
+        return Err("Krenko input changed original full row or removal kind".into());
+    }
+    Ok(input)
+}
 fn removed(state: &mut GameState, owner: &OwnerV1, kind: RemovalV1) -> Result<u64, String> {
     if state
         .stack
@@ -246,6 +380,7 @@ fn removed(state: &mut GameState, owner: &OwnerV1, kind: RemovalV1) -> Result<u6
     {
         return Err("Krenko operation lacks genuine removed row".into());
     }
+    let input = original_input(state, owner, kind)?.index;
     let index = state.engine.event_history.len() as u64;
     state
         .engine
@@ -256,6 +391,7 @@ fn removed(state: &mut GameState, owner: &OwnerV1, kind: RemovalV1) -> Result<u6
                 paid: owner.paid,
                 item: Box::new(owner.item.clone()),
                 kind,
+                input,
             }),
         });
     Ok(index)
@@ -289,7 +425,10 @@ pub(crate) fn resolve(state: &mut GameState, owner: OwnerV1, ctx: &ExecCtx) -> R
     }
     let token = token_definition()?;
     let removed = removed(state, &owner, RemovalV1::Resolving)?;
-    let roster = members(state, owner.item.controller);
+    let roster = original_input(state, &owner, RemovalV1::Resolving)?
+        .members
+        .clone()
+        .ok_or("Krenko resolution input lost actual Goblin roster")?;
     if roster
         .iter()
         .enumerate()
@@ -365,6 +504,8 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 | CommittedEvent::KrenkoRemovedV1 { .. }
                 | CommittedEvent::KrenkoSampleV1 { .. }
                 | CommittedEvent::KrenkoCompletedV1 { .. }
+                | CommittedEvent::KrenkoRemovalInputV1 { .. }
+                | CommittedEvent::KrenkoPaymentInputV1 { .. }
         )
     }) {
         return Err("private Krenko journal entered transient log".into());
@@ -390,14 +531,39 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 _ => None,
             })
             .collect::<Vec<_>>();
+        let inputs = state
+            .engine
+            .event_history
+            .iter()
+            .filter_map(|e| match e {
+                CommittedEvent::KrenkoRemovalInputV1 { input } if input.paid == p.index => {
+                    Some(input.as_ref())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
         let live = state
             .stack
             .iter()
             .filter(|i| i.v4.stack_item_id == p.item.v4.stack_item_id)
             .collect::<Vec<_>>();
         match (removals.as_slice(), live.as_slice()) {
-            ([], [item]) if *item == p.item.as_ref() => {}
+            ([], [item]) if *item == p.item.as_ref() && inputs.is_empty() => {}
             ([r], []) => {
+                let [input] = inputs.as_slice() else {
+                    return Err("Krenko closure lost original actual removal input".into());
+                };
+                if input.item != p.item
+                    || input.paid != p.index
+                    || input.index <= p.index
+                    || input.index >= r.index
+                    || input.kind != r.kind
+                    || r.input != input.index
+                    || !matches!(state.engine.event_history.get(input.index as usize), Some(CommittedEvent::KrenkoRemovalInputV1 { input: original }) if original.as_ref() == *input)
+                {
+                    return Err("Krenko closure redirected original removal input".into());
+                }
+
                 if r.item != p.item
                     || r.index <= p.index
                     || !matches!(state.engine.event_history.get(r.index as usize),Some(CommittedEvent::KrenkoRemovedV1 {removed}) if removed.as_ref()==*r)
@@ -441,12 +607,14 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                         if c.sample.is_none()
                             && c.token_history.is_empty()
                             && samples.is_empty()
+                            && input.members.is_none()
                             && r.index.checked_add(1) == Some(c.index) => {}
                     RemovalV1::Resolving => {
                         let [s] = samples.as_slice() else {
                             return Err("Krenko resolution lost original count sample".into());
                         };
-                        if c.sample != Some(s.index)
+                        if input.members.as_ref() != Some(&s.members)
+                            || c.sample != Some(s.index)
                             || s.index <= r.index
                             || s.index >= c.index
                             || !matches!(state.engine.event_history.get(s.index as usize),Some(CommittedEvent::KrenkoSampleV1 {sample}) if sample.as_ref()==*s)
@@ -491,6 +659,15 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     }
     for e in &state.engine.event_history {
         match e {
+            CommittedEvent::KrenkoPaymentInputV1 { input } => {
+                paid(state, input.stack_item_id)?;
+            }
+            CommittedEvent::KrenkoRemovalInputV1 { input } => {
+                let original = paid(state, input.item.v4.stack_item_id)?;
+                if input.paid != original.index || input.item != original.item {
+                    return Err("orphan Krenko original removal input".into());
+                }
+            }
             CommittedEvent::KrenkoRemovedV1 { removed: r } => {
                 let p = paid(state, r.item.v4.stack_item_id)?;
                 if r.paid != p.index || r.item != p.item {
@@ -519,7 +696,11 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     Ok(())
 }
 pub(crate) fn requires_successor(state: &GameState) -> bool {
-    state.stack.iter().any(|i| tracked(state, i))
+    state.objects.iter().any(|(id, object)| {
+        object.zone == Zone::Battlefield
+            && selected_definition(object.card_def)
+            && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+    }) || state.stack.iter().any(|i| tracked(state, i))
         || state.engine.event_history.iter().any(|e| {
             matches!(
                 e,
@@ -527,6 +708,8 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
                     | CommittedEvent::KrenkoRemovedV1 { .. }
                     | CommittedEvent::KrenkoSampleV1 { .. }
                     | CommittedEvent::KrenkoCompletedV1 { .. }
+                    | CommittedEvent::KrenkoRemovalInputV1 { .. }
+                    | CommittedEvent::KrenkoPaymentInputV1 { .. }
             )
         })
 }

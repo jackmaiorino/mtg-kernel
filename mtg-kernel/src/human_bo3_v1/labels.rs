@@ -1583,6 +1583,65 @@ pub(super) fn label_fiery_v33(
     label_parts_v8(action, &parts, handles, human)
 }
 
+pub(super) fn label_krenko_v34(
+    action: &A,
+    observation: &crate::krenko_observation_v1::KrenkoObservationV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    match action {
+        A::CastSpell { actor, source }
+            if observation.roots.iter().any(|r| {
+                r.card_id == source.card_db_id
+                    && r.root == crate::rules_meaning_krenko_v1::RootV1::PrintedCreatureSpell
+            }) =>
+        {
+            if *actor != human {
+                return Err(Error::UnsupportedPrompt);
+            }
+            return Ok(format!(
+                "Begin casting {} (printed cost {{2}}{{R}}{{R}}): legendary 3/3 Goblin Warrior",
+                handles.name(source)?
+            ));
+        }
+        A::ActivateAbility {
+            actor,
+            source,
+            ability_index: 0,
+            granted_ability,
+        } if granted_ability.is_none()
+            && observation.roots.iter().any(|r| {
+                r.card_id == source.card_db_id
+                    && r.root
+                        == crate::rules_meaning_krenko_v1::RootV1::PrintedTapActivation {
+                            ability_index: 0,
+                        }
+            }) =>
+        {
+            if *actor != human {
+                return Err(Error::UnsupportedPrompt);
+            }
+            let row = observation
+                .facts
+                .sources
+                .iter()
+                .find(|r| r.source == *source)
+                .ok_or(Error::UnsupportedPrompt)?;
+            return Ok(format!("Tap {}: create 1/1 red Goblin tokens equal to your Goblin permanents at resolution (currently {})", handles.name(source)?, row.current_controlled_goblin_permanents));
+        }
+        _ => {}
+    }
+    let parts = super::life_ward_v8::ProjectionPartsV8 {
+        projection: &observation.projection,
+        own_hand: &observation.own_hand,
+        known_library_cards: &observation.known_library_cards,
+        known_hand_cards: &observation.known_hand_cards,
+        known_face_down_cards: &observation.known_face_down_cards,
+        extensions: &observation.extensions,
+    };
+    label_parts_v8(action, &parts, handles, human)
+}
+
 #[cfg(test)]
 mod variable_target_refusal_tests {
     use super::*;

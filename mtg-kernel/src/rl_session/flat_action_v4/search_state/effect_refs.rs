@@ -1233,6 +1233,8 @@ pub(super) fn conflicts(
             InitiativeTrigger { binding } => s.raw(binding.source.source),
             MonarchTrigger { binding } => s.raw(binding.source.source),
             KrenkoPaidV1 { .. }
+            | KrenkoPaymentInputV1 { .. }
+            | KrenkoRemovalInputV1 { .. }
             | KrenkoRemovedV1 { .. }
             | KrenkoSampleV1 { .. }
             | KrenkoCompletedV1 { .. }
