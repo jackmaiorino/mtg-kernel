@@ -15540,6 +15540,9 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     {
         return true;
     }
+    if crate::garruks_uprising_v1::grants_keyword(state, id, kw) {
+        return true;
+    }
     if crate::standard_creatures_v1::keyword_granted(state, id, kw) {
         return true;
     }

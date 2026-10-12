@@ -545,3 +545,5 @@ pub mod cauldron_grants_v1;
 mod crystal_barricade_v1;
 pub mod rules_meaning_cerberus_v1;
 pub mod rules_meaning_employment_v1;
+
+pub mod garruks_uprising_v1;
