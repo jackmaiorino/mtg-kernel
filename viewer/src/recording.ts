@@ -36,7 +36,7 @@ const policySchema = z.object({
   sampled: integer, value: z.number().finite(), valueScale: text,
 }).strict();
 const replaySchema = z.object({
-  schema: z.literal('mtg-kernel-search-replay/v1'), complete: z.literal(true), key: keySchema, worlds: text,
+  schema: z.enum(['mtg-kernel-search-replay/v1','mtg-kernel-search-replay/v2']), complete: z.literal(true), key: keySchema, worlds: text,
   nodes: z.array(z.object({ id: u32, actor: seat, visits: u32, priors: z.array(u32),
     actions: z.array(actionSchema).min(1), children: z.array(z.array(u32)),
     edgeVisits: z.array(u32), edgeValueSums: z.array(i64),
@@ -46,7 +46,7 @@ const replaySchema = z.object({
     choices: z.array(z.object({ node: u32, action: u32,
       mode: z.enum(['coverage','round_robin','unvisited','prior_free','puct']),
       scores: z.array(i64.nullable()), board: boardSchema,
-    }).strict()).min(1).max(64), leaf: boardSchema,
+    }).strict()).min(1).max(64), leaf: boardSchema, leafNode: u32.nullable().optional(),
   }).strict()).min(1).max(512),
 }).strict();
 export type SearchReplay = z.infer<typeof replaySchema>;
@@ -143,20 +143,39 @@ function validateReplay(frame: Frame, recording: Recording) {
       n.priors.reduce((s,v) => s+v,0) !== 1000000 || n.children.flat().some(c => c >= replay.nodes.length)) throw new Error('Broken search node or action reference');
   }
   let transitions = 0;
+  let nextNode = 1;
+  const discovered = new Set([0]), edges = new Set<string>(), nodeVisits = replay.nodes.map(() => 0);
+  const hasLeafIdentity = replay.schema === 'mtg-kernel-search-replay/v2';
   for (const [i,s] of replay.simulations.entries()) {
     if (s.ordinal !== i || s.choices[0].node !== 0) throw new Error('Search simulation order is invalid');
     for (const [j,c] of s.choices.entries()) {
       const n = replay.nodes[c.node];
       if (!n || c.action >= n.actions.length || c.scores.length !== n.actions.length) throw new Error('Broken search choice reference');
       if (j > 0) { const p = s.choices[j-1]; if (!replay.nodes[p.node].children[p.action].includes(c.node)) throw new Error('Search path is not in the captured graph'); }
+      if (hasLeafIdentity) {
+        if (!discovered.has(c.node)) throw new Error('Search visits a node before expansion');
+        if (j) { const p=s.choices[j-1]; edges.add(`${p.node}:${p.action}:${c.node}`); }
+        nodeVisits[c.node]++;
+      }
       visits[c.node][c.action]++; sums[c.node][c.action] += BigInt(s.value); transitions++;
     }
+    if (hasLeafIdentity) {
+      if (s.reason==='expanded') {
+        const p=s.choices.at(-1)!;
+        if (s.leafNode!==nextNode || !replay.nodes[p.node].children[p.action].includes(nextNode)) throw new Error('Search leaf identity differs from its expansion');
+        edges.add(`${p.node}:${p.action}:${nextNode}`); discovered.add(nextNode); nodeVisits[nextNode]++; nextNode++;
+      } else if (s.leafNode!==null) throw new Error('Unexpanded search evaluation must have no leaf node');
+    } else if (s.leafNode!==undefined) throw new Error('Leaf identities require search replay v2');
     for (const b of [...s.choices.map(c => c.board),s.leaf]) {
       if (b.players.some(p => p.hand.length)) throw new Error('Hypothetical search exposes a sampled hand');
       const objects = objectList(b), ids = new Set(objects.map(o => o.id));
       if (ids.size !== objects.length || objects.some(o => !recording.cards[o.card]) ||
         b.combat.some(c => !ids.has(c.attacker) || c.blockers.some(id => !ids.has(id)))) throw new Error('Broken hypothetical board reference');
     }
+  }
+  if (hasLeafIdentity) {
+    const captured=new Set(replay.nodes.flatMap(n=>n.children.flatMap((children,a)=>children.map(c=>`${n.id}:${a}:${c}`))));
+    if (nextNode!==replay.nodes.length || captured.size!==edges.size || [...captured].some(e=>!edges.has(e)) || replay.nodes.some(n=>n.visits!==nodeVisits[n.id])) throw new Error('Search expansion coverage or node visits differ');
   }
   if (transitions !== search.transitions) throw new Error('Search replay transition count differs');
   for (const [i,n] of replay.nodes.entries()) {
