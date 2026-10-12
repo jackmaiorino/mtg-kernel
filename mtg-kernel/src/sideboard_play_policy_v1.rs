@@ -69,7 +69,11 @@ mod origin;
 #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub(crate) mod public_inputs;
 pub mod registry_evolution_v1;
-#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+#[cfg(any(
+    test,
+    feature = "experimental-burn-net8-packed-cuda-v1",
+    feature = "viewer-recording-v1"
+))]
 pub(crate) mod search_leaf_v4;
 #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub(crate) mod stack_inputs;
@@ -1508,6 +1512,38 @@ impl FrozenPlayPolicyV1 {
         #[cfg(feature = "gameplay-decision-trace-v1")]
         self.capture_trace_v1(session, decision, selected, &scores);
         Ok(selected)
+    }
+
+    /// One actual forward and sampler draw; no legacy trace receipt is armed.
+    #[cfg(feature = "viewer-recording-v1")]
+    pub(crate) fn select_viewer_receipt_v1(
+        &mut self,
+        session: &FastActorSessionV1,
+    ) -> Result<(u32, FrozenPlayDecisionScoresV1, Vec<String>), String> {
+        if self.collection_sampler.is_some() || self.trace.is_some() {
+            return Err("viewer capture requires the frozen sampler without a legacy trace".into());
+        }
+        let FastActorResponseV1::Decision(decision) = session.current_response() else {
+            return Err("cannot select from a terminal session".into());
+        };
+        let scores = self.score_fast_session_v1(session)?;
+        let selected = self.sample_scores(
+            &scores.logits,
+            decision.acting_player,
+            decision.legal_action_count,
+        )?;
+        let width = scores.logits.len();
+        let masses = if let Some(fresh) = &self.fresh_successor {
+            fresh.sampler.last_masses_v1(width)
+        } else if let Some(successor) = &self.successor {
+            successor.sampler.last_masses_v1(width)
+        } else {
+            self.sampler.last_masses_v1(width)
+        }
+        .iter()
+        .map(u128::to_string)
+        .collect();
+        Ok((selected, scores, masses))
     }
 
     fn score_owned(&mut self) -> Result<FrozenPlayDecisionScoresV1, String> {

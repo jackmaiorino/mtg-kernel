@@ -81,6 +81,30 @@ fn validate_gae_inputs_v1(
 }
 
 impl NativePolicyValueTrainStateV1 {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn train_step_gae_with_e_config_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        workers: Option<usize>,
+        config: NativePolicyValueModelConfigV1,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        self.train_step_gae_with_input_config_v1(
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            workers.map_or(BackwardExecutionV1::Sequential, |worker_limit| {
+                BackwardExecutionV1::FixedPartitions { worker_limit }
+            }),
+            config,
+            false,
+        )
+    }
     /// Canonical CPU GAE update under the flat-V3 input contract. V3
     /// sibling of `train_step_gae_feature_transfer_v4`.
     pub(crate) fn train_step_gae_feature_transfer_v3(

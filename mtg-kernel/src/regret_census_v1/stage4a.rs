@@ -27,6 +27,7 @@ mod bank_trace;
 mod branch;
 mod canon2;
 mod diag;
+pub(crate) mod e_supported;
 mod identity;
 mod labels;
 mod play;
@@ -564,6 +565,7 @@ fn run_root(
         other => return Err(format!("root stratum {other:?}")),
     };
     let ctx = RootCtx {
+        visible_history: &[],
         root: &session,
         d,
         focal: crate::ids::PlayerId(setup.focal as u8),
@@ -715,6 +717,7 @@ fn run_root_diag(
         other => return Err(format!("root stratum {other:?}")),
     };
     let ctx = RootCtx {
+        visible_history: &[],
         root: &session,
         d,
         focal: crate::ids::PlayerId(setup.focal as u8),
