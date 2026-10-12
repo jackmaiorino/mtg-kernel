@@ -1,6 +1,8 @@
-//! Prepared printed-card acceptance. This card remains unregistered; run only
-//! after a reviewed candidate catalog admits its real definition, without hooks.
-#![cfg(feature = "limited-fdn-fixtures")]
+//! Genuine printed-card candidate acceptance; current registration remains unqualified.
+#![cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 
 use mtg_kernel::card_def::{card_id_by_name, CardType, Keywords, TargetSpec, CARD_DEFS};
 use mtg_kernel::engine::{self, Action, Decision};
@@ -23,7 +25,6 @@ fn ready(player: PlayerId) -> GameState {
 }
 
 #[test]
-#[ignore = "requires genuine Fiery registration; actual Madness Cleanup qualification"]
 fn actual_fiery_cast_during_madness_cleanup_priority_expires_before_player_flip() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);

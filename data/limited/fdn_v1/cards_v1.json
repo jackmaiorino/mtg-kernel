@@ -6879,6 +6879,35 @@
         "exile_top_two_choose_exact_one",
         "ordinary_play_until_holder_next_cleanup"
       ]
+    },
+    {
+      "name": "Fiery Annihilation",
+      "mana_cost": "{2}{R}",
+      "mana_value": 3,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "java_file": "Mage.Sets/src/mage/cards/f/FieryAnnihilation.java",
+      "is_land": false,
+      "produces_mana": [],
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_fiery_annihilation.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "five_damage_to_creature",
+        "up_to_one_independent_attached_equipment_exile",
+        "original_creature_this_turn_death_exile_replacement"
+      ]
     }
   ]
 }

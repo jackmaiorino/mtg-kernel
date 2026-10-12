@@ -473,7 +473,6 @@ mod future_printed {
         panic!("actual Fiery resolution never completed");
     }
     #[test]
-    #[ignore = "Fiery unregistered; root owns actual consumer qualification"]
     fn actual_mandatory_creature_optional_equipment_decline_payment_restore_and_replacements_both_seats(
     ) {
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -599,7 +598,6 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "Fiery unregistered; root owns actual consumer qualification"]
     fn actual_prevented_damage_original_source_departure_hidden_target_and_real_cleanup_restore() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let (mut state, target, _) = equipped(actor, actor.opponent(), true);
@@ -690,7 +688,6 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "Fiery unregistered; root owns actual consumer qualification"]
     fn actual_bound_input_rejects_coherent_pending_rewrite_and_erased_shield_readonly() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let (mut state, target, _) = equipped(actor, actor, true);

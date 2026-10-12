@@ -189,7 +189,6 @@ mod tests {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
-    #[ignore = "requires genuine Fiery registration and successor qualification"]
     fn future_printed_definition_meaning_and_coherent_rewrites_refuse() {
         let selector = live_selector().unwrap();
         let id = crate::card_def::card_id_by_name("Fiery Annihilation")
