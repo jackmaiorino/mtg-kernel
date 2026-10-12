@@ -11,3 +11,5 @@ The physical copy-cost fixture now invokes the accepted typed Aegis candidate/ap
 Banishing is genuinely registered as candidate ID 418 at this base. All 13 registration-dependent Banishing child tests plus the genuine precise-root and V26 backend groups are enabled under their existing pure Limited gates. Existing external genuine printed tests and V26 Human tests were already enabled. Garruk-dependent ignored groups stay unchanged. These are readiness fixes, not a runtime, typecheck, native, Full or profile result.
 
 Verification: pinned Rust 1.94.1 formatting and git diff checks only. Metadata, catalogs, decks, frozen 286/24 inputs and profiles are untouched.
+
+Peer review identified the standalone V2 constructor bypassing the policy-parts wrapper. Its common V2 builder now invokes the same readonly refusal, and the real shroud fixture checks both standalone V1 and V2 constructors. No keyword DTO is widened.

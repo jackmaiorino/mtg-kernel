@@ -51,6 +51,13 @@ fn shroud_excludes_both_players_and_rechecks_real_announced_spell_readonly() {
             let before = serde_json::to_vec(branch).unwrap();
             assert!(step(branch, Action::ChooseTarget(Target::Object(creature))).is_err());
             assert!(crate::rl::observe_v1(branch, actor, 0).is_err());
+            assert!(crate::rl::observe_v2(
+                branch,
+                &crate::surface_v2::HarnessSurfaceV2::new(),
+                actor,
+                0
+            )
+            .is_err());
             assert_eq!(serde_json::to_vec(branch).unwrap(), before);
             // Choosing the genuine player recipient still completes the cast.
             step(

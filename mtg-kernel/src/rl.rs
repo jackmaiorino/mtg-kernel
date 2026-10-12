@@ -1996,6 +1996,7 @@ fn build_observation_common_v2(
         bool,
     ),
 ) -> Result<ObservationV2> {
+    refuse_unrepresented_shroud(state)?;
     let (
         accept_cant_block,
         accept_temporary_control,
