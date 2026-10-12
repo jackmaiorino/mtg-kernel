@@ -3,6 +3,23 @@ use crate::gameplay_trace_v1::{actor_id, GameplayTraceV1, PendingTrace, SCHEMA_V
 use serde_json::json;
 
 impl FastActorSessionV1 {
+    #[cfg(feature = "viewer-recording-v1")]
+    pub(crate) fn viewer_observation_v1(
+        &self,
+        seat: PlayerSeatV1,
+    ) -> Result<crate::policy_observation_v6::ObservationV6, String> {
+        crate::rl::observe_policy_v6_unhashed_for_flat_policy(
+            &self.state,
+            &self.surface,
+            actor_id(seat),
+            self.policy_step_count,
+            self.physical_decision_count,
+            0,
+            1,
+        )
+        .map_err(|e| format!("viewer projection: {e:?}"))
+    }
+
     pub(crate) fn gameplay_trace_visible_v1(
         &self,
         expected: FastActorDecisionV1,
