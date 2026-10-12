@@ -30,7 +30,7 @@ pub(crate) fn owns_definition(card: u16) -> bool {
     })
 }
 
-pub(crate) fn record_entry(state: &mut GameState, entry_history_index: usize) {
+pub(crate) fn record_entry(state: &mut GameState, entry_history_index: usize) -> Option<usize> {
     let id = match state.engine.event_history.get(entry_history_index) {
         Some(CommittedEvent::ZoneChange {
             object,
@@ -38,13 +38,14 @@ pub(crate) fn record_entry(state: &mut GameState, entry_history_index: usize) {
             ..
         })
         | Some(CommittedEvent::CreateToken { object, .. }) => *object,
-        _ => return,
+        _ => return None,
     };
     let object = state.objects.get(id);
     if !owns_definition(object.card_def) {
-        return;
+        return None;
     }
     let source = AbilitySourceContractV4::capture(state, id);
+    let index = state.engine.event_history.len();
     state
         .engine
         .event_history
@@ -52,6 +53,7 @@ pub(crate) fn record_entry(state: &mut GameState, entry_history_index: usize) {
             source,
             entry_history_index,
         });
+    Some(index)
 }
 
 pub(crate) fn validate_source_for_program(
@@ -125,6 +127,7 @@ pub(crate) fn validate_source_for_program(
 }
 
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    crate::raid_entry_custody_v1::validate(state)?;
     if state.engine.event_log.iter().any(|event| {
         matches!(
             event,
@@ -140,6 +143,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         .engine
         .pending_triggers
         .iter()
+        .chain(state.raid_waiting_v1.iter().flatten())
         .chain(state.legend_pending_v1.iter().flatten())
         .chain(
             state
@@ -208,7 +212,7 @@ mod tests {
             );
             let before = serde_json::to_vec(&state).unwrap();
             let hash = state.state_hash();
-            record_entry(&mut state, usize::MAX);
+            let _ = record_entry(&mut state, usize::MAX);
             validate_state(&state).unwrap();
             assert_eq!(before, serde_json::to_vec(&state).unwrap());
             assert_eq!(hash, state.state_hash());

@@ -483,6 +483,7 @@ pub(super) fn record_begin(state: &mut GameState) -> Result<(), String> {
         .engine
         .event_history
         .push(CommittedEvent::SquadRallierResolutionBoundaryV1 { receipt });
+    crate::raid_entry_custody_v1::record_started(state, stack_item_id)?;
     Ok(())
 }
 
