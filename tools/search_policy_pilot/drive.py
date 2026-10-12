@@ -59,13 +59,14 @@ def cold_of(root: Path) -> Path:
     return Path("E:" + text[2:]) if text[:2].upper() == "D:" else Path(text + "-cold")
 
 
-def storage(root: Path) -> dict:
+def storage(root: Path, projected: int) -> dict:
+    """Each arm root is a quarter of the pilot's 64 GiB physical-copy allowance (hot plus recovery)."""
     hot, cold = Path(root), cold_of(Path(root))
-    volumes = {hot.drive.upper(): 3 * GiB}
-    volumes[cold.drive.upper()] = volumes.get(cold.drive.upper(), 0) + GiB
+    volumes = {hot.drive.upper(): projected * 3 // 4}
+    volumes[cold.drive.upper()] = volumes.get(cold.drive.upper(), 0) + projected - projected * 3 // 4
     return {"accounting_roots": [str(hot).replace("\\", "/"), str(cold).replace("\\", "/")],
-            "max_logical_bytes": 64 * GiB, "reserve_bytes": 60 * GiB,
-            "projected_additional_bytes": 4 * GiB, "projected_volume_bytes": volumes}
+            "max_logical_bytes": 16 * GiB, "reserve_bytes": 60 * GiB,
+            "projected_additional_bytes": projected, "projected_volume_bytes": volumes}
 
 
 def request(config: Path, runtime: Path, root: Path, workers: int, cpus: list[int], tag: str, wall: int,
@@ -77,7 +78,7 @@ def request(config: Path, runtime: Path, root: Path, workers: int, cpus: list[in
             "cold_root": str(cold_of(root) / "cold" / tag).replace("\\", "/"),
             "placement": {"host": host, "cpu_affinity": cpus, "workers": workers,
                           "preparation_workers": 1, "memory_bytes": 16 * GiB},
-            "storage": storage(root), "wall_seconds": wall,
+            "storage": storage(root, GiB if tag.startswith("qual-") else 12 * GiB), "wall_seconds": wall,
             "non_natural_tolerance": cfg["max_non_natural_episode_fraction"]}
 
 
