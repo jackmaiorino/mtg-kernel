@@ -184,9 +184,10 @@ def qualification() -> list:
 
 
 def smoke() -> list:
-    """Two engineering smoke cases in their own seed domain (one per parent)."""
-    return [case("smoke", lin, min(range(9), key=lambda o: h(NS, "smoke-opponent", lin, o)), 0, 0)
-            for lin in LINEAGES]
+    """Two engineering smoke cases in their own seed domain, both on r1 (the second can then
+    bind a controller to the parent identity the first row reports)."""
+    others = sorted(range(9), key=lambda o: h(NS, "smoke-opponent", o))[:2]
+    return [case("smoke", "r1", o, i, 0) for i, o in enumerate(others)]
 
 
 DOMAINS = {
