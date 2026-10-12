@@ -206,6 +206,9 @@ def all_seeds() -> dict:
     for lineage in LINEAGES:
         for kind in PRE_KINDS:
             out[f"{lineage}/{kind}"] = sorted(e["seed"] for o in range(DECKS) for e in pre_games(lineage, kind, o))
+    # evaluate.py's panel cases (shared by every checkpoint and both references).
+    out["evaluation"] = sorted(seed("evaluation", own=o, other=t, family=k)
+                               for o in range(DECKS) for t in range(DECKS) for k in range(4))
     return out
 
 
