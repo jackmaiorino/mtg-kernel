@@ -9073,6 +9073,7 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
     if crate::raid_entry_v1::validate_state(state).is_err()
         || crate::gorehorn_damage_v1::validate_state(state).is_err()
         || effect::crystal_prevention_v1::validate(state).is_err()
+        || crate::arahbo_v1::validate_state(state).is_err()
     {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
