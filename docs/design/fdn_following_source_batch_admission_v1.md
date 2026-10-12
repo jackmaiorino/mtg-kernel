@@ -36,3 +36,17 @@ input remain unchanged from the actual418 derivation. All older identity
 literals remain byte-exact. The appended v80 live canaries and historical v79
 readability/stale-write refusals still require repaired native qualification;
 Native76's failed compile, CargoJSON and actual output remain preserved.
+
+PR235 exact `d096333b7` CI run `38276169617` failed strict lint with seven
+issues: two negated optional-definition predicates, three eight-argument
+helpers, a Raid test constructor unused outside its selected catalog, and a
+constant assertion. Repairs use equivalent `is_none_or` predicates, preserve
+all observation permissions and surveil count/keep limits in tuples, scope
+the constructor to its actual test users, and retain the selected Raid
+selector's mandatory rejection via a conditional panic. No exemption or
+printed behavior change is added. The original normalized UTF-8 job log is
+retained. Native77 was still queued without a claim, child, command log or
+guard output; its exact waiting supervisor was withdrawn after those checks
+because this head now has observed lint failures. No native test or build is
+reported for that request. A new supported request will qualify the repaired
+head; Claude's all16-core reservation is unchanged.

@@ -212,9 +212,9 @@ pub(super) fn validate_required_stage(
         .ctx
         .ability_source_contract
         .map(|source| source.card_def);
-    if !definition
+    if definition
         .and_then(|id| crate::card_def::CARD_DEFS.get(usize::from(id)))
-        .is_some_and(|def| def.name == "Gutless Plunderer")
+        .is_none_or(|def| def.name != "Gutless Plunderer")
     {
         return Ok(());
     }
@@ -345,9 +345,9 @@ pub(crate) fn selection_shape(state: &GameState) -> Result<Option<(u16, u16)>, S
     let Some(source) = pending.ctx.ability_source_contract else {
         return Ok(None);
     };
-    if !crate::card_def::CARD_DEFS
+    if crate::card_def::CARD_DEFS
         .get(source.card_def as usize)
-        .is_some_and(|definition| definition.name == "Gutless Plunderer")
+        .is_none_or(|definition| definition.name != "Gutless Plunderer")
     {
         return Ok(None);
     }

@@ -78,7 +78,11 @@ pub(super) fn prepare_current(
 }
 
 impl FastActorSessionV1 {
-    #[cfg(test)]
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     pub(crate) fn from_raid_entry_v21_fixture_state(state: crate::state::GameState) -> Self {
         let mut session = Self::reset_with_limits(23, 91, 10_000, 10_000);
         session.state = state;

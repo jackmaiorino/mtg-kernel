@@ -74,13 +74,13 @@ fn kept(
 fn stage(
     continuation: &mut EffectContinuation,
     player: PlayerId,
-    count: u8,
+    limits: (u8, Option<u16>),
     library: Vec<EffectObjectBinding>,
     graveyard: Option<Vec<EffectObjectBinding>>,
     path: Vec<u16>,
     remainder: Vec<EffectFrame>,
-    max_kept: Option<u16>,
 ) -> Result<(), String> {
+    let (count, max_kept) = limits;
     let candidates = match &graveyard {
         None => prefix(&library, count).to_vec(),
         Some(cards) => kept(&library, count, cards)?,
@@ -141,7 +141,13 @@ pub(super) fn begin(
     let max_kept = metadata(state, pending, player, count, &library, &path, &remainder)?;
     state.reveal_library_top(player, player, prefix(&library, count).len());
     stage(
-        pending, player, count, library, None, path, remainder, max_kept,
+        pending,
+        player,
+        (count, max_kept),
+        library,
+        None,
+        path,
+        remainder,
     )?;
     Ok(true)
 }
@@ -301,12 +307,11 @@ pub(super) fn resume(
         stage(
             pending,
             *player,
-            *requested_count,
+            (*requested_count, None),
             original_library.clone(),
             Some(graveyard_order.clone()),
             path.clone(),
             expected_remaining_frames.clone(),
-            None,
         )?;
         return Ok(true);
     }
