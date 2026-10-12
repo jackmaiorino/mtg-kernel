@@ -1,14 +1,18 @@
 //! Exact attacking-source power, sampled at resolution. No predecessor path records it.
-use crate::card_def::{CardType, Keywords, CARD_DEFS};
-use crate::effect::{EffectObjectBinding, EffectOp, ExecCtx};
+#[cfg(test)]
+use crate::card_def::Keywords;
+use crate::card_def::CARD_DEFS;
+#[cfg(test)]
+use crate::effect::EffectObjectBinding;
+use crate::effect::EffectOp;
 use crate::event::{CommittedEvent, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
-use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Target, Zone};
+use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Zone};
 
 pub(crate) fn root() -> EffectOp {
     EffectOp::BindAshrootAttackBoostV1
 }
-fn owns_definition(id: u16) -> bool {
+pub(crate) fn owns_definition(id: u16) -> bool {
     CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
         d.is_executable()
             && crate::trigger::triggers_for(id)
@@ -19,7 +23,7 @@ fn owns_definition(id: u16) -> bool {
 pub(crate) fn owns_item(item: &crate::state::StackItem) -> bool {
     matches!(
         item.inline_effect,
-        Some(EffectOp::AshrootAttackBoostV1 { .. })
+        Some(EffectOp::AshrootAttackBoostV1 { .. } | EffectOp::AshrootBoostFromCaptureV2 { .. })
     ) && item
         .v4
         .ability_source_contract
@@ -137,44 +141,9 @@ pub(crate) fn validate_trigger(
     controller: PlayerId,
     contract: Option<AbilitySourceContractV4>,
 ) -> Result<(), String> {
-    let EffectOp::AshrootAttackBoostV1 { source: binding } = op else {
-        if contract.is_some_and(|c| owns_definition(c.card_def)) {
-            return Err("Ashroot trigger changed its definition-owned root".into());
-        }
-        return Ok(());
-    };
-    let source = contract.ok_or("Ashroot attack lost original source")?;
-    if !owns_definition(source.card_def)
-        || source.source != id
-        || source.controller != controller
-        || source.zone != Zone::Battlefield
-        || binding.object != source.source
-        || binding.expected_zone != source.zone
-        || binding.expected_zone_change_count != source.zone_change_count
-    {
-        return Err("Ashroot attack changed original source binding".into());
-    }
-    let declared = state
-        .engine
-        .event_history
-        .iter()
-        .rev()
-        .find_map(|e| match e {
-            CommittedEvent::DeclaredAttacker {
-                source: attacker,
-                source_zone_change_count,
-                controller,
-            } if *attacker == id && *source_zone_change_count == source.zone_change_count => {
-                Some(*controller)
-            }
-            _ => None,
-        });
-    if declared != Some(controller) {
-        return Err("Ashroot attack lacks original declaration controller".into());
-    }
-    Ok(())
+    crate::ashroot_dispatch_v2::validate_trigger(state, op, id, controller, contract)
 }
-/// Read the same battlefield incarnation, or a unique genuine departure snapshot.
+
 pub(crate) fn sample_power(
     state: &GameState,
     source: AbilitySourceContractV4,
@@ -227,11 +196,14 @@ pub(crate) fn sample_power(
 }
 /// History-only snapshots are authenticated at every external action boundary.
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    crate::ashroot_dispatch_v2::validate_state(state)?;
     for item in &state.stack {
         if item.inline_effect.as_ref().is_some_and(|op| {
             matches!(
                 op,
-                EffectOp::AshrootAttackBoostV1 { .. } | EffectOp::BindAshrootAttackBoostV1
+                EffectOp::AshrootAttackBoostV1 { .. }
+                    | EffectOp::BindAshrootAttackBoostV1
+                    | EffectOp::AshrootBoostFromCaptureV2 { .. }
             )
         }) || item
             .v4
@@ -262,7 +234,9 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     {
         if matches!(
             pending.effect,
-            EffectOp::AshrootAttackBoostV1 { .. } | EffectOp::BindAshrootAttackBoostV1
+            EffectOp::AshrootAttackBoostV1 { .. }
+                | EffectOp::BindAshrootAttackBoostV1
+                | EffectOp::AshrootBoostFromCaptureV2 { .. }
         ) || pending
             .source_contract
             .is_some_and(|source| owns_definition(source.card_def))
@@ -311,63 +285,6 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     }
     Ok(())
 }
-pub(crate) fn execute(
-    state: &mut GameState,
-    ctx: &ExecCtx,
-    binding: EffectObjectBinding,
-) -> Result<(), String> {
-    validate_trigger(
-        state,
-        &EffectOp::AshrootAttackBoostV1 { source: binding },
-        ctx.source,
-        ctx.controller,
-        ctx.ability_source_contract,
-    )?;
-    let source = ctx
-        .ability_source_contract
-        .ok_or("Ashroot source missing")?;
-    let [Target::Object(target)] = ctx.targets.as_slice() else {
-        return Err("Ashroot lost sole creature target".into());
-    };
-    let [contract] = ctx.target_contracts.as_slice() else {
-        return Err("Ashroot lost exact target contract".into());
-    };
-    let live = state
-        .objects
-        .try_get(*target)
-        .ok_or("Ashroot target missing")?;
-    if (*target == source.source && live.zone_change_count == source.zone_change_count)
-        || live.zone != Zone::Battlefield
-        || live.controller != ctx.controller
-        || !crate::engine::object_has_type(state, *target, CardType::Creature)
-    {
-        return Ok(());
-    }
-    let crate::state::StackTargetContractV4::Object {
-        object,
-        zone,
-        zone_change_count,
-        ..
-    } = contract
-    else {
-        return Err("Ashroot target contract is not an object".into());
-    };
-    if *object != *target
-        || *zone != Zone::Battlefield
-        || *zone_change_count != live.zone_change_count
-    {
-        return Ok(());
-    }
-    let amount = sample_power(state, source)?;
-    let recipient = EffectObjectBinding {
-        object: *target,
-        expected_zone: Zone::Battlefield,
-        expected_zone_change_count: live.zone_change_count,
-    };
-    crate::effect::install_temporary_boost(state, recipient, amount, amount, Keywords::TRAMPLE);
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

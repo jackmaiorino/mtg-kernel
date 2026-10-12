@@ -173,6 +173,7 @@ impl Scan<'_> {
             | BindAuthorityEntryGainLifeV1
             | AuthorityEntryGainLifeV1 { .. }
             | BindAshrootAttackBoostV1
+            | AshrootBoostFromCaptureV2 { .. }
             | CerberusUntapV1 { .. }
             | LookTopMayKeepOneRestGraveyard { .. }
             | TakeExtraTurnAfterThisOneV1
@@ -968,6 +969,11 @@ pub(super) fn conflicts(
                 | crate::event::CommittedEvent::VampireGourmandPublishedV2 { .. }
                 | crate::event::CommittedEvent::VampireGourmandCounterRemovedV2 { .. }
                 | crate::event::CommittedEvent::VampireGourmandCounterClosedV2 { .. }
+                | crate::event::CommittedEvent::GorehornDepartureV1 { .. }
+                | crate::event::CommittedEvent::GorehornPublishedV1 { .. }
+                | crate::event::CommittedEvent::GorehornPreparedV1 { .. }
+                | crate::event::CommittedEvent::GorehornDamageOperationV1 { .. }
+                | crate::event::CommittedEvent::GorehornOperationV1 { .. }
         )
     }) {
         return true;
@@ -1114,6 +1120,7 @@ pub(super) fn conflicts(
             | BanishingAuraHostsCapturedV1 { .. }
             | BanishingAuraHostChosenV1 { .. }
             | BanishingAuraOperationStartedV1 { .. } => true,
+            AshrootDispatchV2 { .. } => !s.pool.is_empty(),
             CerberusCaptureV1 { capture } => s.raw(capture.source.source),
             CerberusObserversV1 { sources, .. } => {
                 sources.iter().any(|source| s.raw(source.source))
@@ -1156,6 +1163,11 @@ pub(super) fn conflicts(
             | PrivateKeepOneLibraryConsumedV1 { .. }
             | PrivateKeepOneRaidSkippedV1 { .. }
             | RaidEntrySourceV1 { .. }
+            | GorehornDepartureV1 { .. }
+            | GorehornPublishedV1 { .. }
+            | GorehornPreparedV1 { .. }
+            | GorehornDamageOperationV1 { .. }
+            | GorehornOperationV1 { .. }
             | SquadRallierResolutionBoundaryV1 { .. }
             | SowerRestrictionInstalledV1 { .. }
             | SowerRestrictionExpiredV1 { .. }

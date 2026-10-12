@@ -490,4 +490,103 @@ mod future_printed {
             assert_eq!(first, session.inner.privileged_core_environment_hash());
         }
     }
+
+    #[test]
+    fn actual_gorehorn_historical_source_public_human_full_binding_retry_restore_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor, 5);
+            raid(&mut state, actor, true);
+            let source = insert(&mut state, actor, "Gorehorn Raider", Zone::Hand);
+            state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 4;
+            assert!(
+                matches!(next(&mut state),Decision::CastSpellOrPass{player,..} if player==actor)
+            );
+            engine::step(&mut state, Action::CastSpell(source)).unwrap();
+            let _ = next(&mut state);
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseTargets { .. })
+            ));
+            engine::step(
+                &mut state,
+                Action::ChooseTarget(crate::state::Target::Player(actor.opponent())),
+            )
+            .unwrap();
+            let _ = next(&mut state);
+            crate::effect::execute(
+                &crate::effect::EffectOp::GrantKeywordTargetUntilEndOfTurn {
+                    object: crate::effect::ObjectRef::ThisSource,
+                    keyword: crate::card_def::Keywords::LIFELINK,
+                },
+                &crate::effect::ExecCtx::no_targets(source, actor),
+                &mut state,
+            );
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(source, Zone::Hand),
+            );
+            let attack = state.attack_declaration_turn_v1.take();
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change_to_battlefield_under_controller(
+                    source,
+                    actor.opponent(),
+                ),
+            );
+            state.attack_declaration_turn_v1 = attack;
+            let mut hidden = state.clone();
+            insert(&mut hidden, actor.opponent(), "Island", Zone::Hand);
+            insert(&mut state, actor.opponent(), "Forest", Zone::Hand);
+            let mut session = HumanRaidEntrySessionV21::from_session(
+                FastActorSessionV1::from_raid_entry_v21_fixture_state(replay(&state)),
+            )
+            .unwrap();
+            let mut projector = HumanRaidEntryProjectorV21::new(actor.into());
+            let current = expected(&session);
+            let public = session.public_observation(current).unwrap();
+            let [facts] = public.gorehorn_sources.as_slice() else {
+                panic!("one real Gorehorn source");
+            };
+            assert!(facts.historical && facts.lifelink);
+            assert_eq!(facts.ability_controller, actor.into());
+            assert_eq!(facts.damage_controller, actor.into());
+            let prompt = projector.project_current(&session, current).unwrap();
+            safe(&serde_json::to_value(&prompt).unwrap());
+            let [human] = prompt.state.extensions.gorehorn_sources.as_slice() else {
+                panic!("one safe Gorehorn source");
+            };
+            assert_eq!(human.printed_card_name, "Gorehorn Raider");
+            assert!(human.historical && human.lifelink);
+            let other = HumanRaidEntrySessionV21::from_session(
+                FastActorSessionV1::from_raid_entry_v21_fixture_state(hidden),
+            )
+            .unwrap();
+            assert_eq!(
+                prompt,
+                HumanRaidEntryProjectorV21::new(actor.into())
+                    .project_current(&other, expected(&other))
+                    .unwrap()
+            );
+            let mut forged = public.clone();
+            forged.gorehorn_sources[0].damage_controller = actor.opponent().into();
+            assert!(forged.validate_artifact().is_err());
+            let snapshot = session.snapshot_v21();
+            let request = action(&prompt, "Pass");
+            let receipt = projector.submit(&mut session, request.clone()).unwrap();
+            let hash = session.inner.privileged_core_environment_hash();
+            assert_eq!(
+                projector.submit(&mut session, request.clone()).unwrap(),
+                receipt
+            );
+            assert_eq!(hash, session.inner.privileged_core_environment_hash());
+            session.restore_v21(&snapshot).unwrap();
+            let before = session.inner.privileged_core_environment_hash();
+            assert_eq!(
+                projector.submit(&mut session, request),
+                Err(Error::StaleDecision)
+            );
+            assert_eq!(before, session.inner.privileged_core_environment_hash());
+        }
+    }
 }

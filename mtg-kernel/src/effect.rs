@@ -1639,6 +1639,9 @@ pub enum EffectOp {
     StromkirkCounterFromCaptureV2 {
         capture_history_index: u64,
     },
+    AshrootBoostFromCaptureV2 {
+        capture_history_index: u64,
+    },
     BindGarrukEtbDrawV1,
     BindGarrukPowerEntryDrawV1,
     GarrukDrawFromCaptureV1 {
@@ -7880,7 +7883,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     };
     if matches!(
         pending.resolving_item.inline_effect,
-        Some(EffectOp::AshrootAttackBoostV1 { .. })
+        Some(EffectOp::AshrootAttackBoostV1 { .. } | EffectOp::AshrootBoostFromCaptureV2 { .. })
     ) {
         return Err("Ashroot atomic boost has no externally resumable choice".into());
     }
@@ -16232,6 +16235,13 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             }
         }
         EffectOp::DealDamage { target, amount } => {
+            if crate::gorehorn_damage_v1::owns_context(ctx) {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
             let target = ctx.resolve_target(*target);
             event::propose_and_commit(
                 state,
@@ -18739,13 +18749,11 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 ctx.source,
             ));
         }
-        EffectOp::AshrootAttackBoostV1 { source } => {
-            if crate::ashroot_animist_v1::execute(state, ctx, *source).is_err() {
-                state.engine.halted = Some((
-                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                    ctx.source,
-                ));
-            }
+        EffectOp::AshrootAttackBoostV1 { .. } | EffectOp::AshrootBoostFromCaptureV2 { .. } => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
         }
         EffectOp::WildwoodCounterFromReceiptV1 { .. } => {
             if crate::wildwood_capture_v1::execute(state, ctx, op).is_err() {

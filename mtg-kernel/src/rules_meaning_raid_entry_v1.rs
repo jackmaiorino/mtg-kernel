@@ -41,6 +41,8 @@ pub struct MeaningV1 {
     pub successful_declaration_this_turn: bool,
     pub resolution_recheck: bool,
     pub surviving_source_required: bool,
+    pub damage_uses_live_original_or_departure: bool,
+    pub damage_lifelink_uses_characteristics_controller: bool,
     pub instruction: InstructionV1,
 }
 fn digest(bytes: &[u8]) -> String {
@@ -55,6 +57,8 @@ pub fn producer_sha256_v1() -> String {
         SCHEMA,
         include_str!("rules_meaning_raid_entry_v1.rs"),
         include_str!("raid_entry_v1.rs"),
+        include_str!("gorehorn_damage_v1.rs"),
+        include_str!("source_power_activation_v1.rs"),
         include_str!("card_def.rs"),
         include_str!("trigger.rs"),
         include_str!("effect.rs"),
@@ -167,6 +171,8 @@ pub fn meaning_v1(
         successful_declaration_this_turn: true,
         resolution_recheck: true,
         surviving_source_required: false,
+        damage_uses_live_original_or_departure: def.name == "Gorehorn Raider",
+        damage_lifelink_uses_characteristics_controller: def.name == "Gorehorn Raider",
         instruction,
     })
 }

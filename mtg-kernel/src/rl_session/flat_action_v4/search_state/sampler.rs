@@ -15,9 +15,15 @@ fn conflicts(
     {
         return true;
     }
-    // This source preparation does not admit retained linked-duration history
-    // to hidden-state sampling, including already-closed rows.
-    if crate::banishing_light_v1::requires_successor(state) {
+    // Retained linked duration and attack ownership need their qualified sampler.
+    if crate::banishing_light_v1::requires_successor(state)
+        || (state.engine.event_history.iter().any(|event| {
+            matches!(
+                event,
+                crate::event::CommittedEvent::AshrootDispatchV2 { .. }
+            )
+        }) && !pool.is_empty())
+    {
         return true;
     }
     // The source's old definition and power remain authoritative after it returns

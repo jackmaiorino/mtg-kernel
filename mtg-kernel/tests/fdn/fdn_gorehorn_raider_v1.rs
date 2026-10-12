@@ -300,3 +300,317 @@ fn original_entry_controller_receipt_rejects_coherent_live_trigger_rewrite_reado
         assert_eq!(before, serde_json::to_vec(&restored).unwrap());
     }
 }
+
+fn grant(state: &mut GameState, object: ObjectId, keyword: Keywords) {
+    let controller = state.objects.get(object).controller;
+    effect::execute(
+        &EffectOp::GrantKeywordTargetUntilEndOfTurn {
+            object: mtg_kernel::effect::ObjectRef::ThisSource,
+            keyword,
+        },
+        &mtg_kernel::effect::ExecCtx::no_targets(object, controller),
+        state,
+    );
+    assert!(state.engine.halted.is_none());
+}
+/// Existing definition-independent typed control primitive, not a printed
+/// Lightning Bolt control spell. Actual Gorehorn cast/root/resolution remain real.
+fn control_primitive(state: &mut GameState, object: ObjectId, controller: PlayerId) {
+    let source = put(state, controller, "Lightning Bolt", Zone::Hand);
+    let mut ctx = mtg_kernel::effect::ExecCtx::no_targets(source, controller);
+    ctx.targets.push(Target::Object(object));
+    ctx.target_contracts
+        .push(mtg_kernel::state::StackTargetContractV4::capture(
+            state,
+            Target::Object(object),
+        ));
+    effect::execute(
+        &EffectOp::GainControlOfTargetCreatureUntilEndOfTurn { target_index: 0 },
+        &ctx,
+        state,
+    );
+    assert!(state.engine.halted.is_none());
+    assert_eq!(state.objects.get(object).controller, controller);
+}
+fn resolve_one(state: &mut GameState) {
+    let count = state.stack.len();
+    for _ in 0..16 {
+        if state.stack.len() < count {
+            return;
+        }
+        assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
+        engine::step(state, Action::Pass).unwrap();
+    }
+    panic!("top item did not resolve");
+}
+fn bounce_with_real_unsummon(state: &mut GameState, actor: PlayerId, source: ObjectId) {
+    let bounce = put(state, actor, "Unsummon", Zone::Hand);
+    state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 1;
+    assert!(
+        matches!(next(state),Decision::CastSpellOrPass{player,castable_spells,..}
+  if player==actor && castable_spells.contains(&bounce))
+    );
+    engine::step(state, Action::CastSpell(bounce)).unwrap();
+    assert!(
+        matches!(next(state),Decision::ChooseTargets{legal_targets,..}
+  if legal_targets.contains(&Target::Object(source)))
+    );
+    engine::step(state, Action::ChooseTarget(Target::Object(source))).unwrap();
+    let _ = next(state);
+    resolve_one(state);
+    assert_eq!(state.objects.get(source).zone, Zone::Hand);
+}
+#[test]
+fn actual_bounce_reentry_uses_original_departure_lifelink_deathtouch_not_new_incarnation() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor, 5);
+        raid(&mut state, actor, true);
+        let recipient = put(
+            &mut state,
+            actor.opponent(),
+            "Serra Angel",
+            Zone::Battlefield,
+        );
+        let source = cast(&mut state, actor);
+        target_trigger(&mut state, actor, Target::Object(recipient));
+        grant(&mut state, source, Keywords::LIFELINK);
+        grant(&mut state, source, Keywords::DEATHTOUCH);
+        bounce_with_real_unsummon(&mut state, actor, source);
+        // Genuine event primitive reentry, with Raid off to isolate the old trigger.
+        let attack = state.attack_declaration_turn_v1.take();
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change_to_battlefield_under_controller(source, actor.opponent()),
+        );
+        state.attack_declaration_turn_v1 = attack;
+        assert!(state.objects.get(source).zone_change_count > 1);
+        assert_eq!(state.objects.get(source).controller, actor.opponent());
+        assert!(!engine::has_effective_keyword(
+            &state,
+            source,
+            Keywords::LIFELINK
+        ));
+        let before = state.players[actor.index()].life;
+        let opponent = state.players[actor.opponent().index()].life;
+        let mut restored = replay(&state);
+        assert!(settle(&mut state).is_none());
+        assert!(settle(&mut restored).is_none());
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+        assert_eq!(state.players[actor.index()].life, before + 2);
+        assert_eq!(state.players[actor.opponent().index()].life, opponent);
+        assert_eq!(state.objects.get(recipient).zone, Zone::Graveyard);
+        assert_eq!(state.objects.get(source).controller, actor.opponent());
+    }
+}
+#[test]
+fn live_source_current_controller_and_keywords_change_without_changing_ability_controller() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor, 5);
+        raid(&mut state, actor, true);
+        let source = cast(&mut state, actor);
+        target_trigger(&mut state, actor, Target::Player(actor.opponent()));
+        grant(&mut state, source, Keywords::LIFELINK);
+        control_primitive(&mut state, source, actor.opponent());
+        let item = state.stack.last().unwrap();
+        assert_eq!(item.controller, actor);
+        assert_eq!(item.v4.ability_source_contract.unwrap().controller, actor);
+        let actor_life = state.players[actor.index()].life;
+        let opponent_life = state.players[actor.opponent().index()].life;
+        let mut restored = replay(&state);
+        assert!(settle(&mut state).is_none());
+        assert!(settle(&mut restored).is_none());
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+        assert_eq!(state.players[actor.index()].life, actor_life);
+        assert_eq!(state.players[actor.opponent().index()].life, opponent_life);
+        assert!(state
+            .engine
+            .event_history
+            .iter()
+            .any(|event| matches!(event,
+   event::CommittedEvent::LifeGain{player,amount:2} if *player==actor.opponent())));
+    }
+}
+#[test]
+fn original_red_departure_obeys_color_prevention_and_complete_numeric_shield_after_restore() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for numeric in [false, true] {
+            let mut state = ready(actor, 5);
+            raid(&mut state, actor, true);
+            let source = cast(&mut state, actor);
+            target_trigger(&mut state, actor, Target::Player(actor.opponent()));
+            grant(&mut state, source, Keywords::LIFELINK);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Graveyard),
+            );
+            if numeric {
+                state.engine.next_replacement_id += 1;
+                state
+                    .engine
+                    .active_replacements
+                    .push(event::ActiveReplacement {
+                        id: state.engine.next_replacement_id,
+                        source,
+                        kind: event::ReplacementEffectKind::PreventNextDamage {
+                            target: Target::Player(actor.opponent()),
+                            remaining: 2,
+                        },
+                    });
+            } else {
+                event::install_color_damage_prevention(&mut state, source, ManaColor::R).unwrap();
+            }
+            let before = [state.players[0].life, state.players[1].life];
+            let mut restored = replay(&state);
+            assert!(settle(&mut state).is_none());
+            assert!(settle(&mut restored).is_none());
+            assert_eq!(before, [state.players[0].life, state.players[1].life]);
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&restored).unwrap()
+            );
+            assert!(state
+                .engine
+                .event_history
+                .iter()
+                .any(|event| matches!(event,
+    event::CommittedEvent::GorehornDamageOperationV1{operation} if operation.output.is_none())));
+        }
+    }
+}
+#[test]
+fn gorehorn_publication_preparation_and_actual_damage_operation_erasure_refuse_readonly() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut original = ready(actor, 5);
+        raid(&mut original, actor, true);
+        cast(&mut original, actor);
+        target_trigger(&mut original, actor, Target::Player(actor.opponent()));
+        for mode in 0..3 {
+            let mut bad = replay(&original);
+            match mode {
+                0 => {
+                    bad.stack.last_mut().unwrap().v4.gorehorn_published_v1.0 = None;
+                    bad.engine.event_history.retain(|e| {
+                        !matches!(e, event::CommittedEvent::GorehornPublishedV1 { .. })
+                    });
+                }
+                1 => {
+                    bad.stack.clear();
+                }
+                _ => {
+                    bad.stack.last_mut().unwrap().targets = vec![Target::Player(actor)];
+                    bad.stack.last_mut().unwrap().v4.target_contracts =
+                        vec![mtg_kernel::state::StackTargetContractV4::capture(
+                            &original,
+                            Target::Player(actor),
+                        )];
+                }
+            }
+            let before = serde_json::to_vec(&bad).unwrap();
+            assert!(effect::validate_pending_effect_choice(&bad).is_err());
+            assert!(engine::step(&mut bad, Action::Pass).is_err());
+            assert_eq!(before, serde_json::to_vec(&bad).unwrap());
+        }
+        assert!(settle(&mut original).is_none());
+        for mode in 0..3 {
+            let mut bad = replay(&original);
+            match mode {
+                0 => bad.engine.event_history.retain(|e| {
+                    !matches!(e, event::CommittedEvent::GorehornDamageOperationV1 { .. })
+                }),
+                1 => bad
+                    .engine
+                    .event_history
+                    .retain(|e| !matches!(e, event::CommittedEvent::GorehornPreparedV1 { .. })),
+                _ => bad
+                    .engine
+                    .event_history
+                    .retain(|e| !matches!(e, event::CommittedEvent::GorehornOperationV1 { .. })),
+            }
+            let before = serde_json::to_vec(&bad).unwrap();
+            assert!(engine::step(&mut bad, Action::Pass).is_err());
+            assert_eq!(before, serde_json::to_vec(&bad).unwrap());
+        }
+    }
+}
+
+#[test]
+fn genuine_simultaneous_departure_preserves_prebatch_suppressed_lifelink_in_both_orders() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for witness_first in [false, true] {
+            let mut state = ready(actor, 5);
+            raid(&mut state, actor, true);
+            let source = cast(&mut state, actor);
+            target_trigger(&mut state, actor, Target::Player(actor.opponent()));
+            grant(&mut state, source, Keywords::LIFELINK);
+            assert!(engine::has_effective_keyword(
+                &state,
+                source,
+                Keywords::LIFELINK
+            ));
+            // A registered flash enabler makes the actual enchantment response legal.
+            put(&mut state, actor, "High Fae Trickster", Zone::Battlefield);
+            let witness = put(&mut state, actor, "Witness Protection", Zone::Hand);
+            state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 1;
+            assert!(
+                matches!(next(&mut state),Decision::CastSpellOrPass{player,..} if player==actor)
+            );
+            engine::step(&mut state, Action::CastSpell(witness)).unwrap();
+            assert!(
+                matches!(next(&mut state),Decision::ChooseTargets{legal_targets,..}
+    if legal_targets.contains(&Target::Object(source)))
+            );
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(source))).unwrap();
+            let _ = next(&mut state);
+            resolve_one(&mut state);
+            assert_eq!(state.objects.get(witness).zone, Zone::Battlefield);
+            assert!(!engine::has_effective_keyword(
+                &state,
+                source,
+                Keywords::LIFELINK
+            ));
+            let ids = if witness_first {
+                [witness, source]
+            } else {
+                [source, witness]
+            };
+            event::propose_and_commit_batch(
+                &mut state,
+                ids.into_iter()
+                    .map(|id| ProposedEvent::zone_change(id, Zone::Graveyard))
+                    .collect(),
+            );
+            let captures = state
+                .engine
+                .event_history
+                .iter()
+                .filter_map(|e| match e {
+                    event::CommittedEvent::GorehornDepartureV1 { departure }
+                        if departure.facts.source.source == source =>
+                    {
+                        Some(departure)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(captures.len(), 1);
+            assert!(!captures[0].facts.lifelink);
+            let before = state.players[actor.index()].life;
+            let opponent = state.players[actor.opponent().index()].life;
+            let mut restored = replay(&state);
+            assert!(settle(&mut state).is_none());
+            assert!(settle(&mut restored).is_none());
+            assert_eq!(state.players[actor.index()].life, before);
+            assert_eq!(state.players[actor.opponent().index()].life, opponent - 2);
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&restored).unwrap()
+            );
+        }
+    }
+}

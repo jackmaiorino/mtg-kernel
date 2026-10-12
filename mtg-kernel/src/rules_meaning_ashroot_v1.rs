@@ -57,6 +57,7 @@ pub fn producer_sha256() -> String {
         SCHEMA,
         include_str!("rules_meaning_ashroot_v1.rs"),
         include_str!("ashroot_animist_v1.rs"),
+        include_str!("ashroot_dispatch_v2.rs"),
         include_str!("trigger.rs"),
         include_str!("engine.rs"),
         include_str!("effect.rs"),

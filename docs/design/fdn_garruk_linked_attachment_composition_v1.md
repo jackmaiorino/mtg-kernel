@@ -41,3 +41,13 @@ back-face token creation still transforms after creation; Garruk is selected onl
 in pure Limited, and this source does not claim cross-catalog Standard qualification.
 Copied-source historical transport and other frozen consumer limitations remain
 explicit. All Rust tests, typechecks and actual games remain unrun in this lane.
+
+This composition also absorbs root93bdd9c372dde1fc0da50b742ee7c77bce81793f.
+Ashroot records its Attack/Capture immediately after the saved declaration;
+Gourmand retains that saved index afterward. Exact-ID counter and private pre-pop
+owners for Garruk, Ashroot, Gorehorn, Banishing, Librarian, Temporal and Stromkirk
+remain independent before one actual removal. The root-provided cleanup hooks
+remain intact. Static inspection preserves the full root prefixes of208 EffectOp,
+128 CommittedEvent,69 TriggerCondition and21 private consumer modes, appending
+only Garruk definitions. Existing catalogs and the Ashroot/Gorehorn/Stromkirk/
+Gourmand/linked-operation source files are unchanged from that prerequisite.

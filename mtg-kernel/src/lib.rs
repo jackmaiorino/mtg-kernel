@@ -95,6 +95,8 @@ pub mod extra_turn_v1;
 mod fdn_raid_v1;
 pub mod frenzied_public_v1;
 pub mod garruk_public_v1;
+mod gorehorn_damage_v1;
+
 pub mod gourmand_public_v1;
 
 pub mod human_opening_v1;
@@ -535,6 +537,7 @@ pub mod xmage_observed_inference_v1;
 pub const KERNEL_VERSION: &str = "0.0.4-spike";
 
 mod ashroot_animist_v1;
+pub mod ashroot_dispatch_v2;
 pub mod ashroot_public_v1;
 mod frenzied_goblin_v1;
 pub mod public_cost_features_v1;
