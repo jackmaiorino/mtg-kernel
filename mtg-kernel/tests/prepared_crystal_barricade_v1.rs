@@ -3920,8 +3920,8 @@ fn raid_crystal_bounce(state: &mut GameState, actor: PlayerId, gorehorn: ObjectI
         ProposedEvent::zone_change(gorehorn, Zone::Battlefield),
     );
     // Physical reentry after an actual Unsummon. This is not a second printed cast.
-    // Its genuine new Raid trigger is targeted and countered by the existing
-    // typed counter primitive, leaving only the original instruction in flight.
+    // Its genuine new Raid trigger targets a registered Ward creature. The
+    // actual Ward response leaves only the original instruction in flight.
     assert!(matches!(next(state), Decision::ChooseTargets { .. }));
     engine::step(state, Action::ChooseTarget(Target::Object(ward_creature))).unwrap();
     let _ = next(state);
