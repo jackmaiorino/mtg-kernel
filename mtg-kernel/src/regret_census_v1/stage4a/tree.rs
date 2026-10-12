@@ -134,7 +134,7 @@ fn rewrite(v: &mut Value, h: &Handles) {
 
 /// Sort key of an observation element: its JSON with engine handles and
 /// incarnation counters masked.
-fn masked(v: &Value) -> String {
+pub(crate) fn masked(v: &Value) -> String {
     fn mask(v: &mut Value) {
         match v {
             Value::Object(m) => {
@@ -160,7 +160,7 @@ fn masked(v: &Value) -> String {
 /// cards) but can follow engine handles or hidden draw order (a mill reveals
 /// the library in its sampled order). Every other list keeps engine order:
 /// stack, targets, combat orders, pending triggers. Never applied to the menu.
-const UNORDERED_LISTS: [&str; 10] = [
+pub(crate) const UNORDERED_LISTS: [&str; 10] = [
     "own_hand",
     "known_hand_cards",
     "battlefield",
@@ -173,38 +173,81 @@ const UNORDERED_LISTS: [&str; 10] = [
     "cards",
 ];
 
-fn sort_by_content(a: &mut Vec<Value>) {
+/// Raw handle → tie rank, consulted only between entries equal under the
+/// content mask (repaired key mode; `None` is the legacy rule: input order).
+pub(crate) type TieRanks = HashMap<u64, u32>;
+
+/// The handle that names a list entry: the shallowest `arena_id` in it.
+pub(crate) fn own_handle(v: &Value) -> Option<u64> {
+    let mut level = vec![v];
+    while !level.is_empty() {
+        let mut next = Vec::new();
+        for x in level {
+            match x {
+                Value::Object(m) => {
+                    if let Some(id) = m.get("arena_id").and_then(Value::as_u64) {
+                        return Some(id);
+                    }
+                    next.extend(m.values());
+                }
+                Value::Array(a) => next.extend(a.iter()),
+                _ => {}
+            }
+        }
+        level = next;
+    }
+    None
+}
+
+fn sort_by_content(a: &mut Vec<Value>, ranks: Option<&TieRanks>) {
     if a.len() > 1 && a.iter().all(Value::is_object) {
-        let mut keyed: Vec<(String, Value)> = a.drain(..).map(|x| (masked(&x), x)).collect();
+        let rank = |x: &Value| {
+            ranks
+                .and_then(|r| own_handle(x).and_then(|h| r.get(&h).copied()))
+                .unwrap_or(u32::MAX)
+        };
+        let mut keyed: Vec<((String, u32), Value)> =
+            a.drain(..).map(|x| ((masked(&x), rank(&x)), x)).collect();
         keyed.sort_by(|x, y| x.0.cmp(&y.0));
         a.extend(keyed.into_iter().map(|(_, x)| x));
     }
 }
 
-fn sort_object_lists(v: &mut Value) {
+/// Calls `f` on every declared-unordered list (each seat's list of a
+/// per-seat pair separately), innermost first.
+pub(crate) fn for_unordered_lists(v: &mut Value, f: &mut impl FnMut(&mut Vec<Value>)) {
     match v {
         Value::Object(m) => {
             for (k, x) in m.iter_mut() {
-                sort_object_lists(x);
+                for_unordered_lists(x, f);
                 if UNORDERED_LISTS.contains(&k.as_str()) {
                     if let Value::Array(a) = x {
                         // Per-seat pairs ([[..], [..]]) sort within each seat.
                         if a.iter().all(Value::is_array) {
                             for inner in a.iter_mut() {
                                 if let Value::Array(i) = inner {
-                                    sort_by_content(i);
+                                    f(i);
                                 }
                             }
                         } else {
-                            sort_by_content(a);
+                            f(a);
                         }
                     }
                 }
             }
         }
-        Value::Array(a) => a.iter_mut().for_each(sort_object_lists),
+        Value::Array(a) => a.iter_mut().for_each(|x| for_unordered_lists(x, f)),
         _ => {}
     }
+}
+
+#[cfg(test)]
+fn sort_object_lists(v: &mut Value) {
+    sort_object_lists_with(v, None);
+}
+
+fn sort_object_lists_with(v: &mut Value, ranks: Option<&TieRanks>) {
+    for_unordered_lists(v, &mut |a| sort_by_content(a, ranks));
 }
 
 /// Timestamps become their rank within the observation; exile-permission
@@ -245,10 +288,39 @@ fn rank_counters(v: &mut Value) {
 
 /// Canonical bytes of the current focal decision.
 pub(crate) fn canon(s: &FastActorSessionV1, d: FastActorDecisionV1) -> Result<Canon, PlayErr> {
+    let (obs, sem) = raw_decision(s, d)?;
+    Ok(canon_values(obs, sem)?.0)
+}
+
+/// The acting player's raw V4 observation and frozen-source menu, as JSON
+/// (before any canonical rewriting).
+pub(crate) fn raw_decision(
+    s: &FastActorSessionV1,
+    d: FastActorDecisionV1,
+) -> Result<(Value, Vec<Value>), PlayErr> {
     let (obs, sem) = s
         .actor_visible_decision_v4(d)
         .map_err(|e| PlayErr::Fault(format!("actor-visible decision: {e:?}")))?;
-    let mut obs = serde_json::to_value(&obs).map_err(|e| PlayErr::Fault(e.to_string()))?;
+    let obs = serde_json::to_value(&obs).map_err(|e| PlayErr::Fault(e.to_string()))?;
+    let sem: Vec<Value> = sem
+        .iter()
+        .map(|x| serde_json::to_value(x).map_err(|e| PlayErr::Fault(e.to_string())))
+        .collect::<Result<_, _>>()?;
+    Ok((obs, sem))
+}
+
+/// Raw-to-canonical handle mapping of one canonicalization (diagnostic):
+/// raw `arena_id` values in first-appearance order (canonical index = list
+/// position) and the smallest `zone_change_count` shown per raw handle.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Mapping {
+    pub(crate) order: Vec<u64>,
+    pub(crate) min_zcc: Vec<(u64, u64)>,
+}
+
+/// The observation and menu with step bookkeeping removed and absolute
+/// counters ranked: the input to the content sort.
+pub(crate) fn prepare(mut obs: Value, mut sem: Vec<Value>) -> (Value, Vec<Value>) {
     if let Value::Object(m) = &mut obs {
         for k in [
             "step_index",
@@ -259,15 +331,26 @@ pub(crate) fn canon(s: &FastActorSessionV1, d: FastActorDecisionV1) -> Result<Ca
             m.remove(k);
         }
     }
-    let mut sem: Vec<Value> = sem
-        .iter()
-        .map(|x| serde_json::to_value(x).map_err(|e| PlayErr::Fault(e.to_string())))
-        .collect::<Result<_, _>>()?;
     rank_counters(&mut obs);
     for x in &mut sem {
         rank_counters(x);
     }
-    sort_object_lists(&mut obs);
+    (obs, sem)
+}
+
+/// `canon` on a raw observation and menu, with its handle mapping.
+pub(crate) fn canon_values(obs: Value, sem: Vec<Value>) -> Result<(Canon, Mapping), PlayErr> {
+    let (obs, sem) = prepare(obs, sem);
+    canon_prepared(obs, sem, None)
+}
+
+/// `canon_values` on prepared input, with optional tie ranks.
+pub(crate) fn canon_prepared(
+    mut obs: Value,
+    mut sem: Vec<Value>,
+    ranks: Option<&TieRanks>,
+) -> Result<(Canon, Mapping), PlayErr> {
+    sort_object_lists_with(&mut obs, ranks);
     let mut handles = Handles::default();
     collect_ids(&obs, &mut handles);
     // Handles named only by the menu are indexed in content order, not in
@@ -300,7 +383,13 @@ pub(crate) fn canon(s: &FastActorSessionV1, d: FastActorDecisionV1) -> Result<Ca
     // the node's edge list is the sorted set of canonical actions.
     let mut edges = menu.clone();
     edges.sort();
-    Ok(Canon { obs, menu, edges })
+    let mut min_zcc: Vec<(u64, u64)> = handles.min_zcc.into_iter().collect();
+    min_zcc.sort_unstable();
+    let mapping = Mapping {
+        order: handles.order,
+        min_zcc,
+    };
+    Ok((Canon { obs, menu, edges }, mapping))
 }
 
 pub(crate) fn child_key(parent: &Key, edge: &[u8], c: &Canon) -> Key {
@@ -335,7 +424,7 @@ pub(crate) struct Node {
     pub(crate) depth: u32,
 }
 
-fn permutation(len: usize, seed: u64) -> Vec<usize> {
+pub(crate) fn permutation(len: usize, seed: u64) -> Vec<usize> {
     let mut p: Vec<usize> = (0..len).collect();
     let mut rng = SplitMix64::seed(seed);
     for i in (1..len).rev() {
@@ -361,11 +450,24 @@ impl Node {
         depth: u32,
         seeds: &RootSeeds,
     ) -> Self {
+        let perm = permutation(canon.edges.len(), seeds.get(Purpose::Ties, "E", 0, key));
+        Self::with_perm(parent, edge, canon, depth, perm)
+    }
+
+    /// A node with an explicit seeded tie order over its edges.
+    pub(crate) fn with_perm(
+        parent: Key,
+        edge: Vec<u8>,
+        canon: Canon,
+        depth: u32,
+        perm: Vec<usize>,
+    ) -> Self {
         let k = canon.edges.len();
+        debug_assert_eq!(perm.len(), k);
         Self {
             parent,
             edge,
-            perm: permutation(k, seeds.get(Purpose::Ties, "E", 0, key)),
+            perm,
             canon,
             visits: 0,
             n: vec![0; k],
@@ -472,9 +574,10 @@ impl Tree {
     }
 
     /// Backs up one natural terminal result over a completed simulation's
-    /// path (inserting its new node, if any).
-    pub(crate) fn backup(&mut self, path: &[(Key, usize)], new: Option<(Key, Node)>, win: bool) {
-        if let Some((k, n)) = new {
+    /// path, inserting its new nodes (one under B1; with depth retention, the
+    /// first expansion and its retained tail).
+    pub(crate) fn backup(&mut self, path: &[(Key, usize)], new: Vec<(Key, Node)>, win: bool) {
+        for (k, n) in new {
             self.nodes.insert(k, n);
         }
         for (k, a) in path {
@@ -664,5 +767,175 @@ mod tests {
         assert_eq!(v["battlefield"][1][0]["n"], "c");
         assert_eq!(v["own_hand"][0]["n"], "y");
         assert_eq!(v["stack"][0]["n"], "q");
+    }
+
+    /// A small actor view: two seats' battlefields, a stack spell with one
+    /// object target, an aura relation, and a menu naming objects.
+    fn view(bf: Vec<Value>, target: (u64, u64), source: (u64, u64)) -> (Value, Vec<Value>) {
+        let obs = serde_json::json!({"projection":{
+            "battlefield":[[{"stable":{"arena_id":90,"card_db_id":5,"zone_change_count":1},"tapped":false,"damage":0,"attachments":[]}], bf],
+            "stack":[{"source":{"arena_id":source.0,"card_db_id":41,"zone":"Stack","zone_change_count":source.1},
+                "targets":[{"object":{"arena_id":target.0,"card_db_id":19,"zone":"Battlefield","zone_change_count":target.1},"target_kind":"object"}]}],
+            "object_relations":[]},"step_index":7});
+        let menu = vec![
+            serde_json::json!({"action_kind":"pass"}),
+            serde_json::json!({"action_kind":"activate","source":{"arena_id":90,"zone_change_count":1}}),
+        ];
+        (obs, menu)
+    }
+
+    fn creature(id: u64, zcc: u64, damage: u64, tapped: bool, attachments: Vec<u64>) -> Value {
+        serde_json::json!({"stable":{"arena_id":id,"card_db_id":19,"zone_change_count":zcc},
+            "tapped":tapped,"damage":damage,"attachments":attachments})
+    }
+
+    fn rename(v: &mut Value, f: &impl Fn(u64) -> u64) {
+        match v {
+            Value::Object(m) => {
+                if let Some(id) = m.get("arena_id").and_then(Value::as_u64) {
+                    m.insert("arena_id".into(), Value::from(f(id)));
+                }
+                if let Some(Value::Array(a)) = m.get_mut("attachments") {
+                    for x in a.iter_mut() {
+                        *x = Value::from(f(x.as_u64().unwrap()));
+                    }
+                }
+                for (k, x) in m.iter_mut() {
+                    if k != "attachments" {
+                        rename(x, f);
+                    }
+                }
+            }
+            Value::Array(a) => a.iter_mut().for_each(|x| rename(x, f)),
+            _ => {}
+        }
+    }
+
+    fn c((obs, menu): (Value, Vec<Value>)) -> (Canon, Mapping) {
+        canon_values(obs, menu).unwrap()
+    }
+
+    /// Positive: a consistent renaming of every handle leaves the canonical
+    /// view and sorted edges unchanged, and the mapping is the renaming.
+    #[test]
+    fn canonical_view_is_invariant_under_consistent_renaming() {
+        let bf = vec![
+            creature(11, 3, 0, false, vec![]),
+            creature(12, 3, 2, true, vec![]),
+        ];
+        let base = view(bf, (12, 3), (40, 0));
+        let f = |id: u64| 1000 - 7 * id;
+        let mut renamed = base.clone();
+        rename(&mut renamed.0, &f);
+        renamed.1.iter_mut().for_each(|m| rename(m, &f));
+        let (a, ma) = c(base);
+        let (b, mb) = c(renamed);
+        assert_eq!(a, b);
+        assert_eq!(mb.order, ma.order.iter().map(|&x| f(x)).collect::<Vec<_>>());
+        // Live candidates bind one to one.
+        for (i, m) in a.menu.iter().enumerate() {
+            assert_eq!(live_index(&b, m).unwrap(), i as u32);
+        }
+    }
+
+    /// Positive: permuting a declared-unordered list of distinct entries
+    /// leaves the canonical view unchanged.
+    #[test]
+    fn distinct_entries_are_order_free() {
+        let x = creature(11, 3, 0, false, vec![]);
+        let y = creature(12, 3, 2, true, vec![]);
+        let a = c(view(vec![x.clone(), y.clone()], (12, 3), (40, 0))).0;
+        let b = c(view(vec![y, x], (12, 3), (40, 0))).0;
+        assert_eq!(a, b);
+    }
+
+    /// Failing invariance witness (collab LANES/search-identity-audit-20261011):
+    /// two visibly identical copies tie in the content sort, so their
+    /// declared-unordered list order (engine order) decides which canonical
+    /// handle each receives, and a target naming "the first copy" and one
+    /// naming "the second" get different canonical views although the two
+    /// views are the same labeled graph up to exchanging the copies. This
+    /// asserts the current behavior; a repair must flip it deliberately.
+    #[test]
+    fn equal_copy_order_changes_target_identity() {
+        let x = creature(11, 3, 0, false, vec![]);
+        let y = creature(12, 3, 0, false, vec![]);
+        let first = c(view(vec![x.clone(), y.clone()], (11, 3), (40, 0))).0;
+        let permuted = c(view(vec![y.clone(), x.clone()], (11, 3), (40, 0))).0;
+        assert_ne!(first.obs, permuted.obs, "list permutation changed the view");
+        // Equivalently, targeting either copy: an exchange of the two handles.
+        let other = c(view(vec![x, y], (12, 3), (40, 0))).0;
+        assert_ne!(first.obs, other.obs);
+        assert_eq!(permuted.obs, other.obs);
+        assert_eq!(first.edges, other.edges);
+    }
+
+    /// Second failing invariance witness: the sort mask also nulls
+    /// `attachments`, so two entries that differ only in what is attached
+    /// to them tie, and engine order again decides their canonical handles
+    /// (the attachment itself stays visible, so targets remain distinct).
+    #[test]
+    fn attachment_only_difference_ties() {
+        let x = creature(11, 3, 0, false, vec![]);
+        let y = creature(12, 3, 0, false, vec![90]);
+        let a = c(view(vec![x.clone(), y.clone()], (12, 3), (40, 0))).0;
+        let b = c(view(vec![y, x], (12, 3), (40, 0))).0;
+        assert_ne!(a.obs, b.obs, "list permutation changed the view");
+    }
+
+    /// Negative controls: targets that differ in damage, tapped state, an
+    /// attachment, or incarnation stay distinct, whatever the list order.
+    #[test]
+    fn real_target_distinctions_survive() {
+        let cases = [
+            (
+                creature(11, 3, 0, false, vec![]),
+                creature(12, 3, 2, false, vec![]),
+            ),
+            (
+                creature(11, 3, 0, false, vec![]),
+                creature(12, 3, 0, true, vec![]),
+            ),
+            (
+                creature(11, 3, 0, false, vec![]),
+                creature(12, 3, 0, false, vec![90]),
+            ),
+        ];
+        for (i, (x, y)) in cases.into_iter().enumerate() {
+            let tx = c(view(vec![x.clone(), y.clone()], (11, 3), (40, 0))).0;
+            let ty = c(view(vec![x.clone(), y.clone()], (12, 3), (40, 0))).0;
+            let ty_perm = c(view(vec![y, x], (12, 3), (40, 0))).0;
+            assert_ne!(tx.obs, ty.obs);
+            // Entries differing only in attachments tie in the masked sort
+            // (see `attachment_only_difference_ties`).
+            if i < 2 {
+                assert_eq!(ty, ty_perm);
+            }
+        }
+        // A stale target reference (an earlier incarnation of the same
+        // object) differs from a current one.
+        let bf = vec![
+            creature(11, 4, 0, false, vec![]),
+            creature(12, 3, 0, false, vec![]),
+        ];
+        let current = c(view(bf.clone(), (11, 4), (40, 0))).0;
+        let stale = c(view(bf.clone(), (11, 3), (40, 0))).0;
+        assert_ne!(current.obs, stale.obs);
+        // A frozen trigger source from an earlier incarnation differs from
+        // the object's current incarnation as source.
+        let frozen = c(view(bf.clone(), (12, 3), (11, 3))).0;
+        let live = c(view(bf, (12, 3), (11, 4))).0;
+        assert_ne!(frozen.obs, live.obs);
+    }
+
+    /// The stack, its targets and combat orders keep engine order.
+    #[test]
+    fn ordered_structures_are_not_sorted() {
+        let mut v = serde_json::json!({"stack":[{"n":2},{"n":1}],"targets":[{"n":2},{"n":1}],
+            "combat":{"attack_order":[{"n":2},{"n":1}]}});
+        sort_object_lists(&mut v);
+        assert_eq!(v["stack"][0]["n"], 2);
+        assert_eq!(v["targets"][0]["n"], 2);
+        assert_eq!(v["combat"]["attack_order"][0]["n"], 2);
     }
 }

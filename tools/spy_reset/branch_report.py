@@ -1,0 +1,381 @@
+"""Branching attribution and B1/D8 comparison (collab LANES/search-budget-plan-20261011).
+
+CLI:
+  attribution --rows B1ROWS... --out ATTRIBUTION.json   Stage A (selection diagnostics only)
+  compare     --b1 B1ROWS... --d8 D8ROWS... --out RESULT.json
+
+Both commands also require --roots ROOTS.jsonl --cases cases.txt --bindings BINDINGS.json.
+These are caller-pinned declarations, not inferred from the result rows.
+
+Panel roots are the 36 IDs of cases.txt; the two named roots are reported apart.
+Labels (erratum, collab LANES/search-identity-audit-20261011): L counts physical groups;
+"share"/"first_substep" are the first-recorded-choice metrics (not necessarily substep 0);
+"selection_seconds" is elapsed wall time, not CPU.
+Per root, evaluation metrics average over its 16 worlds; lineages average roots.
+Missing roots, failed searches, rejected samples and invalid (nonnatural, truncated,
+faulted) evaluations make the comparison incomplete; they are never losses.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import re
+import statistics as st
+from pathlib import Path
+
+LINEAGES = ("r1", "r2")
+NAMED = {"r1-o4-t5-s0@109", "r1-o4-t0-s0@186"}
+
+
+def contract(expected, bindings, cases):
+    if (len(cases) != 36 or len(set(cases)) != 36 or any(named(k) for k in cases)
+            or set(expected) != set(cases) | NAMED
+            or any(sum(k.startswith(lin + "-") for k in cases) != 18 for lin in LINEAGES)
+            or set(bindings) != set(LINEAGES)
+            or any(not re.fullmatch(r"[0-9a-f]{64}", v) for v in bindings.values())):
+        raise ValueError("expected contract requires the declared 36 cases, two named roots and full lineage bindings")
+    for k, spec in expected.items():
+        source = k.split("@")[0]
+        if (not re.fullmatch(r"r[12]-o\d+-t\d+-s[01]", source)
+                or spec.get("root_id") != k or spec.get("source") != source
+                or type(spec.get("budget")) is not int or spec["budget"] <= 0
+                or not re.fullmatch(r"[0-9a-f]{64}", spec.get("expected_b1_tree", ""))
+                or bool(spec.get("named")) != named(k)):
+            raise ValueError(f"invalid expected root {k}")
+        if named(k):
+            n = spec["named"]
+            if (n.get("step") != int(k.split("@")[1]) or type(n.get("search")) is not int
+                    or n["search"] < 0 or any(not re.fullmatch(r"[0-9a-f]{64}", n.get(key, ""))
+                                             for key in ("row_sha256", "bank_binding_sha256"))):
+                raise ValueError(f"named root lacks declared saved input pins: {k}")
+
+
+def input_contract(k, entries, spec, bindings):
+    if any(row is None for _, _, row in entries):
+        return False
+    try:
+        lin, own, _, seat = re.fullmatch(r"(r[12])-o(\d+)-t(\d+)-s([01])", spec["source"]).groups()
+        for arm, retain, row in entries:
+            if (row["kind"] != "branch_root" or row["root_id"] != k
+                    or row["selection_failed"] is not False
+                    or not math.isfinite(_sel(row)) or _sel(row) <= 0
+                    or row["source"] != spec["source"] or row["budget"] != spec["budget"]
+                    or row["arm"] != arm or row["retain"] != retain
+                    or row["lineage"] != lin or row["own"] != int(own) or row["seat"] != int(seat)
+                    or row["bank_binding_sha256"] != bindings[lin]
+                    or row["expected_b1_tree"] != spec["expected_b1_tree"]):
+                return False
+            root = row["root"]
+            if not all(key in root for key in ("anchor_step", "step", "physical_decision_id", "substep", "k",
+                                               "obs_hash", "menu_hash", "state_hash", "selection_root",
+                                               "source_actions_sha256", "source_identity")):
+                return False
+            identity = root["source_identity"]
+            if not all(key in identity for key in ("id", "lineage", "own", "other", "seat", "opp", "seed",
+                                                    "starting_player", "runtime_rules", "select_rule", "limits",
+                                                    "bank_binding_sha256", "source", "anchor")):
+                return False
+            if (identity["id"] != spec["source"] or identity["bank_binding_sha256"] != bindings[lin]
+                    or identity["lineage"] != lin or identity["own"] != int(own) or identity["seat"] != int(seat)
+                    or identity["source"]["end"] not in ("win", "loss", "draw")
+                    or identity["source"]["actions_sha256"] != root["source_actions_sha256"]
+                    or identity["anchor"]["step"] != root["anchor_step"]):
+                return False
+            if spec.get("named") and root["step"] != spec["named"]["step"]:
+                return False
+            expected_named = ({key: spec["named"][key] for key in
+                               ("row_sha256", "bank_binding_sha256", "search", "step")}
+                              if spec.get("named") else None)
+            if row.get("named_input") != expected_named:
+                return False
+            if arm == "B1" and (row["b1_parity"] is not True or row["tree_hash"] != spec["expected_b1_tree"]):
+                return False
+        return True
+    except (KeyError, TypeError, AttributeError, ValueError):
+        return False
+
+
+def rows(paths):
+    out = {}
+    for p in paths:
+        for line in Path(p).read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                r = json.loads(line)
+                if r.get("kind") == "error":
+                    raise SystemExit(f"error row: {r}")
+                if r.get("kind") == "branch_root":
+                    if r["root_id"] in out:
+                        raise SystemExit(f"duplicate root {r['root_id']}")
+                    out[r["root_id"]] = r
+    return out
+
+
+def named(root_id):
+    return "@" in root_id
+
+
+def tree_summary(r):
+    t, s = r["tree"], r["simulations"]
+    deep = [d for d in t["by_physical_depth"] if d["physical_depth"] <= 6]
+    return {"nodes": t["nodes"], "max_physical_depth": t["max_physical_depth"],
+            "max_topology_depth": t["max_topology_depth"],
+            "links": t["links"], "unexpanded_backed_edges": t["unexpanded_backed_edges"],
+            "groups_with_several_children": t["action_groups"]["with_several_children"],
+            "observation_split": t["action_groups"]["observation_split"],
+            "menu_only_split": t["action_groups"]["menu_only_split"],
+            "sibling_tags": t["action_groups"]["sibling_difference_tags"],
+            "repeated_views": t["repeated_views"],
+            "depth_profile": [{k: d[k] for k in ("physical_depth", "nodes", "visits", "mean_legal", "mean_tried",
+                                                 "mean_child_bearing", "mean_effective_actions", "mean_top_share",
+                                                 "nodes_with_eligible")} for d in deep],
+            "simulations": s}
+
+
+def attribution_accounting(row):
+    """Validate accounting before aggregation; v2 conditional depths are distinct from v1 means."""
+    natural = row["simulations"]["natural"]
+    schema = row.get("schema")
+    if schema in (None, "branch-root-v1"):
+        if row["simulations"].get("schema") not in (None, "branch-sim-accounting-v1"):
+            raise ValueError("row and accounting schemas disagree")
+        share = natural["mean_transitions_after_first_expansion"] / max(1.0, natural["mean_transitions"])
+        depth = sum(int(k) * v for k, v in natural["first_expansion_depth_histogram"].items()) / max(1, natural["count"])
+        if not all(math.isfinite(v) for v in (share, depth)):
+            raise ValueError("nonfinite legacy attribution")
+        return "v1", share, depth
+    if schema != "branch-root-v2" or row["simulations"]["schema"] != "branch-sim-accounting-v2":
+        raise ValueError("unsupported accounting schema")
+    required = ("attempts_equal_accepted_plus_rejections", "transitions_equal_selection_total",
+                "calls_equal_selection_total", "buckets_sum_to_totals", "snapshots_within_totals",
+                "rejections_equal_sampler_count", "natural_expansion_iff_committed")
+    if any(row["simulations"]["reconciles"].get(k) is not True for k in required):
+        raise ValueError("accounting does not reconcile")
+    count, expanded, absent = (natural[k] for k in ("count", "expanded", "not_expanded"))
+    if (any(type(v) is not int or v < 0 for v in (count, expanded, absent))
+            or expanded + absent != count):
+        raise ValueError("invalid natural counts")
+    histogram = natural["first_expansion_depth_histogram"]
+    if (not isinstance(histogram, dict)
+            or any(not isinstance(k, str) or (k != "none" and not re.fullmatch(r"0|[1-9]\d*", k))
+                   or type(v) is not int or v < 0 for k, v in histogram.items())
+            or histogram.get("none", 0) != absent
+            or sum(v for k, v in histogram.items() if k != "none") != expanded):
+        raise ValueError("expansion histogram does not reconcile")
+    shares = natural["pooled_share_of_natural_work"]["transitions"]
+    values = [shares[k] for k in ("tree_prefix", "after_expansion", "depth_tail_without_expansion")]
+    if not all(v is None for v in values):
+        if (any(type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 1 for v in values)
+                or not math.isclose(sum(values), 1.0)
+                or (expanded == 0 and shares["after_expansion"] != 0)):
+            raise ValueError("invalid pooled transition shares")
+    depth = (sum(int(k) * v for k, v in histogram.items() if k != "none") / expanded
+             if expanded else None)
+    return "v2", shares["after_expansion"], depth
+
+
+def attribution(b1: dict, expected: dict, bindings: dict, cases: list) -> dict:
+    contract(expected, bindings, cases)
+    invalid = [k for k in sorted(set(b1) | set(expected))
+               if k not in expected or not input_contract(k, [("B1", 1, b1.get(k))], expected[k], bindings)]
+    if invalid:
+        return {"complete": False, "incomplete": invalid}
+    accounting = {}
+    for k, row in b1.items():
+        try:
+            accounting[k] = attribution_accounting(row)
+        except (KeyError, TypeError, ValueError, AttributeError, OverflowError):
+            invalid.append(k)
+    if invalid:
+        return {"complete": False, "incomplete": sorted(invalid)}
+    if len({v[0] for v in accounting.values()}) != 1:
+        return {"complete": False, "incomplete": sorted(b1), "reason": "mixed accounting schemas"}
+    panel = {k: v for k, v in b1.items() if not named(k)}
+    out = {"roots": len(panel), "named": sorted(k for k in b1 if named(k)),
+           "parity": {k: v["b1_parity"] for k, v in b1.items()},
+           "failed_searches": [k for k, v in b1.items() if v["selection_failed"]],
+           "lineages": {}, "per_root": {k: tree_summary(v) for k, v in sorted(b1.items())}}
+    for lin in LINEAGES:
+        rs = [v for v in panel.values() if v["lineage"] == lin]
+        if not rs:
+            continue
+        def m(f):
+            vals = [f(r) for r in rs]
+            return {"mean": st.mean(vals), "median": st.median(vals), "min": min(vals), "max": max(vals)}
+        out["lineages"][lin] = {
+            "roots": len(rs),
+            "nodes": m(lambda r: r["tree"]["nodes"]),
+            "max_physical_depth": m(lambda r: r["tree"]["max_physical_depth"]),
+            "extra_action_groups": m(lambda r: r["tree"]["links"]["extra_action_groups"]),
+            "extra_observations": m(lambda r: r["tree"]["links"]["extra_observations_within_groups"]),
+            "identity_holds_all": all(r["tree"]["links"]["identity_holds"] for r in rs),
+            "share_groups_observation_split": m(lambda r: r["tree"]["action_groups"]["observation_split"]
+                                                / max(1, r["tree"]["links"]["G_action_groups_with_children"])),
+            "views_reached_by_several_histories": m(lambda r: r["tree"]["repeated_views"]["views_reached_by_several_histories"]),
+            "unexpanded_backed_edges": m(lambda r: r["tree"]["unexpanded_backed_edges"]["edges"]),
+            "depth2_effective_actions": m(lambda r: next((d["mean_effective_actions"] for d in r["tree"]["by_physical_depth"]
+                                                         if d["physical_depth"] == 2), 0.0)),
+            "depth3_nodes_with_eligible_share": m(lambda r: next((d["nodes_with_eligible"] / max(1, d["nodes"])
+                                                               for d in r["tree"]["by_physical_depth"]
+                                                               if d["physical_depth"] == 3), 0.0)),
+            "sibling_tags": {tag: sum(r["tree"]["action_groups"]["sibling_difference_tags"].get(tag, 0) for r in rs)
+                             for tag in ("own_private", "opponent_known", "own_public", "opponent_public",
+                                         "public_other", "menu", "residual")},
+            "decks": sorted({r["own"] for r in rs})}
+        if accounting[rs[0]["root_id"]][0] == "v1":
+            out["lineages"][lin]["transitions_after_first_expansion_share"] = m(lambda r: accounting[r["root_id"]][1])
+            out["lineages"][lin]["first_expansion_mean_depth"] = m(lambda r: accounting[r["root_id"]][2])
+        else:
+            for index, label in ((1, "pooled_natural_transitions_after_expansion_share"),
+                                 (2, "first_expansion_mean_depth_among_expanded")):
+                values = [accounting[r["root_id"]][index] for r in rs]
+                defined = [v for v in values if v is not None]
+                out["lineages"][lin][label] = {
+                    "defined_roots": len(defined), "undefined_roots": len(values) - len(defined),
+                    "mean": st.mean(defined) if defined else None,
+                    "median": st.median(defined) if defined else None,
+                    "min": min(defined) if defined else None, "max": max(defined) if defined else None}
+    out["complete"] = not out["failed_searches"]
+    return out
+
+
+def root_eval(r):
+    try:
+        return _root_eval(r)
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _v2(r):
+    return r.get("schema") == "branch-root-v2"
+
+
+def _sel(r):
+    """Selection elapsed wall seconds (v2 renamed the timing keys)."""
+    return r["timing"]["selection_wall_seconds" if _v2(r) else "selection"]
+
+
+def _fields(r):
+    """(share, first-recorded count, descendant count) field names by row schema."""
+    if _v2(r):
+        return ("first_recorded_choice_share", "first_recorded_choice_controlled",
+                "descendant_first_recorded_controlled")
+    return ("first_substep_share", "first_substep_controlled", "descendant_controlled")
+
+
+def _root_eval(r):
+    ws = r["evaluation"]
+    valid = [w for w in ws if "rejected" not in w and w.get("valid") is True
+             and type(w.get("win")) is bool and w.get("end") in ("win", "nonwin")
+             and w["win"] == (w["end"] == "win")
+             and isinstance(w.get("world_state_hash"), str)
+             and re.fullmatch(r"[0-9a-f]{16}", w["world_state_hash"])]
+    if (r["selection_failed"] is not False or len(ws) != 16 or len(valid) != 16
+            or any(type(w.get("world")) is not int for w in ws)
+            or sorted(w["world"] for w in ws) != list(range(16))
+            or not math.isfinite(_sel(r)) or _sel(r) <= 0
+            or any(not math.isfinite(w[k]) for w in valid for k in
+                   ("L", *_fields(r), "support_after_first_fallback"))):
+        return None
+    valid.sort(key=lambda w: w["world"])
+    m = lambda k: st.mean(w[k] for w in valid)  # noqa: E731
+    # Row schema v2 renamed the v1 fields: "first_substep_*" counted a group's first
+    # recorded nonforced choice, which need not be substep zero.
+    share, first, desc = _fields(r)
+    return {"L": m("L"), "L_values": [w["L"] for w in valid], "share": m(share),
+            "first_substep": m(first), "descendants": m(desc),
+            "after_fallback": m("support_after_first_fallback"), "wins": sum(w["win"] for w in valid),
+            "first_unsupported": [w["first_unsupported_group"] for w in valid],
+            "first_miss": [w["first_miss_group"] for w in valid],
+            "selection_seconds": _sel(r), "states": [w["world_state_hash"] for w in valid],
+            "outcomes": [w["win"] for w in valid]}
+
+
+def compare(b1: dict, d8: dict, expected: dict, bindings: dict, cases: list) -> dict:
+    contract(expected, bindings, cases)
+    out = {"incomplete": [], "lineages": {}, "named": {}, "per_root": {}}
+    for k in sorted(set(b1) | set(d8) | set(expected)):
+        a, b = b1.get(k), d8.get(k)
+        if (k not in expected or not input_contract(k, [("B1", 1, a), ("D8", 8, b)], expected[k], bindings)
+                or a["root"] != b["root"]):
+            out["incomplete"].append(k)
+            continue
+        ea, eb = (root_eval(a) if a else None), (root_eval(b) if b else None)
+        if ea is None or eb is None:
+            out["incomplete"].append(k)
+            continue
+        if ea["states"] != eb["states"]:
+            out["incomplete"].append(f"{k}: evaluation worlds differ")
+            continue
+        disc = {"d8_only_win": sum(1 for x, y in zip(ea["outcomes"], eb["outcomes"]) if y and not x),
+                "b1_only_win": sum(1 for x, y in zip(ea["outcomes"], eb["outcomes"]) if x and not y)}
+        rec = {"B1": {x: ea[x] for x in ("L", "share", "first_substep", "descendants", "after_fallback", "wins",
+                                          "selection_seconds")},
+               "D8": {x: eb[x] for x in ("L", "share", "first_substep", "descendants", "after_fallback", "wins",
+                                          "selection_seconds")},
+               "discordance": disc, "own": a["own"], "lineage": a["lineage"],
+               "staged_revisits": b["simulations"]["natural"]["revisits_to_tail_nodes"],
+               "retained_tail_nodes": b["simulations"]["natural"]["retained_tail_nodes"],
+               "max_depth": {"B1": a["tree"]["max_physical_depth"], "D8": b["tree"]["max_physical_depth"]},
+               "nodes": {"B1": a["tree"]["nodes"], "D8": b["tree"]["nodes"]},
+               "completed": {"B1": a["simulations"]["natural"]["count"], "D8": b["simulations"]["natural"]["count"]}}
+        (out["named"] if named(k) else out["per_root"])[k] = rec
+    for lin in LINEAGES:
+        rs = [v for v in out["per_root"].values() if v["lineage"] == lin]
+        if not rs:
+            continue
+        agg = {arm: {x: st.mean(r[arm][x] for r in rs) for x in ("L", "share", "first_substep", "descendants",
+                                                                  "after_fallback", "selection_seconds")}
+               for arm in ("B1", "D8")}
+        wins = {arm: sum(r[arm]["wins"] for r in rs) for arm in ("B1", "D8")}
+        complete = len(rs) == 18
+        screen = (complete and agg["D8"]["L"] > agg["B1"]["L"] and agg["D8"]["share"] > agg["B1"]["share"]
+                  and wins["D8"] >= wins["B1"])
+        out["lineages"][lin] = {"roots": len(rs), "complete": complete, "means": agg, "wins": wins,
+                                "worlds": 16 * len(rs),
+                                "L_per_selection_second": {arm: agg[arm]["L"] / agg[arm]["selection_seconds"]
+                                                           for arm in ("B1", "D8")},
+                                "screen": screen}
+    out["complete"] = not out["incomplete"] and all(v["complete"] for v in out["lineages"].values()) \
+        and len(out["lineages"]) == 2
+    out["disposition"] = ("incomplete" if not out["complete"] else
+                          "promising mechanism screen" if all(v["screen"] for v in out["lineages"].values())
+                          else "screen not met")
+    return out
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = ap.add_subparsers(dest="op", required=True)
+    a = sub.add_parser("attribution")
+    a.add_argument("--rows", nargs="+", required=True)
+    a.add_argument("--out", type=Path, required=True)
+    c = sub.add_parser("compare")
+    c.add_argument("--b1", nargs="+", required=True)
+    c.add_argument("--d8", nargs="+", required=True)
+    c.add_argument("--out", type=Path, required=True)
+    for parser in (a, c):
+        parser.add_argument("--roots", type=Path, required=True, help="declared RootSpec JSONL, including both named roots")
+        parser.add_argument("--cases", type=Path, required=True, help="declared 36 panel IDs, one per line")
+        parser.add_argument("--bindings", type=Path, required=True, help="full expected bank binding digest by lineage")
+    args = ap.parse_args(argv)
+    expected = {}
+    for line in args.roots.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            spec = json.loads(line)
+            if spec["root_id"] in expected:
+                raise ValueError("duplicate declared root")
+            expected[spec["root_id"]] = spec
+    bindings = json.loads(args.bindings.read_text(encoding="utf-8"))
+    cases = args.cases.read_text(encoding="utf-8").splitlines()
+    if args.op == "attribution":
+        result = attribution(rows(args.rows), expected, bindings, cases)
+    else:
+        result = compare(rows(args.b1), rows(args.d8), expected, bindings, cases)
+    args.out.write_text(json.dumps(result, indent=1) + "\n")
+    print(json.dumps({k: v for k, v in result.items() if k not in ("per_root", "named")}, indent=1)[:3000])
+    return 0 if result["complete"] else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
