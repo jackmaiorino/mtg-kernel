@@ -175,7 +175,7 @@ impl GarrukObservationV1 {
         Ok(())
     }
 }
-fn roots() -> Result<Vec<RootV1>, RlContractError> {
+pub(crate) fn roots() -> Result<Vec<RootV1>, RlContractError> {
     // Ordinary Default/Standard sessions still have a real successor identity,
     // but never fabricate the missing Limited definition or claim its meaning.
     if !cfg!(all(
@@ -208,25 +208,10 @@ fn roots() -> Result<Vec<RootV1>, RlContractError> {
     .collect()
 }
 
-pub fn observe_v1(
+pub(crate) fn facts(
     state: &GameState,
-    surface: &PolicySurfaceV5,
-    actor: PlayerId,
-    step_index: u64,
-    physical_decision_id: u64,
-    substep_index: u32,
-    substep_count: u32,
-) -> Result<GarrukObservationV1, RlContractError> {
+) -> Result<(Vec<EntryOccurrenceV1>, Vec<ActiveSourceV1>), RlContractError> {
     crate::garruks_uprising_v1::validate_state(state).map_err(RlContractError)?;
-    let (triggers, links, attachment_choice, confirmed_attachments) =
-        crate::banishing_public_v1::facts(state)?;
-    let linked_exile = LinkedExileFactsV1 {
-        triggers,
-        links,
-        attachment_choice,
-        confirmed_attachments,
-        roots: crate::banishing_public_v1::roots()?,
-    };
     let mut entry_occurrences = Vec::new();
     let mut event_order = 0;
     let mut previous_entry = None;
@@ -397,6 +382,29 @@ pub fn observe_v1(
             })
         })
         .collect::<Result<Vec<_>, RlContractError>>()?;
+    Ok((entry_occurrences, active_sources))
+}
+
+pub fn observe_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep_index: u32,
+    substep_count: u32,
+) -> Result<GarrukObservationV1, RlContractError> {
+    crate::garruks_uprising_v1::validate_state(state).map_err(RlContractError)?;
+    let (triggers, links, attachment_choice, confirmed_attachments) =
+        crate::banishing_public_v1::facts(state)?;
+    let linked_exile = LinkedExileFactsV1 {
+        triggers,
+        links,
+        attachment_choice,
+        confirmed_attachments,
+        roots: crate::banishing_public_v1::roots()?,
+    };
+    let (entry_occurrences, active_sources) = facts(state)?;
     let base = crate::rl::garruk_observation_storage_v1(
         state,
         surface,
