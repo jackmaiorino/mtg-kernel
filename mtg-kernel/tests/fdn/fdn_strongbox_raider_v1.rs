@@ -393,7 +393,7 @@ fn genuine_two_grant_cleanup_cannot_omit_one_original_permission_and_resurrect_i
             }
         }
         bad.engine.event_history.retain(|event|!matches!(event,CommittedEvent::StrongboxPermissionExpiredV1 {installation,..} if *installation==omitted));
-        let mut resurrected = grants[1].permission.clone();
+        let mut resurrected = grants[1].permission;
         resurrected.expiry = engine::PlayPermissionExpiry::UntilHoldersNextTurn {
             holder_turn_started: true,
         };
