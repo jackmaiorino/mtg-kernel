@@ -744,7 +744,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     )
                 }
             }
-            let should_token = *kind == RemovalKindV1::Resolving;
+            let should_token = **kind == RemovalKindV1::Resolving;
             match (should_token, token) {
                 (true, Some(token))
                     if *token > *removal

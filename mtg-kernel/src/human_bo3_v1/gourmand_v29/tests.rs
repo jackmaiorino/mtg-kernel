@@ -70,7 +70,7 @@ fn ordinary_menu_state_privacy_and_real_submit_retry_parity_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let base = FastActorSessionV1::from_human_v8_fixture_state(basic(actor, "Lightning Bolt"));
         let predecessor = HumanRaidSessionV9::from_session(base.clone()).unwrap();
-        let mut session = HumanGourmandSessionV29::from_session(base).unwrap();
+        let mut session = HumanGourmandSessionV29::from_session(base, actor.into()).unwrap();
         let current = expected(&session);
         let old = HumanDecisionProjectorV9::new(actor.into())
             .project_current(&predecessor, current)
@@ -82,7 +82,11 @@ fn ordinary_menu_state_privacy_and_real_submit_retry_parity_both_seats() {
         assert_eq!(prompt.actions, old.actions);
         assert_eq!(prompt.state.public, old.state.public);
         assert_eq!(prompt.state.extensions.predecessor, old.state.extensions);
-        assert!(prompt.state.extensions.cannot_block_restrictions.is_empty());
+        assert!(prompt
+            .state
+            .extensions
+            .cannot_be_blocked_restrictions
+            .is_empty());
         assert_eq!(
             projector.project_current(&session, current).unwrap(),
             prompt
@@ -200,7 +204,7 @@ fn inherited_registered_generic_ward_menu_is_preserved_and_submission_replays() 
         crate::policy_observation_v6::tests::reach_ward_payment(&mut state);
         let base = FastActorSessionV1::from_human_v8_fixture_state(state);
         let previous = HumanRaidSessionV9::from_session(base.clone()).unwrap();
-        let mut session = HumanGourmandSessionV29::from_session(base).unwrap();
+        let mut session = HumanGourmandSessionV29::from_session(base, actor.into()).unwrap();
         let e = expected(&session);
         let old = HumanDecisionProjectorV9::new(e.acting_player)
             .project_current(&previous, e)

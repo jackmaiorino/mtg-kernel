@@ -557,7 +557,7 @@ mod future_printed {
                 settle(&mut state),
                 Some(Decision::ChooseEffectTargets { .. })
             ));
-            let selected = state.players[actor.index()]
+            let selected = state
                 .exile
                 .iter()
                 .copied()
@@ -670,9 +670,9 @@ mod future_printed {
                 actor.into()
             );
             session.restore_v32(&saved).unwrap();
-            let mut replay = HumanStrongboxProjectorV32::new(actor.into());
+            let mut restored_projector = HumanStrongboxProjectorV32::new(actor.into());
             assert_eq!(
-                replay
+                restored_projector
                     .project_current(&session, expected(&session))
                     .unwrap(),
                 prompt
