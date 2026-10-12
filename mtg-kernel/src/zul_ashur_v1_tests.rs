@@ -363,4 +363,136 @@ mod future_printed {
             assert!(!has_active(&offturn));
         }
     }
+
+    fn readonly_common_refusal(mut bad: GameState) {
+        let saved = serde_json::to_vec(&bad).unwrap();
+        let mut replay: GameState = serde_json::from_slice(&saved).unwrap();
+        for branch in [&mut bad, &mut replay] {
+            let before = serde_json::to_vec(branch).unwrap();
+            assert!(validate_state(branch).is_err());
+            assert!(engine::step(branch, Action::Pass).is_err());
+            assert_eq!(before, serde_json::to_vec(branch).unwrap());
+            assert!(crate::zul_ashur_observation_v1::observe_v1(
+                branch,
+                &crate::policy_surface_v5::PolicySurfaceV5::new_with_engine_priority_v1(),
+                branch.priority_player,
+                0,
+                0,
+                0,
+                1
+            )
+            .is_err());
+            assert_eq!(before, serde_json::to_vec(branch).unwrap());
+            let mut expected: GameState = serde_json::from_slice(&before).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(branch),
+                Decision::Halted { .. }
+            ));
+            assert!(matches!(
+                branch.engine.halted,
+                Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    _
+                ))
+            ));
+            expected.engine.halted = branch.engine.halted;
+            assert_eq!(
+                serde_json::to_vec(&expected).unwrap(),
+                serde_json::to_vec(branch).unwrap()
+            );
+        }
+        assert_eq!(
+            serde_json::to_vec(&bad).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+    }
+    #[test]
+    #[ignore = "Zul Ashur is unregistered; genuine removal input and restore forgery qualification remains root-owned"]
+    fn actual_original_journals_cannot_be_closed_by_manufactured_counter_or_fizzle_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (state, _, target) = setup(actor);
+            let item = state.stack.last().unwrap().clone();
+            let publication = published(&state, item.v4.stack_item_id).unwrap().index;
+            for outcome in [OutcomeV1::Countered, OutcomeV1::NoLegalTarget] {
+                let mut forged = state.clone();
+                let original_journal = forged.engine.event_history.clone();
+                forged
+                    .stack
+                    .retain(|i| i.v4.stack_item_id != item.v4.stack_item_id);
+                let at = forged.engine.event_history.len() as u32;
+                forged
+                    .engine
+                    .event_history
+                    .push(CommittedEvent::ZulAshurRemovedV1 {
+                        removal: Box::new(RemovalV1 {
+                            index: at,
+                            input: at - 1,
+                            publication,
+                            item: Box::new(item.clone()),
+                            outcome,
+                            target_legal: outcome == OutcomeV1::Countered,
+                            turn: forged.turn_key_v1(),
+                            active_player: forged.active_player,
+                        }),
+                    });
+                assert_eq!(
+                    original_journal,
+                    forged.engine.event_history[..original_journal.len()]
+                );
+                readonly_common_refusal(forged);
+            }
+            let mut actual_counter = state.clone();
+            engine::counter_stack_item_by_id(&mut actual_counter, item.v4.stack_item_id)
+                .unwrap()
+                .unwrap();
+            validate_state(&actual_counter).unwrap();
+            assert!(!has_active(&actual_counter));
+            let input_at = actual_counter.engine.event_history.iter().position(|e|matches!(e,
+                CommittedEvent::ZulAshurRemovalInputV1 { input } if input.publication == publication)).unwrap();
+            let mut erased = actual_counter.clone();
+            erased.engine.event_history[input_at] = CommittedEvent::Tap {
+                object: item.source,
+            };
+            readonly_common_refusal(erased);
+            let mut changed = actual_counter.clone();
+            if let CommittedEvent::ZulAshurRemovalInputV1 { input } =
+                &mut changed.engine.event_history[input_at]
+            {
+                input.outcome = OutcomeV1::NoLegalTarget;
+                input.target_legal = false;
+            } else {
+                panic!("actual input");
+            }
+            if let Some(CommittedEvent::ZulAshurRemovedV1 { removal }) =
+                changed.engine.event_history.get_mut(input_at + 1)
+            {
+                removal.outcome = OutcomeV1::NoLegalTarget;
+                removal.target_legal = false;
+            } else {
+                panic!("actual removal");
+            }
+            readonly_common_refusal(changed);
+            let mut stale = state;
+            for zone in [Zone::Hand, Zone::Graveyard] {
+                crate::event::propose_and_commit(
+                    &mut stale,
+                    crate::event::ProposedEvent::zone_change(target, zone),
+                );
+            }
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&stale).unwrap()).unwrap();
+            for branch in [&mut stale, &mut restored] {
+                settle(branch);
+                validate_state(branch).unwrap();
+                assert!(!has_active(branch));
+                assert!(branch.engine.event_history.iter().any(|e|matches!(e,
+                    CommittedEvent::ZulAshurRemovalInputV1 { input } if input.publication == publication
+                        && input.outcome == OutcomeV1::NoLegalTarget && !input.target_legal)));
+            }
+            assert_eq!(
+                serde_json::to_vec(&stale).unwrap(),
+                serde_json::to_vec(&restored).unwrap()
+            );
+        }
+    }
 }

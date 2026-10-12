@@ -42,9 +42,24 @@ pub enum OutcomeV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RemovalV1 {
     pub index: u32,
+    pub input: u32,
     pub publication: u32,
     pub item: Box<StackItem>,
     pub outcome: OutcomeV1,
+    pub target_legal: bool,
+    pub turn: u32,
+    pub active_player: PlayerId,
+}
+/// Independent actual engine removal input, recorded with the genuine private loan.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RemovalInputV1 {
+    pub index: u32,
+    pub publication: u32,
+    pub item: Box<StackItem>,
+    pub outcome: OutcomeV1,
+    pub target_now: Option<StackTargetContractV4>,
+    pub target_is_zombie_creature: bool,
+    pub target_in_original_graveyard: bool,
     pub target_legal: bool,
     pub turn: u32,
     pub active_player: PlayerId,
@@ -191,6 +206,94 @@ pub(crate) fn acquire(state: &GameState, item: &StackItem) -> Result<Option<Owne
         publication: publication.index,
     }))
 }
+
+fn input_target_legal(input: &RemovalInputV1) -> bool {
+    match (input.item.v4.target_contracts.first(), input.target_now) {
+        (
+            Some(StackTargetContractV4::Object {
+                object,
+                card_def,
+                owner,
+                zone: Zone::Graveyard,
+                zone_change_count,
+                spell_copy_origin,
+                ..
+            }),
+            Some(StackTargetContractV4::Object {
+                object: now_object,
+                card_def: now_definition,
+                owner: now_owner,
+                zone: Zone::Graveyard,
+                zone_change_count: now_generation,
+                spell_copy_origin: now_copy,
+                ..
+            }),
+        ) => {
+            *object == now_object
+                && *card_def == now_definition
+                && *owner == now_owner
+                && *owner == input.item.controller
+                && *zone_change_count == now_generation
+                && *spell_copy_origin == now_copy
+                && input.target_is_zombie_creature
+                && input.target_in_original_graveyard
+        }
+        _ => false,
+    }
+}
+pub(crate) fn record_removal_input(
+    state: &mut GameState,
+    owner: &OwnerV1,
+    outcome: OutcomeV1,
+) -> Result<(), String> {
+    if state.stack.iter().any(|i| i.v4.stack_item_id == owner.item.v4.stack_item_id)
+        || published(state, owner.item.v4.stack_item_id)?.item.as_ref() != &owner.item
+        || state.engine.event_history.iter().any(|e| matches!(e,
+            CommittedEvent::ZulAshurRemovalInputV1 { input } if input.publication == owner.publication))
+    {
+        return Err("Zul input lacks the genuine uniquely removed private owner".into());
+    }
+    let Target::Object(target) = owner.item.targets[0] else {
+        return Err("Zul original target missing".into());
+    };
+    let live = state.objects.try_get(target);
+    let input = RemovalInputV1 {
+        index: index(state)?,
+        publication: owner.publication,
+        item: Box::new(owner.item.clone()),
+        outcome,
+        target_now: live.map(|_| StackTargetContractV4::capture(state, Target::Object(target))),
+        target_is_zombie_creature: live.is_some_and(|o| {
+            CARD_DEFS[usize::from(o.card_def)]
+                .types
+                .contains(&CardType::Creature)
+                && crate::engine::has_effective_subtype(state, target, Subtype::Zombie)
+        }),
+        target_in_original_graveyard: live.is_some_and(|o| {
+            o.zone == Zone::Graveyard
+                && o.owner == owner.item.controller
+                && state.players[owner.item.controller.index()]
+                    .graveyard
+                    .contains(&target)
+        }),
+        target_legal: target_legal(state, &owner.item),
+        turn: state.turn_key_v1(),
+        active_player: state.active_player,
+    };
+    if input.target_legal != input_target_legal(&input)
+        || (outcome == OutcomeV1::Resolved && !input.target_legal)
+        || (outcome == OutcomeV1::NoLegalTarget && input.target_legal)
+    {
+        return Err("Zul input changed actual original target legality".into());
+    }
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::ZulAshurRemovalInputV1 {
+            input: Box::new(input),
+        });
+    Ok(())
+}
 pub(crate) fn remove_owned(
     state: &mut GameState,
     owner: OwnerV1,
@@ -209,8 +312,23 @@ pub(crate) fn remove_owned(
     {
         return Err("Zul outcome changed original target legality".into());
     }
+    let Some(CommittedEvent::ZulAshurRemovalInputV1 { input }) = state.engine.event_history.last()
+    else {
+        return Err("Zul operation lacks independent actual removal input".into());
+    };
+    if input.publication != owner.publication
+        || input.item.as_ref() != &owner.item
+        || input.outcome != outcome
+        || input.target_legal != legal
+        || input.target_legal != input_target_legal(input)
+        || input.turn != state.turn_key_v1()
+        || input.active_player != state.active_player
+    {
+        return Err("Zul operation changed actual removal input".into());
+    }
     let removal = RemovalV1 {
         index: index(state)?,
+        input: input.index,
         publication: owner.publication,
         item: Box::new(owner.item.clone()),
         outcome,
@@ -398,8 +516,29 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     _ => return Err("Zul mandatory original owner missing or replayed".into()),
                 }
             }
+            CommittedEvent::ZulAshurRemovalInputV1 { input } => {
+                if input.index as usize != at || input.publication as usize >= at
+                    || !matches!(state.engine.event_history.get(input.publication as usize),
+                        Some(CommittedEvent::ZulAshurPublishedV1 { publication }) if publication.item == input.item)
+                    || state.engine.event_history.iter().filter(|e| matches!(e,
+                        CommittedEvent::ZulAshurRemovalInputV1 { input: other } if other.publication == input.publication)).count() != 1
+                    || input.target_legal != input_target_legal(input)
+                    || (input.target_now.is_none() && (input.target_is_zombie_creature || input.target_in_original_graveyard))
+                    || !matches!(state.engine.event_history.get(at+1),
+                        Some(CommittedEvent::ZulAshurRemovedV1 { removal }) if removal.input == input.index)
+                {
+                    return Err("Zul independent actual removal input invalid or orphaned".into());
+                }
+                metadata(state, &input.item)?;
+            }
             CommittedEvent::ZulAshurRemovedV1 { removal: r } => {
                 if r.index as usize != at
+                    || r.input.checked_add(1) != Some(r.index)
+                    || !matches!(state.engine.event_history.get(r.input as usize),
+                        Some(CommittedEvent::ZulAshurRemovalInputV1 { input })
+                            if input.item == r.item && input.publication == r.publication
+                                && input.outcome == r.outcome && input.target_legal == r.target_legal
+                                && input.turn == r.turn && input.active_player == r.active_player)
                     || r.publication as usize >= at
                     || !matches!(state.engine.event_history.get(r.publication as usize),
                         Some(CommittedEvent::ZulAshurPublishedV1{publication:p}) if p.item==r.item)
@@ -489,6 +628,7 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
             matches!(
                 e,
                 CommittedEvent::ZulAshurPublishedV1 { .. }
+                    | CommittedEvent::ZulAshurRemovalInputV1 { .. }
                     | CommittedEvent::ZulAshurRemovedV1 { .. }
                     | CommittedEvent::ZulAshurInstalledV1 { .. }
                     | CommittedEvent::ZulAshurCleanupV1 { .. }

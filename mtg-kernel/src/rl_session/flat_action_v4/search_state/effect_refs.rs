@@ -1002,6 +1002,7 @@ pub(super) fn conflicts(
                 | crate::event::CommittedEvent::ZulAshurCleanupEnteredV1 { .. }
                 | crate::event::CommittedEvent::ZulAshurCleanupV1 { .. }
                 | crate::event::CommittedEvent::ZulAshurExpiredV1 { .. }
+                | crate::event::CommittedEvent::ZulAshurRemovalInputV1 { .. }
         )
     }) {
         return true;
@@ -1287,6 +1288,7 @@ pub(super) fn conflicts(
             | crate::event::CommittedEvent::ZulAshurCleanupEnteredV1 { .. }
             | crate::event::CommittedEvent::ZulAshurCleanupV1 { .. }
             | crate::event::CommittedEvent::ZulAshurExpiredV1 { .. }
+            | crate::event::CommittedEvent::ZulAshurRemovalInputV1 { .. }
             | SquadRallierResolutionBoundaryV1 { .. }
             | SowerRestrictionInstalledV1 { .. }
             | SowerRestrictionExpiredV1 { .. }

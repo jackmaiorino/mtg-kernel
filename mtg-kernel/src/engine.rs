@@ -14283,6 +14283,11 @@ pub(crate) fn counter_stack_item_by_id(
     crate::raid_entry_custody_v1::record_countered(state, raid_counter_owner)?;
     crate::equipment_damage_source_v4::record_countered(state, equipment_owner)?;
     if let Some(owner) = zul_owner {
+        crate::zul_ashur_v1::record_removal_input(
+            state,
+            &owner,
+            crate::zul_ashur_v1::OutcomeV1::Countered,
+        )?;
         crate::zul_ashur_v1::remove_owned(state, owner, crate::zul_ashur_v1::OutcomeV1::Countered)?;
     }
     crate::gorehorn_damage_v1::record_removed(
@@ -14849,7 +14854,10 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         } else {
             crate::zul_ashur_v1::OutcomeV1::NoLegalTarget
         };
-        if crate::zul_ashur_v1::remove_owned(state, owner, outcome).is_err() {
+        if crate::zul_ashur_v1::record_removal_input(state, &owner, outcome)
+            .and_then(|()| crate::zul_ashur_v1::remove_owned(state, owner, outcome))
+            .is_err()
+        {
             state.stack.push(item.clone());
             state.engine.halted =
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));

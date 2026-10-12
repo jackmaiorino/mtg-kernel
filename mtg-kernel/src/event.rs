@@ -1243,6 +1243,9 @@ pub enum CommittedEvent {
     ZulAshurExpiredV1 {
         expiry: crate::zul_ashur_v1::ExpiryV1,
     },
+    ZulAshurRemovalInputV1 {
+        input: Box<crate::zul_ashur_v1::RemovalInputV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
