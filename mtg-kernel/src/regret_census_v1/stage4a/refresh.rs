@@ -694,6 +694,26 @@ mod tests {
         assert_eq!(Allocation::R.next_refresh(500_000), 12_000);
     }
 
+    /// A ceiling that is not a multiple of the refresh size ends with one
+    /// partial refresh that spends the remainder exactly.
+    #[test]
+    fn budget_ceiling_ends_with_a_partial_refresh() {
+        let a = Allocation {
+            anchor: ANCHOR_BUDGET,
+            refresh: REFRESH_BUDGET,
+            total: 300_000,
+        };
+        let mut used = ANCHOR_BUDGET;
+        let mut sizes = vec![];
+        while let Step::Refresh(b) = rule(Lookup::Miss, a, used, false) {
+            used += b;
+            sizes.push(b);
+        }
+        assert_eq!(sizes, [64_000, 64_000, 44_000]);
+        assert_eq!(used, 300_000);
+        assert_eq!(rule(Lookup::Miss, a, used, false), Step::Plain);
+    }
+
     use super::super::world::{sample, DeckPrior};
     use crate::runtime_decks::RUNTIME_DECKS;
 
