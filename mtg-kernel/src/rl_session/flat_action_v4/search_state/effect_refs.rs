@@ -174,6 +174,7 @@ impl Scan<'_> {
             | GarrukDrawFromCaptureV1 {..}
             | BindAuthorityEntryGainLifeV1
             | AuthorityEntryGainLifeV1 { .. }
+            | ExileTopChooseOneUntilNextTurn { .. }
             | BindAshrootAttackBoostV1
             | AshrootBoostFromCaptureV2 { .. }
             | CerberusUntapV1 { .. }
@@ -446,6 +447,7 @@ impl Scan<'_> {
                     || self.op(then)
                     || self.fs(expected_remaining_frames)
             }
+            GrantChosenExilePlayPermission { .. } => true,
             SurveilLibraryOne {
                 original_library,
                 expected_remaining_frames,
@@ -540,6 +542,7 @@ impl Scan<'_> {
     fn purpose(&self, p: &EffectTargetSelectionPurpose) -> bool {
         use EffectTargetSelectionPurpose::*;
         match p {
+            ChooseNewlyExiledCard { .. } => true,
             CopyTarget { choice } => self.copy(&choice.spell) || self.fs(&choice.remaining),
             DiscardDraw { choice } => self.bs(&choice.hand) || self.fs(&choice.remaining),
             ExileBatch { choice } => {
@@ -884,6 +887,7 @@ fn continuation_conflicts(
             OwnerLibrarySecondOrBottom { frame }
             | CounterUnlessPaysGeneric { frame }
             | CounterUnlessPaysLife { frame }
+            | ChosenExilePlayPermission { frame }
             | CounterTargetUnlessPaysGeneric { frame }
             | ExileOneFromGraveyard { frame }
             | SurveilLibraryOne { frame }
@@ -1212,6 +1216,13 @@ pub(super) fn conflicts(
             | CerberusCompletedV1 { .. }
             | PrivateKeepOneLibraryCapturedV1 { .. }
             | PrivateKeepOneLibraryConsumedV1 { .. }
+            | ExilePlaySelectionCapturedV1 { .. }
+            | ExilePlaySelectionConsumedV1 { .. }
+            | StrongboxPermissionGrantedV1 { .. }
+            | StrongboxPermissionTurnStartedV1 { .. }
+            | StrongboxPermissionCleanupV1 { .. }
+            | StrongboxPermissionExpiredV1 { .. }
+            | StrongboxRaidSkippedV1 { .. }
             | PrivateKeepOneRaidSkippedV1 { .. }
             | RaidEntrySourceV1 { .. }
             | RaidEntryCaptureV1 { .. }

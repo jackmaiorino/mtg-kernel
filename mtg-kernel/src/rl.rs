@@ -1947,7 +1947,9 @@ fn build_observation_v2(
         acting_player,
         step_index,
         text_mode,
-        (false, false, false, false, false, false, false, false),
+        (
+            false, false, false, false, false, false, false, false, false,
+        ),
     )
 }
 
@@ -1957,7 +1959,7 @@ fn build_observation_common_v2(
     acting_player: PlayerId,
     step_index: u64,
     text_mode: ObservationTextModeV2,
-    capabilities: (bool, bool, bool, bool, bool, bool, bool, bool),
+    capabilities: (bool, bool, bool, bool, bool, bool, bool, bool, bool),
 ) -> Result<ObservationV2> {
     let (
         accept_cant_block,
@@ -1968,7 +1970,12 @@ fn build_observation_common_v2(
         accept_garruk,
         accept_crystal,
         accept_arahbo,
+        accept_strongbox,
     ) = capabilities;
+    if !accept_strongbox {
+        crate::effect::exile_top_choose_v1::require_legacy_consumer_supported(state)
+            .map_err(RlContractError)?;
+    }
     if !accept_arahbo && crate::arahbo_v1::requires_successor(state) {
         return Err(RlContractError(
             "Arahbo requires V31 public/Human successor".into(),
@@ -2278,7 +2285,9 @@ fn build_policy_observation_parts(
         acting_player,
         step_index,
         text_mode,
-        (false, false, false, false, false, false, false, false),
+        (
+            false, false, false, false, false, false, false, false, false,
+        ),
     )
 }
 fn build_policy_observation_parts_common(
@@ -2287,7 +2296,7 @@ fn build_policy_observation_parts_common(
     acting_player: PlayerId,
     step_index: u64,
     text_mode: ObservationTextModeV2,
-    capabilities: (bool, bool, bool, bool, bool, bool, bool, bool),
+    capabilities: (bool, bool, bool, bool, bool, bool, bool, bool, bool),
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
     let (
         accept_cant_block,
@@ -2298,7 +2307,12 @@ fn build_policy_observation_parts_common(
         accept_garruk,
         accept_crystal,
         accept_arahbo,
+        accept_strongbox,
     ) = capabilities;
+    if !accept_strongbox {
+        crate::effect::exile_top_choose_v1::require_legacy_consumer_supported(state)
+            .map_err(RlContractError)?;
+    }
 
     let base = build_observation_common_v2(
         state,
@@ -2315,6 +2329,7 @@ fn build_policy_observation_parts_common(
             accept_garruk,
             accept_crystal,
             accept_arahbo,
+            accept_strongbox,
         ),
     )?;
     let context = policy_surface_context_v5(
@@ -2491,7 +2506,9 @@ fn build_policy_observation_storage_v6(
         false,
         false,
         false,
-        (false, false, false, false, false, false, false, false),
+        (
+            false, false, false, false, false, false, false, false, false,
+        ),
     )
 }
 
@@ -2521,7 +2538,7 @@ pub(crate) fn extra_turn_observation_storage_v1(
         false,
         false,
         false,
-        (false, true, false, false, false, false, false, false),
+        (false, true, false, false, false, false, false, false, false),
     )
 }
 
@@ -2578,7 +2595,9 @@ pub(crate) fn sower_observation_storage_v1(
         false,
         false,
         false,
-        (false, false, false, false, false, false, false, false),
+        (
+            false, false, false, false, false, false, false, false, false,
+        ),
     )
 }
 
@@ -2608,7 +2627,9 @@ pub(crate) fn employment_observation_storage_v1(
         false,
         true,
         false,
-        (false, false, false, false, false, false, false, false),
+        (
+            false, false, false, false, false, false, false, false, false,
+        ),
     )
 }
 
@@ -2638,7 +2659,9 @@ pub(crate) fn wildwood_observation_storage_v1(
         true,
         false,
         false,
-        (false, false, false, false, false, false, false, false),
+        (
+            false, false, false, false, false, false, false, false, false,
+        ),
     )
 }
 
@@ -2668,7 +2691,9 @@ pub(crate) fn cerberus_observation_storage_v1(
         false,
         false,
         true,
-        (false, false, false, false, false, false, false, false),
+        (
+            false, false, false, false, false, false, false, false, false,
+        ),
     )
 }
 
@@ -2698,7 +2723,7 @@ pub(crate) fn authority_observation_storage_v1(
         false,
         false,
         false,
-        (true, false, false, false, false, false, false, false),
+        (true, false, false, false, false, false, false, false, false),
     )
 }
 
@@ -2728,7 +2753,9 @@ pub(crate) fn frenzied_observation_storage_v1(
         false,
         false,
         false,
-        (false, false, false, false, false, false, false, false),
+        (
+            false, false, false, false, false, false, false, false, false,
+        ),
     )
 }
 
@@ -2758,7 +2785,7 @@ pub(crate) fn juggernaut_observation_storage_v1(
         false,
         false,
         false,
-        (false, false, true, false, false, false, false, false),
+        (false, false, true, false, false, false, false, false, false),
     )
 }
 
@@ -2788,7 +2815,7 @@ pub(crate) fn banishing_observation_storage_v1(
         false,
         false,
         false,
-        (false, false, false, true, false, false, false, false),
+        (false, false, false, true, false, false, false, false, false),
     )
 }
 
@@ -2818,7 +2845,36 @@ pub(crate) fn gourmand_observation_storage_v1(
         false,
         false,
         false,
-        (false, false, false, false, true, false, false, false),
+        (false, false, false, false, true, false, false, false, false),
+    )
+}
+pub(crate) fn strongbox_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::strongbox_public_v1::validate_projection_authority(state)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_common(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
+        false,
+        false,
+        false,
+        false,
+        (false, false, false, false, false, false, false, false, true),
     )
 }
 pub(crate) fn garruk_observation_storage_v1(
@@ -2847,7 +2903,7 @@ pub(crate) fn garruk_observation_storage_v1(
         false,
         false,
         false,
-        (false, false, false, true, false, true, false, false),
+        (false, false, false, true, false, true, false, false, false),
     )
 }
 
@@ -2877,7 +2933,7 @@ pub(crate) fn crystal_observation_storage_v1(
         false,
         false,
         false,
-        (false, false, false, false, false, false, true, false),
+        (false, false, false, false, false, false, true, false, false),
     )
 }
 
@@ -2908,7 +2964,7 @@ pub(crate) fn arahbo_observation_storage_v1(
         false,
         false,
         false,
-        (false, false, false, true, false, true, false, true),
+        (false, false, false, true, false, true, false, true, false),
     )
 }
 
@@ -2919,7 +2975,7 @@ fn build_policy_observation_storage_common(
     accept_wildwood: bool,
     accept_temporary_control: bool,
     accept_cerberus: bool,
-    accepted_statics: (bool, bool, bool, bool, bool, bool, bool, bool),
+    accepted_statics: (bool, bool, bool, bool, bool, bool, bool, bool, bool),
 ) -> Result<PolicyObservationStorageV6> {
     let (
         accept_authority,
@@ -2930,7 +2986,12 @@ fn build_policy_observation_storage_common(
         accept_garruk,
         accept_crystal,
         accept_arahbo,
+        accept_strongbox,
     ) = accepted_statics;
+    if !accept_strongbox {
+        crate::effect::exile_top_choose_v1::require_legacy_consumer_supported(request.state)
+            .map_err(RlContractError)?;
+    }
     if !accept_arahbo && crate::arahbo_v1::requires_successor(request.state) {
         return Err(RlContractError(
             "Arahbo requires V31 public/Human successor".into(),
@@ -3006,6 +3067,7 @@ fn build_policy_observation_storage_common(
             accept_garruk,
             accept_crystal,
             accept_arahbo,
+            accept_strongbox,
         ),
     )?;
     if let Some(search) = &extensions.decision_local_library {
@@ -8230,7 +8292,8 @@ fn pending_effect_semantic_v4(
                                     TargetSelectionPurposeV4::LibraryOrder
                                 }
                             },
-                            crate::effect::EffectTargetSelectionPurpose::ExileBatch { .. }
+                            crate::effect::EffectTargetSelectionPurpose::ChooseNewlyExiledCard { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::ExileBatch { .. }
                             | crate::effect::EffectTargetSelectionPurpose::CopyTarget { .. }
                             | crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
                             | crate::effect::EffectTargetSelectionPurpose::Hideaway { .. }

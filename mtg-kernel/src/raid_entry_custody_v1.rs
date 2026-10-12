@@ -52,7 +52,10 @@ pub(crate) fn record_started(state: &mut GameState, id: StackItemId) -> Result<(
     if item.v4.stack_item_id != id
         || item.v4.ability_source_contract.is_none_or(|s| {
             !definition(s)
-                || crate::card_def::CARD_DEFS[usize::from(s.card_def)].name != "Gutless Plunderer"
+                || !matches!(
+                    crate::card_def::CARD_DEFS[usize::from(s.card_def)].name,
+                    "Gutless Plunderer" | "Strongbox Raider"
+                )
         })
     {
         return Ok(());
@@ -645,7 +648,24 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                             );
                         }
                     }
-                    receipts.last().is_some_and(|r| r.pending.is_none())
+                    let completed = receipts.last().is_some_and(|r| r.pending.is_none());
+                    if completed
+                        && crate::card_def::CARD_DEFS
+                            [usize::from(p.item.v4.ability_source_contract.unwrap().card_def)]
+                        .name
+                            == "Strongbox Raider"
+                    {
+                        let first = receipts.first().unwrap();
+                        let last = receipts.last().unwrap();
+                        crate::effect::exile_top_choose_v1::validate_closed(
+                            state,
+                            p.item.v4.stack_item_id,
+                            p.item.v4.ability_source_contract.unwrap(),
+                            first.history_index,
+                            last.history_index,
+                        )?;
+                    }
+                    completed
                 };
                 if counters.len() > 1 || (!gorehorn && !counters.is_empty() && completed) {
                     return Err("Raid published instruction has duplicate closure".into());
@@ -664,10 +684,12 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 if s.index as usize != index
                     || s.first_boundary <= p.index
                     || s.first_boundary >= s.index
-                    || crate::card_def::CARD_DEFS
-                        [usize::from(p.item.v4.ability_source_contract.unwrap().card_def)]
-                    .name
-                        != "Gutless Plunderer"
+                    || !matches!(
+                        crate::card_def::CARD_DEFS
+                            [usize::from(p.item.v4.ability_source_contract.unwrap().card_def)]
+                        .name,
+                        "Gutless Plunderer" | "Strongbox Raider"
+                    )
                     || !published_matches_base(state, &s.item, p)
                     || s.item.v4.squad_rallier_started_v1.0.is_none_or(|binding| {
                         binding.first_receipt_history_index != s.first_boundary
@@ -1011,8 +1033,8 @@ mod tests {
             let mut bad: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
             let pending = bad.raid_waiting_v1.as_mut().unwrap().first_mut().unwrap();
-            if let EffectOp::Conditional { then, .. } = &mut pending.effect {
-                **then = EffectOp::DealDamage {
+            if let crate::effect::EffectOp::Conditional { then, .. } = &mut pending.effect {
+                **then = crate::effect::EffectOp::DealDamage {
                     target: crate::effect::TargetRef::Target(0),
                     amount: 3,
                 };

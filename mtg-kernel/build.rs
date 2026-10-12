@@ -6816,6 +6816,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Skyship Buccaneer" => "self_etb:intervening_if_captured_controller_declared_attackers_this_turn:declaration_history_round_and_active_seat:recheck_at_resolution:draw_controller:1",
         "Gorehorn Raider" => "self_etb:independent_original_entry_controller:raid_capture_and_recheck:any_target_player_creature_planeswalker:damage2",
         "Gutless Plunderer" => "self_etb:independent_original_entry_controller:raid_capture_and_recheck:private_look3:keep0_or1_top:rest_ordered_graveyard:exact_committed_library",
+        "Strongbox Raider" => "self_etb:original_controller:raid_capture_and_recheck:exile_top2:choose_exact_one_new_exile:ordinary_play_until_holder_next_cleanup",
         "Stromkirk Bloodthief" => "controller_end_step:intervening_opponent_actual_life_loss_this_turn:target_controlled_vampire_permanent:counter:plus1_plus1:1:captured_controller_recheck",
         "Authority of the Consuls" => "opponent_creature_entry:actual_zonechange_or_create_token:captured_controller:gain_life_1;static:opponent_creatures_enter_tapped:active_printed_ability",
         "Searslicer Goblin" => "beginning_captured_controller_end_step:intervening_if_captured_controller_declared_attackers_this_turn:declaration_history_round_and_active_seat:recheck_at_resolution:create_goblin_token_for_captured_controller:1:untapped:nonattacking:no_haste",
