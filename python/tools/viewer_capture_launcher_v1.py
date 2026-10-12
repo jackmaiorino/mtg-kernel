@@ -96,6 +96,7 @@ def main():
     ap.add_argument('--qualification-steps',type=int,default=8)
     ap.add_argument('--max-games',type=int,default=3)
     ap.add_argument('--previous-acquisition',type=Path)
+    ap.add_argument('--seed-base',type=int,default=2026101201)
     args = ap.parse_args()
     args.root.mkdir(parents=True,exist_ok=True)
     if len(args.replay_steps) > 3 or len(set(args.replay_steps)) != len(args.replay_steps) or any(n < 0 for n in args.replay_steps):
@@ -106,6 +107,7 @@ def main():
     prior_games = len(prior['results']) if prior else 0
     if prior_games + args.max_games > 3: raise ValueError('Development game allowance exceeded')
     check_steps = args.qualification_steps
+    if not 0 <= args.seed_base < 2**64-3: raise ValueError('Invalid seed base')
     guard = require_guard(args.root,args.lane)
     pins = pin_inputs(args.binary,args.source)
     inventory = json.loads(args.inventory.read_text())
@@ -154,7 +156,7 @@ def main():
             remaining=int(5400-prior_seconds-(time.monotonic()-started))
             if remaining <= 0: break
             # Each attempt is one independent full game. Stop when a complete demonstration exists.
-            result=invoke(args.binary,args.source,args.root,f'game-{i+1}',2026101201+i,True,100000,remaining,replay_steps)
+            result=invoke(args.binary,args.source,args.root,f'game-{i+1}',args.seed_base+i,True,100000,remaining,replay_steps)
             results.append(result)
             if capture_complete(result): break
         complete=[r for r in results if capture_complete(r)]
