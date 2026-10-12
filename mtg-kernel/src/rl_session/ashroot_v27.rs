@@ -188,6 +188,52 @@ mod tests {
     use super::*;
     use crate::policy_observation_v6::tests::{put, ready_state};
 
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    fn genuine_pending_occurrence_erasure_invalidates_existing_v27_binding_readonly() {
+        use crate::engine::{self, Action, Decision};
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state();
+            state.active_player = actor;
+            state.priority_player = actor;
+            state.step = crate::state::Step::DeclareAttackers;
+            let source = put(&mut state, actor, "Ashroot Animist", Zone::Battlefield);
+            put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            state.objects.get_mut(source).summoning_sick = false;
+            assert!(
+                matches!(engine::advance_until_decision(&mut state),Decision::DeclareAttackers {eligible,..} if eligible.contains(&source))
+            );
+            engine::step(&mut state, Action::DeclareAttackers(vec![source])).unwrap();
+            let mut session = FastActorSessionV1::from_ashroot_v27_fixture_state(state);
+            let FastActorResponseV1::Decision(expected) = session.current_response() else {
+                panic!("actual mandatory target decision");
+            };
+            let (_, _, binding) = session
+                .ashroot_current_decision_input_v27(expected, actor.into())
+                .unwrap();
+            session
+                .ashroot_fixture_state_mut()
+                .engine
+                .pending_triggers
+                .clear();
+            let before = session.privileged_core_environment_hash();
+            assert!(session
+                .ashroot_validate_bound_decision_v27(expected, actor.into(), &binding)
+                .is_err());
+            assert_eq!(session.privileged_core_environment_hash(), before);
+            let bytes = serde_json::to_vec(&session.state).unwrap();
+            let restored: GameState = serde_json::from_slice(&bytes).unwrap();
+            let refused = FastActorSessionV1::from_ashroot_v27_fixture_state(restored);
+            assert!(matches!(
+                refused.current_response(),
+                FastActorResponseV1::Terminal(_)
+            ));
+        }
+    }
+
     #[test]
     fn complete_ordered_binding_observation_identity_seat_and_menu_changes_refuse_readonly() {
         for actor in [PlayerId::P0, PlayerId::P1] {

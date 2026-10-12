@@ -90,6 +90,157 @@ fn restore(state: &GameState) -> GameState {
     assert_eq!(serde_json::to_vec(&value).unwrap(), bytes);
     value
 }
+fn refuses_readonly(mut state: GameState) {
+    let before = serde_json::to_vec(&state).unwrap();
+    assert!(engine::step(&mut state, Action::Pass).is_err());
+    assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+    // Repeated restoration does not create a fresh occurrence or clear refusal.
+    let mut restored = restore(&state);
+    assert!(engine::step(&mut restored, Action::Pass).is_err());
+    assert_eq!(serde_json::to_vec(&restored).unwrap(), before);
+}
+
+#[test]
+fn genuine_attack_requires_uncollected_pending_and_finalized_owner_both_seats() {
+    use mtg_kernel::ashroot_dispatch_v2::JournalV2;
+    use mtg_kernel::event::CommittedEvent;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let source = source(&mut state, actor);
+        let target = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        declare_attack(&mut state, source);
+        let mut erased = restore(&state);
+        erased.engine.event_log.retain(|e| {
+            !matches!(
+                e,
+                CommittedEvent::AshrootDispatchV2 {
+                    journal: JournalV2::Capture { .. }
+                }
+            )
+        });
+        refuses_readonly(erased);
+        assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
+        let mut erased = restore(&state);
+        erased.engine.pending_triggers.clear();
+        refuses_readonly(erased);
+        let mut erased = restore(&state);
+        erased.engine.pending_triggers.clear();
+        // Original attack authority stays intact when all later dispatch receipts are removed.
+        erased.engine.event_history.retain(|e| {
+            !matches!(
+                e,
+                CommittedEvent::AshrootDispatchV2 {
+                    journal: JournalV2::Collected { .. }
+                }
+            )
+        });
+        refuses_readonly(erased);
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        let mut erased = restore(&state);
+        erased.stack.retain(|item| item.source != source);
+        refuses_readonly(erased);
+        let mut injected = restore(&state);
+        let marker = injected
+            .engine
+            .event_history
+            .iter()
+            .find(|e| {
+                matches!(
+                    e,
+                    CommittedEvent::AshrootDispatchV2 {
+                        journal: JournalV2::Capture { .. }
+                    }
+                )
+            })
+            .unwrap()
+            .clone();
+        injected.engine.event_log.push(marker);
+        refuses_readonly(injected);
+        resolve_attack(&mut state);
+        assert_eq!(engine::effective_power(&state, target), 5);
+    }
+}
+
+#[test]
+fn completed_attack_cannot_replay_or_erase_installation_and_cleanup_both_seats() {
+    use mtg_kernel::ashroot_dispatch_v2::JournalV2;
+    use mtg_kernel::event::CommittedEvent;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let source = source(&mut state, actor);
+        let target = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        attack(&mut state, source, target);
+        let original = state.stack.last().unwrap().clone();
+        resolve_attack(&mut state);
+        let effects = state.engine.until_end_of_turn.clone();
+        for mode in 0..4 {
+            let mut bad = restore(&state);
+            match mode {
+                0 => bad.stack.push(original.clone()),
+                1 => bad.engine.until_end_of_turn.clear(),
+                2 => bad.engine.event_history.retain(|e| {
+                    !matches!(
+                        e,
+                        CommittedEvent::AshrootDispatchV2 {
+                            journal: JournalV2::Operation { .. }
+                        }
+                    )
+                }),
+                _ => bad.engine.event_history.retain(|e| {
+                    !matches!(
+                        e,
+                        CommittedEvent::AshrootDispatchV2 {
+                            journal: JournalV2::Removed { .. }
+                        }
+                    )
+                }),
+            }
+            refuses_readonly(bad);
+        }
+        for _ in 0..120 {
+            if state.active_player != actor {
+                break;
+            }
+            match next(&mut state) {
+                Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+                Decision::DeclareBlockers { .. } => {
+                    engine::step(&mut state, Action::DeclareBlockers(vec![])).unwrap()
+                }
+                d => panic!("natural Cleanup {d:?}"),
+            }
+        }
+        assert_eq!(state.active_player, actor.opponent());
+        assert_eq!(engine::effective_power(&state, target), 1);
+        assert!(!engine::has_effective_keyword(
+            &state,
+            target,
+            Keywords::TRAMPLE
+        ));
+        assert!(state.engine.event_history.iter().any(|e| matches!(
+            e,
+            CommittedEvent::AshrootDispatchV2 {
+                journal: JournalV2::Expired { .. }
+            }
+        )));
+        let mut resurrected = restore(&state);
+        resurrected.engine.until_end_of_turn.extend(effects);
+        refuses_readonly(resurrected);
+        let mut erased = restore(&state);
+        erased.engine.event_history.retain(|e| {
+            !matches!(
+                e,
+                CommittedEvent::AshrootDispatchV2 {
+                    journal: JournalV2::Cleanup { .. }
+                }
+            )
+        });
+        refuses_readonly(erased);
+        let mut replayed = restore(&state);
+        replayed.stack.push(original);
+        refuses_readonly(replayed);
+    }
+}
 fn source(state: &mut GameState, actor: PlayerId) -> ObjectId {
     let id = put(state, actor, "Ashroot Animist", Zone::Hand);
     state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 3;
@@ -332,13 +483,13 @@ fn forged_original_source_binding_or_controller_refuses_before_priority_mutation
             let item = bad.stack.iter_mut().find(|i| i.source == source).unwrap();
             match mode {
                 0 => {
-                    let Some(mtg_kernel::effect::EffectOp::AshrootAttackBoostV1 {
-                        source: binding,
+                    let Some(mtg_kernel::effect::EffectOp::AshrootBoostFromCaptureV2 {
+                        capture_history_index,
                     }) = &mut item.inline_effect
                     else {
                         panic!()
                     };
-                    binding.object = target;
+                    *capture_history_index = u64::MAX;
                 }
                 1 => {
                     item.controller = actor.opponent();
@@ -346,13 +497,11 @@ fn forged_original_source_binding_or_controller_refuses_before_priority_mutation
                 }
                 2 => item.v4.ability_source_contract = None,
                 _ => {
-                    let Some(mtg_kernel::effect::EffectOp::AshrootAttackBoostV1 {
-                        source: binding,
-                    }) = &mut item.inline_effect
-                    else {
-                        panic!()
-                    };
-                    binding.expected_zone_change_count += 1;
+                    item.v4
+                        .ability_source_contract
+                        .as_mut()
+                        .unwrap()
+                        .zone_change_count += 1;
                 }
             }
             let before = serde_json::to_vec(&bad).unwrap();

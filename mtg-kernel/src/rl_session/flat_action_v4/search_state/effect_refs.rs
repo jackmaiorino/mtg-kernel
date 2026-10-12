@@ -168,6 +168,7 @@ impl Scan<'_> {
             | BindAuthorityEntryGainLifeV1
             | AuthorityEntryGainLifeV1 { .. }
             | BindAshrootAttackBoostV1
+            | AshrootBoostFromCaptureV2 { .. }
             | CerberusUntapV1 { .. }
             | LookTopMayKeepOneRestGraveyard { .. }
             | TakeExtraTurnAfterThisOneV1
@@ -1071,6 +1072,7 @@ pub(super) fn conflicts(
                     })
             }
             AshrootPowerBeforeDepartureV1 { source, .. } => s.raw(source.object),
+            AshrootDispatchV2 { .. } => !s.pool.is_empty(),
             CerberusCaptureV1 { capture } => s.raw(capture.source.source),
             CerberusObserversV1 { sources, .. } => {
                 sources.iter().any(|source| s.raw(source.source))

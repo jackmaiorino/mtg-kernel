@@ -7,6 +7,15 @@ fn conflicts(
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    if state.engine.event_history.iter().any(|event| {
+        matches!(
+            event,
+            crate::event::CommittedEvent::AshrootDispatchV2 { .. }
+        )
+    }) && !pool.is_empty()
+    {
+        return true;
+    }
     // The source's old definition and power remain authoritative after it returns
     // to a hidden zone. This lane does not admit a historical resampling scheme.
     if state.engine.event_history.iter().any(|event| {

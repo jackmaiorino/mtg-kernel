@@ -1620,6 +1620,9 @@ pub enum EffectOp {
     AshrootAttackBoostV1 {
         source: EffectObjectBinding,
     },
+    AshrootBoostFromCaptureV2 {
+        capture_history_index: u64,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -7803,7 +7806,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     };
     if matches!(
         pending.resolving_item.inline_effect,
-        Some(EffectOp::AshrootAttackBoostV1 { .. })
+        Some(EffectOp::AshrootAttackBoostV1 { .. } | EffectOp::AshrootBoostFromCaptureV2 { .. })
     ) {
         return Err("Ashroot atomic boost has no externally resumable choice".into());
     }
@@ -18556,13 +18559,11 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ctx.source,
             ));
         }
-        EffectOp::AshrootAttackBoostV1 { source } => {
-            if crate::ashroot_animist_v1::execute(state, ctx, *source).is_err() {
-                state.engine.halted = Some((
-                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                    ctx.source,
-                ));
-            }
+        EffectOp::AshrootAttackBoostV1 { .. } | EffectOp::AshrootBoostFromCaptureV2 { .. } => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
         }
         EffectOp::WildwoodCounterFromReceiptV1 { .. } => {
             if crate::wildwood_capture_v1::execute(state, ctx, op).is_err() {

@@ -67,6 +67,7 @@ pub fn producer_sha256_v1() -> String {
         SCHEMA,
         include_str!("ashroot_public_v1.rs"),
         include_str!("ashroot_animist_v1.rs"),
+        include_str!("ashroot_dispatch_v2.rs"),
         include_str!("trigger.rs"),
         include_str!("effect.rs"),
         include_str!("event.rs"),
@@ -158,6 +159,7 @@ fn roots() -> Result<Vec<RootV1>, RlContractError> {
 /// Authenticates selected roots, actual declaration and departing-power provenance.
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     roots().map_err(|error| error.0)?;
+    crate::ashroot_animist_v1::validate_state(state)?;
     if state
         .legend_pending_v1
         .iter()
@@ -179,6 +181,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             matches!(
                 pending.effect,
                 crate::effect::EffectOp::AshrootAttackBoostV1 { .. }
+                    | crate::effect::EffectOp::AshrootBoostFromCaptureV2 { .. }
             )
         })
     {
@@ -205,6 +208,7 @@ fn power_contexts(
         if !matches!(
             pending.effect,
             crate::effect::EffectOp::AshrootAttackBoostV1 { .. }
+                | crate::effect::EffectOp::AshrootBoostFromCaptureV2 { .. }
         ) {
             continue;
         }
