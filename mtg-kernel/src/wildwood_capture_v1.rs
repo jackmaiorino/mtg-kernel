@@ -582,8 +582,8 @@ mod tests {
                     matches!(state.engine.event_history.last(), Some(CommittedEvent::PlusOneCountersAdded { object, count: 2, .. }) if *object == recipient)
                 );
             } else {
-                // The existing default/Standard counter path emits no Limited
-                // receipt. Preserve that absence and the unchanged placement.
+                // Configurations without Limited emit no counter receipt.
+                // Preserve that absence and the unchanged placement.
                 assert_eq!(state.engine.event_history.len(), before);
             }
             assert!(state.wildwood_waiting_v1.is_none());
