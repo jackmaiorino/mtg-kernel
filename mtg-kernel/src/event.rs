@@ -1072,6 +1072,18 @@ pub enum CommittedEvent {
         removal_history_index: u64,
         draw_history_index: Option<u64>,
     },
+    ExilePlaySelectionCapturedV1 {
+        resolving_stack_item: crate::ids::StackItemId,
+        binding: Box<crate::effect::ExileTopChoiceBindingV1>,
+    },
+    ExilePlaySelectionConsumedV1 {
+        resolving_stack_item: crate::ids::StackItemId,
+        selected: Option<crate::effect::EffectObjectBinding>,
+    },
+    StrongboxRaidSkippedV1 {
+        resolving_stack_item: crate::ids::StackItemId,
+        initial_boundary_history_index: u32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

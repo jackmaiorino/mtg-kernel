@@ -2843,6 +2843,8 @@ fn build_policy_observation_storage_common(
     accept_cerberus: bool,
     accepted_statics: (bool, bool, bool, bool, bool, bool),
 ) -> Result<PolicyObservationStorageV6> {
+    crate::effect::exile_top_choose_v1::require_legacy_consumer_supported(request.state)
+        .map_err(RlContractError)?;
     let (
         accept_authority,
         accept_extra_turn,
