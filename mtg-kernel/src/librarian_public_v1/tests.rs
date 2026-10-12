@@ -14,7 +14,7 @@ pub(crate) fn ready(actor: PlayerId) -> GameState {
     // Keep actual draw and hidden-library substitution fixtures on live cards.
     for player in [PlayerId::P0, PlayerId::P1] {
         for _ in 0..10 {
-            put(&mut state, player, "Plains", Zone::Library);
+            put(&mut state, player, "Forest", Zone::Library);
         }
     }
     state
