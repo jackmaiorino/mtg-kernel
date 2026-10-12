@@ -838,6 +838,8 @@ pub enum CommittedEvent {
     },
     VampireGourmandAttackCaptureV2 {
         declaration_history_index: u32,
+        turn: u32,
+        active_player: PlayerId,
         source: crate::state::AbilitySourceContractV4,
     },
     VampireGourmandCollectedV2 {

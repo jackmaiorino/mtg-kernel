@@ -1941,7 +1941,7 @@ fn build_observation_v2(
         acting_player,
         step_index,
         text_mode,
-        false,
+        (false, false),
         false,
     )
 }
@@ -1952,7 +1952,7 @@ fn build_observation_common_v2(
     acting_player: PlayerId,
     step_index: u64,
     text_mode: ObservationTextModeV2,
-    accept_cant_block: bool,
+    accept_cant_block: (bool, bool),
     accept_temporary_control: bool,
 ) -> Result<ObservationV2> {
     if accept_temporary_control {
@@ -2242,7 +2242,7 @@ fn build_policy_observation_parts(
         acting_player,
         step_index,
         text_mode,
-        false,
+        (false, false),
         false,
     )
 }
@@ -2252,7 +2252,7 @@ fn build_policy_observation_parts_common(
     acting_player: PlayerId,
     step_index: u64,
     text_mode: ObservationTextModeV2,
-    accept_cant_block: bool,
+    accept_cant_block: (bool, bool),
     accept_temporary_control: bool,
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
     let base = build_observation_common_v2(
@@ -2434,7 +2434,7 @@ fn build_policy_observation_storage_v6(
     build_policy_observation_storage_common(
         request,
         accept_life_ward,
-        false,
+        (false, false),
         false,
         false,
         false,
@@ -2464,7 +2464,7 @@ pub(crate) fn sower_observation_storage_v1(
             text_mode: ObservationTextModeV2::FullArtifact,
         },
         true,
-        true,
+        (true, false),
         false,
         false,
         false,
@@ -2494,7 +2494,7 @@ pub(crate) fn employment_observation_storage_v1(
             text_mode: ObservationTextModeV2::FullArtifact,
         },
         true,
-        false,
+        (false, false),
         false,
         true,
         false,
@@ -2524,7 +2524,7 @@ pub(crate) fn wildwood_observation_storage_v1(
             text_mode: ObservationTextModeV2::FullArtifact,
         },
         true,
-        false,
+        (false, false),
         true,
         false,
         false,
@@ -2554,7 +2554,7 @@ pub(crate) fn cerberus_observation_storage_v1(
             text_mode: ObservationTextModeV2::FullArtifact,
         },
         true,
-        false,
+        (false, false),
         false,
         false,
         true,
@@ -2584,7 +2584,7 @@ pub(crate) fn authority_observation_storage_v1(
             text_mode: ObservationTextModeV2::FullArtifact,
         },
         true,
-        false,
+        (false, false),
         false,
         false,
         false,
@@ -2614,7 +2614,7 @@ pub(crate) fn frenzied_observation_storage_v1(
             text_mode: ObservationTextModeV2::FullArtifact,
         },
         true,
-        true,
+        (true, false),
         false,
         false,
         false,
@@ -2622,15 +2622,52 @@ pub(crate) fn frenzied_observation_storage_v1(
     )
 }
 
+pub(crate) fn gourmand_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::gourmand_public_v1::validate_projection_authority(state)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_common(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
+        (false, true),
+        false,
+        false,
+        false,
+        false,
+    )
+}
 fn build_policy_observation_storage_common(
     request: PolicyObservationBuildV5<'_>,
     accept_life_ward: bool,
-    accept_cant_block: bool,
+    accept_cant_block: (bool, bool),
     accept_wildwood: bool,
     accept_temporary_control: bool,
     accept_cerberus: bool,
     accept_authority: bool,
 ) -> Result<PolicyObservationStorageV6> {
+    if !accept_cant_block.1
+        && crate::vampire_gourmand_dispatch_v2::requires_successor(request.state)
+    {
+        return Err(RlContractError(
+            "Gourmand requires its selected public/Human successor".into(),
+        ));
+    }
+
     if !accept_authority && crate::authority_of_the_consuls_v1::requires_successor(request.state) {
         return Err(RlContractError(
             "Authority requires its selected public/Human successor".into(),
@@ -6942,9 +6979,11 @@ fn validate_linked_exile_records_public_v4(state: &GameState) -> Result<()> {
 fn continuous_effects_common_v2(
     state: &GameState,
     acting_player: PlayerId,
-    accept_cant_block: bool,
+    accept_cant_block: (bool, bool),
     accept_temporary_control: bool,
 ) -> Result<Vec<ContinuousEffectPublicV2>> {
+    let (accept_cant_block, accept_gourmand) = accept_cant_block;
+
     if crate::crystal_barricade_v1::active(state) {
         return Err(RlContractError(
             "player hexproof and controlled-creature noncombat prevention require a public successor".into(),
@@ -7187,6 +7226,9 @@ fn continuous_effects_common_v2(
                 ));
             }
             UntilEndOfTurnEffect::ResolvedObjectCantBeBlockedV1 { .. } => {
+                if accept_gourmand {
+                    continue;
+                }
                 return Err(RlContractError(
                     "temporary cant-block restriction requires a public successor".into(),
                 ));

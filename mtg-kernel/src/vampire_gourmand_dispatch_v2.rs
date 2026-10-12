@@ -15,10 +15,24 @@ pub(crate) fn owns_definition(id: u16) -> bool {
                 && (t.effect)() == crate::vampire_gourmand_v1::program()
         })
 }
+pub(crate) fn requires_successor(state: &GameState) -> bool {
+    state
+        .engine
+        .event_history
+        .iter()
+        .any(|e| matches!(e, CommittedEvent::VampireGourmandAttackCaptureV2 { .. }))
+        || state.stack.iter().any(selected)
+        || state.engine.pending_triggers.iter().any(|p| {
+            p.source_contract
+                .is_some_and(|s| owns_definition(s.card_def))
+        })
+}
+
 fn capture_at(state: &GameState, at: u32) -> Result<AbilitySourceContractV4, String> {
     let Some(CommittedEvent::VampireGourmandAttackCaptureV2 {
         declaration_history_index,
         source,
+        ..
     }) = state.engine.event_history.get(at as usize)
     else {
         return Err("Gourmand original attack capture absent".into());
@@ -59,6 +73,8 @@ pub(crate) fn capture_declaration(state: &mut GameState, declaration: usize) {
     }
     let event = CommittedEvent::VampireGourmandAttackCaptureV2 {
         declaration_history_index: declaration as u32,
+        turn: state.turn,
+        active_player: state.active_player,
         source: AbilitySourceContractV4::capture(state, id),
     };
     state.engine.event_history.push(event.clone());
@@ -74,6 +90,24 @@ fn captures(state: &GameState) -> Vec<u32> {
             matches!(e, CommittedEvent::VampireGourmandAttackCaptureV2 { .. }).then_some(at as u32)
         })
         .collect()
+}
+fn validate_open_turn(state: &GameState, capture: u32) -> Result<(), String> {
+    let Some(CommittedEvent::VampireGourmandAttackCaptureV2 {
+        turn,
+        active_player,
+        source,
+        ..
+    }) = state.engine.event_history.get(capture as usize)
+    else {
+        return Err("Gourmand original attack turn absent".into());
+    };
+    if *turn != state.turn
+        || *active_player != state.active_player
+        || source.controller != *active_player
+    {
+        return Err("Gourmand open attack crossed its original turn".into());
+    }
+    Ok(())
 }
 fn collections(state: &GameState, capture: u32) -> Vec<usize> {
     state.engine.event_history.iter().enumerate().filter_map(|(at,e)| matches!(e,
@@ -269,6 +303,7 @@ pub(crate) fn validate(state: &GameState, removed: Option<&StackItem>) -> Result
         }
         let published = publications(state, capture);
         if collected.is_empty() {
+            validate_open_turn(state, capture)?;
             if logged != 1 || !held.is_empty() || !published.is_empty() {
                 return Err("Gourmand uncollected attack lost waiting ownership".into());
             }
@@ -278,7 +313,9 @@ pub(crate) fn validate(state: &GameState, removed: Option<&StackItem>) -> Result
             return Err("Gourmand attack collection repeated or replayed".into());
         }
         match published.as_slice() {
-            [] if held.len() == 1 => {}
+            [] if held.len() == 1 => {
+                validate_open_turn(state, capture)?;
+            }
             [(published_at, original)] => {
                 if *published_at <= collected[0]
                     || !held.is_empty()
@@ -349,6 +386,7 @@ pub(crate) fn validate(state: &GameState, removed: Option<&StackItem>) -> Result
                     .collect();
                 let closure_count = cost_closed.len() + counter_closed.len();
                 if closure_count == 0 {
+                    validate_open_turn(state, capture)?;
                     crate::engine::validated_stack_item_target_spec(original, state)?;
                     if !counter_removed.is_empty()
                         || match (
