@@ -67,6 +67,7 @@ pub(crate) struct Roles {
 
 /// Everything fixed for one frozen root.
 pub(crate) struct RootCtx<'a> {
+    pub(crate) visible_history: &'a [super::e_supported::VisibleFrame],
     pub(crate) root: &'a FastActorSessionV1,
     pub(crate) d: FastActorDecisionV1,
     pub(crate) focal: PlayerId,
@@ -699,7 +700,7 @@ impl Roles {
             keys, legacy_path, ..
         } = diag;
         legacy_path.clear();
-        let mut keyer = Keyer::new(ctx.key_mode, keys);
+        let mut keyer = Keyer::with_history(ctx.key_mode, keys, ctx.visible_history)?;
         let mut sup = Sup::new();
         let mut path: Vec<(Key, usize)> = Vec::new();
         let mut new: Vec<(Key, Node)> = Vec::new();
@@ -1131,7 +1132,7 @@ impl Roles {
         mut log: Option<&mut Vec<u32>>,
     ) -> Result<End, PlayErr> {
         let mut kstats = KeyStats::default();
-        let mut keyer = Keyer::new(ctx.key_mode, &mut kstats);
+        let mut keyer = Keyer::with_history(ctx.key_mode, &mut kstats, ctx.visible_history)?;
         let mut matching = true;
         let mut depth = 0u32;
         let mut last_phys: Option<u64> = None;

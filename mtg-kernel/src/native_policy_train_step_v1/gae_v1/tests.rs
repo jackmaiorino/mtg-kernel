@@ -778,3 +778,130 @@ fn gae_profile_preserves_complete_update_and_records_actual_phases() {
         ]
     );
 }
+
+#[test]
+fn e_supported_ce_is_policy_only_combines_once_and_replays() {
+    use crate::native_policy_train_step_v1::{ESupportedPolicyInputV1, ESupportedPolicyRowV1};
+    use crate::sideboard_play_policy_v1::FreshLineageGenerationV1;
+    let mut base = NativePolicyValueTrainStateV1::new_v1(perturbed_model()).unwrap();
+    let fixture = Fixture::capture(base.model_v1());
+    let steps = fixture.substeps();
+    let batch = groups(&steps);
+    base.train_step_gae_feature_transfer_v3(&batch, &[0.3, -0.2], &[0.15, -0.4], VC, LR)
+        .unwrap();
+    let fixture = Fixture::capture(base.model_v1());
+    let steps = fixture.substeps();
+    let batch = groups(&steps);
+    let input = |treatment, scheduled, valid| ESupportedPolicyInputV1 {
+        scheduled,
+        treatment,
+        rows: if valid {
+            vec![ESupportedPolicyRowV1 {
+                group_index: 0,
+                substep_index: 1,
+                legal_width: fixture.logits[1].len(),
+                target_index: 0,
+            }]
+        } else {
+            vec![]
+        },
+    };
+    let mut ordinary = base.clone();
+    let reference = ordinary
+        .train_step_gae_feature_transfer_v3(&batch, &[0.3, -0.2], &[0.15, -0.4], VC, LR)
+        .unwrap();
+    for (treatment, scheduled, valid) in [(false, 1, true), (true, 0, false), (true, 1, false)] {
+        let mut state = base.clone();
+        let (result, report) = state
+            .train_step_gae_e_supported_v1(
+                FreshLineageGenerationV1::V3,
+                &batch,
+                &[0.3, -0.2],
+                &[0.15, -0.4],
+                VC,
+                LR,
+                None,
+                &input(treatment, scheduled, valid),
+            )
+            .unwrap();
+        assert_eq!(result.gradients, reference.gradients);
+        assert!(report.is_none());
+        assert_eq!(state_bits(&state), state_bits(&ordinary));
+    }
+    let run = || {
+        let mut state = base.clone();
+        let (result, report) = state
+            .train_step_gae_e_supported_v1(
+                FreshLineageGenerationV1::V3,
+                &batch,
+                &[0.3, -0.2],
+                &[0.15, -0.4],
+                VC,
+                LR,
+                None,
+                &input(true, 2, true),
+            )
+            .unwrap();
+        assert_eq!(state.adam_step_v1(), 2);
+        assert!(result.loss.is_finite());
+        let report = report.unwrap();
+        assert_eq!(report["gradient_components"]["value"]["auxiliary_l2"], 0.0);
+        assert!(
+            report["gradient_components"]["policy"]["auxiliary_l2"]
+                .as_f64()
+                .unwrap()
+                > 0.0
+        );
+        assert!(
+            report["gradient_components"]["shared"]["auxiliary_l2"]
+                .as_f64()
+                .unwrap()
+                > 0.0
+        );
+        for (actual, expected) in result.gradients.iter().zip(&reference.gradients) {
+            if actual.name.starts_with("value_head.") {
+                assert_eq!(actual.values, expected.values);
+            }
+        }
+        // Verify the actual full Adam update from inherited moments and combined gradients.
+        let before = base.snapshot_v1().unwrap();
+        let gradients: Vec<_> = result.gradients.iter().map(|p| p.values.clone()).collect();
+        let (mut parameters, mut first, mut second) = adam_update(
+            &before.parameters,
+            &gradients,
+            &before.first_moments,
+            &before.second_moments,
+            2,
+            LR,
+        )
+        .unwrap();
+        parameters[SCORER_SECOND_BIAS].values[0] = f32::from_bits(before.scorer_bias_anchor_bits);
+        first[SCORER_SECOND_BIAS][0] = 0.0;
+        second[SCORER_SECOND_BIAS][0] = 0.0;
+        let after = state.snapshot_v1().unwrap();
+        assert_eq!(after.parameters, parameters);
+        assert_eq!(after.first_moments, first);
+        assert_eq!(after.second_moments, second);
+        (
+            state.snapshot_v1().unwrap().state_sha256_v1().unwrap(),
+            report,
+        )
+    };
+    assert_eq!(run(), run());
+    let mut invalid = base.clone();
+    let mut input = input(true, 1, true);
+    input.rows[0].target_index = usize::MAX;
+    assert!(invalid
+        .train_step_gae_e_supported_v1(
+            FreshLineageGenerationV1::V3,
+            &batch,
+            &[0.3, -0.2],
+            &[0.15, -0.4],
+            VC,
+            LR,
+            None,
+            &input
+        )
+        .is_err());
+    assert_eq!(state_bits(&invalid), state_bits(&base));
+}
