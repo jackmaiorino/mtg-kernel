@@ -39,3 +39,17 @@ exhaustive search reference visitor. Explicit conflict arms repair that compile
 gap; independently retained Librarian payment/removal/operation/completion
 history also refuses this unqualified sampler. Older states with no such history
 retain the previous path. Native compilation and refusal execution are pending.
+# Native75 compilation repair
+
+Native75 retries exact `6abca211c` after the shared-target build-script cache
+failure in Native73. Its current generator output has 416 definitions and
+SHA-256 `f6a32649ab2a683876352466229f5d81b9bebbc159a9b2c570d54043938f31be`.
+Limited all-target compilation found two external fixtures naming the private
+Librarian activation module. The fixtures now forge the same serialized
+operation inputs through their public event field and retain all rejection
+assertions, without exposing private producer authority. The Raid fixture
+accessor is compiled only in the catalog that actually uses it, addressing
+the observed default/Standard dead-code warning. Pinned selected formatting
+and diff checks pass; repaired native/gameplay results remain pending. The
+failed Native73 and Native75 attempts remain separately preserved.
+

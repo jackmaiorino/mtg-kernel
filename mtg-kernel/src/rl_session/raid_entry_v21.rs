@@ -94,7 +94,11 @@ impl FastActorSessionV1 {
         session.advance_to_decision_or_terminal();
         session
     }
-    #[cfg(test)]
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     pub(crate) fn raid_entry_fixture_state(&self) -> &crate::state::GameState {
         &self.state
     }

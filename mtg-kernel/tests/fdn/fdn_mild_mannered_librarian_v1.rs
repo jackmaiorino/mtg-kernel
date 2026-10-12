@@ -595,9 +595,12 @@ fn actual_unresolved_paid_activation_cannot_manufacture_completion_without_an_op
         forged.engine.event_history.push(
             mtg_kernel::event::CommittedEvent::LibrarianActivationOperationV1 {
                 item: Box::new(original.clone()),
-                operation: mtg_kernel::librarian_activation_v1::OperationV1::Countered {
-                    removal_history_index: 0,
-                },
+                // Forge the serialized restore input without exposing the
+                // private activation-authority module to external callers.
+                operation: serde_json::from_value(serde_json::json!({
+                    "Countered": { "removal_history_index": 0 }
+                }))
+                .unwrap(),
             },
         );
         forged.engine.event_history.push(
@@ -645,17 +648,16 @@ fn actual_unresolved_paid_activation_cannot_manufacture_completion_without_an_op
                             })
                             .unwrap();
                     let mtg_kernel::event::CommittedEvent::LibrarianActivationOperationV1 {
-                        operation:
-                            mtg_kernel::librarian_activation_v1::OperationV1::Resolved {
-                                draw_history_index,
-                                ..
-                            },
+                        operation,
                         ..
                     } = operation
                     else {
                         panic!("genuine resolved operation")
                     };
-                    *draw_history_index = 0;
+                    let mut forged_operation = serde_json::to_value(&*operation).unwrap();
+                    assert!(forged_operation["Resolved"].is_object());
+                    forged_operation["Resolved"]["draw_history_index"] = 0.into();
+                    *operation = serde_json::from_value(forged_operation).unwrap();
                 }
             }
             refuse_paid_restore(&forged);
