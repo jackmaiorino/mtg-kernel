@@ -31,6 +31,125 @@ fn source_owns_root(source: AbilitySourceContractV4, root: &EffectOp) -> bool {
                 && owned_root(root)
         })
 }
+
+/// A synchronous, nonserializable loan of an actually indexed stack item.
+/// Only this module constructs it, before engine removal; external restore
+/// validation cannot manufacture an absent-live resolution from pending data.
+pub(crate) struct VampireGourmandResolutionOwnerV1 {
+    original: StackItem,
+    expected: StackItem,
+    initial: bool,
+}
+impl VampireGourmandResolutionOwnerV1 {
+    pub(crate) fn completion_matches(&self, item: &StackItem) -> bool {
+        *item == self.expected
+    }
+}
+pub(crate) fn acquire_owner(
+    state: &GameState,
+    item: &StackItem,
+    initial: bool,
+) -> Result<Option<VampireGourmandResolutionOwnerV1>, String> {
+    let owns = item.kind == crate::state::StackItemKind::TriggeredAbility
+        && item.v4.ability_source_contract.is_some_and(|source| {
+            item.inline_effect
+                .as_ref()
+                .is_some_and(|root| source_owns_root(source, root))
+        });
+    if !owns {
+        return Ok(None);
+    }
+    validate(state)?;
+    crate::engine::validated_stack_item_target_spec(item, state)?;
+    if state
+        .stack
+        .iter()
+        .filter(|live| live.v4.stack_item_id == item.v4.stack_item_id)
+        .count()
+        != 1
+        || !state.stack.iter().any(|live| live == item)
+    {
+        return Err("optional sacrifice owner did not acquire the genuine live stack item".into());
+    }
+    let mut expected = item.clone();
+    if initial {
+        if state.engine.pending_effect.is_some()
+            || !item.v4.vampire_gourmand_started_v1.is_empty()
+            || history(state)?
+                .iter()
+                .any(|r| r.stack_item_id == item.v4.stack_item_id)
+        {
+            return Err("optional sacrifice initial owner cannot restart".into());
+        }
+        expected.v4.vampire_gourmand_started_v1.0 = Some(VampireGourmandStartedBindingV1 {
+            stack_item_id: item.v4.stack_item_id,
+            source: item.v4.ability_source_contract.unwrap(),
+            first_receipt_history_index: u32::try_from(state.engine.event_history.len())
+                .map_err(|_| "resolution history exceeds u32")?,
+        });
+    } else if state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_none_or(|pending| pending.resolving_item != *item)
+    {
+        return Err("optional sacrifice resumed owner changed its published item".into());
+    }
+    Ok(Some(VampireGourmandResolutionOwnerV1 {
+        original: item.clone(),
+        expected,
+        initial,
+    }))
+}
+
+pub(crate) fn begin_owned(
+    state: &mut GameState,
+    op: &EffectOp,
+    ctx: &ExecCtx,
+    owner: &VampireGourmandResolutionOwnerV1,
+) -> Result<ResumableProgress, String> {
+    if !owner.initial
+        || state.engine.pending_effect.is_some()
+        || state
+            .stack
+            .iter()
+            .any(|item| item.v4.stack_item_id == owner.original.v4.stack_item_id)
+        || owner.original.inline_effect.as_ref() != Some(op)
+        || ctx.stack_item_id != Some(owner.original.v4.stack_item_id)
+        || ctx.source != owner.original.source
+        || ctx.controller != owner.original.controller
+        || ctx.ability_source_contract != owner.original.v4.ability_source_contract
+    {
+        return Err("optional sacrifice initial removed-item ownership changed".into());
+    }
+    super::validate_resumable_program(op)?;
+    let pending = EffectContinuation {
+        resolving_item: owner.expected.clone(),
+        ctx: ctx.clone(),
+        frames: vec![EffectFrame::Program {
+            op: op.clone(),
+            path: Vec::new(),
+        }],
+        choice: None,
+        answered_choice_guard: None,
+    };
+    if *super::validated_definition_owned_root_effect(state, &pending)? != *op {
+        return Err("optional sacrifice removed owner lost its definition-owned context".into());
+    }
+    state.engine.pending_effect = Some(pending);
+    record_begin(state)?;
+    drive_owned(state, owner)
+}
+
+pub(crate) fn resume_owned(
+    state: &mut GameState,
+    owner: &VampireGourmandResolutionOwnerV1,
+) -> Result<ResumableProgress, String> {
+    if owner.initial {
+        return Err("initial owner cannot resume a published selection".into());
+    }
+    drive_owned(state, owner)
+}
 fn tracked(state: &GameState) -> Result<bool, String> {
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(false);
@@ -121,6 +240,12 @@ fn history(state: &GameState) -> Result<Vec<&VampireGourmandResolutionReceiptV1>
 }
 
 pub(super) fn validate(state: &GameState) -> Result<(), String> {
+    validate_with_owner(state, None)
+}
+fn validate_with_owner(
+    state: &GameState,
+    owner: Option<&VampireGourmandResolutionOwnerV1>,
+) -> Result<(), String> {
     if state.engine.event_log.iter().any(|event| {
         matches!(
             event,
@@ -191,12 +316,19 @@ pub(super) fn validate(state: &GameState) -> Result<(), String> {
             );
         }
         let pending = state.engine.pending_effect.as_ref().unwrap();
-        let live = crate::engine::resolution_cast_v1::resolving_index(state, receipt.stack_item_id)
-            .and_then(|index| state.stack.get(index))
-            .ok_or("started optional sacrifice stack item absent")?;
-        if live.v4.vampire_gourmand_started_v1
-            != pending.resolving_item.v4.vampire_gourmand_started_v1
-        {
+        let live = state
+            .stack
+            .iter()
+            .find(|item| item.v4.stack_item_id == receipt.stack_item_id);
+        let removed = owner.filter(|owner| {
+            owner.expected == pending.resolving_item
+                && owner.expected.v4.stack_item_id == receipt.stack_item_id
+        });
+        if match (live, removed) {
+            (Some(live), None) => live != &pending.resolving_item,
+            (None, Some(_)) => false,
+            _ => true,
+        } {
             return Err("optional sacrifice live and pending start authority differ".into());
         }
         if pending.resolving_item.v4.ability_source_contract != Some(receipt.source) {
@@ -283,9 +415,17 @@ pub(super) fn record_begin(state: &mut GameState) -> Result<(), String> {
         source,
         first_receipt_history_index: history_index,
     };
-    let index = crate::engine::resolution_cast_v1::resolving_index(state, stack_item_id)
-        .ok_or("optional sacrifice live stack item absent at publication")?;
-    state.stack[index].v4.vampire_gourmand_started_v1.0 = Some(started);
+    if pending.resolving_item.v4.vampire_gourmand_started_v1.0 != Some(started) {
+        let live = state
+            .stack
+            .iter_mut()
+            .find(|item| item.v4.stack_item_id == stack_item_id)
+            .ok_or("optional sacrifice initial publication lacks removed-item ownership")?;
+        if live != &pending.resolving_item {
+            return Err("optional sacrifice initial live item changed".into());
+        }
+        live.v4.vampire_gourmand_started_v1.0 = Some(started);
+    }
     let pending = state.engine.pending_effect.as_mut().unwrap();
     pending.resolving_item.v4.vampire_gourmand_started_v1.0 = Some(started);
     let receipt = VampireGourmandResolutionReceiptV1 {
@@ -347,4 +487,16 @@ pub(super) fn drive(state: &mut GameState) -> Result<ResumableProgress, String> 
         record_boundary(state)?;
     }
     result
+}
+
+fn drive_owned(
+    state: &mut GameState,
+    owner: &VampireGourmandResolutionOwnerV1,
+) -> Result<ResumableProgress, String> {
+    validate_with_owner(state, Some(owner))?;
+    let result = super::frenzied_goblin_resolution_v1::drive(state);
+    if result.is_ok() {
+        record_boundary(state)?;
+    }
+    Ok(result?)
 }

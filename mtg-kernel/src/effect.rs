@@ -53,6 +53,11 @@ pub use frenzied_goblin_resolution_v1::{
 };
 mod vampire_gourmand_resolution_v1;
 pub use vampire_gourmand_resolution_v1::VampireGourmandResolutionReceiptV1;
+pub(crate) use vampire_gourmand_resolution_v1::{
+    acquire_owner as acquire_vampire_gourmand_resolution_owner,
+    begin_owned as begin_owned_vampire_gourmand_resolution,
+    resume_owned as resume_owned_vampire_gourmand_resolution, VampireGourmandResolutionOwnerV1,
+};
 mod squad_rallier_resolution_v1;
 pub(crate) use squad_rallier_resolution_v1::owned_root as squad_rallier_root_is_exact;
 pub use squad_rallier_resolution_v1::SquadRallierResolutionReceiptV1;

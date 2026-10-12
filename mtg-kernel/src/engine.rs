@@ -10032,6 +10032,15 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
             return None;
         }
     };
+    let gourmand_owner =
+        match effect::acquire_vampire_gourmand_resolution_owner(state, &item, false) {
+            Ok(owner) => owner,
+            Err(_) => {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                return None;
+            }
+        };
     let index = resolution_cast_v1::resolving_index(state, item.v4.stack_item_id);
     match index
         .filter(|&i| i < state.stack.len())
@@ -10055,6 +10064,8 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
         effect::resume_owned_squad_rallier_resolution(state, owner)
     } else if let Some(owner) = frenzied_owner.as_ref() {
         effect::resume_owned_frenzied_goblin_resolution(state, owner)
+    } else if let Some(owner) = gourmand_owner.as_ref() {
+        effect::resume_owned_vampire_gourmand_resolution(state, owner)
     } else {
         effect::resume_resumable_resolution(state)
     };
@@ -13932,6 +13943,7 @@ fn execute_resolving_program(
     program: &EffectOp,
     squad_owner: Option<&effect::SquadRallierResolutionOwnerV1>,
     frenzied_owner: Option<&effect::FrenziedGoblinResolutionOwnerV1>,
+    gourmand_owner: Option<&effect::VampireGourmandResolutionOwnerV1>,
 ) -> ResolutionProgress {
     if !effect::contains_player_choice(program) {
         effect::execute(program, ctx, state);
@@ -13942,19 +13954,22 @@ fn execute_resolving_program(
         effect::begin_owned_squad_rallier_resolution(state, program, ctx, owner)
     } else if let Some(owner) = frenzied_owner {
         effect::begin_owned_frenzied_goblin_resolution(state, program, ctx, owner)
+    } else if let Some(owner) = gourmand_owner {
+        effect::begin_owned_vampire_gourmand_resolution(state, program, ctx, owner)
     } else {
         effect::begin_resumable_resolution(program, ctx, item.clone(), state)
     };
     match progress {
         Ok(effect::ResumableProgress::Complete(completed))
-            if squad_owner.map_or_else(
-                || {
-                    frenzied_owner.map_or(*completed == *item, |owner| {
-                        owner.completion_matches(&completed)
-                    })
-                },
-                |owner| owner.completion_matches(&completed),
-            ) =>
+            if if let Some(owner) = squad_owner {
+                owner.completion_matches(&completed)
+            } else if let Some(owner) = frenzied_owner {
+                owner.completion_matches(&completed)
+            } else if let Some(owner) = gourmand_owner {
+                owner.completion_matches(&completed)
+            } else {
+                *completed == *item
+            } =>
         {
             ResolutionProgress::Complete
         }
@@ -13962,17 +13977,18 @@ fn execute_resolving_program(
             // Keep the resolving item visible throughout the decision, but
             // grant no priority/SBA/trigger window until the continuation
             // completes.
-            let published = if squad_owner.is_some() || frenzied_owner.is_some() {
-                state
-                    .engine
-                    .pending_effect
-                    .as_ref()
-                    .expect("owned suspension publishes pending")
-                    .resolving_item
-                    .clone()
-            } else {
-                item.clone()
-            };
+            let published =
+                if squad_owner.is_some() || frenzied_owner.is_some() || gourmand_owner.is_some() {
+                    state
+                        .engine
+                        .pending_effect
+                        .as_ref()
+                        .expect("owned suspension publishes pending")
+                        .resolving_item
+                        .clone()
+                } else {
+                    item.clone()
+                };
             resolution_cast_v1::restore_parent(state, published);
             ResolutionProgress::Suspended
         }
@@ -14038,6 +14054,20 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         }
     };
     let squad_owner = match effect::acquire_squad_rallier_resolution_owner(
+        state,
+        state.stack.last().expect("resolving genuine stack item"),
+        true,
+    ) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
+    let gourmand_owner = match effect::acquire_vampire_gourmand_resolution_owner(
         state,
         state.stack.last().expect("resolving genuine stack item"),
         true,
@@ -14183,6 +14213,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             &effect,
             squad_owner.as_ref(),
             frenzied_owner.as_ref(),
+            gourmand_owner.as_ref(),
         );
         if progress == ResolutionProgress::Complete {
             crate::source_power_activation_v1::finish(state, &item);
@@ -14232,6 +14263,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             &program,
             squad_owner.as_ref(),
             frenzied_owner.as_ref(),
+            gourmand_owner.as_ref(),
         ) == ResolutionProgress::Suspended
         {
             return ResolutionProgress::Suspended;

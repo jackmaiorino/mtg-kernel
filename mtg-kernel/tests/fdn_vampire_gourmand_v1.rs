@@ -685,3 +685,55 @@ fn witness_before_real_attack_and_empty_declaration_have_no_optional_sacrifice()
         }
     }
 }
+
+#[test]
+fn real_answer_resumes_only_with_engine_removed_item_ownership_after_repeated_restore() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for pay in [false, true] {
+            let (mut state, source, other) = fixture(actor);
+            selection(&mut state, actor, source);
+            let started = state
+                .engine
+                .pending_effect
+                .as_ref()
+                .unwrap()
+                .resolving_item
+                .v4
+                .vampire_gourmand_started_v1;
+            assert!(!started.is_empty());
+            let action = if pay {
+                Action::ChooseEffectTarget(Target::Object(other))
+            } else {
+                Action::FinishEffectSelection
+            };
+            engine::step(&mut state, action).unwrap();
+            state = restore(&restore(&state));
+            let mut missing_live = restore(&state);
+            let id = started.0.unwrap().stack_item_id;
+            missing_live
+                .stack
+                .retain(|item| item.v4.stack_item_id != id);
+            let before = serde_json::to_vec(&missing_live).unwrap();
+            assert!(mtg_kernel::effect::resume_resumable_resolution(&mut missing_live).is_err());
+            assert_eq!(serde_json::to_vec(&missing_live).unwrap(), before);
+            assert!(engine::step(&mut missing_live, Action::Pass).is_err());
+            assert_eq!(serde_json::to_vec(&missing_live).unwrap(), before);
+            let mut replay = restore(&state);
+            finish(&mut state);
+            finish(&mut replay);
+            assert_eq!(restricted(&state, source), pay);
+            assert_eq!(
+                state.objects.get(other).zone,
+                if pay {
+                    Zone::Graveyard
+                } else {
+                    Zone::Battlefield
+                }
+            );
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&replay).unwrap()
+            );
+        }
+    }
+}
