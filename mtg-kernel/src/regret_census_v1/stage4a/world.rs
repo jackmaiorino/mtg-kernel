@@ -41,7 +41,8 @@ pub(crate) struct DeckPrior {
 
 impl DeckPrior {
     /// Condition the approximate public prior on every supplied actor-visible
-    /// frame. Physical cards are deduplicated across the prefix; tokens are excluded.
+    /// frame. Handles deduplicate only within a frame; cross-frame card counts use
+    /// per-card maxima because hidden shuffle breaks physical-copy continuity.
     /// This uses only transported public/known-card objects, never private state.
     pub(crate) fn with_visible_history(
         mut self,
@@ -88,12 +89,23 @@ impl DeckPrior {
         } else {
             "p1"
         };
-        let mut visible = std::collections::BTreeMap::new();
+        let mut maxima: std::collections::BTreeMap<u16, usize> = Default::default();
         for frame in history {
+            let mut visible = std::collections::BTreeMap::new();
             cards(&frame.observation, owner, &mut visible);
+            let mut counts: std::collections::BTreeMap<u16, usize> = Default::default();
+            for card in visible.values() {
+                *counts.entry(*card).or_default() += 1;
+            }
+            for (card, count) in counts {
+                let maximum = maxima.entry(card).or_default();
+                *maximum = (*maximum).max(count);
+            }
         }
-        let mut visible: Vec<_> = visible.values().copied().collect();
-        visible.sort_unstable();
+        let visible: Vec<_> = maxima
+            .into_iter()
+            .flat_map(|(card, count)| std::iter::repeat_n(card, count))
+            .collect();
         let keep: Vec<_> = (0..self.decks.len())
             .filter(|&i| is_submultiset(&visible, &self.decks[i]))
             .collect();
@@ -317,31 +329,59 @@ mod tests {
     use super::*;
 
     #[test]
-    fn e_supported_public_prior_preserves_distinct_cards_seen_across_frames() {
+    fn e_supported_prior_uses_visible_multiplicity_without_hidden_copy_identity() {
         use super::super::e_supported::VisibleFrame;
         let prior = DeckPrior::new(&[0]);
         let card = prior.decks[0][0];
         let count = prior.decks[0].iter().filter(|&&c| c == card).count();
-        let frame = |id| VisibleFrame {
-            observation: serde_json::json!({"known_hand_cards":[[],[{
-            "card_name":"visible","stable":{"arena_id":id,"owner":"p1","card_db_id":card}}]]}),
+        let object = |id| {
+            serde_json::json!({"card_name":"visible","stable":{
+            "arena_id":id,"owner":"p1","card_db_id":card}})
+        };
+        let frame = |cards: Vec<serde_json::Value>| VisibleFrame {
+            observation: serde_json::json!({"known_hand_cards":[[],cards]}),
             menu: vec![],
             selected: 0,
         };
-        let repeated: Vec<_> = (0..count + 1).map(|_| frame(1)).collect();
+        // Separate one-card reveals cannot establish distinct physical copies.
+        let sequential: Vec<_> = (0..count + 1)
+            .map(|i| frame(vec![object(i as u64)]))
+            .collect();
         assert_eq!(
             prior
                 .clone()
-                .with_visible_history(&repeated, PlayerId(0))
+                .with_visible_history(&sequential, PlayerId(0))
                 .ids()
                 .len(),
             1
         );
-        let distinct: Vec<_> = (0..count + 1).map(|i| frame(i as u64)).collect();
+        let repeated: Vec<_> = (0..count + 1).map(|_| frame(vec![object(1)])).collect();
+        assert_eq!(
+            prior
+                .clone()
+                .with_visible_history(&repeated, PlayerId(0))
+                .ids(),
+            prior
+                .clone()
+                .with_visible_history(&sequential, PlayerId(0))
+                .ids()
+        );
+        // Simultaneously visible distinct copies do establish multiplicity.
+        let simultaneous = vec![frame((0..count + 1).map(|i| object(i as u64)).collect())];
         assert!(prior
-            .with_visible_history(&distinct, PlayerId(0))
+            .clone()
+            .with_visible_history(&simultaneous, PlayerId(0))
             .ids()
             .is_empty());
+        // Two representations of one visible object never count twice.
+        let duplicate = vec![frame(vec![object(1); count + 1])];
+        assert_eq!(
+            prior
+                .with_visible_history(&duplicate, PlayerId(0))
+                .ids()
+                .len(),
+            1
+        );
     }
 
     #[test]

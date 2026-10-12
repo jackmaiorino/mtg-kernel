@@ -109,6 +109,9 @@ pub(crate) fn query(
     else {
         return Ok((None, packet));
     };
+    if node.perm != root_ties {
+        return Err("E stored root tie order differs from runtime seed".into());
+    }
     let (permutation, choice) = bind_supported_choice(node, canon)?;
     packet["n"] = json!(node.n);
     packet["wins"] = json!(node.wins);
