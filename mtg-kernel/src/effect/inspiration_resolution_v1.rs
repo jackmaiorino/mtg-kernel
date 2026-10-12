@@ -26,6 +26,147 @@ fn owned_root(op: &EffectOp) -> bool {
         }))
 }
 
+/// Only the engine can acquire this loan while the complete resolving row
+/// is live. It cannot be manufactured by deserializing a continuation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct InspirationResolutionOwnerV1 {
+    original: StackItem,
+    initial: bool,
+}
+
+impl InspirationResolutionOwnerV1 {
+    pub(crate) fn completion_matches(&self, item: &StackItem) -> bool {
+        self.original == *item
+    }
+}
+
+pub(crate) fn acquire_owner(
+    state: &GameState,
+    item: &StackItem,
+    initial: bool,
+) -> Result<Option<InspirationResolutionOwnerV1>, String> {
+    if item.kind != crate::state::StackItemKind::Spell {
+        return Ok(None);
+    }
+    let source = state
+        .objects
+        .try_get(item.source)
+        .ok_or("Inspiration acquisition source is absent")?;
+    let Some(root) = CARD_DEFS
+        .get(usize::from(source.card_def))
+        .and_then(|definition| (definition.spell_effect)())
+        .filter(|root| owned_root(root))
+    else {
+        return Ok(None);
+    };
+    validate(state)?;
+    crate::engine::validated_stack_item_target_spec(item, state)?;
+    if state
+        .stack
+        .iter()
+        .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+        .count()
+        != 1
+        || !state.stack.iter().any(|row| row == item)
+        || (initial && state.stack.last() != Some(item))
+    {
+        return Err("Inspiration acquisition lost its genuine complete live row".into());
+    }
+    if initial {
+        if state.engine.pending_effect.is_some()
+            || history(state)?
+                .iter()
+                .any(|receipt| receipt.stack_item_id == item.v4.stack_item_id)
+        {
+            return Err("Inspiration initial acquisition cannot restart a resolution".into());
+        }
+    } else {
+        let pending = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .ok_or("Inspiration resumed acquisition lost its continuation")?;
+        if pending.resolving_item != *item
+            || *validated_definition_owned_root_effect(state, pending)? != root
+        {
+            return Err("Inspiration resumed acquisition changed its owned root or row".into());
+        }
+    }
+    Ok(Some(InspirationResolutionOwnerV1 {
+        original: item.clone(),
+        initial,
+    }))
+}
+
+fn with_row_loan(
+    state: &mut GameState,
+    owner: &InspirationResolutionOwnerV1,
+    operation: impl FnOnce(&mut GameState) -> Result<ResumableProgress, String>,
+) -> Result<ResumableProgress, String> {
+    if state
+        .stack
+        .iter()
+        .any(|row| row.v4.stack_item_id == owner.original.v4.stack_item_id)
+    {
+        return Err("Inspiration private loan requires the actual engine removal".into());
+    }
+    // The physical spell remains in Stack during its non-target choices.
+    // Reinsert only this engine-owned row for synchronous validation; the
+    // engine publishes the continuation row after the loan is returned.
+    state.stack.push(owner.original.clone());
+    let result = operation(state);
+    let index = state
+        .stack
+        .iter()
+        .position(|row| row.v4.stack_item_id == owner.original.v4.stack_item_id)
+        .ok_or("Inspiration private row disappeared before loan return")?;
+    let returned = state.stack.remove(index);
+    if returned != owner.original {
+        return Err("Inspiration private row changed before loan return".into());
+    }
+    result
+}
+
+pub(crate) fn begin_owned(
+    state: &mut GameState,
+    op: &EffectOp,
+    ctx: &ExecCtx,
+    owner: &InspirationResolutionOwnerV1,
+) -> Result<ResumableProgress, String> {
+    if !owner.initial
+        || ctx.source != owner.original.source
+        || ctx.controller != owner.original.controller
+        || ctx.stack_item_id != Some(owner.original.v4.stack_item_id)
+    {
+        return Err("Inspiration initial private ownership changed".into());
+    }
+    with_row_loan(state, owner, |state| {
+        super::begin_resumable_resolution_with_inspiration_owner(
+            op,
+            ctx,
+            owner.original.clone(),
+            state,
+            Some(owner),
+        )
+    })
+}
+
+pub(crate) fn resume_owned(
+    state: &mut GameState,
+    owner: &InspirationResolutionOwnerV1,
+) -> Result<ResumableProgress, String> {
+    if owner.initial
+        || state
+            .engine
+            .pending_effect
+            .as_ref()
+            .is_none_or(|pending| pending.resolving_item != owner.original)
+    {
+        return Err("Inspiration resumed private ownership changed".into());
+    }
+    with_row_loan(state, owner, |state| drive_owned(state, owner))
+}
+
 fn tracked(state: &GameState) -> Result<bool, String> {
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(false);
@@ -165,9 +306,13 @@ pub(super) fn preflight_begin(
     op: &EffectOp,
     ctx: &ExecCtx,
     item: &StackItem,
+    owner: Option<&InspirationResolutionOwnerV1>,
 ) -> Result<bool, String> {
     if !owned_root(op) {
         return Ok(false);
+    }
+    if owner.is_none_or(|owner| !owner.initial || owner.original != *item) {
+        return Err("Inspiration begin requires its genuine private pre-pop owner".into());
     }
     validate(state)?;
     let tentative = EffectContinuation {
@@ -255,13 +400,29 @@ pub(super) fn record_boundary(state: &mut GameState) -> Result<(), String> {
 }
 
 pub(super) fn drive(state: &mut GameState) -> Result<ResumableProgress, String> {
-    // The ordinary wrapper is unchanged for all predecessor programs.
-    let owned = tracked(state)?;
-    if owned {
-        validate(state)?;
+    if tracked(state)? {
+        return Err("Inspiration resumption requires its genuine private removed-row owner".into());
+    }
+    super::vampire_gourmand_resolution_v1::drive(state)
+}
+
+pub(super) fn drive_owned(
+    state: &mut GameState,
+    owner: &InspirationResolutionOwnerV1,
+) -> Result<ResumableProgress, String> {
+    validate(state)?;
+    if !tracked(state)?
+        || state
+            .engine
+            .pending_effect
+            .as_ref()
+            .is_none_or(|pending| pending.resolving_item != owner.original)
+        || !state.stack.iter().any(|row| row == &owner.original)
+    {
+        return Err("Inspiration driver lost its exact private row loan".into());
     }
     let result = super::vampire_gourmand_resolution_v1::drive(state);
-    if owned && result.is_ok() {
+    if result.is_ok() {
         record_boundary(state)?;
     }
     result

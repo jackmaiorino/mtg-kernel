@@ -492,3 +492,40 @@ fn ordinary_counter_response_prevents_mill_and_flashback_still_exiles_both_seats
         }
     }
 }
+
+#[test]
+fn real_owned_prompt_cannot_resume_or_restart_through_public_effect_entry_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor, true);
+        let source = put(&mut state, actor, "Inspiration from Beyond", Zone::Hand);
+        cast(&mut state, actor, source, false);
+        let _ = until_selection(&mut state);
+        let pending = state.engine.pending_effect.as_ref().unwrap().clone();
+        let root = (CARD_DEFS[state.objects.get(source).card_def as usize].spell_effect)().unwrap();
+        for remove_live_row in [false, true] {
+            let mut forged = restore(&state);
+            if remove_live_row {
+                forged
+                    .stack
+                    .retain(|row| row.v4.stack_item_id != pending.resolving_item.v4.stack_item_id);
+            }
+            let before = forged.clone();
+            assert!(effect::resume_resumable_resolution(&mut forged).is_err());
+            assert_eq!(forged, before);
+
+            // Preserve the actual publication/answer journals, but try to
+            // restart from the complete genuine row and execution context.
+            forged.engine.pending_effect = None;
+            let before = forged.clone();
+            let error = effect::begin_resumable_resolution(
+                &root,
+                &pending.ctx,
+                pending.resolving_item.clone(),
+                &mut forged,
+            )
+            .unwrap_err();
+            assert!(error.contains("genuine private pre-pop owner"), "{error}");
+            assert_eq!(forged, before);
+        }
+    }
+}

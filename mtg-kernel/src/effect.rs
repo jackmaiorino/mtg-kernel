@@ -71,6 +71,11 @@ pub(crate) use squad_rallier_resolution_v1::{
     resume_owned as resume_owned_squad_rallier_resolution, SquadRallierResolutionOwnerV1,
 };
 mod inspiration_resolution_v1;
+pub(crate) use inspiration_resolution_v1::{
+    acquire_owner as acquire_inspiration_resolution_owner,
+    begin_owned as begin_owned_inspiration_resolution,
+    resume_owned as resume_owned_inspiration_resolution, InspirationResolutionOwnerV1,
+};
 pub(crate) mod library_choice_search_v2;
 mod standard_payment_v1;
 pub mod standard_selection_v1;
@@ -3106,6 +3111,16 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
+    begin_resumable_resolution_with_inspiration_owner(op, ctx, resolving_item, state, None)
+}
+
+fn begin_resumable_resolution_with_inspiration_owner(
+    op: &EffectOp,
+    ctx: &ExecCtx,
+    resolving_item: StackItem,
+    state: &mut GameState,
+    inspiration_owner: Option<&InspirationResolutionOwnerV1>,
+) -> Result<ResumableProgress, String> {
     if (crystal_prevention_v1::mixed_environment(state)
         && !crystal_prevention_v1::ordinary_nondamage(op))
         || resolving_item.v4.crystal_prevention_started_v1.0.is_some()
@@ -3122,8 +3137,13 @@ pub fn begin_resumable_resolution(
         squad_rallier_resolution_v1::preflight_begin(state, op, ctx, &resolving_item)?;
     let owned_frenzied =
         frenzied_goblin_resolution_v1::preflight_begin(state, op, ctx, &resolving_item)?;
-    let owned_mandatory_return =
-        inspiration_resolution_v1::preflight_begin(state, op, ctx, &resolving_item)?;
+    let owned_mandatory_return = inspiration_resolution_v1::preflight_begin(
+        state,
+        op,
+        ctx,
+        &resolving_item,
+        inspiration_owner,
+    )?;
     state.engine.pending_effect = Some(EffectContinuation {
         resolving_item,
         ctx: ctx.clone(),
@@ -3146,7 +3166,11 @@ pub fn begin_resumable_resolution(
     if owned_mandatory_return {
         inspiration_resolution_v1::record_begin(state)?;
     }
-    drive_resumable(state)
+    if let Some(owner) = inspiration_owner {
+        inspiration_resolution_v1::drive_owned(state, owner)
+    } else {
+        drive_resumable(state)
+    }
 }
 
 /// Resumes after `choose_resumable_option` installed the selected branch.

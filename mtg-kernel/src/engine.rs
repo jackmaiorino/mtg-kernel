@@ -10289,6 +10289,15 @@ fn drain_pending_effect_or_decide(state: &mut GameState) -> Option<Decision> {
 fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
     let pending = state.engine.pending_effect.as_ref().unwrap();
     let item = pending.resolving_item.clone();
+    let inspiration_owner = match effect::acquire_inspiration_resolution_owner(state, &item, false)
+    {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return None;
+        }
+    };
     let squad_owner = match effect::acquire_squad_rallier_resolution_owner(state, &item, false) {
         Ok(owner) => owner,
         Err(_) => {
@@ -10350,7 +10359,9 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
         }
     }
 
-    let progress = if let Some(owner) = crystal_owner.as_ref() {
+    let progress = if let Some(owner) = inspiration_owner.as_ref() {
+        effect::resume_owned_inspiration_resolution(state, owner)
+    } else if let Some(owner) = crystal_owner.as_ref() {
         effect::crystal_prevention_v1::resume_owned(state, owner)
     } else if let Some(owner) = squad_owner.as_ref() {
         effect::resume_owned_squad_rallier_resolution(state, owner)
@@ -14462,15 +14473,18 @@ fn execute_resolving_program(
     extra_owners: (
         Option<&effect::VampireGourmandResolutionOwnerV1>,
         Option<&effect::crystal_prevention_v1::OwnerV1>,
+        Option<&effect::InspirationResolutionOwnerV1>,
     ),
 ) -> ResolutionProgress {
-    let (gourmand_owner, crystal_owner) = extra_owners;
+    let (gourmand_owner, crystal_owner, inspiration_owner) = extra_owners;
     if crystal_owner.is_none() && !effect::contains_player_choice(program) {
         effect::execute(program, ctx, state);
         return ResolutionProgress::Complete;
     }
 
-    let progress = if let Some(owner) = crystal_owner {
+    let progress = if let Some(owner) = inspiration_owner {
+        effect::begin_owned_inspiration_resolution(state, program, ctx, owner)
+    } else if let Some(owner) = crystal_owner {
         effect::crystal_prevention_v1::begin_owned(state, program, ctx, owner)
     } else if let Some(owner) = squad_owner {
         effect::begin_owned_squad_rallier_resolution(state, program, ctx, owner)
@@ -14483,7 +14497,9 @@ fn execute_resolving_program(
     };
     match progress {
         Ok(effect::ResumableProgress::Complete(completed))
-            if if let Some(owner) = crystal_owner {
+            if if let Some(owner) = inspiration_owner {
+                owner.completion_matches(&completed)
+            } else if let Some(owner) = crystal_owner {
                 owner.completion_matches(&completed)
             } else if let Some(owner) = squad_owner {
                 owner.completion_matches(&completed)
@@ -14505,6 +14521,7 @@ fn execute_resolving_program(
                 || frenzied_owner.is_some()
                 || gourmand_owner.is_some()
                 || crystal_owner.is_some()
+                || inspiration_owner.is_some()
             {
                 state
                     .engine
@@ -14570,6 +14587,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         .last()
         .expect("resolve_top_of_stack called with an empty stack");
     let resolving_source = item.source;
+    let inspiration_owner = match effect::acquire_inspiration_resolution_owner(state, item, true) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let targets_legal = match stack_targets_still_legal(item, state) {
         Ok(legal) => legal,
         Err(_) => {
@@ -15019,7 +15046,11 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                     &effect,
                     squad_owner.as_ref(),
                     frenzied_owner.as_ref(),
-                    (gourmand_owner.as_ref(), crystal_owner.as_ref()),
+                    (
+                        gourmand_owner.as_ref(),
+                        crystal_owner.as_ref(),
+                        inspiration_owner.as_ref(),
+                    ),
                 )
             };
         if progress == ResolutionProgress::Complete {
@@ -15105,7 +15136,11 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             &program,
             squad_owner.as_ref(),
             frenzied_owner.as_ref(),
-            (gourmand_owner.as_ref(), crystal_owner.as_ref()),
+            (
+                gourmand_owner.as_ref(),
+                crystal_owner.as_ref(),
+                inspiration_owner.as_ref(),
+            ),
         ) == ResolutionProgress::Suspended
         {
             return ResolutionProgress::Suspended;
