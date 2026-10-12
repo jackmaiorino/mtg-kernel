@@ -92,6 +92,7 @@ mod source_power_activation_v1;
 pub mod sower_of_chaos_v1;
 pub mod sower_public_v1;
 mod sower_restriction_capture_v1;
+pub(crate) mod vampire_gourmand_dispatch_v2;
 mod vampire_gourmand_v1;
 pub mod wildwood_public_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]

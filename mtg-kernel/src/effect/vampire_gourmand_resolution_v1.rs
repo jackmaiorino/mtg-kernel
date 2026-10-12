@@ -574,6 +574,7 @@ fn validate_with_owner(
     }) {
         return Err("optional sacrifice receipt cannot enter the public trigger event log".into());
     }
+    crate::vampire_gourmand_dispatch_v2::validate(state, owner.map(|o| &o.expected))?;
     let receipts = history(state)?;
     validate_cost_operations(state, &receipts)?;
     validate_restrictions(state)?;

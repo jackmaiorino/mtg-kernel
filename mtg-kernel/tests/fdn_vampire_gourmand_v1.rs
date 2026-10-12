@@ -990,3 +990,76 @@ fn installed_genuine_rule_requires_actual_cleanup_expiry_and_cannot_resurrect() 
         }
     }
 }
+
+#[test]
+fn actual_attack_pending_and_published_owners_cannot_be_deleted_or_rewritten() {
+    use mtg_kernel::event::CommittedEvent;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source, _) = fixture(actor);
+        let captured = restore(&state);
+        assert!(captured
+            .engine
+            .event_history
+            .iter()
+            .any(|e| matches!(e, CommittedEvent::VampireGourmandAttackCaptureV2 { .. })));
+        for _ in 0..12 {
+            let decision = next(&mut state);
+            if state.stack.iter().any(|i| i.source == source) {
+                break;
+            }
+            assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        assert!(state
+            .stack
+            .iter()
+            .any(|i| i.source == source && i.v4.vampire_gourmand_started_v1.is_empty()));
+        let published = restore(&state);
+        for origin in [&captured, &published] {
+            for case in 0..4 {
+                let mut bad = restore(origin);
+                match case {
+                    0 => {
+                        bad.engine.pending_triggers.retain(|p| p.source != source);
+                        bad.engine.event_log.retain(|e| {
+                            !matches!(e, CommittedEvent::VampireGourmandAttackCaptureV2 { .. })
+                        });
+                        bad.stack.retain(|i| i.source != source);
+                    }
+                    1 => bad.engine.event_history.retain(|e| {
+                        !matches!(e, CommittedEvent::VampireGourmandAttackCaptureV2 { .. })
+                    }),
+                    2 => {
+                        for p in &mut bad.engine.pending_triggers {
+                            if p.source == source {
+                                p.controller = actor.opponent();
+                                p.source_contract.as_mut().unwrap().controller = actor.opponent();
+                            }
+                        }
+                        for i in &mut bad.stack {
+                            if i.source == source {
+                                i.controller = actor.opponent();
+                                i.v4.ability_source_contract.as_mut().unwrap().controller =
+                                    actor.opponent();
+                            }
+                        }
+                    }
+                    _ => {
+                        for p in &mut bad.engine.pending_triggers {
+                            if p.source == source {
+                                p.effect = mtg_kernel::effect::EffectOp::Sequence(vec![]);
+                            }
+                        }
+                        for i in &mut bad.stack {
+                            if i.source == source {
+                                i.inline_effect =
+                                    Some(mtg_kernel::effect::EffectOp::Sequence(vec![]));
+                            }
+                        }
+                    }
+                }
+                refused_cost_state(&bad);
+            }
+        }
+    }
+}

@@ -12864,6 +12864,8 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
     let finalized = state.stack.last().expect("trigger just published").clone();
     crate::wildwood_capture_v1::publish(state, &finalized);
     effect::frenzied_goblin_resolution_v1::publish(state)?;
+    let gourmand_item = state.stack.last().expect("trigger just published").clone();
+    crate::vampire_gourmand_dispatch_v2::publish(state, &gourmand_item)?;
     crate::cerberus_capture_v1::publish(state, &finalized)?;
     // Same `priority_passes`/`priority_player` reset as `reset_priority`
     // (117.5: priority passes to the active player once a triggered
@@ -13799,6 +13801,8 @@ pub(crate) fn counter_stack_item_by_id(
         _ => return Err("duplicate private stack-incarnation ids".to_string()),
     };
     let item = state.stack[position].clone();
+    let gourmand_counter_owner =
+        crate::vampire_gourmand_dispatch_v2::acquire_counter(state, &item)?;
     effect::frenzied_goblin_resolution_v1::preflight_unstarted_removal(state, &item)?;
     validated_stack_item_target_spec(&item, state)?;
     if item.kind == StackItemKind::Spell
@@ -13815,6 +13819,11 @@ pub(crate) fn counter_stack_item_by_id(
         None
     };
     state.stack.remove(position);
+    crate::vampire_gourmand_dispatch_v2::counter_removed(
+        state,
+        gourmand_counter_owner.as_ref(),
+        &item,
+    )?;
     effect::frenzied_goblin_resolution_v1::complete_unstarted(
         state,
         &item,
@@ -18853,6 +18862,8 @@ pub(crate) fn finish_declare_attackers(state: &mut GameState, attackers: Vec<Obj
             };
             state.engine.event_log.push(event.clone());
             state.engine.event_history.push(event);
+            let declaration = state.engine.event_history.len() - 1;
+            crate::vampire_gourmand_dispatch_v2::capture_declaration(state, declaration);
         }
     }
     if !state.engine.combat.attackers.is_empty() {

@@ -836,6 +836,25 @@ pub enum CommittedEvent {
         operation_history_index: u32,
         cleanup_history_index: u32,
     },
+    VampireGourmandAttackCaptureV2 {
+        declaration_history_index: u32,
+        source: crate::state::AbilitySourceContractV4,
+    },
+    VampireGourmandCollectedV2 {
+        capture_history_index: u32,
+    },
+    VampireGourmandPublishedV2 {
+        capture_history_index: u32,
+        item: Box<crate::state::StackItem>,
+    },
+    VampireGourmandCounterRemovedV2 {
+        publication_history_index: u32,
+        item: Box<crate::state::StackItem>,
+    },
+    VampireGourmandCounterClosedV2 {
+        publication_history_index: u32,
+        removal_history_index: u32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
