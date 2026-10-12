@@ -119,7 +119,11 @@ impl FastActorSessionV1 {
         session
     }
 
-    #[cfg(test)]
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     pub(crate) fn banishing_fixture_state_mut(&mut self) -> &mut GameState {
         &mut self.state
     }

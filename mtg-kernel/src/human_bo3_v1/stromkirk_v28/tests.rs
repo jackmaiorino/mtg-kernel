@@ -227,7 +227,7 @@ mod future_printed {
     use crate::engine::{self, Action, Decision};
     use crate::event::{self, ProposedEvent};
     use crate::mana::ManaColor;
-    use crate::state::{GameState, Step, Target};
+    use crate::state::{GameState, Step};
     #[test]
     fn actual_cast_endstep_public_human_target_binding_restore_and_hidden_privacy() {
         for actor in [PlayerId::P0, PlayerId::P1] {
