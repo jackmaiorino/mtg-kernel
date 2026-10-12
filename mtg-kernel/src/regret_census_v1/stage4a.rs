@@ -30,6 +30,7 @@ mod diag;
 mod identity;
 mod labels;
 mod play;
+mod practice;
 mod refresh;
 mod replay_labels;
 mod seeds;
@@ -68,6 +69,9 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-canon-offline"
             | "s4a-budget"
             | "s4a-budget-replay"
+            | "s4a-practice-starts"
+            | "s4a-practice-values"
+            | "s4a-train-exposure"
     )
 }
 
@@ -1288,6 +1292,9 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
         | "s4a-budget" | "s4a-budget-replay" => return run_bank_mode(cfg, policy),
         "s4a-bank-parity" => return run_bank_parity(cfg, policy),
         "s4a-label-replay" => return replay_labels::run(cfg),
+        "s4a-practice-starts" | "s4a-practice-values" | "s4a-train-exposure" => {
+            return practice::run(cfg)
+        }
         _ => {}
     }
     let shared = load_shared(cfg)?;
