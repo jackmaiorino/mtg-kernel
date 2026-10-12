@@ -10,6 +10,13 @@ pub(crate) fn ready(actor: PlayerId) -> GameState {
     state.active_player = actor;
     state.priority_player = actor;
     state.step = crate::state::Step::Main1;
+    // Real printed draw attempts need real cards. ready_state intentionally
+    // starts with empty libraries; it never deals an opening hand.
+    for owner in [actor, actor.opponent()] {
+        for _ in 0..16 {
+            put(&mut state, owner, "Forest", Zone::Library);
+        }
+    }
     state
 }
 pub(crate) fn next(state: &mut GameState) -> Decision {
