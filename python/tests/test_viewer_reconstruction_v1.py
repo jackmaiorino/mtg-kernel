@@ -52,12 +52,12 @@ class ReconstructionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/'replay.jsonl'
             path.write_text(''.join(json.dumps(dict(r,schema='mtg-kernel-viewer-reconstruction/v1'))+'\n' for r in rows),encoding='utf-8')
-            recording=build_recording(path,'privacy-case','Privacy case',Exporter({},'p0'))
+            recording=build_recording(path,'privacy-case','Privacy case',Exporter({},'p0'),[])
             public=json.dumps(recording)
             self.assertNotIn('SECRET',public);self.assertNotIn('source_policy_seeds',public)
             self.assertEqual(recording['frames'][0]['actions'],[{'index':0,'label':'Pass','kind':'pass','refs':[]}])
             rows[-1]['complete']=False
             path.write_text(''.join(json.dumps(dict(r,schema='mtg-kernel-viewer-reconstruction/v1'))+'\n' for r in rows),encoding='utf-8')
-            with self.assertRaisesRegex(ValueError,'incomplete'):build_recording(path,'privacy-case','Privacy case',Exporter({},'p0'))
+            with self.assertRaisesRegex(ValueError,'incomplete'):build_recording(path,'privacy-case','Privacy case',Exporter({},'p0'),[])
 
 if __name__=='__main__':unittest.main()
