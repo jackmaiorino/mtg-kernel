@@ -7007,6 +7007,70 @@
         "ward_pay_two_life",
         "tap_own_graveyard_zombie_creature_ordinary_cast_permission_this_turn"
       ]
+    },
+    {
+      "name": "Soulstone Sanctuary",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "animation"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SoulstoneSanctuary.java",
+      "engine_capability": "full",
+      "is_token": false,
+      "decks": [
+        "FDN_reference_soulstone_kellan.dck"
+      ]
+    },
+    {
+      "name": "Kellan, Planar Trailblazer",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Faerie",
+        "Scout"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "persistent_upgrade",
+        "combat_damage_impulse"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/k/KellanPlanarTrailblazer.java",
+      "engine_capability": "full",
+      "is_token": false,
+      "decks": [
+        "FDN_reference_soulstone_kellan.dck"
+      ]
     }
   ]
 }

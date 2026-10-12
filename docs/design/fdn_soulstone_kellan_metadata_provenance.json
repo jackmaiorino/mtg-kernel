@@ -1,0 +1,13 @@
+{
+  "commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "files": {
+    "Mage.Sets/src/mage/cards/s/SoulstoneSanctuary.java": {
+      "bytes": 1612,
+      "sha256": "7c2caba091a694f0846f7c74317f4500e4dc8c2eb6e40ffe44810c725a12bcf5"
+    },
+    "Mage.Sets/src/mage/cards/k/KellanPlanarTrailblazer.java": {
+      "bytes": 4822,
+      "sha256": "6014f2545d3020d01674d8d4df26dec465cbca5fd52e400b8b242454704b85f5"
+    }
+  }
+}

@@ -109,6 +109,14 @@ fn activate(
         if activatable_abilities.contains(&(source, ability)))
     );
     engine::step(state, Action::ActivateAbility(source, ability)).unwrap();
+    assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
+    assert!(state.engine.pending_activation.is_none());
+    assert!(state.stack.iter().any(|item| {
+        item.kind == mtg_kernel::state::StackItemKind::ActivatedAbility
+            && item.source == source
+            && item.controller == actor
+            && item.v4.activated_ability_index == Some(ability)
+    }));
 }
 
 fn blink(state: &mut GameState, source: ObjectId) {

@@ -305,51 +305,6 @@ pub(crate) fn creature_types(state: &GameState, id: ObjectId) -> Option<(Vec<u16
     Some((result, *timestamp))
 }
 
-#[cfg(test)]
-mod fdn_kellan_subtype_boundary_tests {
-    use super::*;
-    use crate::ids::PlayerId;
-    use crate::policy_observation_v6::tests::{put, ready_state};
-
-    /// Registered Elf stand-in for the physical subtype-replacement boundary.
-    /// This is not printed Kellan gameplay or card admission evidence.
-    #[test]
-    fn replacement_removes_scout_but_preserves_noncreature_subtypes_after_restore() {
-        for actor in [PlayerId::P0, PlayerId::P1] {
-            let mut state = ready_state();
-            let source = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
-            let object = state.objects.get_mut(source);
-            object.v4.effective_subtype_ids =
-                vec![Subtype::Scout.stable_id(), Subtype::Equipment.stable_id()];
-            object.v4.creature_upgrade = Some(CreatureUpgradeV1 {
-                creature_types: Some((
-                    vec![Subtype::Human.stable_id(), Subtype::Detective.stable_id()],
-                    1,
-                )),
-                ..Default::default()
-            });
-            let expected = vec![
-                Subtype::Equipment.stable_id(),
-                Subtype::Human.stable_id(),
-                Subtype::Detective.stable_id(),
-            ];
-            assert_eq!(creature_types(&state, source), Some((expected.clone(), 1)));
-            let mut restored: GameState =
-                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
-            assert_eq!(creature_types(&restored, source), Some((expected, 1)));
-            crate::event::propose_and_commit(
-                &mut restored,
-                crate::event::ProposedEvent::zone_change(source, Zone::Hand),
-            );
-            crate::event::propose_and_commit(
-                &mut restored,
-                crate::event::ProposedEvent::zone_change(source, Zone::Battlefield),
-            );
-            assert!(creature_types(&restored, source).is_none());
-        }
-    }
-}
-
 pub(crate) fn keyword_granted(state: &GameState, id: ObjectId, keyword: Keywords) -> bool {
     upgrade(state, id).is_some_and(|value| {
         value.keyword_grants.iter().any(|(granted, timestamp)| {
@@ -964,6 +919,51 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
         CreatureEffectV1::SurgeBlue => {
             value.base_stats = Some((5, 4, timestamp));
             value.color = Some((2, timestamp));
+        }
+    }
+}
+
+#[cfg(test)]
+mod fdn_kellan_subtype_boundary_tests {
+    use super::*;
+    use crate::ids::PlayerId;
+    use crate::policy_observation_v6::tests::{put, ready_state};
+
+    /// Registered Elf stand-in for the physical subtype-replacement boundary.
+    /// This is not printed Kellan gameplay or card admission evidence.
+    #[test]
+    fn replacement_removes_scout_but_preserves_noncreature_subtypes_after_restore() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state();
+            let source = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let object = state.objects.get_mut(source);
+            object.v4.effective_subtype_ids =
+                vec![Subtype::Scout.stable_id(), Subtype::Equipment.stable_id()];
+            object.v4.creature_upgrade = Some(CreatureUpgradeV1 {
+                creature_types: Some((
+                    vec![Subtype::Human.stable_id(), Subtype::Detective.stable_id()],
+                    1,
+                )),
+                ..Default::default()
+            });
+            let expected = vec![
+                Subtype::Equipment.stable_id(),
+                Subtype::Human.stable_id(),
+                Subtype::Detective.stable_id(),
+            ];
+            assert_eq!(creature_types(&state, source), Some((expected.clone(), 1)));
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(creature_types(&restored, source), Some((expected, 1)));
+            crate::event::propose_and_commit(
+                &mut restored,
+                crate::event::ProposedEvent::zone_change(source, Zone::Hand),
+            );
+            crate::event::propose_and_commit(
+                &mut restored,
+                crate::event::ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            assert!(creature_types(&restored, source).is_none());
         }
     }
 }

@@ -237,6 +237,17 @@ class LimitedDeckTest(unittest.TestCase):
         for name in ["Swamp", "Forest"]:
             self.assertEqual(resolved.count(self.registry[name].card_id), 12)
 
+    def test_soulstone_kellan_reference_uses_registered_cards_and_real_mana(self) -> None:
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_soulstone_kellan.dck").read_text(encoding="utf-8"))
+        resolved = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(resolved), 40)
+        self.assertEqual(self.registry["Soulstone Sanctuary"].card_id, 428)
+        self.assertEqual(self.registry["Kellan, Planar Trailblazer"].card_id, 429)
+        self.assertEqual(resolved[:8], [428] * 4 + [429] * 4)
+        for name in ["Frenzied Goblin", "Lightning Bolt", "Goblin Boarders"]:
+            self.assertEqual(resolved.count(self.registry[name].card_id), 4)
+        self.assertEqual(resolved.count(self.registry["Mountain"].card_id), 20)
+
     def test_original_decks_are_40_cards_and_fully_resolve(self) -> None:
         for filename, supported_copies, source_sha256 in [
             ("FDN_top_04956_UG.dck", 40, "bb618d6eaddf04b0a9e51e9a88cd512a04635e99ebca91b11ace4c305d634c86"),
@@ -439,7 +450,7 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("FDN_top_*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
-        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 223)
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 225)
         self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
                              for card in report["cards"]), 0)
 
