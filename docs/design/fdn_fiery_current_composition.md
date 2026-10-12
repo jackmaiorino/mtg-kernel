@@ -1,5 +1,14 @@
 # Current Fiery Annihilation source composition
 
+The selected precise meaning now authenticates the actual printed spell mode,
+catalog, producer source and exact root. It records ordered damage, optional
+attached Equipment exile, independent target legality, original-incarnation
+death replacement and actual Cleanup expiry. A future real registration test
+checks meaning rewrites; it remains explicitly ignored until registration.
+The future gameplay assertion uses Fiery's reserved target identity 64.
+These source changes have formatting and diff checks, with native typecheck,
+runtime and Public/Human V33 still pending. Fiery remains unregistered.
+
 Own branch `codex/fdn-fiery-current-source-20261012` composes preserved
 `6af6b446b14acaf25cd60becedd1667d9316ff5c` on later source
 `8c53207a6aa9ad39d9bdaa0ee5eb89fe94e9b014`. Original source and old worktree

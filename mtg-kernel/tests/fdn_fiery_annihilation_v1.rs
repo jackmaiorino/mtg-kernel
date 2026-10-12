@@ -303,7 +303,7 @@ fn fiery_printed_metadata_real_equip_optional_target_and_pending_stack_restore()
         def.target_spec,
         TargetSpec::CreatureThenUpToOneAttachedEquipment
     );
-    assert_eq!(def.target_spec.stable_id(), 63);
+    assert_eq!(def.target_spec.stable_id(), 64);
     for caster in [PlayerId::P0, PlayerId::P1] {
         for owner in [caster, caster.opponent()] {
             for optional in [false, true] {
