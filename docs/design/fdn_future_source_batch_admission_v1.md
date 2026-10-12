@@ -52,4 +52,3 @@ accessor is compiled only in the catalog that actually uses it, addressing
 the observed default/Standard dead-code warning. Pinned selected formatting
 and diff checks pass; repaired native/gameplay results remain pending. The
 failed Native73 and Native75 attempts remain separately preserved.
-
