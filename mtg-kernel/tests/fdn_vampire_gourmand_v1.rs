@@ -1063,3 +1063,51 @@ fn actual_attack_pending_and_published_owners_cannot_be_deleted_or_rewritten() {
         }
     }
 }
+
+#[test]
+fn precise_gourmand_rule_authenticates_optional_cost_and_each_paid_consequence_fact() {
+    use mtg_kernel::rules_meaning_gourmand_v1 as meaning;
+    let id = card_id_by_name("Vampire Gourmand").expect("genuine registration required");
+    let selector = meaning::live_selector().unwrap();
+    let record = meaning::meaning(&selector, id, 0).unwrap();
+    meaning::validate(&record).unwrap();
+    assert_eq!(
+        (
+            record.rule.sacrifice_minimum,
+            record.rule.sacrifice_maximum,
+            record.rule.draw_count_after_payment
+        ),
+        (0, 1, 1)
+    );
+    assert_eq!(
+        record.rule.target_spec,
+        mtg_kernel::card_def::TargetSpec::None
+    );
+    assert!(!record.public_human_model_and_sampler_admitted);
+    let value = serde_json::to_value(&record).unwrap();
+    for (key, fact) in value["rule"].as_object().unwrap() {
+        let mut wrong = value.clone();
+        match fact {
+            serde_json::Value::Bool(boolean) => wrong["rule"][key] = (!boolean).into(),
+            serde_json::Value::Number(number) => {
+                wrong["rule"][key] = (number.as_u64().unwrap() + 1).into()
+            }
+            serde_json::Value::String(_) => wrong["rule"][key] = "forged".into(),
+            _ => continue,
+        }
+        let parsed = serde_json::from_value::<meaning::MeaningV1>(wrong);
+        assert!(
+            parsed.is_err() || meaning::validate(&parsed.unwrap()).is_err(),
+            "fact {key}"
+        );
+    }
+    let mut wrong = record.clone();
+    wrong.selector.card_db_hash ^= 1;
+    assert!(meaning::validate(&wrong).is_err());
+    let mut wrong = record.clone();
+    wrong.trigger_index = 1;
+    assert!(meaning::validate(&wrong).is_err());
+    let mut wrong = value;
+    wrong["unknown"] = "unaccepted".into();
+    assert!(serde_json::from_value::<meaning::MeaningV1>(wrong).is_err());
+}
