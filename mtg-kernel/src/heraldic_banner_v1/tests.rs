@@ -125,14 +125,83 @@ mod future_printed {
             for id in [own, opponent] {
                 assert_eq!(state.objects.get(id).zone, Zone::Hand);
             }
+            let surface = crate::policy_surface_v5::PolicySurfaceV5::new_for_session();
+            let first =
+                crate::banner_observation_v1::observe_v1(&state, &surface, actor, 0, 0, 0, 1)
+                    .unwrap();
+            assert!(first.prior_entry_colors.is_empty());
             engine::step(&mut state, Action::ChooseEffectOption(4)).unwrap();
             assert_eq!(reach_color(&mut state), actor.opponent());
+            let later = crate::banner_observation_v1::observe_v1(
+                &state,
+                &surface,
+                actor.opponent(),
+                0,
+                0,
+                0,
+                1,
+            )
+            .unwrap();
+            assert_eq!(
+                later.prior_entry_colors,
+                vec![crate::banner_observation_v1::PriorEntryColorV36 {
+                    entry_ordinal: 1,
+                    chooser: actor.into(),
+                    printed_card_db_id: state.objects.get(own).card_def,
+                    chosen_color: ManaColor::G,
+                }]
+            );
+            assert_eq!(later.entry_choice.as_ref().unwrap().entry_ordinal, 0);
+            assert_eq!(
+                later.entry_choice.as_ref().unwrap().chooser,
+                actor.opponent().into()
+            );
+            let answer = serde_json::to_value(&later.prior_entry_colors).unwrap();
+            assert_eq!(answer[0].as_object().unwrap().len(), 4);
+            assert!(answer[0].get("original").is_none() && answer[0].get("arena_id").is_none());
             for id in [own, opponent] {
                 assert_eq!(state.objects.get(id).zone, Zone::Hand);
             }
+            let mut altered = state.clone();
+            let pending = altered
+                .engine
+                .linked_aura_operation_v1
+                .pending_general_v36
+                .as_mut()
+                .unwrap();
+            let crate::linked_aura_operation_v1::GeneralAnswerV36::Color { color, .. } =
+                &mut pending.answers[0]
+            else {
+                panic!("actual prior color answer");
+            };
+            *color = ManaColor::U;
+            let before = serde_json::to_vec(&altered).unwrap();
+            assert!(crate::banner_observation_v1::observe_v1(
+                &altered,
+                &surface,
+                actor.opponent(),
+                0,
+                0,
+                0,
+                1
+            )
+            .is_err());
+            assert!(engine::step(&mut altered, Action::Pass).is_err());
+            assert_eq!(serde_json::to_vec(&altered).unwrap(), before);
             let mut restored: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
             for branch in [&mut state, &mut restored] {
+                let actual = crate::banner_observation_v1::observe_v1(
+                    branch,
+                    &surface,
+                    actor.opponent(),
+                    0,
+                    0,
+                    0,
+                    1,
+                )
+                .unwrap();
+                assert_eq!(actual.prior_entry_colors, later.prior_entry_colors);
                 engine::step(branch, Action::ChooseEffectOption(3)).unwrap();
                 assert_eq!(authenticated_color(branch, own).unwrap(), ManaColor::G);
                 assert_eq!(authenticated_color(branch, opponent).unwrap(), ManaColor::R);
@@ -280,18 +349,11 @@ mod future_printed {
             }
             assert_eq!(state.priority_player, actor.opponent());
             engine::step(&mut state, Action::CastSpell(counter)).unwrap();
-            assert!(matches!(
-                engine::advance_until_decision(&mut state),
-                Decision::ChooseTargets { .. }
-            ));
-            let slot = state
-                .stack
-                .iter()
-                .position(|item| item.source == banner)
-                .unwrap();
+            assert!(matches!(engine::advance_until_decision(&mut state),
+                Decision::ChooseTargets { legal_targets, .. } if legal_targets == [crate::state::Target::Object(banner)]));
             engine::step(
                 &mut state,
-                Action::ChooseTarget(crate::state::Target::StackItem(slot)),
+                Action::ChooseTarget(crate::state::Target::Object(banner)),
             )
             .unwrap();
             for _ in 0..12 {

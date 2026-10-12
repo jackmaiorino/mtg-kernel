@@ -132,6 +132,7 @@ pub struct HumanBannerExtensionsV36 {
     pub predecessor: HumanExtensionsV9,
     pub entry_choice: Option<HumanBannerEntryV36>,
     pub chosen_colors: Vec<HumanBannerColorV36>,
+    pub prior_entry_colors: Vec<HumanBannerPriorColorV36>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HumanBannerEntryV36 {
@@ -139,6 +140,13 @@ pub struct HumanBannerEntryV36 {
     pub chooser: PlayerSeatV1,
     pub printed_name: String,
     pub colors: [crate::mana::ManaColor; 5],
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HumanBannerPriorColorV36 {
+    pub handle: String,
+    pub chooser: PlayerSeatV1,
+    pub printed_name: String,
+    pub chosen_color: crate::mana::ManaColor,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HumanBannerColorV36 {
@@ -183,6 +191,26 @@ fn state(
             })
         })
         .transpose()?;
+    let prior_entry_colors = observation
+        .prior_entry_colors
+        .iter()
+        .map(|row| {
+            let def = crate::card_def::CARD_DEFS
+                .get(row.printed_card_db_id as usize)
+                .ok_or(Error::InvalidVisibleReference)?;
+            Ok(HumanBannerPriorColorV36 {
+                handle: format!(
+                    "entry{}",
+                    row.entry_ordinal
+                        .checked_add(1)
+                        .ok_or(Error::InvalidVisibleReference)?
+                ),
+                chooser: row.chooser,
+                printed_name: def.object_name.into(),
+                chosen_color: row.chosen_color,
+            })
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
     let chosen_colors = observation
         .chosen_colors
         .iter()
@@ -207,6 +235,7 @@ fn state(
             },
             entry_choice,
             chosen_colors,
+            prior_entry_colors,
         },
         policy_context: old.policy_context,
         known_face_down_cards: old.known_face_down_cards,

@@ -5422,12 +5422,15 @@ impl RlEpisodeSessionV1 {
 
     #[cfg(test)]
     fn advance_to_decision_or_terminal(&mut self) {
+        self.advance_to_decision_or_terminal_profiled(None);
+    }
+
+    fn advance_to_decision_or_terminal_profiled(
+        &mut self,
+        mut profile: Option<&mut RlPhaseProfileV1>,
+    ) {
         if crate::heraldic_banner_v1::validate_state(&self.state).is_err()
-            || (self.flat_action_contract_mode == FlatActionContractModeV1::BannerV36
-                && crate::banner_observation_v1::validate_projection_authority(&self.state)
-                    .is_err())
-            || (crate::heraldic_banner_v1::requires_successor(&self.state)
-                && self.flat_action_contract_mode != FlatActionContractModeV1::BannerV36)
+            || crate::heraldic_banner_v1::requires_successor(&self.state)
         {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -5441,13 +5444,6 @@ impl RlEpisodeSessionV1 {
             return;
         }
 
-        self.advance_to_decision_or_terminal_profiled(None);
-    }
-
-    fn advance_to_decision_or_terminal_profiled(
-        &mut self,
-        mut profile: Option<&mut RlPhaseProfileV1>,
-    ) {
         self.current = None;
         if crate::arahbo_v1::requires_successor(&self.state) {
             self.terminal = Some(halted_terminal(
@@ -7194,6 +7190,25 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
+        if crate::heraldic_banner_v1::validate_state(&self.state).is_err()
+            || (self.flat_action_contract_mode == FlatActionContractModeV1::BannerV36
+                && crate::banner_observation_v1::validate_projection_authority(&self.state)
+                    .is_err())
+            || (crate::heraldic_banner_v1::requires_successor(&self.state)
+                && self.flat_action_contract_mode != FlatActionContractModeV1::BannerV36)
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:banner_v36_authority_or_transport".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+
         if crate::arahbo_v1::requires_successor(&self.state)
             && self.flat_action_contract_mode != FlatActionContractModeV1::ArahboV31
         {

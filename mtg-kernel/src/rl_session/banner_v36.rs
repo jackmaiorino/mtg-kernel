@@ -302,6 +302,18 @@ mod tests {
                 .banner_validate_bound_decision_v36(expected, actor.into(), &forged)
                 .is_err());
             let mut forged = binding.clone();
+            forged.observation.prior_entry_colors.push(
+                crate::banner_observation_v1::PriorEntryColorV36 {
+                    entry_ordinal: 0,
+                    chooser: actor.into(),
+                    printed_card_db_id: crate::card_def::card_id_by_name("Forest").unwrap(),
+                    chosen_color: crate::mana::ManaColor::G,
+                },
+            );
+            assert!(session
+                .banner_validate_bound_decision_v36(expected, actor.into(), &forged)
+                .is_err());
+            let mut forged = binding.clone();
             forged.observation.producer_sha256.clear();
             assert!(session
                 .banner_validate_bound_decision_v36(expected, actor.into(), &forged)
@@ -316,6 +328,45 @@ mod tests {
                 .banner_validate_bound_decision_v36(expected, actor.into(), &binding)
                 .is_err());
             assert_eq!(session.privileged_core_environment_hash(), before);
+        }
+    }
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    #[ignore = "requires genuine Heraldic Banner registration; actual predecessor advancement refusal"]
+    fn genuine_pending_entry_refuses_episode_and_old_fast_actor_before_automatic_work() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state();
+            state.active_player = actor;
+            state.priority_player = actor;
+            let banner = put(&mut state, actor, "Heraldic Banner", Zone::Hand);
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(banner, Zone::Battlefield),
+            );
+            crate::heraldic_banner_v1::validate_state(&state).unwrap();
+            assert!(crate::linked_aura_operation_v1::has_banner_pending(&state));
+            let before = serde_json::to_vec(&state).unwrap();
+            let mut episode = RlEpisodeSessionV1::reset_with_limits(23, 91, 10_000, 10_000);
+            episode.state = state.clone();
+            episode.terminal = None;
+            episode.advance_to_decision_or_terminal_profiled(None);
+            assert!(episode.terminal.is_some() && episode.current.is_none());
+            assert_eq!(serde_json::to_vec(&episode.state).unwrap(), before);
+            for mode in [
+                FlatActionContractModeV1::V1,
+                FlatActionContractModeV1::HumanV8,
+            ] {
+                let mut old = FastActorSessionV1::reset_with_limits(23, 91, 10_000, 10_000);
+                old.state = state.clone();
+                old.flat_action_contract_mode = mode;
+                old.terminal = None;
+                old.advance_to_decision_or_terminal();
+                assert!(old.terminal.is_some() && old.current.is_none());
+                assert_eq!(serde_json::to_vec(&old.state).unwrap(), before);
+            }
         }
     }
 }

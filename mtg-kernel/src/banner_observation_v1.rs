@@ -42,6 +42,7 @@ pub struct BannerObservationV1 {
     pub attacked_this_turn: [bool; 2],
     pub entry_choice: Option<EntryChoiceV36>,
     pub chosen_colors: Vec<ChosenColorV36>,
+    pub prior_entry_colors: Vec<PriorEntryColorV36>,
     pub roots: Vec<RootV1>,
     pub projection_sha256: String,
 }
@@ -142,6 +143,15 @@ pub struct EntryChoiceV36 {
     pub colors: [crate::mana::ManaColor; 5],
     pub printed_card_db_id: u16,
 }
+/// Already announced answers from the current pre-entry operation, in APNAP answer order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PriorEntryColorV36 {
+    pub entry_ordinal: u32,
+    pub chooser: PlayerSeatV1,
+    pub printed_card_db_id: u16,
+    pub chosen_color: crate::mana::ManaColor,
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChosenColorV36 {
@@ -222,6 +232,76 @@ fn entry_choice(state: &GameState) -> Result<Option<EntryChoiceV36>, RlContractE
         printed_card_db_id: choice.card_def,
     }))
 }
+fn prior_entry_colors(state: &GameState) -> Result<Vec<PriorEntryColorV36>, RlContractError> {
+    use crate::event::CommittedEvent;
+    use crate::linked_aura_operation_v1::GeneralAnswerV36;
+    let Some(pending) = state
+        .engine
+        .linked_aura_operation_v1
+        .pending_general_v36
+        .as_ref()
+    else {
+        return Ok(Vec::new());
+    };
+    // Whole-checkpoint replay already authenticates the original operation and
+    // ordered answers. Also bind each exported answer to its committed capture.
+    pending
+        .answers
+        .iter()
+        .map(|answer| {
+            let GeneralAnswerV36::Color { choice, color } = answer else {
+                return Err(RlContractError(
+                    "Banner V36 refuses foreign prior owner answers".into(),
+                ));
+            };
+            let captures = state
+                .engine
+                .event_history
+                .iter()
+                .enumerate()
+                .filter_map(|(index, event)| match event {
+                    CommittedEvent::BannerEntryColorCapturedV1 {
+                        operation,
+                        choice: captured,
+                    } if *operation == pending.operation_history_index
+                        && captured.as_ref() == choice =>
+                    {
+                        Some(index)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let [capture] = captures.as_slice() else {
+                return Err(RlContractError(
+                    "Banner prior answer lost unique original capture".into(),
+                ));
+            };
+            let answers = state
+                .engine
+                .event_history
+                .iter()
+                .enumerate()
+                .filter(|(index, event)| {
+                    *index > *capture
+                        && matches!(event, CommittedEvent::BannerEntryColorChosenV1 {
+                capture: original, color: chosen
+            } if *original as usize == *capture && chosen == color)
+                })
+                .count();
+            if answers != 1 || !crate::heraldic_banner_v1::COLORS.contains(color) {
+                return Err(RlContractError(
+                    "Banner prior answer lost actual announced color".into(),
+                ));
+            }
+            Ok(PriorEntryColorV36 {
+                entry_ordinal: choice.ordinal,
+                chooser: choice.controller.into(),
+                printed_card_db_id: choice.card_def,
+                chosen_color: *color,
+            })
+        })
+        .collect()
+}
 fn chosen_colors(state: &GameState) -> Result<Vec<ChosenColorV36>, RlContractError> {
     state
         .objects
@@ -286,6 +366,7 @@ pub fn observe_v1(
         ],
         entry_choice: entry_choice(state)?,
         chosen_colors: chosen_colors(state)?,
+        prior_entry_colors: prior_entry_colors(state)?,
         roots: roots()?,
         projection_sha256: String::new(),
     };
@@ -309,7 +390,11 @@ mod tests {
             assert_eq!(new.known_hand_cards, old.known_hand_cards);
             assert_eq!(new.known_face_down_cards, old.known_face_down_cards);
             assert_eq!(new.extensions, old.extensions);
-            assert!(new.entry_choice.is_none() && new.chosen_colors.is_empty());
+            assert!(
+                new.entry_choice.is_none()
+                    && new.chosen_colors.is_empty()
+                    && new.prior_entry_colors.is_empty()
+            );
             new.validate_artifact().unwrap();
             assert_eq!(serde_json::to_vec(&state).unwrap(), bytes);
         }

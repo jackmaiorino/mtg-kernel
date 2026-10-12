@@ -82,7 +82,9 @@ fn ordinary_menu_state_privacy_and_real_submit_retry_parity_both_seats() {
         assert_eq!(prompt.actions, old.actions);
         assert_eq!(prompt.state.public, old.state.public);
         assert_eq!(prompt.state.extensions.predecessor, old.state.extensions);
-        assert!(prompt.state.extensions.death_replacements.is_empty());
+        assert!(prompt.state.extensions.entry_choice.is_none());
+        assert!(prompt.state.extensions.chosen_colors.is_empty());
+        assert!(prompt.state.extensions.prior_entry_colors.is_empty());
         assert_eq!(
             projector.project_current(&session, current).unwrap(),
             prompt
@@ -316,11 +318,12 @@ mod future_printed {
                 .unwrap();
             for _ in 0..12 {
                 let current = expected(&session);
-                if session
-                    .public_observation(current)
-                    .unwrap()
-                    .entry_choice
-                    .is_some()
+                if current.acting_player == actor.into()
+                    && session
+                        .public_observation(current)
+                        .unwrap()
+                        .entry_choice
+                        .is_some()
                 {
                     break;
                 }
@@ -469,6 +472,87 @@ mod future_printed {
                     .unwrap();
                 assert_safe(&serde_json::to_value(&prompt).unwrap());
                 prompts.push(prompt);
+            }
+            assert_eq!(prompts[0], prompts[1]);
+        }
+    }
+    #[test]
+    #[ignore = "requires genuine Heraldic Banner registration; APNAP prior public colors and owning V36"]
+    fn later_apnap_owner_sees_announced_colors_before_entry_without_other_hand_identity_both_seats()
+    {
+        use crate::engine::{self, Action};
+        use crate::event::ProposedEvent;
+        use crate::mana::ManaColor;
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut prompts = Vec::new();
+            for hidden in ["Lightning Bolt", "Island"] {
+                let mut core = ready(actor);
+                put(&mut core, actor, hidden, Zone::Hand);
+                let other = put(&mut core, actor.opponent(), "Heraldic Banner", Zone::Hand);
+                let own = put(&mut core, actor, "Heraldic Banner", Zone::Hand);
+                crate::event::propose_and_commit_batch(
+                    &mut core,
+                    vec![
+                        ProposedEvent::zone_change(other, Zone::Battlefield),
+                        ProposedEvent::zone_change(own, Zone::Battlefield),
+                    ],
+                );
+                assert!(matches!(engine::advance_until_decision(&mut core),
+                    engine::Decision::ChooseEntryColorV36 { player, entry_ordinal: 1, .. } if player == actor));
+                engine::step(&mut core, Action::ChooseEffectOption(4)).unwrap();
+                assert!(matches!(engine::advance_until_decision(&mut core),
+                    engine::Decision::ChooseEntryColorV36 { player, entry_ordinal: 0, .. } if player == actor.opponent()));
+                for id in [own, other] {
+                    assert_eq!(core.objects.get(id).zone, Zone::Hand);
+                }
+                let mut session = owned(core);
+                let mut projector = HumanBannerProjectorV36::new(actor.opponent().into());
+                let prompt = projector
+                    .project_current(&session, expected(&session))
+                    .unwrap();
+                assert_safe(&serde_json::to_value(&prompt).unwrap());
+                let prior = &prompt.state.extensions.prior_entry_colors;
+                assert_eq!(prior.len(), 1);
+                assert_eq!(prior[0].handle, "entry2");
+                assert_eq!(prior[0].chooser, actor.into());
+                assert_eq!(prior[0].printed_name, "Heraldic Banner");
+                assert_eq!(prior[0].chosen_color, ManaColor::G);
+                assert_eq!(
+                    prompt
+                        .state
+                        .extensions
+                        .entry_choice
+                        .as_ref()
+                        .unwrap()
+                        .handle,
+                    "entry1"
+                );
+                assert!(prompt.state.extensions.chosen_colors.is_empty());
+                prompts.push(prompt.clone());
+                let snapshot = session.snapshot_v36();
+                session.restore_v36(&snapshot).unwrap();
+                assert!(projector
+                    .submit(&mut session, request(&prompt, "Choose red"))
+                    .is_err());
+                let refreshed = projector
+                    .project_current(&session, expected(&session))
+                    .unwrap();
+                assert_eq!(refreshed.state.extensions.prior_entry_colors, *prior);
+                projector
+                    .submit(&mut session, request(&refreshed, "Choose red"))
+                    .unwrap();
+                let state = session.inner.banner_fixture_state_mut();
+                assert_eq!(
+                    crate::heraldic_banner_v1::authenticated_color(state, own).unwrap(),
+                    ManaColor::G
+                );
+                assert_eq!(
+                    crate::heraldic_banner_v1::authenticated_color(state, other).unwrap(),
+                    ManaColor::R
+                );
+                for id in [own, other] {
+                    assert_eq!(state.objects.get(id).zone, Zone::Battlefield);
+                }
             }
             assert_eq!(prompts[0], prompts[1]);
         }
