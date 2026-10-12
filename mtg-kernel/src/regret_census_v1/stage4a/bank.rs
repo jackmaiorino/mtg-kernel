@@ -291,6 +291,7 @@ pub(super) fn guide_ctx<'a>(
         limits,
         urgency: Some(URGENCY),
         key_mode: super::canon2::KeyMode::Legacy,
+        interchange: false,
     })
 }
 

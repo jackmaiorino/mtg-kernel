@@ -422,6 +422,9 @@ pub(crate) struct Node {
     pub(crate) n: Vec<u64>,
     pub(crate) wins: Vec<u64>,
     pub(crate) depth: u32,
+    /// Edges merged into an interchangeable sibling (`interchange.rs`), never
+    /// selected or executed; empty when merging is off.
+    pub(crate) skip: Vec<bool>,
 }
 
 pub(crate) fn permutation(len: usize, seed: u64) -> Vec<usize> {
@@ -473,7 +476,12 @@ impl Node {
             n: vec![0; k],
             wins: vec![0; k],
             depth,
+            skip: Vec::new(),
         }
+    }
+
+    fn skipped(&self, a: usize) -> bool {
+        self.skip.get(a).copied().unwrap_or(false)
     }
 
     /// Selection rule: the first untried action in the seeded order; once
@@ -492,7 +500,7 @@ impl Node {
             let ln = (self.visits.max(2) as f64).ln();
             let mut best = self.perm[0];
             let mut best_v = f64::NEG_INFINITY;
-            for &a in &self.perm {
+            for &a in self.perm.iter().filter(|&&a| !self.skipped(a)) {
                 let v = if self.n[a] == 0 {
                     u
                 } else {
@@ -506,13 +514,17 @@ impl Node {
             }
             return best;
         }
-        if let Some(&a) = self.perm.iter().find(|&&a| self.n[a] == 0) {
+        if let Some(&a) = self
+            .perm
+            .iter()
+            .find(|&&a| self.n[a] == 0 && !self.skipped(a))
+        {
             return a;
         }
         let ln = (self.visits.max(2) as f64).ln();
         let mut best = self.perm[0];
         let mut best_v = f64::NEG_INFINITY;
-        for &a in &self.perm {
+        for &a in self.perm.iter().filter(|&&a| !self.skipped(a)) {
             let n = self.n[a] as f64;
             let v = self.wins[a] as f64 / n + (UCB_C2 * ln / n).sqrt();
             if v > best_v {
@@ -528,7 +540,7 @@ impl Node {
     pub(crate) fn frozen_choice(&self) -> Option<usize> {
         let mut best: Option<(usize, f64)> = None;
         for &a in &self.perm {
-            if self.n[a] < MIN_EXEC_BACKUPS {
+            if self.n[a] < MIN_EXEC_BACKUPS || self.skipped(a) {
                 continue;
             }
             let m = self.wins[a] as f64 / self.n[a] as f64;
@@ -713,6 +725,32 @@ mod tests {
         let a = d.select();
         visit(&mut d, a, true);
         assert_ne!(d.select(), a, "baseline tries every action first");
+    }
+
+    /// Merged edges (`interchange.rs`) are never tried, selected or executed,
+    /// under either selection rule; with no merges nothing changes.
+    #[test]
+    fn skipped_edges_are_never_selected_or_executed() {
+        for u in [None, Some(1.5)] {
+            let mut n = node(4);
+            n.skip = vec![false, true, false, true];
+            for _ in 0..200 {
+                let a = n.select_with(u);
+                assert!(!n.skip[a], "{a}");
+                visit(&mut n, a, a == 2);
+            }
+            assert_eq!(n.n[1] + n.n[3], 0);
+            assert_eq!(n.frozen_choice(), Some(2));
+            n.n[1] = 50;
+            n.wins[1] = 50;
+            assert_eq!(n.frozen_choice(), Some(2), "a skipped edge never executes");
+        }
+        let mut plain = node(3);
+        let order = plain.perm.clone();
+        for &a in &order {
+            assert_eq!(plain.select(), a);
+            visit(&mut plain, a, false);
+        }
     }
 
     #[test]

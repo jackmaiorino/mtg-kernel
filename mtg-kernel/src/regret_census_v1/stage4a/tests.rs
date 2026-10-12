@@ -396,6 +396,7 @@ fn small_root_package_is_deterministic_and_within_ceilings() {
             },
             urgency: None,
             key_mode: super::canon2::KeyMode::Legacy,
+            interchange: false,
         };
         let (e, tree) = roles.select_e(&ctx);
         assert!(e.transitions <= 6_000);
@@ -936,6 +937,7 @@ fn diagnostic_trace_is_passive_and_reconstructs_backups() {
             },
             urgency: None,
             key_mode: super::canon2::KeyMode::Legacy,
+            interchange: false,
         };
         let mut trace = traced.then(diag::Trace::default);
         let (e, tree) = roles.select_e_traced(&ctx, trace.as_mut());
@@ -1497,4 +1499,107 @@ fn resolution_boundary_is_refused_when_any_card_reads_graveyard_order() {
     ];
     let (menus, _) = scripted_cast(RuntimeRulesV1::default(), "Balustrade Spy", &lib);
     assert!(order_menus(&menus) >= 3, "{menus:?}");
+}
+
+/// Engine check of interchangeable-choice merging (`interchange.rs`) on
+/// fixture games over the nine decks: every merged pair of candidates leads to
+/// a next decision whose acting view and menu are the same up to exchanging
+/// the two copies (or to the same terminal). Also reports how common merging
+/// is, overall and at Spy decisions.
+#[test]
+fn interchangeable_choices_lead_to_the_same_next_view() {
+    use crate::rl_session::FastActorResponseV1 as R;
+    let cfg = test_cfg();
+    let spy = spy_index();
+    // [all, spy]: decisions, with a merge, candidates, orbits.
+    let mut counts = [[0u64; 4]; 2];
+    let mut checked = 0u64;
+    let mut kinds: BTreeMap<String, u64> = BTreeMap::new();
+    for game in 0..18u64 {
+        let setup = game_setup(&cfg, 1, game * 5);
+        let spy_seat = setup.decks.iter().position(|&d| d == spy);
+        each_decision(game * 5, |s, d| {
+            if d.legal_action_count < 2 {
+                return;
+            }
+            let (obs, menu) = tree::raw_decision(s, *d).unwrap();
+            let (obs, menu) = tree::prepare(obs, menu);
+            let known = interchange::opponent_known(s, play::acting(d));
+            let (ids, merges) = interchange::orbits(&obs, &menu, &known);
+            let mut distinct = ids.clone();
+            distinct.sort_unstable();
+            distinct.dedup();
+            let at_spy = spy_seat == Some(play::acting(d).index());
+            for (k, on) in [(0, true), (1, at_spy)] {
+                if on {
+                    counts[k][0] += 1;
+                    counts[k][1] += u64::from(distinct.len() < ids.len());
+                    counts[k][2] += ids.len() as u64;
+                    counts[k][3] += distinct.len() as u64;
+                }
+            }
+            for m in &merges {
+                *kinds
+                    .entry(menu[m.a]["action_kind"].as_str().unwrap_or("?").to_owned())
+                    .or_default() += 1;
+                let next = |i: usize| {
+                    let mut c = s.clone();
+                    let r = c.step(d.episode_id, d.step, i as u32).unwrap();
+                    (c, r)
+                };
+                let ((ca, ra), (cb, rb)) = (next(m.a), next(m.b));
+                match (ra, rb) {
+                    (R::Decision(da), R::Decision(db)) => {
+                        assert_eq!(da.acting_player, db.acting_player);
+                        assert_eq!(da.legal_action_count, db.legal_action_count);
+                        let (oa, ma) = tree::raw_decision(&ca, da).unwrap();
+                        let (oa, ma) = tree::prepare(oa, ma);
+                        let (ob, mb) = tree::raw_decision(&cb, db).unwrap();
+                        let (ob, mb) = tree::prepare(ob, mb);
+                        if std::env::var("INTERCHANGE_DEBUG").is_ok()
+                            && !interchange::same_up_to_exchange((&oa, &ma), (&ob, &mb), m.x, m.y)
+                        {
+                            eprintln!("A: {}\nB: {}\nknown now: {}\nhand now: {}\nsurface: {}\ndecision kinds: {:?} {:?} {:?}",
+                                menu[m.a], menu[m.b], obs["known_hand_cards"], obs["own_hand"],
+                                obs["projection"]["surface_context"], d.decision_kind, da.decision_kind, db.decision_kind);
+                            eprintln!(
+                                "A next surface: {}\nB next surface: {}",
+                                oa["projection"]["surface_context"],
+                                ob["projection"]["surface_context"]
+                            );
+                        }
+                        assert!(
+                            interchange::same_up_to_exchange((&oa, &ma), (&ob, &mb), m.x, m.y),
+                            "game {game} step {}: merged {m:?} diverged",
+                            d.step
+                        );
+                    }
+                    (R::Terminal(ta), R::Terminal(tb)) => {
+                        assert_eq!(
+                            format!("{:?}", ta.terminal_outcome),
+                            format!("{:?}", tb.terminal_outcome)
+                        );
+                    }
+                    other => panic!("game {game}: merged {m:?} diverged: {other:?}"),
+                }
+                checked += 1;
+            }
+        });
+    }
+    eprintln!(
+        "interchange: all decisions {} with merge {} candidates {} orbits {}; spy decisions {} with merge {} candidates {} orbits {}; checked pairs {checked}; kinds {kinds:?}",
+        counts[0][0], counts[0][1], counts[0][2], counts[0][3],
+        counts[1][0], counts[1][1], counts[1][2], counts[1][3]
+    );
+    assert!(checked >= 20, "{checked}");
+}
+
+#[test]
+fn interchange_setting_is_off_unless_set_to_one() {
+    use std::env::VarError;
+    assert_eq!(parse_interchange(Err(VarError::NotPresent)), Ok(false));
+    assert_eq!(parse_interchange(Ok("0".into())), Ok(false));
+    assert_eq!(parse_interchange(Ok("1".into())), Ok(true));
+    assert!(parse_interchange(Ok("yes".into())).is_err());
+    assert!(parse_interchange(Ok(String::new())).is_err());
 }

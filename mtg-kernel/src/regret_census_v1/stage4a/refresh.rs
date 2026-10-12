@@ -42,6 +42,8 @@ use std::time::Instant;
 pub(super) const TOTAL_BUDGET: u64 = 512_000;
 pub(super) const ANCHOR_BUDGET: u64 = 128_000;
 pub(super) const REFRESH_BUDGET: u64 = 64_000;
+/// Row label of the opt-in interchangeable-choice merging (`interchange.rs`).
+pub(super) const INTERCHANGE_RULE: &str = "interchange-orbit-v1";
 
 /// One arm's search allocation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,12 +118,16 @@ pub(super) struct GuideRun {
     /// choice) rather than from a bank anchor.
     pub(super) opening: bool,
     pub(super) mode: KeyMode,
+    /// Merge interchangeable choices (`interchange.rs`) in every search and
+    /// in the cursor that walks its tree.
+    pub(super) interchange: bool,
 }
 
 impl GuideRun {
     pub(super) const ANCHOR_LEGACY: Self = Self {
         opening: false,
         mode: KeyMode::Legacy,
+        interchange: false,
     };
 }
 
@@ -161,10 +167,10 @@ struct Hit {
 }
 
 impl Cursor {
-    fn new(tree: Tree, search: usize, mode: KeyMode) -> Self {
+    fn new(tree: Tree, search: usize, mode: KeyMode, interchange: bool) -> Self {
         Self {
             tree,
-            keyer: Keyer::new(mode, KeyStats::default()),
+            keyer: Keyer::new(mode, KeyStats::default()).with_interchange(interchange),
             advanced: false,
             matching: true,
             depth: 0,
@@ -227,6 +233,7 @@ struct Searches<'a> {
     used: u64,
     records: Vec<Value>,
     mode: KeyMode,
+    interchange: bool,
     keys: KeyStats,
 }
 
@@ -255,6 +262,7 @@ impl Searches<'_> {
         };
         let mut ctx = guide_ctx(s, self.focal, self.opp, &seeds, &self.sh.prior, limits)?;
         ctx.key_mode = self.mode;
+        ctx.interchange = self.interchange;
         let started = Instant::now();
         let mut diag = super::arms::SearchDiag::default();
         let (sel, tree) = self
@@ -299,6 +307,7 @@ fn guide(
         used: 0,
         records: Vec::new(),
         mode: run.mode,
+        interchange: run.interchange,
         keys: KeyStats::default(),
     };
     let (first, kept) = if run.opening {
@@ -327,7 +336,11 @@ fn guide(
             },
         }
     };
-    let mut cursor = Cursor::new(first, 0, run.mode);
+    if run.interchange && !run.opening {
+        // A bank anchor tree was built without merging.
+        return Err("interchangeable-choice merging runs from openings only".into());
+    }
+    let mut cursor = Cursor::new(first, 0, run.mode, run.interchange);
     let mut cursor_keys = KeyStats::default();
     let mut suffix = run.opening.then(|| super::labels::Suffix::new(true));
     live_focal.reset_sampling_v1(src.guide_policy_seeds);
@@ -357,7 +370,12 @@ fn guide(
                 match searches.run(&s, budget, d.step, reason)? {
                     Some(tree) => {
                         cursor_keys.merge(&cursor.keyer.stats);
-                        cursor = Cursor::new(tree, searches.records.len() - 1, run.mode);
+                        cursor = Cursor::new(
+                            tree,
+                            searches.records.len() - 1,
+                            run.mode,
+                            run.interchange,
+                        );
                         refreshed = Some(reason);
                         (lookup, hit) = cursor.lookup(&s, d)?;
                     }
@@ -379,6 +397,12 @@ fn guide(
                     )
                 }
                 _ => (act_plain(live_focal, &s, &d, &mut c)?, "plain"),
+            };
+            // Along a matching history an interchangeable copy plays as its
+            // representative, so the cursor stays on the stored edge.
+            let a = match &hit {
+                Some(h) if cursor.matching => cursor.keyer.representative(&h.step, a),
+                _ => a,
             };
             if let Some(h) = hit {
                 if cursor.matching {
@@ -454,6 +478,7 @@ pub(super) fn budget_case(
     src: &SourceSpec,
     total: u64,
     mode: KeyMode,
+    interchange: bool,
     binding: &str,
 ) -> Result<Value, String> {
     let started = Instant::now();
@@ -484,16 +509,20 @@ pub(super) fn budget_case(
         GuideRun {
             opening: true,
             mode,
+            interchange,
         },
     )?;
-    Ok(
-        json!({"kind":"budget_game","schema":"search-total-budget-v1/game","id":src.id,
+    let mut row = json!({"kind":"budget_game","schema":"search-total-budget-v1/game","id":src.id,
         "lineage":sh.spec.lineage,"own":src.own,"other":src.other,"seat":src.seat,"opp":src.opp,
         "seed":src.seed,"starting_player":src.starting_player,"live_policy_seeds":src.guide_policy_seeds,
         "search_root":src.search_root,"bank_binding_sha256":binding,
         "allocation":{"initial":allocation.anchor,"refresh":allocation.refresh,"total":allocation.total},
-        "game":rec,"wall":started.elapsed().as_secs_f64()}),
-    )
+        "game":rec,"wall":started.elapsed().as_secs_f64()});
+    // Present only when merging was on, so default rows are unchanged.
+    if interchange {
+        row["interchange"] = json!(INTERCHANGE_RULE);
+    }
+    Ok(row)
 }
 
 /// Replay check of one recorded budget game (analysis only): rebuilds the

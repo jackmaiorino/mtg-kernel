@@ -177,7 +177,7 @@ pub(crate) fn swap_handles(v: &mut Value, x: u64, y: u64) {
 }
 
 /// Unordered lists sorted by full JSON (multiset comparison).
-fn as_multisets(v: &Value) -> Value {
+pub(super) fn as_multisets(v: &Value) -> Value {
     let mut x = v.clone();
     super::tree::for_unordered_lists(&mut x, &mut |a| {
         a.sort_by_cached_key(|e| e.to_string());
@@ -520,6 +520,12 @@ pub(crate) struct KeyStats {
     pub(crate) canonicalizations_for_ties: u64,
     pub(crate) fallbacks: BTreeMap<&'static str, u64>,
     pub(crate) seconds: f64,
+    /// Interchangeable-choice merging was on (`interchange.rs`).
+    pub(crate) interchange: bool,
+    /// Frames where at least two live candidates merged.
+    pub(crate) merged_frames: u64,
+    /// Live candidates merged away (menu size minus orbits), summed.
+    pub(crate) merged_candidates: u64,
 }
 
 impl KeyStats {
@@ -532,13 +538,22 @@ impl KeyStats {
             *self.fallbacks.entry(k).or_default() += v;
         }
         self.seconds += o.seconds;
+        self.interchange |= o.interchange;
+        self.merged_frames += o.merged_frames;
+        self.merged_candidates += o.merged_candidates;
     }
 
     pub(crate) fn json(&self) -> Value {
-        serde_json::json!({"frames":self.frames,"frames_with_mattering_ties":self.frames_with_mattering_ties,
+        let mut v = serde_json::json!({"frames":self.frames,"frames_with_mattering_ties":self.frames_with_mattering_ties,
             "exact_resolved":self.exact_resolved,"canonicalizations_for_ties":self.canonicalizations_for_ties,
             "fallbacks":self.fallbacks,"fallback_total":self.fallbacks.values().sum::<u64>(),
-            "keying_seconds":self.seconds,"work_bound":TIE_WORK_BOUND})
+            "keying_seconds":self.seconds,"work_bound":TIE_WORK_BOUND});
+        // Present only when merging was on, so default rows are unchanged.
+        if self.interchange {
+            v["interchange"] = serde_json::json!({"frames_with_merges":self.merged_frames,
+                "merged_candidates":self.merged_candidates});
+        }
+        v
     }
 }
 
@@ -552,6 +567,8 @@ pub(crate) struct Step {
     menu: Vec<Value>,
     /// Members of classes this frame resolved by exchange.
     resolved: Vec<u64>,
+    /// Orbit id per live candidate when interchangeable choices merge.
+    orbits: Option<Vec<usize>>,
 }
 
 /// Keys along one path from the root; selection and frozen execution use it
@@ -563,6 +580,8 @@ pub(crate) struct Keyer<S: std::borrow::BorrowMut<KeyStats>> {
     frames: Vec<Frame>,
     /// Members of every class resolved by exchange earlier on this path.
     resolved: HashSet<u64>,
+    /// Merge interchangeable choices (`interchange.rs`); off by default.
+    interchange: bool,
     pub(crate) stats: S,
 }
 
@@ -574,8 +593,16 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
             repaired: ([0u8; 32], b"root".to_vec()),
             frames: Vec::new(),
             resolved: HashSet::new(),
+            interchange: false,
             stats,
         }
+    }
+
+    /// Turns interchangeable-choice merging on or off for this path.
+    pub(crate) fn with_interchange(mut self, on: bool) -> Self {
+        self.interchange = on;
+        self.stats.borrow_mut().interchange |= on;
+        self
     }
 
     pub(crate) fn step(
@@ -584,7 +611,12 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
         d: FastActorDecisionV1,
     ) -> Result<Step, PlayErr> {
         let (raw_obs, raw_menu) = raw_decision(s, d)?;
-        self.key_raw(raw_obs, raw_menu)
+        let known = if self.interchange {
+            super::interchange::opponent_known(s, super::play::acting(&d))
+        } else {
+            Vec::new()
+        };
+        self.key_raw_known(raw_obs, raw_menu, &known)
     }
 
     /// `step` on a raw actor-visible observation and menu.
@@ -593,8 +625,28 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
         raw_obs: Value,
         raw_menu: Vec<Value>,
     ) -> Result<Step, PlayErr> {
+        self.key_raw_known(raw_obs, raw_menu, &[])
+    }
+
+    /// `key_raw` with the handles the opponent knows (`interchange.rs`).
+    fn key_raw_known(
+        &mut self,
+        raw_obs: Value,
+        raw_menu: Vec<Value>,
+        known: &[u64],
+    ) -> Result<Step, PlayErr> {
         let t0 = Instant::now();
         let (obs, menu) = prepare(raw_obs, raw_menu);
+        let orbits = self.interchange.then(|| {
+            let (ids, _) = super::interchange::orbits(&obs, &menu, known);
+            let mut distinct = ids.clone();
+            distinct.sort_unstable();
+            distinct.dedup();
+            let merged = (ids.len() - distinct.len()) as u64;
+            self.stats.borrow_mut().merged_frames += u64::from(merged > 0);
+            self.stats.borrow_mut().merged_candidates += merged;
+            ids
+        });
         let (legacy, _) = canon_prepared(obs.clone(), menu.clone(), None)?;
         let legacy_key = child_key(&self.legacy.0, &self.legacy.1, &legacy);
         let step = if self.mode == KeyMode::Legacy {
@@ -606,6 +658,7 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                 obs,
                 menu,
                 resolved: Vec::new(),
+                orbits,
             }
         } else {
             let (view, tried, mattering) = repaired_view(
@@ -629,6 +682,7 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                         obs,
                         menu,
                         resolved: members,
+                        orbits,
                     }
                 }
                 Err(f) => {
@@ -646,6 +700,7 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                         obs,
                         menu,
                         resolved: Vec::new(),
+                        orbits,
                     }
                 }
             }
@@ -694,6 +749,39 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                 map_priority(&pr, &st.repaired, &st.legacy)
             }
         }
+    }
+
+    /// The representative of `live`'s orbit: the member with the least
+    /// storage canonical bytes (`live` itself when merging is off). It is a
+    /// property of the stored node, so every visit and execution agrees.
+    pub(crate) fn representative(&self, st: &Step, live: u32) -> u32 {
+        let Some(ids) = &st.orbits else {
+            return live;
+        };
+        let (_, _, _, cn) = self.storage(st);
+        let orbit = ids[live as usize];
+        (0..ids.len())
+            .filter(|&i| ids[i] == orbit)
+            .min_by(|&i, &j| cn.menu[i].cmp(&cn.menu[j]))
+            .map_or(live, |i| i as u32)
+    }
+
+    /// Storage edges that are not their orbit's representative (empty when
+    /// merging is off): a node never selects them.
+    pub(crate) fn skipped(&self, st: &Step) -> Vec<bool> {
+        let Some(ids) = &st.orbits else {
+            return Vec::new();
+        };
+        let (_, _, _, cn) = self.storage(st);
+        let mut skip = vec![false; cn.edges.len()];
+        for i in 0..ids.len() {
+            if self.representative(st, i as u32) as usize != i {
+                if let Some(e) = cn.edges.iter().position(|x| *x == cn.menu[i]) {
+                    skip[e] = true;
+                }
+            }
+        }
+        skip
     }
 
     /// Records the live action taken at this frame.
