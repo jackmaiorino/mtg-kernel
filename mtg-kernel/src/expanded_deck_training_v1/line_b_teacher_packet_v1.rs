@@ -361,6 +361,7 @@ pub(super) fn line_b_auxiliary_input_v1(
         return Ok(None);
     }
     Ok(Some(LineBAuxiliaryInputV1 {
+        scheduled_count: None,
         direction: packet.options.direction,
         coefficient: packet.options.coefficient,
         roots,
