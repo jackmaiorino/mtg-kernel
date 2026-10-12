@@ -180,7 +180,8 @@ impl SearchCapture {
         if let Some((key, edge)) = at {
             self.attempt(|this| {
             let id=*this.ids.get(key).ok_or("UCT choice node missing")?; let board=this.snapshot(s)?;
-            let v=json!({"node":id,"action":edge,"board":board,"expanded":src==SelSrc::Expand,"scores":std::mem::take(&mut this.scores)});
+            let step=match s.current_response() { FastActorResponseV1::Decision(d)=>d.step, _=>return Err("UCT choice is terminal".into()) };
+            let v=json!({"node":id,"action":edge,"board":board,"step":step,"expanded":src==SelSrc::Expand,"scores":std::mem::take(&mut this.scores)});
             this.charge(&v)?;this.current["choices"].as_array_mut().ok_or("UCT attempt missing")?.push(v);Ok(())
         });
         }
@@ -408,7 +409,7 @@ fn read(input: &Input) -> Result<Vec<u8>, String> {
     }
     Ok(bytes)
 }
-pub(super) fn run(path: &Path) -> Result<(), String> {
+pub(crate) fn run(path: &Path) -> Result<(), String> {
     use super::{bank, play};
     let config: Config = serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
