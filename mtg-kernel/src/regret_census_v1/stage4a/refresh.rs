@@ -28,10 +28,11 @@ use super::bank::{
     act_plain, bank_roles, err, guide_ctx, guide_record, outcome, plain_logged, source_session,
     walk, BankShared, SourceSpec,
 };
+use super::canon2::{KeyMode, KeyStats, Keyer, Step as KeyStep};
 use super::labels::{classify, spy_defs};
 use super::play::{acting, apply, decision, Counters, Meter};
 use super::seeds::RootSeeds;
-use super::tree::{canon, child_key, live_index, Found, Key, Tree, MAX_DEPTH};
+use super::tree::{live_index, Found, Tree, MAX_DEPTH};
 use crate::ids::PlayerId;
 use crate::rl_session::FastActorSessionV1;
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
@@ -108,6 +109,22 @@ pub(super) enum Step {
     Plain,
 }
 
+/// How a guide starts and which keys it uses.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct GuideRun {
+    /// From an ordinary opening (initial search at the first eligible focal
+    /// choice) rather than from a bank anchor.
+    pub(super) opening: bool,
+    pub(super) mode: KeyMode,
+}
+
+impl GuideRun {
+    pub(super) const ANCHOR_LEGACY: Self = Self {
+        opening: false,
+        mode: KeyMode::Legacy,
+    };
+}
+
 pub(super) fn rule(
     lookup: Lookup,
     allocation: Allocation,
@@ -124,21 +141,31 @@ pub(super) fn rule(
     }
 }
 
-/// The current tree and where the actual history stands in it.
+/// The current tree and where the actual history stands in it; keys use the
+/// same version and mapping as the search that built the tree.
 struct Cursor {
     tree: Tree,
-    parent: (Key, Vec<u8>),
+    keyer: Keyer<KeyStats>,
+    advanced: bool,
     matching: bool,
     depth: u32,
     last_phys: Option<u64>,
     search: usize,
 }
 
+/// A looked-up decision: the keyed step and, on a hit, the supported edge's
+/// prior natural backups.
+struct Hit {
+    step: KeyStep,
+    backups: Option<u64>,
+}
+
 impl Cursor {
-    fn new(tree: Tree, search: usize) -> Self {
+    fn new(tree: Tree, search: usize, mode: KeyMode) -> Self {
         Self {
             tree,
-            parent: ([0u8; 32], b"root".to_vec()),
+            keyer: Keyer::new(mode, KeyStats::default()),
+            advanced: false,
             matching: true,
             depth: 0,
             last_phys: None,
@@ -146,13 +173,12 @@ impl Cursor {
         }
     }
 
-    /// Looks up the current decision; on a hit returns the live action of
-    /// the supported edge (and advances on it once executed).
+    /// Looks up the current decision.
     fn lookup(
         &mut self,
         s: &FastActorSessionV1,
         d: crate::rl_session::FastActorDecisionV1,
-    ) -> Result<(Lookup, Option<(Key, super::tree::Canon)>), String> {
+    ) -> Result<(Lookup, Option<Hit>), String> {
         if self.last_phys != Some(d.physical_decision_id) {
             self.depth += 1;
             self.last_phys = Some(d.physical_decision_id);
@@ -163,28 +189,31 @@ impl Cursor {
         if self.depth > MAX_DEPTH {
             return Ok((Lookup::DepthLimit, None));
         }
-        let cn = canon(s, d).map_err(err)?;
-        let key = child_key(&self.parent.0, &self.parent.1, &cn);
-        let found = match self
-            .tree
-            .find(&key, &self.parent.0, &self.parent.1, &cn)
-            .map_err(err)?
-        {
+        let st = self.keyer.step(s, d).map_err(err)?;
+        let (key, pk, pe, cn) = self.keyer.storage(&st);
+        let (found, backups) = match self.tree.find(&key, &pk, &pe, cn).map_err(err)? {
             Found::Hit(node) => match node.frozen_choice() {
-                Some(e) => Lookup::Supported(e),
-                None => Lookup::Unsupported,
+                Some(e) => (Lookup::Supported(e), Some(node.n[e])),
+                None => (Lookup::Unsupported, None),
             },
-            Found::Miss => Lookup::Miss,
+            Found::Miss => (Lookup::Miss, None),
         };
         if found == Lookup::Miss {
             self.matching = false;
         }
-        Ok((found, Some((key, cn))))
+        Ok((found, Some(Hit { step: st, backups })))
+    }
+
+    /// The live candidate of storage edge `e` at a looked-up decision.
+    fn live(&self, hit: &Hit, e: usize) -> Result<u32, String> {
+        let (_, _, _, cn) = self.keyer.storage(&hit.step);
+        live_index(cn, &cn.edges[e]).map_err(err)
     }
 
     /// Advances along the chosen live action (a matched node, any chooser).
-    fn advance(&mut self, key: Key, cn: &super::tree::Canon, live: u32) {
-        self.parent = (key, cn.menu[live as usize].clone());
+    fn advance(&mut self, hit: Hit, live: u32) {
+        self.keyer.advance(hit.step, live);
+        self.advanced = true;
     }
 }
 
@@ -197,6 +226,8 @@ struct Searches<'a> {
     lineage: String,
     used: u64,
     records: Vec<Value>,
+    mode: KeyMode,
+    keys: KeyStats,
 }
 
 impl Searches<'_> {
@@ -222,15 +253,21 @@ impl Searches<'_> {
             select_cap: budget,
             ..self.sh.limits
         };
-        let ctx = guide_ctx(s, self.focal, self.opp, &seeds, &self.sh.prior, limits)?;
+        let mut ctx = guide_ctx(s, self.focal, self.opp, &seeds, &self.sh.prior, limits)?;
+        ctx.key_mode = self.mode;
         let started = Instant::now();
-        let (sel, tree) = self.roles.select_e(&ctx);
+        let mut diag = super::arms::SearchDiag::default();
+        let (sel, tree) = self
+            .roles
+            .select_e_diagnosed(&ctx, None, 1, None, None, Some(&mut diag));
+        self.keys.merge(&diag.keys);
         self.used += sel.transitions;
         let failed = sel.incomplete || !sel.faults.is_empty();
         self.records.push(json!({"search":k,"step":at_step,"reason":reason,"budget":budget,
+            "root":super::bank::decision_identity(s)?,
             "transitions":sel.transitions,"completed_natural":sel.completed,"attempted":sel.attempted,
             "nonnatural":sel.nonnatural,"incomplete":sel.incomplete,"faults":sel.faults,
-            "tree":sel.extra["tree"].clone(),"wall":started.elapsed().as_secs_f64()}));
+            "tree":sel.extra["tree"].clone(),"keys":diag.keys.json(),"wall":started.elapsed().as_secs_f64()}));
         Ok((!failed).then_some(tree))
     }
 }
@@ -247,6 +284,7 @@ fn guide(
     opp: usize,
     allocation: Allocation,
     anchor_tree: Option<(Tree, Value)>,
+    run: GuideRun,
 ) -> Result<(Value, Option<Tree>), String> {
     let started = Instant::now();
     let focal = PlayerId(src.seat);
@@ -260,28 +298,38 @@ fn guide(
         lineage: sh.spec.lineage.clone(),
         used: 0,
         records: Vec::new(),
+        mode: run.mode,
+        keys: KeyStats::default(),
     };
-    let anchor_step = decision(anchor).ok_or("anchor is terminal")?.step;
-    let (first, kept) = match anchor_tree {
-        Some((tree, record)) => {
-            searches.used = allocation.anchor;
-            searches.records.push(record);
-            (tree.clone(), None)
+    let (first, kept) = if run.opening {
+        // From an ordinary opening: the initial search waits for the first
+        // focal decision with two or more legal actions.
+        (Tree::default(), None)
+    } else {
+        let anchor_step = decision(anchor).ok_or("anchor is terminal")?.step;
+        match anchor_tree {
+            Some((tree, record)) => {
+                searches.used = allocation.anchor;
+                searches.records.push(record);
+                (tree.clone(), None)
+            }
+            None => match searches.run(anchor, allocation.anchor, anchor_step, "anchor")? {
+                Some(tree) => {
+                    let kept = (allocation == Allocation::R).then(|| tree.clone());
+                    (tree, kept)
+                }
+                None => {
+                    return Ok((
+                        json!({"valid":false,"invalid_reason":"failed search","searches":searches.records}),
+                        None,
+                    ))
+                }
+            },
         }
-        None => match searches.run(anchor, allocation.anchor, anchor_step, "anchor")? {
-            Some(tree) => {
-                let kept = (allocation == Allocation::R).then(|| tree.clone());
-                (tree, kept)
-            }
-            None => {
-                return Ok((
-                    json!({"valid":false,"invalid_reason":"failed search","searches":searches.records}),
-                    None,
-                ))
-            }
-        },
     };
-    let mut cursor = Cursor::new(first, 0);
+    let mut cursor = Cursor::new(first, 0, run.mode);
+    let mut cursor_keys = KeyStats::default();
+    let mut suffix = run.opening.then(|| super::labels::Suffix::new(true));
     live_focal.reset_sampling_v1(src.guide_policy_seeds);
     live_opp.reset_sampling_v1(src.guide_policy_seeds);
     let mut s = anchor.clone();
@@ -291,14 +339,26 @@ fn guide(
     let mut invalid: Option<String> = None;
     while let Some(d) = decision(&s) {
         let a = if acting(&d) == focal && d.legal_action_count >= 2 {
+            let remaining_before = allocation.total.saturating_sub(searches.used);
             let (mut lookup, mut hit) = cursor.lookup(&s, d)?;
             let mut refreshed = None;
-            let step = rule(lookup, allocation, searches.used, false);
+            let step = if run.opening && searches.records.is_empty() {
+                // The initial search: min(initial allocation, ceiling).
+                Step::Refresh(allocation.anchor.min(allocation.total))
+            } else {
+                rule(lookup, allocation, searches.used, false)
+            };
             if let Step::Refresh(budget) = step {
-                match searches.run(&s, budget, d.step, lookup.reason())? {
+                let reason = if searches.records.is_empty() {
+                    "initial"
+                } else {
+                    lookup.reason()
+                };
+                match searches.run(&s, budget, d.step, reason)? {
                     Some(tree) => {
-                        cursor = Cursor::new(tree, searches.records.len() - 1);
-                        refreshed = Some(lookup.reason());
+                        cursor_keys.merge(&cursor.keyer.stats);
+                        cursor = Cursor::new(tree, searches.records.len() - 1, run.mode);
+                        refreshed = Some(reason);
                         (lookup, hit) = cursor.lookup(&s, d)?;
                     }
                     None => {
@@ -307,37 +367,47 @@ fn guide(
                     }
                 }
             }
-            let new_root = cursor.depth == 1 && cursor.parent.0 == [0u8; 32];
+            let new_root = cursor.depth == 1 && !cursor.advanced;
+            let mut edge_backups = None;
             let (a, chooser) = match rule(lookup, allocation, searches.used, true) {
                 Step::Execute(e) => {
-                    let (_, cn) = hit.as_ref().expect("a supported lookup has a node");
+                    let h = hit.as_ref().expect("a supported lookup has a node");
+                    edge_backups = h.backups;
                     (
-                        live_index(cn, &cn.edges[e]).map_err(err)?,
+                        cursor.live(h, e)?,
                         if new_root { "new_root" } else { "reused" },
                     )
                 }
                 _ => (act_plain(live_focal, &s, &d, &mut c)?, "plain"),
             };
-            if let Some((key, cn)) = &hit {
+            if let Some(h) = hit {
                 if cursor.matching {
-                    cursor.advance(*key, cn, a);
+                    cursor.advance(h, a);
                 }
             }
             let sem = s.diagnostic_current_action_semantics().unwrap_or_default();
-            let (mut own_offered, mut dr_offered) = (false, false);
+            let (mut cast_offered, mut own_offered, mut dr_offered) = (false, false, false);
             for x in &sem {
-                let (_, own, dr) = classify(x, s.game_state(), focal, &defs);
+                let (cast, own, dr) = classify(x, s.game_state(), focal, &defs);
+                cast_offered |= cast;
                 own_offered |= own;
                 dr_offered |= dr;
             }
-            let (_, own_chosen, dr_chosen) =
+            let (cast_chosen, own_chosen, dr_chosen) =
                 sem.get(a as usize).map_or((false, false, false), |x| {
                     classify(x, s.game_state(), focal, &defs)
                 });
+            // The passive sequence tracker watches a chosen Spy cast or
+            // self-target through the next transition (the same rule as
+            // selection, frozen execution and label replay).
+            super::play::observe(suffix.as_mut(), &s, a, focal, &defs);
             decisions.push(
                 json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
                 "substep":d.substep_index,"k":d.legal_action_count,"chooser":chooser,
                 "search":cursor.search,"lookup":lookup.reason(),"refreshed":refreshed,
+                "edge_backups":edge_backups,"remaining_before":remaining_before,
+                "remaining_after":allocation.total.saturating_sub(searches.used),
+                "spy_cast_offered":cast_offered,"spy_cast_chosen":cast_chosen,
                 "spy_self_offered":own_offered,"spy_self_chosen":own_chosen,
                 "dr_giant_offered":dr_offered,"dr_giant_chosen":dr_chosen}),
             );
@@ -348,8 +418,9 @@ fn guide(
             act_plain(live_opp, &s, &d, &mut c)?
         };
         actions.push(a);
-        apply(&mut s, &d, a, &mut meter, focal, None, &defs).map_err(err)?;
+        apply(&mut s, &d, a, &mut meter, focal, suffix.as_mut(), &defs).map_err(err)?;
     }
+    cursor_keys.merge(&cursor.keyer.stats);
     let end = if invalid.is_some() {
         None
     } else {
@@ -365,9 +436,93 @@ fn guide(
         json!({"valid":valid,"invalid_reason":invalid.or_else(|| (!valid).then(|| "non-natural guide".to_owned())),
             "end":end,"actions":actions,"decisions":decisions,"learner_starts":starts.len(),
             "searches":searches.records,"transitions_used":searches.used,
+            "key_mode":run.mode.label(),"search_keys":searches.keys.json(),"execution_keys":cursor_keys.json(),
+            "sequence":suffix.as_ref().map(|x| x.json()),"real_transitions":meter.spent,
             "wall":started.elapsed().as_secs_f64()}),
         kept,
     ))
+}
+
+/// One total-budget arm-game from an ordinary opening (collab
+/// LANES/search-budget-discovery-plan-20261011): 128,000 initially at the
+/// first focal choice with two or more legal actions, then 64,000 per
+/// support-triggered refresh, within `total`. Seeds come from the case, never
+/// from the ceiling.
+pub(super) fn budget_case(
+    sh: &BankShared,
+    policy: &FrozenPlayPolicyV1,
+    src: &SourceSpec,
+    total: u64,
+    mode: KeyMode,
+    binding: &str,
+) -> Result<Value, String> {
+    let started = Instant::now();
+    let opp = sh
+        .labels
+        .iter()
+        .position(|l| *l == src.opp)
+        .ok_or("unknown guide opponent")?;
+    let mut roles = bank_roles(policy, &sh.opponents)?;
+    let mut live_focal = policy.fork_for_collection_v3()?;
+    let mut live_opp = sh.opponents[opp].fork_for_collection_v3()?;
+    let opening = source_session(&sh.spec, src)?;
+    let allocation = Allocation {
+        anchor: ANCHOR_BUDGET,
+        refresh: REFRESH_BUDGET,
+        total,
+    };
+    let (rec, _) = guide(
+        sh,
+        &mut roles,
+        &mut live_focal,
+        &mut live_opp,
+        &opening,
+        src,
+        opp,
+        allocation,
+        None,
+        GuideRun {
+            opening: true,
+            mode,
+        },
+    )?;
+    Ok(
+        json!({"kind":"budget_game","schema":"search-total-budget-v1/game","id":src.id,
+        "lineage":sh.spec.lineage,"own":src.own,"other":src.other,"seat":src.seat,"opp":src.opp,
+        "seed":src.seed,"starting_player":src.starting_player,"live_policy_seeds":src.guide_policy_seeds,
+        "search_root":src.search_root,"bank_binding_sha256":binding,
+        "allocation":{"initial":allocation.anchor,"refresh":allocation.refresh,"total":allocation.total},
+        "game":rec,"wall":started.elapsed().as_secs_f64()}),
+    )
+}
+
+/// Replay check of one recorded budget game (analysis only): rebuilds the
+/// case's opening, applies the recorded actions for both seats with the
+/// passive sequence tracker (the same observation rule as live play), and
+/// returns the replayed sequence labels and outcome. Nothing is searched.
+pub(super) fn budget_replay(
+    sh: &BankShared,
+    src: &SourceSpec,
+    actions: &[u32],
+) -> Result<Value, String> {
+    let focal = PlayerId(src.seat);
+    let defs = spy_defs();
+    let mut s = source_session(&sh.spec, src)?;
+    let mut suffix = super::labels::Suffix::new(true);
+    let mut meter = Meter::new(u64::MAX);
+    for &a in actions {
+        let d = decision(&s).ok_or("replay reached a terminal early")?;
+        if acting(&d) == focal && d.legal_action_count >= 2 {
+            super::play::observe(Some(&mut suffix), &s, a, focal, &defs);
+        }
+        apply(&mut s, &d, a, &mut meter, focal, Some(&mut suffix), &defs).map_err(err)?;
+    }
+    // Focal physical decision starts (with replay identities) for reset cuts.
+    let (starts, witnesses) = guide_record(&source_session(&sh.spec, src)?, focal, actions)?;
+    Ok(
+        json!({"id":src.id,"end":outcome(&s, focal),"sequence":suffix.json(),"actions":actions.len(),
+        "starts":starts,"witnesses":witnesses}),
+    )
 }
 
 /// Rebuilds the bank's anchor for `src` and plays the requested arms.
@@ -439,6 +594,7 @@ pub(super) fn source_arms(
             opp,
             Allocation::S512,
             None,
+            GuideRun::ANCHOR_LEGACY,
         )?;
         arms.insert("S512".into(), rec);
     } else {
@@ -452,6 +608,7 @@ pub(super) fn source_arms(
             opp,
             Allocation::R,
             None,
+            GuideRun::ANCHOR_LEGACY,
         )?;
         let anchor_record = rec["searches"][0].clone();
         arms.insert("R".into(), rec);
@@ -468,6 +625,7 @@ pub(super) fn source_arms(
                     opp,
                     Allocation::S128,
                     Some((tree, anchor_record)),
+                    GuideRun::ANCHOR_LEGACY,
                 )?
                 .0
             }
@@ -486,6 +644,7 @@ pub(super) fn source_arms(
 
 #[cfg(test)]
 mod tests {
+    use super::super::tree::canon;
     use super::*;
 
     #[test]
@@ -533,6 +692,26 @@ mod tests {
         );
         // A partial remainder is spent, never exceeded.
         assert_eq!(Allocation::R.next_refresh(500_000), 12_000);
+    }
+
+    /// A ceiling that is not a multiple of the refresh size ends with one
+    /// partial refresh that spends the remainder exactly.
+    #[test]
+    fn budget_ceiling_ends_with_a_partial_refresh() {
+        let a = Allocation {
+            anchor: ANCHOR_BUDGET,
+            refresh: REFRESH_BUDGET,
+            total: 300_000,
+        };
+        let mut used = ANCHOR_BUDGET;
+        let mut sizes = vec![];
+        while let Step::Refresh(b) = rule(Lookup::Miss, a, used, false) {
+            used += b;
+            sizes.push(b);
+        }
+        assert_eq!(sizes, [64_000, 64_000, 44_000]);
+        assert_eq!(used, 300_000);
+        assert_eq!(rule(Lookup::Miss, a, used, false), Step::Plain);
     }
 
     use super::super::world::{sample, DeckPrior};
