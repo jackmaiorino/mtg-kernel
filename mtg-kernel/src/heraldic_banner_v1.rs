@@ -86,7 +86,7 @@ pub(crate) fn choice(
     }))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnteredV1 {
     pub operation: u32,
@@ -230,6 +230,7 @@ fn validate_entered(state: &GameState, entered: &EnteredV1, at: usize) -> Result
                 ..
             },
         ) if *object == change.object
+            && *object == entered.object.source
             && choice.original.as_ref().is_some_and(|before| {
                 before.zone == *from
                     && before.owner == entered.object.owner
@@ -320,4 +321,13 @@ pub(crate) fn controlled_boost(state: &GameState, recipient: ObjectId) -> (i32, 
         toughness += i32::from(boost.toughness);
     }
     (power, toughness)
+}
+
+impl std::hash::Hash for ChoiceV1 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        use std::hash::Hash;
+        serde_json::to_vec(self)
+            .expect("actual Banner entry capture serializes")
+            .hash(state);
+    }
 }

@@ -1093,7 +1093,12 @@ pub(super) fn conflicts(
             | StromkirkCompletedV2 { .. } => true,
             // These are history-only owning records. Reject malformed log
             // transport too, rather than implying sampler admission.
-            CrystalPreventionBoundaryV1 { .. }
+            BannerEntryOperationStartedV1 { .. }
+            | BannerEntryColorCapturedV1 { .. }
+            | BannerEntryColorChosenV1 { .. }
+            | BannerEntryColorCommittedV1 { .. }
+            | BannerEntryOperationCompletedV1 { .. }
+            | CrystalPreventionBoundaryV1 { .. }
             | CrystalShieldOperationV1 { .. }
             | CrystalExecutionV1 { .. }
             | CrystalDamageOperationV3 { .. }

@@ -216,6 +216,17 @@ fn potential_operation(state: &GameState) -> bool {
     potentially_returns_aura(state) || crate::heraldic_banner_v1::potentially_enters(state)
 }
 
+fn operation_has_color_entry(state: &GameState, operation: &OperationV1) -> bool {
+    let selected = |event: &ProposedEvent| {
+        crate::heraldic_banner_v1::choice(state, event, 0).is_ok_and(|choice| choice.is_some())
+    };
+    match operation {
+        OperationV1::Event(event) | OperationV1::Commit(event) => selected(event),
+        OperationV1::Batch(events) => events.iter().any(selected),
+        _ => false,
+    }
+}
+
 fn original_sha256(state: &GameState) -> String {
     Sha256::digest(serde_json::to_vec(state).expect("genuine origin serializes"))
         .iter()
@@ -322,14 +333,14 @@ fn replay_general(
                 .iter()
                 .any(|plan| plan.committed.is_none())
         {
-            return Err("Banner operation ended without all actual entries")
-                .map_err(str::to_string);
+            return Err("Banner operation ended without all actual entries".into());
         }
-        let entries = runner
+        let mut entries: Vec<u32> = runner
             .color_plans
             .iter()
             .map(|plan| plan.committed.unwrap())
             .collect();
+        entries.sort_unstable();
         staged
             .engine
             .event_history
@@ -732,6 +743,12 @@ pub(crate) fn advance(state: &mut GameState) -> Decision {
                 .unwrap_or(crate::ids::ObjectId(0)),
         });
     }
+    if crate::heraldic_banner_v1::validate_state(state).is_err() {
+        return Decision::Halted {
+            mechanic: crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source: crate::ids::ObjectId(0),
+        };
+    }
     if locally_owned(state) || !potential_operation(state) {
         return crate::engine::advance_without_linked_aura_v1(state);
     }
@@ -747,11 +764,26 @@ pub(crate) fn advance(state: &mut GameState) -> Decision {
     }
 }
 pub(crate) fn needs_event_owner(state: &GameState) -> bool {
-    !locally_owned(state) && (has_pending(state) || potentially_returns_aura(state))
+    !locally_owned(state)
+        && (has_pending(state)
+            || potential_operation(state)
+            || crate::card_def::CARD_DEFS
+                .iter()
+                .enumerate()
+                .any(|(id, _)| crate::heraldic_banner_v1::owns_definition(id as u16)))
 }
 
 pub(crate) fn event(state: &mut GameState, operation: OperationV1) -> bool {
-    if locally_owned(state) || (!has_pending(state) && !potential_operation(state)) {
+    if locally_owned(state) {
+        return false;
+    }
+    if crate::heraldic_banner_v1::validate_state(state).is_err() {
+        return true;
+    }
+    if !has_pending(state)
+        && !potential_operation(state)
+        && !operation_has_color_entry(state, &operation)
+    {
         return false;
     }
     if has_pending(state) {
@@ -761,4 +793,258 @@ pub(crate) fn event(state: &mut GameState, operation: OperationV1) -> bool {
         *state = next;
     }
     true
+}
+
+/// Capture the complete actual entry roster before any member is committed.
+/// Answers run in APNAP order; proposal ordinals retain the original roster.
+pub(crate) fn prepare_entry_colors(
+    state: &mut GameState,
+    events: &[ProposedEvent],
+) -> Result<bool, String> {
+    let mut choices = Vec::new();
+    for event in events {
+        if let Some(choice) = crate::heraldic_banner_v1::choice(state, event, 0)? {
+            choices.push(choice);
+        }
+    }
+    if choices.is_empty() {
+        return Ok(true);
+    }
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .ok_or("Banner as-enters choice has no actual operation owner")?;
+    if runner.checkpoint.is_some() {
+        return Ok(false);
+    }
+    // A batch pre-captures these proposals. Its per-member commit consumes
+    // an existing plan, never asks a second choice for the same occurrence.
+    if choices.len() == 1
+        && runner.color_plans.iter().any(|p| {
+            p.committed.is_none() && p.color.is_some() && p.choice.proposal == choices[0].proposal
+        })
+    {
+        return Ok(true);
+    }
+    let first = runner.color_plans.len();
+    let mut additions = Vec::new();
+    for (offset, mut choice) in choices.into_iter().enumerate() {
+        choice.ordinal =
+            u32::try_from(first + offset).map_err(|_| "Banner entry ordinal overflow")?;
+        additions.push(choice);
+    }
+    if state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .unwrap()
+        .banner_start
+        .is_none()
+    {
+        let index = u32::try_from(state.engine.event_history.len())
+            .map_err(|_| "Banner operation index overflow")?;
+        let runtime = state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_mut()
+            .unwrap();
+        runtime.banner_start = Some(index);
+        runtime.used_banner = true;
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::BannerEntryOperationStartedV1 {
+                operation: Box::new(runtime.operation.clone()),
+                original_sha256: runtime.original_sha256.clone(),
+            });
+    }
+    let operation = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .unwrap()
+        .banner_start
+        .unwrap();
+    for choice in additions {
+        let capture = u32::try_from(state.engine.event_history.len())
+            .map_err(|_| "Banner capture index overflow")?;
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::BannerEntryColorCapturedV1 {
+                operation,
+                choice: Box::new(choice.clone()),
+            });
+        state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_mut()
+            .unwrap()
+            .color_plans
+            .push(ColorPlanV36 {
+                choice,
+                capture,
+                color: None,
+                answer: None,
+                committed: None,
+            });
+    }
+    let mut indices = (first
+        ..state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_ref()
+            .unwrap()
+            .color_plans
+            .len())
+        .collect::<Vec<_>>();
+    indices.sort_by_key(|&index| {
+        let p = &state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_ref()
+            .unwrap()
+            .color_plans[index];
+        (p.choice.controller != state.active_player, p.choice.ordinal)
+    });
+    for index in indices {
+        let runtime = state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_ref()
+            .unwrap();
+        let plan = runtime.color_plans[index].clone();
+        if let Some(answer) = runtime.answers.get(runtime.cursor).cloned() {
+            let GeneralAnswerV36::Color { choice, color } = answer else {
+                return Err("Banner replay changed its confirmed choice kind".into());
+            };
+            if choice != plan.choice || !crate::heraldic_banner_v1::COLORS.contains(&color) {
+                return Err("Banner replay changed an actual entry/color answer".into());
+            }
+            let at = u32::try_from(state.engine.event_history.len())
+                .map_err(|_| "Banner answer index overflow")?;
+            state
+                .engine
+                .event_history
+                .push(CommittedEvent::BannerEntryColorChosenV1 {
+                    capture: plan.capture,
+                    color,
+                });
+            let runtime = state
+                .engine
+                .linked_aura_operation_v1
+                .runtime
+                .as_mut()
+                .unwrap();
+            runtime.cursor += 1;
+            runtime.color_plans[index].color = Some(color);
+            runtime.color_plans[index].answer = Some(at);
+        } else {
+            let mut snapshot = state.clone();
+            let runner = state
+                .engine
+                .linked_aura_operation_v1
+                .runtime
+                .as_ref()
+                .unwrap();
+            if let Some(original) = runner.original_stack.last() {
+                let absent = !snapshot
+                    .stack
+                    .iter()
+                    .any(|i| i.v4.stack_item_id == original.v4.stack_item_id);
+                let departed = snapshot.engine.event_history[runner.original_history_len..].iter().any(|event|
+                    matches!(event, CommittedEvent::ZoneChange { object, from: crate::state::Zone::Stack, .. } if *object == original.source));
+                if absent && !departed {
+                    snapshot.stack.insert(
+                        runner
+                            .original_stack
+                            .len()
+                            .saturating_sub(1)
+                            .min(snapshot.stack.len()),
+                        original.clone(),
+                    );
+                }
+            }
+            snapshot.engine.linked_aura_operation_v1 = StateV1::default();
+            state
+                .engine
+                .linked_aura_operation_v1
+                .runtime
+                .as_mut()
+                .unwrap()
+                .checkpoint = Some((
+                Box::new(snapshot),
+                GeneralChoiceV36::Color {
+                    choice: plan.choice,
+                    capture: plan.capture,
+                },
+            ));
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Called after the actual allocator/move and before entry observers.
+pub(crate) fn commit_entry_color(
+    state: &mut GameState,
+    proposal: &ProposedEvent,
+    object: crate::ids::ObjectId,
+    entry: usize,
+) -> Result<(), String> {
+    if !crate::heraldic_banner_v1::owns_definition(state.objects.get(object).card_def) {
+        return Ok(());
+    }
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .ok_or("Banner committed entry lost its operation owner")?;
+    let index = runner
+        .color_plans
+        .iter()
+        .position(|p| p.committed.is_none() && p.choice.proposal == *proposal)
+        .ok_or("Banner committed entry was not in its actual pre-entry roster")?;
+    let plan = runner.color_plans[index].clone();
+    let color = plan
+        .color
+        .ok_or("Banner entry committed before its choice")?;
+    let entered = crate::heraldic_banner_v1::EnteredV1 {
+        operation: runner
+            .banner_start
+            .ok_or("Banner entry lost operation occurrence")?,
+        capture: plan.capture,
+        answer: plan.answer.ok_or("Banner entry lost chosen occurrence")?,
+        entry: u32::try_from(entry).map_err(|_| "Banner entry index overflow")?,
+        object: crate::state::AbilitySourceContractV4::capture(state, object),
+        color,
+    };
+    state.objects.get_mut(object).v4.chosen_color = Some(color);
+    let marker =
+        u32::try_from(state.engine.event_history.len()).map_err(|_| "Banner marker overflow")?;
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::BannerEntryColorCommittedV1 {
+            entered: Box::new(entered),
+        });
+    state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
+        .unwrap()
+        .color_plans[index]
+        .committed = Some(marker);
+    Ok(())
 }

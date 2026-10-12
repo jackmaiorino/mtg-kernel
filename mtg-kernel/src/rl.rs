@@ -4044,7 +4044,8 @@ fn core_surface_action_candidates_v1(
                 )?;
             }
             Decision::ChooseVariableCastTargets { .. }
-            | Decision::ChooseVariableCastKicker { .. } => {
+            | Decision::ChooseVariableCastKicker { .. }
+            | Decision::ChooseEntryColorV36 { .. } => {
                 return Err(RlContractError(
                     "variable cast targeting requires its legal-action successor".into(),
                 ))
@@ -4657,6 +4658,7 @@ pub fn acting_player_for_surface_decision(
             | Decision::ChooseAttackTarget { player, .. }
             | Decision::ChooseVariableCastTargets { player, .. }
             | Decision::ChooseVariableCastKicker { player, .. }
+            | Decision::ChooseEntryColorV36 { player, .. }
             | Decision::ChooseOptionalCost { player, .. }
             | Decision::ChooseSpellCopyPayment { player, .. }
             | Decision::ChooseSpellCopyRetarget { player, .. }

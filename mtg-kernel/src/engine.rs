@@ -1570,6 +1570,12 @@ pub enum Decision {
         spell: ObjectId,
         can_decline: bool,
     },
+    /// Genuine as-enters replacement choice, before any entry roster commits.
+    ChooseEntryColorV36 {
+        player: PlayerId,
+        entry_ordinal: u32,
+        colors: [ManaColor; 5],
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -16153,6 +16159,7 @@ pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
         power += crate::standard_legends_v1::jodah_bonus(state, id);
     }
     power += controlled_creature_boost_v1(state, id).0;
+    power += crate::heraldic_banner_v1::controlled_boost(state, id).0;
     if def.is_executable()
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     {
@@ -16217,6 +16224,7 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
         toughness += crate::standard_legends_v1::jodah_bonus(state, id);
     }
     toughness += controlled_creature_boost_v1(state, id).1;
+    toughness += crate::heraldic_banner_v1::controlled_boost(state, id).1;
     if def.is_executable()
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     {

@@ -2705,6 +2705,7 @@ fn flat_validate_origin_decision_v1(
         }
         Decision::ChooseVariableCastTargets { .. }
         | Decision::ChooseVariableCastKicker { .. }
+        | Decision::ChooseEntryColorV36 { .. }
         | Decision::ChooseCombatDamageRange { .. }
         | Decision::ChooseLegendPermanent { .. }
         | Decision::ChooseLondonMulligan { .. }
