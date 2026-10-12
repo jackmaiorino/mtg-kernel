@@ -220,7 +220,6 @@ fn inherited_registered_generic_ward_menu_is_preserved_and_submission_replays() 
 }
 
 #[test]
-#[ignore = "Crystal Barricade is unregistered; explicit future printed qualification"]
 #[cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
@@ -336,7 +335,6 @@ fn future_printed_bolt_mixed_menu_public_human_submit_and_owning_restore_both_se
 }
 
 #[test]
-#[ignore = "Crystal Barricade is unregistered; explicit future printed qualification"]
 #[cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
@@ -501,7 +499,6 @@ fn future_incinerating_private_human_discard_decline_and_owning_restore_both_sea
 }
 
 #[test]
-#[ignore = "Crystal Barricade is unregistered; explicit future printed qualification"]
 #[cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
@@ -581,7 +578,6 @@ fn future_bite_human_binds_resolving_spell_separately_from_actual_damage_source(
 }
 
 #[test]
-#[ignore = "Crystal remains unregistered; future actual owning Indrik qualification"]
 #[cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
@@ -685,7 +681,6 @@ fn future_indrik_program_menu_public_human_submit_retry_and_owning_restore() {
 }
 
 #[test]
-#[ignore = "Crystal Barricade is unregistered; explicit future printed qualification"]
 #[cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
@@ -791,7 +786,6 @@ fn future_firebrand_fixed_history_human_menu_retry_rollback_and_safe_capture_bot
 }
 
 #[test]
-#[ignore = "Crystal Barricade remains unregistered; actual future Raid/Human qualification"]
 #[cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
