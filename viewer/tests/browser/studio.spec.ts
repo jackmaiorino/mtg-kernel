@@ -42,7 +42,7 @@ test('exact policy favorite survives numeric display rounding', async ({page}) =
   await page.locator('input[type=file]').setInputFiles({name:'precision.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(recording))});
   await expect(page.getByRole('heading',{name:native.title})).toBeVisible();
   await expect(page.locator('.action-option').first()).toContainText('Policy favorite');
-  await expect(page.locator('.action-option').first()).toContainText('Do not assign');
+  await expect(page.locator('.action-option').first()).toContainText('Assign Voldaren Epicure to block Clockwork Percussionist');
   await expect(page.locator('.action-option').nth(1)).not.toContainText('Policy favorite');
 });
 for (const size of [{width:1440,height:900},{width:1920,height:1080},{width:320,height:900}]) {
