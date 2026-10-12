@@ -2,14 +2,28 @@ import importlib.util
 import json
 import sys
 import unittest
+import tempfile
 from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parents[1] / 'tools'
 sys.path.insert(0, str(TOOLS))
 import viewer_export_v1 as export
 import viewer_demo_pack_v1 as pack
+import viewer_capture_launcher_v1 as capture
 
 class ViewerExportTests(unittest.TestCase):
+    def test_missing_or_interrupted_capture_is_incomplete(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'capture.jsonl'
+            result = {'exit_code':0, 'capture':str(path)}
+            self.assertFalse(capture.capture_complete(result))
+            path.write_text('{"kind":"decision"')
+            self.assertFalse(capture.capture_complete(result))
+            path.write_text('{"kind":"decision","terminal":{"terminal_classification":"natural"}}\n{"kind":"footer","complete":true}\n')
+            self.assertTrue(capture.capture_complete(result))
+            path.write_text('{"kind":"footer","complete":true}\n')
+            self.assertFalse(capture.capture_complete(result))
+
     def test_reference_walk_keeps_only_object_identity(self):
         self.assertEqual(export.references({'source':{'arena_id':4,'card_db_id':12},'target':[{'arena_id':8}]}), ['o4','o8'])
 

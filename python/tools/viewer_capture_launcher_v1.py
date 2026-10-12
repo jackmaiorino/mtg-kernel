@@ -32,6 +32,24 @@ def pin_inputs(binary: Path, source: Path) -> dict:
 def used_bytes(root: Path) -> int:
     return sum(p.stat().st_size for p in root.rglob('*') if p.is_file())
 
+def capture_complete(result: dict) -> bool:
+    if result['exit_code'] != 0 or not result.get('capture'):
+        return False
+    try:
+        footer, natural = None, False
+        with Path(result['capture']).open('rb') as stream:
+            for line in stream:
+                if not line.endswith(b'\n') or footer is not None:
+                    return False
+                row = json.loads(line)
+                terminal = row.get('terminal')
+                natural |= isinstance(terminal, dict) and terminal.get('terminal_classification') == 'natural'
+                if row.get('kind') == 'footer':
+                    footer = row
+        return bool(footer and footer.get('complete') and natural)
+    except (OSError, ValueError, TypeError):
+        return False
+
 def require_guard(root: Path):
     claim = os.environ.get('HOST_SLOTS_CLAIM')
     if not claim: raise ValueError('Use host_slots_v1.py run; unguarded capture refused')
@@ -122,11 +140,8 @@ def main():
             # Each attempt is one independent full game. Stop when a complete demonstration exists.
             result=invoke(args.binary,args.source,args.root,f'game-{i+1}',2026101201+i,True,100000,remaining)
             results.append(result)
-            if result['exit_code']==0:
-                capture=Path(result['capture'])
-                rows=capture.read_text().splitlines()
-                if rows and json.loads(rows[-1]).get('complete') and any(json.loads(line).get('terminal') for line in rows[1:-1]): break
-        complete=[r for r in results if r['exit_code']==0 and Path(r['capture']).exists() and json.loads(Path(r['capture']).read_text().splitlines()[-1]).get('complete')]
+            if capture_complete(result): break
+        complete=[r for r in results if capture_complete(r)]
         report={'state':'complete' if complete else 'insufficient-demo-coverage','results':results,'raw_bytes':used_bytes(args.root),'pins':pins,
             'qualification_sha256':sha(report_path),'allocation':'Sequential first-game acquisition minimizes time to one complete recording; two-worker independent-work throughput qualified.'}
         acquisition.write_text(json.dumps(report,indent=2),encoding='utf-8')
