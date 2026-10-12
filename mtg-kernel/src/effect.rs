@@ -1642,6 +1642,11 @@ pub enum EffectOp {
     AshrootBoostFromCaptureV2 {
         capture_history_index: u64,
     },
+    BindGarrukEtbDrawV1,
+    BindGarrukPowerEntryDrawV1,
+    GarrukDrawFromCaptureV1 {
+        capture_history_index: u64,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -7861,6 +7866,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::ashroot_animist_v1::validate_state(state)?;
     crate::stromkirk_bloodthief_v1::validate_state(state)?;
     temporary_control_v1::authority::validate(state)?;
+    crate::garruks_uprising_v1::validate_state(state)?;
     crate::self_reflection_v1::validate_live_stack(state)?;
     crate::authority_of_the_consuls_v1::validate_state(state)?;
     crate::cerberus_capture_v1::validate_state(state)?;
@@ -18771,6 +18777,16 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             crate::sower_of_chaos_v1::install(state, ctx, *target_index);
         }
         EffectOp::BindAuthorityEntryGainLifeV1 => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        EffectOp::BindGarrukEtbDrawV1
+        | EffectOp::BindGarrukPowerEntryDrawV1
+        | EffectOp::GarrukDrawFromCaptureV1 { .. } => {
+            // Actual execution requires the private removed-row owner in
+            // resolve_top_of_stack, never a caller-constructed generic ctx.
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,

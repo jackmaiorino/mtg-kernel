@@ -7,6 +7,14 @@ fn conflicts(
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    if state
+        .engine
+        .event_history
+        .iter()
+        .any(crate::garruks_uprising_v1::is_history)
+    {
+        return true;
+    }
     // Retained linked duration and attack ownership need their qualified sampler.
     if crate::banishing_light_v1::requires_successor(state)
         || (state.engine.event_history.iter().any(|event| {

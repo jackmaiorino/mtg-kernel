@@ -259,6 +259,8 @@ pub enum TriggerCondition {
     OpponentCreatureEntersV1,
     /// Own end step with intervening actual opponent life loss.
     BeginningControllerEndStepIfOpponentLostLife,
+    GarrukOwnEtbFerociousV1,
+    GarrukControlledCreaturePowerEntryV1,
 }
 
 pub struct TriggeredAbilityDef {
@@ -1583,6 +1585,23 @@ const GUTLESS_PLUNDERER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
     condition: TriggerCondition::EtbAfterControllerAttackedThisTurn,
     ..etb_trigger(gutless_plunderer_effect)
 }];
+fn garruk_etb_draw() -> EffectOp {
+    EffectOp::BindGarrukEtbDrawV1
+}
+fn garruk_power_entry_draw() -> EffectOp {
+    EffectOp::BindGarrukPowerEntryDrawV1
+}
+const GARRUKS_UPRISING_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::GarrukOwnEtbFerociousV1,
+        ..etb_trigger(garruk_etb_draw)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::GarrukControlledCreaturePowerEntryV1,
+        ..etb_trigger(garruk_power_entry_draw)
+    },
+];
+
 fn skyship_buccaneer_effect() -> EffectOp {
     EffectOp::Conditional {
         cond: EffectCond::ControllerAttackedThisTurn,
@@ -3519,6 +3538,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Gorehorn Raider" => &GOREHORN_RAIDER_TRIGGERS,
         "Gutless Plunderer" => &GUTLESS_PLUNDERER_TRIGGERS,
         "Stromkirk Bloodthief" => &STROMKIRK_BLOODTHIEF_TRIGGERS,
+        "Garruk's Uprising" => &GARRUKS_UPRISING_TRIGGERS,
+
         "Searslicer Goblin" => &SEARSLICER_GOBLIN_TRIGGERS,
         "Authority of the Consuls" => &AUTHORITY_OF_THE_CONSULS_TRIGGERS,
         "Ruby, Daring Tracker" => &RUBY_DARING_TRACKER_TRIGGERS,
@@ -3923,6 +3944,10 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
             },
         ) => count == actual_count && max_taken == actual_max_taken,
         (EffectOp::BindAuthorityEntryGainLifeV1, EffectOp::AuthorityEntryGainLifeV1 { .. }) => true,
+        (
+            EffectOp::BindGarrukEtbDrawV1 | EffectOp::BindGarrukPowerEntryDrawV1,
+            EffectOp::GarrukDrawFromCaptureV1 { .. },
+        ) => true,
         (template, EffectOp::CerberusUntapV1 { .. })
             if *template == crate::slumbering_cerberus_v1::program_v1() =>
         {
@@ -4040,6 +4065,10 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    if matches!(effect, EffectOp::GarrukDrawFromCaptureV1 { .. }) {
+        return crate::garruks_uprising_v1::selected_definition(card_def)
+            .then_some(TargetSpec::None);
+    }
     if matches!(effect, EffectOp::WildwoodCounterFromReceiptV1 { .. }) {
         return crate::wildwood_capture_v1::owns_definition(card_def).then_some(TargetSpec::None);
     }
@@ -4738,6 +4767,16 @@ fn triggers_from_events(
         }
     }
     match crate::authority_of_the_consuls_v1::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
+    match crate::garruks_uprising_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
             state.engine.halted = Some((

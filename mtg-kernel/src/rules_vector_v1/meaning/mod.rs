@@ -144,9 +144,13 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
         | EffectOp::LookTopPickToHandBottomRest { .. }
         | EffectOp::LookTopSelectV1 { .. } => effect_b::effect_op(op, env, out),
+        EffectOp::BindGarrukEtbDrawV1
+        | EffectOp::BindGarrukPowerEntryDrawV1
+        | EffectOp::GarrukDrawFromCaptureV1 { .. } => out.atoms.push(Atom::Opaque),
         EffectOp::BindAshrootAttackBoostV1
         | EffectOp::AshrootAttackBoostV1 { .. }
         | EffectOp::AshrootBoostFromCaptureV2 { .. } => out.atoms.push(Atom::Opaque),
+
         EffectOp::TakeExtraTurnAfterThisOneV1
         | EffectOp::BindAuthorityEntryGainLifeV1
         | EffectOp::AuthorityEntryGainLifeV1 { .. }

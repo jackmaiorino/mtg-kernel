@@ -9096,6 +9096,13 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
     }
     // A closed Cerberus operation still owns historical authority. Validate it
     // before automatic step/cleanup work can mutate a restored malformed state.
+    if crate::garruks_uprising_v1::validate_state(state).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        return Decision::Halted {
+            mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+            source: ObjectId(0),
+        };
+    }
     if crate::cerberus_capture_v1::validate_state(state).is_err() {
         let source = state
             .engine
@@ -13020,6 +13027,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
     ) {
         let published = state.stack.last().expect("just published trigger").clone();
         crate::authority_of_the_consuls_v1::publish(state, &published)?;
+        crate::garruks_uprising_v1::publish(state, &published)?;
     }
     let finalized = state.stack.last().expect("trigger just published").clone();
     crate::ashroot_dispatch_v2::publish(state, &finalized)?;
@@ -13242,6 +13250,8 @@ fn triggered_stack_item_expected_target_spec(
             ability_source_contract,
         )?;
     }
+
+    crate::garruks_uprising_v1::validate_source(state, inline_effect, ability_source_contract)?;
     crate::authority_of_the_consuls_v1::validate_source(
         state,
         inline_effect,
@@ -14025,6 +14035,7 @@ pub(crate) fn counter_stack_item_by_id(
         // on the stack after the attempt, so callers finish the effect normally.
         return Ok(Some(item));
     }
+    let garruk_counter_owner = crate::garruks_uprising_v1::before_remove(state, &item)?;
     let mut departure = if item.kind == StackItemKind::Spell {
         Some(plan_spell_departure(state, &item, Zone::Graveyard)?)
     } else {
@@ -14043,7 +14054,11 @@ pub(crate) fn counter_stack_item_by_id(
     } else {
         state.stack.remove(position);
     }
+    if let Some(owner) = garruk_counter_owner {
+        crate::garruks_uprising_v1::counter_removed(state, owner)?;
+    }
     crate::ashroot_dispatch_v2::counter(state, ashroot_owner.as_ref())?;
+
     crate::extra_turn_v1::record_countered(state, temporal_owner);
     crate::banishing_light_v1::record_removed(
         state,
@@ -14057,11 +14072,13 @@ pub(crate) fn counter_stack_item_by_id(
         gourmand_counter_owner.as_ref(),
         &item,
     )?;
+
     crate::gorehorn_damage_v1::record_removed(
         state,
         gorehorn_owner,
         crate::gorehorn_damage_v1::OutcomeV1::Countered,
     )?;
+
     effect::frenzied_goblin_resolution_v1::complete_unstarted(
         state,
         &item,
@@ -14438,6 +14455,28 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         .v4
         .ability_source_contract
         .is_some_and(|source| crate::banishing_light_v1::source_present(state, source));
+
+    let garruk_owner = match crate::garruks_uprising_v1::before_remove(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
+    let initialized_entry =
+        match crate::garruks_uprising_v1::acquire_permanent_entry(state, &current, targets_legal) {
+            Ok(owner) => owner,
+            Err(_) => {
+                state.engine.halted = Some((
+                    UnsupportedMechanic::InvalidEffectContinuation,
+                    resolving_source,
+                ));
+                return ResolutionProgress::Suspended;
+            }
+        };
     let item = state
         .stack
         .pop()
@@ -14482,6 +14521,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         x_value: item.v4.x_value,
     };
 
+    if let Some(owner) = garruk_owner {
+        if crate::garruks_uprising_v1::resolve_removed(state, owner, &ctx).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
     if let Some(owner) = stromkirk_owner.as_ref() {
         if crate::stromkirk_dispatch_v1::resolve_owned(state, owner).is_err() {
             state.engine.halted =
@@ -14511,6 +14558,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
         if item.kind == StackItemKind::Spell && item.v4.cast_method == Some(CastMethodV4::Bestow) {
+            if let Some(owner) = initialized_entry.as_ref() {
+                if crate::event::commit_garruk_initialized_entry(state, owner).is_err() {
+                    state.engine.halted =
+                        Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                    return ResolutionProgress::Suspended;
+                }
+                return ResolutionProgress::Complete;
+            }
             effect::execute(
                 &EffectOp::PutSourceOntoBattlefieldWithXPlusOneCounters,
                 &ctx,
@@ -14659,7 +14714,13 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             state.stack.push(item.clone());
         }
     } else if let Some(program) = program {
-        if execute_resolving_program(
+        if let Some(owner) = initialized_entry.as_ref() {
+            if crate::event::commit_garruk_initialized_entry(state, owner).is_err() {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                return ResolutionProgress::Suspended;
+            }
+        } else if execute_resolving_program(
             state,
             &item,
             &ctx,
@@ -16015,6 +16076,9 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
                     .has(kw)
         })
     {
+        return true;
+    }
+    if crate::garruks_uprising_v1::grants_keyword(state, id, kw) {
         return true;
     }
     if crate::standard_creatures_v1::keyword_granted(state, id, kw) {

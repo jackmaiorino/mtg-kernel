@@ -34,13 +34,16 @@ pub use ashroot_v27::*;
 mod stromkirk_v28;
 pub use stromkirk_v28::*;
 mod authority_v17;
+mod garruk_v30;
 pub use authority_v17::*;
 mod gourmand_v29;
+pub use garruk_v30::*;
 pub use gourmand_v29::{
     HumanDecisionGourmandV29, HumanGourmandExtensionsV29, HumanGourmandProjectorV29,
     HumanGourmandResolutionV29, HumanGourmandRestrictionV29, HumanGourmandSacrificeMenuV29,
     HumanGourmandSessionV29, HumanGourmandSnapshotV29,
 };
+
 mod frenzied_v15;
 pub use frenzied_v15::*;
 mod raid_v9;
