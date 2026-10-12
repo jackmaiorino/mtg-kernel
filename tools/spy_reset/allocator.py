@@ -428,7 +428,7 @@ def admit(plan: dict) -> Path:
         ev = json.loads(Path(plan["throughput_evidence"]).read_text())
         if not (ev.get("workload") == WORKLOAD and ev.get("host") == plan["host"]
                 and ev.get("binary_sha256") == plan["binary_sha256"]
-                and int(ev.get("qualified_parallel_slots", 0)) >= int(plan["slots"])):
+                and int(ev.get("qualified_parallel_slots", 0)) >= int(plan.get("slots", BATCH_GAMES))):
             raise SystemExit("no matching throughput evidence for this host, binary and slot count")
     return binary
 

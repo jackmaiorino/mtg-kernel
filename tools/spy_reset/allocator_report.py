@@ -221,8 +221,10 @@ def main(argv=None) -> int:
         vals = [result["lineages"][lin][name] for lin in alloc.LINEAGES]
         result["aggregate"][name] = {k: (None if any(v[k] is None for v in vals) else mean([v[k] for v in vals]))
                                      for k in ("point", "lower", "upper")}
-    result["aggregate"]["spy"] = {arm: mean([summaries[lin][arm]["decks"][alloc.SPY]["point"] or 0.0
-                                             for lin in alloc.LINEAGES]) for arm in alloc.ARMS}
+    spy_points = {arm: [summaries[lin][arm]["decks"][alloc.SPY]["point"] for lin in alloc.LINEAGES]
+                  for arm in alloc.ARMS}
+    result["aggregate"]["spy"] = {arm: (None if any(v is None for v in pts) else mean(pts))
+                                  for arm, pts in spy_points.items()}
     for per_arm in costs.values():
         for acc in per_arm.values():
             acc["supported_fraction"] = acc.get("supported", 0) / max(1, acc.get("decisions", 0))
@@ -238,7 +240,7 @@ def main(argv=None) -> int:
         if r.get("kind", "process") == "process":
             cpu[r.get("phase", "?")] += r.get("cpu_seconds", 0.0)
     result["cpu_seconds_by_phase"] = cpu
-    heldout_sched = [r for r in rows.values() if r.get("arm") in ("random", "learned")]
+    heldout_sched = [r for r in rows.values() if r.get("arm") in ("random", "learned") and status(r) == "natural"]
     result["feature_diagnostics"]["heldout"] = feature_diagnostics(heldout_sched, w)
     if a.feature_rows:
         result["feature_diagnostics"]["training"] = feature_diagnostics(load_dirs(a.feature_rows, "t").values(), w)
