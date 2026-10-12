@@ -66,6 +66,8 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-refresh"
             | "s4a-branch"
             | "s4a-canon-offline"
+            | "s4a-budget"
+            | "s4a-budget-replay"
     )
 }
 
@@ -1072,6 +1074,105 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         }
         return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
     }
+    if cfg.mode == "s4a-budget-replay" {
+        // Analysis: BUDGET_ROWS lists recorded s4a-budget rows (JSONL, one
+        // file per line); each is replayed from its own case fields.
+        let path = std::env::var("BUDGET_ROWS").map_err(|_| "BUDGET_ROWS is required")?;
+        let mut out = String::new();
+        for file in std::fs::read_to_string(&path)
+            .map_err(|e| format!("{path}: {e}"))?
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+        {
+            let row: Value = serde_json::from_str(
+                std::fs::read_to_string(file.trim())
+                    .map_err(|e| format!("{file}: {e}"))?
+                    .lines()
+                    .next()
+                    .ok_or("empty row")?,
+            )
+            .map_err(|e| e.to_string())?;
+            if row["lineage"] != sh.spec.lineage {
+                continue;
+            }
+            let src = bank::SourceSpec {
+                id: row["id"].as_str().unwrap_or_default().to_owned(),
+                own: row["own"].as_u64().unwrap_or(0) as usize,
+                other: row["other"].as_u64().unwrap_or(0) as usize,
+                seat: row["seat"].as_u64().unwrap_or(0) as u8,
+                opp: row["opp"].as_str().unwrap_or_default().to_owned(),
+                seed: row["seed"].as_u64().unwrap_or(0),
+                starting_player: row["starting_player"].as_u64().unwrap_or(0) as u8,
+                source_policy_seeds: [0, 0],
+                anchor_draw: 0,
+                guide_policy_seeds: [0, 0],
+                search_root: String::new(),
+            };
+            let actions: Vec<u32> = serde_json::from_value(row["game"]["actions"].clone())
+                .map_err(|e| e.to_string())?;
+            let rep = std::thread::scope(|scope| {
+                std::thread::Builder::new()
+                    .stack_size(256 << 20)
+                    .spawn_scoped(scope, || refresh::budget_replay(&sh, &src, &actions))
+                    .map_err(|e| e.to_string())?
+                    .join()
+                    .map_err(|_| "replay worker panicked".to_owned())?
+            })
+            .unwrap_or_else(|e| json!({"error":e}));
+            let ok = rep["end"] == row["game"]["end"] && rep["sequence"] == row["game"]["sequence"];
+            out.push_str(&format!(
+                "{}
+",
+                json!({"file":file.trim(),"id":src.id,"replay":rep,"matches_live":ok})
+            ));
+        }
+        return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
+    }
+    if cfg.mode == "s4a-budget" {
+        // Total-budget screen (collab LANES/search-budget-discovery-plan-20261011):
+        // BUDGET_CASES is JSONL of source cases (ordinary openings); this
+        // process plays cases [first_game, first_game + games) at ceiling
+        // BUDGET_TOTAL with BUDGET_KEY_MODE keys.
+        sh.spec.validate()?;
+        let binding = bank::bank_binding(policy, &sh)?;
+        let path = std::env::var("BUDGET_CASES").map_err(|_| "BUDGET_CASES is required")?;
+        let cases: Vec<bank::SourceSpec> = std::fs::read_to_string(&path)
+            .map_err(|e| format!("{path}: {e}"))?
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str(l).map_err(|e| format!("{path}: {e}")))
+            .collect::<Result<_, _>>()?;
+        let total: u64 = std::env::var("BUDGET_TOTAL")
+            .map_err(|_| "BUDGET_TOTAL is required")?
+            .parse()
+            .map_err(|_| "BUDGET_TOTAL must be a count")?;
+        let mode = match std::env::var("BUDGET_KEY_MODE").as_deref() {
+            Ok("repaired") => canon2::KeyMode::Repaired,
+            Ok("legacy") => canon2::KeyMode::Legacy,
+            _ => return Err("BUDGET_KEY_MODE must be repaired or legacy".into()),
+        };
+        let first = cfg.first_game as usize;
+        let end = (first + cfg.games as usize).min(cases.len());
+        let mut out = String::new();
+        for src in &cases[first..end] {
+            let row = std::thread::scope(|scope| {
+                std::thread::Builder::new()
+                    .stack_size(256 << 20)
+                    .spawn_scoped(scope, || {
+                        refresh::budget_case(&sh, policy, src, total, mode, &binding)
+                    })
+                    .map_err(|e| e.to_string())?
+                    .join()
+                    .map_err(|_| "budget worker panicked".to_owned())?
+            })
+            .unwrap_or_else(|e| json!({"kind":"error","id":src.id,"error":e}));
+            out.push_str(&format!(
+                "{row}
+"
+            ));
+        }
+        return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
+    }
     if cfg.mode == "s4a-refresh" {
         sh.spec.validate()?;
         let binding = bank::bank_binding(policy, &sh)?;
@@ -1183,9 +1284,8 @@ fn run_bank_parity(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<
 
 pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(), String> {
     match cfg.mode.as_str() {
-        "s4a-bank" | "s4a-bank-trace" | "s4a-refresh" | "s4a-branch" | "s4a-canon-offline" => {
-            return run_bank_mode(cfg, policy)
-        }
+        "s4a-bank" | "s4a-bank-trace" | "s4a-refresh" | "s4a-branch" | "s4a-canon-offline"
+        | "s4a-budget" | "s4a-budget-replay" => return run_bank_mode(cfg, policy),
         "s4a-bank-parity" => return run_bank_parity(cfg, policy),
         "s4a-label-replay" => return replay_labels::run(cfg),
         _ => {}
