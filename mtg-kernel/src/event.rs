@@ -1518,6 +1518,42 @@ pub(crate) fn install_exile_if_dies(
 
 pub(crate) fn validate_exile_if_dies_replacements(state: &GameState) -> Result<(), ObjectId> {
     for (at, event) in state.engine.event_history.iter().enumerate() {
+        let CommittedEvent::ExileIfDiesReplacementCleanupV1 {
+            index,
+            installations,
+            turn,
+            active_player,
+        } = event
+        else {
+            continue;
+        };
+        if *index as usize != at || installations.is_empty() {
+            return Err(installations.first().map_or(ObjectId(0), |r| r.source));
+        }
+        for replacement in installations {
+            let install = state.engine.event_history[..at].iter().filter(|e| matches!(e,
+                CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement: r } if r == replacement)).count();
+            let expiry = state.engine.event_history.iter().enumerate().filter(|(position, e)| matches!(e,
+                CommittedEvent::ExileIfDiesReplacementExpiredV1 {
+                    replacement: r, cleanup_index, turn: t, active_player: p,
+                } if r == replacement && cleanup_index == index && t == turn && p == active_player && *position > at)).count();
+            if install != 1
+                || expiry != 1
+                || installations.iter().filter(|r| *r == replacement).count() != 1
+                || state
+                    .engine
+                    .active_replacements
+                    .iter()
+                    .any(|r| r.id == replacement.id)
+                || !matches!(replacement.kind,
+                    ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { turn: t, active_player: p, .. }
+                    if t == *turn && p == *active_player)
+            {
+                return Err(replacement.source);
+            }
+        }
+    }
+    for (at, event) in state.engine.event_history.iter().enumerate() {
         let CommittedEvent::ExileIfDiesReplacementExpiredV1 {
             replacement,
             turn,

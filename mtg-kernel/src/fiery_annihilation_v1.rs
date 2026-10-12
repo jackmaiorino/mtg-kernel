@@ -560,6 +560,79 @@ mod tests {
         }
     }
 
+    #[test]
+    fn genuine_cleanup_roster_preserved_but_expiry_erased_cannot_resurrect_shield() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, _, _, ctx) = fixture(actor, false, true);
+            for _ in 0..8 {
+                put(&mut state, actor, "Forest", Zone::Hand);
+            }
+            execute(&ctx, &mut state);
+            let installed = state.engine.active_replacements.last().unwrap().clone();
+            let ending_key = state.turn_key_v1();
+            state.step = crate::state::Step::End;
+            let mut cleanup = false;
+            for _ in 0..12 {
+                match engine::advance_until_decision(&mut state) {
+                    Decision::CastSpellOrPass { .. } => {
+                        engine::step(&mut state, Action::Pass).unwrap()
+                    }
+                    Decision::Discard { player, count, .. } => {
+                        assert_eq!((player, count), (actor, 2));
+                        assert_eq!(state.step, crate::state::Step::Cleanup);
+                        assert_eq!(state.turn_key_v1(), ending_key);
+                        cleanup = true;
+                        break;
+                    }
+                    other => panic!("actual Cleanup discard boundary {other:?}"),
+                }
+            }
+            assert!(cleanup);
+            event::validate_exile_if_dies_replacements(&state).unwrap();
+            for corruption in 0..3 {
+                let mut bad: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                match corruption {
+                    0 => {
+                        // Retain the independently recorded real installation
+                        // and actual Cleanup roster, at the same ending turn.
+                        bad.engine.event_history.retain(|e| {
+                            !matches!(
+                                e,
+                                event::CommittedEvent::ExileIfDiesReplacementExpiredV1 { .. }
+                            )
+                        });
+                        bad.engine.active_replacements.push(installed.clone());
+                    }
+                    1 => bad.engine.event_history.retain(|e| {
+                        !matches!(
+                            e,
+                            event::CommittedEvent::ExileIfDiesReplacementCleanupV1 { .. }
+                        )
+                    }),
+                    _ => {
+                        let row = bad
+                            .engine
+                            .event_history
+                            .iter()
+                            .find(|e| {
+                                matches!(
+                                    e,
+                                    event::CommittedEvent::ExileIfDiesReplacementCleanupV1 { .. }
+                                )
+                            })
+                            .unwrap()
+                            .clone();
+                        bad.engine.event_history.push(row);
+                    }
+                }
+                let bytes = serde_json::to_vec(&bad).unwrap();
+                assert!(engine::step(&mut bad, Action::Pass).is_err());
+                assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+            }
+        }
+    }
+
     #[cfg(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
