@@ -299,8 +299,11 @@ mod future_printed {
             let mut projector = HumanStromkirkProjectorV28::new(actor.into());
             let prompt = projector.project_current(&session, current).unwrap();
             safe(&serde_json::to_value(&prompt).unwrap());
-            assert!(prompt.state.extensions.opponent_lost_life_this_turn);
-            assert!(!prompt.state.extensions.own_lost_life_this_turn);
+            assert_eq!(
+                prompt.state.extensions.opponent_lost_life_this_turn,
+                Some(true)
+            );
+            assert_eq!(prompt.state.extensions.own_lost_life_this_turn, Some(false));
             assert!(prompt
                 .actions
                 .iter()

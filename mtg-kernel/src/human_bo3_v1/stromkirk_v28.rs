@@ -94,8 +94,8 @@ pub struct HumanLossContextV28 {
 pub struct HumanStromkirkExtensionsV28 {
     pub predecessor: HumanExtensionsV9,
     pub loss_contexts: Vec<HumanLossContextV28>,
-    pub own_lost_life_this_turn: bool,
-    pub opponent_lost_life_this_turn: bool,
+    pub own_lost_life_this_turn: Option<bool>,
+    pub opponent_lost_life_this_turn: Option<bool>,
 }
 fn parts(observation: &StromkirkObservationV1) -> super::life_ward_v8::ProjectionPartsV8<'_> {
     super::life_ward_v8::ProjectionPartsV8 {
@@ -146,8 +146,10 @@ fn state(
                 opponent_attacked_this_turn: observation.attacked_this_turn[1 - seat],
             },
             loss_contexts,
-            own_lost_life_this_turn: observation.lost_life_this_turn[seat],
-            opponent_lost_life_this_turn: observation.lost_life_this_turn[1 - seat],
+            own_lost_life_this_turn: observation.lost_life_this_turn.map(|flags| flags[seat]),
+            opponent_lost_life_this_turn: observation
+                .lost_life_this_turn
+                .map(|flags| flags[1 - seat]),
         },
         policy_context: old.policy_context,
         known_face_down_cards: old.known_face_down_cards,

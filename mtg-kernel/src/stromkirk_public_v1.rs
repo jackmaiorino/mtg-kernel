@@ -49,7 +49,9 @@ pub struct StromkirkObservationV1 {
     pub known_face_down_cards: Vec<crate::rl::FaceDownCardKnowledgeV1>,
     pub extensions: PolicyObservationExtensionsV8,
     pub attacked_this_turn: [bool; 2],
-    pub lost_life_this_turn: [bool; 2],
+    /// None means this selected catalog has no authenticated loss recorder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lost_life_this_turn: Option<[bool; 2]>,
     pub loss_contexts: Vec<LossContextV1>,
     pub roots: Vec<RootV1>,
     pub projection_sha256: String,
@@ -330,9 +332,9 @@ pub fn observe_v1(
         extensions: base.extensions.predecessor,
         attacked_this_turn: base.extensions.attacked_this_turn,
         lost_life_this_turn: if crate::life_loss_turn_v1::enabled() {
-            crate::life_loss_turn_v1::flags(state).map_err(RlContractError)?
+            Some(crate::life_loss_turn_v1::flags(state).map_err(RlContractError)?)
         } else {
-            [false; 2]
+            None
         },
         loss_contexts,
         roots: roots()?,
