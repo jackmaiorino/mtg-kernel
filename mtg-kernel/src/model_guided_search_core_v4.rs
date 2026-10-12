@@ -156,6 +156,13 @@ struct Node {
 type Witness<'a> =
     Option<&'a mut dyn FnMut(&FastActorSessionV1, u32) -> std::result::Result<[u8; 32], String>>;
 
+#[cfg_attr(
+    not(feature = "viewer-recording-v1"),
+    allow(
+        dead_code,
+        reason = "observer payload is consumed only by optional viewer capture"
+    )
+)]
 pub(crate) enum ViewerEvent<'a> {
     Choice {
         session: &'a FastActorSessionV1,

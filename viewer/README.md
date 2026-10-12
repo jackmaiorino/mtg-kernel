@@ -48,8 +48,6 @@ Bookmark objects have `frame`, `title`, `situation`, `alternatives`, and `conseq
 
 The exporter also accepts validated historical gameplay traces, with an explicit card ID-to-name mapping. Opponent records are excluded from these actor-only exports. Seeds, library order, RNG state, tensors and private journals are never exported.
 
-## Publish another demo
-
 ## Record and inspect search replay
 
 The viewer also accepts `mtg-kernel-viewer-recording/v2`, which adds optional `mtg-kernel-search-replay/v1` data to a decision's search diagnostics. V1 fixtures and policy-only recordings remain supported. Replay data joins the complete episode/step/physical/substep/actor key, preserves node and action indices, and reconciles every simulated edge and root sum against the recorded table and its original digest. Hypothetical snapshots never become gameplay frames.
