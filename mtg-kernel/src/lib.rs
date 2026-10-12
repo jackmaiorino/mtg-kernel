@@ -567,6 +567,7 @@ pub(crate) mod public_stack_features_v1;
 pub mod rules_meaning_ashroot_v1;
 pub mod rules_meaning_crystal_barricade_v1;
 pub mod rules_meaning_frenzied_goblin_v1;
+pub mod rules_meaning_inspiration_v1;
 pub mod rules_meaning_searslicer_v1;
 pub mod rules_meaning_self_reflection_v1;
 pub mod rules_meaning_sower_v1;
