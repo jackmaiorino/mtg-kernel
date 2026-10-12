@@ -1530,6 +1530,33 @@ pub(crate) fn validate_exile_if_dies_replacements(state: &GameState) -> Result<(
         if *index as usize != at || installations.is_empty() {
             return Err(installations.first().map_or(ObjectId(0), |r| r.source));
         }
+        let expected: Vec<_> = state.engine.event_history[..at]
+            .iter()
+            .filter_map(|e| {
+                let CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement } = e else {
+                    return None;
+                };
+                (!state.engine.event_history[..at].iter().any(|e| {
+                    matches!(e,
+                CommittedEvent::ExileIfDiesReplacementExpiredV1 { replacement: r, .. }
+                if r == replacement)
+                }))
+                .then_some(replacement)
+            })
+            .collect();
+        if expected.len() != installations.len()
+            || expected.iter().any(|r| {
+                installations
+                    .iter()
+                    .filter(|captured| *captured == *r)
+                    .count()
+                    != 1
+            })
+        {
+            return Err(expected
+                .first()
+                .map_or(installations[0].source, |r| r.source));
+        }
         for replacement in installations {
             let install = state.engine.event_history[..at].iter().filter(|e| matches!(e,
                 CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement: r } if r == replacement)).count();

@@ -569,6 +569,21 @@ mod tests {
             }
             execute(&ctx, &mut state);
             let installed = state.engine.active_replacements.last().unwrap().clone();
+            let other = put(
+                &mut state,
+                actor.opponent(),
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            state.objects.get_mut(other).counters.plus1_plus1 = 6;
+            let mut second_ctx = ctx.clone();
+            second_ctx.targets = vec![Target::Object(other)];
+            second_ctx.target_contracts = vec![StackTargetContractV4::capture(
+                &state,
+                second_ctx.targets[0],
+            )];
+            execute(&second_ctx, &mut state);
+            let second = state.engine.active_replacements.last().unwrap().clone();
             let ending_key = state.turn_key_v1();
             state.step = crate::state::Step::End;
             let mut cleanup = false;
@@ -589,7 +604,7 @@ mod tests {
             }
             assert!(cleanup);
             event::validate_exile_if_dies_replacements(&state).unwrap();
-            for corruption in 0..3 {
+            for corruption in 0..4 {
                 let mut bad: GameState =
                     serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
                 match corruption {
@@ -610,7 +625,7 @@ mod tests {
                             event::CommittedEvent::ExileIfDiesReplacementCleanupV1 { .. }
                         )
                     }),
-                    _ => {
+                    2 => {
                         let row = bad
                             .engine
                             .event_history
@@ -624,6 +639,20 @@ mod tests {
                             .unwrap()
                             .clone();
                         bad.engine.event_history.push(row);
+                    }
+                    _ => {
+                        for row in &mut bad.engine.event_history {
+                            if let event::CommittedEvent::ExileIfDiesReplacementCleanupV1 {
+                                installations,
+                                ..
+                            } = row
+                            {
+                                installations.retain(|r| r != &second);
+                            }
+                        }
+                        bad.engine.event_history.retain(|e| !matches!(e,
+                            event::CommittedEvent::ExileIfDiesReplacementExpiredV1 { replacement, .. } if replacement == &second));
+                        bad.engine.active_replacements.push(second.clone());
                     }
                 }
                 let bytes = serde_json::to_vec(&bad).unwrap();
