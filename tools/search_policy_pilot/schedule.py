@@ -136,6 +136,49 @@ def config(lineage: str, arm: str, phase: str, parent: dict, a48: dict, source: 
             "output_directory": output_directory}
 
 
+PRE_KINDS = ("engineering", "probe")
+
+
+def pre_games(lineage: str, kind: str, own: int) -> list[dict]:
+    """Two ordinary-start games for one own deck: the engineering roots (two per deck and lineage)
+    or the disjoint fixed-probe source games (one probe root each). Opposing deck, focal seat
+    and frozen opponent are hash draws; nothing is read from any outcome."""
+    check(lineage, "main")
+    if kind not in PRE_KINDS:
+        raise ValueError(f"unknown pre-learning kind {kind!r}")
+    out = []
+    for k in range(2):
+        fields = {"lineage": lineage, "kind": kind, "own": own, "game": k}
+        other = rank("pre_other", **fields)[0] % DECKS
+        seat = rank("pre_seat", **fields)[0] & 1
+        out.append({"own": own, "other": other, "family": k, "seat": seat, "seed": seed("pre_episode", **fields),
+                    "starting_player": (own + other + k) % 2,
+                    "opponent": "parent" if rank("pre_opponent", **fields)[0] & 1 else "a48"})
+    return out
+
+
+def pre_config(lineage: str, kind: str, own: int, parent: dict, a48: dict, workers: int, output_directory: str,
+               decks: list[dict]) -> dict:
+    """One guarded single-update run of the two games with both roots queried. Engineering runs use
+    the treatment path (CE, gradients, value-head zero); probe runs only record targets."""
+    entries = pre_games(lineage, kind, own)
+    episodes = []
+    for i, e in enumerate(entries):
+        ep = episode(lineage, kind, own, i, e, decks)
+        ep["id"] = f"{NS}-{lineage}-{kind}-o{own}-t{e['other']}-g{i}-s{e['seat']}"
+        episodes.append({"episode": ep, "opponent": {"kind": "fixed",
+                                                     "id": PARENT_ID if e["opponent"] == "parent" else A48_ID}})
+    slots = [{"trajectory_index": i, "case_id": f"{NS}/{lineage}/{kind}/o{own}/g{i}"} for i in range(len(entries))]
+    return {"schema": ndb.SCHEMA, "initial_source": parent,
+            "opponents": [{"id": A48_ID, "source": a48}, {"id": PARENT_ID, "source": parent}],
+            "iterations": [{"episodes": episodes}], **json.loads(json.dumps(ndb.FROZEN)),
+            "update_backend": {"kind": "cpu"}, "collection_workers": workers,
+            "e_supported": {"teacher": parent, "treatment": kind == "engineering",
+                            "prior_deck_indices": PRIOR_DECK_INDICES,
+                            "selection_transition_cap": SELECTION_TRANSITION_CAP, "slots": [slots]},
+            "output_directory": output_directory}
+
+
 def summary() -> dict:
     out = {}
     for lineage in LINEAGES:
@@ -158,8 +201,12 @@ def summary() -> dict:
 
 
 def all_seeds() -> dict:
-    return {f"{lineage}/{phase}": sorted({e["seed"] for u in updates(lineage, phase) for e in u})
-            for lineage in LINEAGES for phase in PHASES}
+    out = {f"{lineage}/{phase}": sorted({e["seed"] for u in updates(lineage, phase) for e in u})
+           for lineage in LINEAGES for phase in PHASES}
+    for lineage in LINEAGES:
+        for kind in PRE_KINDS:
+            out[f"{lineage}/{kind}"] = sorted(e["seed"] for o in range(DECKS) for e in pre_games(lineage, kind, o))
+    return out
 
 
 def registered_seeds() -> set[int]:
@@ -192,6 +239,13 @@ def main(argv=None) -> int:
     c.add_argument("--workers", type=int, required=True)
     c.add_argument("--first", type=int, default=0)
     c.add_argument("--count", type=int, default=UPDATES)
+    pc = sub.add_parser("pre-config")
+    for k in ("lineage", "kind", "output-directory"):
+        pc.add_argument(f"--{k}", required=True)
+    for k in ("parent", "a48", "out"):
+        pc.add_argument(f"--{k}", type=Path, required=True)
+    pc.add_argument("--own", type=int, required=True)
+    pc.add_argument("--workers", type=int, required=True)
     sub.add_parser("seeds").add_argument("--out", type=Path, required=True)
     sub.add_parser("summary")
     a = ap.parse_args(argv)
@@ -207,6 +261,11 @@ def main(argv=None) -> int:
         print(json.dumps(res))
         return 0 if not clash and res["duplicates"] == 0 else 1
     decks = ndb.load_decks(REPO / "data" / "runtime_decks_v1.json")
+    if a.op == "pre-config":
+        cfg = pre_config(a.lineage, a.kind, a.own, json.loads(a.parent.read_text()), json.loads(a.a48.read_text()),
+                         a.workers, a.output_directory, decks)
+        print(json.dumps(write_json(a.out, cfg)))
+        return 0
     cfg = config(a.lineage, a.arm, a.phase, json.loads(a.parent.read_text()), json.loads(a.a48.read_text()),
                  json.loads(a.source.read_text()) if a.source else None, a.workers,
                  a.output_directory, decks, a.first, a.count)
