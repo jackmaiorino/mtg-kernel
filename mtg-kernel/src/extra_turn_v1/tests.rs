@@ -444,18 +444,47 @@ pub(crate) mod future_printed {
     #[test]
     fn another_actual_cast_during_extra_turn_has_distinct_turn_uses_and_draw_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let mut state = ready(actor);
+            // Select the genuine first-life-gain consumer through the pool,
+            // leaving it below the Forest draw prefix and off the battlefield.
+            let forest = card_def::card_id_by_name("Forest").unwrap();
+            let seraph = card_def::card_id_by_name("Vanguard Seraph").unwrap();
+            let mut library = vec![forest; 39];
+            library.push(seraph);
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                &library,
+                &library,
+                crate::rl::card_name,
+                110_423,
+                actor,
+            );
+            state.step = Step::Main1;
+            assert!(state.life_gain_turn_v1.is_some());
             cast(&mut state, actor);
             resolve(&mut state);
             assert_eq!(state.players[actor.index()].spells_cast_this_turn, 1);
             next_turn(&mut state);
             main(&mut state);
             assert_eq!(state.players[actor.index()].spells_cast_this_turn, 0);
+            let life_before_loss = state.players[actor.index()].life;
             crate::event::propose_and_commit(
                 &mut state,
                 crate::event::ProposedEvent::life_loss(actor, 1),
             );
-            assert!(state.player_lost_life_this_turn_v1(actor));
+            assert_eq!(state.players[actor.index()].life, life_before_loss - 1);
+            let gain = CommittedEvent::LifeGain {
+                player: actor.opponent(),
+                amount: 1,
+            };
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::life_gain(actor.opponent(), 1),
+            );
+            assert_eq!(
+                crate::life_gain_turn_v1::event_ordinals(&state, std::slice::from_ref(&gain))
+                    .unwrap(),
+                vec![Some(1)]
+            );
+            let gain_anchor = state.life_gain_turn_v1.as_ref().unwrap().history_index;
             let second = cast(&mut state, actor);
             resolve(&mut state);
             let key = state.turn_key_v1();
@@ -464,7 +493,26 @@ pub(crate) mod future_printed {
             assert_eq!(state.turn, 1);
             assert!(state.turn_key_v1() > key);
             assert_eq!(state.own_turn_count_v1(actor), 3);
-            assert!(!state.player_lost_life_this_turn_v1(actor));
+            assert_eq!(state.players[actor.index()].life, life_before_loss - 1);
+            let history = state.life_gain_turn_v1.as_ref().unwrap();
+            assert_eq!(history.turn, state.turn_key_v1());
+            assert_eq!(history.active_player, actor);
+            assert!(history.history_index > gain_anchor);
+            assert!(matches!(
+                state.engine.event_history.get(history.history_index),
+                Some(CommittedEvent::LifeGainTurnBeganV1 { turn, active_player })
+                    if *turn == state.turn_key_v1() && *active_player == actor
+            ));
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::life_gain(actor.opponent(), 1),
+            );
+            assert_eq!(
+                crate::life_gain_turn_v1::event_ordinals(&state, std::slice::from_ref(&gain))
+                    .unwrap(),
+                vec![Some(1)],
+                "the actual extra-turn Untap resets the selected gain consumer"
+            );
             assert_eq!(state.players[actor.index()].spells_cast_this_turn, 0);
             assert_eq!(
                 state.extra_turn_v1.as_ref().unwrap().current_extra,
