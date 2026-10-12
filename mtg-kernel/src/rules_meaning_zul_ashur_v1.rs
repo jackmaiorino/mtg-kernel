@@ -78,7 +78,7 @@ pub fn live_selector() -> Result<SelectorV1, String> {
     }
     Ok(SelectorV1 {
         schema: SCHEMA.into(),
-        card_db_hash: crate::card_def::CARD_DB_HASH,
+        card_db_hash: crate::card_def::KERNEL_CARDDB_HASH,
         producer_sha256: producer_sha256_v1(),
     })
 }

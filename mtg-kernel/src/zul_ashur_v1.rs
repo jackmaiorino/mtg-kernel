@@ -141,7 +141,7 @@ pub(crate) fn target_legal(state: &GameState, item: &StackItem) -> bool {
             && live.spell_copy_origin == *spell_copy_origin
             && state.players[owner.index()].graveyard.contains(object)
             && CARD_DEFS[usize::from(live.card_def)].types.contains(&CardType::Creature)
-            && CARD_DEFS[usize::from(live.card_def)].subtypes.contains(&Subtype::Zombie)))
+            && crate::engine::has_effective_subtype(state, *object, Subtype::Zombie)))
 }
 pub(crate) fn publish(state: &mut GameState, id: StackItemId) -> Result<(), String> {
     let Some(item) = state

@@ -62,11 +62,12 @@ mod future_printed {
         state.priority_player = actor;
         state.step = crate::state::Step::Main1;
         let source = put(&mut state, actor, "Zul Ashur, Lich Lord", Zone::Battlefield);
-        let target = put(&mut state, actor, "Gutless Plunderer", Zone::Graveyard);
+        let target = put(&mut state, actor, "Diregraf Ghoul", Zone::Graveyard);
+        let changeling = put(&mut state, actor, "Webweaver Changeling", Zone::Graveyard);
         let foreign = put(
             &mut state,
             actor.opponent(),
-            "Gutless Plunderer",
+            "Diregraf Ghoul",
             Zone::Graveyard,
         );
         let nonzombie = put(&mut state, actor, "Llanowar Elves", Zone::Graveyard);
@@ -76,6 +77,7 @@ mod future_printed {
             panic!("actual target choice")
         };
         assert!(legal_targets.contains(&Target::Object(target)));
+        assert!(legal_targets.contains(&Target::Object(changeling)));
         for id in [foreign, nonzombie, land] {
             assert!(!legal_targets.contains(&Target::Object(id)));
         }
@@ -201,6 +203,164 @@ mod future_printed {
                 meaning.rule.ordinary_timing_and_all_costs = false;
                 assert!(crate::rules_meaning_zul_ashur_v1::validate(&meaning).is_err());
             }
+        }
+    }
+
+    #[test]
+    #[ignore = "Zul Ashur is unregistered; actual printed Ward and source control qualification remains root-owned"]
+    fn actual_printed_cast_life_ward_pay_decline_and_restore_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for pay in [false, true] {
+                let mut state = ready_state();
+                state.active_player = actor;
+                state.priority_player = actor;
+                state.step = crate::state::Step::Main1;
+                let source = put(&mut state, actor, "Zul Ashur, Lich Lord", Zone::Hand);
+                state.players[actor.index()].mana_pool[crate::mana::ManaColor::B.pool_index()] = 1;
+                state.players[actor.index()].mana_pool[crate::mana::ManaColor::C.pool_index()] = 1;
+                engine::step(&mut state, Action::CastSpell(source)).unwrap();
+                let _ = next(&mut state);
+                settle(&mut state);
+                assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+                assert!(state.objects.get(source).summoning_sick);
+                let caster = actor.opponent();
+                let bolt = put(&mut state, caster, "Lightning Bolt", Zone::Hand);
+                state.priority_player = caster;
+                state.players[caster.index()].mana_pool[crate::mana::ManaColor::R.pool_index()] = 1;
+                engine::step(&mut state, Action::CastSpell(bolt)).unwrap();
+                engine::step(&mut state, Action::ChooseTarget(Target::Object(source))).unwrap();
+                let _ = next(&mut state);
+                for _ in 0..20 {
+                    match next(&mut state) {
+                        Decision::ChooseEffectBoolean { player, .. } => {
+                            assert_eq!(player, caster);
+                            break;
+                        }
+                        Decision::CastSpellOrPass { .. } => {
+                            engine::step(&mut state, Action::Pass).unwrap();
+                        }
+                        other => panic!("actual life Ward {other:?}"),
+                    }
+                }
+                assert!(matches!(
+                    next(&mut state),
+                    Decision::ChooseEffectBoolean { .. }
+                ));
+                let life = state.players[caster.index()].life;
+                let mut restored: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                for branch in [&mut state, &mut restored] {
+                    engine::step(branch, Action::ChooseEffectBoolean(pay)).unwrap();
+                    settle(branch);
+                    assert_eq!(
+                        branch.players[caster.index()].life,
+                        life - if pay { 2 } else { 0 }
+                    );
+                    assert_eq!(
+                        branch.objects.get(source).zone,
+                        if pay {
+                            Zone::Graveyard
+                        } else {
+                            Zone::Battlefield
+                        }
+                    );
+                    assert_eq!(branch.objects.get(bolt).zone, Zone::Graveyard);
+                    assert!(!has_active(branch));
+                    validate_state(branch).unwrap();
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&restored).unwrap()
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "Zul Ashur is unregistered; typed control setup and actual off-turn permission qualification remains root-owned"]
+    fn actual_original_holder_after_typed_control_change_offturn_timing_and_expiry_forgery_both_seats(
+    ) {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, source, target) = setup(actor);
+            let donor = put(&mut state, actor.opponent(), "Lightning Bolt", Zone::Hand);
+            let mut ctx = crate::effect::ExecCtx::no_targets(donor, actor.opponent());
+            ctx.targets.push(Target::Object(source));
+            ctx.target_contracts.push(StackTargetContractV4::capture(
+                &state,
+                Target::Object(source),
+            ));
+            // Existing typed control primitive setup; the Zul activation above was genuinely paid.
+            crate::effect::execute(
+                &EffectOp::GainControlOfTargetCreatureUntilEndOfTurn { target_index: 0 },
+                &ctx,
+                &mut state,
+            );
+            assert_eq!(state.objects.get(source).controller, actor.opponent());
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                settle(branch);
+                let generation = branch.objects.get(target).zone_change_count;
+                assert!(permission(branch, target, actor, generation));
+                assert!(!permission(branch, target, actor.opponent(), generation));
+                let installation = installations(branch).next().unwrap().index;
+                let mut bad: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(branch).unwrap()).unwrap();
+                bad.engine
+                    .event_history
+                    .push(CommittedEvent::ZulAshurExpiredV1 {
+                        expiry: ExpiryV1 {
+                            installation,
+                            cleanup: bad.engine.event_history.len() as u32,
+                        },
+                    });
+                let bytes = serde_json::to_vec(&bad).unwrap();
+                assert!(engine::step(&mut bad, Action::Pass).is_err());
+                assert_eq!(bytes, serde_json::to_vec(&bad).unwrap());
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&restored).unwrap()
+            );
+
+            let mut offturn = ready_state();
+            offturn.active_player = actor.opponent();
+            offturn.priority_player = actor;
+            offturn.step = crate::state::Step::Main1;
+            let source = put(
+                &mut offturn,
+                actor,
+                "Zul Ashur, Lich Lord",
+                Zone::Battlefield,
+            );
+            let target = put(&mut offturn, actor, "Diregraf Ghoul", Zone::Graveyard);
+            engine::step(&mut offturn, Action::ActivateAbility(source, 0)).unwrap();
+            let _ = next(&mut offturn);
+            engine::step(&mut offturn, Action::ChooseTarget(Target::Object(target))).unwrap();
+            let _ = next(&mut offturn);
+            settle(&mut offturn);
+            assert!(permission(
+                &offturn,
+                target,
+                actor,
+                offturn.objects.get(target).zone_change_count
+            ));
+            offturn.priority_player = actor;
+            offturn.players[actor.index()].mana_pool[crate::mana::ManaColor::B.pool_index()] = 1;
+            let bytes = serde_json::to_vec(&offturn).unwrap();
+            assert!(engine::step(&mut offturn, Action::CastSpell(target)).is_err());
+            assert_eq!(bytes, serde_json::to_vec(&offturn).unwrap());
+            offturn.step = crate::state::Step::End;
+            for _ in 0..40 {
+                let d = next(&mut offturn);
+                if offturn.active_player == actor {
+                    break;
+                }
+                assert!(matches!(d, Decision::CastSpellOrPass { .. }), "{d:?}");
+                engine::step(&mut offturn, Action::Pass).unwrap();
+            }
+            assert_eq!(offturn.active_player, actor);
+            assert!(!has_active(&offturn));
         }
     }
 }

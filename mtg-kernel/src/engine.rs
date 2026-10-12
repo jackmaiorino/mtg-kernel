@@ -4275,9 +4275,7 @@ fn activation_legal_targets_with_source_lki(
                 card_def::CARD_DEFS[live.card_def as usize]
                     .types
                     .contains(&CardType::Creature)
-                    && card_def::CARD_DEFS[live.card_def as usize]
-                        .subtypes
-                        .contains(&subtype)
+                    && has_effective_subtype(state, *object, subtype)
             }),
             _ => false,
         },
