@@ -3667,6 +3667,7 @@ fn execute_update_v1(
     let checkpoint_started = std::time::Instant::now();
     let snapshot = state.snapshot_v1().map_err(err)?;
     let after = hex(&snapshot.state_sha256_v1().map_err(err)?);
+    fs::create_dir(&output_directory).map_err(err)?;
     let e_packet_pin = e_teacher
         .as_ref()
         .map(|(packet, _)| publish_json(&output_directory, "e-supported-teacher.json", packet))
@@ -3747,7 +3748,6 @@ fn execute_update_v1(
             .map(|context| context.after_update(snapshot.adam_step))
             .transpose()?,
     };
-    fs::create_dir(&output_directory).map_err(err)?;
     let checkpoint_pin = publish_json(&output_directory, "checkpoint.json", &checkpoint)?;
     // Readback exercises the real same-format continuation loader.
     let resumed_source = ExpandedModelSourceV1 {

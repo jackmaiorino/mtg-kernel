@@ -72,11 +72,11 @@ pub(crate) fn query(
         key_mode: KeyMode::Repaired,
     };
     let mut roles = Roles {
-        focal: teacher.clone(),
-        opps: vec![opponent.clone()],
-        scorer: teacher.clone(),
-        inner_focal: teacher.clone(),
-        inner_opps: vec![opponent.clone()],
+        focal: teacher.fork_for_collection_v3()?,
+        opps: vec![opponent.fork_for_collection_v3()?],
+        scorer: teacher.fork_for_collection_v3()?,
+        inner_focal: teacher.fork_for_collection_v3()?,
+        inner_opps: vec![opponent.fork_for_collection_v3()?],
     };
     let (selection, tree) = roles.select_e(&ctx);
     if !selection.faults.is_empty() {

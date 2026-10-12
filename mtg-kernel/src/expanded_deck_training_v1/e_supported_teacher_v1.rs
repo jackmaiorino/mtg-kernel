@@ -140,7 +140,8 @@ pub(super) fn teach(
         let FastActorResponseV1::Decision(d) = root.current_response() else {
             unreachable!()
         };
-        let mut capture = student.clone();
+        let mut capture = student.fork_for_collection_v3()?;
+        capture.reset_sampling_v1([0, 0]);
         let actual_tensor = match trajectory_generation_v1(trajectory) {
             FreshLineageGenerationV1::V3 => {
                 TensorBitsV1::from_tensor(&capture.select_with_training_tensor_v3(&root)?.2.common)
@@ -212,9 +213,7 @@ pub(super) fn teach(
             .map(|a| {
                 let mut sampler = WideCategoricalScratchV1::default();
                 let mass = sampler.apportion(&logits).map_err(err)?[a];
-                let z: Vec<f64> = logits.iter().map(|&z| f64::from(z)).collect();
-                let m = z.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-                let ce = (z.iter().map(|z| (z - m).exp()).sum::<f64>()).ln() + m - z[a];
+                let ce = ce_readout(&logits, a)?;
                 Ok::<_, String>(
                     json!({"ce":ce,"deployed_mass":mass as f64/(u64::MAX as f64+1.0),
                 "deployed_mass_u128":mass.to_string(),"disagreement":row.selected as usize!=a}),
@@ -295,4 +294,30 @@ pub(super) fn continuation_identity(options: &ESupportedTeacherOptionsV1) -> Val
         "prior_deck_indices":options.prior_deck_indices,"selection_transition_cap":options.selection_transition_cap,
         "runtime_commit":env!("MTG_KERNEL_BUILD_GIT_HEAD"),
         "runtime_tree":env!("MTG_KERNEL_BUILD_TRACKED_TREE_SHA256")})
+}
+
+fn ce_readout(logits: &[f32], target: usize) -> Result<f64, String> {
+    ensure(
+        logits.len() >= 2 && target < logits.len() && logits.iter().all(|z| z.is_finite()),
+        "E invalid CE readout",
+    )?;
+    let maximum = logits
+        .iter()
+        .map(|&z| f64::from(z))
+        .fold(f64::NEG_INFINITY, f64::max);
+    let gaps: Vec<_> = logits.iter().map(|&z| f64::from(z) - maximum).collect();
+    Ok(gaps.iter().map(|z| z.exp()).sum::<f64>().ln() - gaps[target])
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn e_supported_ce_readout_preserves_large_finite_common_offsets() {
+        let zero = ce_readout(&[0.0, 0.0], 0).unwrap();
+        assert_eq!(zero, 2.0_f64.ln());
+        for offset in [7.0, 1.0e20, -1.0e20, f32::MAX] {
+            assert_eq!(ce_readout(&[offset, offset], 0).unwrap(), zero);
+        }
+        assert!(ce_readout(&[0.0, f32::NAN], 0).is_err());
+    }
 }
