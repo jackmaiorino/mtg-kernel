@@ -4,7 +4,8 @@ import native from './fixtures/native-root-excerpt.json';
 import replayFixture from './fixtures/search-replay.json';
 import graphFixture from './fixtures/search-graph.json';
 import retained from './fixtures/retained-search.json';
-import { graphAt, graphLayout } from '../src/search-graph';
+import rootChoicesFixture from './fixtures/root-choices.json';
+import { graphAt, graphLayout, rootChoicesAt, rootChoiceStatus } from '../src/search-graph';
 import { initialSearchPlayback, searchReducer, searchEvents, rootHistory } from '../src/search-playback';
 import { comparePolicyMasses, policyFavorite, parseRecording, verifySearchDigests } from '../src/recording';
 import { initialPlayback, playbackReducer } from '../src/playback';
@@ -36,6 +37,35 @@ describe('retained search-controlled decisions',()=>{
   });
 });
 describe('growing search graph',()=>{
+  it('keeps all four legal moves before search visits or evaluates them',()=>{
+    const replay=parseRecording(rootChoicesFixture).frames[0].search!.replay!;
+    const event={simulation:0,phase:'select' as const,choice:0},graph=graphAt(replay,event);
+    const choices=rootChoicesAt(replay,event,graph);
+    expect(choices.map(c=>c.index)).toEqual([0,1,2,3]);
+    expect(choices.every(c=>c.visits===0&&c.evaluations===0&&c.children.length===0&&c.firstEvaluation===null)).toBe(true);
+    expect(graph.nodes.size).toBe(1);
+  });
+  it('retains evaluation-only alternatives and advances visits at backup',()=>{
+    const replay=parseRecording(rootChoicesFixture).frames[0].search!.replay!;
+    const evaluated={simulation:1,phase:'evaluate' as const,choice:0};
+    const probe=rootChoicesAt(replay,evaluated,graphAt(replay,evaluated))[1];
+    expect(probe).toMatchObject({visits:0,evaluations:1,children:[],firstEvaluation:{value:'-7786',simulation:1}});
+    expect(rootChoiceStatus(probe)).toContain('backup pending');
+    const end={simulation:4,phase:'backup' as const,choice:0},graph=graphAt(replay,end),choices=rootChoicesAt(replay,end,graph);
+    expect(choices.map(c=>c.visits)).toEqual([2,1,1,1]);
+    expect(choices[0].children).toEqual([1]);
+    expect(choices.slice(1).map(rootChoiceStatus)).toEqual(Array(3).fill('Evaluated once · not expanded'));
+    expect(graph.nodes.size).toBe(2);
+    const rewind={simulation:0,phase:'select' as const,choice:0};
+    expect(rootChoicesAt(replay,rewind,graphAt(replay,rewind)).every(c=>c.firstEvaluation===null)).toBe(true);
+  });
+  it('does not label an older expansion with missing identity as unexpanded',()=>{
+    const replay=parseRecording(rootChoicesFixture).frames[0].search!.replay!;
+    replay.schema='mtg-kernel-search-replay/v1';delete replay.simulations[4].leafNode;
+    const event={simulation:4,phase:'backup' as const,choice:0},choice=rootChoicesAt(replay,event,graphAt(replay,event))[0];
+    expect(choice.unidentifiedExpansions).toBe(1);
+    expect(rootChoiceStatus(choice)).toBe('Expansion recorded · child identity unavailable');
+  });
   it('reveals evaluated positions at expansion and updates visits only at backup',async()=>{
     const r=parseRecording(graphFixture);await verifySearchDigests(r);const replay=r.frames[0].search!.replay!;
     const before=graphAt(replay,{simulation:1,phase:'select',choice:0});expect([...before.nodes.keys()]).toEqual([0]);
