@@ -34,6 +34,7 @@ struct Config {
     focal_checkpoint: String,
     opponent_checkpoint: String,
     original_runtime: String,
+    original_source: String,
 }
 
 fn read(input: &Input) -> Result<Vec<u8>, String> {
@@ -148,7 +149,7 @@ pub(crate) fn run(path: &Path) -> Result<(), String> {
         json!({"kind":"header","perspective":"p0","cards":cards,"runtime":runtime,
         "decks":[spec.decks[source.own].label,spec.decks[source.other].label],
         "focal_checkpoint":config.focal_checkpoint,"opponent_checkpoint":config.opponent_checkpoint,
-        "original_runtime":config.original_runtime,"witness_sha256":config.witness.sha256,
+        "original_runtime":config.original_runtime,"original_source":config.original_source,"witness_sha256":config.witness.sha256,
         "bank_sha256":config.bank.sha256,"spec_sha256":config.spec.sha256,
         "source_id":config.id,"runtime_rules":spec.runtime_rules,"allocation":witness["allocation"]}),
     )?;

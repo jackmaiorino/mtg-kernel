@@ -71,6 +71,8 @@ const recordingSchema = z.object({
   seats: z.tuple([z.object({ name: text, deck: text }).strict(), z.object({ name: text, deck: text }).strict()]),
   cards: z.record(z.string(), cardSchema), frames: z.array(frameSchema).min(1).max(100000),
   bookmarks: z.array(z.object({ frame: text, title: text, situation: text, alternatives: text, consequence: text }).strict()).max(30),
+  reconstruction: z.object({ kind: z.literal('recorded-actions'), originalSource: hash, originalRuntime: hash,
+    sourceArtifactSha256: hash, openingArtifactSha256: hash, runtimeRules: text }).strict().optional(),
 }).strict();
 export type Recording = z.infer<typeof recordingSchema>;
 export type Frame = Recording['frames'][number];
@@ -95,6 +97,7 @@ export function parseRecording(raw: unknown): Recording {
     throw new Error(`Recording cannot be opened: ${issue.path.join('.')} ${issue.message}`);
   }
   const r = result.data;
+  if (r.reconstruction && r.schema !== 'mtg-kernel-viewer-recording/v3') throw new Error('Reconstruction provenance requires recording format v3');
   const ids = new Set<string>();
   const keys = new Set<string>();
   for (const [id, card] of Object.entries(r.cards)) if (id !== card.id) throw new Error('Card identifier mismatch');
@@ -137,6 +140,7 @@ export function parseRecording(raw: unknown): Recording {
   const byId = new Map(r.frames.map(f => [f.id,f]));
   for (const f of r.frames) if (f.decisionSource) {
     const source=f.decisionSource, root=byId.get(source.root);
+    if (r.reconstruction && source.artifactSha256 !== r.reconstruction.sourceArtifactSha256) throw new Error('Recorded search choice belongs to a different reconstruction source');
     if (!root?.search || root.search.algorithm !== 'persistent-uct' || root.key.actor !== r.perspective ||
         !root.decisionSource || root.decisionSource.kind !== 'search-root' || root.decisionSource.root !== root.id ||
         root.key.episode !== f.key.episode || root.key.step > f.key.step || root.decisionSource.treeDigest !== source.treeDigest ||

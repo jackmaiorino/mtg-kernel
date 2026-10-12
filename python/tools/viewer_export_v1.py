@@ -267,7 +267,7 @@ def build_recording(path: Path, identifier: str, title: str, exporter: Exporter,
         identity.get("checkpoint_sha256") or identity.get("actual_model", {}).get("parameter_values_sha256", "historical-recorded-model"))
     decks = header.get("decks", ["Recorded deck", "Recorded deck"])
     version = 'mtg-kernel-viewer-recording/v3' if reconstructed else 'mtg-kernel-viewer-recording/v2' if any(f['search'] and f['search'].get('replay') for f in frames) else SCHEMA
-    return {"schema":version,"id":identifier,"title":title,
+    recording = {"schema":version,"id":identifier,"title":title,
         "description":("A selected qualification game: r1 Spy versus T1 Wildfire. A plain-policy opening leads to a persistent-search guide from turn 8. Search selected the self-mill and Giant reanimation choices. Reconstructed from recorded real actions; root tables and chooser identities were retained, individual simulations and policy distributions were not. This example is not representative of the refresh pilot or a playing-strength benchmark." if reconstructed else "Illustrative self-play with a frozen model. Recorded behavior is not a playing-strength benchmark." if native else "Historical actor-visible diagnostic recording."),
         "perspective":exporter.perspective,"complete":complete,"coverage":"every-step" if native or reconstructed else "decision-snapshots",
         "identity":{"source":runtime.get("engine_commit", "unknown"),"runtime":runtime.get("executable_sha256", "unknown"),
@@ -275,6 +275,11 @@ def build_recording(path: Path, identifier: str, title: str, exporter: Exporter,
             "sourceSha256":hashlib.sha256(path.read_bytes()).hexdigest()},
         "seats":[{"name":"r1 / Search guide" if reconstructed else "Kernel / Agent 01","deck":decks[0]},{"name":"T1 / Policy" if reconstructed else "Kernel / Agent 02","deck":decks[1]}],
         "cards":exporter.cards,"frames":frames,"bookmarks":bookmarks}
+    if reconstructed:
+        recording['reconstruction'] = {'kind':'recorded-actions','originalSource':header['original_source'],
+            'originalRuntime':header['original_runtime'],'sourceArtifactSha256':header['witness_sha256'],
+            'openingArtifactSha256':header['bank_sha256'],'runtimeRules':header['runtime_rules']}
+    return recording
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
