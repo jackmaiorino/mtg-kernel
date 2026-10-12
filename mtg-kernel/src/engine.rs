@@ -9135,7 +9135,9 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
     }
     // A closed Cerberus operation still owns historical authority. Validate it
     // before automatic step/cleanup work can mutate a restored malformed state.
-    if crate::garruks_uprising_v1::validate_state(state).is_err() {
+    if crate::garruks_uprising_v1::validate_state(state).is_err()
+        || crate::arahbo_v1::validate_state(state).is_err()
+    {
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
         return Decision::Halted {
             mechanic: UnsupportedMechanic::InvalidEffectContinuation,
@@ -13112,6 +13114,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
     }
     let finalized = state.stack.last().expect("trigger just published").clone();
     crate::garruks_uprising_v1::publish(state, &finalized)?;
+    crate::arahbo_v1::publish(state, &finalized)?;
     crate::ashroot_dispatch_v2::publish(state, &finalized)?;
     crate::wildwood_capture_v1::publish(state, &finalized);
     effect::frenzied_goblin_resolution_v1::publish(state)?;
@@ -13334,6 +13337,7 @@ fn triggered_stack_item_expected_target_spec(
     }
 
     crate::garruks_uprising_v1::validate_source(state, inline_effect, ability_source_contract)?;
+    crate::arahbo_v1::validate_source(state, inline_effect, ability_source_contract)?;
     crate::authority_of_the_consuls_v1::validate_source(
         state,
         inline_effect,
@@ -14137,6 +14141,7 @@ pub(crate) fn counter_stack_item_by_id(
         // on the stack after the attempt, so callers finish the effect normally.
         return Ok(Some(item));
     }
+    let arahbo_counter_owner = crate::arahbo_v1::before_remove(state, &item)?;
     let garruk_counter_owner = crate::garruks_uprising_v1::before_remove(state, &item)?;
     let mut departure = if item.kind == StackItemKind::Spell {
         Some(plan_spell_departure(state, &item, Zone::Graveyard)?)
@@ -14156,6 +14161,10 @@ pub(crate) fn counter_stack_item_by_id(
         }
     } else {
         state.stack.remove(position);
+    }
+    if let Some(owner) = arahbo_counter_owner {
+        crate::arahbo_v1::record_counter_input(state, &owner)?;
+        crate::arahbo_v1::counter_removed(state, owner)?;
     }
     if let Some(owner) = garruk_counter_owner {
         crate::garruks_uprising_v1::counter_removed(state, owner)?;
@@ -14601,6 +14610,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         .ability_source_contract
         .is_some_and(|source| crate::banishing_light_v1::source_present(state, source));
 
+    let arahbo_owner = match crate::arahbo_v1::before_remove(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let garruk_owner = match crate::garruks_uprising_v1::before_remove(state, &current) {
         Ok(owner) => owner,
         Err(_) => {
@@ -14666,6 +14685,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         x_value: item.v4.x_value,
     };
 
+    if let Some(owner) = arahbo_owner {
+        if crate::arahbo_v1::resolve_removed(state, owner, &ctx).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
     if let Some(owner) = garruk_owner {
         if crate::garruks_uprising_v1::resolve_removed(state, owner, &ctx).is_err() {
             state.engine.halted =
@@ -15563,6 +15590,16 @@ pub(crate) fn static_controlled_subtype_boost_for(
     name: &str,
 ) -> Option<StaticControlledSubtypeBoostDef> {
     match name {
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        "Arahbo, the First Fang" => Some(StaticControlledSubtypeBoostDef {
+            subtype: card_def::Subtype::Cat,
+            exclude_source: true,
+            power: 1,
+            toughness: 1,
+        }),
         "Dwynen, Gilt-Leaf Daen" | "Elvish Archdruid" => Some(StaticControlledSubtypeBoostDef {
             subtype: card_def::Subtype::Elf,
             exclude_source: true,

@@ -149,7 +149,7 @@ pub(crate) fn acquire_permanent_entry(
     item: &StackItem,
     targets_legal: bool,
 ) -> Result<Option<PermanentEntryOwnerV1>, String> {
-    if !enabled()
+    if !(enabled() || crate::arahbo_v1::enabled())
         || item.kind != crate::state::StackItemKind::Spell
         || item.inline_effect.is_some()
         || item.v4.cast_method == Some(crate::state::CastMethodV4::Omen)

@@ -36,6 +36,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fmt;
 
+pub(crate) mod arahbo_v31;
 pub(crate) mod ashroot_v27;
 pub(crate) mod authority_v17;
 pub(crate) mod banishing_v26;
@@ -4457,6 +4458,7 @@ enum FlatActionContractModeV1 {
     GourmandV29,
     GarrukV30,
     CrystalV22,
+    ArahboV31,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -5412,6 +5414,18 @@ impl RlEpisodeSessionV1 {
         mut profile: Option<&mut RlPhaseProfileV1>,
     ) {
         self.current = None;
+        if crate::arahbo_v1::requires_successor(&self.state) {
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:arahbo_v31_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+
         if crate::garruks_uprising_v1::requires_successor(&self.state) {
             self.terminal = Some(halted_terminal(
                 &self.deck_ids,
@@ -7145,8 +7159,25 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
+        if crate::arahbo_v1::requires_successor(&self.state)
+            && self.flat_action_contract_mode != FlatActionContractModeV1::ArahboV31
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:arahbo_v31_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         if crate::garruks_uprising_v1::requires_successor(&self.state)
-            && self.flat_action_contract_mode != FlatActionContractModeV1::GarrukV30
+            && !matches!(
+                self.flat_action_contract_mode,
+                FlatActionContractModeV1::GarrukV30 | FlatActionContractModeV1::ArahboV31
+            )
         {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -7193,7 +7224,9 @@ impl FastActorSessionV1 {
         if crate::banishing_light_v1::requires_successor(&self.state)
             && !matches!(
                 self.flat_action_contract_mode,
-                FlatActionContractModeV1::BanishingV26 | FlatActionContractModeV1::GarrukV30
+                FlatActionContractModeV1::BanishingV26
+                    | FlatActionContractModeV1::GarrukV30
+                    | FlatActionContractModeV1::ArahboV31
             )
         {
             self.terminal = Some(halted_terminal(
@@ -7504,6 +7537,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:garruk_v30:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::ArahboV31 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = arahbo_v31::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:arahbo_v31:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));

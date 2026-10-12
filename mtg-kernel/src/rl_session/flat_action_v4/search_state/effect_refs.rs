@@ -167,6 +167,8 @@ impl Scan<'_> {
             | PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness { .. }
             | GrantKeywordToDeclaredTargetsUntilEndOfTurn { .. }
             | ReturnTwoDifferentControllerCreaturesToOwnersHands
+            | BindArahboCatEntryV1
+            | ArahboTokenFromCaptureV1 { .. }
             | BindGarrukEtbDrawV1
             | BindGarrukPowerEntryDrawV1
             | GarrukDrawFromCaptureV1 {..}
@@ -1169,6 +1171,13 @@ pub(super) fn conflicts(
             }
             CerberusPublishedV1 { item, .. } => s.raw(item.source),
             CerberusOperationV1 { source, .. } => s.raw(source.source),
+            ArahboEntryObservationV1 { .. }
+            | ArahboTokenCaptureV1 { .. }
+            | ArahboTokenCollectedV1 { .. }
+            | ArahboTokenPublishedV1 { .. }
+            | ArahboTokenRemovedV1 { .. }
+            | ArahboTokenCompletedV1 { .. }
+            | ArahboCounterInputV1 { .. } => true,
             GarrukEntryObservationV1 { .. }
             | GarrukDrawCaptureV1 { .. }
             | GarrukDrawCollectedV1 { .. }

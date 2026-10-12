@@ -589,5 +589,10 @@ pub mod rules_meaning_banishing_v1;
 pub mod rules_meaning_extra_turn_v1;
 pub mod rules_meaning_raid_entry_v1;
 
+pub mod arahbo_v1;
 pub mod banishing_public_v1;
 pub mod garruks_uprising_v1;
+
+pub mod rules_meaning_arahbo_v1;
+
+pub mod arahbo_public_v1;

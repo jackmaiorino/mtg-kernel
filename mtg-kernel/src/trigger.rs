@@ -261,6 +261,7 @@ pub enum TriggerCondition {
     BeginningControllerEndStepIfOpponentLostLife,
     GarrukOwnEtbFerociousV1,
     GarrukControlledCreaturePowerEntryV1,
+    ArahboThisOrOtherNontokenCatEntryV1,
 }
 
 pub struct TriggeredAbilityDef {
@@ -1585,6 +1586,22 @@ const GUTLESS_PLUNDERER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
     condition: TriggerCondition::EtbAfterControllerAttackedThisTurn,
     ..etb_trigger(gutless_plunderer_effect)
 }];
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn arahbo_cat_entry() -> EffectOp {
+    EffectOp::BindArahboCatEntryV1
+}
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+const ARAHBO_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ArahboThisOrOtherNontokenCatEntryV1,
+    ..etb_trigger(arahbo_cat_entry)
+}];
+
 fn garruk_etb_draw() -> EffectOp {
     EffectOp::BindGarrukEtbDrawV1
 }
@@ -3538,6 +3555,11 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Gorehorn Raider" => &GOREHORN_RAIDER_TRIGGERS,
         "Gutless Plunderer" => &GUTLESS_PLUNDERER_TRIGGERS,
         "Stromkirk Bloodthief" => &STROMKIRK_BLOODTHIEF_TRIGGERS,
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        "Arahbo, the First Fang" => &ARAHBO_TRIGGERS,
         "Garruk's Uprising" => &GARRUKS_UPRISING_TRIGGERS,
 
         "Searslicer Goblin" => &SEARSLICER_GOBLIN_TRIGGERS,
@@ -3944,6 +3966,7 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
             },
         ) => count == actual_count && max_taken == actual_max_taken,
         (EffectOp::BindAuthorityEntryGainLifeV1, EffectOp::AuthorityEntryGainLifeV1 { .. }) => true,
+        (EffectOp::BindArahboCatEntryV1, EffectOp::ArahboTokenFromCaptureV1 { .. }) => true,
         (
             EffectOp::BindGarrukEtbDrawV1 | EffectOp::BindGarrukPowerEntryDrawV1,
             EffectOp::GarrukDrawFromCaptureV1 { .. },
@@ -4065,6 +4088,9 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    if matches!(effect, EffectOp::ArahboTokenFromCaptureV1 { .. }) {
+        return crate::arahbo_v1::selected_definition(card_def).then_some(TargetSpec::None);
+    }
     if matches!(effect, EffectOp::GarrukDrawFromCaptureV1 { .. }) {
         return crate::garruks_uprising_v1::selected_definition(card_def)
             .then_some(TargetSpec::None);
@@ -4780,6 +4806,16 @@ fn triggers_from_events(
         }
     }
     match crate::garruks_uprising_v1::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
+    match crate::arahbo_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
             state.engine.halted = Some((

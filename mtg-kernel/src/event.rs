@@ -1105,6 +1105,39 @@ pub enum CommittedEvent {
     GorehornCrystalCompletionV1 {
         completion: Box<crate::gorehorn_damage_v1::crystal::CompletionV1>,
     },
+    ArahboEntryObservationV1 {
+        entry: Box<crate::arahbo_v1::EntryV1>,
+        effective_cat: bool,
+        was_token: bool,
+        sources: Vec<(
+            crate::state::AbilitySourceContractV4,
+            crate::arahbo_v1::RootV1,
+        )>,
+    },
+    ArahboTokenCaptureV1 {
+        capture: crate::arahbo_v1::CaptureV1,
+    },
+    ArahboTokenCollectedV1 {
+        capture_history_index: u64,
+    },
+    ArahboTokenPublishedV1 {
+        capture_history_index: u64,
+        item: Box<crate::state::StackItem>,
+    },
+    ArahboTokenRemovedV1 {
+        capture_history_index: u64,
+        item: Box<crate::state::StackItem>,
+        kind: crate::arahbo_v1::RemovalKindV1,
+    },
+    ArahboTokenCompletedV1 {
+        capture_history_index: u64,
+        removal_history_index: u64,
+        token_history_index: Option<u64>,
+    },
+    ArahboCounterInputV1 {
+        capture_history_index: u64,
+        item: Box<crate::state::StackItem>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -1725,7 +1758,7 @@ pub(crate) fn commit_garruk_initialized_entry(
             None,
             None,
             None,
-            None,
+            (None, None),
             (Some(entering), false),
         );
     }
@@ -1832,7 +1865,7 @@ fn commit_with_ability_lki(
         abilities_removed_before,
         frozen_death_captures,
         None,
-        None,
+        (None, None),
         (None, false),
     );
 }
@@ -1843,13 +1876,17 @@ fn commit_with_ability_lki_and_entry_batch(
     abilities_removed_before: Option<bool>,
     frozen_death_captures: Option<Vec<CommittedEvent>>,
     mut authority_batch: Option<&mut crate::authority_of_the_consuls_v1::EntryBatchV1>,
-    mut garruk_batch: Option<&mut crate::garruks_uprising_v1::EntryBatchV1>,
+    entry_batches: (
+        Option<&mut crate::garruks_uprising_v1::EntryBatchV1>,
+        Option<&mut crate::arahbo_v1::EntryBatchV1>,
+    ),
     entry_context: (
         Option<(ObjectId, crate::garruks_uprising_v1::EntryCharacteristicsV1)>,
         bool,
     ),
 ) {
     let (entering_characteristics, defer_raid_entry) = entry_context;
+    let (mut garruk_batch, mut arahbo_batch) = entry_batches;
     let mut event = event;
     if let ProposedEvent::ZoneChange(change) = &mut event {
         if change.to_zone == Zone::Graveyard
@@ -2322,6 +2359,11 @@ fn commit_with_ability_lki_and_entry_batch(
         crate::garruks_uprising_v1::record_single_entry(state, entry_history_index)
     }
 
+    if let Some(batch) = arahbo_batch.as_mut() {
+        batch.record(state, entry_history_index);
+    } else {
+        crate::arahbo_v1::record_single_entry(state, entry_history_index);
+    }
     if let Some(batch) = authority_batch.as_mut() {
         batch.record(entry_history_index);
     } else {
@@ -2390,6 +2432,7 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
     )>,
 ) {
     let garruk_batch = crate::garruks_uprising_v1::EntryBatchV1::capture();
+    let arahbo_batch = crate::arahbo_v1::EntryBatchV1::capture();
     let raid_history_start = state.engine.event_history.len();
     if crate::effect::crystal_prevention_v1::validate(state).is_err() {
         state.engine.halted = Some((
@@ -2423,6 +2466,7 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
         authority_batch,
         EntryBatchCommitContextV1 {
             garruk_batch,
+            arahbo_batch,
             attachments,
             raid_history_start,
         },
@@ -2446,6 +2490,7 @@ pub(crate) fn commit_crystal_prepared_batch(
     let authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
     let context = EntryBatchCommitContextV1 {
         garruk_batch: crate::garruks_uprising_v1::EntryBatchV1::capture(),
+        arahbo_batch: crate::arahbo_v1::EntryBatchV1::capture(),
         attachments: Vec::new(),
         raid_history_start: state.engine.event_history.len(),
     };
@@ -2453,6 +2498,7 @@ pub(crate) fn commit_crystal_prepared_batch(
 }
 struct EntryBatchCommitContextV1 {
     garruk_batch: Option<crate::garruks_uprising_v1::EntryBatchV1>,
+    arahbo_batch: Option<crate::arahbo_v1::EntryBatchV1>,
     attachments: Vec<(
         crate::effect::EffectObjectBinding,
         crate::effect::EffectObjectBinding,
@@ -2467,6 +2513,7 @@ fn commit_batch_survivors(
 ) {
     let EntryBatchCommitContextV1 {
         mut garruk_batch,
+        mut arahbo_batch,
         attachments,
         raid_history_start,
     } = context;
@@ -2540,7 +2587,7 @@ fn commit_batch_survivors(
                 Some(removed),
                 captures,
                 authority_batch.as_mut(),
-                garruk_batch.as_mut(),
+                (garruk_batch.as_mut(), arahbo_batch.as_mut()),
                 (None, true),
             );
         }
@@ -2555,7 +2602,7 @@ fn commit_batch_survivors(
                 None,
                 captures,
                 authority_batch.as_mut(),
-                garruk_batch.as_mut(),
+                (garruk_batch.as_mut(), arahbo_batch.as_mut()),
                 (None, true),
             );
         }
@@ -2589,6 +2636,9 @@ fn commit_batch_survivors(
     }
 
     crate::raid_entry_custody_v1::capture_batch_entries(state, raid_history_start);
+    if let Some(batch) = arahbo_batch {
+        batch.finish(state);
+    }
     for (_, player, amount) in lifelink_gains {
         commit(state, ProposedEvent::life_gain(player, amount));
     }
@@ -3834,7 +3884,7 @@ mod authority_visibility_tests {
                     None,
                     None,
                     Some(&mut batch),
-                    None,
+                    (None, None),
                     (None, false),
                 );
                 // A typed physical hidden-characteristic boundary before
@@ -3992,7 +4042,7 @@ mod garruk_entry_tests {
                         None,
                         None,
                         None,
-                        Some(&mut batch),
+                        (Some(&mut batch), None),
                         (hidden, false),
                     );
                 }
@@ -4077,6 +4127,75 @@ mod garruk_entry_tests {
                 }
                 crate::garruks_uprising_v1::validate_state(&state).unwrap();
             }
+        }
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod arahbo_entry_tests {
+    use super::*;
+    use crate::arahbo_v1::future_tests::{cast, ready, settle};
+    use crate::arahbo_v1::{EntryBatchV1, RootV1};
+    use crate::engine;
+    use crate::ids::PlayerId;
+    use crate::policy_observation_v6::tests::put;
+    #[test]
+    #[ignore = "requires genuine Arahbo registration; physical characteristic boundary"]
+    fn nontoken_cat_permanent_does_not_require_creature_type_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor);
+            cast(&mut state, actor);
+            // Labeled physical layer-4 substrate: an accepted Equipment with Cat
+            // subtype, not a claim of a natural printed FDN type-grant producer.
+            let equipment = put(&mut state, actor, "Bonesplitter", Zone::Hand);
+            crate::event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(equipment, Zone::Battlefield),
+            );
+            let start = state.engine.event_history.len() - 1;
+            // Re-enter through the genuine event pipeline with its retained cached
+            // Cat characteristic. The definition remains a noncreature artifact.
+            crate::event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(equipment, Zone::Hand),
+            );
+            state
+                .objects
+                .get_mut(equipment)
+                .v4
+                .effective_subtype_ids
+                .push(crate::card_def::Subtype::Cat.stable_id());
+            let mut batch = EntryBatchV1::capture().unwrap();
+            // Cache reset on entry means this boundary belongs immediately before
+            // observation, after actual committed movement, as other typed tests do.
+            commit_with_ability_lki_and_entry_batch(
+                &mut state,
+                ProposedEvent::zone_change(equipment, Zone::Battlefield),
+                None,
+                None,
+                None,
+                (None, Some(&mut batch)),
+                (None, false),
+            );
+            state
+                .objects
+                .get_mut(equipment)
+                .v4
+                .effective_subtype_ids
+                .push(crate::card_def::Subtype::Cat.stable_id());
+            batch.finish(&mut state);
+            assert!(!engine::object_has_type(
+                &state,
+                equipment,
+                crate::card_def::CardType::Creature
+            ));
+            assert!(state.engine.event_history[start..].iter().any(|event|matches!(event,CommittedEvent::ArahboTokenCaptureV1 {capture} if capture.root==RootV1::OtherNontokenCatEntry)));
+            settle(&mut state);
+            assert_eq!(state.engine.event_history.iter().filter(|event|matches!(event,CommittedEvent::CreateToken {token_def,..} if Some(*token_def)==crate::card_def::card_id_by_name("Cat Token"))).count(),2);
         }
     }
 }

@@ -41,7 +41,8 @@ fn threshold(out: &mut Collector, player: RelF, zone: ZoneF, obj: ObjF, minimum:
 /// The event a triggered ability waits for, plus any intervening reads.
 pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector) {
     match condition {
-        TriggerCondition::GarrukOwnEtbFerociousV1
+        TriggerCondition::ArahboThisOrOtherNontokenCatEntryV1
+        | TriggerCondition::GarrukOwnEtbFerociousV1
         | TriggerCondition::GarrukControlledCreaturePowerEntryV1
         | TriggerCondition::OpponentCreatureEntersV1 => out.atoms.push(Atom::Opaque),
         TriggerCondition::ThisOrControlledCreatureDies => {
