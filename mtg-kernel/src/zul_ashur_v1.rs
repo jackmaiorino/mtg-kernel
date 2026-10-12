@@ -20,7 +20,7 @@ pub(crate) fn owns_definition(id: u16) -> bool {
 fn selected(item: &StackItem) -> bool {
     item.kind == StackItemKind::ActivatedAbility
         && item.v4.granted_by.is_none()
-        && item.v4.cauldron_grant.is_none()
+        && item.v4.cauldron_grant.is_empty()
         && item
             .v4
             .ability_source_contract
