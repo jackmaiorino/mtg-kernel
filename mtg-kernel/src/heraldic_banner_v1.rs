@@ -40,6 +40,20 @@ pub(crate) fn owns_definition(id: u16) -> bool {
                 })
     })
 }
+pub(crate) fn requires_successor(state: &GameState) -> bool {
+    potentially_enters(state)
+        || crate::linked_aura_operation_v1::has_banner_pending(state)
+        || state.engine.event_history.iter().any(|e| {
+            matches!(
+                e,
+                CommittedEvent::BannerEntryOperationStartedV1 { .. }
+                    | CommittedEvent::BannerEntryColorCapturedV1 { .. }
+                    | CommittedEvent::BannerEntryColorChosenV1 { .. }
+                    | CommittedEvent::BannerEntryColorCommittedV1 { .. }
+                    | CommittedEvent::BannerEntryOperationCompletedV1 { .. }
+            )
+        })
+}
 pub(crate) fn potentially_enters(state: &GameState) -> bool {
     state
         .objects
@@ -64,7 +78,13 @@ pub(crate) fn choice(
                 return Err("Banner color entry has a foreign face".into());
             }
             (
-                change.battlefield_controller.unwrap_or(object.owner),
+                change.battlefield_controller.unwrap_or_else(|| {
+                    if object.zone == Zone::Stack {
+                        object.controller
+                    } else {
+                        object.owner
+                    }
+                }),
                 object.card_def,
                 Some(object.clone()),
             )
@@ -227,12 +247,22 @@ fn validate_entered(state: &GameState, entered: &EnteredV1, at: usize) -> Result
                 object,
                 from,
                 to: Zone::Battlefield,
-                ..
+                controller_before,
             },
         ) if *object == change.object
             && *object == entered.object.source
             && choice.original.as_ref().is_some_and(|before| {
                 before.zone == *from
+                    && before.controller == *controller_before
+                    && before.card_def == choice.card_def
+                    && choice.controller
+                        == change.battlefield_controller.unwrap_or_else(|| {
+                            if before.zone == Zone::Stack {
+                                before.controller
+                            } else {
+                                before.owner
+                            }
+                        })
                     && before.owner == entered.object.owner
                     && before.zone_change_count.checked_add(1)
                         == Some(entered.object.zone_change_count)
@@ -251,7 +281,35 @@ fn validate_entered(state: &GameState, entered: &EnteredV1, at: usize) -> Result
             && entered.object.owner == *controller => {}
         _ => return Err("Banner color has no actual corresponding battlefield entry".into()),
     }
-    if entered.object.zone != Zone::Battlefield {
+    if let Some(CommittedEvent::BannerEntryOperationStartedV1 { operation, .. }) =
+        state.engine.event_history.get(entered.operation as usize)
+    {
+        match operation.as_ref() {
+            crate::linked_aura_operation_v1::OperationV1::Event(event)
+            | crate::linked_aura_operation_v1::OperationV1::Commit(event)
+                if *event != choice.proposal =>
+            {
+                return Err("Banner entry differs from original direct operation".into());
+            }
+            crate::linked_aura_operation_v1::OperationV1::Batch(events)
+                if !events.contains(&choice.proposal) =>
+            {
+                return Err("Banner entry differs from original batch roster".into());
+            }
+            crate::linked_aura_operation_v1::OperationV1::Advance
+            | crate::linked_aura_operation_v1::OperationV1::Step(_)
+                if matches!(&choice.proposal,
+                ProposedEvent::ZoneChange(change) if choice.original.as_ref().is_some_and(|o|o.zone==Zone::Stack)
+                    && change.battlefield_controller.is_some()) =>
+            {
+                return Err(
+                    "Banner printed permanent entry changed original spell controller".into(),
+                );
+            }
+            _ => {}
+        }
+    }
+    if entered.object.zone != Zone::Battlefield || entered.object.attached_to.is_some() {
         return Err("Banner entry binding has foreign zone".into());
     }
     Ok(())

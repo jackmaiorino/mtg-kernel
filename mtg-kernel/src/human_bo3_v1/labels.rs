@@ -426,7 +426,8 @@ fn actor(action: &A) -> Option<PlayerSeatV1> {
         | A::ChooseLondonMulligan { actor, .. }
         | A::ChooseLondonBottom { actor, .. }
         | A::ChooseAttackTarget { actor, .. }
-        | A::ChooseLegendPermanent { actor, .. } => Some(*actor),
+        | A::ChooseLegendPermanent { actor, .. }
+        | A::ChooseEntryColorV36 { actor, .. } => Some(*actor),
         #[cfg(feature = "limited-fdn-fixtures")]
         A::ChooseTriggerOrderNext { actor, .. } => Some(*actor),
         A::Ambiguous { .. } => None,
@@ -1393,7 +1394,8 @@ fn label_common(
         | A::ChooseLondonBottom { .. }
         | A::ChooseLegendPermanent { .. }
         | A::ChooseAttackTarget { .. }
-        | A::Ambiguous { .. } => return Err(Error::UnsupportedPrompt),
+        | A::Ambiguous { .. }
+        | A::ChooseEntryColorV36 { .. } => return Err(Error::UnsupportedPrompt),
     })
 }
 

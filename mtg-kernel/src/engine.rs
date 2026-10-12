@@ -9103,6 +9103,12 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    if crate::heraldic_banner_v1::validate_state(state).is_err() {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
     if let Err(source) = event::validate_exile_if_dies_replacements(state) {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         state.engine.halted = Some((mechanic, source));
