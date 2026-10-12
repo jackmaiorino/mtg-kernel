@@ -1098,6 +1098,7 @@ pub(super) fn conflicts(
             | FrenziedGoblinInstalledV1 { .. }
             | FrenziedGoblinExpiredV1 { .. }
             | FrenziedGoblinCleanupV1 { .. }
+            | VampireGourmandResolutionBoundaryV1 { .. }
             | DifferentControllerTargetDepartureV1 { .. }
             | LifeLoss { .. }
             | LifeGain { .. }

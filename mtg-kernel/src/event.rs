@@ -820,6 +820,9 @@ pub enum CommittedEvent {
         stack_item_id: StackItemId,
         operation_history_index: u64,
     },
+    VampireGourmandResolutionBoundaryV1 {
+        receipt: crate::effect::VampireGourmandResolutionReceiptV1,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -1639,6 +1639,14 @@ const FRENZIED_GOBLIN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef 
     ..etb_trigger(frenzied_goblin_effect)
 }];
 
+fn vampire_gourmand_effect() -> EffectOp {
+    crate::vampire_gourmand_v1::program()
+}
+const VAMPIRE_GOURMAND_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Attacks,
+    ..etb_trigger(vampire_gourmand_effect)
+}];
+
 fn blood_fountain_effect() -> EffectOp {
     let blood = crate::card_def::card_id_by_name("Blood Token").expect("Blood Token in CARD_DEFS");
     EffectOp::CreateToken {
@@ -3457,6 +3465,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Ruby, Daring Tracker" => &RUBY_DARING_TRACKER_TRIGGERS,
         "Courageous Goblin" => &COURAGEOUS_GOBLIN_TRIGGERS,
         "Frenzied Goblin" => &FRENZIED_GOBLIN_TRIGGERS,
+        "Vampire Gourmand" => &VAMPIRE_GOURMAND_TRIGGERS,
         "Webweaver Changeling" => &WEBWEAVER_CHANGELING_TRIGGERS,
         "Glint Hawk" => &GLINT_HAWK_TRIGGERS,
         "Gatecreeper Vine" => &GATECREEPER_VINE_TRIGGERS,

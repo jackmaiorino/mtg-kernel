@@ -7186,6 +7186,11 @@ fn continuous_effects_common_v2(
                     "temporary cant-block restriction requires a public successor".into(),
                 ));
             }
+            UntilEndOfTurnEffect::ResolvedObjectCantBeBlockedV1 { .. } => {
+                return Err(RlContractError(
+                    "temporary cant-block restriction requires a public successor".into(),
+                ));
+            }
             UntilEndOfTurnEffect::DamageCannotBePrevented {
                 timestamp,
                 duration,

@@ -505,6 +505,13 @@ pub enum UntilEndOfTurnEffect {
         controller: PlayerId,
         timestamp: u64,
     },
+    /// Rule-changing evasion, not a removable granted ability.
+    ResolvedObjectCantBeBlockedV1 {
+        object_id: ObjectId,
+        object_zone_change_count: u32,
+        timestamp: u64,
+        duration: EffectDuration,
+    },
 }
 
 /// Whether an `effect::EffectOp::ImpulseDraw`-exiled card's `PlayPermission`
@@ -8840,7 +8847,9 @@ fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
     if defender_controls_island && has_effective_keyword(state, attacker, Keywords::ISLANDWALK) {
         return Vec::new();
     }
-    if has_effective_keyword(state, attacker, Keywords::CANT_BE_BLOCKED) {
+    if crate::vampire_gourmand_v1::cant_be_blocked(state, attacker)
+        || has_effective_keyword(state, attacker, Keywords::CANT_BE_BLOCKED)
+    {
         return Vec::new();
     }
     // Azure Fleet Admiral: "can't be blocked by creatures the monarch
@@ -13050,6 +13059,7 @@ fn triggered_stack_item_expected_target_spec(
         ability_source_contract,
     )?;
     crate::cerberus_capture_v1::validate_source(state, inline_effect, ability_source_contract)?;
+    crate::vampire_gourmand_v1::validate_source(state, source_card_def, ability_source_contract)?;
     #[cfg(feature = "standard-magezero-fixtures")]
     if matches!(
         inline_effect,
@@ -14419,11 +14429,13 @@ fn advance_step(state: &mut GameState) {
     // Cleanup priority can install a fresh rule-changing restriction. CR 514.3
     // repeats cleanup before the player flip, including these new records.
     if state.step == Step::Cleanup
-        && state
-            .engine
-            .until_end_of_turn
-            .iter()
-            .any(|effect| matches!(effect, UntilEndOfTurnEffect::ResolvedObjectCantBlock { .. }))
+        && state.engine.until_end_of_turn.iter().any(|effect| {
+            matches!(
+                effect,
+                UntilEndOfTurnEffect::ResolvedObjectCantBlock { .. }
+                    | UntilEndOfTurnEffect::ResolvedObjectCantBeBlockedV1 { .. }
+            )
+        })
     {
         for player in &mut state.players {
             player.mana_pool = [0; 6];
@@ -15736,7 +15748,8 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
                 UntilEndOfTurnEffect::SyntheticMarker(_) => false,
                 UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
                 | UntilEndOfTurnEffect::ResolvedObjectCantBlock { .. }
-                | UntilEndOfTurnEffect::ResolvedObjectControlEffect { .. } => false,
+                | UntilEndOfTurnEffect::ResolvedObjectControlEffect { .. }
+                | UntilEndOfTurnEffect::ResolvedObjectCantBeBlockedV1 { .. } => false,
             };
             if grants {
                 return true;
@@ -18859,6 +18872,10 @@ mod raid_history_tests;
 ))]
 #[path = "engine/sower_of_chaos_v1_tests.rs"]
 mod sower_of_chaos_v1_tests;
+
+#[cfg(test)]
+#[path = "engine/vampire_gourmand_v1_tests.rs"]
+mod vampire_gourmand_v1_tests;
 
 #[cfg(test)]
 #[path = "engine/anytarget_planeswalker_tests.rs"]

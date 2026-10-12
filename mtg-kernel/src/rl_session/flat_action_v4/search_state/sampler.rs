@@ -155,6 +155,11 @@ fn conflicts(
                 object_id,
                 object_zone_change_count,
                 ..
+            }
+            | ResolvedObjectCantBeBlockedV1 {
+                object_id,
+                object_zone_change_count,
+                ..
             } => same(*object_id, *object_zone_change_count),
             DamageCannotBePrevented { .. } => false,
         }
