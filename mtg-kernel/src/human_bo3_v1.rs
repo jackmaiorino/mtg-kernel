@@ -276,6 +276,9 @@ impl HumanDecisionProjectorV1 {
     }
 }
 
+mod fiery_v33;
+pub use fiery_v33::*;
+
 mod strongbox_v32;
 pub use strongbox_v32::*;
 

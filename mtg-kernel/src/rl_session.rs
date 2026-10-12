@@ -46,6 +46,7 @@ pub(crate) mod cerberus_v19;
 pub(crate) mod crystal_v22;
 pub(crate) mod employment_v18;
 pub mod extra_turn_v23;
+pub(crate) mod fiery_v33;
 pub(crate) mod frenzied_v15;
 pub(crate) mod garruk_v30;
 pub(crate) mod gourmand_v29;
@@ -4331,7 +4332,8 @@ fn flat_validate_expected_decision_v1(
     }
     // The frozen flat formats cannot represent these extended mechanics or
     // numeric ranges. Refuse before publishing any incomplete buffers.
-    if crate::fiery_annihilation_v1::requires_successor(&session.state)
+    if (crate::fiery_annihilation_v1::requires_successor(&session.state)
+        && session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33)
         || (crate::combat_static_rules_v1::requires_successor(&session.state)
         && session.flat_action_contract_mode != FlatActionContractModeV1::JuggernautV25)
         || session.state.objects.iter().any(|(_, object)| {
@@ -4340,9 +4342,11 @@ fn flat_validate_expected_decision_v1(
     }) || session.state.planeswalkers_v1.is_some()
         || session.state.trigger_uses_v1.is_some()
         || session.state.engine.active_replacements.iter().any(|replacement| {
-            matches!(replacement.kind,
-                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. }
-                | crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. })
+            match replacement.kind {
+                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. } => true,
+                crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. } => session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33,
+                _ => false,
+            }
         })
     {
         return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
@@ -4463,6 +4467,7 @@ enum FlatActionContractModeV1 {
     CrystalV22,
     ArahboV31,
     StrongboxV32,
+    FieryV33,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -7526,6 +7531,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:strongbox_v32:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::FieryV33 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = fiery_v33::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:fiery_v33:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));

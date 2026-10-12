@@ -1515,6 +1515,74 @@ pub(super) fn label_strongbox_v32(
     label_parts_v8(action, &parts, handles, human)
 }
 
+pub(super) fn label_fiery_v33(
+    action: &A,
+    observation: &crate::fiery_observation_v1::FieryObservationV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    if let Some(menu) = &observation.cast_menu {
+        match action {
+            A::ChooseTarget {
+                actor,
+                source,
+                remaining,
+                target: crate::rl::TargetRefV1::Object { object },
+            } if *actor == human
+                && menu.caster == human
+                && *source == menu.source
+                && *remaining == menu.remaining
+                && menu.legal.contains(object) =>
+            {
+                return Ok(match menu.phase {
+                    crate::fiery_public_v1::CastTargetPhaseV1::MandatoryCreature=>format!("Choose {} as the creature target of {}: five damage; if it would die this turn, exile it instead",handles.name(object)?,handles.name(source)?),
+                    crate::fiery_public_v1::CastTargetPhaseV1::OptionalAttachedEquipment=>format!("Choose {} as the optional attached Equipment target of {}: exile only this selected Equipment",handles.name(object)?,handles.name(source)?),
+                    _=>return Err(Error::UnsupportedPrompt),
+                });
+            }
+            A::FinishTargetSelection {
+                actor,
+                source,
+                selected_count: 1,
+            } if *actor == human
+                && menu.caster == human
+                && *source == menu.source
+                && menu.can_finish =>
+            {
+                return Ok(format!(
+                    "Finish {} without an Equipment target",
+                    handles.name(source)?
+                ))
+            }
+            A::ChooseTarget { .. } | A::FinishTargetSelection { .. } => {
+                return Err(Error::UnsupportedPrompt)
+            }
+            _ => {}
+        }
+    }
+    if let A::CastSpell { actor, source } = action {
+        if observation
+            .roots
+            .iter()
+            .any(|root| root.card_id == source.card_db_id)
+        {
+            if *actor != human {
+                return Err(Error::UnsupportedPrompt);
+            }
+            return Ok(format!("Begin casting {} (printed cost {{2}}{{R}}): five damage to one creature, exile up to one targeted Equipment attached to it, and exile that creature if it would die this turn",handles.name(source)?));
+        }
+    }
+    let parts = super::life_ward_v8::ProjectionPartsV8 {
+        projection: &observation.projection,
+        own_hand: &observation.own_hand,
+        known_library_cards: &observation.known_library_cards,
+        known_hand_cards: &observation.known_hand_cards,
+        known_face_down_cards: &observation.known_face_down_cards,
+        extensions: &observation.extensions,
+    };
+    label_parts_v8(action, &parts, handles, human)
+}
+
 #[cfg(test)]
 mod variable_target_refusal_tests {
     use super::*;

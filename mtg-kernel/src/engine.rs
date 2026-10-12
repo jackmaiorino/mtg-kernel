@@ -7076,7 +7076,7 @@ fn normal_cast_target_prefix_is_payable(
         })
 }
 
-fn completable_next_cast_targets(
+pub(crate) fn completable_next_cast_targets(
     def: &card_def::CardDef,
     pending: &PendingCast,
     spec: TargetSpec,
