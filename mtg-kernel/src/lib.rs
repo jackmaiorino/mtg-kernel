@@ -503,6 +503,7 @@ mod store_v2_resume_walk_timing_harness_v1;
 /// postflight binding.
 pub mod strict_source_tree_attestation_v1;
 pub(crate) mod stromkirk_bloodthief_v1;
+pub(crate) mod stromkirk_dispatch_v1;
 pub mod stromkirk_public_v1;
 pub mod surface;
 pub mod surface_v2;

@@ -12339,6 +12339,16 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
             // batch was just put on the stack), and a trigger whose targets
             // cannot be completed is removed rather than posing a
             // `ChooseTargets` with no legal choice.
+            if crate::stromkirk_dispatch_v1::unavailable(state, &pending).is_err() {
+                state.engine.halted = Some((
+                    UnsupportedMechanic::InvalidEffectContinuation,
+                    pending.source,
+                ));
+                return Some(Decision::Halted {
+                    mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                    source: pending.source,
+                });
+            }
             state.engine.pending_triggers.remove(0);
             continue;
         }
@@ -12362,6 +12372,16 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
                 // false`), which `drain_pending_cast_or_decide`'s matching
                 // `targeting_can_complete`/`abort_cast` guard already
                 // avoids for spell casts.
+                if crate::stromkirk_dispatch_v1::unavailable(state, &pending).is_err() {
+                    state.engine.halted = Some((
+                        UnsupportedMechanic::InvalidEffectContinuation,
+                        pending.source,
+                    ));
+                    return Some(Decision::Halted {
+                        mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                        source: pending.source,
+                    });
+                }
                 state.engine.pending_triggers.remove(0);
                 continue;
             }
@@ -12852,6 +12872,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
     crate::wildwood_capture_v1::publish(state, &finalized);
     effect::frenzied_goblin_resolution_v1::publish(state)?;
     crate::cerberus_capture_v1::publish(state, &finalized)?;
+    crate::stromkirk_dispatch_v1::publish(state, &finalized)?;
     // Same `priority_passes`/`priority_player` reset as `reset_priority`
     // (117.5: priority passes to the active player once a triggered
     // ability is put on the stack), but deliberately inlined instead of
@@ -13797,6 +13818,7 @@ pub(crate) fn counter_stack_item_by_id(
         _ => return Err("duplicate private stack-incarnation ids".to_string()),
     };
     let item = state.stack[position].clone();
+    let stromkirk_counter_owner = crate::stromkirk_dispatch_v1::acquire(state, &item)?;
     effect::frenzied_goblin_resolution_v1::preflight_unstarted_removal(state, &item)?;
     validated_stack_item_target_spec(&item, state)?;
     if item.kind == StackItemKind::Spell
@@ -13813,6 +13835,7 @@ pub(crate) fn counter_stack_item_by_id(
         None
     };
     state.stack.remove(position);
+    crate::stromkirk_dispatch_v1::counter_removed(state, stromkirk_counter_owner.as_ref(), &item)?;
     effect::frenzied_goblin_resolution_v1::complete_unstarted(
         state,
         &item,
@@ -14102,6 +14125,19 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         ));
         return ResolutionProgress::Suspended;
     }
+    let stromkirk_owner = match crate::stromkirk_dispatch_v1::preflight_resolution(
+        state,
+        state.stack.last().unwrap(),
+    ) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let item = state
         .stack
         .pop()
@@ -14138,6 +14174,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         x_value: item.v4.x_value,
     };
 
+    if let Some(owner) = stromkirk_owner.as_ref() {
+        if crate::stromkirk_dispatch_v1::resolve_owned(state, owner).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
     if !targets_legal {
         if item.kind == StackItemKind::Spell && item.v4.cast_method == Some(CastMethodV4::Bestow) {
             effect::execute(

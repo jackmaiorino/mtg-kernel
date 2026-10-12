@@ -56,6 +56,7 @@ pub(crate) fn record_begin(state: &mut GameState, beginning: usize) {
         .map(|id| AbilitySourceContractV4::capture(state, id))
         .collect();
     if !observers.is_empty() {
+        let observers_index = state.engine.event_history.len();
         state
             .engine
             .event_history
@@ -64,6 +65,7 @@ pub(crate) fn record_begin(state: &mut GameState, beginning: usize) {
                 turn: state.turn,
                 observers,
             });
+        crate::stromkirk_dispatch_v1::emit_captures(state, observers_index);
     }
 }
 
@@ -73,14 +75,21 @@ pub(crate) fn validate_source(
     source: Option<AbilitySourceContractV4>,
 ) -> Result<(), String> {
     let selected = source.is_some_and(|s| owns_definition(s.card_def));
-    if !selected && *op != root() {
+    if !selected && *op != root() && crate::stromkirk_dispatch_v1::capture_of(op).is_none() {
         return Ok(());
     }
     let source = source.ok_or("Stromkirk lost its original end-step source")?;
-    if !selected || *op != root() {
+    if !selected || crate::stromkirk_dispatch_v1::capture_of(op).is_none() {
         return Err("Stromkirk changed its selected trigger root".into());
     }
     crate::engine::validate_historical_ability_source_contract(state, source)?;
+    if crate::stromkirk_dispatch_v1::source_at(
+        state,
+        crate::stromkirk_dispatch_v1::capture_of(op).unwrap(),
+    )? != source
+    {
+        return Err("Stromkirk captured dispatch changed original source".into());
+    }
     let original = state
         .engine
         .event_history
@@ -102,6 +111,7 @@ pub(crate) fn validate_source(
 
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     crate::life_loss_turn_v1::validate(state)?;
+    crate::stromkirk_dispatch_v1::validate_state(state)?;
     if state
         .engine
         .event_log
@@ -187,7 +197,8 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             && (pending
                 .source_contract
                 .is_some_and(|s| owns_definition(s.card_def))
-                || pending.effect == root())
+                || pending.effect == root()
+                || crate::stromkirk_dispatch_v1::capture_of(&pending.effect).is_some())
         {
             validate_source(state, &pending.effect, pending.source_contract)?;
             if pending
@@ -217,68 +228,22 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
 pub(crate) fn owns_item(item: &crate::state::StackItem) -> bool {
     item.kind == crate::state::StackItemKind::TriggeredAbility
         && item.v4.granted_by.is_none()
-        && item.inline_effect.as_ref() == Some(&root())
+        && item
+            .inline_effect
+            .as_ref()
+            .and_then(crate::stromkirk_dispatch_v1::capture_of)
+            .is_some()
         && item
             .v4
             .ability_source_contract
             .is_some_and(|s| owns_definition(s.card_def))
 }
 pub(crate) fn resolve(state: &mut GameState, ctx: &crate::effect::ExecCtx) {
-    if resolve_checked(state, ctx).is_err() {
-        state.engine.halted = Some((
-            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-            ctx.source,
-        ));
-    }
-}
-fn resolve_checked(state: &mut GameState, ctx: &crate::effect::ExecCtx) -> Result<(), String> {
-    let source = ctx
-        .ability_source_contract
-        .ok_or("Stromkirk counter lost source authority")?;
-    validate_source(state, &root(), Some(source))?;
-    if source.source != ctx.source
-        || source.controller != ctx.controller
-        || ctx.targets.len() != 1
-        || ctx.target_contracts.len() != 1
-    {
-        return Err("Stromkirk counter changed original context".into());
-    }
-    let crate::state::Target::Object(object) = ctx.targets[0] else {
-        return Err("Stromkirk target is not a permanent".into());
-    };
-    let contract = crate::effect::temporary_control_v1::normalize_historical_target(
-        state,
-        ctx.target_contracts[0],
-    );
-    let crate::state::StackTargetContractV4::Object {
-        object: captured,
-        zone: Zone::Battlefield,
-        zone_change_count,
-        ..
-    } = contract
-    else {
-        return Err("Stromkirk counter lost captured permanent incarnation".into());
-    };
-    if captured != object || !state.engine.event_history.iter().any(|e| matches!(e,
-        CommittedEvent::Targeted { target, target_zone_change_count, targeting_stack_item, targeting_controller }
-            if *target == object && *target_zone_change_count == zone_change_count
-                && Some(*targeting_stack_item) == ctx.stack_item_id && *targeting_controller == ctx.controller)) {
-        return Err("Stromkirk counter lost actual targeted publication".into());
-    }
-    if !crate::engine::target_contract_matches_live(state, ctx.targets[0], contract)
-        || !crate::engine::effect_target_is_legal_from_ability_source(
-            state,
-            source,
-            ctx.controller,
-            target_spec(),
-            &ctx.targets,
-            0,
-        )
-    {
-        return Ok(());
-    }
-    crate::event::add_plus_one_counters(state, object, ctx.controller, 1)?;
-    Ok(())
+    // Definition templates cannot execute outside the real dispatch owner.
+    state.engine.halted = Some((
+        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+        ctx.source,
+    ));
 }
 
 #[cfg(test)]

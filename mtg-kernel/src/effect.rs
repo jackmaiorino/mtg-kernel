@@ -1613,6 +1613,9 @@ pub enum EffectOp {
     },
     /// Stromkirk's legal controlled Vampire permanent, including noncreatures.
     StromkirkVampirePermanentCounterV1,
+    StromkirkCounterFromCaptureV2 {
+        capture_history_index: u64,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -18528,6 +18531,12 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     ctx.source,
                 ));
             }
+        }
+        EffectOp::StromkirkCounterFromCaptureV2 { .. } => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
         }
         EffectOp::StromkirkVampirePermanentCounterV1 => {
             crate::stromkirk_bloodthief_v1::resolve(state, ctx);

@@ -830,6 +830,40 @@ pub enum CommittedEvent {
         turn: u32,
         observers: Vec<crate::state::AbilitySourceContractV4>,
     },
+
+    StromkirkTriggerCaptureV2 {
+        observers_history_index: u64,
+        observer_index: u32,
+    },
+    StromkirkCollectedV2 {
+        capture_history_index: u64,
+    },
+    StromkirkPublishedV2 {
+        capture_history_index: u64,
+        item: Box<crate::state::StackItem>,
+    },
+    StromkirkPlacementRemovedV2 {
+        capture_history_index: u64,
+        pending: Box<crate::trigger::PendingTrigger>,
+    },
+    StromkirkResolutionRemovedV2 {
+        capture_history_index: u64,
+        item: Box<crate::state::StackItem>,
+        input: Box<crate::stromkirk_dispatch_v1::ResolutionInputV2>,
+    },
+    StromkirkCounterRemovedV2 {
+        capture_history_index: u64,
+        item: Box<crate::state::StackItem>,
+    },
+    StromkirkOperationV2 {
+        capture_history_index: u64,
+        removal_history_index: u64,
+        outcome: crate::stromkirk_dispatch_v1::OutcomeV2,
+    },
+    StromkirkCompletedV2 {
+        capture_history_index: u64,
+        operation_history_index: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

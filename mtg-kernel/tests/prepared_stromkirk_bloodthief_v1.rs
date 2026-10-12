@@ -624,3 +624,157 @@ fn actual_trigger_accepts_typed_noncreature_vampire_permanent_and_places_counter
         );
     }
 }
+
+fn refuses_corruption_readonly(state: &GameState) {
+    let bytes = serde_json::to_vec(state).unwrap();
+    for _ in 0..2 {
+        let mut bad: GameState = serde_json::from_slice(&bytes).unwrap();
+        assert!(engine::step(&mut bad, Action::Pass).is_err());
+        assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+        assert!(matches!(
+            engine::advance_until_decision(&mut bad),
+            Decision::Halted { .. }
+        ));
+        bad.engine.halted = None;
+        assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+    }
+}
+
+#[test]
+fn mandatory_capture_survives_erased_pending_and_published_rows_or_fabricated_completion() {
+    use mtg_kernel::event::CommittedEvent;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let source = cast_source(&mut state, actor);
+        event::propose_and_commit(&mut state, ProposedEvent::life_loss(actor.opponent(), 1));
+        end_targets(&mut state).unwrap();
+        let pending = restore(&state);
+        announce(&mut state, source, source, actor);
+        let published = restore(&state);
+        for origin in [&pending, &published] {
+            let capture = origin
+                .engine
+                .event_history
+                .iter()
+                .enumerate()
+                .find_map(|(at, e)| {
+                    matches!(e, CommittedEvent::StromkirkTriggerCaptureV2 { .. })
+                        .then_some(at as u64)
+                })
+                .unwrap();
+            for case in 0..4 {
+                let mut bad = restore(origin);
+                bad.engine.pending_triggers.clear();
+                bad.stack.retain(|i| i.source != source);
+                match case {
+                    0 => {}
+                    1 => {
+                        let operation = bad.engine.event_history.len() as u64;
+                        bad.engine.event_history.push(
+                            serde_json::from_value(serde_json::json!({
+                                "StromkirkOperationV2": {"capture_history_index":capture,
+                                    "removal_history_index":capture, "outcome":"Countered"}
+                            }))
+                            .unwrap(),
+                        );
+                        bad.engine
+                            .event_history
+                            .push(CommittedEvent::StromkirkCompletedV2 {
+                                capture_history_index: capture,
+                                operation_history_index: operation,
+                            });
+                    }
+                    2 => bad
+                        .engine
+                        .event_history
+                        .retain(|e| !matches!(e, CommittedEvent::StromkirkCollectedV2 { .. })),
+                    _ => bad
+                        .engine
+                        .event_history
+                        .push(CommittedEvent::StromkirkCompletedV2 {
+                            capture_history_index: capture,
+                            operation_history_index: capture,
+                        }),
+                }
+                refuses_corruption_readonly(&bad);
+                assert_eq!(bad.objects.get(source).counters.plus1_plus1, 0);
+            }
+        }
+        let mut bad = restore(&published);
+        bad.stack.last_mut().unwrap().inline_effect = Some(EffectOp::Sequence(vec![]));
+        refuses_corruption_readonly(&bad);
+        let mut bad = restore(&published);
+        bad.stack.push(bad.stack.last().unwrap().clone());
+        refuses_corruption_readonly(&bad);
+    }
+}
+
+#[test]
+fn completed_real_counter_resolution_cannot_replay_saved_finalized_row_or_lose_operation() {
+    use mtg_kernel::event::CommittedEvent;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let source = cast_source(&mut state, actor);
+        event::propose_and_commit(&mut state, ProposedEvent::life_payment(actor.opponent(), 1));
+        end_targets(&mut state).unwrap();
+        announce(&mut state, source, source, actor);
+        let saved = state.stack.last().unwrap().clone();
+        let mut replay = restore(&state);
+        settle(&mut state);
+        settle(&mut replay);
+        assert_eq!(state.objects.get(source).counters.plus1_plus1, 1);
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+        for case in 0..4 {
+            let mut bad = restore(&state);
+            match case {
+                0 => bad.stack.push(saved.clone()),
+                1 => bad
+                    .engine
+                    .event_history
+                    .retain(|e| !matches!(e, CommittedEvent::StromkirkResolutionRemovedV2 { .. })),
+                2 => bad
+                    .engine
+                    .event_history
+                    .retain(|e| !matches!(e, CommittedEvent::StromkirkOperationV2 { .. })),
+                _ => {
+                    let closed = bad
+                        .engine
+                        .event_history
+                        .iter()
+                        .find(|e| matches!(e, CommittedEvent::StromkirkCompletedV2 { .. }))
+                        .unwrap()
+                        .clone();
+                    bad.engine.event_history.push(closed);
+                }
+            }
+            refuses_corruption_readonly(&bad);
+            assert_eq!(bad.objects.get(source).counters.plus1_plus1, 1);
+        }
+    }
+}
+
+#[test]
+fn genuine_pending_source_departure_with_no_remaining_vampire_closes_without_publication() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let source = cast_source(&mut state, actor);
+        event::propose_and_commit(&mut state, ProposedEvent::life_loss(actor.opponent(), 1));
+        end_targets(&mut state).unwrap();
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+        let mut replay = restore(&state);
+        settle(&mut state);
+        settle(&mut replay);
+        assert_eq!(state.objects.get(source).counters.plus1_plus1, 0);
+        assert!(state.engine.event_history.iter().any(|e| matches!(
+            e,
+            mtg_kernel::event::CommittedEvent::StromkirkCompletedV2 { .. }
+        )));
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+    }
+}

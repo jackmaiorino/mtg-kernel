@@ -69,6 +69,7 @@ pub fn producer_sha256_v1() -> String {
         SCHEMA,
         include_str!("stromkirk_public_v1.rs"),
         include_str!("stromkirk_bloodthief_v1.rs"),
+        include_str!("stromkirk_dispatch_v1.rs"),
         include_str!("trigger.rs"),
         include_str!("effect.rs"),
         include_str!("event.rs"),

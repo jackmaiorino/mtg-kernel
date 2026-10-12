@@ -3784,6 +3784,11 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
     if template == effect {
         return true;
     }
+    if *template == crate::stromkirk_bloodthief_v1::root()
+        && crate::stromkirk_dispatch_v1::capture_of(effect).is_some()
+    {
+        return true;
+    }
     match (template, effect) {
         (
             EffectOp::Conditional { cond, then, else_ },
@@ -4538,8 +4543,19 @@ pub(crate) fn collect_and_process_with_waiting(
     // checkpoint, rather than at the earlier event-matching snapshot. The
     // targets must be legal for the trigger's own source (protection,
     // "other than this"), the same set its target decision will offer.
-    new_triggers
-        .retain(|pending| crate::engine::pending_trigger_targets_can_complete(pending, state));
+    new_triggers.retain(|pending| {
+        let keep = crate::engine::pending_trigger_targets_can_complete(pending, state);
+        if !keep && crate::stromkirk_dispatch_v1::unavailable(state, pending).is_err() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                pending.source,
+            ));
+        }
+        keep
+    });
+    if state.engine.halted.is_some() {
+        return Vec::new();
+    }
 
     order_apnap(new_triggers, state.active_player)
 }
@@ -4603,6 +4619,16 @@ fn triggers_from_events(
                 })
     });
     let mut new_triggers = state.legend_pending_v1.take().unwrap_or_default();
+    match crate::stromkirk_dispatch_v1::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
     match crate::cerberus_capture_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
@@ -5742,8 +5768,9 @@ fn trigger_matches(
             TriggerCondition::BeginningControllerEndStepIfOpponentLostLife,
             CommittedEvent::BeginningEndStep { active_player, .. },
         ) => {
-            *active_player == controller
-                && crate::life_loss_turn_v1::opponent_lost_life(state, controller).unwrap_or(false)
+            let _ = (active_player, controller);
+            // Exact observers are captured before SBA and collected through their own journal.
+            false
         }
         (TriggerCondition::BeginningEndStepAfterWarp, CommittedEvent::BeginningEndStep { .. }) => {
             state.objects.get(source).v4.warped_v1

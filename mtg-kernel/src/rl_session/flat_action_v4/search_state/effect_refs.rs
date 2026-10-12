@@ -124,6 +124,7 @@ impl Scan<'_> {
             | AttachSourceToTarget { .. }
             | AddCountersToTarget { .. }
             | StromkirkVampirePermanentCounterV1
+            | StromkirkCounterFromCaptureV2 { .. }
             | CreateTokenAndAttachSource { .. }
             | CreateRoleAttachedToTarget { .. }
             | AddMana { .. }
@@ -1003,7 +1004,15 @@ pub(super) fn conflicts(
     state.engine.event_log.iter().any(|event| {
         use crate::event::CommittedEvent::*;
         match event {
-            StromkirkEndStepObserversV1 { .. } => true,
+            StromkirkEndStepObserversV1 { .. }
+            | StromkirkTriggerCaptureV2 { .. }
+            | StromkirkCollectedV2 { .. }
+            | StromkirkPublishedV2 { .. }
+            | StromkirkPlacementRemovedV2 { .. }
+            | StromkirkResolutionRemovedV2 { .. }
+            | StromkirkCounterRemovedV2 { .. }
+            | StromkirkOperationV2 { .. }
+            | StromkirkCompletedV2 { .. } => true,
             Damage { source, target, .. } => {
                 s.raw(*source) || matches!(target,crate::state::Target::Object(id) if s.raw(*id))
             }
