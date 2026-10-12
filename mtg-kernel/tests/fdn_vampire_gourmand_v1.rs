@@ -206,6 +206,7 @@ fn selection(state: &mut GameState, actor: PlayerId, source: ObjectId) -> Vec<Ta
             {
                 assert!(item.targets.is_empty() && item.v4.target_contracts.is_empty());
                 assert!(item.v4.target_spec.is_none());
+                assert!(item.v4.vampire_gourmand_started_v1.is_empty());
             }
         }
         engine::step(state, Action::Pass).unwrap();
@@ -508,7 +509,7 @@ fn restored_selection_missing_stage_root_restart_controller_and_stale_answers_re
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, source, other) = fixture(actor);
         selection(&mut state, actor, source);
-        for mode in 0..6 {
+        for mode in 0..10 {
             let mut forged = restore(&state);
             match mode {
                 0 => {
@@ -557,8 +558,77 @@ fn restored_selection_missing_stage_root_restart_controller_and_stale_answers_re
                         ProposedEvent::zone_change(other, Zone::Battlefield),
                     );
                 }
-                _ => control_primitive(&mut forged, other, actor.opponent()),
+                5 => control_primitive(&mut forged, other, actor.opponent()),
+                6 => {
+                    // Erase both mutable continuation and every progress
+                    // receipt. The genuine live stack start guard remains.
+                    forged.engine.pending_effect = None;
+                    forged.engine.event_history.retain(|event| !matches!(event,
+                        mtg_kernel::event::CommittedEvent::VampireGourmandResolutionBoundaryV1 { .. }));
+                }
+                7 => {
+                    let id = forged
+                        .engine
+                        .pending_effect
+                        .as_ref()
+                        .unwrap()
+                        .resolving_item
+                        .v4
+                        .stack_item_id;
+                    forged
+                        .stack
+                        .iter_mut()
+                        .find(|item| item.v4.stack_item_id == id)
+                        .unwrap()
+                        .v4
+                        .vampire_gourmand_started_v1
+                        .0 = None;
+                }
+                8 => {
+                    let id = forged
+                        .engine
+                        .pending_effect
+                        .as_ref()
+                        .unwrap()
+                        .resolving_item
+                        .v4
+                        .stack_item_id;
+                    forged
+                        .stack
+                        .iter_mut()
+                        .find(|item| item.v4.stack_item_id == id)
+                        .unwrap()
+                        .v4
+                        .vampire_gourmand_started_v1
+                        .0
+                        .as_mut()
+                        .unwrap()
+                        .first_receipt_history_index += 1;
+                }
+                _ => {
+                    let id = forged
+                        .engine
+                        .pending_effect
+                        .as_ref()
+                        .unwrap()
+                        .resolving_item
+                        .v4
+                        .stack_item_id;
+                    forged
+                        .stack
+                        .iter_mut()
+                        .find(|item| item.v4.stack_item_id == id)
+                        .unwrap()
+                        .v4
+                        .vampire_gourmand_started_v1
+                        .0
+                        .as_mut()
+                        .unwrap()
+                        .source
+                        .controller = actor.opponent();
+                }
             }
+            forged = restore(&restore(&forged));
             let before = serde_json::to_vec(&forged).unwrap();
             assert!(mtg_kernel::effect::validate_pending_effect_choice(&forged).is_err());
             assert!(engine::step(

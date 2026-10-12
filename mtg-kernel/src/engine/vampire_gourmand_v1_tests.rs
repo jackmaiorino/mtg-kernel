@@ -5,6 +5,30 @@ use crate::state::AbilitySourceContractV4;
 use crate::vampire_gourmand_v1;
 
 #[test]
+fn predecessor_unstarted_stack_guard_is_absent_from_serialization_and_hash_input() {
+    use std::hash::{Hash, Hasher};
+    struct NoWrites;
+    impl Hasher for NoWrites {
+        fn finish(&self) -> u64 {
+            0
+        }
+        fn write(&mut self, _: &[u8]) {
+            panic!("empty successor wrote Hash input");
+        }
+    }
+    let legacy = crate::state::StackStateV4::default();
+    assert!(legacy.vampire_gourmand_started_v1.is_empty());
+    assert!(serde_json::to_value(&legacy)
+        .unwrap()
+        .get("vampire_gourmand_started_v1")
+        .is_none());
+    legacy.vampire_gourmand_started_v1.hash(&mut NoWrites);
+    let restored: crate::state::StackStateV4 =
+        serde_json::from_value(serde_json::to_value(&legacy).unwrap()).unwrap();
+    assert_eq!(restored, legacy);
+}
+
+#[test]
 fn registered_incarnation_evasion_uses_real_blocker_validator_restore_and_reentry() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready_state();

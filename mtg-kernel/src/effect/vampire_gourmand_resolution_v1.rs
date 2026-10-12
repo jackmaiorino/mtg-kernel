@@ -3,7 +3,7 @@
 use super::*;
 use crate::card_def::CARD_DEFS;
 use crate::event::CommittedEvent;
-use crate::state::AbilitySourceContractV4;
+use crate::state::{AbilitySourceContractV4, VampireGourmandStartedBindingV1};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct VampireGourmandResolutionReceiptV1 {
@@ -130,6 +130,47 @@ pub(super) fn validate(state: &GameState) -> Result<(), String> {
         return Err("optional sacrifice receipt cannot enter the public trigger event log".into());
     }
     let receipts = history(state)?;
+    // A started live root must retain its independent stack-owned marker.
+    // Erasing pending_effect and every progress receipt cannot turn it back
+    // into a genuinely unstarted stack item.
+    for item in &state.stack {
+        let Some(started) = item.v4.vampire_gourmand_started_v1.0 else {
+            continue;
+        };
+        if started.stack_item_id != item.v4.stack_item_id
+            || item.kind != crate::state::StackItemKind::TriggeredAbility
+            || item.v4.ability_source_contract != Some(started.source)
+            || item
+                .inline_effect
+                .as_ref()
+                .is_none_or(|root| !source_owns_root(started.source, root))
+            || receipts
+                .iter()
+                .find(|r| r.stack_item_id == started.stack_item_id)
+                .is_none_or(|r| {
+                    r.history_index != started.first_receipt_history_index
+                        || r.source != started.source
+                })
+        {
+            return Err("started optional sacrifice root lost its independent authority".into());
+        }
+    }
+    for receipt in &receipts {
+        if let Some(pending) = receipt.pending.as_ref() {
+            let first = receipts
+                .iter()
+                .find(|r| r.stack_item_id == receipt.stack_item_id)
+                .ok_or("optional sacrifice first receipt absent")?;
+            let expected = VampireGourmandStartedBindingV1 {
+                stack_item_id: receipt.stack_item_id,
+                source: receipt.source,
+                first_receipt_history_index: first.history_index,
+            };
+            if pending.resolving_item.v4.vampire_gourmand_started_v1.0 != Some(expected) {
+                return Err("optional sacrifice receipt lost its started stack binding".into());
+            }
+        }
+    }
     let mut latest = Vec::new();
     for receipt in receipts.iter().rev() {
         if !latest
@@ -150,6 +191,14 @@ pub(super) fn validate(state: &GameState) -> Result<(), String> {
             );
         }
         let pending = state.engine.pending_effect.as_ref().unwrap();
+        let live = crate::engine::resolution_cast_v1::resolving_index(state, receipt.stack_item_id)
+            .and_then(|index| state.stack.get(index))
+            .ok_or("started optional sacrifice stack item absent")?;
+        if live.v4.vampire_gourmand_started_v1
+            != pending.resolving_item.v4.vampire_gourmand_started_v1
+        {
+            return Err("optional sacrifice live and pending start authority differ".into());
+        }
         if pending.resolving_item.v4.ability_source_contract != Some(receipt.source) {
             return Err("optional sacrifice original source contract changed".into());
         }
@@ -177,6 +226,9 @@ pub(super) fn preflight_begin(
         return Ok(false);
     }
     validate(state)?;
+    if !item.v4.vampire_gourmand_started_v1.is_empty() {
+        return Err("started optional sacrifice stack resolution cannot restart".into());
+    }
     let tentative = EffectContinuation {
         resolving_item: item.clone(),
         ctx: ctx.clone(),
@@ -218,9 +270,26 @@ pub(super) fn record_begin(state: &mut GameState) -> Result<(), String> {
         .pending_effect
         .as_ref()
         .ok_or("initial resolution is absent")?;
+    let history_index = u32::try_from(state.engine.event_history.len())
+        .map_err(|_| "resolution history exceeds u32")?;
+    let stack_item_id = pending.resolving_item.v4.stack_item_id;
+    let source = pending
+        .resolving_item
+        .v4
+        .ability_source_contract
+        .ok_or("optional sacrifice source contract absent")?;
+    let started = VampireGourmandStartedBindingV1 {
+        stack_item_id,
+        source,
+        first_receipt_history_index: history_index,
+    };
+    let index = crate::engine::resolution_cast_v1::resolving_index(state, stack_item_id)
+        .ok_or("optional sacrifice live stack item absent at publication")?;
+    state.stack[index].v4.vampire_gourmand_started_v1.0 = Some(started);
+    let pending = state.engine.pending_effect.as_mut().unwrap();
+    pending.resolving_item.v4.vampire_gourmand_started_v1.0 = Some(started);
     let receipt = VampireGourmandResolutionReceiptV1 {
-        history_index: u32::try_from(state.engine.event_history.len())
-            .map_err(|_| "resolution history exceeds u32")?,
+        history_index,
         previous_history_index: None,
         ordinal: 0,
         stack_item_id: pending.resolving_item.v4.stack_item_id,
