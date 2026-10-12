@@ -893,8 +893,17 @@ mod tests {
                 "Dwynen, Gilt-Leaf Daen",
                 Zone::Battlefield,
             );
-            assert!(matches!(crate::engine::advance_until_decision(&mut state),
-    crate::engine::Decision::ChooseLegendPermanent{player,..} if player==actor));
+            assert!(state.pending_legend_rule_v1.is_none());
+            assert!(state
+                .raid_waiting_v1
+                .as_ref()
+                .is_some_and(|waiting| waiting.iter().any(|pending| pending.source == source)));
+            let decision = crate::engine::advance_until_decision(&mut state);
+            assert!(
+                matches!(decision,
+                crate::engine::Decision::ChooseLegendPermanent { player, .. } if player == actor),
+                "actual legend checkpoint returned {decision:?}"
+            );
             assert!(state
                 .pending_legend_rule_v1
                 .as_ref()
