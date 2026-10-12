@@ -204,6 +204,10 @@ pub(super) fn teach(
             "E input differs from prepared forward row",
         )?;
         let logits: Vec<f32> = row.logits.iter().map(|&b| f32::from_bits(b)).collect();
+        ensure(
+            logits.iter().all(|z| z.is_finite()),
+            "E nonfinite student logits",
+        )?;
         let target_readout = target
             .map(|a| {
                 let mut sampler = WideCategoricalScratchV1::default();
@@ -250,8 +254,10 @@ pub(super) fn teach(
         let seat = episode["learner_seat"]
             .as_u64()
             .expect("typed learner seat") as usize;
-        let key=serde_json::to_string(&json!({"deck":episode["selected"][seat]["label"],
-            "seat":seat,"family":slot["decision"]["family"],"width":slot["decision"]["legal_width"]})).map_err(err)?;
+        let key = serde_json::to_string(&json!({"deck":episode["selected"][seat]["label"],
+            "seat":seat,"family":slot["decision"]["family"],"width":slot["decision"]["legal_width"],
+            "temporal_quartile":slot["temporal_fraction"].as_f64().map(|f|(f*4.0) as u64)}))
+        .map_err(err)?;
         let counts = census
             .entry(key)
             .or_insert(json!({"scheduled":0,"available":0,"valid":0,"disagreement":0}));

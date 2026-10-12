@@ -89,12 +89,20 @@ pub(crate) fn query(
     let (key, parent, edge, canon) = keyer.storage(&step);
     let (raw_observation, raw_menu) =
         tree::raw_decision(session, d).map_err(|e| format!("{e:?}"))?;
+    let root_mapping = canon
+        .edges
+        .iter()
+        .map(|e| tree::live_index(canon, e).map_err(|e| format!("{e:?}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    let root_ties = keyer.perm(&step, seeds).map_err(|e| format!("{e:?}"))?;
     let mut packet = json!({"method":METHOD,"key_mode":"repaired-v2","retention":1,
         "fpu":1.5,"max_depth":32,"min_support":8,"requested_transitions":select_cap,
         "sampler":super::world::SAMPLER_VERSION,"prior":prior.ids(),"history":history,
         "raw_observation":raw_observation,"ordered_action_semantics":raw_menu,
         "root_key":super::hex(&key),"canonical_edges":canon.edges,"canonical_live_menu":canon.menu,
-        "tree_sha256":tree.hash(),"cost":selection.json(),"status":"unsupported_root"});
+        "tree_sha256":tree.hash(),"cost":selection.json(),"status":"unsupported_root",
+        "canonical_to_live":root_mapping,"tie_order":root_ties,
+        "n":vec![0_u64;canon.edges.len()],"wins":vec![0_u64;canon.edges.len()]});
     let Found::Hit(node) = tree
         .find(&key, &parent, &edge, canon)
         .map_err(|e| format!("{e:?}"))?
