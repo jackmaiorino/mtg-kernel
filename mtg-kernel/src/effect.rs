@@ -16219,6 +16219,24 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 crate::engine::effective_power(state, second).max(0),
             ];
             let mut packets = Vec::with_capacity(2);
+            if first == second {
+                let Some(amount) = powers[0].checked_mul(2) else {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                };
+                if amount > 0 {
+                    packets.push(event::ProposedEvent::damage(
+                        first,
+                        Target::Object(first),
+                        amount,
+                    ));
+                }
+                event::propose_and_commit_batch(state, packets);
+                return;
+            }
             if powers[0] > 0 {
                 packets.push(event::ProposedEvent::damage(
                     first,

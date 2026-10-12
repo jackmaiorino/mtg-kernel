@@ -304,3 +304,59 @@ fn registered_fight_primitive_without_crystal_keeps_generic_batch_and_restore() 
         assert_eq!(state.state_hash(), replay.state_hash());
     }
 }
+
+#[test]
+fn registered_self_fight_is_one_twice_power_packet_with_current_lifelink_and_restore() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state();
+        let source = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        let contract = crate::state::AbilitySourceContractV4::capture(&state, source);
+        state.players[actor.index()]
+            .battlefield
+            .retain(|id| *id != source);
+        state.players[actor.opponent().index()]
+            .battlefield
+            .push(source);
+        state.objects.get_mut(source).controller = actor.opponent();
+        state.objects.get_mut(source).v4.lifelink_keyword_counters = 1;
+        let mut ctx = ExecCtx::no_targets(source, actor);
+        ctx.ability_source_contract = Some(contract);
+        ctx.targets = vec![Target::Object(source)];
+        ctx.target_contracts = vec![crate::state::StackTargetContractV4::capture(
+            &state,
+            Target::Object(source),
+        )];
+        let op = EffectOp::FightObjects {
+            first: ObjectRef::ThisSource,
+            second: ObjectRef::Target(0),
+            target_spec: crate::card_def::TargetSpec::OpponentControlledCreature,
+        };
+        let life = state.players[actor.opponent().index()].life;
+        let mut replay: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        for current in [&mut state, &mut replay] {
+            crate::effect::execute(&op, &ctx, current);
+            assert_eq!(current.objects.get(source).damage, 2);
+            assert_eq!(current.players[actor.opponent().index()].life, life + 2);
+            let packets = current
+                .engine
+                .event_history
+                .iter()
+                .filter_map(|event| match event {
+                    CommittedEvent::Damage {
+                        source: dealt,
+                        target,
+                        amount,
+                    } if *dealt == source => Some((*target, *amount)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(packets, vec![(Target::Object(source), 2)]);
+            assert!(!requires_successor(current));
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+    }
+}

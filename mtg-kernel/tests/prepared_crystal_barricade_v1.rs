@@ -3075,3 +3075,139 @@ fn real_indrik_program_answer_and_owner_erasure_forgeries_refuse_readonly() {
         }
     }
 }
+
+#[test]
+fn real_indrik_can_target_its_transferred_source_and_self_fights_for_twice_power() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for protected in [false, true] {
+            for shield_first in [false, true] {
+                let mut state = ready(actor);
+                let wall = source(&mut state, actor);
+                let other_wall = if protected {
+                    put(
+                        &mut state,
+                        actor.opponent(),
+                        "Crystal Barricade",
+                        Zone::Battlefield,
+                    )
+                } else {
+                    wall
+                };
+                put(
+                    &mut state,
+                    actor.opponent(),
+                    "Shivan Dragon",
+                    Zone::Battlefield,
+                );
+                let indrik = put(&mut state, actor, "Affectionate Indrik", Zone::Hand);
+                state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 1;
+                state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 5;
+                priority(&mut state, actor);
+                engine::step(&mut state, Action::CastSpell(indrik)).unwrap();
+                for _ in 0..20 {
+                    let decision = next(&mut state);
+                    if matches!(decision, Decision::ChooseTargets { .. }) {
+                        break;
+                    }
+                    assert!(
+                        matches!(decision, Decision::CastSpellOrPass { .. }),
+                        "{decision:?}"
+                    );
+                    engine::step(&mut state, Action::Pass).unwrap();
+                }
+                assert_eq!(state.objects.get(indrik).zone, Zone::Battlefield);
+                // Typed control setup at the committed trigger-target checkpoint;
+                // this is not a claimed printed control spell or priority response.
+                control_primitive(&mut state, indrik, actor.opponent());
+                state.objects.get_mut(indrik).v4.lifelink_keyword_counters = 1;
+                shield(&mut state, other_wall, indrik, 1);
+                assert!(
+                    matches!(next(&mut state), Decision::ChooseTargets { legal_targets, .. }
+                    if legal_targets.contains(&Target::Object(indrik)))
+                );
+                engine::step(&mut state, Action::ChooseTarget(Target::Object(indrik))).unwrap();
+                mixed_menu(&mut state);
+                assert!(
+                    matches!(next(&mut state), Decision::ChooseEffectOption {player,..} if player == actor)
+                );
+                let life = state.players[actor.opponent().index()].life;
+                let mut replay = restore(&state);
+                for current in [&mut state, &mut replay] {
+                    engine::step(current, Action::ChooseEffectOption(1)).unwrap();
+                    if protected {
+                        assert!(
+                            matches!(next(current), Decision::ChooseEffectOption {player,..}
+                            if player == actor.opponent())
+                        );
+                        let choice = current
+                            .engine
+                            .pending_effect
+                            .as_ref()
+                            .unwrap()
+                            .choice
+                            .as_ref()
+                            .unwrap();
+                        assert!(
+                            matches!(choice, mtg_kernel::effect::PendingEffectChoice::ChooseOption {
+                            purpose: mtg_kernel::effect::EffectOptionChoicePurpose::CrystalPreventionV1 {choice},..
+                        } if choice.original_amount == 8 && choice.source == indrik && choice.target == Target::Object(indrik))
+                        );
+                        if shield_first {
+                            let chosen = option(current, true);
+                            engine::step(current, Action::ChooseEffectOption(chosen)).unwrap();
+                            let _ = next(current);
+                        }
+                        let chosen = option(current, false);
+                        engine::step(current, Action::ChooseEffectOption(chosen)).unwrap();
+                    }
+                    finish(current);
+                    let packets = current
+                        .engine
+                        .event_history
+                        .iter()
+                        .filter_map(|event| match event {
+                            event::CommittedEvent::Damage {
+                                source,
+                                target,
+                                amount,
+                            } if *source == indrik => Some((*target, *amount)),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    assert_eq!(
+                        packets,
+                        if protected {
+                            vec![]
+                        } else {
+                            vec![(Target::Object(indrik), 7)]
+                        }
+                    );
+                    assert_eq!(
+                        current.players[actor.opponent().index()].life,
+                        life + if protected { 0 } else { 7 }
+                    );
+                    assert_eq!(
+                        current.objects.get(indrik).zone,
+                        if protected {
+                            Zone::Battlefield
+                        } else {
+                            Zone::Graveyard
+                        }
+                    );
+                    assert!(current
+                        .engine
+                        .event_history
+                        .iter()
+                        .any(|event| matches!(event,
+                        event::CommittedEvent::CrystalBatchPreparedV3 {capture}
+                            if capture.ctx.source == indrik && capture.proposals.len() == 1
+                                && capture.proposals[0].amount == 8)));
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&replay).unwrap()
+                );
+            }
+        }
+    }
+}

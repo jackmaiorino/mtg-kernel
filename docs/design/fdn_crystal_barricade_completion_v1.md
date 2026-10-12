@@ -97,3 +97,9 @@ Four future both-seat real-cast groups cover accept/decline, both prevention sea
 ### Resumed historical activation completion
 
 Tracing Firebrand's prerequisite found that the actual generic owning-resume Complete branch omitted source_power_activation_v1::finish. Initial resolution, counter and fizzle already called it. The resume branch now emits the same definition-owned historical activation finish only after the completed item equals the genuine removed item. Ordinary roots remain no-ops through that helper. Existing future real Heartfire mixed-prevention/restore groups retain their completion assertions and cover this path when qualified; no native result is claimed.
+
+### A legal Indrik self-fight
+
+The current primary Wizards Comprehensive Rules (2026-09-25), [701.14c](https://media.wizards.com/2026/downloads/MagicCompRules%2020260925.pdf), specifies damage equal to twice power when a creature fights itself. Indrik can legally choose itself if its source moves to the opponent's control before target selection while the trigger retains its original controller. Both the generic typed fight leaf and the owning exact source-fight now collapse that case to one checked twice-power proposal. The controlled/opponent pair recipe still rejects an impossible repeated target. Ordinary distinct-fighter ordering is unchanged.
+
+A universally registered Elf primitive checks one actual twice-power packet, current-controller lifelink and exact replay. A future both-seat real Indrik cast/control/target/optional-choice group checks both prevention orders, one affected-controller menu, actual unprotected self-damage/lifelink/SBA, and restore. Source inspection is not gameplay qualification.

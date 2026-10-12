@@ -2749,14 +2749,33 @@ fn fight_proposals(
             return Err("Crystal fight changed original legal source incarnation".into());
         }
     }
-    if ids[0] == ids[1] {
-        return Err("Crystal fight repeated physical fighter".into());
-    }
     if fight.creatures.iter().any(Option::is_none) {
         if fight.signed_powers != [0, 0] {
             return Err("Crystal incomplete fight nevertheless captured power".into());
         }
         return Ok(Vec::new());
+    }
+    if ids[0] == ids[1] {
+        if !source_fight_recipe(op)
+            || fight.creatures[0] != fight.creatures[1]
+            || fight.signed_powers[0] != fight.signed_powers[1]
+        {
+            return Err("Crystal self-fight changed its single physical source".into());
+        }
+        let amount = fight.signed_powers[0]
+            .max(0)
+            .checked_mul(2)
+            .ok_or("Crystal self-fight damage overflow")?;
+        return Ok(if amount > 0 {
+            vec![BatchDamageV2 {
+                source: ids[0],
+                target: Target::Object(ids[0]),
+                amount,
+                touched: Vec::new(),
+            }]
+        } else {
+            Vec::new()
+        });
     }
     Ok((0..2)
         .filter(|slot| fight.signed_powers[*slot] > 0)
