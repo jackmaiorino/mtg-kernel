@@ -27,7 +27,7 @@ Public packs reveal the featured seat's hand and diagnostics only. Opponent menu
 
 ## Bounded native capture
 
-Build the feature-gated `viewer_capture_v1` binary with the pinned Rust toolchain, through the existing resource launcher. It loads a pinned `ExpandedModelSourceV1`, uses one V4 checkpoint for both seats, and runs T512 search with a depth cap of 64 and no stability halves. It does not modify checkpoint, primary training, gameplay trace or search outcome schemas. Recording failure disables diagnostics and marks the capture incomplete without changing game decisions.
+Build the feature-gated `viewer_capture_v1` binary with the pinned Rust toolchain, through the existing resource launcher. It loads a pinned `ExpandedModelSourceV1`, uses one V4 checkpoint for both seats, and runs T512 search with a depth cap of 64 and no stability halves. It does not modify checkpoint, primary training, gameplay trace or search outcome schemas. Recording is disabled unless the configuration explicitly sets `record: true`. Operational recorder failures disable diagnostics and report incomplete capture without changing game decisions. Reused output paths remain configuration errors.
 
 Before acquisition, create a read-only three-host inventory and register the owned artifact root under the existing artifact law. Run both launcher modes inside `python/tools/host_slots_v1.py run --lane cinematic-viewer-232 --cores 2 -- ...`:
 

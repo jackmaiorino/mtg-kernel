@@ -36,7 +36,7 @@ struct Config {
     max_seconds: u64,
 }
 fn record_default() -> bool {
-    true
+    false
 }
 fn max_steps_default() -> u64 {
     100000
@@ -53,12 +53,8 @@ struct Recorder {
     natural_complete: bool,
 }
 impl Recorder {
-    fn open(path: &Path, header: Value) -> Result<Self, String> {
-        let file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)
-            .map_err(|e| e.to_string())?;
+    fn open(path: &Path, header: Value) -> std::io::Result<Self> {
+        let file = OpenOptions::new().write(true).create_new(true).open(path)?;
         let mut r = Self {
             file,
             bytes: 0,
@@ -67,8 +63,8 @@ impl Recorder {
             natural_complete: false,
         };
         r.write(header);
-        if r.stopped.is_some() {
-            return Err("unable to write capture header".into());
+        if let Some(reason) = &r.stopped {
+            return Err(std::io::Error::other(reason.clone()));
         }
         Ok(r)
     }
@@ -146,13 +142,27 @@ pub fn run(path: &Path) -> Result<(), String> {
         })
         .collect::<serde_json::Map<String, Value>>();
     let mut recorder = if config.record {
-        Some(Recorder::open(
-            &config.output,
-            json!({"kind":"header","identity":identity,
+        let initialize = (|| -> std::io::Result<Recorder> {
+            let runtime =
+                crate::gameplay_trace_v1::runtime_identity().map_err(std::io::Error::other)?;
+            Recorder::open(
+                &config.output,
+                json!({"kind":"header","identity":identity,
             "source_sha256":format!("{:x}",Sha256::digest(&source_bytes)),
-            "runtime":crate::gameplay_trace_v1::runtime_identity()?,"perspective":"p0",
+            "runtime":runtime,"perspective":"p0",
             "decks":[decks[0].id,decks[1].id],"cards":cards,"search":{"tier":"T512","stability_halves":false,"depth":64}}),
-        )?)
+            )
+        })();
+        match initialize {
+            Ok(recorder) => Some(recorder),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Err("capture destination already exists".into());
+            }
+            Err(error) => {
+                eprintln!("viewer capture incomplete: recorder unavailable ({error})");
+                None
+            }
+        }
     } else {
         None
     };
