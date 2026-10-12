@@ -208,7 +208,7 @@ def export_capture(path: Path, exporter: Exporter) -> tuple[dict, list[dict], bo
                         "value":row["policy"]["value"], "valueScale":"Raw model value; acting-player perspective, uncalibrated."}
                     search = {"digest":row["search"]["digest"], "simulations":result["simulations"], "transitions":result["transitions_used"],
                         "nodes":result["tree_node_count"], "tier":"T512", "stabilityHalves":False,
-                        "valueScale":"Search values are signed integers on the 9,000 scale, from the root actor's perspective.",
+                        "valueScale":"Search leaf estimates use signed integers clipped to ±9,000; natural wins/losses use ±10,000. Values are from the root actor's perspective.",
                         "stats":[{"index":s["flat_action_index"],"visits":s["visits"],"valueSum":str(s["value_sum"]),"meanValue":str(s["mean_value"])} for s in result["root_action_stats"]]}
                 else:
                     semantic = row["actions"][row["selected"]]

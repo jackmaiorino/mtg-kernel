@@ -50,6 +50,18 @@ The exporter also accepts validated historical gameplay traces, with an explicit
 
 ## Publish another demo
 
+## Record and inspect search replay
+
+The viewer also accepts `mtg-kernel-viewer-recording/v2`, which adds optional `mtg-kernel-search-replay/v1` data to a decision's search diagnostics. V1 fixtures and policy-only recordings remain supported. Replay data joins the complete episode/step/physical/substep/actor key, preserves node and action indices, and reconciles every simulated edge and root sum against the recorded table and its original digest. Hypothetical snapshots never become gameplay frames.
+
+Pass `--lane YOUR_LANE --replay-steps 1 15 100` to both guarded qualification and capture commands. The native config accepts `search_replay_steps` with up to three distinct steps; it is empty by default. Use actual featured-seat decisions and verify that all three were recorded before publication. Runtime, input and allocation pins plus replay settings must match qualification. A failed projection or byte-bound overrun makes capture incomplete without changing gameplay.
+
+The search transport has its own event/simulation timeline, play/pause and speeds. Selecting an explored move follows its recorded simulation. Scores retain the search actor and root perspective; search priors are the quantized priors used by search, distinct from Hamilton sampling masses. Leaf estimates clip at ±9,000, natural wins/losses use ±10,000 and draws use zero. Links can add `&searchEvent=N` to an existing game/decision fragment. Search replay is unavailable when it was not recorded.
+
+Both sampled hands are excluded from public hypothetical positions. Interior action descriptions use public references only; captured hidden menus, node keys, RNG details and encoded tensors remain private. Do not reconstruct or invent simulation history from final root statistics. Annotate observed paths and results after inspecting the new capture. The three guided moments remain authored commentary.
+
+## Publish another demo
+
 Place complete exported games and their `assets/` directory under one external demo root. Add `manifest.json` with `games: [{id, file, sha256}]`. Pack it using `python/tools/viewer_demo_pack_v1.py pack ROOT viewer-demo.zip`. Upload the archive as a versioned GitHub release asset and update `demo-release.json` with its tag and SHA-256.
 
 The Viewer workflow verifies the frontend, exporter and browser checks, downloads the pinned archive, checks every recording hash, and publishes the static build on GitHub Pages. Whole recordings and art remain release artifacts rather than source commits. Links use `#game=ID&decision=FRAME_ID`.
