@@ -40,6 +40,14 @@ pub struct ClosedV4 {
     pub item: Box<StackItem>,
     pub outcome: OutcomeV4,
     pub boundary: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counter: Option<u32>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CounterRemovalV4 {
+    pub index: u32,
+    pub publication: u32,
+    pub item: Box<StackItem>,
 }
 /// Nonserializable loan of the genuine complete row before actual removal.
 pub(crate) struct OwnerV4 {
@@ -254,6 +262,15 @@ pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), S
         return Ok(());
     }
     validate_published_metadata(state, item)?;
+    let p = publication(state, item.v4.stack_item_id)?;
+    if state.engine.event_history.iter().any(|event| {
+        matches!(event,
+        CommittedEvent::EquipmentDamagePreparedV4 {prepared} if prepared.publication==p.index)
+    }) {
+        prepared(state, item.v4.stack_item_id)?;
+    } else {
+        facts(state, p.item.v4.ability_source_contract.unwrap())?;
+    }
     if state
         .stack
         .iter()
@@ -560,7 +577,37 @@ pub(crate) fn record_countered(
     let Some(owner) = owner else {
         return Ok(());
     };
-    close(state, &owner, &owner.item, OutcomeV4::Countered, None)
+    let p = publication(state, owner.item.v4.stack_item_id)?;
+    if p.index != owner.publication
+        || p.item.as_ref() != &owner.item
+        || state
+            .stack
+            .iter()
+            .any(|item| item.v4.stack_item_id == owner.item.v4.stack_item_id)
+        || !owner.item.v4.crystal_prevention_started_v1.is_empty()
+    {
+        return Err("equipment counter operation lost the genuine removed owner".into());
+    }
+    let index = u32::try_from(state.engine.event_history.len())
+        .map_err(|_| "equipment counter history overflow")?;
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::EquipmentDamageCounterRemovalV4 {
+            removal: Box::new(CounterRemovalV4 {
+                index,
+                publication: owner.publication,
+                item: Box::new(owner.item.clone()),
+            }),
+        });
+    close(
+        state,
+        &owner,
+        &owner.item,
+        OutcomeV4::Countered,
+        None,
+        Some(index),
+    )
 }
 pub(crate) fn finish_owned(
     state: &mut GameState,
@@ -581,7 +628,14 @@ pub(crate) fn finish_owned(
             _ => None,
         })
         .ok_or("equipment completion lost actual execution boundary")?;
-    close(state, owner, item, OutcomeV4::Resolved, Some(boundary))
+    close(
+        state,
+        owner,
+        item,
+        OutcomeV4::Resolved,
+        Some(boundary),
+        None,
+    )
 }
 fn close(
     state: &mut GameState,
@@ -589,6 +643,7 @@ fn close(
     item: &StackItem,
     outcome: OutcomeV4,
     boundary: Option<u32>,
+    counter: Option<u32>,
 ) -> Result<(), String> {
     if state
         .stack
@@ -616,6 +671,7 @@ fn close(
                 item: Box::new(item.clone()),
                 outcome,
                 boundary,
+                counter,
             }),
         });
     validate_state(state)
@@ -628,6 +684,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 | CommittedEvent::EquipmentDamageDepartureV4 { .. }
                 | CommittedEvent::EquipmentDamagePreparedV4 { .. }
                 | CommittedEvent::EquipmentDamageClosedV4 { .. }
+                | CommittedEvent::EquipmentDamageCounterRemovalV4 { .. }
         )
     }) {
         return Err("private equipment source authority entered transient log".into());
@@ -668,6 +725,16 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     return Err("equipment preparation index changed".into());
                 }
             }
+            CommittedEvent::EquipmentDamageCounterRemovalV4 { removal: r } => {
+                let p = publication(state, r.item.v4.stack_item_id)?;
+                if r.index as usize!=index || r.index<=p.index || r.publication!=p.index || r.item!=p.item
+                    || state.stack.iter().any(|item|item.v4.stack_item_id==r.item.v4.stack_item_id)
+                    || state.engine.event_history.iter().filter(|event|matches!(event,
+                        CommittedEvent::EquipmentDamageClosedV4 {closed} if closed.counter==Some(r.index)
+                            && closed.outcome==OutcomeV4::Countered && closed.item==r.item && closed.publication==p.index)).count()!=1 {
+                    return Err("equipment counter operation lost exact unique closed removal".into());
+                }
+            }
             CommittedEvent::EquipmentDamageClosedV4 { closed: c } => {
                 let p = publication(state, c.item.v4.stack_item_id)?;
                 if c.index as usize != index
@@ -677,26 +744,58 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 {
                     return Err("equipment closure changed publication".into());
                 }
-                match (c.outcome,c.boundary) {
-                    (OutcomeV4::Countered,None)=>{
-                        if c.item!=p.item || state.engine.event_history.iter().any(|e|matches!(e,
+                match (c.outcome, c.boundary) {
+                    (OutcomeV4::Countered, None) => {
+                        let at = c.counter.ok_or(
+                            "equipment cancellation lost independent actual counter operation",
+                        )?;
+                        let Some(CommittedEvent::EquipmentDamageCounterRemovalV4 { removal: r }) =
+                            state.engine.event_history.get(at as usize)
+                        else {
+                            return Err(
+                                "equipment cancellation references no actual counter operation"
+                                    .into(),
+                            );
+                        };
+                        if r.index!=at || at.checked_add(1)!=Some(c.index) || r.publication!=p.index || r.item!=p.item
+                            || c.item!=p.item || state.engine.event_history.iter().any(|e|matches!(e,
                             CommittedEvent::EquipmentDamagePreparedV4 {prepared} if prepared.publication==p.index)) {
-                            return Err("equipment counter hides execution".into());
+                            return Err("equipment counter changed actual removal or hides execution".into());
                         }
                     }
-                    (OutcomeV4::Resolved,Some(at))=>{
-                        let Some(CommittedEvent::CrystalPreventionBoundaryV1 {boundary:b})=state.engine.event_history.get(at as usize)
-                            else{return Err("equipment closure lost real boundary".into());};
-                        let Some(CommittedEvent::CrystalExecutionV1 {execution:e})=at.checked_sub(1).and_then(|i|state.engine.event_history.get(i as usize))
-                            else{return Err("equipment closure lost independent actual execution".into());};
-                        if at>=c.index || b.item!=c.item || b.pending.is_some() || b.answer.is_some()
-                            || e.item!=c.item || e.after.is_some() || e.history_index+1!=b.history_index {
-                            return Err("equipment completion changed actual final execution".into());
+                    (OutcomeV4::Resolved, Some(at)) => {
+                        let Some(CommittedEvent::CrystalPreventionBoundaryV1 { boundary: b }) =
+                            state.engine.event_history.get(at as usize)
+                        else {
+                            return Err("equipment closure lost real boundary".into());
+                        };
+                        let Some(CommittedEvent::CrystalExecutionV1 { execution: e }) = at
+                            .checked_sub(1)
+                            .and_then(|i| state.engine.event_history.get(i as usize))
+                        else {
+                            return Err(
+                                "equipment closure lost independent actual execution".into()
+                            );
+                        };
+                        if c.counter.is_some()
+                            || at >= c.index
+                            || b.item != c.item
+                            || b.pending.is_some()
+                            || b.answer.is_some()
+                            || e.item != c.item
+                            || e.after.is_some()
+                            || e.history_index + 1 != b.history_index
+                        {
+                            return Err(
+                                "equipment completion changed actual final execution".into()
+                            );
                         }
-                        let r=prepared(state,c.item.v4.stack_item_id)?;
-                        if r.index>=at {return Err("equipment closed before actual source preparation".into());}
+                        let r = prepared(state, c.item.v4.stack_item_id)?;
+                        if r.index >= at {
+                            return Err("equipment closed before actual source preparation".into());
+                        }
                     }
-                    _=>return Err("equipment closure changed outcome".into()),
+                    _ => return Err("equipment closure changed outcome".into()),
                 }
             }
             _ => {}
@@ -721,6 +820,7 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
                 CommittedEvent::EquipmentDamagePublishedV4 { .. }
                     | CommittedEvent::EquipmentDamagePreparedV4 { .. }
                     | CommittedEvent::EquipmentDamageClosedV4 { .. }
+                    | CommittedEvent::EquipmentDamageCounterRemovalV4 { .. }
             )
         })
 }

@@ -138,6 +138,40 @@ fn registered_rod_and_elves_actual_cast_equip_and_departed_grant_resolve_without
             .v4
             .stack_item_id;
         assert!(has_publication(&state, grant));
+        let mut fake = state.clone();
+        let published = publication(&fake, grant).unwrap().clone();
+        fake.stack.retain(|item| item.v4.stack_item_id != grant);
+        let index = u32::try_from(fake.engine.event_history.len()).unwrap();
+        fake.engine
+            .event_history
+            .push(CommittedEvent::EquipmentDamageClosedV4 {
+                closed: Box::new(ClosedV4 {
+                    index,
+                    publication: published.index,
+                    item: published.item,
+                    outcome: OutcomeV4::Countered,
+                    boundary: None,
+                    counter: None,
+                }),
+            });
+        let mut fake: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&fake).unwrap()).unwrap();
+        let bytes = serde_json::to_vec(&fake).unwrap();
+        assert!(crate::engine::step(&mut fake, Action::Pass).is_err());
+        assert_eq!(bytes, serde_json::to_vec(&fake).unwrap());
+        let mut expected = fake.clone();
+        expected.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        assert!(matches!(
+            crate::engine::advance_until_decision(&mut fake),
+            Decision::Halted { .. }
+        ));
+        assert_eq!(
+            serde_json::to_vec(&fake).unwrap(),
+            serde_json::to_vec(&expected).unwrap()
+        );
         let mut unowned = state.clone();
         let item = unowned
             .stack
@@ -185,6 +219,31 @@ fn registered_rod_and_elves_actual_cast_equip_and_departed_grant_resolve_without
             ProposedEvent::zone_change(host, Zone::Battlefield),
         );
         state.objects.get_mut(host).v4.lifelink_keyword_counters = 0;
+        let mut erased = state.clone();
+        // Keep every original occurrence at its original index while erasing only the private departure proof.
+        for event in &mut erased.engine.event_history {
+            if matches!(event, CommittedEvent::EquipmentDamageDepartureV4 { .. }) {
+                *event = CommittedEvent::Tap { object: host };
+            }
+        }
+        let mut erased: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&erased).unwrap()).unwrap();
+        let bytes = serde_json::to_vec(&erased).unwrap();
+        assert!(crate::engine::step(&mut erased, Action::Pass).is_err());
+        assert_eq!(bytes, serde_json::to_vec(&erased).unwrap());
+        let mut expected = erased.clone();
+        expected.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        assert!(matches!(
+            crate::engine::advance_until_decision(&mut erased),
+            Decision::Halted { .. }
+        ));
+        assert_eq!(
+            serde_json::to_vec(&erased).unwrap(),
+            serde_json::to_vec(&expected).unwrap()
+        );
         let life = [state.players[0].life, state.players[1].life];
         let mut replay: GameState =
             serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();

@@ -1179,6 +1179,9 @@ pub enum CommittedEvent {
     EquipmentDamageClosedV4 {
         closed: Box<crate::equipment_damage_source_v4::ClosedV4>,
     },
+    EquipmentDamageCounterRemovalV4 {
+        removal: Box<crate::equipment_damage_source_v4::CounterRemovalV4>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

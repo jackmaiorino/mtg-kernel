@@ -993,6 +993,7 @@ pub(super) fn conflicts(
                 | crate::event::CommittedEvent::EquipmentDamageDepartureV4 { .. }
                 | crate::event::CommittedEvent::EquipmentDamagePreparedV4 { .. }
                 | crate::event::CommittedEvent::EquipmentDamageClosedV4 { .. }
+                | crate::event::CommittedEvent::EquipmentDamageCounterRemovalV4 { .. }
         )
     }) {
         return true;
@@ -1245,6 +1246,7 @@ pub(super) fn conflicts(
             | crate::event::CommittedEvent::EquipmentDamageDepartureV4 { .. }
             | crate::event::CommittedEvent::EquipmentDamagePreparedV4 { .. }
             | crate::event::CommittedEvent::EquipmentDamageClosedV4 { .. }
+            | crate::event::CommittedEvent::EquipmentDamageCounterRemovalV4 { .. }
             | SquadRallierResolutionBoundaryV1 { .. }
             | SowerRestrictionInstalledV1 { .. }
             | SowerRestrictionExpiredV1 { .. }
