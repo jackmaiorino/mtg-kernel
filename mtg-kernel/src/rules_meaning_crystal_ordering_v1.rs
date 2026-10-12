@@ -46,6 +46,7 @@ pub fn producer_sha256_v1() -> String {
         include_str!("gorehorn_damage_v1.rs"),
         include_str!("raid_entry_custody_v1.rs"),
         include_str!("fixed_source_damage_v3.rs"),
+        include_str!("equipment_damage_source_v4.rs"),
         include_str!("rules_meaning_heartfire_v1.rs"),
         include_str!("creature_stats_lki_v1.rs"),
         include_str!("standard_legends_v1.rs"),

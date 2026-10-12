@@ -2460,7 +2460,7 @@ pub(crate) fn validate_historical_ability_source_contract(
     Ok(())
 }
 
-fn validate_equipment_granted_trigger_contract(
+pub(crate) fn validate_equipment_granted_trigger_contract(
     state: &GameState,
     host: AbilitySourceContractV4,
     equipment: AbilitySourceContractV4,
@@ -9104,6 +9104,7 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
     // Refuse lost captured Raid owners before refresh, legend, SBA or automatic work.
     if crate::raid_entry_v1::validate_state(state).is_err()
         || crate::gorehorn_damage_v1::validate_state(state).is_err()
+        || crate::equipment_damage_source_v4::validate_state(state).is_err()
         || effect::crystal_prevention_v1::validate(state).is_err()
         || crate::arahbo_v1::validate_state(state).is_err()
     {
@@ -9119,6 +9120,7 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
     // Refuse lost captured Raid owners before refresh, legend, SBA or automatic work.
     if crate::raid_entry_v1::validate_state(state).is_err()
         || crate::gorehorn_damage_v1::validate_state(state).is_err()
+        || crate::equipment_damage_source_v4::validate_state(state).is_err()
     {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
@@ -13130,6 +13132,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
         },
     });
     crate::gorehorn_damage_v1::publish(state, stack_item_id)?;
+    crate::equipment_damage_source_v4::publish(state, stack_item_id)?;
     crate::raid_entry_custody_v1::publish(state, stack_item_id)?;
     if t.target_spec != TargetSpec::None {
         if let Err(error) = log_final_targeting_events(state, stack_item_id) {
@@ -14200,6 +14203,7 @@ pub(crate) fn counter_stack_item_by_id(
         crate::librarian_activation_v1::acquire_counter_owner(state, &item)?;
     let ashroot_owner = crate::ashroot_dispatch_v2::acquire(state, &item)?;
     let gorehorn_owner = crate::gorehorn_damage_v1::acquire_owner(state, &item)?;
+    let equipment_owner = crate::equipment_damage_source_v4::counter_owner(state, &item)?;
     let raid_counter_owner = crate::raid_entry_custody_v1::counter_owner(state, &item)?;
     let temporal_owner = crate::extra_turn_v1::acquire_counter(state, &item)?;
     if temporal_owner.is_some() && item.is_copy {
@@ -14233,6 +14237,7 @@ pub(crate) fn counter_stack_item_by_id(
     )?;
 
     crate::raid_entry_custody_v1::record_countered(state, raid_counter_owner)?;
+    crate::equipment_damage_source_v4::record_countered(state, equipment_owner)?;
     crate::gorehorn_damage_v1::record_removed(
         state,
         gorehorn_owner,

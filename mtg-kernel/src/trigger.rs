@@ -4420,6 +4420,11 @@ fn sba_fixed_point_with_protected_triggers(
             }
         }
         if !dying.is_empty() {
+            crate::equipment_damage_source_v4::before_protected_departures(
+                state,
+                &dying,
+                protected_triggers,
+            );
             crate::event::commit_sba_death_batch_v1(state, dying);
             changed = true;
         }

@@ -3886,29 +3886,14 @@ fn raid_crystal_bounce(state: &mut GameState, actor: PlayerId, gorehorn: ObjectI
     let old_id = state
         .stack
         .iter()
-        .find(|i| {
-            i.source == gorehorn && i.kind == mtg_kernel::state::StackItemKind::TriggeredAbility
+        .find(|item| {
+            item.source == gorehorn
+                && item.kind == mtg_kernel::state::StackItemKind::TriggeredAbility
         })
         .unwrap()
         .v4
         .stack_item_id;
-    let spell = put(state, actor, "Unsummon", Zone::Hand);
-    state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 1;
-    priority(state, actor);
-    engine::step(state, Action::CastSpell(spell)).unwrap();
-    assert!(
-        matches!(next(state),Decision::ChooseTargets { legal_targets, .. } if legal_targets.contains(&Target::Object(gorehorn)))
-    );
-    engine::step(state, Action::ChooseTarget(Target::Object(gorehorn))).unwrap();
-    let _ = next(state);
-    for _ in 0..12 {
-        if state.objects.get(spell).zone == Zone::Graveyard {
-            break;
-        }
-        assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
-        engine::step(state, Action::Pass).unwrap();
-    }
-    assert_eq!(state.objects.get(gorehorn).zone, Zone::Hand);
+    resolve_real_snap_bounce_and_land_choices(state, actor, gorehorn);
     let ward_creature = put(
         state,
         actor.opponent(),
@@ -3919,7 +3904,7 @@ fn raid_crystal_bounce(state: &mut GameState, actor: PlayerId, gorehorn: ObjectI
         state,
         ProposedEvent::zone_change(gorehorn, Zone::Battlefield),
     );
-    // Physical reentry after an actual Unsummon. This is not a second printed cast.
+    // Physical reentry after an actual Snap. This is not a second printed cast.
     // Its genuine new Raid trigger targets a registered Ward creature. The
     // actual Ward response leaves only the original instruction in flight.
     assert!(matches!(next(state), Decision::ChooseTargets { .. }));
@@ -4279,21 +4264,304 @@ fn actual_equipment_grant_recipe_and_historical_provenance_forgeries_refuse_read
 }
 
 #[test]
-fn departed_equipment_damage_grant_remains_explicitly_unrepresented_before_mutation() {
+fn equipment_grant_original_departure_reentry_and_current_control_facts_restore_with_or_without_crystal(
+) {
     for actor in [PlayerId::P0, PlayerId::P1] {
-        let (mut state, host, _, _) = crystal_rod_fixture(actor);
-        // Genuine physical departure primitive; no invented printed bounce spell.
-        event::propose_and_commit(&mut state, ProposedEvent::zone_change(host, Zone::Hand));
-        assert!(state.engine.halted.is_none());
-        let mut bad = restore(&state);
-        let bytes = serde_json::to_vec(&bad).unwrap();
-        assert!(engine::step(&mut bad, Action::Pass).is_err());
-        assert_eq!(bytes, serde_json::to_vec(&bad).unwrap());
-        assert!(matches!(
-            engine::advance_until_decision(&mut bad),
-            Decision::Halted { .. }
-        ));
-        bad.engine.halted = None;
-        assert_eq!(bytes, serde_json::to_vec(&bad).unwrap());
+        for with_crystal in [false, true] {
+            for departed in [false, true] {
+                let (mut state, host, rod, bolt) = crystal_rod_fixture(actor);
+                if !with_crystal {
+                    let walls = state
+                        .objects
+                        .iter()
+                        .filter_map(|(id, o)| {
+                            (o.zone == Zone::Battlefield
+                                && CARD_DEFS[o.card_def as usize].name == "Crystal Barricade")
+                                .then_some(id)
+                        })
+                        .collect::<Vec<_>>();
+                    for wall in walls {
+                        event::propose_and_commit(
+                            &mut state,
+                            ProposedEvent::zone_change(wall, Zone::Hand),
+                        );
+                    }
+                }
+                let grant_id = state
+                    .stack
+                    .iter()
+                    .find(|i| i.v4.granted_by.is_some_and(|g| g.source == rod))
+                    .unwrap()
+                    .v4
+                    .stack_item_id;
+                let original_generation = state.objects.get(host).zone_change_count;
+                if departed {
+                    bounce_equipped_host_preserving_original_grant(&mut state, actor, host);
+                    event::propose_and_commit(
+                        &mut state,
+                        ProposedEvent::zone_change(host, Zone::Battlefield),
+                    );
+                    assert_ne!(
+                        state.objects.get(host).zone_change_count,
+                        original_generation
+                    );
+                    state.objects.get_mut(host).v4.lifelink_keyword_counters = 0;
+                }
+                control_primitive(&mut state, host, actor.opponent());
+                let life = [state.players[0].life, state.players[1].life];
+                let observation = mtg_kernel::crystal_public_v1::observe_v1(
+                    &state,
+                    &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+                    actor,
+                    0,
+                    0,
+                    0,
+                    1,
+                )
+                .unwrap();
+                let row = observation
+                    .equipment_damage_sources
+                    .iter()
+                    .find(|r| r.source.arena_id == host.0)
+                    .unwrap();
+                assert_eq!(row.source.zone_change_count, original_generation);
+                assert_eq!(row.ability_controller, actor.into());
+                assert_eq!(
+                    row.damage_controller,
+                    if departed { actor } else { actor.opponent() }.into()
+                );
+                assert_eq!(row.historical, departed);
+                assert!(row.lifelink);
+                let mut replay = restore(&state);
+                for current in [&mut state, &mut replay] {
+                    finish(current);
+                    assert_eq!(current.objects.get(bolt).zone, Zone::Graveyard);
+                    let gain_actor = i32::from(departed);
+                    let gain_opponent = i32::from(!departed);
+                    assert_eq!(
+                        current.players[actor.index()].life,
+                        life[actor.index()] - 3 + gain_actor
+                    );
+                    assert_eq!(
+                        current.players[actor.opponent().index()].life,
+                        life[actor.opponent().index()] - 1 + gain_opponent
+                    );
+                    assert_eq!(current.engine.event_history.iter().filter(|e|matches!(e,
+                        mtg_kernel::event::CommittedEvent::EquipmentDamageClosedV4 {closed} if closed.item.v4.stack_item_id==grant_id
+                    )).count(),1);
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&replay).unwrap()
+                );
+            }
+        }
     }
+}
+#[test]
+fn actual_equipment_grant_publication_and_closed_receipt_erasures_refuse_readonly_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (state, _, rod, _) = crystal_rod_fixture(actor);
+        let grant_id = state
+            .stack
+            .iter()
+            .find(|i| i.v4.granted_by.is_some_and(|g| g.source == rod))
+            .unwrap()
+            .v4
+            .stack_item_id;
+        for mode in 0..3 {
+            let mut bad = restore(&state);
+            if mode != 1 {
+                bad.engine.event_history.retain(|e| {
+                    !matches!(
+                        e,
+                        mtg_kernel::event::CommittedEvent::EquipmentDamagePublishedV4 { .. }
+                    )
+                });
+            }
+            if mode != 0 {
+                bad.stack
+                    .iter_mut()
+                    .find(|i| i.v4.stack_item_id == grant_id)
+                    .unwrap()
+                    .v4
+                    .equipment_damage_published_v4 = Default::default();
+            }
+            let bytes = serde_json::to_vec(&bad).unwrap();
+            assert!(engine::step(&mut bad, Action::Pass).is_err());
+            assert_eq!(bytes, serde_json::to_vec(&bad).unwrap());
+        }
+        let mut completed = state;
+        finish(&mut completed);
+        for mode in 0..2 {
+            let mut bad = restore(&completed);
+            if mode == 0 {
+                bad.engine.event_history.retain(|e| {
+                    !matches!(
+                        e,
+                        mtg_kernel::event::CommittedEvent::EquipmentDamageClosedV4 { .. }
+                    )
+                });
+            } else {
+                let closed = bad
+                    .engine
+                    .event_history
+                    .iter()
+                    .find(|e| {
+                        matches!(
+                            e,
+                            mtg_kernel::event::CommittedEvent::EquipmentDamageClosedV4 { .. }
+                        )
+                    })
+                    .unwrap()
+                    .clone();
+                bad.engine.event_history.push(closed);
+            }
+            let bytes = serde_json::to_vec(&bad).unwrap();
+            assert!(engine::step(&mut bad, Action::Pass).is_err());
+            assert_eq!(bytes, serde_json::to_vec(&bad).unwrap());
+        }
+    }
+}
+
+fn bounce_equipped_host_preserving_original_grant(
+    state: &mut GameState,
+    actor: PlayerId,
+    host: ObjectId,
+) {
+    resolve_real_snap_bounce_and_land_choices(state, actor, host);
+}
+#[test]
+fn actual_rod_grant_and_witness_simultaneous_departure_freezes_both_orders_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for host_first in [false, true] {
+            let (mut state, host, rod, _) = crystal_rod_fixture(actor);
+            let grant = state
+                .stack
+                .iter()
+                .find(|i| i.v4.granted_by.is_some_and(|g| g.source == rod))
+                .unwrap()
+                .v4
+                .stack_item_id;
+            witness(&mut state, actor, host);
+            assert!(!engine::has_effective_keyword(
+                &state,
+                host,
+                Keywords::LIFELINK
+            ));
+            let aura = state
+                .objects
+                .get(host)
+                .attachments
+                .iter()
+                .copied()
+                .find(|id| {
+                    CARD_DEFS[state.objects.get(*id).card_def as usize].name == "Witness Protection"
+                })
+                .unwrap();
+            let order = if host_first {
+                [host, aura]
+            } else {
+                [aura, host]
+            };
+            event::propose_and_commit_batch(
+                &mut state,
+                order
+                    .into_iter()
+                    .map(|id| ProposedEvent::zone_change(id, Zone::Hand))
+                    .collect(),
+            );
+            let life = [state.players[0].life, state.players[1].life];
+            let mut replay = restore(&state);
+            for current in [&mut state, &mut replay] {
+                finish(current);
+                assert_eq!(current.players[actor.index()].life, life[actor.index()] - 3);
+                assert_eq!(
+                    current.players[actor.opponent().index()].life,
+                    life[actor.opponent().index()] - 1
+                );
+                assert!(current.engine.event_history.iter().any(|e|matches!(e,
+                    mtg_kernel::event::CommittedEvent::EquipmentDamagePreparedV4 {prepared}
+                        if prepared.ctx.stack_item_id==Some(grant) && !prepared.facts.lifelink && prepared.departure.is_some()
+                )));
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&replay).unwrap()
+            );
+        }
+    }
+}
+
+fn resolve_real_snap_bounce_and_land_choices(
+    state: &mut GameState,
+    actor: PlayerId,
+    source: ObjectId,
+) {
+    priority(state, actor);
+    let own_land = put(state, actor, "Island", Zone::Battlefield);
+    let opponent_land = put(state, actor.opponent(), "Island", Zone::Battlefield);
+    for land in [own_land, opponent_land] {
+        event::propose_and_commit(state, ProposedEvent::tap(land));
+    }
+    let bounce = put(state, actor, "Snap", Zone::Hand);
+    state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 1;
+    state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+    assert!(
+        matches!(next(state), Decision::CastSpellOrPass { player, castable_spells, .. }
+        if player == actor && castable_spells.contains(&bounce))
+    );
+    engine::step(state, Action::CastSpell(bounce)).unwrap();
+    assert!(
+        matches!(next(state), Decision::ChooseTargets { legal_targets, .. }
+        if legal_targets.contains(&Target::Object(source)))
+    );
+    engine::step(state, Action::ChooseTarget(Target::Object(source))).unwrap();
+    let _ = next(state); // Finalize the genuine cast before ordinary resolution.
+    let mut choice = None;
+    for _ in 0..16 {
+        match next(state) {
+            Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
+            decision @ Decision::ChooseEffectTargets { .. } => {
+                choice = Some(decision);
+                break;
+            }
+            other => panic!("Snap resolution returned {other:?}"),
+        }
+    }
+    let choice = choice.expect("real Snap land continuation did not appear");
+    assert!(matches!(choice, Decision::ChooseEffectTargets {
+        player, source: chosen_source, selected_count: 0, min_targets: 0, max_targets: 2,
+        legal_targets, can_finish: true
+    } if player == actor && chosen_source == bounce
+        && legal_targets.contains(&Target::Object(own_land))
+        && legal_targets.contains(&Target::Object(opponent_land))));
+    assert_eq!(state.objects.get(source).zone, Zone::Hand);
+    let mut restored = restore(state);
+    for current in [&mut *state, &mut restored] {
+        engine::step(
+            current,
+            Action::ChooseEffectTarget(Target::Object(own_land)),
+        )
+        .unwrap();
+        assert!(matches!(next(current), Decision::ChooseEffectTargets {
+            player, source: chosen_source, selected_count: 1, min_targets: 0, max_targets: 2,
+            legal_targets, can_finish: true
+        } if player == actor && chosen_source == bounce
+            && legal_targets.contains(&Target::Object(opponent_land))));
+        engine::step(
+            current,
+            Action::ChooseEffectTarget(Target::Object(opponent_land)),
+        )
+        .unwrap();
+        let _ = next(current);
+        assert_eq!(current.objects.get(bounce).zone, Zone::Graveyard);
+        assert!(!current.objects.get(own_land).tapped);
+        assert!(!current.objects.get(opponent_land).tapped);
+        assert!(current.engine.pending_effect.is_none());
+    }
+    assert_eq!(
+        serde_json::to_vec(state).unwrap(),
+        serde_json::to_vec(&restored).unwrap()
+    );
 }

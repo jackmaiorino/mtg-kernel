@@ -5,6 +5,7 @@ use super::*;
 #[serde(rename_all = "snake_case")]
 pub(crate) enum BackupMode {
     Off,
+    #[cfg_attr(feature = "viewer-recording-v1", allow(dead_code))]
     Report,
     Blend,
 }

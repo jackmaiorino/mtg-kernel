@@ -1504,8 +1504,26 @@ pub struct StackStateV4 {
     pub crystal_prevention_started_v1: CrystalPreventionStartedV1,
     #[serde(default, skip_serializing_if = "FixedDamagePaidV3::is_empty")]
     pub fixed_damage_paid_v3: FixedDamagePaidV3,
+    #[serde(default, skip_serializing_if = "EquipmentDamagePublishedV4::is_empty")]
+    pub equipment_damage_published_v4: EquipmentDamagePublishedV4,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct EquipmentDamagePublishedV4(pub Option<u32>);
+impl EquipmentDamagePublishedV4 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl Hash for EquipmentDamagePublishedV4 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(index) = self.0 {
+            "equipment-damage-publication/v4".hash(state);
+            index.hash(state);
+        }
+    }
+}
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct GorehornPublishedV1(pub Option<u32>);

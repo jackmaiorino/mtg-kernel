@@ -333,6 +333,7 @@ pub(crate) struct OwnerV1 {
     root: EffectOp,
     initial: bool,
     gorehorn: Option<crate::gorehorn_damage_v1::OwnerV1>,
+    equipment: Option<crate::equipment_damage_source_v4::OwnerV4>,
 }
 impl OwnerV1 {
     pub(crate) fn permits_damage(
@@ -542,6 +543,7 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         | EffectOp::DestroyTargetLandThenMaySearchBasicTapped { .. }
         | EffectOp::TapObject { .. }
         | EffectOp::UntapObject { .. }
+        | EffectOp::UntapUpToLands { .. }
         | EffectOp::SkipNextUntap { .. }
         | EffectOp::AttachSourceToTarget { .. }
         | EffectOp::AddMana { .. }
@@ -607,9 +609,15 @@ fn original_damage(
             let historical = ctx.stack_item_id.filter(|id| {
                 crate::fixed_source_damage_v3::has_payment(state, *id)
                     || crate::gorehorn_damage_v1::has_publication(state, *id)
+                    || crate::equipment_damage_source_v4::has_publication(state, *id)
             });
             if let Some(id) = historical {
-                if crate::gorehorn_damage_v1::has_publication(state, id) {
+                if crate::equipment_damage_source_v4::has_publication(state, id) {
+                    if *op != crate::equipment_damage_source_v4::published_root(state, id)? {
+                        return Err("Crystal equipment damage changed granted leaf".into());
+                    }
+                    crate::equipment_damage_source_v4::damage_source(state, ctx.source, id)?;
+                } else if crate::gorehorn_damage_v1::has_publication(state, id) {
                     if !matches!(
                         op,
                         EffectOp::DealDamage {
@@ -681,6 +689,15 @@ fn equipment_damage_grant(item: &StackItem) -> bool {
         })
 }
 fn owned_root(state: &GameState, pending: &EffectContinuation) -> Result<Box<EffectOp>, String> {
+    if crate::equipment_damage_source_v4::tracked(state, &pending.resolving_item) {
+        crate::equipment_damage_source_v4::validate_published_metadata(
+            state,
+            &pending.resolving_item,
+        )?;
+        return Ok(Box::new(crate::equipment_damage_source_v4::printed_root(
+            &pending.resolving_item,
+        )?));
+    }
     if !equipment_damage_grant(&pending.resolving_item) {
         return validated_definition_owned_root_effect(state, pending);
     }
@@ -755,6 +772,9 @@ pub(crate) fn source_power_payment_matches(
             )
             || (crate::fixed_source_damage_v3::selected(saved)
                 && boundary.root == crate::fixed_source_damage_v3::printed_root())
+            || (crate::equipment_damage_source_v4::selected(saved)
+                && crate::equipment_damage_source_v4::printed_root(saved)
+                    .is_ok_and(|root| boundary.root == root))
             || (crate::gorehorn_damage_v1::selected(saved)
                 && boundary.root == crate::trigger::gorehorn_raider_effect()))
 }
@@ -845,6 +865,7 @@ fn supported(op: &EffectOp) -> bool {
 }
 pub(crate) fn requires_successor(state: &GameState) -> bool {
     crate::crystal_barricade_v1::active(state)
+        || crate::equipment_damage_source_v4::requires_successor(state)
         || crate::fixed_source_damage_v3::requires_successor(state)
         || boundaries(state).next().is_some()
         || state.engine.event_history.iter().any(|event| {
@@ -880,6 +901,7 @@ pub(crate) fn acquire_owner(
     if !started
         && !mixed_environment(state)
         && !crate::fixed_source_damage_v3::tracked(state, item)
+        && !crate::equipment_damage_source_v4::tracked(state, item)
         && !(crate::gorehorn_damage_v1::selected(item)
             && crate::crystal_barricade_v1::active(state))
     {
@@ -912,7 +934,11 @@ pub(crate) fn acquire_owner(
     if !has_damage(&root) {
         return Ok(None);
     }
-    if initial && equipment_damage_grant(item) && !live_equipment_damage_source(state, item) {
+    if initial
+        && equipment_damage_grant(item)
+        && !crate::equipment_damage_source_v4::has_publication(state, item.v4.stack_item_id)
+        && !live_equipment_damage_source(state, item)
+    {
         return Err("Crystal equipment damage needs an original public live source; historical grant capture remains a successor prerequisite".into());
     }
     let mut expected = item.clone();
@@ -937,8 +963,10 @@ pub(crate) fn acquire_owner(
         return Err("Crystal resume lost its published owner".into());
     }
     let gorehorn = crate::gorehorn_damage_v1::acquire_owner(state, item)?;
+    let equipment = crate::equipment_damage_source_v4::acquire_owner(state, item)?;
     Ok(Some(OwnerV1 {
         gorehorn,
+        equipment,
         original: item.clone(),
         expected,
         root,
@@ -991,9 +1019,10 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
             crate::engine::validated_stack_item_target_spec(item, state)?;
             if item.v4.crystal_prevention_started_v1.is_empty()
                 && equipment_damage_grant(item)
+                && !crate::equipment_damage_source_v4::has_publication(state, item.v4.stack_item_id)
                 && !live_equipment_damage_source(state, item)
             {
-                return Err("Crystal equipment damage needs original live public source facts before resolution".into());
+                return Err("Crystal legacy equipment damage needs original live source".into());
             }
         }
     }
@@ -1374,6 +1403,14 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                         op,
                     )?;
                 }
+                if let Some(equipment) = owner.equipment.as_ref() {
+                    crate::equipment_damage_source_v4::prepare_owned(
+                        state,
+                        equipment,
+                        &pending.ctx,
+                        op,
+                    )?;
+                }
                 let damage = original_damage(state, &pending.ctx, op)?;
                 if damage.amount <= 0 {
                     steps.push(step);
@@ -1560,6 +1597,9 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
         if let Some(gorehorn) = owner.gorehorn.as_ref() {
             crate::gorehorn_damage_v1::crystal::finish_owned(state, gorehorn, &owner.expected)?;
         }
+    }
+    if let Some(equipment) = owner.equipment.as_ref().filter(|_| !suspended) {
+        crate::equipment_damage_source_v4::finish_owned(state, equipment, &owner.expected)?;
     }
     Ok(if suspended {
         ResumableProgress::Suspended
@@ -2385,6 +2425,7 @@ pub(crate) fn answer_discard(state: &mut GameState, target: Option<Target>) -> R
         root: boundary.root.clone(),
         initial: false,
         gorehorn: None,
+        equipment: None,
     };
     let mut commit = DiscardCommitV2 {
         capture: at,
@@ -3831,6 +3872,7 @@ pub(crate) fn answer(state: &mut GameState, index: u16) -> Result<(), String> {
         root,
         initial: false,
         gorehorn: None,
+        equipment: None,
     };
     let answer = AnswerV1 {
         before: choice.clone(),
@@ -4011,6 +4053,7 @@ pub(crate) fn answer_program_choice(state: &mut GameState, option: u16) -> Resul
         root: boundary.root,
         initial: false,
         gorehorn: None,
+        equipment: None,
     };
     state
         .engine

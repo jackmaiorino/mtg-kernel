@@ -1190,6 +1190,21 @@ pub enum CommittedEvent {
         turn: u32,
         active_player: PlayerId,
     },
+    EquipmentDamagePublishedV4 {
+        publication: Box<crate::equipment_damage_source_v4::PublicationV4>,
+    },
+    EquipmentDamageDepartureV4 {
+        departure: Box<crate::equipment_damage_source_v4::DepartureV4>,
+    },
+    EquipmentDamagePreparedV4 {
+        prepared: Box<crate::equipment_damage_source_v4::PreparationV4>,
+    },
+    EquipmentDamageClosedV4 {
+        closed: Box<crate::equipment_damage_source_v4::ClosedV4>,
+    },
+    EquipmentDamageCounterRemovalV4 {
+        removal: Box<crate::equipment_damage_source_v4::CounterRemovalV4>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -2361,6 +2376,7 @@ fn commit_with_ability_lki_and_entry_batch(
                 crate::ashroot_animist_v1::before_departure(state, z.object);
                 crate::source_power_activation_v1::before_departure(state, z.object);
                 crate::gorehorn_damage_v1::before_departure(state, z.object);
+                crate::equipment_damage_source_v4::before_departure(state, z.object);
             }
             #[cfg(feature = "standard-magezero-fixtures")]
             crate::standard_keywords_v1::before_zone_change(state, z.object, z.to_zone);
@@ -2849,6 +2865,7 @@ fn commit_batch_survivors(
         }
     }
     crate::gorehorn_damage_v1::before_batch_departures(state, &survivors);
+    crate::equipment_damage_source_v4::before_batch_departures(state, &survivors);
     crate::ashroot_animist_v1::before_batch_departures(state, &survivors);
     // Lifelink changes life at the same time as the damage. Capture every
     // source/controller before any member of the simultaneous batch can die.
@@ -2979,6 +2996,14 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
             .map(|id| ProposedEvent::zone_change(*id, Zone::Graveyard))
             .collect::<Vec<_>>(),
     );
+
+    crate::equipment_damage_source_v4::before_batch_departures(
+        state,
+        &chosen
+            .iter()
+            .map(|id| ProposedEvent::zone_change(*id, Zone::Graveyard))
+            .collect::<Vec<_>>(),
+    );
     let captures = chosen
         .iter()
         .map(|id| {
@@ -3002,6 +3027,14 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
 pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<ObjectId>) {
     crate::linked_aura_operation_v1::begin_batch(state);
     crate::gorehorn_damage_v1::before_batch_departures(
+        state,
+        &dying
+            .iter()
+            .map(|id| ProposedEvent::zone_change(*id, Zone::Graveyard))
+            .collect::<Vec<_>>(),
+    );
+
+    crate::equipment_damage_source_v4::before_batch_departures(
         state,
         &dying
             .iter()

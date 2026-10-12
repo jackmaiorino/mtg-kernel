@@ -131,6 +131,7 @@ fn selected_definition_uses_program(item: &StackItem) -> bool {
 
 pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), String> {
     crate::gorehorn_damage_v1::validate_item(state, item)?;
+    crate::equipment_damage_source_v4::validate_item(state, item)?;
     crate::fixed_source_damage_v3::validate_item(state, item)?;
     if !is_program(item.inline_effect.as_ref()) {
         if selected_definition_uses_program(item)
@@ -259,6 +260,7 @@ pub(crate) fn finish(state: &mut GameState, item: &StackItem) {
 
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     crate::gorehorn_damage_v1::validate_state(state)?;
+    crate::equipment_damage_source_v4::validate_state(state)?;
     crate::fixed_source_damage_v3::validate_state(state)?;
     // The operation owns a mandatory payment receipt. Receipt presence cannot
     // decide whether its live activation is validated: deletion must refuse
@@ -329,6 +331,9 @@ pub(crate) fn damage_source(
     source: ObjectId,
     id: StackItemId,
 ) -> Result<HistoricalDamageSourceV1, String> {
+    if crate::equipment_damage_source_v4::has_publication(state, id) {
+        return crate::equipment_damage_source_v4::damage_source(state, source, id);
+    }
     if crate::gorehorn_damage_v1::has_publication(state, id) {
         return crate::gorehorn_damage_v1::damage_source(state, id, source);
     }

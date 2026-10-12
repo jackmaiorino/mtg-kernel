@@ -343,22 +343,72 @@ fn resolve_one(state: &mut GameState) {
     }
     panic!("top item did not resolve");
 }
-fn bounce_with_real_unsummon(state: &mut GameState, actor: PlayerId, source: ObjectId) {
-    let bounce = put(state, actor, "Unsummon", Zone::Hand);
+fn bounce_with_real_snap(state: &mut GameState, actor: PlayerId, source: ObjectId) {
+    let own_land = put(state, actor, "Island", Zone::Battlefield);
+    let opponent_land = put(state, actor.opponent(), "Island", Zone::Battlefield);
+    for land in [own_land, opponent_land] {
+        event::propose_and_commit(state, ProposedEvent::tap(land));
+    }
+    let bounce = put(state, actor, "Snap", Zone::Hand);
     state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 1;
+    state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
     assert!(
-        matches!(next(state),Decision::CastSpellOrPass{player,castable_spells,..}
-  if player==actor && castable_spells.contains(&bounce))
+        matches!(next(state), Decision::CastSpellOrPass { player, castable_spells, .. }
+        if player == actor && castable_spells.contains(&bounce))
     );
     engine::step(state, Action::CastSpell(bounce)).unwrap();
     assert!(
-        matches!(next(state),Decision::ChooseTargets{legal_targets,..}
-  if legal_targets.contains(&Target::Object(source)))
+        matches!(next(state), Decision::ChooseTargets { legal_targets, .. }
+        if legal_targets.contains(&Target::Object(source)))
     );
     engine::step(state, Action::ChooseTarget(Target::Object(source))).unwrap();
-    let _ = next(state);
-    resolve_one(state);
+    let _ = next(state); // Finalize the genuine cast before ordinary resolution.
+    let mut choice = None;
+    for _ in 0..16 {
+        match next(state) {
+            Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
+            decision @ Decision::ChooseEffectTargets { .. } => {
+                choice = Some(decision);
+                break;
+            }
+            other => panic!("Snap resolution returned {other:?}"),
+        }
+    }
+    let choice = choice.expect("real Snap land continuation did not appear");
+    assert!(matches!(choice, Decision::ChooseEffectTargets {
+        player, source: chosen_source, selected_count: 0, min_targets: 0, max_targets: 2,
+        legal_targets, can_finish: true
+    } if player == actor && chosen_source == bounce
+        && legal_targets.contains(&Target::Object(own_land))
+        && legal_targets.contains(&Target::Object(opponent_land))));
     assert_eq!(state.objects.get(source).zone, Zone::Hand);
+    let mut restored = replay(state);
+    for current in [&mut *state, &mut restored] {
+        engine::step(
+            current,
+            Action::ChooseEffectTarget(Target::Object(own_land)),
+        )
+        .unwrap();
+        assert!(matches!(next(current), Decision::ChooseEffectTargets {
+            player, source: chosen_source, selected_count: 1, min_targets: 0, max_targets: 2,
+            legal_targets, can_finish: true
+        } if player == actor && chosen_source == bounce
+            && legal_targets.contains(&Target::Object(opponent_land))));
+        engine::step(
+            current,
+            Action::ChooseEffectTarget(Target::Object(opponent_land)),
+        )
+        .unwrap();
+        let _ = next(current);
+        assert_eq!(current.objects.get(bounce).zone, Zone::Graveyard);
+        assert!(!current.objects.get(own_land).tapped);
+        assert!(!current.objects.get(opponent_land).tapped);
+        assert!(current.engine.pending_effect.is_none());
+    }
+    assert_eq!(
+        serde_json::to_vec(state).unwrap(),
+        serde_json::to_vec(&restored).unwrap()
+    );
 }
 #[test]
 fn actual_bounce_reentry_uses_original_departure_lifelink_deathtouch_not_new_incarnation() {
@@ -375,7 +425,7 @@ fn actual_bounce_reentry_uses_original_departure_lifelink_deathtouch_not_new_inc
         target_trigger(&mut state, actor, Target::Object(recipient));
         grant(&mut state, source, Keywords::LIFELINK);
         grant(&mut state, source, Keywords::DEATHTOUCH);
-        bounce_with_real_unsummon(&mut state, actor, source);
+        bounce_with_real_snap(&mut state, actor, source);
         // Genuine event primitive reentry, with Raid off to isolate the old trigger.
         let attack = state.attack_declaration_turn_v1.take();
         event::propose_and_commit(
