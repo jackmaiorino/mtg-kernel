@@ -496,6 +496,32 @@ pub(super) fn budget_case(
     )
 }
 
+/// Replay check of one recorded budget game (analysis only): rebuilds the
+/// case's opening, applies the recorded actions for both seats with the
+/// passive sequence tracker (the same observation rule as live play), and
+/// returns the replayed sequence labels and outcome. Nothing is searched.
+pub(super) fn budget_replay(
+    sh: &BankShared,
+    src: &SourceSpec,
+    actions: &[u32],
+) -> Result<Value, String> {
+    let focal = PlayerId(src.seat);
+    let defs = spy_defs();
+    let mut s = source_session(&sh.spec, src)?;
+    let mut suffix = super::labels::Suffix::new(true);
+    let mut meter = Meter::new(u64::MAX);
+    for &a in actions {
+        let d = decision(&s).ok_or("replay reached a terminal early")?;
+        if acting(&d) == focal && d.legal_action_count >= 2 {
+            super::play::observe(Some(&mut suffix), &s, a, focal, &defs);
+        }
+        apply(&mut s, &d, a, &mut meter, focal, Some(&mut suffix), &defs).map_err(err)?;
+    }
+    Ok(
+        json!({"id":src.id,"end":outcome(&s, focal),"sequence":suffix.json(),"actions":actions.len()}),
+    )
+}
+
 /// Rebuilds the bank's anchor for `src` and plays the requested arms.
 pub(super) fn source_arms(
     sh: &BankShared,

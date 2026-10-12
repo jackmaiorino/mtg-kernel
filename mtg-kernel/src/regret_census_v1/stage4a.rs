@@ -67,6 +67,7 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-branch"
             | "s4a-canon-offline"
             | "s4a-budget"
+            | "s4a-budget-replay"
     )
 }
 
@@ -1070,6 +1071,60 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         }
         if let Some(p) = dump_path {
             std::fs::write(&p, dump).map_err(|e| format!("{p}: {e}"))?;
+        }
+        return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
+    }
+    if cfg.mode == "s4a-budget-replay" {
+        // Analysis: BUDGET_ROWS lists recorded s4a-budget rows (JSONL, one
+        // file per line); each is replayed from its own case fields.
+        let path = std::env::var("BUDGET_ROWS").map_err(|_| "BUDGET_ROWS is required")?;
+        let mut out = String::new();
+        for file in std::fs::read_to_string(&path)
+            .map_err(|e| format!("{path}: {e}"))?
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+        {
+            let row: Value = serde_json::from_str(
+                std::fs::read_to_string(file.trim())
+                    .map_err(|e| format!("{file}: {e}"))?
+                    .lines()
+                    .next()
+                    .ok_or("empty row")?,
+            )
+            .map_err(|e| e.to_string())?;
+            if row["lineage"] != sh.spec.lineage {
+                continue;
+            }
+            let src = bank::SourceSpec {
+                id: row["id"].as_str().unwrap_or_default().to_owned(),
+                own: row["own"].as_u64().unwrap_or(0) as usize,
+                other: row["other"].as_u64().unwrap_or(0) as usize,
+                seat: row["seat"].as_u64().unwrap_or(0) as u8,
+                opp: row["opp"].as_str().unwrap_or_default().to_owned(),
+                seed: row["seed"].as_u64().unwrap_or(0),
+                starting_player: row["starting_player"].as_u64().unwrap_or(0) as u8,
+                source_policy_seeds: [0, 0],
+                anchor_draw: 0,
+                guide_policy_seeds: [0, 0],
+                search_root: String::new(),
+            };
+            let actions: Vec<u32> = serde_json::from_value(row["game"]["actions"].clone())
+                .map_err(|e| e.to_string())?;
+            let rep = std::thread::scope(|scope| {
+                std::thread::Builder::new()
+                    .stack_size(256 << 20)
+                    .spawn_scoped(scope, || refresh::budget_replay(&sh, &src, &actions))
+                    .map_err(|e| e.to_string())?
+                    .join()
+                    .map_err(|_| "replay worker panicked".to_owned())?
+            })
+            .unwrap_or_else(|e| json!({"error":e}));
+            let ok = rep["end"] == row["game"]["end"] && rep["sequence"] == row["game"]["sequence"];
+            out.push_str(&format!(
+                "{}
+",
+                json!({"file":file.trim(),"id":src.id,"replay":rep,"matches_live":ok})
+            ));
         }
         return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
     }
