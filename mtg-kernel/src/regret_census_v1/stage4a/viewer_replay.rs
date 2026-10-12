@@ -155,6 +155,10 @@ pub(crate) fn run(path: &Path) -> Result<(), String> {
     let mut session = source_session(&spec, source)?;
     let mut seen_decisions = 0;
     let mut seen_searches = 0;
+    let defs = super::labels::spy_defs();
+    let focal = crate::ids::PlayerId::P0;
+    let mut self_mill_resolved = false;
+    let mut giant_reanimated = false;
     for (step, &action) in prefix.iter().chain(&suffix).enumerate() {
         let FastActorResponseV1::Decision(d) = session.current_response() else {
             return Err("Early terminal during reconstruction".into());
@@ -242,9 +246,28 @@ pub(crate) fn run(path: &Path) -> Result<(), String> {
             search = json!({"record":record,"live_order":order});
             seen_searches += 1;
         }
+        let mut watched = super::labels::Before::take(session.game_state(), focal, &defs);
+        if d.acting_player == PlayerSeatV1::P0 {
+            let semantics = session
+                .diagnostic_current_action_semantics()
+                .ok_or("Action semantics missing")?;
+            let (cast, own, _) = super::labels::classify(
+                &semantics[action as usize],
+                session.game_state(),
+                focal,
+                &defs,
+            );
+            watched.self_chosen_now = own;
+            if cast {
+                watched.watch_spy_cast(session.game_state(), focal, &defs);
+            }
+        }
         session
             .step(d.episode_id, d.step, action)
             .map_err(|e| format!("{e:?}"))?;
+        let resolved = super::labels::events(&watched, session.game_state(), focal, &defs);
+        self_mill_resolved |= resolved.self_target_resolved;
+        giant_reanimated |= resolved.dr_giant_resolved;
         let after = session.viewer_observation_v1(PlayerSeatV1::P0)?;
         let terminal = match session.current_response() {
             FastActorResponseV1::Terminal(t) => json!(t),
@@ -255,7 +278,8 @@ pub(crate) fn run(path: &Path) -> Result<(), String> {
             json!({"kind":"decision","decision":{"episode_id":d.episode_id,"step":d.step,
                 "physical_decision_id":d.physical_decision_id,"substep_index":d.substep_index,
                 "acting_player":d.acting_player},"before":before,"after":after,
-            "actions":actions,"labels":labels,"selected":action,"evidence":evidence,"search":search,"terminal":terminal}),
+            "actions":actions,"labels":labels,"selected":action,"evidence":evidence,"search":search,"terminal":terminal,
+            "resolution":{"self_mill":resolved.self_target_resolved,"giant_reanimated":resolved.dr_giant_resolved}}),
         )?;
     }
     let FastActorResponseV1::Terminal(t) = session.current_response() else {
@@ -265,13 +289,16 @@ pub(crate) fn run(path: &Path) -> Result<(), String> {
         || t.winner != Some(PlayerSeatV1::P0)
         || seen_decisions != decisions.len()
         || seen_searches != searches.len()
+        || !self_mill_resolved
+        || !giant_reanimated
     {
         return Err("Reconstructed terminal or evidence coverage differs".into());
     }
     write(
         &mut file,
         json!({"kind":"footer","written":prefix.len()+suffix.len(),"complete":true,
-        "anchor_verified":true,"decision_keys_verified":seen_decisions,"search_roots_verified":seen_searches,"terminal":t}),
+        "anchor_verified":true,"decision_keys_verified":seen_decisions,"search_roots_verified":seen_searches,"terminal":t,
+        "combo_resolved":{"self_mill":self_mill_resolved,"giant_reanimated":giant_reanimated}}),
     )?;
     file.flush().map_err(|e| e.to_string())
 }
