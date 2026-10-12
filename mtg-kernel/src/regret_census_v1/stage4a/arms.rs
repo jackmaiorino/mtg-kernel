@@ -270,7 +270,7 @@ impl Discovery {
         }
     }
 
-    fn json(&self) -> Value {
+    pub(crate) fn json(&self) -> Value {
         json!({"discovered":self.completions_natural > 0,"trajectories":self.trajectories,
             "natural":self.natural,"completions_natural":self.completions_natural,
             "completion_wins":self.completion_wins,"completion_distinct_seeds":self.completion_seeds.len(),

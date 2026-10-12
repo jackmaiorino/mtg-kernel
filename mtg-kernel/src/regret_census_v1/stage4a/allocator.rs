@@ -229,6 +229,16 @@ pub(super) enum SchedStep {
     Plain,
 }
 
+impl super::refresh::Consult for Scheduler {
+    fn cap(&self) -> u64 {
+        self.cap
+    }
+
+    fn consult(&mut self, c: &super::refresh::ConsultCtx<'_>) -> Result<(u64, Value), String> {
+        Scheduler::consult(self, c.s, c.focal, c.lookup, c.counts)
+    }
+}
+
 /// Supported actions execute; after a search at this substep (or a zero
 /// choice) the fallback plays; with no allowance nothing is sampled.
 pub(super) fn sched_rule(lookup: Lookup, remaining: u64, decided_here: bool) -> SchedStep {
@@ -349,7 +359,7 @@ impl Arm {
 }
 
 /// Uniform in [0, 1) from 53 random bits.
-fn uniform(rng: &mut SplitMix64) -> f64 {
+pub(super) fn uniform(rng: &mut SplitMix64) -> f64 {
     (rng.next_u64() >> 11) as f64 * (1.0 / (1u64 << 53) as f64)
 }
 
@@ -496,6 +506,7 @@ pub(super) fn allocator_case(
     let run = GuideRun {
         opening: true,
         mode,
+        extended: false,
     };
     let (allocation, mut scheduler, weights_sha) = match arm {
         Arm::Current => (
@@ -541,7 +552,9 @@ pub(super) fn allocator_case(
         allocation,
         None,
         run,
-        scheduler.as_mut(),
+        scheduler
+            .as_mut()
+            .map(|s| s as &mut dyn super::refresh::Consult),
     )?;
     let sched = scheduler.as_ref().map(
         |s| json!({"decisions":s.decisions,"requested":s.requested,"controller_seconds":s.seconds}),

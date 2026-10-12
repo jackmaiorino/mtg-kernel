@@ -15,6 +15,7 @@ mod scratch_v1;
 pub(crate) mod stack_inputs_v1;
 
 pub(crate) use scratch_v1::NativePolicyValueForwardScratchV1;
+pub(crate) use scratch_v1::{PooledRepresentationV1, POOLING_SCHEMA_V1};
 #[cfg(test)]
 use scratch_v1::NativePolicyValueOutputViewV1;
 

@@ -42,9 +42,10 @@ use crate::native_flat_tensorizer_v4::{
 use crate::native_policy_train_step_v1::native_train_state_parameter_layout_v1;
 use crate::native_policy_value_net_v1::{
     ForwardActivationModeV1, NativeNamedParameterV1, NativePolicyValueForwardScratchV1,
-    NativePolicyValueModelConfigV1, NativePolicyValueNetV1, CARD_EMBEDDING_DIM_V1,
-    CARD_VOCAB_SIZE_V1, FEATURE_CONTRACT_DIGEST_V1, FEATURE_ENCODING_DIGEST_V1,
-    MODEL_ARCHITECTURE_VERSION_V1, MODEL_CONFIG_FINGERPRINT_V1, PARAMETER_COUNT_V1,
+    NativePolicyValueModelConfigV1, NativePolicyValueNetV1, PooledRepresentationV1,
+    CARD_EMBEDDING_DIM_V1, CARD_VOCAB_SIZE_V1, FEATURE_CONTRACT_DIGEST_V1,
+    FEATURE_ENCODING_DIGEST_V1, MODEL_ARCHITECTURE_VERSION_V1, MODEL_CONFIG_FINGERPRINT_V1,
+    PARAMETER_COUNT_V1,
 };
 use crate::paired_bo1_harness_v1::{
     PairedBo1PolicyInputV1, PairedBo1PolicyV1, PlayPolicyGenerationV1,
@@ -1363,6 +1364,37 @@ impl FrozenPlayPolicyV1 {
         &mut self,
         session: &FastActorSessionV1,
     ) -> Result<FrozenPlayDecisionScoresV1, String> {
+        self.score_fast_session_capturing_v1(session, None)
+    }
+
+    /// `score_fast_session_v1` plus a detached pooled copy of the same
+    /// forward's state and legal-action scorer representations (allocator
+    /// head features). One forward; logits, value and every sampling stream
+    /// are exactly those of `score_fast_session_v1`, and nothing borrowed
+    /// from the forward scratch outlives this call.
+    pub(crate) fn score_fast_session_with_representation_v1(
+        &mut self,
+        session: &FastActorSessionV1,
+    ) -> Result<(FrozenPlayDecisionScoresV1, PooledRepresentationV1), String> {
+        let mut pooled = None;
+        let scores = self.score_fast_session_capturing_v1(session, Some(&mut pooled))?;
+        Ok((scores, pooled.ok_or("no representation captured")?))
+    }
+
+    /// The forward activation mode of this instance's scoring (binding label).
+    pub(crate) fn forward_activation_mode_label_v1(&self) -> &'static str {
+        if self.fast_search_forward {
+            "fast_search_tanh"
+        } else {
+            "libm_tanh"
+        }
+    }
+
+    fn score_fast_session_capturing_v1(
+        &mut self,
+        session: &FastActorSessionV1,
+        capture: Option<&mut Option<PooledRepresentationV1>>,
+    ) -> Result<FrozenPlayDecisionScoresV1, String> {
         let FastActorResponseV1::Decision(decision) = session.current_response() else {
             return Err("cannot score a terminal session".into());
         };
@@ -1377,7 +1409,7 @@ impl FrozenPlayPolicyV1 {
             self.owned.globals = encoded.globals;
             successor.extensions = encoded.extensions;
             return self
-                .score_owned()
+                .score_owned_capturing(capture)
                 .map_err(|error| format!("{error}; decision={decision:?}"));
         }
         if let Some(fresh) = &mut self.fresh_successor {
@@ -1391,7 +1423,7 @@ impl FrozenPlayPolicyV1 {
             self.owned.globals = encoded.globals;
             fresh.extensions = encoded.extensions;
             return self
-                .score_owned()
+                .score_owned_capturing(capture)
                 .map_err(|error| format!("{error}; decision={decision:?}"));
         }
         let encoded = session
@@ -1402,7 +1434,7 @@ impl FrozenPlayPolicyV1 {
             )
             .map_err(|e| format!("actor-visible encoding: {e:?}; decision={decision:?}"))?;
         self.owned.globals = encoded.globals;
-        self.score_owned()
+        self.score_owned_capturing(capture)
     }
 
     /// Test-only cost split of one V3 `score_fast_session_v1` call:
@@ -1547,6 +1579,15 @@ impl FrozenPlayPolicyV1 {
     }
 
     fn score_owned(&mut self) -> Result<FrozenPlayDecisionScoresV1, String> {
+        self.score_owned_capturing(None)
+    }
+
+    /// `score_owned`, optionally copying the pooled representation of the
+    /// validated forward output into `capture` (read-only; same arithmetic).
+    fn score_owned_capturing(
+        &mut self,
+        capture: Option<&mut Option<PooledRepresentationV1>>,
+    ) -> Result<FrozenPlayDecisionScoresV1, String> {
         let mode = if self.fast_search_forward {
             ForwardActivationModeV1::FastSearchTanh
         } else {
@@ -1601,6 +1642,9 @@ impl FrozenPlayPolicyV1 {
                 && output.value.is_finite(),
             "invalid frozen inference output",
         )?;
+        if let Some(capture) = capture {
+            *capture = Some(output.pooled_representation_v1());
+        }
         Ok(FrozenPlayDecisionScoresV1 {
             logits: output.logits.to_vec(),
             value: output.value,

@@ -22,6 +22,7 @@
 //! checks (rows record the limits and whether they are formal).
 
 mod allocator;
+mod allocator2;
 mod arms;
 mod bank;
 mod bank_trace;
@@ -75,6 +76,8 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-practice-values"
             | "s4a-train-exposure"
             | "s4a-allocator"
+            | "s4a-allocator-v2"
+            | "s4a-allocator-v2-probe"
     )
 }
 
@@ -1242,6 +1245,74 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         }
         return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
     }
+    if cfg.mode == "s4a-allocator-v2" || cfg.mode == "s4a-allocator-v2-probe" {
+        // Allocator v2 (collab LANES/allocator-redesign-20261012):
+        // ALLOC2_CASES is JSONL of allocator2::AllocCase (arm current, q, S
+        // or H; Spy only); this process plays cases [first_game, first_game
+        // + games). ALLOC2_WEIGHTS names the S or H controller (required for
+        // a learned case), bound to this process's parent. ALLOC2_TOTAL is
+        // the per-game ceiling (default 2,048,000). The probe mode plays
+        // only probe cases (supported-node refresh probe); the ordinary mode
+        // refuses them.
+        sh.spec.validate()?;
+        let binding = bank::bank_binding(policy, &sh)?;
+        let parent = allocator2::ParentBinding::of(policy, &sh.spec.lineage);
+        let path = std::env::var("ALLOC2_CASES").map_err(|_| "ALLOC2_CASES is required")?;
+        let cases: Vec<allocator2::AllocCase> = std::fs::read_to_string(&path)
+            .map_err(|e| format!("{path}: {e}"))?
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str(l).map_err(|e| format!("{path}: {e}")))
+            .collect::<Result<_, _>>()?;
+        let probing = cfg.mode == "s4a-allocator-v2-probe";
+        if cases.iter().any(|c| c.probe.is_some() != probing) {
+            return Err(format!(
+                "{} plays {} cases only",
+                cfg.mode,
+                if probing { "probe" } else { "ordinary" }
+            ));
+        }
+        let total: u64 = match std::env::var("ALLOC2_TOTAL") {
+            Ok(v) => v.parse().map_err(|_| "ALLOC2_TOTAL must be a count")?,
+            Err(_) => allocator2::CAP,
+        };
+        let mode = match std::env::var("BUDGET_KEY_MODE").as_deref() {
+            Ok("repaired") => canon2::KeyMode::Repaired,
+            Ok("legacy") => canon2::KeyMode::Legacy,
+            _ => return Err("BUDGET_KEY_MODE must be repaired or legacy".into()),
+        };
+        let weights = match std::env::var("ALLOC2_WEIGHTS") {
+            Ok(p) => Some(allocator2::Weights::load(&p, &parent)?),
+            Err(_) => None,
+        };
+        let first = cfg.first_game as usize;
+        let end = (first + cfg.games as usize).min(cases.len());
+        let mut out = String::new();
+        for case in &cases[first..end] {
+            let row = std::thread::scope(|scope| {
+                std::thread::Builder::new()
+                    .stack_size(256 << 20)
+                    .spawn_scoped(scope, || {
+                        allocator2::allocator_case(
+                            &sh,
+                            policy,
+                            &parent,
+                            case,
+                            weights.as_ref(),
+                            total,
+                            mode,
+                            &binding,
+                        )
+                    })
+                    .map_err(|e| e.to_string())?
+                    .join()
+                    .map_err(|_| "allocator v2 worker panicked".to_owned())?
+            })
+            .unwrap_or_else(|e| json!({"kind":"error","id":case.id,"arm":case.arm,"error":e}));
+            out.push_str(&format!("{row}\n"));
+        }
+        return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
+    }
     if cfg.mode == "s4a-refresh" {
         sh.spec.validate()?;
         let binding = bank::bank_binding(policy, &sh)?;
@@ -1354,7 +1425,8 @@ fn run_bank_parity(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<
 pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(), String> {
     match cfg.mode.as_str() {
         "s4a-bank" | "s4a-bank-trace" | "s4a-refresh" | "s4a-branch" | "s4a-canon-offline"
-        | "s4a-budget" | "s4a-budget-replay" | "s4a-allocator" => {
+        | "s4a-budget" | "s4a-budget-replay" | "s4a-allocator" | "s4a-allocator-v2"
+        | "s4a-allocator-v2-probe" => {
             return run_bank_mode(cfg, policy)
         }
         "s4a-bank-parity" => return run_bank_parity(cfg, policy),
