@@ -6,6 +6,7 @@ const seat = z.enum(['p0', 'p1']);
 const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const text = z.string().max(4096);
 const hash = z.string().regex(/^[0-9a-f]{64}$/);
+const commit = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
 const u32 = z.number().int().nonnegative().max(0xffffffff);
 const i64 = z.string().regex(/^-?\d+$/).refine(s => BigInt(s) >= -(1n << 63n) && BigInt(s) < (1n << 63n), 'Value exceeds signed 64-bit capture range');
 const safeImage = z.string().max(1024).refine(s => /^assets\/[a-zA-Z0-9/_\.\-]+$/.test(s) && !s.split('/').includes('..'), 'Invalid asset path');
@@ -71,7 +72,7 @@ const recordingSchema = z.object({
   seats: z.tuple([z.object({ name: text, deck: text }).strict(), z.object({ name: text, deck: text }).strict()]),
   cards: z.record(z.string(), cardSchema), frames: z.array(frameSchema).min(1).max(100000),
   bookmarks: z.array(z.object({ frame: text, title: text, situation: text, alternatives: text, consequence: text }).strict()).max(30),
-  reconstruction: z.object({ kind: z.literal('recorded-actions'), originalSource: hash, originalRuntime: hash,
+  reconstruction: z.object({ kind: z.literal('recorded-actions'), originalSource: commit, originalRuntime: hash,
     sourceArtifactSha256: hash, openingArtifactSha256: hash, runtimeRules: text }).strict().optional(),
 }).strict();
 export type Recording = z.infer<typeof recordingSchema>;

@@ -11,6 +11,12 @@ import { initialPlayback, playbackReducer } from '../src/playback';
 
 const copy = () => structuredClone(fixture);
 describe('retained search-controlled decisions',()=>{
+  it('accepts original Git source identities and binds the reconstruction artifact',()=>{
+    const reconstruction={kind:'recorded-actions',originalSource:'c'.repeat(40),originalRuntime:'d'.repeat(64),
+      sourceArtifactSha256:'b'.repeat(64),openingArtifactSha256:'e'.repeat(64),runtimeRules:'resolution-boundary-v1'};
+    expect(parseRecording({...retained,reconstruction}).reconstruction?.originalSource).toBe(reconstruction.originalSource);
+    expect(()=>parseRecording({...retained,reconstruction:{...reconstruction,sourceArtifactSha256:'f'.repeat(64)}})).toThrow(/different reconstruction source/);
+  });
   it('loads a bound root table and continuation without inventing optional diagnostics',async()=>{
     const r=parseRecording(retained);await verifySearchDigests(r);
     expect(r.frames[0].search?.algorithm).toBe('persistent-uct');
