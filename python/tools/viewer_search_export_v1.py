@@ -50,7 +50,7 @@ def export_replay(raw, exporter, decision_key, root_actions, search):
                     kind = semantic['action_kind']
                     label = kind.replace('_',' ').capitalize()
                     public_names = list(dict.fromkeys(names[r] for r in refs if r in names))
-                    if public_names: label += ': ' + ', '.join(public_names)
+                    if public_names: label += ' involving ' + ', '.join(public_names)
                     actions.append({'index':j,'label':label,'kind':kind,'refs':refs})
                 # Labels refer to the first observed context, while each path keeps its actual board.
                 if nodes[n]['actions'][0]['kind'] == 'unobserved': nodes[n]['actions'] = actions
