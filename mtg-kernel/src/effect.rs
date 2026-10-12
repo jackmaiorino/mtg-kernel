@@ -1652,6 +1652,10 @@ pub enum EffectOp {
     ArahboTokenFromCaptureV1 {
         capture_history_index: u64,
     },
+    /// Strongbox newly-exiled choice, ordinary holder-next-turn permission.
+    ExileTopChooseOneUntilNextTurn {
+        count: u8,
+    },
     /// Printed Fiery Annihilation, with independent legality and a committed death shield.
     FieryAnnihilation,
 }
@@ -2100,6 +2104,10 @@ pub enum EffectFrame {
         pay: bool,
         path: Vec<u16>,
     },
+    GrantChosenExilePlayPermission {
+        binding: ExileTopChoiceBindingV1,
+        chosen: EffectObjectBinding,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -2450,6 +2458,9 @@ pub enum EffectTargetSelectionPurpose {
     CrystalDiscardAfterDamageV2 {
         capture: u32,
     },
+    ChooseNewlyExiledCard {
+        binding: ExileTopChoiceBindingV1,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -2645,6 +2656,25 @@ pub enum EffectOptionChoicePurpose {
     },
 }
 
+/// Private actual exile capture, never a public or Human record.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ExileTopChoiceBindingV1 {
+    pub player: PlayerId,
+    pub requested_count: u8,
+    pub stack_item_id: Option<StackItemId>,
+    pub source: ObjectId,
+    pub granted_turn: u32,
+    pub granted_active_player: PlayerId,
+    pub original_library: Vec<EffectObjectBinding>,
+    pub resulting_library: Vec<EffectObjectBinding>,
+    pub exiled: Vec<EffectObjectBinding>,
+    pub exiled_public: Vec<crate::rl::CardStableRefV1>,
+    pub exile_event_indices: Vec<u32>,
+    pub canonical_path: Vec<u16>,
+    pub expected_remaining_frames: Vec<EffectFrame>,
+    pub provenance_digest: [u8; 32],
+}
+
 /// A policy-visible choice yielded by the generic effect interpreter. This is
 /// intentionally typed and extensible: later library ordering, subset, Ward,
 /// and Escape choices add variants here instead of adding card-specific
@@ -2820,6 +2850,9 @@ pub enum EffectAnsweredChoiceGuard {
     CounterUnlessPaysLife {
         frame: Box<EffectFrame>,
     },
+    ChosenExilePlayPermission {
+        frame: Box<EffectFrame>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2979,6 +3012,9 @@ impl std::hash::Hash for ExecCtx {
 /// private library/hand ordering, and multi-card mill ordering enter the v4
 /// interpreter.
 pub fn contains_player_choice(op: &EffectOp) -> bool {
+    if matches!(op, EffectOp::ExileTopChooseOneUntilNextTurn { .. }) {
+        return true;
+    }
     match op {
         EffectOp::Sequence(ops) => ops.iter().enumerate().any(|(index, op)| {
             contains_player_choice(op)
@@ -4143,6 +4179,12 @@ fn complete_resumable_target_selection(
         EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { .. } => {
             return Err("Crystal discard requires its authenticated owning answer".into())
         }
+        EffectTargetSelectionPurpose::ChooseNewlyExiledCard { binding } => {
+            if path != binding.canonical_path || objects.len() != 1 {
+                return Err("Strongbox answer cardinality/path changed".into());
+            }
+            exile_top_choose_v1::stage_answer(continuation, binding, objects[0])?;
+        }
         EffectTargetSelectionPurpose::StandardCopyTargetV1 { .. } => {
             unreachable!("answered above without object bindings")
         }
@@ -5204,7 +5246,9 @@ fn surveil_top_card(
     })
 }
 
+pub(crate) mod exile_top_choose_v1;
 mod private_keep_one_v1;
+pub(crate) mod strongbox_permission_v1;
 pub(crate) use private_keep_one_v1::selection_shape;
 pub use private_keep_one_v1::PrivateKeepOneBindingV1;
 mod surveil_many;
@@ -7207,6 +7251,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::PayManaThen { .. }
                         | EffectFrame::LinkedExileChosenHandCard { .. }
                         | EffectFrame::BeginSearchLibraryToBattlefieldTapped { .. }
+                        | EffectFrame::GrantChosenExilePlayPermission { .. }
                         | EffectFrame::EnterUndercityRoom { .. }
                         | EffectFrame::ResolveUndercityThrone { .. }
                 )
@@ -7248,6 +7293,9 @@ fn validate_answered_choice_guard(
                 return Err("owner-library answered continuation frame stack changed".to_string());
             }
             validate_owner_library_placement_frame(state, pending, frame)?;
+        }
+        Some(EffectAnsweredChoiceGuard::ChosenExilePlayPermission { frame }) => {
+            exile_top_choose_v1::validate_answer(state, pending, frame)?;
         }
         Some(EffectAnsweredChoiceGuard::SurveilLibraryOne { frame }) => {
             let EffectFrame::SurveilLibraryOne {
@@ -7989,6 +8037,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
         }
     }
     private_keep_one_v1::validate_required_stage(state, pending)?;
+    exile_top_choose_v1::validate_required_stage(state, pending)?;
     validate_exact_spell_search_continuation(state, pending)?;
     crate::frenzied_goblin_v1::validate_continuation(state, pending)?;
     validate_answered_choice_guard(state, pending)?;
@@ -8018,6 +8067,9 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 validate_effect_target_candidate(state, candidate)?;
             }
             match purpose {
+                EffectTargetSelectionPurpose::ChooseNewlyExiledCard { .. } => {
+                    exile_top_choose_v1::validate_choice(state, pending)?;
+                }
                 EffectTargetSelectionPurpose::StandardDiscardToDrawV1 {
                     player,
                     original_candidates,
@@ -11399,6 +11451,9 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                         );
                     }
                 }
+                frame @ EffectFrame::GrantChosenExilePlayPermission { .. } => {
+                    exile_top_choose_v1::resume_answer(state, &mut continuation, frame)?;
+                }
                 frame @ EffectFrame::SurveilLibraryMany { .. } => {
                     if surveil_many::resume(state, &mut continuation, frame)? {
                         state.engine.pending_effect = Some(continuation);
@@ -13396,6 +13451,12 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
             EffectOp::LookTopMayKeepOneRestGraveyard { count } => {
                 let player = continuation.ctx.controller;
                 if surveil_many::begin(state, &mut continuation, player, count, path)? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
+            EffectOp::ExileTopChooseOneUntilNextTurn { count } => {
+                if exile_top_choose_v1::begin(state, &mut continuation, count, path)? {
                     state.engine.pending_effect = Some(continuation);
                     return Ok(ResumableProgress::Suspended);
                 }
@@ -19610,6 +19671,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
         | EffectOp::LookTopPickToHandBottomRest { .. }
         | EffectOp::LookTopSelectV1 { .. }
+        | EffectOp::ExileTopChooseOneUntilNextTurn { .. }
         | EffectOp::SelectObjectsV1 { .. }
         | EffectOp::DiscardBasicLandOrCards { .. }
         | EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. }

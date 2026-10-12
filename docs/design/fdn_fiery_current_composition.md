@@ -42,6 +42,15 @@ Eight existing consumer capabilities and their values remain intact, with Fiery
 still explicitly refused until the complete V33 successor is implemented.
 Catalog registrations, frozen pool inputs and profile identities are unchanged.
 
+The source now also joins Strongbox checkpoint
+`fd6c52c7fd6783c5f61b7eeb1eda60949dd8f2a1`. Two enum conflicts retain
+current Strongbox prefixes first and append Fiery: EffectOp 214 to 215 and
+CommittedEvent 164 to 167. Replacement and target prefixes remain 3 to 4 and
+84 to 85. The three reviewed Fiery module blobs remain unchanged. All nine
+existing capability values and Strongbox's exact V32 scope remain intact;
+Fiery full observation/V33 is still unimplemented and explicitly refused by
+predecessor consumers. No new registration or native qualification is claimed.
+
 Existing TargetSpec, EffectOp, ReplacementEffectKind and CommittedEvent variants
 remain an unchanged prefix. The optional dependent target appends physically and
 uses the already reserved stable target ID64; Condemn61, Run Away62, Divine63,

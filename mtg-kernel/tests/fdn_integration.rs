@@ -196,3 +196,6 @@ mod fdn_wildwood_scourge_v1;
 mod fdn_ashroot_animist_v1;
 #[path = "fdn/fdn_juggernaut_v1.rs"]
 mod fdn_juggernaut_v1;
+
+#[path = "fdn/fdn_strongbox_raider_v1.rs"]
+mod fdn_strongbox_raider_v1;

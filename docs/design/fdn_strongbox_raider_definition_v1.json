@@ -1,0 +1,19 @@
+{
+  "name": "Strongbox Raider",
+  "mana_cost": "{2}{R}{R}",
+  "types": [
+    "Creature"
+  ],
+  "subtypes": [
+    "Orc",
+    "Pirate"
+  ],
+  "power": 5,
+  "toughness": 2,
+  "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "mage_source": "Mage.Sets/src/mage/cards/s/StrongboxRaider.java",
+  "mage_source_sha256": "f960d3c31bf03a65e39e1c39faf95f3da1b0d01306f09bbe03822bd7d3e7c0a9",
+  "registered": false,
+  "native_qualified": false,
+  "printed_rule": "Raid: self enters, if captured controller attacked this turn, exile top two of their library; choose exactly one card that reached exile; may play that exact incarnation until end of captured controller next turn."
+}
