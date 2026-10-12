@@ -31,3 +31,15 @@ capabilities use one tuple to stay within the argument limit. All separate
 V20/V21/V23/V25/V27 modes remain present. Banishing is still unregistered and
 this composition is uncompiled/unrun. PR235 and its frozen Native77 source
 remain unchanged; no new printing or catalog identity is admitted here.
+
+## Staged genuine registration
+
+The actual Banishing metadata appends at prospective id418 after the unchanged
+226 FDN records, with a legal40-card reference mainboard. Its genuinely printed
+integration and owning Human tests are enabled but unexecuted. Prospective214
+Full/1 Partial/71 Missing is not accepted coverage. Frozen286 printing names
+and24 external token dependencies are byte-exact. The current v80 identity is
+deliberately stale for this419-definition candidate; derive a successor from
+actual generated output before qualification. No native/gameplay, model,
+sampler, experiment or full-pool acceptance is claimed. PR235 and its separate
+418-definition guarded source remain unchanged.

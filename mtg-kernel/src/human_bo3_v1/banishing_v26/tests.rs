@@ -229,7 +229,6 @@ fn inherited_registered_generic_ward_menu_is_preserved_and_submission_replays() 
 }
 
 #[test]
-#[ignore = "requires genuine future Banishing Light registration"]
 #[cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")

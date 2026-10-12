@@ -2610,12 +2610,12 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 417 (Ashroot after Juggernaut, Temporal,
-        // Bloom, Gutless, Gorehorn and Librarian; earlier definitions retain ids).
+        // batches append through id 418 (Banishing after Ashroot, Juggernaut,
+        // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                418
+                419
             } else {
                 192
             }

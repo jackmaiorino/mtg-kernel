@@ -6691,6 +6691,35 @@
         "attack_trigger",
         "source_power_lki"
       ]
+    },
+    {
+      "mana_cost": "{2}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "power": null,
+      "toughness": null,
+      "name": "Banishing Light",
+      "supertypes": [],
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/b/BanishingLight.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_banishing_light.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "linked_exile_until_source_leaves",
+        "nonland_permanent_target",
+        "linked_aura_return"
+      ]
     }
   ]
 }

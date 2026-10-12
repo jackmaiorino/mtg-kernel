@@ -1,8 +1,8 @@
 {
   "schema": "mtg-kernel-prepared-card-definition/v1",
   "name": "Banishing Light",
-  "registered": false,
-  "catalog_id": null,
+  "registered": true,
+  "catalog_id": 418,
   "engine_capability": "prepared_unqualified",
   "pinned_mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
   "pinned_mage_card": "Mage.Sets/src/mage/cards/b/BanishingLight.java",
@@ -39,10 +39,11 @@
     "full_pool_claim": false
   },
   "remaining": [
-    "compose current canonical source",
-    "register actual metadata and derive actual catalog identity",
-    "execute both-seat printed/restore fixtures",
-    "qualify any newly generated catalog/profile/consumer",
-    "RulesMeaning duration/source dependency representation remains incomplete"
-  ]
+    "derive actual419 catalog identity and append immutable successor profile",
+    "execute both-seat printed/restore fixtures and affected core/meaning/public/Human groups",
+    "qualify live and historical catalog/profile compatibility, legacy exports and current-head delivery",
+    "keep model and broader full-pool acceptance distinct from this staged registration"
+  ],
+  "registration_status": "local candidate registration only; prospective id418 awaits actual generator, native/gameplay qualification and default acceptance",
+  "source_composition": "4290245b3c05797b36f1994670613aa146558b5c"
 }
