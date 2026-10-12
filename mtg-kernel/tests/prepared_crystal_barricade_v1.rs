@@ -3909,6 +3909,12 @@ fn raid_crystal_bounce(state: &mut GameState, actor: PlayerId, gorehorn: ObjectI
         engine::step(state, Action::Pass).unwrap();
     }
     assert_eq!(state.objects.get(gorehorn).zone, Zone::Hand);
+    let ward_creature = put(
+        state,
+        actor.opponent(),
+        "Tolarian Terror",
+        Zone::Battlefield,
+    );
     event::propose_and_commit(
         state,
         ProposedEvent::zone_change(gorehorn, Zone::Battlefield),
@@ -3917,7 +3923,7 @@ fn raid_crystal_bounce(state: &mut GameState, actor: PlayerId, gorehorn: ObjectI
     // Its genuine new Raid trigger is targeted and countered by the existing
     // typed counter primitive, leaving only the original instruction in flight.
     assert!(matches!(next(state), Decision::ChooseTargets { .. }));
-    engine::step(state, Action::ChooseTarget(Target::Player(actor))).unwrap();
+    engine::step(state, Action::ChooseTarget(Target::Object(ward_creature))).unwrap();
     let _ = next(state);
     let new_id = state
         .stack
@@ -3927,9 +3933,32 @@ fn raid_crystal_bounce(state: &mut GameState, actor: PlayerId, gorehorn: ObjectI
         .unwrap()
         .v4
         .stack_item_id;
-    engine::counter_stack_item_by_id(state, new_id)
-        .unwrap()
-        .unwrap();
+    // The real registered Ward trigger counters this exact newer Raid row.
+    // Decline an offered payment instead of invoking a private engine helper.
+    for _ in 0..12 {
+        if !state
+            .stack
+            .iter()
+            .any(|item| item.v4.stack_item_id == new_id)
+        {
+            break;
+        }
+        match next(state) {
+            Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
+            Decision::ChooseEffectBoolean { player, .. } if player == actor => {
+                engine::step(state, Action::ChooseEffectBoolean(false)).unwrap()
+            }
+            other => panic!("newer Raid Ward removal returned {other:?}"),
+        }
+    }
+    assert!(!state
+        .stack
+        .iter()
+        .any(|item| item.v4.stack_item_id == new_id));
+    assert!(state
+        .stack
+        .iter()
+        .any(|item| item.v4.stack_item_id == old_id));
 }
 #[test]
 fn real_gorehorn_raid_crystal_prevention_retains_original_source_and_both_owners_after_restore() {
