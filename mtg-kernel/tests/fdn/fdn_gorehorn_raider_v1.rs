@@ -614,3 +614,61 @@ fn genuine_simultaneous_departure_preserves_prebatch_suppressed_lifelink_in_both
         }
     }
 }
+
+#[test]
+fn actual_rod_equip_and_noncreature_cast_on_gorehorn_preserves_unrelated_granted_trigger() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor, 5);
+        let source = cast(&mut state, actor);
+        assert!(settle(&mut state).is_none());
+        assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+        let rod = put(&mut state, actor, "Black Mage's Rod", Zone::Battlefield);
+        state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 3;
+        let _ = next(&mut state);
+        engine::step(&mut state, Action::ActivateAbility(rod, 0)).unwrap();
+        assert!(
+            matches!(next(&mut state),Decision::ChooseTargets{legal_targets,..}
+   if legal_targets.contains(&Target::Object(source)))
+        );
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(source))).unwrap();
+        let _ = next(&mut state);
+        assert!(settle(&mut state).is_none());
+        assert_eq!(
+            state.objects.get(rod).v4.attached_to.unwrap().object,
+            source
+        );
+        assert!(state.objects.get(source).attachments.contains(&rod));
+        let bolt = state.players[actor.index()]
+            .hand
+            .iter()
+            .copied()
+            .find(|id| CARD_DEFS[state.objects.get(*id).card_def as usize].name == "Lightning Bolt")
+            .unwrap();
+        state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+        let _ = next(&mut state);
+        engine::step(&mut state, Action::CastSpell(bolt)).unwrap();
+        assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
+        engine::step(
+            &mut state,
+            Action::ChooseTarget(Target::Player(actor.opponent())),
+        )
+        .unwrap();
+        let _ = next(&mut state);
+        assert!(state.stack.iter().any(|item| item.source == source
+            && item.v4.granted_by.is_some_and(|grant| grant.source == rod)));
+        assert!(!state
+            .engine
+            .event_history
+            .iter()
+            .any(|e| matches!(e, event::CommittedEvent::GorehornPublishedV1 { .. })));
+        let before = state.players[actor.opponent().index()].life;
+        let mut restored = replay(&state);
+        assert!(settle(&mut state).is_none());
+        assert!(settle(&mut restored).is_none());
+        assert_eq!(state.players[actor.opponent().index()].life, before - 4);
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+    }
+}
