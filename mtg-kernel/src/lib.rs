@@ -94,6 +94,7 @@ pub mod frenzied_public_v1;
 mod gorehorn_damage_v1;
 pub mod human_opening_v1;
 pub mod native_expanded_training_run_v1;
+mod raid_entry_custody_v1;
 mod raid_entry_v1;
 mod source_power_activation_v1;
 pub mod sower_of_chaos_v1;

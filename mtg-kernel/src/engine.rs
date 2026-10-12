@@ -12444,7 +12444,9 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
             // batch was just put on the stack), and a trigger whose targets
             // cannot be completed is removed rather than posing a
             // `ChooseTargets` with no legal choice.
-            if crate::ashroot_dispatch_v2::unavailable(state, &pending).is_err() {
+            if crate::ashroot_dispatch_v2::unavailable(state, &pending).is_err()
+                || crate::raid_entry_custody_v1::record_drop(state, &pending).is_err()
+            {
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
                     pending.source,
@@ -12477,7 +12479,9 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
                 // false`), which `drain_pending_cast_or_decide`'s matching
                 // `targeting_can_complete`/`abort_cast` guard already
                 // avoids for spell casts.
-                if crate::ashroot_dispatch_v2::unavailable(state, &pending).is_err() {
+                if crate::ashroot_dispatch_v2::unavailable(state, &pending).is_err()
+                    || crate::raid_entry_custody_v1::record_drop(state, &pending).is_err()
+                {
                     state.engine.halted = Some((
                         UnsupportedMechanic::InvalidEffectContinuation,
                         pending.source,
@@ -12960,6 +12964,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
         },
     });
     crate::gorehorn_damage_v1::publish(state, stack_item_id)?;
+    crate::raid_entry_custody_v1::publish(state, stack_item_id)?;
     if t.target_spec != TargetSpec::None {
         if let Err(error) = log_final_targeting_events(state, stack_item_id) {
             state.stack.pop();
@@ -13964,6 +13969,7 @@ pub(crate) fn counter_stack_item_by_id(
         crate::librarian_activation_v1::acquire_counter_owner(state, &item)?;
     let ashroot_owner = crate::ashroot_dispatch_v2::acquire(state, &item)?;
     let gorehorn_owner = crate::gorehorn_damage_v1::acquire_owner(state, &item)?;
+    let raid_counter_owner = crate::raid_entry_custody_v1::counter_owner(state, &item)?;
     let temporal_owner = crate::extra_turn_v1::acquire_counter(state, &item)?;
     if temporal_owner.is_some() && item.is_copy {
         if let Some(plan) = departure.take() {
@@ -13974,6 +13980,7 @@ pub(crate) fn counter_stack_item_by_id(
     }
     crate::ashroot_dispatch_v2::counter(state, ashroot_owner.as_ref())?;
     crate::extra_turn_v1::record_countered(state, temporal_owner);
+    crate::raid_entry_custody_v1::record_countered(state, raid_counter_owner)?;
     crate::gorehorn_damage_v1::record_removed(
         state,
         gorehorn_owner,

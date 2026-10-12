@@ -955,6 +955,11 @@ pub(super) fn conflicts(
                 | crate::event::CommittedEvent::LibrarianActivationCounterRemovalV1 { .. }
                 | crate::event::CommittedEvent::LibrarianActivationOperationV1 { .. }
                 | crate::event::CommittedEvent::LibrarianActivationFinishedV1 { .. }
+                | crate::event::CommittedEvent::RaidEntryCaptureV1 { .. }
+                | crate::event::CommittedEvent::RaidEntryPublishedV1 { .. }
+                | crate::event::CommittedEvent::RaidEntryDroppedV1 { .. }
+                | crate::event::CommittedEvent::RaidEntryCounteredV1 { .. }
+                | crate::event::CommittedEvent::RaidEntryStartedV1 { .. }
                 | crate::event::CommittedEvent::GorehornDepartureV1 { .. }
                 | crate::event::CommittedEvent::GorehornPublishedV1 { .. }
                 | crate::event::CommittedEvent::GorehornPreparedV1 { .. }
@@ -1114,6 +1119,11 @@ pub(super) fn conflicts(
             | PrivateKeepOneLibraryConsumedV1 { .. }
             | PrivateKeepOneRaidSkippedV1 { .. }
             | RaidEntrySourceV1 { .. }
+            | RaidEntryCaptureV1 { .. }
+            | RaidEntryPublishedV1 { .. }
+            | RaidEntryDroppedV1 { .. }
+            | RaidEntryCounteredV1 { .. }
+            | RaidEntryStartedV1 { .. }
             | GorehornDepartureV1 { .. }
             | GorehornPublishedV1 { .. }
             | GorehornPreparedV1 { .. }

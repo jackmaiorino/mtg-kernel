@@ -231,6 +231,7 @@ pub(crate) fn before_departure(state: &mut GameState, id: ObjectId) {
             .engine
             .pending_triggers
             .iter()
+            .chain(state.raid_waiting_v1.iter().flatten())
             .chain(state.legend_pending_v1.iter().flatten())
             .chain(
                 state

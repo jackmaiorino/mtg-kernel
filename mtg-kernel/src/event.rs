@@ -900,6 +900,21 @@ pub enum CommittedEvent {
     GorehornOperationV1 {
         operation: Box<crate::gorehorn_damage_v1::OperationV1>,
     },
+    RaidEntryCaptureV1 {
+        capture: Box<crate::raid_entry_custody_v1::CaptureV1>,
+    },
+    RaidEntryPublishedV1 {
+        publication: Box<crate::raid_entry_custody_v1::PublishedV1>,
+    },
+    RaidEntryDroppedV1 {
+        dropped: Box<crate::raid_entry_custody_v1::DroppedV1>,
+    },
+    RaidEntryCounteredV1 {
+        countered: Box<crate::raid_entry_custody_v1::CounteredV1>,
+    },
+    RaidEntryStartedV1 {
+        started: Box<crate::raid_entry_custody_v1::StartedV1>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1404,6 +1419,7 @@ fn commit_with_ability_lki(
         abilities_removed_before,
         frozen_death_captures,
         None,
+        false,
     );
 }
 
@@ -1413,6 +1429,7 @@ fn commit_with_ability_lki_and_entry_batch(
     abilities_removed_before: Option<bool>,
     frozen_death_captures: Option<Vec<CommittedEvent>>,
     mut authority_batch: Option<&mut crate::authority_of_the_consuls_v1::EntryBatchV1>,
+    defer_raid_entry: bool,
 ) {
     let mut event = event;
     if let ProposedEvent::ZoneChange(change) = &mut event {
@@ -1867,7 +1884,11 @@ fn commit_with_ability_lki_and_entry_batch(
     if let Some(source) = single_graveyard_entry {
         crate::soul_shackled_zombie_v1::record_entry(state, source);
     }
-    crate::raid_entry_v1::record_entry(state, entry_history_index);
+    if let Some(capture) = crate::raid_entry_v1::record_entry(state, entry_history_index) {
+        if !defer_raid_entry {
+            crate::raid_entry_custody_v1::capture_entry(state, capture);
+        }
+    }
     if let Some(batch) = authority_batch.as_mut() {
         batch.record(entry_history_index);
     } else {
@@ -1910,6 +1931,7 @@ fn commit_with_ability_lki_and_entry_batch(
 /// / trigger collection exactly once after the whole batch (see
 /// `engine::deal_combat_damage`), not per event.
 pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent>) {
+    let raid_history_start = state.engine.event_history.len();
     let mut authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
     let survivors: Vec<ProposedEvent> = events
         .into_iter()
@@ -1984,6 +2006,7 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
                 Some(removed),
                 captures,
                 authority_batch.as_mut(),
+                true,
             );
         }
     } else {
@@ -1997,6 +2020,7 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
                 None,
                 captures,
                 authority_batch.as_mut(),
+                true,
             );
         }
     }
@@ -2005,6 +2029,7 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
         batch.finish(state);
     }
 
+    crate::raid_entry_custody_v1::capture_batch_entries(state, raid_history_start);
     for (_, player, amount) in lifelink_gains {
         commit(state, ProposedEvent::life_gain(player, amount));
     }
@@ -3192,6 +3217,7 @@ mod authority_visibility_tests {
                     None,
                     None,
                     Some(&mut batch),
+                    false,
                 );
                 // A typed physical hidden-characteristic boundary before
                 // deferred entry capture, not an admitted FDN disguise card.
