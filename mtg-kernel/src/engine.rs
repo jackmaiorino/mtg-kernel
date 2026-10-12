@@ -14107,6 +14107,19 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 return ResolutionProgress::Suspended;
             }
         };
+    let disguised_entry = match crate::garruks_uprising_v1::acquire_disguised_entry(
+        state,
+        state.stack.last().expect("resolving genuine item"),
+    ) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let item = state
         .stack
         .pop()
@@ -14247,7 +14260,13 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         }
     }
     if let Some(program) = program {
-        if execute_resolving_program(
+        if let Some(owner) = disguised_entry.as_ref() {
+            if crate::event::commit_garruk_disguised_entry(state, owner).is_err() {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                return ResolutionProgress::Suspended;
+            }
+        } else if execute_resolving_program(
             state,
             &item,
             &ctx,

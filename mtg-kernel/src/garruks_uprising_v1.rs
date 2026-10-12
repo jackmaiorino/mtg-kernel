@@ -121,6 +121,73 @@ fn enabled() -> bool {
         })
     })
 }
+
+/// A genuine removed permanent spell supplies its cast form before entry.
+/// This loan is never serialized or manufactured from an entry receipt.
+pub(crate) struct DisguisedEntryOwnerV1 {
+    item: StackItem,
+}
+pub(crate) fn acquire_disguised_entry(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<DisguisedEntryOwnerV1>, String> {
+    if !enabled()
+        || item.kind != crate::state::StackItemKind::Spell
+        || item.v4.cast_method != Some(crate::state::CastMethodV4::Alternative)
+    {
+        return Ok(None);
+    }
+    let live = state.objects.get(item.source);
+    let def = &CARD_DEFS[usize::from(live.card_def)];
+    if !def
+        .alt_cost
+        .is_some_and(|alt| alt.condition == crate::card_def::AltCostCondition::DisguiseFromHand)
+    {
+        return Ok(None);
+    }
+    if live.zone != Zone::Stack
+        || item.inline_effect.is_some()
+        || def.printed_mode_effect(item.mode_chosen)
+            != Some(EffectOp::MoveObject {
+                object: crate::effect::ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            })
+        || state
+            .stack
+            .iter()
+            .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+            .collect::<Vec<_>>()
+            != [item]
+    {
+        return Err("Garruk entry cast form lost its exact ordinary permanent spell".into());
+    }
+    crate::engine::validated_stack_item_target_spec(state, item)?;
+    Ok(Some(DisguisedEntryOwnerV1 { item: item.clone() }))
+}
+impl DisguisedEntryOwnerV1 {
+    pub(crate) fn entering_face_down(
+        &self,
+        state: &GameState,
+    ) -> Result<(ObjectId, crate::state::FaceDownV1), String> {
+        if state.objects.get(self.item.source).zone != Zone::Stack
+            || state
+                .stack
+                .iter()
+                .any(|row| row.v4.stack_item_id == self.item.v4.stack_item_id)
+        {
+            return Err("Garruk entry cast-form loan was not genuinely removed".into());
+        }
+        Ok((
+            self.item.source,
+            crate::state::FaceDownV1 {
+                disguised: true,
+                lookers: 1 << self.item.controller.index(),
+                hidden_by: None,
+                hidden_by_source: None,
+            },
+        ))
+    }
+}
 pub(crate) fn record_single_entry(state: &mut GameState, index: usize) {
     let Some(mut batch) = EntryBatchV1::capture() else {
         return;
@@ -748,6 +815,14 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
             .iter()
             .any(|event| matches!(event, CommittedEvent::GarrukDrawCaptureV1 { .. }))
 }
+
+#[cfg(test)]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "garruks_uprising_v1/future_tests.rs"]
+mod future_tests;
 
 #[cfg(test)]
 mod tests {
