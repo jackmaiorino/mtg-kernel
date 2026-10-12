@@ -125,7 +125,7 @@ pub(super) fn validate(state: &GameState) -> Result<(), String> {
                 {
                     return Err("Strongbox holder-next-turn occurrence changed".into());
                 }
-                let mut expected = g.permission.clone();
+                let mut expected = g.permission;
                 if !started.is_empty() {
                     expected.expiry = crate::engine::PlayPermissionExpiry::UntilHoldersNextTurn {
                         holder_turn_started: true,

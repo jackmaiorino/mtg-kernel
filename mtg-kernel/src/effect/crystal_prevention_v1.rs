@@ -228,7 +228,7 @@ pub(crate) fn shield_operation(
         return Err("Crystal shield operation has no positive damage".into());
     }
     let left = remaining - amount.min(remaining);
-    let after = (left > 0).then(|| ActiveReplacement {
+    let after = (left > 0).then_some(ActiveReplacement {
         id: replacement.id,
         source: replacement.source,
         kind: ReplacementEffectKind::PreventNextDamage {
@@ -294,7 +294,7 @@ fn validate_shields(state: &GameState) -> Result<(), String> {
                     return Err("Crystal shield consumed nonpositive damage".into());
                 }
                 let left = remaining - remaining.min(op.damage_amount);
-                let after = (left > 0).then(|| ActiveReplacement {
+                let after = (left > 0).then_some(ActiveReplacement {
                     id: op.before.id,
                     source: op.before.source,
                     kind: ReplacementEffectKind::PreventNextDamage {
@@ -899,12 +899,12 @@ pub(crate) fn acquire_owner(
     initial: bool,
 ) -> Result<Option<OwnerV1>, String> {
     let started = item.v4.crystal_prevention_started_v1.0.is_some();
-    if !started
-        && !mixed_environment(state)
-        && !crate::fixed_source_damage_v3::tracked(state, item)
-        && !crate::equipment_damage_source_v4::tracked(state, item)
-        && !(crate::gorehorn_damage_v1::selected(item)
-            && crate::crystal_barricade_v1::active(state))
+    if !(started
+        || mixed_environment(state)
+        || crate::fixed_source_damage_v3::tracked(state, item)
+        || crate::equipment_damage_source_v4::tracked(state, item)
+        || (crate::gorehorn_damage_v1::selected(item)
+            && crate::crystal_barricade_v1::active(state)))
     {
         return Ok(None);
     }

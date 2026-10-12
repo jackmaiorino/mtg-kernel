@@ -181,7 +181,7 @@ fn real_complete_batch_source_and_nontoken_cat_permanent_scope_before_sba() {
             let mut state = ready(actor);
             let source = put(&mut state, actor, "Arahbo, the First Fang", Zone::Hand);
             let cat = put(&mut state, actor, "Savannah Lions", Zone::Hand);
-            let mut entries = vec![source, cat];
+            let mut entries = [source, cat];
             if reversed {
                 entries.reverse();
             }

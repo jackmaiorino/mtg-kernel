@@ -16327,7 +16327,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             state,
             crate::linked_aura_operation_v1::OperationV1::Effect {
                 op: op.clone(),
-                ctx: ctx.clone(),
+                ctx: Box::new(ctx.clone()),
             },
         )
     {
