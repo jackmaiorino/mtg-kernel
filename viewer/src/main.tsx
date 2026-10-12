@@ -243,7 +243,7 @@ function App() {
       {error && <div role="alert" className="notice error"><span>{error}</span><button onClick={() => setError('')} aria-label="Dismiss error"><X size={16} /></button></div>}
       {!recording && !status && <div className="empty-studio"><GitBranch size={42} /><h2>Your next decision awaits.</h2><p>Import a viewer recording to open the battlefield and decision explorer.</p><button className="primary-button" onClick={() => fileRef.current?.click()}><Upload size={16} /> Import recording</button></div>}
       {recording && frame && board && <>
-        <div className="game-heading"><div><span className="eyebrow">FEATURED GAME</span><h2>{recording.title}</h2></div><div className="game-meta"><span>{recording.complete ? 'Complete game' : 'Partial recording'}</span><span>{recording.coverage === 'every-step' ? 'Every step recorded' : 'Decision snapshots'}</span><button onClick={() => setShowAbout(true)}>{formatHash(recording.identity.checkpoint)} <ExternalLink size={12} /></button></div></div>
+        <div className="game-heading"><div><span className="eyebrow">FEATURED GAME</span><h2>{recording.title}</h2></div><div className="game-meta"><span>{recording.complete ? 'Complete game' : 'Partial recording'}</span><span>{recording.reconstruction ? 'Reconstructed from recorded actions' : recording.coverage === 'every-step' ? 'Every step recorded' : 'Decision snapshots'}</span><button onClick={() => setShowAbout(true)}>{formatHash(recording.identity.checkpoint)} <ExternalLink size={12} /></button></div></div>
         <div className="workspace">
           <section className="game-panel" aria-label="Game replay">
             <LayoutGroup id={`board-${playback.epoch}`}><div className="battlefield" ref={boardRef} key={playback.epoch}>
