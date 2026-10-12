@@ -414,6 +414,8 @@ fn menu(state: &GameState) -> Result<Option<MenuV1>, RlContractError> {
                     ("color", r.source, None),
                 crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. } =>
                     return Err(RlContractError("noncombat Crystal menu contains combat-only prevention".into())),
+                crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. } =>
+                    return Err(RlContractError("Crystal menu contains a non-prevention replacement".into())),
             },
         };
         Ok(OptionV1 { kind: kind.into(), source: public_ref(state, id)?, shield_remaining: amount })

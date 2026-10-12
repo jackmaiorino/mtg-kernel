@@ -8458,6 +8458,7 @@ fn pending_effect_semantic_v4(
                             crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { graveyard_order: Some(_), .. } => TargetSelectionPurposeV4::LibraryOrder,
                             crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { graveyard_order: None, .. }
                             | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryOne { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { .. }
                             | crate::effect::EffectTargetSelectionPurpose::OrderIntoGraveyard {
                                 ..
                             }
