@@ -930,7 +930,18 @@ pub enum CommittedEvent {
     CrystalProgramChoiceV3 {
         operation: Box<crate::effect::crystal_prevention_v1::ProgramChoiceOperationV3>,
     },
+    FixedDamageDepartureV3 {
+        departure: Box<crate::fixed_source_damage_v3::DepartureV3>,
+    },
+    FixedDamagePaidV3 {
+        payment: Box<crate::fixed_source_damage_v3::PaidV3>,
+    },
+    FixedDamageRemovedV3 {
+        removal: Box<crate::fixed_source_damage_v3::RemovedV3>,
+    },
 }
+
+pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct HistoricalDamageSourceV1 {

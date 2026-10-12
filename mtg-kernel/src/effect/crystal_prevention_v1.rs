@@ -602,7 +602,18 @@ fn original_damage(
     op: &EffectOp,
 ) -> Result<DamageProposed, String> {
     let (target, amount, historical_source) = match op {
-        EffectOp::DealDamage { target, amount } => (ctx.resolve_target(*target), *amount, None),
+        EffectOp::DealDamage { target, amount } => {
+            let historical = ctx
+                .stack_item_id
+                .filter(|id| crate::fixed_source_damage_v3::has_payment(state, *id));
+            if let Some(id) = historical {
+                if *op != crate::fixed_source_damage_v3::printed_root() {
+                    return Err("fixed historical damage changed printed instruction".into());
+                }
+                crate::fixed_source_damage_v3::damage_source(state, ctx.source, id)?;
+            }
+            (ctx.resolve_target(*target), *amount, historical)
+        }
         EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1) => {
             let id = ctx
                 .stack_item_id
@@ -674,8 +685,12 @@ pub(crate) fn source_power_payment_matches(
         && boundary.answer.is_none()
         && *boundary.item == *item
         && boundary.pending.as_deref() == Some(&initial)
-        && boundary.root
-            == EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1)
+        && (boundary.root
+            == EffectOp::StandardV1(
+                crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1,
+            )
+            || (crate::fixed_source_damage_v3::selected(saved)
+                && boundary.root == crate::fixed_source_damage_v3::printed_root()))
 }
 fn fight_recipe(op: &EffectOp) -> bool {
     source_fight_recipe(op)
@@ -764,6 +779,7 @@ fn supported(op: &EffectOp) -> bool {
 }
 pub(crate) fn requires_successor(state: &GameState) -> bool {
     crate::crystal_barricade_v1::active(state)
+        || crate::fixed_source_damage_v3::requires_successor(state)
         || boundaries(state).next().is_some()
         || state.engine.event_history.iter().any(|event| {
             matches!(
@@ -795,7 +811,8 @@ pub(crate) fn acquire_owner(
     initial: bool,
 ) -> Result<Option<OwnerV1>, String> {
     let started = item.v4.crystal_prevention_started_v1.0.is_some();
-    if !started && !mixed_environment(state) {
+    if !started && !mixed_environment(state) && !crate::fixed_source_damage_v3::tracked(state, item)
+    {
         return Ok(None);
     }
     validate(state)?;

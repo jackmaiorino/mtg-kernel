@@ -981,6 +981,9 @@ pub(super) fn conflicts(
                 | crate::event::CommittedEvent::CrystalDamageOperationV3 { .. }
                 | crate::event::CommittedEvent::CrystalBatchPreparedV3 { .. }
                 | crate::event::CommittedEvent::CrystalProgramChoiceV3 { .. }
+                | crate::event::CommittedEvent::FixedDamageDepartureV3 { .. }
+                | crate::event::CommittedEvent::FixedDamagePaidV3 { .. }
+                | crate::event::CommittedEvent::FixedDamageRemovedV3 { .. }
         )
     }) || state
         .stack
@@ -1049,7 +1052,10 @@ pub(super) fn conflicts(
             | CrystalExecutionV1 { .. }
             | CrystalDamageOperationV3 { .. }
             | CrystalBatchPreparedV3 { .. }
-            | CrystalProgramChoiceV3 { .. } => true,
+            | CrystalProgramChoiceV3 { .. }
+            | FixedDamageDepartureV3 { .. }
+            | FixedDamagePaidV3 { .. }
+            | FixedDamageRemovedV3 { .. } => true,
             Damage { source, target, .. } => {
                 s.raw(*source) || matches!(target,crate::state::Target::Object(id) if s.raw(*id))
             }

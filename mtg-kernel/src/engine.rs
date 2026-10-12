@@ -10160,6 +10160,14 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
             return None;
         }
     };
+    let fixed_removal_owner = match crate::fixed_source_damage_v3::acquire_removal(state, &item) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return None;
+        }
+    };
     let index = resolution_cast_v1::resolving_index(state, item.v4.stack_item_id);
     match index
         .filter(|&i| i < state.stack.len())
@@ -10191,6 +10199,17 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
     match progress {
         Ok(effect::ResumableProgress::Complete(completed)) => {
             if *completed != item {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                return None;
+            }
+            if crate::fixed_source_damage_v3::record_removed(
+                state,
+                fixed_removal_owner,
+                crate::fixed_source_damage_v3::OutcomeV3::Resolved,
+            )
+            .is_err()
+            {
                 state.engine.halted =
                     Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
                 return None;
@@ -13810,7 +13829,17 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
                     live.zone_change_count != source_contract.zone_change_count
                         || live.zone != source_contract.zone
                 });
-                if matches!(
+                if crate::fixed_source_damage_v3::tracked(state, item) {
+                    crate::fixed_source_damage_v3::legal_targets(
+                        state,
+                        crate::fixed_source_damage_v3::damage_source(
+                            state,
+                            item.source,
+                            item.v4.stack_item_id,
+                        )?,
+                    )
+                    .contains(&target)
+                } else if matches!(
                     item.inline_effect.as_ref(),
                     Some(EffectOp::StandardV1(
                         crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1
@@ -13971,6 +14000,7 @@ pub(crate) fn counter_stack_item_by_id(
         _ => return Err("duplicate private stack-incarnation ids".to_string()),
     };
     let item = state.stack[position].clone();
+    let fixed_removal_owner = crate::fixed_source_damage_v3::acquire_removal(state, &item)?;
     effect::frenzied_goblin_resolution_v1::preflight_unstarted_removal(state, &item)?;
     validated_stack_item_target_spec(&item, state)?;
     if item.kind == StackItemKind::Spell
@@ -14004,6 +14034,11 @@ pub(crate) fn counter_stack_item_by_id(
         state,
         gorehorn_owner,
         crate::gorehorn_damage_v1::OutcomeV1::Countered,
+    )?;
+    crate::fixed_source_damage_v3::record_removed(
+        state,
+        fixed_removal_owner,
+        crate::fixed_source_damage_v3::OutcomeV3::Countered,
     )?;
     effect::frenzied_goblin_resolution_v1::complete_unstarted(
         state,
@@ -14312,6 +14347,17 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         return ResolutionProgress::Suspended;
     }
     let current = state.stack.last().expect("resolving item exists").clone();
+    let fixed_removal_owner = match crate::fixed_source_damage_v3::acquire_removal(state, &current)
+    {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                current.source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     if crate::wildwood_capture_v1::begin(state, &current).is_err()
         || (targets_legal
             && effect::temporary_control_v1::authority::begin_resolution(state).is_err())
@@ -14422,6 +14468,17 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
             return ResolutionProgress::Suspended;
         }
+        if crate::fixed_source_damage_v3::record_removed(
+            state,
+            fixed_removal_owner,
+            crate::fixed_source_damage_v3::OutcomeV3::NoLegalTarget,
+        )
+        .is_err()
+        {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
         crate::source_power_activation_v1::finish(state, &item);
         return ResolutionProgress::Complete;
     }
@@ -14465,6 +14522,12 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         };
         if progress == ResolutionProgress::Complete {
             if crate::librarian_activation_v1::record_resolved(state, &item, effect_history_start)
+                .is_err()
+                || crate::fixed_source_damage_v3::record_removed(
+                    state,
+                    fixed_removal_owner,
+                    crate::fixed_source_damage_v3::OutcomeV3::Resolved,
+                )
                 .is_err()
             {
                 state.engine.halted =
@@ -20236,6 +20299,16 @@ fn finalize_activation(state: &mut GameState) {
         ));
         return;
     }
+    let fixed_payment_owner = match crate::fixed_source_damage_v3::acquire_payment(state) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                state.engine.pending_activation.as_ref().unwrap().source,
+            ));
+            return;
+        }
+    };
     let pending = state
         .engine
         .pending_activation
@@ -20248,7 +20321,7 @@ fn finalize_activation(state: &mut GameState) {
         pending.source,
     )
     .expect("validate_pending_activation already confirmed this ability index resolves");
-    let frozen = freeze_activation_source(state, &pending, ability);
+    let mut frozen = freeze_activation_source(state, &pending, ability);
     let ability = &ability;
     let mut discarded = Vec::new();
     if ability
@@ -20286,14 +20359,42 @@ fn finalize_activation(state: &mut GameState) {
                 .and_then(|id| crate::attack_target_v1::attacked_planeswalker(state, *id))
         })
         .flatten();
-    let paid = pay_cost_components_with_x(
-        state,
-        pending.controller,
-        pending.source,
-        ability.cost,
-        &object_cost_ids,
-        x_value,
-    );
+    let paid = if let Some(owner) = fixed_payment_owner.as_ref() {
+        if !pay_cost_components_with_x(
+            state,
+            pending.controller,
+            pending.source,
+            &[CostComponent::Tap],
+            &object_cost_ids,
+            x_value,
+        ) {
+            false
+        } else {
+            match crate::fixed_source_damage_v3::capture_after_tap(state, owner) {
+                Ok(index) => {
+                    frozen.fixed_departure = Some(index);
+                    pay_cost_components_with_x(
+                        state,
+                        pending.controller,
+                        pending.source,
+                        &[CostComponent::SacrificeSelf],
+                        &object_cost_ids,
+                        x_value,
+                    )
+                }
+                Err(_) => false,
+            }
+        }
+    } else {
+        pay_cost_components_with_x(
+            state,
+            pending.controller,
+            pending.source,
+            ability.cost,
+            &object_cost_ids,
+            x_value,
+        )
+    };
     if !paid {
         // Fail closed for a malformed/restored pending activation rather
         // than granting its effect without collecting the full cost.
@@ -20329,6 +20430,7 @@ struct FrozenActivationSource {
     ability: ActivatedAbilityDef,
     source: AbilitySourceContractV4,
     granted_by: Option<AbilitySourceContractV4>,
+    fixed_departure: Option<u32>,
 }
 
 fn freeze_activation_source(
@@ -20356,6 +20458,7 @@ fn freeze_activation_source(
         ability,
         source,
         granted_by,
+        fixed_departure: None,
     }
 }
 
@@ -20469,6 +20572,7 @@ fn push_paid_activation(
     });
     crate::source_power_activation_v1::record_paid(state, stack_item_id);
     crate::librarian_activation_v1::record_paid(state, stack_item_id);
+    crate::fixed_source_damage_v3::record_paid(state, stack_item_id, frozen.fixed_departure);
     if log_final_targeting_events(state, stack_item_id).is_err() {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,

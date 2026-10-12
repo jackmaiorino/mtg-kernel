@@ -91,6 +91,7 @@ pub mod expanded_deck_training_v1;
 mod experimental_burn_net8_packed_v1;
 pub mod extra_turn_v1;
 mod fdn_raid_v1;
+mod fixed_source_damage_v3;
 pub mod frenzied_public_v1;
 mod gorehorn_damage_v1;
 pub mod human_opening_v1;

@@ -683,3 +683,109 @@ fn future_indrik_program_menu_public_human_submit_retry_and_owning_restore() {
         }
     }
 }
+
+#[test]
+#[ignore = "Crystal Barricade is unregistered; explicit future printed qualification"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn future_firebrand_fixed_history_human_menu_retry_rollback_and_safe_capture_both_seats() {
+    use crate::engine::{self, Action, Decision};
+    use crate::event::{ActiveReplacement, ReplacementEffectKind};
+    use crate::state::Target;
+    for caster in [PlayerId::P0, PlayerId::P1] {
+        let chooser = caster.opponent();
+        let mut core = ready_state();
+        core.active_player = caster;
+        core.priority_player = caster;
+        // Physical setup of real registered definitions, then a genuine printed activation.
+        let wall = put(&mut core, chooser, "Crystal Barricade", Zone::Battlefield);
+        let target = put(&mut core, chooser, "Llanowar Elves", Zone::Battlefield);
+        let fire = put(&mut core, caster, "Fanatical Firebrand", Zone::Battlefield);
+        put(&mut core, chooser, "Lightning Bolt", Zone::Hand);
+        put(&mut core, caster, "Lightning Bolt", Zone::Hand);
+        for player in [PlayerId::P0, PlayerId::P1] {
+            core.players[player.index()].mana_pool[crate::mana::ManaColor::R.pool_index()] = 1;
+        }
+        core.objects.get_mut(fire).v4.lifelink_keyword_counters = 1;
+        core.engine.next_replacement_id += 1;
+        core.engine.active_replacements.push(ActiveReplacement {
+            id: core.engine.next_replacement_id,
+            source: wall,
+            kind: ReplacementEffectKind::PreventNextDamage {
+                target: Target::Object(target),
+                remaining: 1,
+            },
+        });
+        assert!(
+            matches!(engine::advance_until_decision(&mut core),Decision::CastSpellOrPass{player,..} if player==caster)
+        );
+        engine::step(&mut core, Action::ActivateAbility(fire, 0)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut core),
+            Decision::ChooseTargets { .. }
+        ));
+        engine::step(&mut core, Action::ChooseTarget(Target::Object(target))).unwrap();
+        let _ = engine::advance_until_decision(&mut core);
+        for _ in 0..8 {
+            let d = engine::advance_until_decision(&mut core);
+            if matches!(d,Decision::ChooseEffectOption{player,..} if player==chooser) {
+                break;
+            }
+            assert!(matches!(d, Decision::CastSpellOrPass { .. }), "{d:?}");
+            engine::step(&mut core, Action::Pass).unwrap();
+        }
+        assert!(
+            matches!(engine::advance_until_decision(&mut core),Decision::ChooseEffectOption{player,..} if player==chooser)
+        );
+        let base = FastActorSessionV1::from_crystal_v22_fixture_state(core);
+        let mut session = HumanCrystalSessionV22::from_session(base).unwrap();
+        let current = expected(&session);
+        let public = session.public_observation(current).unwrap();
+        let menu = public.prevention_menu.as_ref().unwrap();
+        assert!(menu.source_history.is_none());
+        let fixed = menu.fixed_source_history.as_ref().unwrap();
+        assert_eq!(fixed.printed_damage, 1);
+        assert_eq!(fixed.captured_controller, caster.into());
+        assert!(fixed.lifelink);
+        let mut projector = HumanCrystalProjectorV22::new(chooser.into());
+        let prompt = projector.project_current(&session, current).unwrap();
+        safe(&serde_json::to_value(&prompt).unwrap());
+        assert_eq!(
+            prompt
+                .state
+                .extensions
+                .prevention_menu
+                .as_ref()
+                .unwrap()
+                .fixed_source_history
+                .as_ref()
+                .unwrap(),
+            fixed
+        );
+        let request = action(&prompt, "Apply Crystal Barricade");
+        let snapshot = session.snapshot_v22();
+        let receipt = projector.submit(&mut session, request.clone()).unwrap();
+        let after = session.inner.privileged_core_environment_hash();
+        assert_eq!(
+            projector.submit(&mut session, request.clone()).unwrap(),
+            receipt
+        );
+        assert_eq!(session.inner.privileged_core_environment_hash(), after);
+        session.restore_v22(&snapshot).unwrap();
+        let before = session.inner.privileged_core_environment_hash();
+        assert_eq!(
+            projector.submit(&mut session, request.clone()),
+            Err(Error::StaleDecision)
+        );
+        assert_eq!(session.inner.privileged_core_environment_hash(), before);
+        let mut replay = HumanCrystalProjectorV22::new(chooser.into());
+        let again = replay
+            .project_current(&session, expected(&session))
+            .unwrap();
+        assert_eq!(again, prompt);
+        replay.submit(&mut session, request).unwrap();
+        assert_eq!(session.inner.privileged_core_environment_hash(), after);
+    }
+}

@@ -1498,6 +1498,8 @@ pub struct StackStateV4 {
     pub gorehorn_published_v1: GorehornPublishedV1,
     #[serde(default, skip_serializing_if = "CrystalPreventionStartedV1::is_empty")]
     pub crystal_prevention_started_v1: CrystalPreventionStartedV1,
+    #[serde(default, skip_serializing_if = "FixedDamagePaidV3::is_empty")]
+    pub fixed_damage_paid_v3: FixedDamagePaidV3,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1594,6 +1596,23 @@ impl Hash for CrystalPreventionStartedV1 {
     fn hash<H: Hasher>(&self, state: &mut H) {
         if let Some(index) = self.0 {
             "crystal-prevention-started/v1".hash(state);
+            index.hash(state);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct FixedDamagePaidV3(pub Option<u32>);
+impl FixedDamagePaidV3 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl Hash for FixedDamagePaidV3 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(index) = self.0 {
+            "fixed-damage-paid/v3".hash(state);
             index.hash(state);
         }
     }

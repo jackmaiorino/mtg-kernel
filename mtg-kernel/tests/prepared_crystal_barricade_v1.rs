@@ -3211,3 +3211,364 @@ fn real_indrik_can_target_its_transferred_source_and_self_fights_for_twice_power
         }
     }
 }
+
+fn cast_firebrand(state: &mut GameState, caster: PlayerId) -> ObjectId {
+    let fire = put(state, caster, "Fanatical Firebrand", Zone::Hand);
+    state.players[caster.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+    priority(state, caster);
+    engine::step(state, Action::CastSpell(fire)).unwrap();
+    finish(state);
+    assert_eq!(state.objects.get(fire).zone, Zone::Battlefield);
+    fire
+}
+fn activate_firebrand(
+    state: &mut GameState,
+    caster: PlayerId,
+    fire: ObjectId,
+    target: Target,
+) -> mtg_kernel::ids::StackItemId {
+    priority(state, caster);
+    engine::step(state, Action::ActivateAbility(fire, 0)).unwrap();
+    assert!(
+        matches!(next(state),Decision::ChooseTargets{legal_targets,..} if legal_targets.contains(&target))
+    );
+    engine::step(state, Action::ChooseTarget(target)).unwrap();
+    let _ = next(state); // Genuine tap/sacrifice/payment publication.
+    assert_eq!(state.objects.get(fire).zone, Zone::Graveyard);
+    let item = state.stack.iter().find(|i| i.source == fire).unwrap();
+    assert!(item.v4.fixed_damage_paid_v3.0.is_some());
+    item.v4.stack_item_id
+}
+#[test]
+fn real_firebrand_actual_payment_freezes_fixed_damage_and_current_or_reentered_source_does_not_own_it(
+) {
+    use mtg_kernel::event::CommittedEvent as E;
+    for caster in [PlayerId::P0, PlayerId::P1] {
+        for (prevent, reenter) in [false, true]
+            .into_iter()
+            .flat_map(|p| [false, true].map(|r| (p, r)))
+        {
+            let mut state = ready(caster);
+            let wall = source(&mut state, caster);
+            control_primitive(&mut state, wall, caster.opponent());
+            let fire = cast_firebrand(&mut state, caster);
+            let target = if prevent {
+                put(
+                    &mut state,
+                    caster.opponent(),
+                    "Shivan Dragon",
+                    Zone::Battlefield,
+                )
+            } else {
+                wall
+            };
+            if prevent {
+                shield(&mut state, wall, target, 1);
+            }
+            state.objects.get_mut(fire).v4.lifelink_keyword_counters = 1;
+            // Existing typed keyword-grant primitive, not a fabricated Firebrand root.
+            mtg_kernel::effect::execute(
+                &mtg_kernel::effect::EffectOp::GrantKeywordTargetUntilEndOfTurn {
+                    object: mtg_kernel::effect::ObjectRef::ThisSource,
+                    keyword: Keywords::DEATHTOUCH,
+                },
+                &mtg_kernel::effect::ExecCtx::no_targets(fire, caster),
+                &mut state,
+            );
+            let id = activate_firebrand(&mut state, caster, fire, Target::Object(target));
+            let capture = state
+                .engine
+                .event_history
+                .iter()
+                .find_map(|e| match e {
+                    E::FixedDamageDepartureV3 { departure } => Some(departure.clone()),
+                    _ => None,
+                })
+                .unwrap();
+            assert!(capture.snapshot.tapped);
+            assert!(capture.facts.lifelink && capture.facts.deathtouch);
+            assert_eq!(capture.facts.source.controller, caster);
+            if reenter {
+                event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(fire, Zone::Battlefield),
+                );
+                control_primitive(&mut state, fire, caster.opponent());
+                state.objects.get_mut(fire).counters.plus1_plus1 = 100;
+                assert!(!engine::has_effective_keyword(
+                    &state,
+                    fire,
+                    Keywords::LIFELINK
+                ));
+            }
+            let life = state.players[caster.index()].life;
+            if prevent {
+                mixed_menu(&mut state);
+                let public = mtg_kernel::crystal_public_v1::observe_v1(
+                    &state,
+                    &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+                    caster.opponent(),
+                    0,
+                    0,
+                    0,
+                    1,
+                )
+                .unwrap();
+                let menu = public.prevention_menu.unwrap();
+                assert!(menu.source_history.is_none());
+                let fixed = menu.fixed_source_history.unwrap();
+                assert_eq!(fixed.printed_damage, 1);
+                assert_eq!(fixed.captured_controller, caster.into());
+                assert!(fixed.lifelink && fixed.deathtouch);
+                assert_eq!(
+                    menu.source.zone_change_count,
+                    capture.facts.source.zone_change_count
+                );
+                let mut replay = restore(&state);
+                for current in [&mut state, &mut replay] {
+                    let choose = option(current, false);
+                    engine::step(current, Action::ChooseEffectOption(choose)).unwrap();
+                    finish(current);
+                    assert_eq!(current.objects.get(target).damage, 0);
+                    assert_eq!(current.players[caster.index()].life, life);
+                    assert_eq!(current.engine.active_replacements.len(), 1);
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&replay).unwrap()
+                );
+            } else {
+                let mut replay = restore(&state);
+                for current in [&mut state, &mut replay] {
+                    finish(current);
+                    // Actual one-point damage carries original lifelink/deathtouch
+                    // even after original departure and another incarnation's return.
+                    assert_eq!(current.players[caster.index()].life, life + 1);
+                    assert_eq!(current.objects.get(target).zone, Zone::Graveyard);
+                    assert_eq!(
+                        current
+                            .engine
+                            .event_history
+                            .iter()
+                            .filter(|e| matches!(e,E::Damage {source,..} if *source==fire))
+                            .count(),
+                        1
+                    );
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&replay).unwrap()
+                );
+            }
+            assert_eq!(state.engine.event_history.iter().filter(|e|matches!(e,E::FixedDamageRemovedV3{removal}
+                if removal.item.v4.stack_item_id==id && removal.outcome==mtg_kernel::event::FixedDamageOutcomeV3::Resolved)).count(),1);
+            assert!(!state.stack.iter().any(|i| i.v4.stack_item_id == id));
+        }
+    }
+}
+#[test]
+fn real_firebrand_source_payment_guard_receipt_and_historical_proposal_forgeries_refuse_readonly() {
+    use mtg_kernel::event::CommittedEvent as E;
+    for caster in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(caster);
+        let wall = source(&mut state, caster);
+        control_primitive(&mut state, wall, caster.opponent());
+        let fire = cast_firebrand(&mut state, caster);
+        let target = put(
+            &mut state,
+            caster.opponent(),
+            "Shivan Dragon",
+            Zone::Battlefield,
+        );
+        shield(&mut state, wall, target, 1);
+        let id = activate_firebrand(&mut state, caster, fire, Target::Object(target));
+        for case in 0..5 {
+            let mut bad = restore(&state);
+            match case {
+                0 => bad
+                    .engine
+                    .event_history
+                    .retain(|e| !matches!(e, E::FixedDamagePaidV3 { .. })),
+                1 => bad.stack.last_mut().unwrap().v4.fixed_damage_paid_v3.0 = None,
+                2 => {
+                    bad.engine.event_history.retain(|e| {
+                        !matches!(
+                            e,
+                            E::FixedDamagePaidV3 { .. } | E::FixedDamageDepartureV3 { .. }
+                        )
+                    });
+                    bad.stack.last_mut().unwrap().v4.fixed_damage_paid_v3.0 = None;
+                }
+                3 => bad.stack.clear(),
+                _ => {
+                    bad.stack.last_mut().unwrap().inline_effect =
+                        Some(mtg_kernel::effect::EffectOp::Sequence(vec![]))
+                }
+            }
+            let before = serde_json::to_vec(&bad).unwrap();
+            assert!(engine::step(&mut bad, Action::Pass).is_err(), "case {case}");
+            assert_eq!(serde_json::to_vec(&bad).unwrap(), before);
+            assert!(matches!(
+                engine::advance_until_decision(&mut bad),
+                Decision::Halted { .. }
+            ));
+            bad.engine.halted = None;
+            assert_eq!(serde_json::to_vec(&bad).unwrap(), before);
+        }
+        mixed_menu(&mut state);
+        let mut bad = restore(&state);
+        if let Some(mtg_kernel::effect::PendingEffectChoice::ChooseOption {
+            purpose: mtg_kernel::effect::EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+            ..
+        }) = bad
+            .engine
+            .pending_effect
+            .as_mut()
+            .and_then(|p| p.choice.as_mut())
+        {
+            choice.historical_source = None;
+        }
+        let before = serde_json::to_vec(&bad).unwrap();
+        assert!(engine::step(&mut bad, Action::ChooseEffectOption(0)).is_err());
+        assert_eq!(serde_json::to_vec(&bad).unwrap(), before);
+        let chosen = option(&state, false);
+        engine::step(&mut state, Action::ChooseEffectOption(chosen)).unwrap();
+        finish(&mut state);
+        assert!(state.engine.event_history.iter().any(
+            |e| matches!(e,E::FixedDamageRemovedV3{removal} if removal.item.v4.stack_item_id==id)
+        ));
+        for case in 0..3 {
+            let mut bad = restore(&state);
+            match case {
+                0 => bad
+                    .engine
+                    .event_history
+                    .retain(|e| !matches!(e, E::FixedDamageRemovedV3 { .. })),
+                1 => {
+                    let e = bad
+                        .engine
+                        .event_history
+                        .iter()
+                        .find(|e| matches!(e, E::FixedDamageRemovedV3 { .. }))
+                        .unwrap()
+                        .clone();
+                    bad.engine.event_history.push(e);
+                }
+                _ => {
+                    let paid = bad
+                        .engine
+                        .event_history
+                        .iter()
+                        .find_map(|e| match e {
+                            E::FixedDamagePaidV3 { payment } => Some(payment.item.clone()),
+                            _ => None,
+                        })
+                        .unwrap();
+                    let removal = bad
+                        .engine
+                        .event_history
+                        .iter_mut()
+                        .find_map(|e| match e {
+                            E::FixedDamageRemovedV3 { removal } => Some(removal),
+                            _ => None,
+                        })
+                        .unwrap();
+                    removal.outcome = mtg_kernel::event::FixedDamageOutcomeV3::Countered;
+                    removal.item = paid;
+                }
+            }
+            let before = serde_json::to_vec(&bad).unwrap();
+            assert!(engine::step(&mut bad, Action::Pass).is_err());
+            assert_eq!(serde_json::to_vec(&bad).unwrap(), before);
+        }
+    }
+}
+
+#[test]
+fn real_firebrand_illegal_departed_reentered_target_closes_paid_owner_without_damage() {
+    use mtg_kernel::event::CommittedEvent as E;
+    for caster in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(caster);
+        let fire = cast_firebrand(&mut state, caster);
+        let target = put(
+            &mut state,
+            caster.opponent(),
+            "Shivan Dragon",
+            Zone::Battlefield,
+        );
+        let id = activate_firebrand(&mut state, caster, fire, Target::Object(target));
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(target, Zone::Exile));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(target, Zone::Battlefield),
+        );
+        let before_life = [state.players[0].life, state.players[1].life];
+        let mut replay = restore(&state);
+        for current in [&mut state, &mut replay] {
+            finish(current);
+            assert_eq!(current.objects.get(target).damage, 0);
+            assert_eq!(
+                [current.players[0].life, current.players[1].life],
+                before_life
+            );
+            assert!(!current
+                .engine
+                .event_history
+                .iter()
+                .any(|e| matches!(e,E::Damage{source,..} if *source==fire)));
+            assert_eq!(
+                current
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter(|e| matches!(e,
+                E::FixedDamageRemovedV3{removal} if removal.item.v4.stack_item_id==id
+                    && removal.outcome==mtg_kernel::event::FixedDamageOutcomeV3::NoLegalTarget))
+                    .count(),
+                1
+            );
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+    }
+}
+#[test]
+fn real_firebrand_damage_to_player_uses_captured_controller_without_a_crystal_on_battlefield() {
+    use mtg_kernel::event::CommittedEvent as E;
+    for caster in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(caster);
+        let fire = cast_firebrand(&mut state, caster);
+        state.objects.get_mut(fire).v4.lifelink_keyword_counters = 1;
+        let id = activate_firebrand(&mut state, caster, fire, Target::Player(caster.opponent()));
+        let before = [state.players[0].life, state.players[1].life];
+        let mut replay = restore(&state);
+        for current in [&mut state, &mut replay] {
+            finish(current);
+            assert_eq!(
+                current.players[caster.index()].life,
+                before[caster.index()] + 1
+            );
+            assert_eq!(
+                current.players[caster.opponent().index()].life,
+                before[caster.opponent().index()] - 1
+            );
+            assert_eq!(
+                current
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter(|e| matches!(e,
+                E::FixedDamageRemovedV3{removal} if removal.item.v4.stack_item_id==id
+                    && removal.outcome==mtg_kernel::event::FixedDamageOutcomeV3::Resolved))
+                    .count(),
+                1
+            );
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+    }
+}
