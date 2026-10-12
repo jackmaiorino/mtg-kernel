@@ -4127,3 +4127,144 @@ fn real_gorehorn_false_intervening_raid_completes_crystal_without_preparing_dama
         );
     }
 }
+
+fn crystal_rod_fixture(actor: PlayerId) -> (GameState, ObjectId, ObjectId, ObjectId) {
+    let mut state = ready(actor);
+    let wall = source(&mut state, actor);
+    control_primitive(&mut state, wall, actor.opponent());
+    let host = put(&mut state, actor, "Gorehorn Raider", Zone::Hand);
+    state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+    state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 4;
+    priority(&mut state, actor);
+    engine::step(&mut state, Action::CastSpell(host)).unwrap();
+    finish(&mut state);
+    assert!(!state.player_attacked_this_turn_v1(actor));
+    let rod = put(&mut state, actor, "Black Mage's Rod", Zone::Battlefield);
+    state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 3;
+    priority(&mut state, actor);
+    engine::step(&mut state, Action::ActivateAbility(rod, 0)).unwrap();
+    assert!(
+        matches!(next(&mut state),Decision::ChooseTargets { legal_targets, .. } if legal_targets.contains(&Target::Object(host)))
+    );
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(host))).unwrap();
+    let _ = next(&mut state);
+    finish(&mut state);
+    assert!(state.objects.get(host).attachments.contains(&rod));
+    let recipient = put(
+        &mut state,
+        actor.opponent(),
+        "Shivan Dragon",
+        Zone::Battlefield,
+    );
+    shield(&mut state, wall, recipient, 5); // Genuine mixed environment, unrelated to untargeted player damage.
+    state.objects.get_mut(host).v4.lifelink_keyword_counters = 1;
+    let bolt = announce_bolt(&mut state, actor, Target::Player(actor));
+    let grant = state
+        .stack
+        .iter()
+        .find(|i| i.v4.granted_by.is_some_and(|g| g.source == rod))
+        .unwrap();
+    assert_eq!(grant.source, host);
+    assert_eq!(grant.controller, actor);
+    assert_eq!(grant.v4.target_spec, Some(TargetSpec::None));
+    assert!(grant.v4.gorehorn_published_v1.is_empty());
+    (state, host, rod, bolt)
+}
+#[test]
+fn actual_pinned_rod_grant_roundtrip_beside_crystal_keeps_host_and_equipment_roots_distinct() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, host, rod, bolt) = crystal_rod_fixture(actor);
+        let life = [state.players[0].life, state.players[1].life];
+        let grant_id = state
+            .stack
+            .iter()
+            .find(|i| i.v4.granted_by.is_some_and(|g| g.source == rod))
+            .unwrap()
+            .v4
+            .stack_item_id;
+        mtg_kernel::crystal_public_v1::observe_v1(
+            &state,
+            &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+            actor,
+            0,
+            0,
+            0,
+            1,
+        )
+        .unwrap();
+        let mut replay = restore(&state);
+        for current in [&mut state, &mut replay] {
+            finish(current);
+            assert_eq!(current.objects.get(host).zone, Zone::Battlefield);
+            assert_eq!(current.objects.get(bolt).zone, Zone::Graveyard);
+            assert_eq!(current.players[actor.index()].life, life[actor.index()] - 2);
+            assert_eq!(
+                current.players[actor.opponent().index()].life,
+                life[actor.opponent().index()] - 1
+            );
+            assert!(current.engine.event_history.iter().any(|e|matches!(e,mtg_kernel::event::CommittedEvent::Damage { source,target:Target::Player(p),amount:1,.. } if *source==host && *p==actor.opponent())));
+            assert!(!current.engine.event_history.iter().any(|e|matches!(e,
+                mtg_kernel::event::CommittedEvent::GorehornPublishedV1 { publication } if publication.item.v4.stack_item_id==grant_id)));
+            assert!(!current.engine.event_history.iter().any(|e| matches!(
+                e,
+                mtg_kernel::event::CommittedEvent::GorehornCrystalBeginV1 { .. }
+                    | mtg_kernel::event::CommittedEvent::GorehornCrystalCompletionV1 { .. }
+            )));
+            assert_eq!(current.engine.event_history.iter().filter(|e|matches!(e,
+                mtg_kernel::event::CommittedEvent::CrystalPreventionBoundaryV1 { boundary } if boundary.item.v4.stack_item_id==grant_id && boundary.pending.is_none())).count(),1);
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+    }
+}
+#[test]
+fn actual_equipment_grant_recipe_and_historical_provenance_forgeries_refuse_readonly_with_crystal()
+{
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (state, host, rod, _) = crystal_rod_fixture(actor);
+        for mode in 0..4 {
+            let mut bad = restore(&state);
+            let item = bad
+                .stack
+                .iter_mut()
+                .find(|i| i.v4.granted_by.is_some_and(|g| g.source == rod))
+                .unwrap();
+            match mode {
+                0 => {
+                    item.inline_effect = Some(mtg_kernel::effect::EffectOp::DealDamage {
+                        target: mtg_kernel::effect::TargetRef::Opponent,
+                        amount: 2,
+                    })
+                }
+                1 => item.v4.granted_by.as_mut().unwrap().attached_to = None,
+                2 => item.v4.granted_by.as_mut().unwrap().source = host,
+                _ => item.controller = actor.opponent(),
+            }
+            let before = serde_json::to_vec(&bad).unwrap();
+            assert!(engine::step(&mut bad, Action::Pass).is_err());
+            assert_eq!(before, serde_json::to_vec(&bad).unwrap());
+        }
+    }
+}
+
+#[test]
+fn departed_equipment_damage_grant_remains_explicitly_unrepresented_before_mutation() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, host, _, _) = crystal_rod_fixture(actor);
+        // Genuine physical departure primitive; no invented printed bounce spell.
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(host, Zone::Hand));
+        assert!(state.engine.halted.is_none());
+        let mut bad = restore(&state);
+        let bytes = serde_json::to_vec(&bad).unwrap();
+        assert!(engine::step(&mut bad, Action::Pass).is_err());
+        assert_eq!(bytes, serde_json::to_vec(&bad).unwrap());
+        assert!(matches!(
+            engine::advance_until_decision(&mut bad),
+            Decision::Halted { .. }
+        ));
+        bad.engine.halted = None;
+        assert_eq!(bytes, serde_json::to_vec(&bad).unwrap());
+    }
+}

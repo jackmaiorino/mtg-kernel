@@ -669,6 +669,56 @@ fn original_damage(
         historical_source,
     })
 }
+/// Equipment owns the grant recipe; the host owns the resulting trigger.
+/// Reuse the actual historical grant validator, not the host's printed list.
+fn equipment_damage_grant(item: &StackItem) -> bool {
+    item.kind == crate::state::StackItemKind::TriggeredAbility
+        && item.v4.granted_by.is_some_and(|grant| {
+            crate::card_def::CARD_DEFS
+                .get(usize::from(grant.card_def))
+                .and_then(|def| def.equipment)
+                .is_some_and(|equipment| equipment.noncreature_spell_damage_to_each_opponent > 0)
+        })
+}
+fn owned_root(state: &GameState, pending: &EffectContinuation) -> Result<Box<EffectOp>, String> {
+    if !equipment_damage_grant(&pending.resolving_item) {
+        return validated_definition_owned_root_effect(state, pending);
+    }
+    let item = &pending.resolving_item;
+    if pending.ctx != context(item)
+        || crate::engine::validated_stack_item_target_spec(item, state)?
+            != Some(crate::card_def::TargetSpec::None)
+    {
+        return Err("Crystal equipment damage lost actual historical grant/context".into());
+    }
+    let grant = item
+        .v4
+        .granted_by
+        .ok_or("Crystal equipment trigger lost grant source")?;
+    let profile = crate::card_def::CARD_DEFS[usize::from(grant.card_def)]
+        .equipment
+        .ok_or("Crystal equipment damage lost printed descriptor")?;
+    let root = EffectOp::DealDamage {
+        target: TargetRef::Opponent,
+        amount: i32::from(profile.noncreature_spell_damage_to_each_opponent),
+    };
+    if item.inline_effect.as_ref() != Some(&root) {
+        return Err("Crystal equipment trigger changed its exact granted damage program".into());
+    }
+    Ok(Box::new(root))
+}
+fn live_equipment_damage_source(state: &GameState, item: &StackItem) -> bool {
+    item.v4.ability_source_contract.is_some_and(|source| {
+        state.objects.try_get(source.source).is_some_and(|live| {
+            live.zone == crate::state::Zone::Battlefield
+                && live.owner == source.owner
+                && live.zone_change_count == source.zone_change_count
+                && live.card_def == source.card_def
+                && live.v4.face_down_v1.is_none()
+                && live.spell_copy_origin.is_none()
+        })
+    })
+}
 /// Source-power payment authority remains byte-exact except for this module's
 /// independently published start marker. This is not a generic stack rewrite.
 pub(crate) fn source_power_payment_matches(
@@ -853,7 +903,7 @@ pub(crate) fn acquire_owner(
     if !started && item.inline_effect.as_ref().is_some_and(ordinary_nondamage) {
         return Ok(None);
     }
-    let root = *validated_definition_owned_root_effect(state, &probe(item))?;
+    let root = *owned_root(state, &probe(item))?;
     if !started && ordinary_nondamage(&root) {
         return Ok(None);
     }
@@ -862,6 +912,9 @@ pub(crate) fn acquire_owner(
     }
     if !has_damage(&root) {
         return Ok(None);
+    }
+    if initial && equipment_damage_grant(item) && !live_equipment_damage_source(state, item) {
+        return Err("Crystal equipment damage needs an original public live source; historical grant capture remains a successor prerequisite".into());
     }
     let mut expected = item.clone();
     if initial {
@@ -927,6 +980,24 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     validate_with_owner(state, None)
 }
 fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(), String> {
+    // This selected environment authenticates actual inherited trigger roots
+    // before priority or automatic work. Generated Ward remains on its engine
+    // validator; equipment grants retain the separate historical donor contract.
+    if crate::crystal_barricade_v1::active(state) || boundaries(state).next().is_some() {
+        for item in state
+            .stack
+            .iter()
+            .filter(|item| item.kind == crate::state::StackItemKind::TriggeredAbility)
+        {
+            crate::engine::validated_stack_item_target_spec(item, state)?;
+            if item.v4.crystal_prevention_started_v1.is_empty()
+                && equipment_damage_grant(item)
+                && !live_equipment_damage_source(state, item)
+            {
+                return Err("Crystal equipment damage needs original live public source facts before resolution".into());
+            }
+        }
+    }
     if state.engine.event_log.iter().any(|event| {
         matches!(
             event,
@@ -1084,7 +1155,7 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
             if b.item.v4.crystal_prevention_started_v1.0 != Some(b.history_index)
                 || b.answer.is_some()
                 || b.pending.as_deref() != Some(&initial)
-                || *validated_definition_owned_root_effect(state, &initial)? != b.root
+                || *owned_root(state, &initial)? != b.root
             {
                 return Err("Crystal initial root/owner authority changed".into());
             }
@@ -2167,7 +2238,7 @@ pub(crate) fn validate_discard_choice(
     else {
         return Err("not a Crystal discard menu".into());
     };
-    let root = validated_definition_owned_root_effect(state, pending)?;
+    let root = owned_root(state, pending)?;
     validate_discard_record(state, pending, &root, *at)?;
     let capture = discard_capture_at(state, *at)?;
     let player = capture.ctx.controller;
@@ -3652,7 +3723,7 @@ fn validate_choice(state: &GameState, pending: &EffectContinuation) -> Result<()
             })
         )
     {
-        let root = validated_definition_owned_root_effect(state, pending)?;
+        let root = owned_root(state, pending)?;
         return validate_program_menu_record(pending, &root);
     }
     if matches!(
@@ -3671,7 +3742,7 @@ fn validate_choice(state: &GameState, pending: &EffectContinuation) -> Result<()
     else {
         return Ok(());
     };
-    let root = validated_definition_owned_root_effect(state, pending)?;
+    let root = owned_root(state, pending)?;
     if let Some(progress) = choice.batch.as_ref() {
         validate_batch_choice_record(state, pending, &root, choice)?;
         let capture = batch_capture_at(state, progress.capture, &choice.path)?;
