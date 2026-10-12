@@ -543,6 +543,7 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         | EffectOp::DestroyTargetLandThenMaySearchBasicTapped { .. }
         | EffectOp::TapObject { .. }
         | EffectOp::UntapObject { .. }
+        | EffectOp::UntapUpToLands { .. }
         | EffectOp::SkipNextUntap { .. }
         | EffectOp::AttachSourceToTarget { .. }
         | EffectOp::AddMana { .. }

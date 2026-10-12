@@ -360,3 +360,19 @@ fn registered_self_fight_is_one_twice_power_packet_with_current_lifelink_and_res
         );
     }
 }
+
+#[test]
+fn registered_snap_keeps_its_true_land_choice_on_the_nondamage_path() {
+    let id = crate::card_def::card_id_by_name("Snap").expect("registered base Snap");
+    let definition = &crate::card_def::CARD_DEFS[id as usize];
+    assert!(definition.is_executable());
+    let root = (definition.spell_effect)().expect("Snap spell program");
+    assert!(super::ordinary_nondamage(&root));
+    assert!(!super::has_damage(&root));
+    assert!(
+        matches!(root,crate::effect::EffectOp::Sequence(ref ops) if matches!(ops.as_slice(),[
+            crate::effect::EffectOp::MoveObject {object:crate::effect::ObjectRef::Target(0),to_zone:crate::state::Zone::Hand},
+            crate::effect::EffectOp::UntapUpToLands {chooser:crate::effect::PlayerRef::Controller,max_targets:2},
+        ]))
+    );
+}

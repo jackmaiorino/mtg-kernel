@@ -3886,29 +3886,14 @@ fn raid_crystal_bounce(state: &mut GameState, actor: PlayerId, gorehorn: ObjectI
     let old_id = state
         .stack
         .iter()
-        .find(|i| {
-            i.source == gorehorn && i.kind == mtg_kernel::state::StackItemKind::TriggeredAbility
+        .find(|item| {
+            item.source == gorehorn
+                && item.kind == mtg_kernel::state::StackItemKind::TriggeredAbility
         })
         .unwrap()
         .v4
         .stack_item_id;
-    let spell = put(state, actor, "Unsummon", Zone::Hand);
-    state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 1;
-    priority(state, actor);
-    engine::step(state, Action::CastSpell(spell)).unwrap();
-    assert!(
-        matches!(next(state),Decision::ChooseTargets { legal_targets, .. } if legal_targets.contains(&Target::Object(gorehorn)))
-    );
-    engine::step(state, Action::ChooseTarget(Target::Object(gorehorn))).unwrap();
-    let _ = next(state);
-    for _ in 0..12 {
-        if state.objects.get(spell).zone == Zone::Graveyard {
-            break;
-        }
-        assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
-        engine::step(state, Action::Pass).unwrap();
-    }
-    assert_eq!(state.objects.get(gorehorn).zone, Zone::Hand);
+    resolve_real_snap_bounce_and_land_choices(state, actor, gorehorn);
     let ward_creature = put(
         state,
         actor.opponent(),
@@ -3919,7 +3904,7 @@ fn raid_crystal_bounce(state: &mut GameState, actor: PlayerId, gorehorn: ObjectI
         state,
         ProposedEvent::zone_change(gorehorn, Zone::Battlefield),
     );
-    // Physical reentry after an actual Unsummon. This is not a second printed cast.
+    // Physical reentry after an actual Snap. This is not a second printed cast.
     // Its genuine new Raid trigger targets a registered Ward creature. The
     // actual Ward response leaves only the original instruction in flight.
     assert!(matches!(next(state), Decision::ChooseTargets { .. }));
@@ -4444,24 +4429,7 @@ fn bounce_equipped_host_preserving_original_grant(
     actor: PlayerId,
     host: ObjectId,
 ) {
-    let spell = put(state, actor, "Unsummon", Zone::Hand);
-    state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 1;
-    priority(state, actor);
-    engine::step(state, Action::CastSpell(spell)).unwrap();
-    assert!(
-        matches!(next(state),Decision::ChooseTargets {legal_targets,..} if legal_targets.contains(&Target::Object(host)))
-    );
-    engine::step(state, Action::ChooseTarget(Target::Object(host))).unwrap();
-    let _ = next(state);
-    for _ in 0..12 {
-        if state.objects.get(spell).zone == Zone::Graveyard {
-            break;
-        }
-        assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
-        engine::step(state, Action::Pass).unwrap();
-    }
-    assert_eq!(state.objects.get(spell).zone, Zone::Graveyard);
-    assert_eq!(state.objects.get(host).zone, Zone::Hand);
+    resolve_real_snap_bounce_and_land_choices(state, actor, host);
 }
 #[test]
 fn actual_rod_grant_and_witness_simultaneous_departure_freezes_both_orders_both_seats() {
@@ -4523,4 +4491,77 @@ fn actual_rod_grant_and_witness_simultaneous_departure_freezes_both_orders_both_
             );
         }
     }
+}
+
+fn resolve_real_snap_bounce_and_land_choices(
+    state: &mut GameState,
+    actor: PlayerId,
+    source: ObjectId,
+) {
+    priority(state, actor);
+    let own_land = put(state, actor, "Island", Zone::Battlefield);
+    let opponent_land = put(state, actor.opponent(), "Island", Zone::Battlefield);
+    for land in [own_land, opponent_land] {
+        event::propose_and_commit(state, ProposedEvent::tap(land));
+    }
+    let bounce = put(state, actor, "Snap", Zone::Hand);
+    state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 1;
+    state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+    assert!(
+        matches!(next(state), Decision::CastSpellOrPass { player, castable_spells, .. }
+        if player == actor && castable_spells.contains(&bounce))
+    );
+    engine::step(state, Action::CastSpell(bounce)).unwrap();
+    assert!(
+        matches!(next(state), Decision::ChooseTargets { legal_targets, .. }
+        if legal_targets.contains(&Target::Object(source)))
+    );
+    engine::step(state, Action::ChooseTarget(Target::Object(source))).unwrap();
+    let _ = next(state); // Finalize the genuine cast before ordinary resolution.
+    let mut choice = None;
+    for _ in 0..16 {
+        match next(state) {
+            Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
+            decision @ Decision::ChooseEffectTargets { .. } => {
+                choice = Some(decision);
+                break;
+            }
+            other => panic!("Snap resolution returned {other:?}"),
+        }
+    }
+    let choice = choice.expect("real Snap land continuation did not appear");
+    assert!(matches!(choice, Decision::ChooseEffectTargets {
+        player, source: chosen_source, selected_count: 0, min_targets: 0, max_targets: 2,
+        legal_targets, can_finish: true
+    } if player == actor && chosen_source == bounce
+        && legal_targets.contains(&Target::Object(own_land))
+        && legal_targets.contains(&Target::Object(opponent_land))));
+    assert_eq!(state.objects.get(source).zone, Zone::Hand);
+    let mut restored = restore(state);
+    for current in [&mut *state, &mut restored] {
+        engine::step(
+            current,
+            Action::ChooseEffectTarget(Target::Object(own_land)),
+        )
+        .unwrap();
+        assert!(matches!(next(current), Decision::ChooseEffectTargets {
+            player, source: chosen_source, selected_count: 1, min_targets: 0, max_targets: 2,
+            legal_targets, can_finish: true
+        } if player == actor && chosen_source == bounce
+            && legal_targets.contains(&Target::Object(opponent_land))));
+        engine::step(
+            current,
+            Action::ChooseEffectTarget(Target::Object(opponent_land)),
+        )
+        .unwrap();
+        let _ = next(current);
+        assert_eq!(current.objects.get(bounce).zone, Zone::Graveyard);
+        assert!(!current.objects.get(own_land).tapped);
+        assert!(!current.objects.get(opponent_land).tapped);
+        assert!(current.engine.pending_effect.is_none());
+    }
+    assert_eq!(
+        serde_json::to_vec(state).unwrap(),
+        serde_json::to_vec(&restored).unwrap()
+    );
 }
