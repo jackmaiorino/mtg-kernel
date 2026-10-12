@@ -209,7 +209,7 @@ function App() {
     <div className="avatar">{index === featured ? <Cpu size={20} /> : <Shield size={20} />}</div>
     <div className="player-name"><strong>{recording.seats[index].name}</strong><span>{recording.seats[index].deck}</span></div>
     <div className="player-resources"><span><Layers size={13} /> {board.players[index].handCount} <span className="resource-caption">in hand</span></span><span>{board.players[index].libraryCount} <span className="resource-caption">in library</span></span></div>
-    <div className="life"><motion.strong key={board.players[index].life} initial={false} animate={{ opacity: 1 }}>{board.players[index].life}</motion.strong><span>Life <Help term="Life" onHelp={setHelp} /></span></div>
+    <div className="life"><motion.strong key={board.players[index].life} initial={animation ? { opacity: .4, scale: .9 } : false} animate={{ opacity: 1, scale: 1 }} transition={{ duration: .25 }}>{board.players[index].life}</motion.strong><span>Life <Help term="Life" onHelp={setHelp} /></span></div>
   </div>;
   const field = (index: number) => board && recording && <div className={`field field-${index === featured ? 'featured' : 'opponent'}`}>
     <div className="zone-caption"><span>Battlefield</span><span>{board.players[index].battlefield.length} cards</span></div>
@@ -236,7 +236,7 @@ function App() {
               <div className="phase-strip"><span className="phase-turn">ROUND {board.turn}</span><span className="phase-label">{phaseName(board.phase)}</span><span className="phase-priority">{recording.seats[seatIndex(board.priority)].name} has priority</span><Help term="Battlefield" onHelp={setHelp} /></div>
               {board.stack.length > 0 && <div className="stack-zone"><span><Layers size={14} /> Stack <Help term="Stack" onHelp={setHelp} /></span>{board.stack.map(s => <div key={s.id} data-object={s.source ?? undefined}><ArrowDown size={12} />{s.name}</div>)}</div>}
               {field(featured)}{playerBar(featured)}
-              <div className="hand-zone"><div className="zone-caption"><span>Agent’s hand <Eye size={11} /></span><span>{board.players[featured].handCount} cards</span></div><div className="card-row hand-row">{board.players[featured].hand.map(o => <CardView key={o.id} object={o} recording={recording} assetBase={assetBase} active={refs.includes(o.id) || selectedCard === o.id} onSelect={setSelectedCard} animate={animation} hand />)}{!board.players[featured].hand.length && <span className="empty-zone">No hand snapshot at this decision</span>}</div></div>
+              <div className="hand-zone"><div className="zone-caption"><span>Agent’s hand <Eye size={11} /></span><span>{board.players[featured].handCount} cards</span></div><div className="card-row hand-row">{board.players[featured].hand.map(o => <CardView key={o.id} object={o} recording={recording} assetBase={assetBase} active={refs.includes(o.id) || selectedCard === o.id} onSelect={setSelectedCard} animate={animation} hand />)}{!board.players[featured].hand.length && <span className="empty-zone">{board.players[featured].handCount === 0 ? 'No cards in hand' : 'No hand snapshot at this decision'}</span>}</div></div>
               <Connections board={board} refs={refs} container={boardRef} />
               {playback.after && frame.terminal && <div className="terminal-result"><span className="eyebrow">GAME COMPLETE</span><strong>{frame.terminal.winner ? `${recording.seats[seatIndex(frame.terminal.winner)].name} wins` : 'Recorded terminal'}</strong><span>{frame.terminal.kind}</span></div>}
             </div></LayoutGroup>
