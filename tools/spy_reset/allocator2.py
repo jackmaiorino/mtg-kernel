@@ -217,16 +217,15 @@ def domain_rows(name: str):
 def excluded_seeds(paths) -> set:
     old = set()
 
-    def walk(v, name=None):
+    def walk(v, inside=False):
+        # Every integer under a key naming seeds (at any depth below it) counts.
         if isinstance(v, dict):
             for k, x in v.items():
-                walk(x, k)
+                walk(x, inside or "seed" in k)
         elif isinstance(v, list):
             for x in v:
-                walk(x, name)
-        elif isinstance(v, int) and not isinstance(v, bool) and name in (
-                "seed", "seeds", "source_policy_seeds", "guide_policy_seeds", "controller_seed",
-                "game_seed", "policy_seeds", "search_seed"):
+                walk(x, inside)
+        elif isinstance(v, int) and not isinstance(v, bool) and inside:
             old.add(v)
 
     for p in paths:
