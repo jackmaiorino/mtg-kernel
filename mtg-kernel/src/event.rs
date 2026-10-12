@@ -1265,6 +1265,12 @@ pub enum CommittedEvent {
         operation: u32,
         entries: Vec<u32>,
     },
+    /// Independent engine-published lifecycle boundary for the exact
+    /// mill-three/mandatory instant-or-sorcery return definition program.
+    /// History-only: never projected as a trigger event or public card fact.
+    InspirationResolutionBoundaryV1 {
+        receipt: crate::effect::InspirationResolutionReceiptV1,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

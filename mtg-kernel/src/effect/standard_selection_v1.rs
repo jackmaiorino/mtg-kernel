@@ -7,6 +7,8 @@ pub enum ObjectSelectionFilterV1 {
     CreatureOrPlaneswalker,
     UntappedArtifactOrCreature,
     AnotherCreatureFromCapturedSourceV1,
+    /// A resolving choice of a card, not an announcement target.
+    InstantOrSorcery,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ObjectSelectionActionV1 {
@@ -35,6 +37,16 @@ fn candidates(
     if !matches!(rule.zone, Zone::Battlefield | Zone::Graveyard) || rule.min > rule.max {
         return Err("object selection requires a public zone and ordered bounds".into());
     }
+    let instant_or_sorcery = rule.filter == ObjectSelectionFilterV1::InstantOrSorcery;
+    if instant_or_sorcery
+        && (rule.zone != Zone::Graveyard
+            || rule.any_player
+            || rule.min != 1
+            || rule.max != 1
+            || rule.action != ObjectSelectionActionV1::MoveTo(Zone::Hand))
+    {
+        return Err("instant-or-sorcery return requires one own graveyard card".into());
+    }
     let mut candidates = Vec::new();
     for owner in [PlayerId::P0, PlayerId::P1] {
         if !rule.any_player && owner != player {
@@ -46,7 +58,23 @@ fn candidates(
             &state.players[owner.index()].graveyard
         };
         for &id in objects {
-            let live = state.objects.get(id);
+            let live = if instant_or_sorcery {
+                state
+                    .objects
+                    .try_get(id)
+                    .ok_or("instant-or-sorcery graveyard references absent object")?
+            } else {
+                state.objects.get(id)
+            };
+            if instant_or_sorcery
+                && (live.zone != Zone::Graveyard
+                    || live.owner != owner
+                    || objects.iter().filter(|&&other| other == id).count() != 1)
+            {
+                return Err(
+                    "instant-or-sorcery graveyard roster changed physical authority".into(),
+                );
+            }
             let creature = crate::engine::object_has_type(state, id, CardType::Creature);
             let matches = match rule.filter {
                 ObjectSelectionFilterV1::UntappedArtifactOrCreature => {
@@ -70,6 +98,10 @@ fn candidates(
                     creature
                         && !(id == source.source
                             && live.zone_change_count == source.zone_change_count)
+                }
+                ObjectSelectionFilterV1::InstantOrSorcery => {
+                    crate::engine::object_has_type(state, id, CardType::Instant)
+                        || crate::engine::object_has_type(state, id, CardType::Sorcery)
                 }
             };
             if matches {
@@ -312,4 +344,77 @@ pub fn gix_pair_4() -> EffectOp {
 }
 pub fn gix_pair_5() -> EffectOp {
     gix_command_pair(5)
+}
+
+#[cfg(test)]
+mod instant_or_sorcery_boundary_tests {
+    use super::*;
+    use crate::policy_observation_v6::tests::{put, ready_state};
+
+    fn rule() -> ObjectSelectionRuleV1 {
+        ObjectSelectionRuleV1 {
+            player: PlayerRef::Controller,
+            zone: Zone::Graveyard,
+            any_player: false,
+            filter: ObjectSelectionFilterV1::InstantOrSorcery,
+            min: 1,
+            max: 1,
+            action: ObjectSelectionActionV1::MoveTo(Zone::Hand),
+        }
+    }
+
+    /// Registered cards isolate the new physical selection predicate. This
+    /// does not fabricate a definition-owned Inspiration continuation.
+    #[test]
+    fn registered_selection_boundary_filters_and_refuses_forged_rosters_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state();
+            let instant = put(&mut state, actor, "Lightning Bolt", Zone::Graveyard);
+            let sorcery = put(&mut state, actor, "Ponder", Zone::Graveyard);
+            put(&mut state, actor, "Llanowar Elves", Zone::Graveyard);
+            put(&mut state, actor, "Forest", Zone::Graveyard);
+            let opposing = put(
+                &mut state,
+                actor.opponent(),
+                "Lightning Bolt",
+                Zone::Graveyard,
+            );
+            let expected = candidates(&state, actor, rule()).unwrap();
+            assert_eq!(
+                expected.iter().map(|b| b.object).collect::<Vec<_>>(),
+                vec![instant, sorcery]
+            );
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(candidates(&restored, actor, rule()).unwrap(), expected);
+            for forgery in 0..4 {
+                let mut altered = restored.clone();
+                match forgery {
+                    0 => altered.players[actor.index()].graveyard.push(opposing),
+                    1 => altered.players[actor.index()].graveyard.push(instant),
+                    2 => altered.objects.get_mut(instant).zone = Zone::Hand,
+                    _ => altered.objects.get_mut(instant).owner = actor.opponent(),
+                }
+                let before = altered.clone();
+                assert!(candidates(&altered, actor, rule()).is_err());
+                assert_eq!(altered, before);
+            }
+            event::propose_and_commit(
+                &mut state,
+                event::ProposedEvent::zone_change(instant, Zone::Hand),
+            );
+            event::propose_and_commit(
+                &mut state,
+                event::ProposedEvent::zone_change(instant, Zone::Graveyard),
+            );
+            assert_ne!(
+                candidates(&state, actor, rule()).unwrap(),
+                expected,
+                "returning card is a new incarnation"
+            );
+            let mut invalid = rule();
+            invalid.min = 0;
+            assert!(candidates(&state, actor, invalid).is_err());
+        }
+    }
 }

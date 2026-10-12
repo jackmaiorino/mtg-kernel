@@ -1341,7 +1341,10 @@ pub(super) fn conflicts(
             | CrimeCommitted { .. }
             | BeginningOfCombat { .. }
             | BeginningEndStep { .. }
-            | BeginningPrecombatMainV1 { .. } => false,
+            | BeginningPrecombatMainV1 { .. }
+            // This receipt is history-only. Active snapshot references are
+            // already visited through the owning pending continuation above.
+            | InspirationResolutionBoundaryV1 { .. } => false,
         }
     })
 }
