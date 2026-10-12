@@ -8261,6 +8261,11 @@ pub(crate) fn available_mana_ability_choices_into(
         return;
     }
 
+    if crate::heraldic_banner_v1::owns_definition(object.card_def)
+        && crate::heraldic_banner_v1::authenticated_color(state, source).is_err()
+    {
+        return;
+    }
     let mut primary = ManaColorSetV1::new();
     def.primary_mana_ability_choices_into(object.v4.chosen_color, &mut primary);
     let primary_payable = if let Some(rich) = def.mana_ability_def {
@@ -8270,6 +8275,13 @@ pub(crate) fn available_mana_ability_choices_into(
     };
     if primary_payable {
         for &color in primary.as_slice() {
+            if crate::heraldic_banner_v1::owns_definition(object.card_def)
+                && state.players[player.index()].mana_pool[color.pool_index()]
+                    .checked_add(1)
+                    .is_none()
+            {
+                continue;
+            }
             if let Some(rich) = def.mana_ability_def {
                 if rich.amount == ManaAbilityAmountDef::EachControlledPermanentColor {
                     if rich.cost != ManaAbilityCostDef::TapSelf

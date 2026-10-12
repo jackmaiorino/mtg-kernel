@@ -85,6 +85,14 @@ mod future_printed {
                     assert_eq!(authenticated_color(branch, banner).unwrap(), color);
                     validate_state(branch).unwrap();
                     assert_eq!(branch.players[actor.index()].mana_pool, [0; 6]);
+                    branch.players[actor.index()].mana_pool[color.pool_index()] = u32::MAX;
+                    assert!(
+                        engine::available_mana_ability_choices(actor, banner, branch).is_empty()
+                    );
+                    let full = serde_json::to_vec(branch).unwrap();
+                    assert!(engine::step(branch, Action::ActivateManaAbility(banner)).is_err());
+                    assert_eq!(serde_json::to_vec(branch).unwrap(), full);
+                    branch.players[actor.index()].mana_pool[color.pool_index()] = 0;
                     engine::step(branch, Action::ActivateManaAbility(banner)).unwrap();
                     assert!(branch.objects.get(banner).tapped);
                     assert_eq!(
@@ -191,6 +199,167 @@ mod future_printed {
             engine::step(&mut state, Action::ChooseEffectOption(1)).unwrap();
             assert_eq!(authenticated_color(&state, banner).unwrap(), ManaColor::U);
             validate_state(&state).unwrap();
+        }
+    }
+    #[test]
+    #[ignore = "requires genuine Heraldic Banner registration; accepted physical copy primitive only"]
+    fn actual_copy_allocator_owns_fresh_token_color_before_allocation_and_restores_tail() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor);
+            let banner = put(&mut state, actor, "Heraldic Banner", Zone::Hand);
+            crate::event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(banner, Zone::Battlefield),
+            );
+            engine::step(&mut state, Action::ChooseEffectOption(4)).unwrap();
+            let before = state.objects.len();
+            // Genuine accepted copy allocator, not a claimed printed FDN
+            // spell which copies arbitrary artifacts.
+            assert!(crate::standard_cards_v1::create_token_copy(
+                &mut state,
+                banner,
+                actor.opponent()
+            )
+            .is_none());
+            assert_eq!(reach_color(&mut state), actor.opponent());
+            assert_eq!(state.objects.len(), before);
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                engine::step(branch, Action::ChooseEffectOption(3)).unwrap();
+                let token = branch
+                    .objects
+                    .iter()
+                    .find_map(|(id, o)| {
+                        (id != banner
+                            && owns_definition(o.card_def)
+                            && o.zone == Zone::Battlefield
+                            && o.controller == actor.opponent())
+                        .then_some(id)
+                    })
+                    .unwrap();
+                assert!(branch.objects.get(token).v4.is_token);
+                assert_eq!(branch.objects.len(), before + 1);
+                assert_eq!(authenticated_color(branch, banner).unwrap(), ManaColor::G);
+                assert_eq!(authenticated_color(branch, token).unwrap(), ManaColor::R);
+                assert_eq!(branch.objects.get(token).owner, actor.opponent());
+                validate_state(branch).unwrap();
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&restored).unwrap()
+            );
+        }
+    }
+    #[test]
+    #[ignore = "requires genuine Heraldic Banner registration; genuine Witness recipient and counter response"]
+    fn actual_short_payment_countered_spell_and_effective_recipient_color_recheck_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor);
+            let banner = put(&mut state, actor, "Heraldic Banner", Zone::Hand);
+            let before = serde_json::to_vec(&state).unwrap();
+            assert!(engine::step(&mut state, Action::CastSpell(banner)).is_err());
+            assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 3;
+            let counter = put(&mut state, actor.opponent(), "Counterspell", Zone::Hand);
+            state.players[actor.opponent().index()].mana_pool[ManaColor::U.pool_index()] = 2;
+            engine::step(&mut state, Action::CastSpell(banner)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
+            for _ in 0..4 {
+                if state.priority_player == actor.opponent() {
+                    break;
+                }
+                engine::step(&mut state, Action::Pass).unwrap();
+                assert!(matches!(
+                    engine::advance_until_decision(&mut state),
+                    Decision::CastSpellOrPass { .. }
+                ));
+            }
+            assert_eq!(state.priority_player, actor.opponent());
+            engine::step(&mut state, Action::CastSpell(counter)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::ChooseTargets { .. }
+            ));
+            let slot = state
+                .stack
+                .iter()
+                .position(|item| item.source == banner)
+                .unwrap();
+            engine::step(
+                &mut state,
+                Action::ChooseTarget(crate::state::Target::StackItem(slot)),
+            )
+            .unwrap();
+            for _ in 0..12 {
+                let d = engine::advance_until_decision(&mut state);
+                assert!(
+                    !matches!(d, Decision::ChooseEntryColorV36 { .. }),
+                    "countered spell never enters"
+                );
+                if state.objects.get(banner).zone == Zone::Graveyard {
+                    break;
+                }
+                assert!(matches!(d, Decision::CastSpellOrPass { .. }), "{d:?}");
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            assert_eq!(state.objects.get(banner).zone, Zone::Graveyard);
+            assert!(!state
+                .engine
+                .event_history
+                .iter()
+                .any(|e| matches!(e, CommittedEvent::BannerEntryColorCapturedV1 { .. })));
+            validate_state(&state).unwrap();
+            let mut state = ready(actor);
+            let banner = put(&mut state, actor, "Heraldic Banner", Zone::Hand);
+            let elf = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            crate::event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(banner, Zone::Battlefield),
+            );
+            engine::step(&mut state, Action::ChooseEffectOption(0)).unwrap();
+            assert_eq!(engine::effective_power(&state, elf), 1);
+            let witness = put(&mut state, actor, "Witness Protection", Zone::Hand);
+            state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 1;
+            engine::step(&mut state, Action::CastSpell(witness)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::ChooseTargets { .. }
+            ));
+            engine::step(
+                &mut state,
+                Action::ChooseTarget(crate::state::Target::Object(elf)),
+            )
+            .unwrap();
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                for _ in 0..12 {
+                    let d = engine::advance_until_decision(branch);
+                    if branch.objects.get(witness).zone == Zone::Battlefield {
+                        break;
+                    }
+                    assert!(matches!(d, Decision::CastSpellOrPass { .. }), "{d:?}");
+                    engine::step(branch, Action::Pass).unwrap();
+                }
+                assert_eq!(
+                    engine::object_color_mask(branch, elf),
+                    crate::card_def::mana_color_mask(ManaColor::G)
+                        | crate::card_def::mana_color_mask(ManaColor::W)
+                );
+                // Mage's Witness makes a green and white Citizen 1/1, so the
+                // chosen white anthem becomes applicable to its new colors.
+                assert_eq!(engine::effective_power(branch, elf), 2);
+                assert_eq!(authenticated_color(branch, banner).unwrap(), ManaColor::W);
+                validate_state(branch).unwrap();
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&restored).unwrap()
+            );
         }
     }
 }

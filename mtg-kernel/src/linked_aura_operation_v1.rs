@@ -22,6 +22,10 @@ pub enum OperationV1 {
         op: crate::effect::EffectOp,
         ctx: crate::effect::ExecCtx,
     },
+    CopyTokenV36 {
+        source: crate::state::AbilitySourceContractV4,
+        controller: crate::ids::PlayerId,
+    },
 }
 
 impl Hash for OperationV1 {
@@ -212,6 +216,27 @@ fn invoke(state: &mut GameState, operation: &OperationV1) -> Result<Option<Decis
         }
         OperationV1::Effect { op, ctx } => {
             crate::effect::execute_without_linked_aura_v1(op, ctx, state);
+            Ok(None)
+        }
+        OperationV1::CopyTokenV36 { source, controller } => {
+            let live = state
+                .objects
+                .try_get(source.source)
+                .ok_or("Banner copy template missing")?;
+            if live.zone != crate::state::Zone::Battlefield
+                || live.zone_change_count != source.zone_change_count
+                || live.owner != source.owner
+                || live.card_def != source.card_def
+                || live.v4.face_down_v1.is_some()
+                || !crate::heraldic_banner_v1::owns_definition(source.card_def)
+            {
+                return Err("Banner copy lost actual original template incarnation".into());
+            }
+            crate::standard_cards_v1::create_token_copy_without_banner_owner(
+                state,
+                source.source,
+                *controller,
+            );
             Ok(None)
         }
         OperationV1::Commit(event) => {

@@ -296,6 +296,12 @@ fn validate_entered(state: &GameState, entered: &EnteredV1, at: usize) -> Result
             {
                 return Err("Banner entry differs from original batch roster".into());
             }
+            crate::linked_aura_operation_v1::OperationV1::CopyTokenV36 { source, controller }
+                if !matches!(&choice.proposal, ProposedEvent::CreateToken(token)
+                    if token.token_def == source.card_def && token.controller == *controller) =>
+            {
+                return Err("Banner token entry differs from original copy operation".into());
+            }
             crate::linked_aura_operation_v1::OperationV1::Advance
             | crate::linked_aura_operation_v1::OperationV1::Step(_)
                 if matches!(&choice.proposal,

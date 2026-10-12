@@ -1204,6 +1204,35 @@ pub(crate) fn create_token_copy(
     original: ObjectId,
     controller: PlayerId,
 ) -> Option<ObjectId> {
+    if !crate::linked_aura_operation_v1::locally_owned(state)
+        && crate::heraldic_banner_v1::owns_definition(state.objects.get(original).card_def)
+    {
+        if state.objects.get(original).zone != Zone::Battlefield
+            || state.objects.get(original).v4.face_down_v1.is_some()
+        {
+            return None;
+        }
+        let source = crate::state::AbilitySourceContractV4::capture(state, original);
+        let history_start = state.engine.event_history.len();
+        crate::linked_aura_operation_v1::event(
+            state,
+            crate::linked_aura_operation_v1::OperationV1::CopyTokenV36 { source, controller },
+        );
+        return state.engine.event_history[history_start..]
+            .iter()
+            .find_map(|event| match event {
+                CommittedEvent::CreateToken { object, .. } => Some(*object),
+                _ => None,
+            });
+    }
+    create_token_copy_without_banner_owner(state, original, controller)
+}
+
+pub(crate) fn create_token_copy_without_banner_owner(
+    state: &mut GameState,
+    original: ObjectId,
+    controller: PlayerId,
+) -> Option<ObjectId> {
     let live = state.objects.get(original);
     let (card_def, face) = (live.card_def, live.v4.face_index);
     let start = state.engine.event_log.len();
