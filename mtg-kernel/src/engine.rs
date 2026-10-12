@@ -14510,16 +14510,6 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         .stack
         .last()
         .expect("resolve_top_of_stack called with an empty stack");
-    if crate::krenko_v1::record_input(
-        state,
-        krenko_owner.as_ref(),
-        crate::krenko_v1::RemovalV1::Resolving,
-    )
-    .is_err()
-    {
-        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
-        return ResolutionProgress::Suspended;
-    }
     let resolving_source = item.source;
     let targets_legal = match stack_targets_still_legal(item, state) {
         Ok(legal) => legal,
@@ -14735,6 +14725,20 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         .stack
         .pop()
         .expect("resolve_top_of_stack called with an empty stack");
+    if crate::krenko_v1::record_input(
+        state,
+        krenko_owner.as_ref(),
+        crate::krenko_v1::RemovalV1::Resolving,
+    )
+    .is_err()
+    {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            resolving_source,
+        ));
+        return ResolutionProgress::Suspended;
+    }
+
     crate::banishing_light_v1::record_removed(
         state,
         banishing_owner,
