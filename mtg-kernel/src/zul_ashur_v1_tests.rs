@@ -407,7 +407,6 @@ mod future_printed {
         );
     }
     #[test]
-    #[ignore = "Zul Ashur is unregistered; genuine removal input and restore forgery qualification remains root-owned"]
     fn actual_original_journals_cannot_be_closed_by_manufactured_counter_or_fizzle_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let (state, _, target) = setup(actor);
