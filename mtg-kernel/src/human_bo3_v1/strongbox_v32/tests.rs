@@ -621,13 +621,8 @@ mod future_printed {
             crate::standard_cards_v1::gain_control(&mut state, source, actor.opponent());
             crate::event::propose_and_commit(
                 &mut state,
-                crate::event::ProposedEvent::ZoneChange {
-                    object: source,
-                    from: Zone::Battlefield,
-                    to: Zone::Graveyard,
-                },
-            )
-            .unwrap();
+                crate::event::ProposedEvent::zone_change(source, Zone::Graveyard),
+            );
             let mut session = owned(replay(&state));
             let e = expected(&session);
             assert_eq!(e.acting_player, actor.into());
