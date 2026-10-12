@@ -45,7 +45,8 @@ pub(crate) fn capture_of(op: &EffectOp) -> Option<u64> {
     else {
         return None;
     };
-    (*else_ == Box::new(EffectOp::Sequence(Vec::new()))).then_some(capture_history_index)
+    matches!(else_.as_ref(), EffectOp::Sequence(operations) if operations.is_empty())
+        .then_some(capture_history_index)
 }
 pub(crate) fn source_at(
     state: &GameState,
@@ -74,6 +75,10 @@ pub(crate) fn source_at(
         .copied()
         .ok_or_else(|| "Stromkirk observer ordinal changed".into())
 }
+#[cfg(any(
+    feature = "limited-fdn-fixtures",
+    feature = "standard-magezero-fixtures"
+))]
 pub(crate) fn emit_captures(state: &mut GameState, observers_at: usize) {
     let Some(CommittedEvent::StromkirkEndStepObserversV1 { observers, .. }) =
         state.engine.event_history.get(observers_at)

@@ -27,6 +27,10 @@ pub(crate) fn owns_definition(id: u16) -> bool {
     })
 }
 
+#[cfg(any(
+    feature = "limited-fdn-fixtures",
+    feature = "standard-magezero-fixtures"
+))]
 pub(crate) fn record_begin(state: &mut GameState, beginning: usize) {
     if !crate::life_loss_turn_v1::enabled() {
         return;
