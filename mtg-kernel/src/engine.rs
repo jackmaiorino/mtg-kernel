@@ -13044,9 +13044,9 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
     ) {
         let published = state.stack.last().expect("just published trigger").clone();
         crate::authority_of_the_consuls_v1::publish(state, &published)?;
-        crate::garruks_uprising_v1::publish(state, &published)?;
     }
     let finalized = state.stack.last().expect("trigger just published").clone();
+    crate::garruks_uprising_v1::publish(state, &finalized)?;
     crate::ashroot_dispatch_v2::publish(state, &finalized)?;
     crate::wildwood_capture_v1::publish(state, &finalized);
     effect::frenzied_goblin_resolution_v1::publish(state)?;
