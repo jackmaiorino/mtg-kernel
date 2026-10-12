@@ -2,11 +2,35 @@ import { describe, expect, it } from 'vitest';
 import fixture from './fixtures/actor-visible.json';
 import native from './fixtures/native-root-excerpt.json';
 import replayFixture from './fixtures/search-replay.json';
+import graphFixture from './fixtures/search-graph.json';
+import { graphAt, graphLayout } from '../src/search-graph';
 import { initialSearchPlayback, searchReducer, searchEvents, rootHistory } from '../src/search-playback';
 import { comparePolicyMasses, policyFavorite, parseRecording, verifySearchDigests } from '../src/recording';
 import { initialPlayback, playbackReducer } from '../src/playback';
 
 const copy = () => structuredClone(fixture);
+describe('growing search graph',()=>{
+  it('reveals evaluated positions at expansion and updates visits only at backup',async()=>{
+    const r=parseRecording(graphFixture);await verifySearchDigests(r);const replay=r.frames[0].search!.replay!;
+    const before=graphAt(replay,{simulation:1,phase:'select',choice:0});expect([...before.nodes.keys()]).toEqual([0]);
+    const evaluated=graphAt(replay,{simulation:1,phase:'evaluate',choice:0});expect([...evaluated.nodes.keys()]).toEqual([0,1]);
+    expect(evaluated.nodes.get(1)?.visits).toBe(0);expect(evaluated.frontier).toBe(1);
+    const backedUp=graphAt(replay,{simulation:1,phase:'backup',choice:0});expect(backedUp.nodes.get(1)?.visits).toBe(1);
+    const branched=graphAt(replay,{simulation:2,phase:'evaluate',choice:0});expect([...branched.edges.keys()]).toEqual(['0:0:1','0:0:2']);
+    const final=graphAt(replay,{simulation:4,phase:'backup',choice:0});expect(final.nodes.size).toBe(4);expect(final.edges.size).toBe(3);
+    expect(final.nodes.get(0)).toMatchObject({visits:5,sum:11600n});expect(final.nodes.get(1)).toMatchObject({visits:2,sum:1200n});
+    expect(graphLayout(replay).get(3)?.depth).toBe(2);
+    expect(graphAt(replay,{simulation:0,phase:'select',choice:0}).nodes.size).toBe(1);
+  });
+  it('rejects wrong leaf identities, early node visits and unrecorded graph connections',()=>{
+    const wrong=structuredClone(graphFixture);wrong.frames[0].search!.replay!.simulations[1].leafNode=2;
+    expect(()=>parseRecording(wrong)).toThrow(/leaf identity/);
+    const early=structuredClone(graphFixture);early.frames[0].search!.replay!.simulations[0].choices[0].node=1;
+    expect(()=>parseRecording(early)).toThrow(/order/);
+    const extra=structuredClone(graphFixture);extra.frames[0].search!.replay!.nodes[2].children[0].push(3);
+    expect(()=>parseRecording(extra)).toThrow(/coverage/);
+  });
+});
 describe('recorded search replay',()=>{
   it('loads v2 and reconciles exact root statistics',async()=>{
     const r=parseRecording(replayFixture);await verifySearchDigests(r);
