@@ -3151,6 +3151,21 @@ fn legal_targets_for_controller_from_source(
     source: Option<TargetingSource>,
     state: &GameState,
 ) -> Vec<Target> {
+    if spec == TargetSpec::AnyTarget {
+        if let Some(source) =
+            source.filter(|source| crate::gorehorn_damage_v1::owns_definition(source.card_def))
+        {
+            return crate::gorehorn_damage_v1::legal_targets(
+                state,
+                source.object,
+                source.card_def,
+                source.zone_change_count,
+                controller,
+                targets_chosen,
+            )
+            .unwrap_or_default();
+        }
+    }
     let mut targets = match spec {
         TargetSpec::ArtifactOrEnchantmentThenPlayer => legal_targets_for_controller_from_source(
             if targets_chosen.is_empty() {TargetSpec::ArtifactOrEnchantmentPermanent} else {TargetSpec::AnyPlayer}, &[], controller, source, state),
@@ -12652,14 +12667,17 @@ pub(crate) fn validate_pending_trigger(
             pending
                 .source_contract
                 .map_or(source.card_def, |c| c.card_def),
-        ) || matches!(
-            expected,
-            TargetSpec::UpToTwoCardsInSingleGraveyard
-                | TargetSpec::UpToOneOtherCreature
-                | TargetSpec::AnotherAttackingCreature
-                | TargetSpec::UpToOneOtherControlledPermanent
-                | TargetSpec::UpToTwoOtherControlledCreatures
-        ) {
+        ) || pending
+            .source_contract
+            .is_some_and(|source| crate::gorehorn_damage_v1::owns_definition(source.card_def))
+            || matches!(
+                expected,
+                TargetSpec::UpToTwoCardsInSingleGraveyard
+                    | TargetSpec::UpToOneOtherCreature
+                    | TargetSpec::AnotherAttackingCreature
+                    | TargetSpec::UpToOneOtherControlledPermanent
+                    | TargetSpec::UpToTwoOtherControlledCreatures
+            ) {
             completable_next_targets_for_controller_and_source(
                 expected,
                 &prefix,
@@ -12985,6 +13003,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
             ..StackStateV4::default()
         },
     });
+    crate::gorehorn_damage_v1::publish(state, stack_item_id)?;
     if t.target_spec != TargetSpec::None {
         if let Err(error) = log_final_targeting_events(state, stack_item_id) {
             state.stack.pop();
@@ -14015,6 +14034,7 @@ pub(crate) fn counter_stack_item_by_id(
     let librarian_counter_owner =
         crate::librarian_activation_v1::acquire_counter_owner(state, &item)?;
     let ashroot_owner = crate::ashroot_dispatch_v2::acquire(state, &item)?;
+    let gorehorn_owner = crate::gorehorn_damage_v1::acquire_owner(state, &item)?;
     let temporal_owner = crate::extra_turn_v1::acquire_counter(state, &item)?;
     if temporal_owner.is_some() && item.is_copy {
         if let Some(plan) = departure.take() {
@@ -14036,6 +14056,11 @@ pub(crate) fn counter_stack_item_by_id(
         state,
         gourmand_counter_owner.as_ref(),
         &item,
+    )?;
+    crate::gorehorn_damage_v1::record_removed(
+        state,
+        gorehorn_owner,
+        crate::gorehorn_damage_v1::OutcomeV1::Countered,
     )?;
     effect::frenzied_goblin_resolution_v1::complete_unstarted(
         state,
@@ -14372,6 +14397,19 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 return ResolutionProgress::Suspended;
             }
         };
+    let gorehorn_owner = match crate::gorehorn_damage_v1::acquire_owner(
+        state,
+        state.stack.last().expect("resolving item"),
+    ) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let ashroot_owner = match crate::ashroot_dispatch_v2::acquire_resolution(
         state,
         state.stack.last().expect("resolving item"),
@@ -14461,6 +14499,17 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         return ResolutionProgress::Complete;
     }
     if !targets_legal {
+        if crate::gorehorn_damage_v1::record_removed(
+            state,
+            gorehorn_owner,
+            crate::gorehorn_damage_v1::OutcomeV1::NoLegalTarget,
+        )
+        .is_err()
+        {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
         if item.kind == StackItemKind::Spell && item.v4.cast_method == Some(CastMethodV4::Bestow) {
             effect::execute(
                 &EffectOp::PutSourceOntoBattlefieldWithXPlusOneCounters,
@@ -14524,15 +14573,28 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             crate::banishing_light_v1::finish(state, &item);
             return ResolutionProgress::Complete;
         }
-        let progress = execute_resolving_program(
-            state,
-            &item,
-            &ctx,
-            &effect,
-            squad_owner.as_ref(),
-            frenzied_owner.as_ref(),
-            gourmand_owner.as_ref(),
-        );
+        let progress = if let Some(owner) = gorehorn_owner.as_ref() {
+            let before = state.clone();
+            if crate::gorehorn_damage_v1::execute_owned(state, &effect, &ctx, owner).is_ok() {
+                ResolutionProgress::Complete
+            } else {
+                *state = before;
+                state.stack.push(item.clone());
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                ResolutionProgress::Suspended
+            }
+        } else {
+            execute_resolving_program(
+                state,
+                &item,
+                &ctx,
+                &effect,
+                squad_owner.as_ref(),
+                frenzied_owner.as_ref(),
+                gourmand_owner.as_ref(),
+            )
+        };
         if progress == ResolutionProgress::Complete {
             if crate::librarian_activation_v1::record_resolved(state, &item, effect_history_start)
                 .is_err()

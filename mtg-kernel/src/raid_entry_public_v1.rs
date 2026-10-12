@@ -22,6 +22,7 @@ pub struct RaidEntryObservationV1 {
     pub producer_sha256: String,
     pub base: ObservationV9,
     pub keep_one: Option<KeepOneContextV1>,
+    pub gorehorn_sources: Vec<crate::gorehorn_damage_v1::GorehornSourceV1>,
     pub roots: Vec<crate::rules_meaning_raid_entry_v1::MeaningV1>,
     pub projection_sha256: String,
 }
@@ -31,6 +32,8 @@ pub fn producer_sha256_v1() -> String {
         SCHEMA,
         include_str!("raid_entry_public_v1.rs"),
         include_str!("raid_entry_v1.rs"),
+        include_str!("gorehorn_damage_v1.rs"),
+        include_str!("source_power_activation_v1.rs"),
         include_str!("rules_meaning_raid_entry_v1.rs"),
         include_str!("effect/private_keep_one_v1.rs"),
         include_str!("effect/surveil_many.rs"),
@@ -136,6 +139,8 @@ pub fn observe_v1(
         producer_sha256: producer_sha256_v1(),
         base,
         keep_one,
+        gorehorn_sources: crate::gorehorn_damage_v1::public_sources(state)
+            .map_err(RlContractError)?,
         roots: roots().map_err(RlContractError)?,
         projection_sha256: String::new(),
     };

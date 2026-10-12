@@ -1497,6 +1497,25 @@ pub struct StackStateV4 {
     /// Empty contributes neither serialized bytes nor Hash input.
     #[serde(default, skip_serializing_if = "VampireGourmandStartedV1::is_empty")]
     pub vampire_gourmand_started_v1: VampireGourmandStartedV1,
+    #[serde(default, skip_serializing_if = "GorehornPublishedV1::is_empty")]
+    pub gorehorn_published_v1: GorehornPublishedV1,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct GorehornPublishedV1(pub Option<u32>);
+impl GorehornPublishedV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl Hash for GorehornPublishedV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(index) = self.0 {
+            "gorehorn-publication/v1".hash(state);
+            index.hash(state);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

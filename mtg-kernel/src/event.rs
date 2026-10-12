@@ -1013,6 +1013,21 @@ pub enum CommittedEvent {
     AshrootDispatchV2 {
         journal: crate::ashroot_dispatch_v2::JournalV2,
     },
+    GorehornDepartureV1 {
+        departure: Box<crate::gorehorn_damage_v1::DepartureV1>,
+    },
+    GorehornPublishedV1 {
+        publication: Box<crate::gorehorn_damage_v1::PublicationV1>,
+    },
+    GorehornPreparedV1 {
+        prepared: Box<crate::gorehorn_damage_v1::PreparedV1>,
+    },
+    GorehornDamageOperationV1 {
+        operation: Box<crate::gorehorn_damage_v1::DamageOperationV1>,
+    },
+    GorehornOperationV1 {
+        operation: Box<crate::gorehorn_damage_v1::OperationV1>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1441,6 +1456,76 @@ pub(crate) fn propose_without_linked_aura_v1(state: &mut GameState, event: Propo
     }
 }
 
+/// Only the nonserializable owner obtained before actual engine removal may
+/// commit the printed Raid damage. Ordinary proposals retain their old path.
+pub(crate) fn propose_and_commit_gorehorn_owned(
+    state: &mut GameState,
+    damage: DamageProposed,
+    preparation: u32,
+    owner: &crate::gorehorn_damage_v1::OwnerV1,
+) -> Result<u32, String> {
+    if !owner.permits_damage(state, &damage) {
+        return Err("Gorehorn damage lacks actual removed-item authority".into());
+    }
+    crate::effect::temporary_control_v1::authority::validate(state)?;
+    let replacements_before = state.engine.active_replacements.clone();
+    let turn = state.turn_key_v1();
+    let active = state.active_player;
+    let prevention_overridden = state.engine.until_end_of_turn.iter().any(|effect| {
+        matches!(
+            effect,
+            crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
+        )
+    });
+    let start = state.engine.event_history.len();
+    let final_event = apply_replacements(state, ProposedEvent::Damage(damage));
+    let mut output = None;
+    if let Some(event) = final_event {
+        let ProposedEvent::Damage(damage) = &event else {
+            return Err("Gorehorn replacement changed event kind".into());
+        };
+        output = Some(crate::gorehorn_damage_v1::DamageResultV1 {
+            source: damage.source,
+            target: damage.target,
+            amount: damage.amount,
+            touched: damage.touched_by.clone(),
+        });
+        let gain = lifelink_gain_for(state, &event);
+        commit(state, event);
+        if let Some((player, amount)) = gain {
+            commit(state, ProposedEvent::life_gain(player, amount));
+        }
+    }
+    let damage_index = state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .skip(start)
+        .find_map(|(i, e)| matches!(e, CommittedEvent::Damage { .. }).then_some(i))
+        .map(u32::try_from)
+        .transpose()
+        .map_err(|_| "Gorehorn damage index overflow")?;
+    let index = u32::try_from(state.engine.event_history.len())
+        .map_err(|_| "Gorehorn operation overflow")?;
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::GorehornDamageOperationV1 {
+            operation: Box::new(crate::gorehorn_damage_v1::DamageOperationV1 {
+                index,
+                preparation,
+                replacements_before,
+                output,
+                damage_index,
+                turn,
+                active,
+                prevention_overridden,
+            }),
+        });
+    Ok(index)
+}
+
 /// Applies the (possibly rewritten) proposal to `GameState` and appends the
 /// resulting `CommittedEvent` to the event log for this resolution.
 pub fn commit(state: &mut GameState, event: ProposedEvent) {
@@ -1631,6 +1716,7 @@ fn commit_with_ability_lki_and_entry_batch(
             if from == Zone::Battlefield {
                 crate::ashroot_animist_v1::before_departure(state, z.object);
                 crate::source_power_activation_v1::before_departure(state, z.object);
+                crate::gorehorn_damage_v1::before_departure(state, z.object);
             }
             #[cfg(feature = "standard-magezero-fixtures")]
             crate::standard_keywords_v1::before_zone_change(state, z.object, z.to_zone);
@@ -2016,6 +2102,7 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
             }
         }
     }
+    crate::gorehorn_damage_v1::before_batch_departures(state, &survivors);
     crate::ashroot_animist_v1::before_batch_departures(state, &survivors);
     // Lifelink changes life at the same time as the damage. Capture every
     // source/controller before any member of the simultaneous batch can die.
@@ -2128,6 +2215,13 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
 /// Freeze only new death observers; retain the existing per-member sacrifice,
 /// replacement, zone-change and unrelated-event order exactly.
 pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[ObjectId]) {
+    crate::gorehorn_damage_v1::before_batch_departures(
+        state,
+        &chosen
+            .iter()
+            .map(|id| ProposedEvent::zone_change(*id, Zone::Graveyard))
+            .collect::<Vec<_>>(),
+    );
     let captures = chosen
         .iter()
         .map(|id| {
@@ -2150,6 +2244,13 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
 /// semantics while freezing death observers before any member leaves.
 pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<ObjectId>) {
     crate::linked_aura_operation_v1::begin_batch(state);
+    crate::gorehorn_damage_v1::before_batch_departures(
+        state,
+        &dying
+            .iter()
+            .map(|id| ProposedEvent::zone_change(*id, Zone::Graveyard))
+            .collect::<Vec<_>>(),
+    );
     if !crate::creature_death_capture_v1::enabled() {
         for id in dying {
             commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
