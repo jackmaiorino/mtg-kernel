@@ -18,6 +18,7 @@ pub(crate) struct LineBAuxiliaryRootV1 {
 }
 
 pub(crate) struct LineBAuxiliaryInputV1 {
+    pub(crate) scheduled_count: Option<usize>,
     pub(crate) direction: LineBDivergenceV1,
     /// `c`; the mean runs over all selected roots, censored ones included.
     pub(crate) coefficient: f64,
@@ -62,7 +63,10 @@ pub(super) fn line_b_auxiliary_terms_v1(
     group_tapes: &[GroupTapeV1<'_>],
     parameters: &[NativeNamedParameterV1],
 ) -> Result<LineBAuxiliaryTermsV1, NativePolicyTrainErrorV1> {
-    let count = input.roots.len();
+    let count = input.scheduled_count.unwrap_or(input.roots.len());
+    if count < input.roots.len() {
+        return Err(invalid("auxiliary-scheduled-count"));
+    }
     if count == 0 {
         return Err(invalid("line-b-auxiliary-no-roots"));
     }
@@ -263,6 +267,7 @@ pub(crate) fn line_b_permuted_input_v1(
         .collect();
     (
         LineBAuxiliaryInputV1 {
+            scheduled_count: input.scheduled_count,
             direction: input.direction,
             coefficient: input.coefficient,
             roots,

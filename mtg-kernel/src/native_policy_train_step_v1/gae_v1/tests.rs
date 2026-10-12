@@ -435,6 +435,7 @@ fn line_b_input(
 ) -> LineBAuxiliaryInputV1 {
     let [first, second] = targets;
     LineBAuxiliaryInputV1 {
+        scheduled_count: None,
         direction,
         coefficient,
         roots: vec![
@@ -621,6 +622,7 @@ fn line_b_invalid_auxiliary_inputs_reject_before_mutation() {
     let cases = [
         (
             LineBAuxiliaryInputV1 {
+                scheduled_count: None,
                 direction: LineBDivergenceV1::Reverse,
                 coefficient: 0.1,
                 roots: Vec::new(),
@@ -691,6 +693,7 @@ fn line_b_permuted_targets_rotate_and_move_the_auxiliary_gradient() {
         target,
     };
     let input = LineBAuxiliaryInputV1 {
+        scheduled_count: None,
         direction: LineBDivergenceV1::Reverse,
         coefficient: 1.0,
         roots: vec![root(0, Some(a.clone())), root(1, Some(b.clone()))],
@@ -700,6 +703,7 @@ fn line_b_permuted_targets_rotate_and_move_the_auxiliary_gradient() {
     assert_eq!(permuted.roots[0].target.as_ref(), Some(&b));
     assert_eq!(permuted.roots[1].target.as_ref(), Some(&a));
     let single = LineBAuxiliaryInputV1 {
+        scheduled_count: None,
         direction: LineBDivergenceV1::Forward,
         coefficient: 1.0,
         roots: vec![root(0, Some(a.clone())), root(1, None)],

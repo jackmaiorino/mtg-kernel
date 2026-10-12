@@ -86,8 +86,9 @@ impl NativePolicyValueTrainStateV1 {
             return Ok((result, None));
         }
         let auxiliary = LineBAuxiliaryInputV1 {
+            scheduled_count: Some(input.scheduled),
             direction: LineBDivergenceV1::Forward,
-            coefficient: 0.1 * roots.len() as f64 / input.scheduled as f64,
+            coefficient: 0.1,
             roots,
         };
         let (result, dose) = self.train_step_gae_feature_transfer_line_b_v1(
