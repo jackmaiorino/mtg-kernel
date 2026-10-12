@@ -292,7 +292,7 @@ mod future_printed {
         state
     }
     #[test]
-    #[ignore = "requires genuine Heraldic Banner registration and native qualification"]
+
     fn actual_cast_full_five_choice_owner_restore_retry_anthem_mana_and_forged_color_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut core = ready(actor);
@@ -439,7 +439,7 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "requires genuine Heraldic Banner registration and native qualification"]
+
     fn real_public_entry_menu_uses_no_opponent_hand_identity_and_rejects_old_consumer_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut prompts = Vec::new();
@@ -477,7 +477,7 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "requires genuine Heraldic Banner registration; APNAP prior public colors and owning V36"]
+
     fn later_apnap_owner_sees_announced_colors_before_entry_without_other_hand_identity_both_seats()
     {
         use crate::engine::{self, Action};

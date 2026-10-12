@@ -63,7 +63,7 @@ mod future_printed {
         panic!("actual color menu missing")
     }
     #[test]
-    #[ignore = "requires genuine Heraldic Banner registration; no fabricated root"]
+
     fn real_cast_preentry_five_colors_restore_anthem_and_immediate_mana_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for (index, color) in COLORS.into_iter().enumerate() {
@@ -108,7 +108,7 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "requires genuine Heraldic Banner registration; no fabricated root"]
+
     fn true_simultaneous_entry_choices_precede_both_entries_and_follow_apnap_restore() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);
@@ -214,7 +214,7 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "requires genuine Heraldic Banner registration; no fabricated root"]
+
     fn erased_rewritten_entry_checkpoint_refuses_readonly_and_new_entry_needs_new_color() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);
@@ -271,7 +271,7 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "requires genuine Heraldic Banner registration; accepted physical copy primitive only"]
+
     fn actual_copy_allocator_owns_fresh_token_color_before_allocation_and_restores_tail() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);
@@ -321,7 +321,7 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "requires genuine Heraldic Banner registration; genuine Witness recipient and counter response"]
+
     fn actual_short_payment_countered_spell_and_effective_recipient_color_recheck_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);

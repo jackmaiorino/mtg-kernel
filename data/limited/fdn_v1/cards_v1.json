@@ -7071,6 +7071,34 @@
       "decks": [
         "FDN_reference_soulstone_kellan.dck"
       ]
+    },
+    {
+      "name": "Heraldic Banner",
+      "mana_cost": "{3}",
+      "mana_value": 3,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "is_token": false,
+      "java_file": "Mage.Sets/src/mage/cards/h/HeraldicBanner.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_heraldic_banner.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "as_enters_choose_color",
+        "chosen_color_controlled_creatures_plus_one_power",
+        "tap_chosen_color_mana"
+      ]
     }
   ]
 }
