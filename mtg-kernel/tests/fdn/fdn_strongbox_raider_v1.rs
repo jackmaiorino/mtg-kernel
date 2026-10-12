@@ -295,3 +295,26 @@ fn erased_permission_and_coherent_early_expiry_refuse_before_action_both_seats()
         }
     }
 }
+
+#[test]
+#[ignore = "Strongbox remains unregistered; root owns actual qualification"]
+fn actual_printed_meaning_reconstructs_full_root_and_refuses_each_edited_fact() {
+    use mtg_kernel::rules_meaning_strongbox_v1 as meaning;
+    let selector = meaning::live_selector().unwrap();
+    let id = card_id_by_name("Strongbox Raider").unwrap();
+    let record = meaning::meaning(&selector, id, 0).unwrap();
+    meaning::validate(&selector, &record).unwrap();
+    assert!(meaning::meaning(&selector, id, 1).is_err());
+    let value = serde_json::to_value(&record).unwrap();
+    for (name, fact) in value.as_object().unwrap() {
+        if let Some(actual) = fact.as_bool() {
+            let mut forged = value.clone();
+            forged[name] = serde_json::Value::Bool(!actual);
+            let artifact = serde_json::from_value(forged).unwrap();
+            assert!(meaning::validate(&selector, &artifact).is_err(), "{name}");
+        }
+    }
+    let mut unknown = value;
+    unknown["hidden_library"] = serde_json::Value::Bool(true);
+    assert!(serde_json::from_value::<meaning::MeaningV1>(unknown).is_err());
+}

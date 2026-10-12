@@ -588,3 +588,5 @@ pub mod rules_meaning_raid_entry_v1;
 
 pub mod banishing_public_v1;
 pub mod garruks_uprising_v1;
+
+pub mod rules_meaning_strongbox_v1;
