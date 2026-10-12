@@ -128,6 +128,187 @@ pub(super) fn probe_score(
     Ok(result)
 }
 
+fn validate_prior(prior_deck_indices: &[usize]) -> Result<(), String> {
+    ensure(
+        !prior_deck_indices.is_empty()
+            && prior_deck_indices
+                .iter()
+                .all(|&i| i < crate::runtime_decks::RUNTIME_DECKS.len()),
+        "invalid E public prior",
+    )?;
+    ensure(
+        prior_deck_indices.iter().collect::<BTreeSet<_>>().len() == prior_deck_indices.len(),
+        "duplicate E prior deck",
+    )
+}
+
+/// One fixed teacher-diagnostic probe: a saved nonforced learner row and the
+/// E packet's `selected_live` for it.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ETeacherDiagnosticProbeV1 {
+    pub probe_id: String,
+    pub trajectory: PinnedFileV1,
+    pub row_index: usize,
+    pub teacher_live: usize,
+}
+
+/// The bound teacher choice against the parent's sampled raw choice at fixed
+/// probes, each continued by identical frozen plain policies on fresh lawful
+/// worlds (`stage4a::e_teacher_diagnostic`). A diagnostic of the initial
+/// choice under plain continuation, not of the full E strategy. No search,
+/// reset, update or checkpoint.
+pub(super) fn teacher_diagnostic(
+    teacher: &ExpandedModelSourceV1,
+    prior_deck_indices: &[usize],
+    worlds_per_probe: u64,
+    max_transitions: u64,
+    probes: &[ETeacherDiagnosticProbeV1],
+    output_directory: &Path,
+) -> Result<Value, String> {
+    use crate::regret_census_v1::stage4a::e_teacher_diagnostic as diagnostic;
+    ensure(
+        !probes.is_empty() && probes.len() <= 4096,
+        "E teacher diagnostic probe count outside 1..4096",
+    )?;
+    ensure(
+        (1..=64).contains(&worlds_per_probe) && (1..=65_536).contains(&max_transitions),
+        "E teacher diagnostic worlds or transition cap outside its bounds",
+    )?;
+    validate_prior(prior_deck_indices)?;
+    ensure(
+        !output_directory.exists(),
+        "E teacher diagnostic output directory must be fresh",
+    )?;
+    let (parent, identity) = load_expanded_inference_v1(teacher)?;
+    ensure(
+        parent.collection_sampler_identity_v1().is_none(),
+        "E teacher diagnostic requires the unchanged deployment sampler",
+    )?;
+    let mut ids = BTreeSet::new();
+    let mut rows = Vec::new();
+    let mut totals = diagnostic::Totals::default();
+    for probe in probes {
+        ensure(
+            !probe.probe_id.is_empty() && ids.insert(&probe.probe_id),
+            "duplicate or empty E teacher diagnostic probe id",
+        )?;
+        let trajectory: ExpandedTrajectoryV1 = read_pinned(&probe.trajectory)?;
+        ensure(
+            trajectory.learner_sampler.is_none(),
+            "E teacher diagnostic requires the unchanged deployment collection sampler",
+        )?;
+        let episode = &trajectory.episode;
+        ensure(
+            episode.reset.is_none(),
+            "E teacher diagnostic uses ordinary-start trajectories",
+        )?;
+        let mut session = episode_session_v1(episode, &episode.configurations()?)?;
+        let mut history: Vec<VisibleFrame> = Vec::new();
+        let mut root = None;
+        for (index, row) in trajectory.decisions.iter().enumerate() {
+            let FastActorResponseV1::Decision(d) = session.current_response() else {
+                return Err("E teacher diagnostic replay ended before recorded row".into());
+            };
+            ensure(
+                d.step == row.step
+                    && d.physical_decision_id == row.physical_decision_id
+                    && d.substep_index == row.substep_index
+                    && d.substep_count == row.substep_count
+                    && seat(d.acting_player) == row.actor
+                    && d.legal_action_count as usize == row.logits.len(),
+                "E teacher diagnostic replay row mismatch",
+            )?;
+            if index == probe.row_index {
+                ensure(
+                    row.actor == episode.learner_seat
+                        && d.legal_action_count >= 2
+                        && probe.teacher_live < row.logits.len(),
+                    "E teacher diagnostic probe is not a nonforced learner row of teacher_live",
+                )?;
+                root = Some((session.clone(), history.clone()));
+            }
+            if row.actor == episode.learner_seat {
+                history.push(e_supported::visible_frame(&session, d, row.selected)?);
+            }
+            session
+                .step(d.episode_id, d.step, row.selected)
+                .map_err(err)?;
+        }
+        ensure(
+            matches!(session.current_response(),FastActorResponseV1::Terminal(t) if t==trajectory.terminal),
+            "E teacher diagnostic replay terminal mismatch",
+        )?;
+        let (root, history) = root.ok_or("E teacher diagnostic row outside trajectory")?;
+        let row = &trajectory.decisions[probe.row_index];
+        let mut capture = parent.fork_for_collection_v3()?;
+        capture.reset_sampling_v1([0, 0]);
+        let (logits, tensor) = match trajectory_generation_v1(&trajectory) {
+            FreshLineageGenerationV1::V3 => {
+                let (_, scores, tensor) = capture.select_with_training_tensor_v3(&root)?;
+                (scores.logits, TensorBitsV1::from_tensor(&tensor.common))
+            }
+            FreshLineageGenerationV1::V4 => {
+                let (_, scores, tensor) = capture.select_with_training_tensor_v4(&root)?;
+                (scores.logits, TensorBitsV1::from_tensor(&tensor.common))
+            }
+        };
+        ensure(
+            serde_json::to_vec(&tensor).map_err(err)?
+                == serde_json::to_vec(&row.tensor).map_err(err)?,
+            "E teacher diagnostic encoded input differs from the saved row",
+        )?;
+        let opponent_source = episode
+            .opponent
+            .as_ref()
+            .ok_or("E teacher diagnostic requires a frozen episode opponent")?;
+        let (opponent, opponent_identity) = load_expanded_inference_v1(opponent_source)?;
+        let recorded = trajectory
+            .seat_behaviors
+            .as_ref()
+            .ok_or("E teacher diagnostic opponent behavior identity missing")?;
+        ensure(
+            recorded[1 - usize::from(episode.learner_seat)].identity == opponent_identity,
+            "E teacher diagnostic frozen opponent identity mismatch",
+        )?;
+        let (mut result, probe_totals) = diagnostic::probe(
+            &probe.probe_id,
+            &root,
+            &history,
+            probe.teacher_live,
+            &parent,
+            &opponent,
+            prior_deck_indices,
+            worlds_per_probe,
+            max_transitions,
+        )?;
+        totals.add(&probe_totals);
+        result["trajectory"] = json!(probe.trajectory);
+        result["row_index"] = json!(probe.row_index);
+        result["source_game"] = json!({"episode_id":episode.id,"seed":episode.seed,
+            "learner_seat":episode.learner_seat,"decks":episode.selected});
+        result["opponent_identity"] = json!(opponent_identity);
+        result["learner_behavior_is_teacher"] =
+            json!(recorded[usize::from(episode.learner_seat)].identity == identity);
+        result["saved_logits_match_teacher"] =
+            json!(logits.iter().map(|z| z.to_bits()).collect::<Vec<_>>() == row.logits);
+        rows.push(result);
+    }
+    let result = json!({"schema":"mtg-kernel-e-teacher-diagnostic/v1","method":diagnostic::METHOD,
+        "e_method":e_supported::METHOD,"complete":true,"teacher":teacher,"teacher_identity":identity,
+        "prior_deck_indices":prior_deck_indices,"worlds_per_probe":worlds_per_probe,
+        "max_transitions":max_transitions,
+        "formal":worlds_per_probe == diagnostic::FORMAL_WORLDS
+            && max_transitions == diagnostic::FORMAL_MAX_TRANSITIONS,
+        "scope":"initial choice under plain continuation; not the full E strategy",
+        "probes":rows,"totals":totals,
+        "runtime_commit":env!("MTG_KERNEL_BUILD_GIT_HEAD"),
+        "runtime_tree":env!("MTG_KERNEL_BUILD_TRACKED_TREE_SHA256")});
+    fs::create_dir_all(output_directory).map_err(err)?;
+    publish_json(output_directory, "diagnostic.json", &result)?;
+    Ok(result)
+}
+
 fn rank(case: &str, row: usize) -> [u8; 32] {
     Sha256::digest(
         serde_json::to_vec(&json!({"case_id":case,"namespace":e_supported::METHOD,
@@ -148,23 +329,7 @@ pub(super) fn teach(
         options.selection_transition_cap > 0 && options.selection_transition_cap <= 512_000,
         "invalid E transition cap",
     )?;
-    ensure(
-        !options.prior_deck_indices.is_empty()
-            && options
-                .prior_deck_indices
-                .iter()
-                .all(|&i| i < crate::runtime_decks::RUNTIME_DECKS.len()),
-        "invalid E public prior",
-    )?;
-    ensure(
-        options
-            .prior_deck_indices
-            .iter()
-            .collect::<BTreeSet<_>>()
-            .len()
-            == options.prior_deck_indices.len(),
-        "duplicate E prior deck",
-    )?;
+    validate_prior(&options.prior_deck_indices)?;
     let loaded = if options.slots.is_empty() {
         None
     } else {

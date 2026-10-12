@@ -36,6 +36,19 @@ pub(crate) fn visible_frame(
         selected,
     })
 }
+/// E's public deck prior at a root: the registered decks conditioned on every
+/// actor-visible frame of the prefix and on the root's own view.
+pub(super) fn public_prior(
+    session: &FastActorSessionV1,
+    d: FastActorDecisionV1,
+    history: &[VisibleFrame],
+    prior_indices: &[usize],
+) -> Result<DeckPrior, String> {
+    let mut prior_history = history.to_vec();
+    prior_history.push(visible_frame(session, d, 0)?);
+    Ok(DeckPrior::new(prior_indices).with_visible_history(&prior_history, super::play::acting(&d)))
+}
+
 /// No policy RNG or real session mutation; all search roles are owned clones.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn query(
@@ -48,10 +61,7 @@ pub(crate) fn query(
     prior_indices: &[usize],
     select_cap: u64,
 ) -> Result<(Option<usize>, Value), String> {
-    let mut prior_history = history.to_vec();
-    prior_history.push(visible_frame(session, d, 0)?);
-    let prior =
-        DeckPrior::new(prior_indices).with_visible_history(&prior_history, super::play::acting(&d));
+    let prior = public_prior(session, d, history, prior_indices)?;
     let ctx = RootCtx {
         visible_history: history,
         root: session,
