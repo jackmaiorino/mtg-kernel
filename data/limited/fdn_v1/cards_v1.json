@@ -6973,6 +6973,40 @@
       "mechanics": [
         "tap_create_goblins_from_resolution_time_controlled_permanent_count"
       ]
+    },
+    {
+      "name": "Zul Ashur, Lich Lord",
+      "mana_cost": "{1}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Zombie",
+        "Warlock"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "is_token": false,
+      "java_file": "Mage.Sets/src/mage/cards/z/ZulAshurLichLord.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_zul_ashur.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "ward_pay_two_life",
+        "tap_own_graveyard_zombie_creature_ordinary_cast_permission_this_turn"
+      ]
     }
   ]
 }

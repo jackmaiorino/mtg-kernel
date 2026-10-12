@@ -328,7 +328,7 @@ mod future_printed {
         panic!("actual Zul resolution");
     }
     #[test]
-    #[ignore = "Zul Ashur is unregistered; actual owning Human qualification remains root-owned"]
+
     fn actual_activation_own_graveyard_cast_public_facts_safe_labels_and_owning_rollback_both_seats(
     ) {
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -442,7 +442,7 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "Zul Ashur is unregistered; actual source custody/public refusal qualification remains root-owned"]
+
     fn actual_published_owner_erasure_and_immutable_input_header_order_forgeries_are_readonly_both_seats(
     ) {
         for actor in [PlayerId::P0, PlayerId::P1] {

@@ -101,7 +101,7 @@ mod future_printed {
         panic!("resolution");
     }
     #[test]
-    #[ignore = "Zul Ashur is unregistered; root-owned actual printed qualification"]
+
     fn actual_targets_payment_original_beneficiary_departed_source_normal_cast_and_restoration_both_seats(
     ) {
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -147,7 +147,7 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "Zul Ashur is unregistered; root-owned actual printed qualification"]
+
     fn actual_owner_erasure_counter_target_blink_cleanup_and_meaning_forgeries_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let (state, _, target) = setup(actor);
@@ -207,7 +207,7 @@ mod future_printed {
     }
 
     #[test]
-    #[ignore = "Zul Ashur is unregistered; actual printed Ward and source control qualification remains root-owned"]
+
     fn actual_printed_cast_life_ward_pay_decline_and_restore_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for pay in [false, true] {
@@ -277,7 +277,7 @@ mod future_printed {
     }
 
     #[test]
-    #[ignore = "Zul Ashur is unregistered; typed control setup and actual off-turn permission qualification remains root-owned"]
+
     fn actual_original_holder_after_typed_control_change_offturn_timing_and_expiry_forgery_both_seats(
     ) {
         for actor in [PlayerId::P0, PlayerId::P1] {

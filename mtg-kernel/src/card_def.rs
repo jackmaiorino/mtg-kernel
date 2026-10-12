@@ -2621,18 +2621,19 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 426 (Krenko after Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
+        // batches append through id 427 (Zul after Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                427
+                428
             } else {
                 192
             }
         );
         if cfg!(feature = "limited-fdn-fixtures") {
             assert_eq!(card_id_by_name("Krenko, Mob Boss"), Some(426));
+            assert_eq!(card_id_by_name("Zul Ashur, Lich Lord"), Some(427));
         }
     }
 
