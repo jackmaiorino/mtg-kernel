@@ -578,7 +578,7 @@ pub(crate) fn grant_selected(
             holder_turn_started: false,
         },
     };
-    state.engine.exile_play_permissions.push(permission.clone());
+    state.engine.exile_play_permissions.push(permission);
     if let Some(stack) = binding.stack_item_id {
         let index = u32::try_from(state.engine.event_history.len())
             .map_err(|_| "Strongbox permission overflow")?;

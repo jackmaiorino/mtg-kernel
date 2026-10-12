@@ -189,10 +189,11 @@ mod tests {
             wrong.catalog_hash ^= 1;
             assert!(meaning(&wrong, id, 0).is_err());
         } else {
-            assert!(!cfg!(all(
+            #[cfg(all(
                 feature = "limited-fdn-fixtures",
                 not(feature = "standard-magezero-fixtures")
-            )));
+            ))]
+            panic!("registered Limited Strongbox selector must exist");
         }
     }
 }

@@ -20,7 +20,7 @@ pub enum OperationV1 {
     Commit(ProposedEvent),
     Effect {
         op: crate::effect::EffectOp,
-        ctx: crate::effect::ExecCtx,
+        ctx: Box<crate::effect::ExecCtx>,
     },
 }
 
