@@ -9,6 +9,15 @@ The future gameplay assertion uses Fiery's reserved target identity 64.
 These source changes have formatting and diff checks, with native typecheck,
 runtime and Public/Human V33 still pending. Fiery remains unregistered.
 
+The public facts precursor reconstructs original death replacement rows only
+after full lifecycle validation and genuine definition-bound meaning lookup.
+It retains original spell and target incarnations, actual turn key, current
+original-target presence and real Cleanup expiry. Target transport carries only
+the incarnation relation, never a concealed target card definition. Prepared
+real-cast prevention/source-departure and Cleanup tests check these facts,
+restore equality and malformed lifecycle refusal. Full observation, pending
+target menus and the owning Human V33 adapter remain work to complete.
+
 Own branch `codex/fdn-fiery-current-source-20261012` composes preserved
 `6af6b446b14acaf25cd60becedd1667d9316ff5c` on later source
 `8c53207a6aa9ad39d9bdaa0ee5eb89fe94e9b014`. Original source and old worktree

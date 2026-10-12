@@ -304,6 +304,16 @@ fn fiery_printed_metadata_real_equip_optional_target_and_pending_stack_restore()
         TargetSpec::CreatureThenUpToOneAttachedEquipment
     );
     assert_eq!(def.target_spec.stable_id(), 64);
+    let selector = mtg_kernel::rules_meaning_fiery_v1::live_selector().unwrap();
+    let meaning = mtg_kernel::rules_meaning_fiery_v1::meaning(
+        &selector,
+        card_id_by_name("Fiery Annihilation").unwrap(),
+        0,
+    )
+    .unwrap();
+    mtg_kernel::rules_meaning_fiery_v1::validate(&meaning).unwrap();
+    assert_eq!(meaning.rule.damage_count, 5);
+    assert_eq!(meaning.rule.equipment_target_maximum, 1);
     for caster in [PlayerId::P0, PlayerId::P1] {
         for owner in [caster, caster.opponent()] {
             for optional in [false, true] {
@@ -394,11 +404,31 @@ fn fiery_actual_strands_prevention_still_exiles_equipment_and_later_death_after_
         assert_eq!(state.objects.get(equipment).zone, Zone::Exile);
         assert_eq!(state.objects.get(spell).zone, Zone::Graveyard);
         assert_eq!(shield_count(&state), 1);
+        let public = mtg_kernel::fiery_public_v1::facts_v1(&state).unwrap();
+        assert_eq!(public.death_replacements.len(), 1);
+        let row = &public.death_replacements[0];
+        assert_eq!(row.source_at_resolution.arena_id, spell.0);
+        assert_eq!(row.original_target.arena_id, creature.0);
+        assert!(row.original_target_present);
+        assert_eq!(
+            row.lifecycle,
+            mtg_kernel::fiery_public_v1::LifecycleV1::Unexpired
+        );
+        assert_eq!(
+            mtg_kernel::fiery_public_v1::facts_v1(&copy(&state)).unwrap(),
+            public
+        );
         event::propose_and_commit(
             &mut state,
             ProposedEvent::zone_change(creature, Zone::Graveyard),
         );
         assert_eq!(state.objects.get(creature).zone, Zone::Exile);
+        let departed = mtg_kernel::fiery_public_v1::facts_v1(&state).unwrap();
+        assert!(!departed.death_replacements[0].original_target_present);
+        assert_eq!(
+            departed.death_replacements[0].original_target,
+            row.original_target
+        );
     }
 }
 
@@ -540,6 +570,7 @@ fn fiery_cleanup_expires_replacement_and_restored_forgery_refuses_before_mutatio
         };
         source.controller = source.controller.opponent();
         let before = serde_json::to_vec(&forged).unwrap();
+        assert!(mtg_kernel::fiery_public_v1::facts_v1(&forged).is_err());
         assert!(engine::step(&mut forged, Action::Pass).is_err());
         assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
         state.step = Step::End;
@@ -552,6 +583,12 @@ fn fiery_cleanup_expires_replacement_and_restored_forgery_refuses_before_mutatio
         }
         assert_eq!(shield_count(&state), 0);
         assert_eq!(state.objects.get(creature).damage, 0);
+        let public = mtg_kernel::fiery_public_v1::facts_v1(&state).unwrap();
+        assert_eq!(public.death_replacements.len(), 1);
+        assert_eq!(
+            public.death_replacements[0].lifecycle,
+            mtg_kernel::fiery_public_v1::LifecycleV1::ExpiredAtCleanup
+        );
         state = copy(&state);
         event::propose_and_commit(
             &mut state,

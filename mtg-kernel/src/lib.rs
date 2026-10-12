@@ -100,6 +100,7 @@ mod gorehorn_damage_v1;
 pub mod gourmand_public_v1;
 
 mod fiery_annihilation_v1;
+pub mod fiery_public_v1;
 pub mod human_opening_v1;
 pub mod native_expanded_training_run_v1;
 mod raid_entry_custody_v1;
