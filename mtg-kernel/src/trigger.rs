@@ -3865,6 +3865,10 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
             },
         ) => count == actual_count && max_taken == actual_max_taken,
         (EffectOp::BindAuthorityEntryGainLifeV1, EffectOp::AuthorityEntryGainLifeV1 { .. }) => true,
+        (
+            EffectOp::BindGarrukEtbDrawV1 | EffectOp::BindGarrukPowerEntryDrawV1,
+            EffectOp::GarrukDrawFromCaptureV1 { .. },
+        ) => true,
         (template, EffectOp::CerberusUntapV1 { .. })
             if *template == crate::slumbering_cerberus_v1::program_v1() =>
         {

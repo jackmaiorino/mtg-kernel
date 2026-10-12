@@ -224,3 +224,110 @@ fn genuine_pending_and_published_draw_ownership_cannot_be_erased_or_replayed() {
         readonly(&bad);
     }
 }
+
+#[test]
+fn genuine_copied_enchantment_entry_and_exact_id_counter_keep_original_owners() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        cast(&mut state, actor, "Myr Enforcer", 0, 7);
+        let source = cast(&mut state, actor, "Garruk's Uprising", 1, 2);
+        let before = state.players[actor.index()].hand.len();
+        let copied =
+            crate::standard_cards_v1::create_token_copy(&mut state, source, actor).unwrap();
+        assert!(state.objects.get(copied).v4.is_token);
+        let mut replay = restore(&state);
+        settle(&mut state);
+        settle(&mut replay);
+        assert_eq!(state.players[actor.index()].hand.len(), before + 1);
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+        let creature = put(&mut state, actor, "Myr Enforcer", Zone::Hand);
+        crate::event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(creature, Zone::Battlefield),
+        );
+        loop {
+            match next(&mut state) {
+                Decision::OrderTriggers { pending, .. } => engine::step(
+                    &mut state,
+                    Action::OrderTriggers((0..pending.len()).collect()),
+                )
+                .unwrap(),
+                Decision::CastSpellOrPass { .. } => break,
+                other => panic!("real copied observer placement {other:?}"),
+            }
+        }
+        let saved = state.stack.last().unwrap().clone();
+        engine::counter_stack_item_by_id(&mut state, saved.v4.stack_item_id).unwrap();
+        validate_state(&state).unwrap();
+        let mut bad = restore(&state);
+        bad.stack.push(saved);
+        readonly(&bad);
+        let before = state.players[actor.index()].hand.len();
+        settle(&mut state);
+        assert_eq!(
+            state.players[actor.index()].hand.len(),
+            before + 1,
+            "countered one observer; the other genuinely draws once"
+        );
+    }
+}
+
+#[test]
+fn actual_witness_suppression_and_later_reentered_grant_follow_layer_timestamps() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let source = cast(&mut state, actor, "Garruk's Uprising", 1, 2);
+        let elf = put(&mut state, actor, "Llanowar Elves", Zone::Hand);
+        crate::event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(elf, Zone::Battlefield),
+        );
+        settle(&mut state);
+        assert!(engine::has_effective_keyword(
+            &state,
+            elf,
+            Keywords::TRAMPLE
+        ));
+        let witness = put(&mut state, actor, "Witness Protection", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 1;
+        next(&mut state);
+        engine::step(&mut state, Action::CastSpell(witness)).unwrap();
+        assert!(
+            matches!(next(&mut state), Decision::ChooseTargets { legal_targets, .. }
+            if legal_targets.contains(&crate::state::Target::Object(elf)))
+        );
+        engine::step(
+            &mut state,
+            Action::ChooseTarget(crate::state::Target::Object(elf)),
+        )
+        .unwrap();
+        settle(&mut state);
+        assert!(!engine::has_effective_keyword(
+            &state,
+            elf,
+            Keywords::TRAMPLE
+        ));
+        crate::event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(source, Zone::Hand),
+        );
+        crate::event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(source, Zone::Battlefield),
+        );
+        settle(&mut state);
+        assert!(
+            engine::has_effective_keyword(&state, elf, Keywords::TRAMPLE),
+            "later continuously granted keyword survives the earlier ability removal"
+        );
+        let replay = restore(&state);
+        assert!(engine::has_effective_keyword(
+            &replay,
+            elf,
+            Keywords::TRAMPLE
+        ));
+    }
+}

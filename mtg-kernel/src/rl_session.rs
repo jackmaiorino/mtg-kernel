@@ -41,6 +41,7 @@ pub mod census_future_v2;
 pub(crate) mod cerberus_v19;
 pub(crate) mod employment_v18;
 pub(crate) mod frenzied_v15;
+pub(crate) mod garruk_v30;
 pub(crate) mod human_opening_v1;
 pub(crate) mod human_v8;
 pub(crate) mod sower_v14;
@@ -4433,6 +4434,7 @@ enum FlatActionContractModeV1 {
     AuthorityV17,
     EmploymentV18,
     CerberusV19,
+    GarrukV30,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -5388,6 +5390,17 @@ impl RlEpisodeSessionV1 {
         mut profile: Option<&mut RlPhaseProfileV1>,
     ) {
         self.current = None;
+        if crate::garruks_uprising_v1::requires_successor(&self.state) {
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:garruk_v30_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         let surfaced = match measure_optional(&mut profile, RlPhaseV1::Advance, || {
             self.surface
                 .next_decision_owned(&mut self.state, self.environment_revision)
@@ -7079,6 +7092,20 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
+        if crate::garruks_uprising_v1::requires_successor(&self.state)
+            && self.flat_action_contract_mode != FlatActionContractModeV1::GarrukV30
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:garruk_v30_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         self.current = None;
         let surfaced = match self
             .surface
@@ -7335,6 +7362,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:authority_v17:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::GarrukV30 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = garruk_v30::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:garruk_v30:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));
