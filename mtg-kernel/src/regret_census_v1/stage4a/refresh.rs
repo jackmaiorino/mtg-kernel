@@ -517,8 +517,11 @@ pub(super) fn budget_replay(
         }
         apply(&mut s, &d, a, &mut meter, focal, Some(&mut suffix), &defs).map_err(err)?;
     }
+    // Focal physical decision starts (with replay identities) for reset cuts.
+    let (starts, witnesses) = guide_record(&source_session(&sh.spec, src)?, focal, actions)?;
     Ok(
-        json!({"id":src.id,"end":outcome(&s, focal),"sequence":suffix.json(),"actions":actions.len()}),
+        json!({"id":src.id,"end":outcome(&s, focal),"sequence":suffix.json(),"actions":actions.len(),
+        "starts":starts,"witnesses":witnesses}),
     )
 }
 
