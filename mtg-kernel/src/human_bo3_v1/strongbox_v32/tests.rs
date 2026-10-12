@@ -576,7 +576,23 @@ mod future_printed {
                 .engine
                 .exile_play_permissions
                 .iter()
-                .all(|permission| !permission.cast_without_paying_mana_cost));
+                .all(|permission| !permission.without_mana_cost.0));
+            // A zero pool is not short payment while automatic mana can tap
+            // the real Mountain. Keep that existing source physically tapped.
+            let mountains: Vec<_> = state.players[actor.index()]
+                .battlefield
+                .iter()
+                .copied()
+                .filter(|id| {
+                    state.objects.get(*id).card_def == card_id_by_name("Mountain").unwrap()
+                })
+                .collect();
+            assert_eq!(mountains.len(), 1);
+            state.objects.get_mut(mountains[0]).tapped = true;
+            assert!(state.players[actor.index()]
+                .mana_pool
+                .iter()
+                .all(|amount| *amount == 0));
             assert!(
                 matches!(next(&mut state),Decision::CastSpellOrPass {castable_spells,..} if !castable_spells.contains(&selected))
             );
