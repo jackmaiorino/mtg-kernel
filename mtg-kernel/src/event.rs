@@ -1205,6 +1205,18 @@ pub enum CommittedEvent {
     EquipmentDamageCounterRemovalV4 {
         removal: Box<crate::equipment_damage_source_v4::CounterRemovalV4>,
     },
+    KrenkoPaidV1 {
+        paid: Box<crate::krenko_v1::PaidV1>,
+    },
+    KrenkoRemovedV1 {
+        removed: Box<crate::krenko_v1::RemovedV1>,
+    },
+    KrenkoSampleV1 {
+        sample: Box<crate::krenko_v1::SampleV1>,
+    },
+    KrenkoCompletedV1 {
+        completed: Box<crate::krenko_v1::CompletedV1>,
+    },
     ZulAshurPublishedV1 {
         publication: Box<crate::zul_ashur_v1::PublicationV1>,
     },

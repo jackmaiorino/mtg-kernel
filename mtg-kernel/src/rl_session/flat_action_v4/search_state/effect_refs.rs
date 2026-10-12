@@ -181,6 +181,7 @@ impl Scan<'_> {
             | LookTopMayKeepOneRestGraveyard { .. }
             | TakeExtraTurnAfterThisOneV1
             | CreateControlledCreatureTargetCopyV1
+            | KrenkoCreateGoblinsV1
             | FieryAnnihilation
             | DoubleTargetPowerUntilEndOfTurn { .. }
             | DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
@@ -1231,7 +1232,11 @@ pub(super) fn conflicts(
             }
             InitiativeTrigger { binding } => s.raw(binding.source.source),
             MonarchTrigger { binding } => s.raw(binding.source.source),
-            LibrarianActivationCommittedV1 { .. }
+            KrenkoPaidV1 { .. }
+            | KrenkoRemovedV1 { .. }
+            | KrenkoSampleV1 { .. }
+            | KrenkoCompletedV1 { .. }
+            | LibrarianActivationCommittedV1 { .. }
             | LibrarianActivationCounterRemovalV1 { .. }
             | LibrarianActivationOperationV1 { .. }
             | LibrarianActivationFinishedV1 { .. } => true,

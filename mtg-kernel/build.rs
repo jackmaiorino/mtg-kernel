@@ -4774,6 +4774,15 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
         return recipes;
     }
     match name {
+        "Krenko, Mob Boss" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Tap],
+            effect: AbilityEffectRecipe::StandardProgram("crate::krenko_v1::program"),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Zul Ashur, Lich Lord" => &[ActivatedAbilityRecipe { cost: &[AbilityCostRecipe::Tap], effect: AbilityEffectRecipe::StandardProgram("crate::zul_ashur_v1::recipe"), activation_zone: "Battlefield", sorcery_speed_only: false, target_spec: "CreatureCardInOwnGraveyard", activation_target_filter: "CreatureSubtype(Subtype::Zombie)", max_activations_per_turn: None }],
         "Mild-Mannered Librarian" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::ManaCost("{3}{G}")],
