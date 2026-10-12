@@ -26,7 +26,10 @@ pub(crate) fn needs_stats(state: &GameState, object: ObjectId) -> bool {
     })
 }
 
-fn capture_damage_source(state: &GameState, object: ObjectId) -> HistoricalDamageSourceV1 {
+pub(crate) fn capture_damage_source(
+    state: &GameState,
+    object: ObjectId,
+) -> HistoricalDamageSourceV1 {
     HistoricalDamageSourceV1 {
         source: crate::state::AbilitySourceContractV4::capture(state, object),
         color_mask: crate::engine::object_color_mask(state, object),
@@ -127,6 +130,7 @@ fn selected_definition_uses_program(item: &StackItem) -> bool {
 }
 
 pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), String> {
+    crate::gorehorn_damage_v1::validate_item(state, item)?;
     if !is_program(item.inline_effect.as_ref()) {
         if selected_definition_uses_program(item)
             || state.engine.event_history.iter().any(|event| {
@@ -251,6 +255,7 @@ pub(crate) fn finish(state: &mut GameState, item: &StackItem) {
 }
 
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    crate::gorehorn_damage_v1::validate_state(state)?;
     // The operation owns a mandatory payment receipt. Receipt presence cannot
     // decide whether its live activation is validated: deletion must refuse
     // before any action mutates priority, mana, targets or continuation state.
@@ -320,6 +325,9 @@ pub(crate) fn damage_source(
     source: ObjectId,
     id: StackItemId,
 ) -> Result<HistoricalDamageSourceV1, String> {
+    if crate::gorehorn_damage_v1::has_publication(state, id) {
+        return crate::gorehorn_damage_v1::damage_source(state, id, source);
+    }
     let mut receipts =
         state
             .engine

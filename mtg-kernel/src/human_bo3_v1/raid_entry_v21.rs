@@ -86,7 +86,46 @@ pub struct HumanDecisionRaidEntryV21 {
 pub struct HumanRaidEntryExtensionsV21 {
     pub predecessor: HumanExtensionsV9,
     pub keep_one: Option<crate::raid_entry_public_v1::KeepOneContextV1>,
+    pub gorehorn_sources: Vec<HumanGorehornSourceV21>,
 }
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HumanGorehornSourceV21 {
+    pub stack_ordinal: u32,
+    pub printed_card_name: String,
+    pub ability_controller: PlayerSeatV1,
+    pub damage_controller: PlayerSeatV1,
+    pub historical: bool,
+    pub color_mask: u8,
+    pub lifelink: bool,
+    pub deathtouch: bool,
+}
+fn gorehorn_sources(
+    observation: &RaidEntryObservationV1,
+) -> Result<Vec<HumanGorehornSourceV21>, Error> {
+    observation
+        .gorehorn_sources
+        .iter()
+        .map(|row| {
+            let def = crate::card_def::CARD_DEFS
+                .get(usize::from(row.printed_card_db_id))
+                .ok_or(Error::InvalidVisibleReference)?;
+            if def.name != "Gorehorn Raider" {
+                return Err(Error::InvalidVisibleReference);
+            }
+            Ok(HumanGorehornSourceV21 {
+                stack_ordinal: row.stack_ordinal,
+                printed_card_name: def.name.into(),
+                ability_controller: row.ability_controller,
+                damage_controller: row.damage_controller,
+                historical: row.historical,
+                color_mask: row.color_mask,
+                lifelink: row.lifelink,
+                deathtouch: row.deathtouch,
+            })
+        })
+        .collect()
+}
+
 fn parts(observation: &RaidEntryObservationV1) -> super::life_ward_v8::ProjectionPartsV8<'_> {
     let base = &observation.base;
     super::life_ward_v8::ProjectionPartsV8 {
@@ -125,6 +164,7 @@ fn state(
                     [1 - seat],
             },
             keep_one: observation.keep_one.clone(),
+            gorehorn_sources: gorehorn_sources(observation)?,
         },
     })
 }
