@@ -478,6 +478,7 @@ mod authority_of_the_consuls_v1;
 pub(crate) mod cerberus_capture_v1;
 pub mod cerberus_public_v1;
 pub(crate) mod life_gain_turn_v1;
+pub(crate) mod life_loss_turn_v1;
 pub mod phase_profile;
 pub mod policy_surface_v5;
 pub(crate) mod private_physical_trajectory_core;
@@ -487,6 +488,7 @@ pub mod regret_census_v1;
 pub mod rl;
 pub mod rl_session;
 pub mod rules_meaning_soul_shackled_zombie_v1;
+pub mod rules_meaning_stromkirk_v1;
 pub mod runtime_decks;
 mod self_reflection_v1;
 pub mod sideboard;
@@ -500,6 +502,8 @@ mod store_v2_resume_walk_timing_harness_v1;
 /// Frozen committed-source-tree capture for science workload preflight and
 /// postflight binding.
 pub mod strict_source_tree_attestation_v1;
+pub(crate) mod stromkirk_bloodthief_v1;
+pub mod stromkirk_public_v1;
 pub mod surface;
 pub mod surface_v2;
 pub mod trace;

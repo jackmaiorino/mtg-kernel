@@ -6795,6 +6795,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Nessian Hornbeetle" => "beginning_controller_combat_if_other_creature_effective_power_at_least:4:recheck_at_resolution:plus_one_counter_on_bound_source:1",
         "Micromancer" => "etb:may_search_library:instant_or_sorcery_mana_value:1:reveal_to_hand:shuffle:fail_to_find_allowed",
         "Skyship Buccaneer" => "self_etb:intervening_if_captured_controller_declared_attackers_this_turn:declaration_history_round_and_active_seat:recheck_at_resolution:draw_controller:1",
+        "Stromkirk Bloodthief" => "controller_end_step:intervening_opponent_actual_life_loss_this_turn:target_controlled_vampire_permanent:counter:plus1_plus1:1:captured_controller_recheck",
         "Authority of the Consuls" => "opponent_creature_entry:actual_zonechange_or_create_token:captured_controller:gain_life_1;static:opponent_creatures_enter_tapped:active_printed_ability",
         "Searslicer Goblin" => "beginning_captured_controller_end_step:intervening_if_captured_controller_declared_attackers_this_turn:declaration_history_round_and_active_seat:recheck_at_resolution:create_goblin_token_for_captured_controller:1:untapped:nonattacking:no_haste",
         "Ruby, Daring Tracker" => "source_attacks_while_controller_has_effective_power_at_least:4:bound_source_pump_until_end_of_turn:2:2",

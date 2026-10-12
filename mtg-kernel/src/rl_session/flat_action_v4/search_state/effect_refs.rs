@@ -123,6 +123,7 @@ impl Scan<'_> {
             | SkipNextUntap { .. }
             | AttachSourceToTarget { .. }
             | AddCountersToTarget { .. }
+            | StromkirkVampirePermanentCounterV1
             | CreateTokenAndAttachSource { .. }
             | CreateRoleAttachedToTarget { .. }
             | AddMana { .. }
@@ -942,6 +943,14 @@ pub(super) fn conflicts(
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
     let s = Scan { state, pool };
+    if state.engine.event_history.iter().any(|e| {
+        matches!(
+            e,
+            crate::event::CommittedEvent::StromkirkEndStepObserversV1 { .. }
+        )
+    }) {
+        return true;
+    }
     if let Some(crate::engine::PendingDiscard {
         resume: crate::engine::DiscardResume::FinishEffectContinuation { original_hand, .. },
         ..
@@ -994,6 +1003,7 @@ pub(super) fn conflicts(
     state.engine.event_log.iter().any(|event| {
         use crate::event::CommittedEvent::*;
         match event {
+            StromkirkEndStepObserversV1 { .. } => true,
             Damage { source, target, .. } => {
                 s.raw(*source) || matches!(target,crate::state::Target::Object(id) if s.raw(*id))
             }
@@ -1102,6 +1112,7 @@ pub(super) fn conflicts(
             | LifeLoss { .. }
             | LifeGain { .. }
             | LifeGainTurnBeganV1 { .. }
+            | LifeLossTurnBeganV1 { .. }
             | ManaAdded { .. }
             | UpkeepBegan { .. }
             | CrimeCommitted { .. }

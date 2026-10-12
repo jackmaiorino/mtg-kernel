@@ -394,6 +394,8 @@ pub enum EffectCond {
     },
     /// Raid recheck uses the resolving ability's captured controller.
     ControllerAttackedThisTurn,
+    /// Intervening recheck using the captured original controller.
+    OpponentLostLifeThisTurn,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1609,6 +1611,8 @@ pub enum EffectOp {
     CerberusUntapV1 {
         capture_history_index: u64,
     },
+    /// Stromkirk's legal controlled Vampire permanent, including noncreatures.
+    StromkirkVampirePermanentCounterV1,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -7770,6 +7774,7 @@ fn validate_standard_choose_permanent_origin(
 }
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
+    crate::stromkirk_bloodthief_v1::validate_state(state)?;
     temporary_control_v1::authority::validate(state)?;
     crate::self_reflection_v1::validate_live_stack(state)?;
     crate::authority_of_the_consuls_v1::validate_state(state)?;
@@ -18524,6 +18529,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ));
             }
         }
+        EffectOp::StromkirkVampirePermanentCounterV1 => {
+            crate::stromkirk_bloodthief_v1::resolve(state, ctx);
+        }
         EffectOp::PreventTargetBlockingUntilEndOfTurn { target_index } => {
             crate::sower_of_chaos_v1::install(state, ctx, *target_index);
         }
@@ -19472,6 +19480,9 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
             .hand
             .is_empty(),
         EffectCond::CreatureDiedThisTurn => state.creature_died_this_turn_v1(),
+        EffectCond::OpponentLostLifeThisTurn => {
+            crate::life_loss_turn_v1::opponent_lost_life(state, ctx.controller).unwrap_or(false)
+        }
         EffectCond::ControllerAttackedThisTurn => {
             state.player_attacked_this_turn_v1(ctx.controller)
         }

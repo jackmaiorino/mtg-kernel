@@ -8959,6 +8959,13 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    if crate::stromkirk_bloodthief_v1::validate_state(state).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        return Decision::Halted {
+            mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+            source: ObjectId(0),
+        };
+    }
     // A closed Cerberus operation still owns historical authority. Validate it
     // before automatic step/cleanup work can mutate a restored malformed state.
     if crate::cerberus_capture_v1::validate_state(state).is_err() {
@@ -13050,6 +13057,7 @@ fn triggered_stack_item_expected_target_spec(
         ability_source_contract,
     )?;
     crate::cerberus_capture_v1::validate_source(state, inline_effect, ability_source_contract)?;
+
     #[cfg(feature = "standard-magezero-fixtures")]
     if matches!(
         inline_effect,
@@ -13168,6 +13176,13 @@ fn triggered_stack_item_expected_target_spec(
         crate::soul_shackled_zombie_v1::validate_source(
             state,
             ability_source_contract.ok_or("single-graveyard ETB lost its source capture")?,
+        )?;
+    }
+    if !granted_trigger {
+        crate::stromkirk_bloodthief_v1::validate_source(
+            state,
+            inline_effect,
+            ability_source_contract,
         )?;
     }
     let definition_target_spec = trigger::target_spec_for_trigger(source_card_def, inline_effect);
@@ -13501,7 +13516,9 @@ pub(crate) fn validated_stack_item_target_spec(
     {
         let contract = if crate::self_reflection_v1::owns_spell(state, item) {
             crate::self_reflection_v1::normalize_historical_target(state, contract)
-        } else if effect::temporary_control_v1::owns_spell(state, item) {
+        } else if effect::temporary_control_v1::owns_spell(state, item)
+            || crate::stromkirk_bloodthief_v1::owns_item(item)
+        {
             effect::temporary_control_v1::normalize_historical_target(state, contract)
         } else {
             contract
@@ -13591,7 +13608,9 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
     for (&target, &contract) in item.targets.iter().zip(&item.v4.target_contracts) {
         let same_incarnation = if crate::self_reflection_v1::owns_spell(state, item) {
             crate::self_reflection_v1::target_matches_live(state, target, contract)
-        } else if effect::temporary_control_v1::owns_spell(state, item) {
+        } else if effect::temporary_control_v1::owns_spell(state, item)
+            || crate::stromkirk_bloodthief_v1::owns_item(item)
+        {
             target_contract_matches_live(
                 state,
                 target,
@@ -14585,6 +14604,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             #[cfg(feature = "standard-magezero-fixtures")]
             crate::standard_keywords_v1::advance_day_night(state, p.opponent());
             crate::life_gain_turn_v1::reset_at_untap(state);
+            crate::life_loss_turn_v1::reset_at_untap(state);
             crate::standard_creatures_v1::begin_turn(state);
             state.players[0].spells_cast_this_turn = 0;
             state.players[1].spells_cast_this_turn = 0;
@@ -14735,10 +14755,9 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 };
                 state.engine.event_log.push(marker.clone());
                 state.engine.event_history.push(marker);
-                crate::cerberus_capture_v1::record_begin(
-                    state,
-                    state.engine.event_history.len() - 1,
-                );
+                let beginning_index = state.engine.event_history.len() - 1;
+                crate::cerberus_capture_v1::record_begin(state, beginning_index);
+                crate::stromkirk_bloodthief_v1::record_begin(state, beginning_index);
             }
             let p = state.active_player;
             // 306.3: logged only for whichever player's own End step this

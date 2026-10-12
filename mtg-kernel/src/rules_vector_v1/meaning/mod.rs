@@ -147,6 +147,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         EffectOp::BindAuthorityEntryGainLifeV1
         | EffectOp::AuthorityEntryGainLifeV1 { .. }
         | EffectOp::CerberusUntapV1 { .. }
+        | EffectOp::StromkirkVampirePermanentCounterV1
         | EffectOp::PreventTargetBlockingUntilEndOfTurn { .. } => out.atoms.push(Atom::Opaque),
         EffectOp::WildwoodCounterFromReceiptV1 { .. } => out.atoms.push(Atom::Opaque),
         EffectOp::GainLifeEqualToPaidCostManaValue { .. }
