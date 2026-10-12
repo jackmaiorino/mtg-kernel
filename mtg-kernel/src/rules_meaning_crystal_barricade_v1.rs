@@ -1,6 +1,8 @@
 //! Selected printed static rules. This does not admit a public/model consumer.
-use crate::card_def::{CardType, Keywords, Subtype, CARD_DEFS};
+use crate::card_def::{CardType, Keywords, Subtype, TargetSpec, CARD_DEFS};
+use crate::effect::{EffectOp, ObjectRef};
 use crate::mana::{Cost, ManaColor, Pip};
+use crate::state::Zone;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -122,9 +124,27 @@ pub fn meaning(
         || def.types != [CardType::Artifact, CardType::Creature]
         || def.colors != [ManaColor::W]
         || def.subtypes != [Subtype::Wall]
+        || !def.supertypes.is_empty()
+        || def.mana_value != 2
         || (def.power, def.toughness) != (Some(0), Some(4))
         || def.keywords != Keywords::DEFENDER
-        || (def.spell_effect)().is_some()
+        || def.is_land
+        || def.is_token
+        || !def.produces_mana.is_empty()
+        || def.target_spec != TargetSpec::None
+        || (def.spell_effect)()
+            != Some(EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            })
+        || def.alt_cost.is_some()
+        || def.kicker_cost.is_some()
+        || def.flashback.is_some()
+        || def.mode2.is_some()
+        || def.mode3.is_some()
+        || !def.additional_modes.is_empty()
+        || def.omen.is_some()
+        || def.adventure.is_some()
         || !def.activated_abilities.is_empty()
         || !crate::trigger::triggers_for(card_id).is_empty()
     {
@@ -156,9 +176,15 @@ pub fn meaning(
         static_root,
         def.cost,
         def.types,
+        def.colors,
         def.subtypes,
+        def.supertypes,
+        def.mana_value,
         def.power,
         def.toughness,
+        def.keywords,
+        def.target_spec,
+        (def.spell_effect)(),
         &rule,
     ))
     .expect("typed static root serializes");

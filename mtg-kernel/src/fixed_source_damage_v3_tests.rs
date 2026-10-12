@@ -21,7 +21,6 @@ fn absent_crystal_catalog_does_not_select_firebrand_history() {
 }
 
 #[test]
-#[ignore = "Crystal is unregistered; actual future registered Firebrand counter-primitive qualification"]
 #[cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")

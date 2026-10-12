@@ -6908,6 +6908,38 @@
         "up_to_one_independent_attached_equipment_exile",
         "original_creature_this_turn_death_exile_replacement"
       ]
+    },
+    {
+      "name": "Crystal Barricade",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Wall"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/c/CrystalBarricade.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_crystal_barricade.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "defender",
+        "controller_hexproof",
+        "other_controlled_creature_noncombat_prevention"
+      ]
     }
   ]
 }

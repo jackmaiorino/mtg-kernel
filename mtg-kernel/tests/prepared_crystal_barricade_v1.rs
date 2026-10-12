@@ -1,4 +1,4 @@
-//! Future real-definition acceptance. Parent registration is required.
+//! Genuine candidate-definition acceptance. Native qualification remains pending.
 //! Physical zone/control setup uses existing operands, not fake printed roots.
 #![cfg(all(
     feature = "limited-fdn-fixtures",
@@ -168,6 +168,43 @@ fn actual_metadata_defender_and_player_targeting_restore_refusal() {
     assert_eq!(def.cost.pips, &[Pip::Colored(ManaColor::W)]);
     assert_eq!(def.types, &[CardType::Artifact, CardType::Creature]);
     assert_eq!(def.subtypes, &[Subtype::Wall]);
+    assert_eq!(
+        (def.spell_effect)(),
+        Some(mtg_kernel::effect::EffectOp::MoveObject {
+            object: mtg_kernel::effect::ObjectRef::ThisSource,
+            to_zone: Zone::Battlefield,
+        })
+    );
+    use mtg_kernel::rules_meaning_crystal_barricade_v1::{
+        live_selector, meaning, validate, RuleV1, StaticRootV1,
+    };
+    let selector = live_selector().unwrap();
+    for root in [
+        StaticRootV1::ControllerHexproof,
+        StaticRootV1::OtherControlledCreatureNoncombatPrevention,
+    ] {
+        let actual = meaning(&selector, id, root).unwrap();
+        validate(&actual).unwrap();
+        let mut forged = actual.clone();
+        forged.root_sha256.clear();
+        assert!(validate(&forged).is_err());
+        let mut forged = actual.clone();
+        match &mut forged.rule {
+            RuleV1::ControllerHexproof {
+                does_not_grant_object_hexproof,
+                ..
+            } => {
+                *does_not_grant_object_hexproof = false;
+            }
+            RuleV1::OtherControlledCreatureNoncombatPrevention {
+                exclude_this_source_permanent,
+                ..
+            } => {
+                *exclude_this_source_permanent = false;
+            }
+        }
+        assert!(validate(&forged).is_err());
+    }
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
         let wall = source(&mut state, actor);

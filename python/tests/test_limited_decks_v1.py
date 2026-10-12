@@ -203,6 +203,18 @@ class LimitedDeckTest(unittest.TestCase):
         self.assertEqual(self.registry["Arahbo, the First Fang"].card_id, 422)
         self.assertEqual(self.registry["Strongbox Raider"].card_id, 423)
         self.assertEqual(self.registry["Fiery Annihilation"].card_id, 424)
+        self.assertEqual(self.registry["Crystal Barricade"].card_id, 425)
+
+    def test_crystal_reference_keeps_true_card_counts_and_appended_identity(self) -> None:
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_crystal_barricade.dck").read_text(encoding="utf-8"))
+        resolved = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(resolved), 40)
+        self.assertEqual(resolved[:4], [425] * 4)
+        self.assertEqual(resolved.count(self.registry["Lightning Bolt"].card_id), 4)
+        self.assertEqual(resolved.count(self.registry["Viridian Longbow"].card_id), 4)
+        self.assertEqual(resolved.count(self.registry["Llanowar Elves"].card_id), 4)
+        for name in ["Plains", "Mountain", "Forest"]:
+            self.assertEqual(resolved.count(self.registry[name].card_id), 8)
 
     def test_original_decks_are_40_cards_and_fully_resolve(self) -> None:
         for filename, supported_copies, source_sha256 in [
@@ -406,7 +418,7 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("FDN_top_*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
-        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 220)
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 221)
         self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
                              for card in report["cards"]), 0)
 

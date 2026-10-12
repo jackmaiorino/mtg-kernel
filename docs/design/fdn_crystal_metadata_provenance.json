@@ -1,0 +1,11 @@
+{
+  "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "java_file": "Mage.Sets/src/mage/cards/c/CrystalBarricade.java",
+  "mage_source_bytes": 1627,
+  "mage_source_sha256": "96f7cfe4b83d9f75910eb4e9934e574394790fd5bd9affc2b74abfa0db35c660",
+  "prepared_metadata_bytes": 827,
+  "prepared_metadata_sha256": "02afda61adbd7e949958c5da5ecb98d19156cd498e78741d1707d4636c996caf",
+  "base": "d9aab02d495c345e2e99ba2fdb19ee3e0a11a57d",
+  "engine_id": 425,
+  "native_qualified": false
+}
