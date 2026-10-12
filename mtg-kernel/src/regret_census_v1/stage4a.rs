@@ -1285,7 +1285,7 @@ fn run_bank_parity(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<
 pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(), String> {
     match cfg.mode.as_str() {
         "s4a-bank" | "s4a-bank-trace" | "s4a-refresh" | "s4a-branch" | "s4a-canon-offline"
-        | "s4a-budget" => return run_bank_mode(cfg, policy),
+        | "s4a-budget" | "s4a-budget-replay" => return run_bank_mode(cfg, policy),
         "s4a-bank-parity" => return run_bank_parity(cfg, policy),
         "s4a-label-replay" => return replay_labels::run(cfg),
         _ => {}
