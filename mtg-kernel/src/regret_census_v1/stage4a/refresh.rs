@@ -264,9 +264,10 @@ impl Searches<'_> {
             .observer
             .as_ref()
             .filter(|r| r.error.is_none() && k < 3)
-            .map(|_| super::diag::Trace {
-                viewer: Some(super::viewer_uct::SearchCapture::default()),
-                ..Default::default()
+            .map(|_| {
+                let mut trace = super::diag::Trace::default();
+                trace.viewer = Some(super::viewer_uct::SearchCapture::default());
+                trace
             });
         #[cfg(not(feature = "viewer-recording-v1"))]
         let mut trace = None;
