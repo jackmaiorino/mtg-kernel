@@ -52,6 +52,15 @@ pub struct DiscardMenuV2 {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ProgramMenuV3 {
+    pub chooser: PlayerSeatV1,
+    pub source: CardStableRefV1,
+    pub decline_index: u16,
+    pub fight_index: u16,
+    pub requires_original_source_creature: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SavedDamageSourceV1 {
     pub signed_power: i32,
     pub captured_controller: PlayerSeatV1,
@@ -86,6 +95,8 @@ pub struct CrystalObservationV1 {
     pub prevention_menu: Option<MenuV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub optional_discard_menu: Option<DiscardMenuV2>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub optional_fight_menu: Option<ProgramMenuV3>,
     pub projection_sha256: String,
 }
 fn digest(bytes: &[u8]) -> String {
@@ -329,6 +340,22 @@ pub fn observe_v1(
 ) -> Result<CrystalObservationV1, RlContractError> {
     validate_state(state).map_err(RlContractError)?;
     let optional_discard_menu = discard_menu(state, actor)?;
+    let optional_fight_menu = if crate::effect::crystal_prevention_v1::is_program_choice(state) {
+        let pending = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .ok_or_else(|| RlContractError("Crystal optional fight absent".into()))?;
+        Some(ProgramMenuV3 {
+            chooser: pending.ctx.controller.into(),
+            source: crate::rl::crystal_resolving_source_ref(state, &pending.resolving_item)?,
+            decline_index: 0,
+            fight_index: 1,
+            requires_original_source_creature: true,
+        })
+    } else {
+        None
+    };
     let mut static_sources = Vec::new();
     for (id, o) in state.objects.iter() {
         if crate::crystal_barricade_v1::is_active_source(state, id) {
@@ -373,6 +400,7 @@ pub fn observe_v1(
         static_sources,
         prevention_menu: menu(state)?,
         optional_discard_menu,
+        optional_fight_menu,
         projection_sha256: String::new(),
     };
     o.projection_sha256 = commitment(&o)?;

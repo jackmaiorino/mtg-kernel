@@ -3091,6 +3091,9 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
     if crystal_prevention_v1::is_choice(state) {
         return crystal_prevention_v1::answer(state, option_index);
     }
+    if crystal_prevention_v1::is_program_choice(state) {
+        return crystal_prevention_v1::answer_program_choice(state, option_index);
+    }
     let continuation = state
         .engine
         .pending_effect

@@ -115,12 +115,20 @@ pub struct HumanCrystalDiscardMenuV22 {
     pub draws_if_discarded: u16,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HumanCrystalProgramMenuV22 {
+    pub chooser: PlayerSeatV1,
+    pub source: HumanCardRefV1,
+    pub requires_original_source_creature: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HumanCrystalExtensionsV22 {
     pub predecessor: HumanExtensionsV9,
     pub static_sources: Vec<HumanCrystalSourceV22>,
     pub prevention_menu: Option<HumanCrystalMenuV22>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub optional_discard_menu: Option<HumanCrystalDiscardMenuV22>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub optional_fight_menu: Option<HumanCrystalProgramMenuV22>,
 }
 fn parts(observation: &CrystalObservationV1) -> super::life_ward_v8::ProjectionPartsV8<'_> {
     super::life_ward_v8::ProjectionPartsV8 {
@@ -158,6 +166,17 @@ fn state(
                 source: handles.get(&row.source)?.clone(),
                 maximum_cards: row.maximum_cards,
                 draws_if_discarded: row.draws_if_discarded,
+            })
+        })
+        .transpose()?;
+    let optional_fight_menu = observation
+        .optional_fight_menu
+        .as_ref()
+        .map(|row| {
+            Ok::<_, Error>(HumanCrystalProgramMenuV22 {
+                chooser: row.chooser,
+                source: handles.get(&row.source)?.clone(),
+                requires_original_source_creature: row.requires_original_source_creature,
             })
         })
         .transpose()?;
@@ -203,6 +222,7 @@ fn state(
             static_sources,
             prevention_menu,
             optional_discard_menu,
+            optional_fight_menu,
         },
         policy_context: old.policy_context,
         known_face_down_cards: old.known_face_down_cards,
@@ -219,6 +239,35 @@ fn label(
     handles: &Handles,
     human: PlayerSeatV1,
 ) -> Result<String, Error> {
+    if let Some(menu) = observation.optional_fight_menu.as_ref() {
+        let ActionSemanticV1::ChooseEffectOption {
+            actor,
+            source,
+            option_index,
+            option_count,
+        } = action
+        else {
+            return Err(Error::UnsupportedPrompt);
+        };
+        if *actor != human
+            || menu.chooser != human
+            || *source != menu.source
+            || *option_count != 2
+            || menu.decline_index != 0
+            || menu.fight_index != 1
+            || !menu.requires_original_source_creature
+        {
+            return Err(Error::InvalidVisibleReference);
+        }
+        return match *option_index {
+            0 => Ok("Decline the optional fight".into()),
+            1 => Ok(format!(
+                "Have {} fight the chosen opposing creature",
+                handles.name(&menu.source)?
+            )),
+            _ => Err(Error::InvalidAction),
+        };
+    }
     if let Some(menu) = observation.optional_discard_menu.as_ref() {
         if menu.chooser != human || menu.maximum_cards != 1 || menu.draws_if_discarded != 1 {
             return Err(Error::InvalidVisibleReference);

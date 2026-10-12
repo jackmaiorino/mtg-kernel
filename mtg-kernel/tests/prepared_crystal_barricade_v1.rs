@@ -2088,6 +2088,7 @@ fn real_fixed_and_chosen_power_damage_require_independent_positive_or_prevented_
                     steps: vec![step],
                     batch_commit: None,
                     discard_commit: None,
+                    program_commit: None,
                 };
                 let mut closed = initial.clone();
                 closed.previous = Some(initial.history_index);
@@ -2646,6 +2647,7 @@ fn real_fight_without_menu_commits_both_powers_lifelink_and_requires_preparation
                 steps: vec![step],
                 batch_commit: None,
                 discard_commit: None,
+                program_commit: None,
             };
             let mut closed = initial;
             closed.history_index = execution.history_index + 1;
@@ -2722,5 +2724,354 @@ fn real_bushwhack_basic_land_mode_keeps_its_existing_private_search_owner() {
             serde_json::to_vec(&state).unwrap(),
             serde_json::to_vec(&replay).unwrap()
         );
+    }
+}
+
+fn indrik_fixture(actor: PlayerId) -> (GameState, ObjectId, ObjectId) {
+    let mut state = ready(actor);
+    let wall = source(&mut state, actor);
+    let other_wall = put(
+        &mut state,
+        actor.opponent(),
+        "Crystal Barricade",
+        Zone::Battlefield,
+    );
+    let target = put(
+        &mut state,
+        actor.opponent(),
+        "Shivan Dragon",
+        Zone::Battlefield,
+    );
+    let indrik = put(&mut state, actor, "Affectionate Indrik", Zone::Hand);
+    shield(&mut state, wall, indrik, 1);
+    shield(&mut state, other_wall, target, 1);
+    state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 1;
+    state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 5;
+    priority(&mut state, actor);
+    engine::step(&mut state, Action::CastSpell(indrik)).unwrap();
+    for _ in 0..20 {
+        let decision = next(&mut state);
+        if matches!(decision, Decision::ChooseTargets { .. }) {
+            assert_eq!(state.objects.get(indrik).zone, Zone::Battlefield);
+            assert!(
+                matches!(decision, Decision::ChooseTargets { legal_targets, .. }
+                if legal_targets.contains(&Target::Object(target)))
+            );
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+            let _ = next(&mut state);
+            assert!(state
+                .stack
+                .iter()
+                .any(|item| item.source == indrik && item.targets == vec![Target::Object(target)]));
+            return (state, indrik, target);
+        }
+        assert!(
+            matches!(decision, Decision::CastSpellOrPass { .. }),
+            "{decision:?}"
+        );
+        engine::step(&mut state, Action::Pass).unwrap();
+    }
+    panic!("real Indrik trigger was not placed");
+}
+#[test]
+fn real_indrik_optional_choice_then_source_fight_uses_distinct_owning_stages_and_restore() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for accept in [false, true] {
+            let (mut state, indrik, target) = indrik_fixture(actor);
+            mixed_menu(&mut state);
+            assert!(
+                matches!(next(&mut state), Decision::ChooseEffectOption { player, option_count: 2, .. }
+                if player == actor)
+            );
+            let public = mtg_kernel::crystal_public_v1::observe_v1(
+                &state,
+                &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+                actor,
+                0,
+                0,
+                0,
+                1,
+            )
+            .unwrap();
+            let offer = public.optional_fight_menu.unwrap();
+            assert_eq!(offer.chooser, actor.into());
+            assert!(offer.requires_original_source_creature);
+            assert_eq!((offer.decline_index, offer.fight_index), (0, 1));
+            assert!(public.prevention_menu.is_none());
+            let mut replay = restore(&state);
+            for current in [&mut state, &mut replay] {
+                engine::step(current, Action::ChooseEffectOption(u16::from(accept))).unwrap();
+                let answered = restore(current);
+                assert_eq!(
+                    answered.engine.pending_effect,
+                    current.engine.pending_effect
+                );
+                assert!(current.engine.event_history.iter().any(|event| matches!(event,
+                    event::CommittedEvent::CrystalProgramChoiceV3 { operation }
+                        if operation.item.source == indrik && operation.option == u16::from(accept))));
+                if accept {
+                    for chooser in [actor, actor.opponent()] {
+                        assert!(
+                            matches!(next(current), Decision::ChooseEffectOption { player, .. }
+                            if player == chooser)
+                        );
+                        assert_eq!(current.objects.get(indrik).damage, 0);
+                        assert_eq!(current.objects.get(target).damage, 0);
+                        let chosen = option(current, false);
+                        engine::step(current, Action::ChooseEffectOption(chosen)).unwrap();
+                    }
+                }
+                finish(current);
+                assert_eq!(current.objects.get(indrik).damage, 0);
+                assert_eq!(current.objects.get(target).damage, 0);
+                assert_eq!(current.objects.get(indrik).zone, Zone::Battlefield);
+                assert_eq!(current.objects.get(target).zone, Zone::Battlefield);
+                assert_eq!(current.engine.active_replacements.len(), 2);
+                assert_eq!(current.engine.event_history.iter().any(|event| matches!(event,
+                    event::CommittedEvent::CrystalBatchPreparedV3 { capture } if capture.ctx.source == indrik)), accept);
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&replay).unwrap()
+            );
+        }
+    }
+}
+#[test]
+fn real_indrik_choice_retains_original_controller_while_prevention_uses_current_recipient_controller(
+) {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, indrik, target) = indrik_fixture(actor);
+        // Current-control primitive response at real priority, before the trigger begins.
+        control_primitive(&mut state, indrik, actor.opponent());
+        mixed_menu(&mut state);
+        assert!(
+            matches!(next(&mut state), Decision::ChooseEffectOption { player, .. } if player == actor)
+        );
+        let mut replay = restore(&state);
+        for current in [&mut state, &mut replay] {
+            engine::step(current, Action::ChooseEffectOption(1)).unwrap();
+            for recipient in [target, indrik] {
+                assert!(
+                    matches!(next(current), Decision::ChooseEffectOption { player, .. }
+                    if player == actor.opponent())
+                );
+                let choice = current
+                    .engine
+                    .pending_effect
+                    .as_ref()
+                    .unwrap()
+                    .choice
+                    .as_ref()
+                    .unwrap();
+                assert!(
+                    matches!(choice, mtg_kernel::effect::PendingEffectChoice::ChooseOption {
+                    purpose: mtg_kernel::effect::EffectOptionChoicePurpose::CrystalPreventionV1 { choice }, ..
+                } if choice.target == Target::Object(recipient))
+                );
+                let chosen = option(current, false);
+                engine::step(current, Action::ChooseEffectOption(chosen)).unwrap();
+            }
+            finish(current);
+            assert_eq!(current.objects.get(indrik).controller, actor.opponent());
+            assert_eq!(current.objects.get(indrik).damage, 0);
+            assert_eq!(current.objects.get(target).damage, 0);
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+    }
+}
+#[test]
+fn real_indrik_original_source_departure_or_reentry_cannot_fight_from_lki() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for reenter in [false, true] {
+            let (mut state, indrik, target) = indrik_fixture(actor);
+            let original = state
+                .stack
+                .iter()
+                .find(|item| item.source == indrik)
+                .unwrap()
+                .v4
+                .stack_item_id;
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(indrik, Zone::Graveyard),
+            );
+            if reenter {
+                event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(indrik, Zone::Battlefield),
+                );
+            }
+            for _ in 0..30 {
+                let decision = next(&mut state);
+                if matches!(decision, Decision::ChooseEffectOption { .. })
+                    && state
+                        .engine
+                        .pending_effect
+                        .as_ref()
+                        .is_some_and(|p| p.resolving_item.v4.stack_item_id == original)
+                {
+                    break;
+                }
+                match decision {
+                    Decision::CastSpellOrPass { .. } => {
+                        engine::step(&mut state, Action::Pass).unwrap()
+                    }
+                    Decision::ChooseTargets { legal_targets, .. } => {
+                        assert!(legal_targets.contains(&Target::Object(target)));
+                        engine::step(&mut state, Action::ChooseTarget(Target::Object(target)))
+                            .unwrap();
+                    }
+                    Decision::ChooseEffectOption { .. } => {
+                        // The genuinely new reentry trigger resolves first; decline it.
+                        engine::step(&mut state, Action::ChooseEffectOption(0)).unwrap();
+                    }
+                    Decision::OrderTriggers { pending, .. } => engine::step(
+                        &mut state,
+                        Action::OrderTriggers((0..pending.len()).collect()),
+                    )
+                    .unwrap(),
+                    _ => panic!("unexpected reentry trigger decision {decision:?}"),
+                }
+            }
+            assert!(state.engine.pending_effect.as_ref().is_some_and(|p| p
+                .resolving_item
+                .v4
+                .stack_item_id
+                == original));
+            assert!(
+                matches!(next(&mut state), Decision::ChooseEffectOption { player, .. } if player == actor)
+            );
+            let mut replay = restore(&state);
+            for current in [&mut state, &mut replay] {
+                engine::step(current, Action::ChooseEffectOption(1)).unwrap();
+                // Stop at the original trigger's genuine completion. A reentry
+                // creates its own separate trigger, which must not be conflated.
+                for _ in 0..12 {
+                    let decision = next(current);
+                    if !current
+                        .stack
+                        .iter()
+                        .any(|item| item.v4.stack_item_id == original)
+                        && current
+                            .engine
+                            .pending_effect
+                            .as_ref()
+                            .is_none_or(|p| p.resolving_item.v4.stack_item_id != original)
+                    {
+                        break;
+                    }
+                    assert!(
+                        matches!(decision, Decision::CastSpellOrPass { .. }),
+                        "{decision:?}"
+                    );
+                    engine::step(current, Action::Pass).unwrap();
+                }
+                assert!(!current
+                    .stack
+                    .iter()
+                    .any(|item| item.v4.stack_item_id == original));
+                assert_eq!(current.objects.get(target).damage, 0);
+                assert!(!current
+                    .engine
+                    .event_history
+                    .iter()
+                    .any(|event| matches!(event,
+                    event::CommittedEvent::Damage { source, .. } if *source == indrik)));
+                assert!(current.engine.event_history.iter().any(|event| matches!(event,
+                    event::CommittedEvent::CrystalPreventionBoundaryV1 { boundary }
+                        if boundary.item.v4.stack_item_id == original && boundary.pending.is_none())));
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&replay).unwrap()
+            );
+        }
+    }
+}
+#[test]
+fn real_indrik_program_answer_and_owner_erasure_forgeries_refuse_readonly() {
+    use event::CommittedEvent;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut waiting, indrik, _) = indrik_fixture(actor);
+        mixed_menu(&mut waiting);
+        let before = serde_json::to_vec(&waiting).unwrap();
+        assert!(engine::step(&mut waiting, Action::ChooseEffectOption(2)).is_err());
+        assert_eq!(serde_json::to_vec(&waiting).unwrap(), before);
+        let mut answered = restore(&waiting);
+        engine::step(&mut answered, Action::ChooseEffectOption(1)).unwrap();
+        for case in 0..5 {
+            let mut bad = restore(&answered);
+            match case {
+                0 => bad.engine.event_history.retain(|event| {
+                    !matches!(event, CommittedEvent::CrystalProgramChoiceV3 { .. })
+                }),
+                1 => {
+                    for event in &mut bad.engine.event_history {
+                        if let CommittedEvent::CrystalProgramChoiceV3 { operation } = event {
+                            operation.option = 0;
+                        }
+                    }
+                }
+                2 => {
+                    bad.engine.pending_effect = None;
+                    bad.engine.event_history.retain(|event| {
+                        !matches!(
+                            event,
+                            CommittedEvent::CrystalPreventionBoundaryV1 { .. }
+                                | CommittedEvent::CrystalExecutionV1 { .. }
+                                | CommittedEvent::CrystalProgramChoiceV3 { .. }
+                        )
+                    });
+                }
+                3 => {
+                    for event in &mut bad.engine.event_history {
+                        if let CommittedEvent::CrystalExecutionV1 { execution } = event {
+                            execution.program_commit = None;
+                        }
+                    }
+                }
+                _ => {
+                    let operation = bad
+                        .engine
+                        .event_history
+                        .iter()
+                        .find_map(|event| match event {
+                            CommittedEvent::CrystalProgramChoiceV3 { operation } => {
+                                Some(operation.clone())
+                            }
+                            _ => None,
+                        })
+                        .unwrap();
+                    bad.engine
+                        .event_history
+                        .push(CommittedEvent::CrystalProgramChoiceV3 { operation });
+                }
+            }
+            assert!(bad.stack.iter().any(|item| item.source == indrik));
+            let bytes = serde_json::to_vec(&bad).unwrap();
+            assert!(engine::step(&mut bad, Action::Pass).is_err(), "case {case}");
+            assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+            assert!(mtg_kernel::crystal_public_v1::observe_v1(
+                &bad,
+                &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+                actor,
+                0,
+                0,
+                0,
+                1
+            )
+            .is_err());
+            assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+            assert!(matches!(
+                engine::advance_until_decision(&mut bad),
+                Decision::Halted { .. }
+            ));
+            bad.engine.halted = None;
+            assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+        }
     }
 }

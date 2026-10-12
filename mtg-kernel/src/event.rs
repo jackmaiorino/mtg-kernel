@@ -927,6 +927,9 @@ pub enum CommittedEvent {
     CrystalBatchPreparedV3 {
         capture: Box<crate::effect::crystal_prevention_v1::BatchCaptureV2>,
     },
+    CrystalProgramChoiceV3 {
+        operation: Box<crate::effect::crystal_prevention_v1::ProgramChoiceOperationV3>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

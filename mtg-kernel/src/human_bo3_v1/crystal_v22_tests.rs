@@ -579,3 +579,107 @@ fn future_bite_human_binds_resolving_spell_separately_from_actual_damage_source(
         assert_eq!(session.inner.privileged_core_environment_hash(), after);
     }
 }
+
+#[test]
+#[ignore = "Crystal remains unregistered; future actual owning Indrik qualification"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn future_indrik_program_menu_public_human_submit_retry_and_owning_restore() {
+    use crate::engine::{self, Action, Decision};
+    use crate::event::{self, ActiveReplacement, ProposedEvent, ReplacementEffectKind};
+    use crate::state::Target;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for accept in [false, true] {
+            let mut state = basic(actor, "Lightning Bolt");
+            let wall = put(
+                &mut state,
+                actor.opponent(),
+                "Crystal Barricade",
+                Zone::Battlefield,
+            );
+            let target = put(
+                &mut state,
+                actor.opponent(),
+                "Shivan Dragon",
+                Zone::Battlefield,
+            );
+            let indrik = put(&mut state, actor, "Affectionate Indrik", Zone::Hand);
+            state.engine.active_replacements.push(ActiveReplacement {
+                id: 1,
+                source: wall,
+                kind: ReplacementEffectKind::PreventNextDamage {
+                    target: Target::Object(target),
+                    remaining: 1,
+                },
+            });
+            state.engine.next_replacement_id = 2;
+            // Typed entry setup publishes the real definition-owned trigger.
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(indrik, Zone::Battlefield),
+            );
+            for _ in 0..20 {
+                let decision = engine::advance_until_decision(&mut state);
+                match decision {
+                    Decision::ChooseTargets { legal_targets, .. } => {
+                        assert!(legal_targets.contains(&Target::Object(target)));
+                        engine::step(&mut state, Action::ChooseTarget(Target::Object(target)))
+                            .unwrap();
+                    }
+                    Decision::ChooseEffectOption { .. } => break,
+                    Decision::CastSpellOrPass { .. } => {
+                        engine::step(&mut state, Action::Pass).unwrap()
+                    }
+                    _ => panic!("real Indrik prompt {decision:?}"),
+                }
+            }
+            assert!(crate::effect::crystal_prevention_v1::is_program_choice(
+                &state
+            ));
+            let base = FastActorSessionV1::from_crystal_v22_fixture_state(state);
+            let mut session = HumanCrystalSessionV22::from_session(base).unwrap();
+            let e = expected(&session);
+            let public = session.public_observation(e).unwrap();
+            let menu = public.optional_fight_menu.as_ref().unwrap();
+            assert_eq!(menu.chooser, actor.into());
+            assert!(menu.requires_original_source_creature);
+            let mut projector = HumanCrystalProjectorV22::new(actor.into());
+            let prompt = projector.project_current(&session, e).unwrap();
+            safe(&serde_json::to_value(&prompt).unwrap());
+            let request = action(
+                &prompt,
+                if accept {
+                    "Have Affectionate Indrik"
+                } else {
+                    "Decline the optional fight"
+                },
+            );
+            let snapshot = session.snapshot_v22();
+            let receipt = projector.submit(&mut session, request.clone()).unwrap();
+            let after = session.inner.privileged_core_environment_hash();
+            assert_eq!(
+                projector.submit(&mut session, request.clone()).unwrap(),
+                receipt
+            );
+            assert_eq!(session.inner.privileged_core_environment_hash(), after);
+            session.restore_v22(&snapshot).unwrap();
+            let before = session.inner.privileged_core_environment_hash();
+            assert_eq!(
+                projector.submit(&mut session, request.clone()),
+                Err(Error::StaleDecision)
+            );
+            assert_eq!(session.inner.privileged_core_environment_hash(), before);
+            let mut replay = HumanCrystalProjectorV22::new(actor.into());
+            assert_eq!(
+                replay
+                    .project_current(&session, expected(&session))
+                    .unwrap(),
+                prompt
+            );
+            replay.submit(&mut session, request).unwrap();
+            assert_eq!(session.inner.privileged_core_environment_hash(), after);
+        }
+    }
+}
