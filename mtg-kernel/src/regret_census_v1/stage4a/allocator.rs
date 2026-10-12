@@ -139,7 +139,10 @@ impl Controller {
         e.map(|v| v / s)
     }
 
-    /// log mu of the coalesced choice `amount` at `remaining`.
+    /// log mu of the coalesced choice `amount` at `remaining`. The update
+    /// itself runs in `tools/spy_reset/allocator.py`; this and `grad_log_mu`
+    /// are its reference, checked by the tests.
+    #[cfg(test)]
     pub(super) fn log_mu(&self, x: &[f64; NF], remaining: u64, amount: u64) -> f64 {
         let cs = choices(remaining);
         let mu = coalesce(&mixture(&self.pi(x)), &cs);
@@ -152,6 +155,7 @@ impl Controller {
 
     /// Gradient of `log_mu` with respect to the weights. With `E` the merged
     /// nominal actions, d log mu(E) / d z_j = (1 - eps) pi_j ([j in E] - pi(E)) / mu(E).
+    #[cfg(test)]
     pub(super) fn grad_log_mu(
         &self,
         x: &[f64; NF],
