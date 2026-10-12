@@ -1841,6 +1841,19 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
 }
 
 pub(crate) fn batch_without_linked_aura_v1(state: &mut GameState, events: Vec<ProposedEvent>) {
+    batch_with_linked_aura_attachments_v1(state, events, Vec::new());
+}
+
+/// Already authenticated untargeted attachment choices belong to this entry
+/// batch. Install all attachments before publishing post-entry observers.
+pub(crate) fn batch_with_linked_aura_attachments_v1(
+    state: &mut GameState,
+    events: Vec<ProposedEvent>,
+    attachments: Vec<(
+        crate::effect::EffectObjectBinding,
+        crate::effect::EffectObjectBinding,
+    )>,
+) {
     let mut authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
     let survivors: Vec<ProposedEvent> = events
         .into_iter()
@@ -1931,6 +1944,26 @@ pub(crate) fn batch_without_linked_aura_v1(state: &mut GameState, events: Vec<Pr
         }
     }
 
+    for (aura, host) in attachments {
+        if state.objects.get(aura.object).zone == Zone::Battlefield {
+            let generation = state.objects.get(aura.object).zone_change_count;
+            if state
+                .attach_object_exact(
+                    aura.object,
+                    generation,
+                    host.object,
+                    host.expected_zone_change_count,
+                )
+                .is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    aura.object,
+                ));
+                return;
+            }
+        }
+    }
     if let Some(batch) = authority_batch {
         batch.finish(state);
     }

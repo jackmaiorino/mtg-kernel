@@ -127,9 +127,7 @@ pub(crate) fn end_batch(state: &mut GameState) {
         return;
     }
     let departures = std::mem::take(&mut runtime.deferred_departures);
-    for (source, generation) in departures {
-        crate::effect::return_cards_exiled_until_source_leaves(state, source, generation);
-    }
+    return_departures(state, &departures);
 }
 
 fn invoke(state: &mut GameState, operation: &OperationV1) -> Result<Option<Decision>, String> {
@@ -218,6 +216,50 @@ fn replay(
 /// The first unanswered return snapshots the exact departure point. Later
 /// work may run only in the disposable candidate, never the published state.
 pub(crate) fn request(state: &mut GameState, choice: HostChoiceV1) -> Result<bool, String> {
+    let at = crate::linked_aura_return_v1::record_capture(state, choice.clone())?;
+    let Some(host) = choose(state, choice.clone(), at)? else {
+        return Ok(false);
+    };
+    let start = state.engine.event_history.len();
+    crate::linked_aura_return_v1::answer(state, &choice, host)?;
+    record_answer(state, &choice, at, host, start)?;
+    Ok(true)
+}
+
+fn record_answer(
+    state: &mut GameState,
+    choice: &HostChoiceV1,
+    at: u64,
+    host: EffectObjectBinding,
+    start: usize,
+) -> Result<(), String> {
+    let returned = state.engine.event_history[start..]
+        .iter()
+        .position(|event| {
+            matches!(event,
+        CommittedEvent::ZoneChange { object, from: crate::state::Zone::Exile,
+            to: crate::state::Zone::Battlefield, .. } if *object == choice.aura.object)
+        })
+        .map(|offset| start + offset)
+        .ok_or("linked Aura selected return did not actually occur")?;
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::BanishingAuraHostChosenV1 {
+            capture_history_index: at,
+            host,
+            return_history_index: u64::try_from(returned).map_err(|_| "Aura return exceeds u64")?,
+        });
+    Ok(())
+}
+
+/// Choosing does not move any returning member. In a simultaneous return all
+/// menus are captured first, then owners answer in APNAP order (CR 610.3d).
+fn choose(
+    state: &mut GameState,
+    choice: HostChoiceV1,
+    at: u64,
+) -> Result<Option<EffectObjectBinding>, String> {
     crate::linked_aura_return_v1::validate(state, &choice)?;
     if choice.original_candidates.is_empty() {
         return Err("empty host menu must use the no-return path".into());
@@ -229,11 +271,9 @@ pub(crate) fn request(state: &mut GameState, choice: HostChoiceV1) -> Result<boo
         .as_ref()
         .ok_or("nonempty linked Aura return has no genuine operation owner")?;
     if runner.checkpoint.is_some() {
-        return Ok(false);
+        return Ok(None);
     }
-    let answer = runner.answers.get(runner.cursor).cloned();
-    let at = crate::linked_aura_return_v1::record_capture(state, choice.clone())?;
-    if let Some(answer) = answer {
+    if let Some(answer) = runner.answers.get(runner.cursor).cloned() {
         if answer.choice != choice || !choice.original_candidates.contains(&answer.host) {
             return Err("linked Aura replay changed an already committed owner answer".into());
         }
@@ -244,27 +284,7 @@ pub(crate) fn request(state: &mut GameState, choice: HostChoiceV1) -> Result<boo
             .as_mut()
             .unwrap()
             .cursor += 1;
-        let start = state.engine.event_history.len();
-        crate::linked_aura_return_v1::answer(state, &choice, answer.host)?;
-        let returned = state.engine.event_history[start..]
-            .iter()
-            .position(|event| {
-                matches!(event,
-            CommittedEvent::ZoneChange { object, from: crate::state::Zone::Exile,
-                to: crate::state::Zone::Battlefield, .. } if *object == choice.aura.object)
-            })
-            .map(|offset| start + offset)
-            .ok_or("linked Aura selected return did not actually occur")?;
-        state
-            .engine
-            .event_history
-            .push(CommittedEvent::BanishingAuraHostChosenV1 {
-                capture_history_index: at,
-                host: answer.host,
-                return_history_index: u64::try_from(returned)
-                    .map_err(|_| "Aura return exceeds u64")?,
-            });
-        Ok(true)
+        Ok(Some(answer.host))
     } else {
         let mut snapshot = state.clone();
         // The genuine resolving row was removed by the ordinary engine before
@@ -302,7 +322,99 @@ pub(crate) fn request(state: &mut GameState, choice: HostChoiceV1) -> Result<boo
             .as_mut()
             .unwrap()
             .checkpoint = Some((Box::new(snapshot), choice, at));
-        Ok(false)
+        Ok(None)
+    }
+}
+
+/// All selected until-event effects triggered by the same event return in one
+/// entry batch. A creature entering in that batch cannot be a chosen Aura host
+/// because host legality is determined before any member enters (303.4f).
+pub(crate) fn return_departures(state: &mut GameState, departures: &[(crate::ids::ObjectId, u32)]) {
+    use crate::banishing_light_v1::NoReturnV1;
+    use crate::state::Zone;
+    let mut records = Vec::new();
+    state.engine.linked_exile_records.retain(|record| {
+        let selected = crate::banishing_light_v1::owns_definition(record.source.card_def)
+            && departures.contains(&(record.source.source, record.source.zone_change_count));
+        if selected {
+            records.push(*record);
+        }
+        !selected
+    });
+    if records.is_empty() {
+        return;
+    }
+    let result = (|| -> Result<(), String> {
+        let mut reasons = vec![None; records.len()];
+        let mut choices = Vec::new();
+        for (index, record) in records.iter().copied().enumerate() {
+            if crate::banishing_light_v1::original_token(state, record)? {
+                reasons[index] = Some(NoReturnV1::TokenCannotReturn);
+            } else if !state.objects.try_get(record.exiled).is_some_and(|live| {
+                live.zone == Zone::Exile
+                    && live.zone_change_count == record.exiled_zone_change_count
+                    && state.exile.contains(&record.exiled)
+            }) {
+                reasons[index] = Some(NoReturnV1::RecipientDeparted);
+            } else if crate::card_def::CARD_DEFS[state.objects.get(record.exiled).card_def as usize]
+                .attachment
+                .is_some()
+            {
+                let choice = crate::linked_aura_return_v1::prepare(state, record)?;
+                choices.push((index, choice));
+            }
+        }
+        // Preserve same-owner source order; opposite owners follow APNAP,
+        // independently of the order in which source departures were listed.
+        choices.sort_by_key(|(_, choice)| choice.owner != state.active_player);
+        let mut captured = Vec::new();
+        for (index, choice) in choices {
+            let at = crate::linked_aura_return_v1::record_capture(state, choice.clone())?;
+            if choice.original_candidates.is_empty() {
+                reasons[index] = Some(NoReturnV1::AuraNoLegalHost {
+                    capture_history_index: at,
+                });
+            } else {
+                captured.push((index, choice, at));
+            }
+        }
+        let mut selected = Vec::new();
+        for (index, choice, at) in captured {
+            let Some(host) = choose(state, choice.clone(), at)? else {
+                return Ok(());
+            };
+            selected.push((index, choice, at, host));
+        }
+        let start = state.engine.event_history.len();
+        let events = records
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| reasons[*index].is_none())
+            .map(|(_, record)| {
+                ProposedEvent::zone_change_preserving_known_identity(
+                    record.exiled,
+                    Zone::Battlefield,
+                )
+            })
+            .collect();
+        let attachments = selected
+            .iter()
+            .map(|(_, choice, _, host)| (choice.aura, *host))
+            .collect();
+        crate::event::batch_with_linked_aura_attachments_v1(state, events, attachments);
+        for (_, choice, at, host) in selected {
+            record_answer(state, &choice, at, host, start)?;
+        }
+        for (record, reason) in records.into_iter().zip(reasons) {
+            crate::banishing_light_v1::record_expiry(state, record, start, reason);
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            departures[0].0,
+        ));
     }
 }
 

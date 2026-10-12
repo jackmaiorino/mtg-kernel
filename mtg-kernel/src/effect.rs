@@ -14774,6 +14774,16 @@ pub(crate) fn return_cards_exiled_until_source_leaves(
     if crate::linked_aura_operation_v1::defer_departure(state, source, left_zone_change_count) {
         return;
     }
+    if state.engine.linked_exile_records.iter().any(|record| {
+        record.source.source == source
+            && record.source.zone_change_count == left_zone_change_count
+            && crate::banishing_light_v1::owns_definition(record.source.card_def)
+    }) {
+        crate::linked_aura_operation_v1::return_departures(
+            state,
+            &[(source, left_zone_change_count)],
+        );
+    }
     loop {
         let position = state.engine.linked_exile_records.iter().position(|record| {
             record.source.source == source

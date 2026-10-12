@@ -514,7 +514,24 @@ fn simultaneous_departures_complete_before_returns_and_keep_prior_owner_answers_
         );
         engine::step(&mut state, Action::ChooseEffectTarget(Target::Object(host))).unwrap();
         assert_owner_choice(&mut state, actor.opponent(), second_aura, host);
-        assert_eq!(state.objects.get(first_aura).zone, Zone::Battlefield);
+        assert_eq!(state.objects.get(first_aura).zone, Zone::Exile);
+        assert_eq!(
+            state
+                .engine
+                .event_history
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    CommittedEvent::BanishingAuraHostsCapturedV1 { .. }
+                ))
+                .count(),
+            2
+        );
+        assert!(!state
+            .engine
+            .event_history
+            .iter()
+            .any(|event| matches!(event, CommittedEvent::BanishingAuraHostChosenV1 { .. })));
         assert_eq!(state.objects.get(second_aura).zone, Zone::Exile);
         assert_eq!(
             state
@@ -617,5 +634,156 @@ fn real_registered_activation_cost_pauses_before_publication_at_physical_copy_bo
             serde_json::to_vec(&state).unwrap(),
             serde_json::to_vec(&restored).unwrap()
         );
+    }
+}
+
+#[test]
+#[ignore = "requires future actual Banishing Light registration; no admission bypass"]
+fn simultaneous_creature_and_aura_returns_use_only_pre_entry_hosts_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for alternate_host in [false, true] {
+            let (mut state, aura_source, aura, returning_creature) = linked_aura(actor);
+            let creature_source = put(&mut state, actor, "Banishing Light", Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(creature_source, Zone::Battlefield),
+            );
+            assert!(
+                matches!(next(&mut state), Decision::ChooseTargets {legal_targets,..}
+                if legal_targets.contains(&Target::Object(returning_creature)))
+            );
+            engine::step(
+                &mut state,
+                Action::ChooseTarget(Target::Object(returning_creature)),
+            )
+            .unwrap();
+            finish_stack(&mut state);
+            assert_eq!(state.objects.get(returning_creature).zone, Zone::Exile);
+            let host =
+                alternate_host.then(|| put(&mut state, actor, "Llanowar Elves", Zone::Battlefield));
+            // Creature source first deliberately reproduces the prior leak.
+            event::propose_and_commit_batch(
+                &mut state,
+                vec![
+                    ProposedEvent::zone_change(creature_source, Zone::Hand),
+                    ProposedEvent::zone_change(aura_source, Zone::Hand),
+                ],
+            );
+            if let Some(host) = host {
+                assert_owner_choice(&mut state, actor.opponent(), aura, host);
+                assert_eq!(state.objects.get(returning_creature).zone, Zone::Exile);
+                let Decision::ChooseEffectTargets { legal_targets, .. } = next(&mut state) else {
+                    panic!("owner choice absent")
+                };
+                assert!(
+                    !legal_targets.contains(&Target::Object(returning_creature)),
+                    "a creature entering simultaneously cannot be an Aura host"
+                );
+                let mut restored = replay(&state);
+                for branch in [&mut state, &mut restored] {
+                    engine::step(branch, Action::ChooseEffectTarget(Target::Object(host))).unwrap();
+                    assert_eq!(
+                        branch.objects.get(returning_creature).zone,
+                        Zone::Battlefield
+                    );
+                    assert_eq!(branch.objects.get(aura).zone, Zone::Battlefield);
+                    assert_eq!(
+                        branch.objects.get(aura).v4.attached_to.unwrap().object,
+                        host
+                    );
+                    validate_state(branch).unwrap();
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&restored).unwrap()
+                );
+            } else {
+                assert!(!crate::linked_aura_operation_v1::has_pending(&state));
+                assert_eq!(
+                    state.objects.get(returning_creature).zone,
+                    Zone::Battlefield
+                );
+                assert_eq!(
+                    state.objects.get(aura).zone,
+                    Zone::Exile,
+                    "the returned creature does not rescue an Aura with no pre-entry host"
+                );
+                assert!(state
+                    .engine
+                    .event_history
+                    .iter()
+                    .any(|event| matches!(event,
+                    CommittedEvent::BanishingAuraHostsCapturedV1 {choice}
+                        if choice.aura.object == aura && choice.original_candidates.is_empty())));
+                validate_state(&replay(&state)).unwrap();
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires future actual Banishing Light registration; no admission bypass"]
+fn simultaneous_opposite_owner_choices_follow_apnap_before_any_entry_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for reverse in [false, true] {
+            let (mut state, opponent_aura_source, opponent_aura, host) = linked_aura(actor);
+            let active_aura = put(&mut state, actor, "Pacifism", Zone::Battlefield);
+            state
+                .attach_object_exact(
+                    active_aura,
+                    0,
+                    host,
+                    state.objects.get(host).zone_change_count,
+                )
+                .unwrap();
+            let active_aura_source =
+                put(&mut state, actor.opponent(), "Banishing Light", Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(active_aura_source, Zone::Battlefield),
+            );
+            assert!(
+                matches!(next(&mut state), Decision::ChooseTargets {player,legal_targets,..}
+                if player == actor.opponent() && legal_targets.contains(&Target::Object(active_aura)))
+            );
+            engine::step(
+                &mut state,
+                Action::ChooseTarget(Target::Object(active_aura)),
+            )
+            .unwrap();
+            finish_stack(&mut state);
+            assert_eq!(state.active_player, actor);
+            let mut events = vec![
+                ProposedEvent::zone_change(opponent_aura_source, Zone::Hand),
+                ProposedEvent::zone_change(active_aura_source, Zone::Hand),
+            ];
+            if reverse {
+                events.reverse();
+            }
+            event::propose_and_commit_batch(&mut state, events);
+            assert_owner_choice(&mut state, actor, active_aura, host);
+            assert_eq!(state.objects.get(active_aura).zone, Zone::Exile);
+            assert_eq!(state.objects.get(opponent_aura).zone, Zone::Exile);
+            engine::step(&mut state, Action::ChooseEffectTarget(Target::Object(host))).unwrap();
+            assert_owner_choice(&mut state, actor.opponent(), opponent_aura, host);
+            assert_eq!(state.objects.get(active_aura).zone, Zone::Exile);
+            assert_eq!(state.objects.get(opponent_aura).zone, Zone::Exile);
+            let mut restored = replay(&state);
+            for branch in [&mut state, &mut restored] {
+                engine::step(branch, Action::ChooseEffectTarget(Target::Object(host))).unwrap();
+                for aura in [active_aura, opponent_aura] {
+                    assert_eq!(branch.objects.get(aura).zone, Zone::Battlefield);
+                    assert_eq!(
+                        branch.objects.get(aura).v4.attached_to.unwrap().object,
+                        host
+                    );
+                }
+                validate_state(branch).unwrap();
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&restored).unwrap()
+            );
+        }
     }
 }
