@@ -142,6 +142,7 @@ pub(crate) fn copy_snapshot_legal_targets(
             zone: Zone::Stack,
             zone_change_count: source.zone_change_count,
             other_than: None,
+            original_source_incarnation_only: false,
         }),
         state,
     ))
