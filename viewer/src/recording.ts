@@ -125,6 +125,9 @@ export function parseRecording(raw: unknown): Recording {
       const indices = f.search.stats.map(s => s.index);
       if (indices.length !== f.actions.length || new Set(indices).size !== indices.length || indices.some(i => i >= f.actions.length)) throw new Error('Search action mapping is invalid');
       if (f.search.stats.some(s => s.meanValue !== (s.visits ? BigInt(s.valueSum) / BigInt(s.visits) : 0n).toString())) throw new Error('Search mean differs from captured visit/value sum');
+      if (f.search.algorithm==='persistent-uct' && (!f.decisionSource || f.decisionSource.kind!=='search-root' ||
+          f.search.stats.reduce((n,s)=>n+s.visits,0)!==f.search.simulations ||
+          f.search.stats.some(s=>BigInt(s.valueSum)<0n || BigInt(s.valueSum)>BigInt(s.visits)*1000000n || BigInt(s.valueSum)%1000000n!==0n))) throw new Error('Recorded rollout table has inconsistent source or outcome counts');
       if (f.search.replay) {
         if (r.schema === SCHEMA) throw new Error('Search replay requires recording format v2');
         validateReplay(f, r);
@@ -136,9 +139,9 @@ export function parseRecording(raw: unknown): Recording {
     const source=f.decisionSource, root=byId.get(source.root);
     if (!root?.search || root.search.algorithm !== 'persistent-uct' || root.key.actor !== r.perspective ||
         !root.decisionSource || root.decisionSource.kind !== 'search-root' || root.decisionSource.root !== root.id ||
-        root.key.step > f.key.step || root.decisionSource.treeDigest !== source.treeDigest ||
+        root.key.episode !== f.key.episode || root.key.step > f.key.step || root.decisionSource.treeDigest !== source.treeDigest ||
         root.decisionSource.artifactSha256 !== source.artifactSha256 ||
-        (source.kind==='search-root') !== (f.id===root.id)) throw new Error('Recorded search continuation has a broken root or source binding');
+        (source.kind==='search-root') !== (f.id===root.id) || (source.kind==='search-continuation' && f.search)) throw new Error('Recorded search continuation has a broken root or source binding');
   }
   if (r.bookmarks.some(b => !ids.has(b.frame))) throw new Error('Bookmark points to a missing decision');
   if (r.complete && !r.frames.at(-1)?.terminal) throw new Error('Complete game has no recorded terminal state');

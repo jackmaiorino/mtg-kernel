@@ -25,6 +25,8 @@ describe('retained search-controlled decisions',()=>{
     expect(()=>parseRecording(mismatch)).toThrow(/binding/);
     const old=structuredClone(retained);old.schema='mtg-kernel-viewer-recording/v2';
     expect(()=>parseRecording(old)).toThrow(/format v3/);
+    const episode=structuredClone(retained);episode.frames[1].key.episode++;
+    expect(()=>parseRecording(episode)).toThrow(/binding/);
   });
 });
 describe('growing search graph',()=>{

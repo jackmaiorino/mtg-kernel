@@ -154,6 +154,7 @@ function App() {
   useEffect(() => {
     if (!recording || !frame) return;
     setSelectedAction(null); setSelectedCard(null); setShowAll(false); setActionPage(0); setZone(null);
+    if (frame?.search?.algorithm === 'persistent-uct' && !frame.policy) setView('search');
     const oldParams=new URLSearchParams(window.location.hash.slice(1));
     const nextParams=new URLSearchParams({game:recording.id,decision:frame.id});
     if(oldParams.get('game')===recording.id&&oldParams.get('decision')===frame.id&&oldParams.has('searchEvent'))nextParams.set('searchEvent',oldParams.get('searchEvent')!);
