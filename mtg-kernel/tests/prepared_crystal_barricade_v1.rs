@@ -1316,7 +1316,7 @@ fn real_batch_progress_capture_and_early_commit_forgeries_refuse_readonly() {
             let rejected = engine::advance_until_decision(&mut state);
             assert!(matches!(rejected, Decision::Halted { .. }));
             let mut expected: GameState = serde_json::from_slice(&bytes).unwrap();
-            expected.engine.halted = state.engine.halted.clone();
+            expected.engine.halted = state.engine.halted;
             assert_eq!(
                 serde_json::to_vec(&state).unwrap(),
                 serde_json::to_vec(&expected).unwrap()
