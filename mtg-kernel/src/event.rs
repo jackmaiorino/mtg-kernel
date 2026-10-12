@@ -1265,15 +1265,17 @@ pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
     }
 }
 
-/// The selected entry observer must see the genuine Disguise cast form,
-/// rather than the hidden definition's printed characteristics. Ordinary
-/// catalogs retain their existing entry path and event ordering.
-pub(crate) fn commit_garruk_disguised_entry(
+/// The selected observer sees genuine as-entry Disguise, X counters and
+/// attachment characteristics. Ordinary catalogs retain their old entry path.
+pub(crate) fn commit_garruk_initialized_entry(
     state: &mut GameState,
-    owner: &crate::garruks_uprising_v1::DisguisedEntryOwnerV1,
+    owner: &crate::garruks_uprising_v1::PermanentEntryOwnerV1,
 ) -> Result<(), String> {
     crate::effect::temporary_control_v1::authority::validate(state)?;
-    let entering = owner.entering_face_down(state)?;
+    state
+        .validate_attachment_relations()
+        .map_err(|_| "Garruk entry begins with invalid attachment relations")?;
+    let entering = owner.entering_characteristics(state)?;
     if let Some(event) = apply_replacements(
         state,
         ProposedEvent::zone_change(entering.0, Zone::Battlefield),
@@ -1321,7 +1323,10 @@ fn commit_with_ability_lki_and_entry_batch(
     frozen_death_captures: Option<Vec<CommittedEvent>>,
     mut authority_batch: Option<&mut crate::authority_of_the_consuls_v1::EntryBatchV1>,
     mut garruk_batch: Option<&mut crate::garruks_uprising_v1::EntryBatchV1>,
-    entering_face_down: Option<(ObjectId, crate::state::FaceDownV1)>,
+    entering_characteristics: Option<(
+        ObjectId,
+        crate::garruks_uprising_v1::EntryCharacteristicsV1,
+    )>,
 ) {
     let mut event = event;
     if let ProposedEvent::ZoneChange(change) = &mut event {
@@ -1513,7 +1518,7 @@ fn commit_with_ability_lki_and_entry_batch(
                     authority_batch
                         .as_ref()
                         .map(|batch| batch.observers.as_slice()),
-                    entering_face_down
+                    entering_characteristics
                         .as_ref()
                         .filter(|(object, _)| *object == z.object)
                         .map(|(_, face)| *face),
@@ -2229,10 +2234,11 @@ fn commit_zone_change(
     battlefield_controller: Option<PlayerId>,
     entry_context: (
         Option<&[crate::state::AbilitySourceContractV4]>,
-        Option<crate::state::FaceDownV1>,
+        Option<crate::garruks_uprising_v1::EntryCharacteristicsV1>,
     ),
 ) {
-    let (authority_observers, entering_face_down) = entry_context;
+    let (authority_observers, entering_characteristics) = entry_context;
+    let entering_face_down = entering_characteristics.and_then(|entry| entry.face_down);
     #[cfg(feature = "standard-magezero-fixtures")]
     let battlefield_face_index = battlefield_face_index.or_else(|| {
         (to_zone == Zone::Battlefield
@@ -2385,6 +2391,29 @@ fn commit_zone_change(
         }
     }
     if to_zone == Zone::Battlefield {
+        if let Some(entry) = entering_characteristics {
+            if let Some(host) = entry.attached_to {
+                if cfg!(feature = "limited-fdn-fixtures") {
+                    let timestamp = crate::engine::next_timestamp(state);
+                    state.objects.get_mut(id).v4.layer_timestamp = Some(timestamp);
+                }
+                if entry.bestowed {
+                    state.objects.get_mut(id).v4.effective_subtype_ids =
+                        vec![crate::card_def::Subtype::Aura.stable_id()];
+                }
+                let generation = state.objects.get(id).zone_change_count;
+                if state
+                    .attach_object_exact(id, generation, host.object, host.zone_change_count)
+                    .is_err()
+                {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        id,
+                    ));
+                    return;
+                }
+            }
+        }
         // Evaluate this new static rule with the actual entering controller
         // and initialized battlefield characteristics, preserving the earlier
         // legacy entry checks and their order.
@@ -2399,13 +2428,18 @@ fn commit_zone_change(
         ) {
             state.objects.get_mut(id).tapped = true;
         }
-        if cfg!(feature = "limited-fdn-fixtures") {
+        if cfg!(feature = "limited-fdn-fixtures")
+            && entering_characteristics.is_none_or(|entry| entry.attached_to.is_none())
+        {
             let timestamp = crate::engine::next_timestamp(state);
             state.objects.get_mut(id).v4.layer_timestamp = Some(timestamp);
         }
         let kicked = from_zone == Zone::Stack && state.engine.pending_kicked_source == Some(id);
         if entering_face_down.is_none() {
             initialize_entry_counters(state, id, kicked);
+        }
+        if let Some(count) = entering_characteristics.and_then(|entry| entry.x_counters) {
+            state.objects.get_mut(id).counters.plus1_plus1 = count;
         }
     }
     crate::planeswalker_v1::after_zone_change(state, id);
@@ -3231,11 +3265,14 @@ mod garruk_entry_tests {
                 for id in [source, entrant] {
                     let hidden = (face_down && id == entrant).then_some((
                         id,
-                        crate::state::FaceDownV1 {
-                            disguised: true,
-                            lookers: 1 << actor.index(),
-                            hidden_by: None,
-                            hidden_by_source: None,
+                        crate::garruks_uprising_v1::EntryCharacteristicsV1 {
+                            face_down: Some(crate::state::FaceDownV1 {
+                                disguised: true,
+                                lookers: 1 << actor.index(),
+                                hidden_by: None,
+                                hidden_by_source: None,
+                            }),
+                            ..Default::default()
                         },
                     ));
                     // Genuine entry commit with explicitly labeled physical

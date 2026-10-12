@@ -94,6 +94,18 @@ fn actual_cast_conditional_etb_and_later_event_time_draw_trample_both_seats() {
             other,
             Keywords::TRAMPLE
         ));
+        let before = state.players[actor.index()].hand.len();
+        let large = put(&mut state, actor, "Myr Enforcer", Zone::Hand);
+        crate::event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(large, Zone::Battlefield),
+        );
+        settle(&mut state);
+        assert_eq!(
+            state.players[actor.index()].hand.len(),
+            before,
+            "a creature entering for the source's opponent creates no draw"
+        );
     }
 }
 
@@ -329,5 +341,171 @@ fn actual_witness_suppression_and_later_reentered_grant_follow_layer_timestamps(
             elf,
             Keywords::TRAMPLE
         ));
+    }
+}
+
+#[test]
+fn accepted_nyxborn_x_and_bestow_entry_characteristics_precede_actual_draw_capture() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for form in 0..3 {
+            let mut state = ready(actor);
+            cast(&mut state, actor, "Garruk's Uprising", 1, 2);
+            let host = put(&mut state, actor, "Llanowar Elves", Zone::Hand);
+            crate::event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(host, Zone::Battlefield),
+            );
+            settle(&mut state);
+            let hydra = put(&mut state, actor, "Nyxborn Hydra", Zone::Hand);
+            state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 2;
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 4;
+            next(&mut state);
+            engine::step(&mut state, Action::CastSpell(hydra)).unwrap();
+            assert!(matches!(
+                next(&mut state),
+                Decision::ChooseSpellMode { mode_count: 2, .. }
+            ));
+            engine::step(&mut state, Action::ChooseSpellMode(u8::from(form != 0))).unwrap();
+            if form != 0 {
+                assert!(
+                    matches!(next(&mut state), Decision::ChooseTargets { legal_targets, .. }
+                    if legal_targets.contains(&crate::state::Target::Object(host)))
+                );
+                engine::step(
+                    &mut state,
+                    Action::ChooseTarget(crate::state::Target::Object(host)),
+                )
+                .unwrap();
+            }
+            assert!(
+                matches!(next(&mut state), Decision::ChooseEffectOption { option_count, .. } if option_count > 4)
+            );
+            engine::step(&mut state, Action::ChooseEffectOption(4)).unwrap();
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            assert_eq!(state.stack.last().unwrap().v4.x_value, 4);
+            if form == 2 {
+                crate::event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(host, Zone::Hand),
+                );
+            }
+            let before = state.players[actor.index()].hand.len();
+            let start = state.engine.event_history.len();
+            let mut replay = restore(&state);
+            settle(&mut state);
+            settle(&mut replay);
+            assert_eq!(state.objects.get(hydra).counters.plus1_plus1, 4);
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&replay).unwrap()
+            );
+            assert_eq!(
+                state.players[actor.index()].hand.len(),
+                before + usize::from(form != 1)
+            );
+            let observation = state.engine.event_history[start..]
+                .iter()
+                .find_map(|event| match event {
+                    CommittedEvent::GarrukEntryObservationV1 {
+                        entry,
+                        effective_creature,
+                        effective_power,
+                        ..
+                    } if entry.object == hydra => {
+                        Some((entry, *effective_creature, *effective_power))
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(observation.0.snapshot.counters.plus1_plus1, 4);
+            if form == 1 {
+                assert!(!observation.1);
+                assert_eq!(observation.2, None);
+                assert_eq!(observation.0.snapshot.v4.attached_to.unwrap().object, host);
+                assert_eq!(engine::effective_power(&state, host), 5);
+            } else {
+                assert!(observation.1);
+                assert_eq!(observation.2, Some(4));
+                assert!(observation.0.snapshot.v4.attached_to.is_none());
+            }
+        }
+    }
+}
+
+#[test]
+fn actual_simultaneous_dwynen_entries_retain_mandatory_draws_through_legend_choice() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let source = cast(&mut state, actor, "Garruk's Uprising", 1, 2);
+        let entries = [0, 1].map(|_| put(&mut state, actor, "Dwynen, Gilt-Leaf Daen", Zone::Hand));
+        crate::event::propose_and_commit_batch(
+            &mut state,
+            entries
+                .iter()
+                .map(|id| ProposedEvent::zone_change(*id, Zone::Battlefield))
+                .collect(),
+        );
+        assert!(entries
+            .iter()
+            .all(|id| engine::effective_power(&state, *id) == 4));
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseLegendPermanent { .. }
+        ));
+        assert_eq!(
+            state
+                .pending_legend_rule_v1
+                .as_ref()
+                .unwrap()
+                .waiting_triggers()
+                .len(),
+            2
+        );
+        validate_state(&state).unwrap();
+        let public = crate::garruk_public_v1::observe_v1(
+            &state,
+            &crate::policy_surface_v5::PolicySurfaceV5::new(),
+            actor,
+            0,
+            0,
+            0,
+            1,
+        )
+        .unwrap();
+        assert!(public.entry_occurrences.iter().all(|row| row.lifecycle
+            == crate::garruk_public_v1::EntryLifecycleV1::LegendWaiting
+            && row.event_time_power == Some(4)));
+        let mut bad = restore(&state);
+        crate::standard_cards_v1::gain_control(&mut bad, source, actor.opponent());
+        let mut value = serde_json::to_value(&bad).unwrap();
+        let waiting = value["pending_legend_rule_v1"]["waiting_triggers"]
+            .as_array_mut()
+            .unwrap();
+        let rewritten = serde_json::to_value(actor.opponent()).unwrap();
+        waiting[0]["controller"] = rewritten.clone();
+        waiting[0]["source_contract"]["controller"] = rewritten;
+        let bad: GameState = serde_json::from_value(value).unwrap();
+        assert!(validate_state(&bad).is_err());
+        let bytes = serde_json::to_vec(&bad).unwrap();
+        for _ in 0..2 {
+            let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
+            assert!(
+                engine::step(&mut restored, Action::ChooseLegendPermanent(entries[0])).is_err()
+            );
+            assert_eq!(serde_json::to_vec(&restored).unwrap(), bytes);
+        }
+        let before = state.players[actor.index()].hand.len();
+        let mut replay = restore(&state);
+        for current in [&mut state, &mut replay] {
+            engine::step(current, Action::ChooseLegendPermanent(entries[0])).unwrap();
+            settle(current);
+            assert_eq!(current.players[actor.index()].hand.len(), before + 2);
+            assert_eq!(current.objects.get(entries[0]).zone, Zone::Battlefield);
+            assert_eq!(current.objects.get(entries[1]).zone, Zone::Graveyard);
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
     }
 }

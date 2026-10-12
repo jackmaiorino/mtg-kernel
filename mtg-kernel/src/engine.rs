@@ -14107,9 +14107,10 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 return ResolutionProgress::Suspended;
             }
         };
-    let disguised_entry = match crate::garruks_uprising_v1::acquire_disguised_entry(
+    let initialized_entry = match crate::garruks_uprising_v1::acquire_permanent_entry(
         state,
         state.stack.last().expect("resolving genuine item"),
+        targets_legal,
     ) {
         Ok(owner) => owner,
         Err(_) => {
@@ -14166,6 +14167,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     }
     if !targets_legal {
         if item.kind == StackItemKind::Spell && item.v4.cast_method == Some(CastMethodV4::Bestow) {
+            if let Some(owner) = initialized_entry.as_ref() {
+                if crate::event::commit_garruk_initialized_entry(state, owner).is_err() {
+                    state.engine.halted =
+                        Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                    return ResolutionProgress::Suspended;
+                }
+                return ResolutionProgress::Complete;
+            }
             effect::execute(
                 &EffectOp::PutSourceOntoBattlefieldWithXPlusOneCounters,
                 &ctx,
@@ -14260,8 +14269,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         }
     }
     if let Some(program) = program {
-        if let Some(owner) = disguised_entry.as_ref() {
-            if crate::event::commit_garruk_disguised_entry(state, owner).is_err() {
+        if let Some(owner) = initialized_entry.as_ref() {
+            if crate::event::commit_garruk_initialized_entry(state, owner).is_err() {
                 state.engine.halted =
                     Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
                 return ResolutionProgress::Suspended;

@@ -1,5 +1,5 @@
-//! Selected Garruk's Uprising static characteristics. Trigger ownership is
-//! prepared separately; this unregistered source is not capability admission.
+//! Definition-owned static and captured ETB roots for Garruk's Uprising.
+//! This unregistered source is not capability or consumer admission.
 use crate::card_def::{CardType, Keywords, TargetSpec, CARD_DEFS};
 use crate::effect::{EffectOp, ExecCtx};
 use crate::event::{CommittedEvent, ProposedEvent};
@@ -122,36 +122,74 @@ fn enabled() -> bool {
     })
 }
 
-/// A genuine removed permanent spell supplies its cast form before entry.
-/// This loan is never serialized or manufactured from an entry receipt.
-pub(crate) struct DisguisedEntryOwnerV1 {
-    item: StackItem,
+/// Exact supported as-entry forms, constructed from a genuine finalized
+/// permanent spell before removal. No serialized continuation constructs this loan.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct EntryCharacteristicsV1 {
+    pub face_down: Option<crate::state::FaceDownV1>,
+    pub x_counters: Option<i32>,
+    pub attached_to: Option<crate::state::ObjectLinkV4>,
+    pub bestowed: bool,
 }
-pub(crate) fn acquire_disguised_entry(
+pub(crate) struct PermanentEntryOwnerV1 {
+    item: StackItem,
+    original: GameObject,
+    characteristics: EntryCharacteristicsV1,
+}
+pub(crate) fn acquire_permanent_entry(
     state: &GameState,
     item: &StackItem,
-) -> Result<Option<DisguisedEntryOwnerV1>, String> {
+    targets_legal: bool,
+) -> Result<Option<PermanentEntryOwnerV1>, String> {
     if !enabled()
         || item.kind != crate::state::StackItemKind::Spell
-        || item.v4.cast_method != Some(crate::state::CastMethodV4::Alternative)
+        || item.inline_effect.is_some()
+        || item.v4.cast_method == Some(crate::state::CastMethodV4::Omen)
     {
         return Ok(None);
     }
     let live = state.objects.get(item.source);
     let def = &CARD_DEFS[usize::from(live.card_def)];
-    if !def
-        .alt_cost
-        .is_some_and(|alt| alt.condition == crate::card_def::AltCostCondition::DisguiseFromHand)
-    {
-        return Ok(None);
-    }
+    let bestowed = item.v4.cast_method == Some(crate::state::CastMethodV4::Bestow);
+    let disguised = item.v4.cast_method == Some(crate::state::CastMethodV4::Alternative)
+        && def.alt_cost.is_some_and(|alt| {
+            alt.condition == crate::card_def::AltCostCondition::DisguiseFromHand
+        });
+    let program = if bestowed {
+        if def.bestow.is_none() {
+            return Err("Garruk entry lost actual Bestow form".into());
+        }
+        if targets_legal {
+            Some(
+                EffectOp::PutSourceOntoBattlefieldAttachedToTargetWithXPlusOneCounters {
+                    target: crate::effect::ObjectRef::Target(0),
+                },
+            )
+        } else {
+            Some(EffectOp::PutSourceOntoBattlefieldWithXPlusOneCounters)
+        }
+    } else {
+        def.printed_mode_effect(item.mode_chosen)
+    };
+    let (x_counters, target) = match program {
+        Some(EffectOp::MoveObject {
+            object: crate::effect::ObjectRef::ThisSource,
+            to_zone: Zone::Battlefield,
+        }) if disguised => (None, None),
+        Some(EffectOp::PutSourceOntoBattlefieldWithXPlusOneCounters) => {
+            (Some(i32::from(item.v4.x_value)), None)
+        }
+        Some(EffectOp::PutSourceOntoBattlefieldAttachedToTargetWithXPlusOneCounters { target })
+            if targets_legal =>
+        {
+            (Some(i32::from(item.v4.x_value)), Some(target))
+        }
+        Some(EffectOp::PutSourceOntoBattlefieldAttachedToTarget { target }) if targets_legal => {
+            (None, Some(target))
+        }
+        _ => return Ok(None),
+    };
     if live.zone != Zone::Stack
-        || item.inline_effect.is_some()
-        || def.printed_mode_effect(item.mode_chosen)
-            != Some(EffectOp::MoveObject {
-                object: crate::effect::ObjectRef::ThisSource,
-                to_zone: Zone::Battlefield,
-            })
         || state
             .stack
             .iter()
@@ -159,33 +197,72 @@ pub(crate) fn acquire_disguised_entry(
             .collect::<Vec<_>>()
             != [item]
     {
-        return Err("Garruk entry cast form lost its exact ordinary permanent spell".into());
+        return Err("Garruk entry lost the unique genuine permanent spell".into());
     }
-    crate::engine::validated_stack_item_target_spec(state, item)?;
-    Ok(Some(DisguisedEntryOwnerV1 { item: item.clone() }))
+    crate::engine::validated_stack_item_target_spec(item, state)?;
+    let attached_to = if let Some(crate::effect::ObjectRef::Target(index)) = target {
+        let at = usize::from(index);
+        let Some(crate::state::Target::Object(object)) = item.targets.get(at) else {
+            return Err("Garruk entry attachment lost its actual target".into());
+        };
+        let contract = *item
+            .v4
+            .target_contracts
+            .get(at)
+            .ok_or("Garruk entry attachment lost its contract")?;
+        if !crate::engine::target_contract_matches_live(state, item.targets[at], contract) {
+            return Err("Garruk entry attachment target incarnation changed".into());
+        }
+        Some(crate::state::ObjectLinkV4 {
+            object: *object,
+            zone_change_count: state.objects.get(*object).zone_change_count,
+        })
+    } else if target.is_some() {
+        return Err("Garruk entry attachment is not a definition-owned spell target".into());
+    } else {
+        None
+    };
+    let face_down = disguised.then_some(crate::state::FaceDownV1 {
+        disguised: true,
+        lookers: 1 << item.controller.index(),
+        hidden_by: None,
+        hidden_by_source: None,
+    });
+    Ok(Some(PermanentEntryOwnerV1 {
+        item: item.clone(),
+        original: live.clone(),
+        characteristics: EntryCharacteristicsV1 {
+            face_down,
+            x_counters,
+            attached_to,
+            bestowed: bestowed && targets_legal,
+        },
+    }))
 }
-impl DisguisedEntryOwnerV1 {
-    pub(crate) fn entering_face_down(
+impl PermanentEntryOwnerV1 {
+    pub(crate) fn entering_characteristics(
         &self,
         state: &GameState,
-    ) -> Result<(ObjectId, crate::state::FaceDownV1), String> {
-        if state.objects.get(self.item.source).zone != Zone::Stack
+    ) -> Result<(ObjectId, EntryCharacteristicsV1), String> {
+        if state.objects.get(self.item.source) != &self.original
+            || self.original.zone != Zone::Stack
             || state
                 .stack
                 .iter()
                 .any(|row| row.v4.stack_item_id == self.item.v4.stack_item_id)
         {
-            return Err("Garruk entry cast-form loan was not genuinely removed".into());
+            return Err(
+                "Garruk entry loan was not genuinely removed or changed its physical source".into(),
+            );
         }
-        Ok((
-            self.item.source,
-            crate::state::FaceDownV1 {
-                disguised: true,
-                lookers: 1 << self.item.controller.index(),
-                hidden_by: None,
-                hidden_by_source: None,
-            },
-        ))
+        if self.characteristics.attached_to.is_some_and(|host| {
+            state.objects.try_get(host.object).is_none_or(|live| {
+                live.zone != Zone::Battlefield || live.zone_change_count != host.zone_change_count
+            })
+        }) {
+            return Err("Garruk entering attachment changed its original host".into());
+        }
+        Ok((self.item.source, self.characteristics))
     }
 }
 pub(crate) fn record_single_entry(state: &mut GameState, index: usize) {

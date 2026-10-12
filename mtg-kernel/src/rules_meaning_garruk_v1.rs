@@ -89,6 +89,9 @@ pub fn producer_sha256_v1() -> String {
         include_str!("card_def.rs"),
         include_str!("continuous_characteristics_v1.rs"),
         include_str!("standard_cards_v1.rs"),
+        include_str!("standard_statics_v1.rs"),
+        include_str!("standard_legends_v1.rs"),
+        include_str!("fdn_raid_v1.rs"),
         include_str!("../build.rs"),
     ] {
         hash.update([0]);
