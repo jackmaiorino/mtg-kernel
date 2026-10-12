@@ -895,6 +895,7 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .waiting_triggers()
+                .iter()
                 .any(|pending| pending.source == source));
             validate(&state).unwrap();
             let mut restored: GameState =
