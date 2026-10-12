@@ -126,7 +126,9 @@ pub(super) fn begin(
 ) -> Result<bool, String> {
     let library = bind_library_exact(state, player);
     let remainder = pending.frames.clone();
-    if private_keep_one_v1::is_recipe(&validated_definition_owned_root_effect(state, pending)?) {
+    if private_keep_one_v1::is_recipe(
+        validated_definition_owned_root_effect(state, pending)?.as_ref(),
+    ) {
         private_keep_one_v1::validate_recipe(state, pending, player, count, &path, &remainder)?;
         let binding = private_keep_one_v1::capture(state, &pending.ctx)?;
         if library.is_empty() {
@@ -288,7 +290,9 @@ pub(super) fn resume(
     }
     validate_frame(state, pending, &frame)?;
     pending.answered_choice_guard = None;
-    if private_keep_one_v1::is_recipe(&validated_definition_owned_root_effect(state, pending)?) {
+    if private_keep_one_v1::is_recipe(
+        validated_definition_owned_root_effect(state, pending)?.as_ref(),
+    ) {
         private_keep_one_v1::commit_pending(state, pending, graveyard_order)?;
         return Ok(false);
     }

@@ -27,7 +27,7 @@ pub(super) fn validate_recipe(
     path: &[u16],
     remainder: &[EffectFrame],
 ) -> Result<(), String> {
-    if !is_recipe(&validated_definition_owned_root_effect(state, pending)?)
+    if !is_recipe(validated_definition_owned_root_effect(state, pending)?.as_ref())
         || pending.resolving_item.kind != crate::state::StackItemKind::TriggeredAbility
         || player != pending.ctx.controller
         || count != 3
@@ -218,7 +218,7 @@ pub(super) fn validate_required_stage(
     {
         return Ok(());
     }
-    if !is_recipe(&validated_definition_owned_root_effect(state, pending)?) {
+    if !is_recipe(validated_definition_owned_root_effect(state, pending)?.as_ref()) {
         return Err("Gutless Plunderer lost its definition-owned Raid root".into());
     }
     let stack = pending
@@ -351,7 +351,7 @@ pub(crate) fn selection_shape(state: &GameState) -> Result<Option<(u16, u16)>, S
     {
         return Ok(None);
     }
-    if !is_recipe(&validated_definition_owned_root_effect(state, pending)?) {
+    if !is_recipe(validated_definition_owned_root_effect(state, pending)?.as_ref()) {
         return Err("Gutless private instruction lost its definition-owned root".into());
     }
     match &pending.choice {

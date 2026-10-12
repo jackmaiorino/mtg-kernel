@@ -79,7 +79,7 @@ pub(super) fn prepare_current(
 
 impl FastActorSessionV1 {
     #[cfg(test)]
-    pub(crate) fn from_raid_entry_v21_fixture_state(state: GameState) -> Self {
+    pub(crate) fn from_raid_entry_v21_fixture_state(state: crate::state::GameState) -> Self {
         let mut session = Self::reset_with_limits(23, 91, 10_000, 10_000);
         session.state = state;
         session.surface = PolicySurfaceV5::new_for_session();
@@ -95,7 +95,7 @@ impl FastActorSessionV1 {
         session
     }
     #[cfg(test)]
-    pub(crate) fn raid_entry_fixture_state(&self) -> &GameState {
+    pub(crate) fn raid_entry_fixture_state(&self) -> &crate::state::GameState {
         &self.state
     }
 

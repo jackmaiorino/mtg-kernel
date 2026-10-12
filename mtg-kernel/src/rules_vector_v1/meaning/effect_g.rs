@@ -66,7 +66,7 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         EffectOp::CreatureUpgrade(effect) => {
             use crate::standard_creatures_v1::CreatureEffectV1;
             if matches!(effect, CreatureEffectV1::LibrarianWerewolfAndCounters) {
-                out.control(ControlF::Opaque);
+                out.atoms.push(Atom::Opaque);
                 return;
             }
             if matches!(effect, CreatureEffectV1::FinalityReturnedTarget) {

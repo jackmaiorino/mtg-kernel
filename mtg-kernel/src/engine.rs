@@ -14708,6 +14708,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 .extra_turn_v1
                 .as_ref()
                 .map_or(p.opponent(), |turn| turn.previous_player);
+            #[cfg(feature = "standard-magezero-fixtures")]
             crate::standard_keywords_v1::advance_day_night(state, previous_active);
             crate::life_gain_turn_v1::reset_at_untap(state);
             crate::standard_creatures_v1::begin_turn(state);
