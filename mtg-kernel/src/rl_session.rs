@@ -50,6 +50,7 @@ pub(crate) mod human_v8;
 pub(crate) mod juggernaut_v25;
 pub(crate) mod librarian_v20;
 pub(crate) mod sower_v14;
+pub(crate) mod stromkirk_v28;
 pub(crate) mod wildwood_v16;
 
 pub const RL_SESSION_SCHEMA_VERSION: u32 = 5;
@@ -4448,6 +4449,7 @@ enum FlatActionContractModeV1 {
     JuggernautV25,
     AshrootV27,
     BanishingV26,
+    StromkirkV28,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -7451,6 +7453,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:employment_v18:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::StromkirkV28 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = stromkirk_v28::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:stromkirk_v28:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));

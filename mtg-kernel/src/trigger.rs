@@ -257,6 +257,8 @@ pub enum TriggerCondition {
     AnotherControlledNonHydraCreatureGetsPlusOneCounters,
     /// Scoped committed opposing-creature entry captures; generic matching is unused.
     OpponentCreatureEntersV1,
+    /// Own end step with intervening actual opponent life loss.
+    BeginningControllerEndStepIfOpponentLostLife,
 }
 
 pub struct TriggeredAbilityDef {
@@ -1591,6 +1593,14 @@ fn skyship_buccaneer_effect() -> EffectOp {
         else_: Box::new(EffectOp::Sequence(vec![])),
     }
 }
+
+fn stromkirk_bloodthief_effect() -> EffectOp {
+    crate::stromkirk_bloodthief_v1::root()
+}
+const STROMKIRK_BLOODTHIEF_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningControllerEndStepIfOpponentLostLife,
+    ..etb_trigger(stromkirk_bloodthief_effect)
+}];
 
 const SKYSHIP_BUCCANEER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::EtbAfterControllerAttackedThisTurn,
@@ -3500,6 +3510,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Skyship Buccaneer" => &SKYSHIP_BUCCANEER_TRIGGERS,
         "Gorehorn Raider" => &GOREHORN_RAIDER_TRIGGERS,
         "Gutless Plunderer" => &GUTLESS_PLUNDERER_TRIGGERS,
+        "Stromkirk Bloodthief" => &STROMKIRK_BLOODTHIEF_TRIGGERS,
         "Searslicer Goblin" => &SEARSLICER_GOBLIN_TRIGGERS,
         "Authority of the Consuls" => &AUTHORITY_OF_THE_CONSULS_TRIGGERS,
         "Ruby, Daring Tracker" => &RUBY_DARING_TRACKER_TRIGGERS,
@@ -3700,6 +3711,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         "Mischievous Pup" => TargetSpec::UpToOneOtherControlledPermanent,
         "Felidar Savior" => TargetSpec::UpToTwoOtherControlledCreatures,
         "Armasaur Guide" => TargetSpec::ControlledCreature,
+        "Stromkirk Bloodthief" => crate::stromkirk_bloodthief_v1::target_spec(),
         "Vampire Soulcaller" => TargetSpec::CreatureCardInOwnGraveyard,
         "Affectionate Indrik" => TargetSpec::OpponentControlledCreature,
         "Ambush Wolf" => TargetSpec::UpToOneCardInGraveyards,
@@ -3820,6 +3832,11 @@ pub(crate) fn required_optional_additional_cost_for_trigger(
 /// place on the stack, including Moon-Circuit Hacker's event-frozen branch.
 pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: &EffectOp) -> bool {
     if template == effect {
+        return true;
+    }
+    if *template == crate::stromkirk_bloodthief_v1::root()
+        && crate::stromkirk_dispatch_v1::capture_of(effect).is_some()
+    {
         return true;
     }
     match (template, effect) {
@@ -4583,9 +4600,18 @@ pub(crate) fn collect_and_process_with_waiting(
         let keep = crate::engine::pending_trigger_targets_can_complete(pending, state);
         if !keep {
             crate::banishing_light_v1::discard_without_targets(state, pending);
+            if crate::stromkirk_dispatch_v1::unavailable(state, pending).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    pending.source,
+                ));
+            }
         }
         keep
     });
+    if state.engine.halted.is_some() {
+        return Vec::new();
+    }
 
     order_apnap(new_triggers, state.active_player)
 }
@@ -4649,6 +4675,16 @@ fn triggers_from_events(
                 })
     });
     let mut new_triggers = state.legend_pending_v1.take().unwrap_or_default();
+    match crate::stromkirk_dispatch_v1::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
     match crate::banishing_light_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
@@ -5799,6 +5835,14 @@ fn trigger_matches(
             TriggerCondition::BeginningControllerEndStepAfterControllerAttackedThisTurn,
             CommittedEvent::BeginningEndStep { active_player, .. },
         ) => *active_player == controller && state.player_attacked_this_turn_v1(controller),
+        (
+            TriggerCondition::BeginningControllerEndStepIfOpponentLostLife,
+            CommittedEvent::BeginningEndStep { active_player, .. },
+        ) => {
+            let _ = (active_player, controller);
+            // Exact observers are captured before SBA and collected through their own journal.
+            false
+        }
         (TriggerCondition::BeginningEndStepAfterWarp, CommittedEvent::BeginningEndStep { .. }) => {
             state.objects.get(source).v4.warped_v1
         }

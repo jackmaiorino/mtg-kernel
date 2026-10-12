@@ -929,6 +929,50 @@ pub enum CommittedEvent {
         operation: Box<crate::linked_aura_operation_v1::OperationV1>,
         original_sha256: String,
     },
+    /// History-only actual turn anchor for a selected Limited life-loss consumer.
+    LifeLossTurnBeganV1 {
+        turn: u32,
+        active_player: PlayerId,
+    },
+    StromkirkEndStepObserversV1 {
+        beginning_index: u64,
+        turn: u32,
+        observers: Vec<crate::state::AbilitySourceContractV4>,
+    },
+
+    StromkirkTriggerCaptureV2 {
+        observers_history_index: u64,
+        observer_index: u32,
+    },
+    StromkirkCollectedV2 {
+        capture_history_index: u64,
+    },
+    StromkirkPublishedV2 {
+        capture_history_index: u64,
+        item: Box<crate::state::StackItem>,
+    },
+    StromkirkPlacementRemovedV2 {
+        capture_history_index: u64,
+        pending: Box<crate::trigger::PendingTrigger>,
+    },
+    StromkirkResolutionRemovedV2 {
+        capture_history_index: u64,
+        item: Box<crate::state::StackItem>,
+        input: Box<crate::stromkirk_dispatch_v1::ResolutionInputV2>,
+    },
+    StromkirkCounterRemovedV2 {
+        capture_history_index: u64,
+        item: Box<crate::state::StackItem>,
+    },
+    StromkirkOperationV2 {
+        capture_history_index: u64,
+        removal_history_index: u64,
+        outcome: crate::stromkirk_dispatch_v1::OutcomeV2,
+    },
+    StromkirkCompletedV2 {
+        capture_history_index: u64,
+        operation_history_index: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1841,6 +1885,7 @@ fn commit_with_ability_lki_and_entry_batch(
     let entry_history_index = state.engine.event_history.len();
     state.engine.event_history.push(committed);
     crate::banishing_light_v1::record_entry(state, entry_history_index);
+    crate::life_loss_turn_v1::capture_committed_loss_at(state, entry_history_index);
     if committed_death {
         for capture in death_captures {
             state.engine.event_log.push(capture.clone());

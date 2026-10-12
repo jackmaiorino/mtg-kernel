@@ -394,6 +394,8 @@ pub enum EffectCond {
     },
     /// Raid recheck uses the resolving ability's captured controller.
     ControllerAttackedThisTurn,
+    /// Intervening recheck using the captured original controller.
+    OpponentLostLifeThisTurn,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1621,6 +1623,11 @@ pub enum EffectOp {
     BindAshrootAttackBoostV1,
     AshrootAttackBoostV1 {
         source: EffectObjectBinding,
+    },
+    /// Stromkirk's legal controlled Vampire permanent, including noncreatures.
+    StromkirkVampirePermanentCounterV1,
+    StromkirkCounterFromCaptureV2 {
+        capture_history_index: u64,
     },
 }
 
@@ -7832,6 +7839,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::raid_entry_v1::validate_state(state)?;
     crate::extra_turn_v1::validate(state)?;
     crate::ashroot_animist_v1::validate_state(state)?;
+    crate::stromkirk_bloodthief_v1::validate_state(state)?;
     temporary_control_v1::authority::validate(state)?;
     crate::self_reflection_v1::validate_live_stack(state)?;
     crate::authority_of_the_consuls_v1::validate_state(state)?;
@@ -18723,12 +18731,15 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 ));
             }
         }
-        EffectOp::TakeExtraTurnAfterThisOneV1 => {
-            // Only the private pre-removal resolution owner may schedule turns.
+        EffectOp::TakeExtraTurnAfterThisOneV1 | EffectOp::StromkirkCounterFromCaptureV2 { .. } => {
+            // These operations require their private pre-removal owners.
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
             ));
+        }
+        EffectOp::StromkirkVampirePermanentCounterV1 => {
+            crate::stromkirk_bloodthief_v1::resolve(state, ctx);
         }
         EffectOp::PreventTargetBlockingUntilEndOfTurn { target_index } => {
             crate::sower_of_chaos_v1::install(state, ctx, *target_index);
@@ -19718,6 +19729,9 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
             .hand
             .is_empty(),
         EffectCond::CreatureDiedThisTurn => state.creature_died_this_turn_v1(),
+        EffectCond::OpponentLostLifeThisTurn => {
+            crate::life_loss_turn_v1::opponent_lost_life(state, ctx.controller).unwrap_or(false)
+        }
         EffectCond::ControllerAttackedThisTurn => {
             state.player_attacked_this_turn_v1(ctx.controller)
         }

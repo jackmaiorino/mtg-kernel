@@ -310,6 +310,13 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
                 AggF::EventThisTurn,
             );
         }
+        TriggerCondition::BeginningControllerEndStepIfOpponentLostLife => {
+            out.trigger(TrigF::StepBegins {
+                step: StepF::EndStep,
+                yours_only: true,
+            });
+            out.atoms.push(Atom::Opaque);
+        }
         TriggerCondition::BeginningControllerEndStep => {
             out.trigger(TrigF::StepBegins {
                 step: StepF::EndStep,

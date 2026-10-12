@@ -1992,8 +1992,8 @@ pub struct GameState {
     /// battlefield incarnation for intervening-if trigger comparisons.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creature_stats_lki_v1: Option<Vec<CreatureStatsLkiV1>>,
-    /// Players who lost life this turn. Only `standard-magezero-fixtures`
-    /// builds record it.
+    /// Players who lost life this turn. Standard records its original ledger;
+    /// Limited opts in only through an actual selected life-loss definition.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub life_loss_turn_v1: Option<LifeLossTurnV1>,
     /// Creatures that can't attack or block while a source stays under
@@ -2286,7 +2286,10 @@ impl GameState {
     }
 
     /// Records that `player` lost life now.
-    #[cfg(feature = "standard-magezero-fixtures")]
+    #[cfg(any(
+        feature = "standard-magezero-fixtures",
+        feature = "limited-fdn-fixtures"
+    ))]
     pub(crate) fn record_life_loss_v1(&mut self, player: PlayerId) {
         let mut players = if self.player_lost_life_this_turn_v1(player.opponent()) {
             let mut players = [false; 2];
@@ -2422,6 +2425,7 @@ impl GameState {
             wildwood_waiting_v1: None,
         };
         crate::life_gain_turn_v1::initialize_for_pool(&mut state);
+        crate::life_loss_turn_v1::initialize_for_catalog(&mut state);
         state
     }
 

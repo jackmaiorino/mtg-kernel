@@ -9053,6 +9053,13 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
             source: ObjectId(0),
         };
     }
+    if crate::stromkirk_bloodthief_v1::validate_state(state).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        return Decision::Halted {
+            mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+            source: ObjectId(0),
+        };
+    }
     if crate::extra_turn_v1::validate(state).is_err() {
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
         return Decision::Halted {
@@ -12439,6 +12446,16 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
             // batch was just put on the stack), and a trigger whose targets
             // cannot be completed is removed rather than posing a
             // `ChooseTargets` with no legal choice.
+            if crate::stromkirk_dispatch_v1::unavailable(state, &pending).is_err() {
+                state.engine.halted = Some((
+                    UnsupportedMechanic::InvalidEffectContinuation,
+                    pending.source,
+                ));
+                return Some(Decision::Halted {
+                    mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                    source: pending.source,
+                });
+            }
             state.engine.pending_triggers.remove(0);
             continue;
         }
@@ -12462,6 +12479,16 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
                 // false`), which `drain_pending_cast_or_decide`'s matching
                 // `targeting_can_complete`/`abort_cast` guard already
                 // avoids for spell casts.
+                if crate::stromkirk_dispatch_v1::unavailable(state, &pending).is_err() {
+                    state.engine.halted = Some((
+                        UnsupportedMechanic::InvalidEffectContinuation,
+                        pending.source,
+                    ));
+                    return Some(Decision::Halted {
+                        mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                        source: pending.source,
+                    });
+                }
                 state.engine.pending_triggers.remove(0);
                 continue;
             }
@@ -12953,6 +12980,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
     effect::frenzied_goblin_resolution_v1::publish(state)?;
     crate::cerberus_capture_v1::publish(state, &finalized)?;
     crate::banishing_light_v1::publish(state, &finalized)?;
+    crate::stromkirk_dispatch_v1::publish(state, &finalized)?;
     // Same `priority_passes`/`priority_player` reset as `reset_priority`
     // (117.5: priority passes to the active player once a triggered
     // ability is put on the stack), but deliberately inlined instead of
@@ -13169,6 +13197,7 @@ fn triggered_stack_item_expected_target_spec(
         ability_source_contract,
     )?;
     crate::cerberus_capture_v1::validate_source(state, inline_effect, ability_source_contract)?;
+
     #[cfg(feature = "standard-magezero-fixtures")]
     if matches!(
         inline_effect,
@@ -13290,6 +13319,11 @@ fn triggered_stack_item_expected_target_spec(
         )?;
     }
     if !granted_trigger {
+        crate::stromkirk_bloodthief_v1::validate_source(
+            state,
+            inline_effect,
+            ability_source_contract,
+        )?;
         crate::raid_entry_v1::validate_source_for_program(
             state,
             inline_effect,
@@ -13638,7 +13672,9 @@ pub(crate) fn validated_stack_item_target_spec(
             crate::ashroot_animist_v1::normalize_target(state, contract)
         } else if crate::self_reflection_v1::owns_spell(state, item) {
             crate::self_reflection_v1::normalize_historical_target(state, contract)
-        } else if effect::temporary_control_v1::owns_spell(state, item) {
+        } else if effect::temporary_control_v1::owns_spell(state, item)
+            || crate::stromkirk_bloodthief_v1::owns_item(item)
+        {
             effect::temporary_control_v1::normalize_historical_target(state, contract)
         } else {
             contract
@@ -13734,7 +13770,9 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
             )
         } else if crate::self_reflection_v1::owns_spell(state, item) {
             crate::self_reflection_v1::target_matches_live(state, target, contract)
-        } else if effect::temporary_control_v1::owns_spell(state, item) {
+        } else if effect::temporary_control_v1::owns_spell(state, item)
+            || crate::stromkirk_bloodthief_v1::owns_item(item)
+        {
             target_contract_matches_live(
                 state,
                 target,
@@ -13922,6 +13960,7 @@ pub(crate) fn counter_stack_item_by_id(
         _ => return Err("duplicate private stack-incarnation ids".to_string()),
     };
     let item = state.stack[position].clone();
+    let stromkirk_counter_owner = crate::stromkirk_dispatch_v1::acquire(state, &item)?;
     effect::frenzied_goblin_resolution_v1::preflight_unstarted_removal(state, &item)?;
     validated_stack_item_target_spec(&item, state)?;
     if item.kind == StackItemKind::Spell
@@ -13955,6 +13994,7 @@ pub(crate) fn counter_stack_item_by_id(
         crate::banishing_light_v1::RemovalV1::Countered,
     );
     crate::banishing_light_v1::finish(state, &item);
+    crate::stromkirk_dispatch_v1::counter_removed(state, stromkirk_counter_owner.as_ref(), &item)?;
     effect::frenzied_goblin_resolution_v1::complete_unstarted(
         state,
         &item,
@@ -14249,6 +14289,17 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         ));
         return ResolutionProgress::Suspended;
     }
+    let stromkirk_owner = match crate::stromkirk_dispatch_v1::preflight_resolution(state, &current)
+    {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let temporal_owner =
         match crate::extra_turn_v1::acquire(state, state.stack.last().expect("resolving item")) {
             Ok(owner) => owner,
@@ -14318,6 +14369,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         x_value: item.v4.x_value,
     };
 
+    if let Some(owner) = stromkirk_owner.as_ref() {
+        if crate::stromkirk_dispatch_v1::resolve_owned(state, owner).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
     if !targets_legal {
         if item.kind == StackItemKind::Spell && item.v4.cast_method == Some(CastMethodV4::Bestow) {
             effect::execute(
@@ -14833,6 +14892,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             #[cfg(feature = "standard-magezero-fixtures")]
             crate::standard_keywords_v1::advance_day_night(state, previous_active);
             crate::life_gain_turn_v1::reset_at_untap(state);
+            crate::life_loss_turn_v1::reset_at_untap(state);
             crate::standard_creatures_v1::begin_turn(state);
             state.players[0].spells_cast_this_turn = 0;
             state.players[1].spells_cast_this_turn = 0;
@@ -14988,10 +15048,9 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 };
                 state.engine.event_log.push(marker.clone());
                 state.engine.event_history.push(marker);
-                crate::cerberus_capture_v1::record_begin(
-                    state,
-                    state.engine.event_history.len() - 1,
-                );
+                let beginning_index = state.engine.event_history.len() - 1;
+                crate::cerberus_capture_v1::record_begin(state, beginning_index);
+                crate::stromkirk_bloodthief_v1::record_begin(state, beginning_index);
             }
             let p = state.active_player;
             // 306.3: logged only for whichever player's own End step this

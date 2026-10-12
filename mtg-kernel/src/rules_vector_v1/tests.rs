@@ -761,6 +761,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Searslicer Goblin",
     "Goblin Token",
     "Slumbering Cerberus",
+    "Stromkirk Bloodthief",
     "Frenzied Goblin",
     "Ashroot Animist",
     "Wildwood Scourge",
