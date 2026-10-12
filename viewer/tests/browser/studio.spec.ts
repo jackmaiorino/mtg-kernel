@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import fixture from '../fixtures/actor-visible.json';
+import fixture from '../fixtures/actor-visible.json' with { type: 'json' };
 
 async function openFixture(page: import('@playwright/test').Page) {
   await page.route('**/demo/manifest.json', route => route.fulfill({status:404}));

@@ -20,6 +20,7 @@ impl<'a> V4SearchLeafEvaluatorV1<'a> {
             .map_err(|e| format!("V4 search leaf floating-point verification: {e:?}"))?;
         Ok(Self { policy })
     }
+    #[cfg_attr(feature = "viewer-recording-v1", allow(dead_code))]
     pub(crate) fn tensor_digest(
         &self,
         session: &FastActorSessionV1,

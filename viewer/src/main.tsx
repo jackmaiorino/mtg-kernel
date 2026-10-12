@@ -29,7 +29,7 @@ function CardView({ object, recording, assetBase, active, onSelect, animate, han
 }) {
   const card = recording.cards[object.card];
   const [imageFailed, setImageFailed] = useState(false);
-  const image = card.image ? `${assetBase}${card.image}` : null;
+  const image = card.image && assetBase ? `${assetBase}${card.image}` : null;
   return <motion.button layout={animate} layoutId={object.id} initial={false}
     animate={{ rotate: object.tapped ? 8 : 0 }} transition={{ duration: animate ? .38 : 0 }}
     className={`game-card ${active ? 'card-active' : ''} ${object.tapped ? 'tapped' : ''} ${hand ? 'hand-card' : ''}`}

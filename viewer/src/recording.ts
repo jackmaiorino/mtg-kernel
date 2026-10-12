@@ -61,7 +61,7 @@ export const seatIndex = (s: Seat) => s === 'p0' ? 0 : 1;
 export const objectList = (b: Board) => [...b.players.flatMap(p => [...p.battlefield, ...p.hand, ...p.graveyard]), ...b.exile];
 export const probability = (mass: string) => Number(BigInt(mass)) / 2 ** 64;
 export const frameKey = (k: Frame['key']) => `${k.episode}:${k.step}:${k.physical}:${k.substep}:${k.actor}`;
-export const isRoutine = (f: Frame) => f.actions[f.executed].kind === 'pass_priority' &&
+export const isRoutine = (f: Frame) => ['pass', 'pass_priority'].includes(f.actions[f.executed].kind) &&
   JSON.stringify(f.board.players) === JSON.stringify(f.after.players) &&
   JSON.stringify(f.board.stack) === JSON.stringify(f.after.stack) && !f.terminal;
 

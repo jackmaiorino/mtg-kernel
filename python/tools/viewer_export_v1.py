@@ -146,6 +146,8 @@ def terminal(value: dict | None) -> dict | None:
         outcome = value.get("terminal_outcome", value.get("outcome"))
         if isinstance(outcome, dict):
             winner = outcome.get("winner")
+        elif outcome in ('p0_win', 'p1_win'):
+            winner = outcome[:2]
     return {"kind": "Natural terminal", "winner": winner}
 
 def export_capture(path: Path, exporter: Exporter) -> tuple[dict, list[dict], bool]:
@@ -160,6 +162,8 @@ def export_capture(path: Path, exporter: Exporter) -> tuple[dict, list[dict], bo
                 raise ValueError("Invalid capture schema/order")
             if row["kind"] == "header" and header is None and not frames:
                 header = row
+                if row['perspective'] != exporter.perspective:
+                    raise ValueError('Capture perspective differs from requested export')
                 exporter.names = row["cards"]
             elif row["kind"] == "footer" and header is not None:
                 footer = row

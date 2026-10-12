@@ -50,6 +50,7 @@ struct Recorder {
     bytes: usize,
     written: u64,
     stopped: Option<String>,
+    natural_complete: bool,
 }
 impl Recorder {
     fn open(path: &Path, header: Value) -> Result<Self, String> {
@@ -63,6 +64,7 @@ impl Recorder {
             bytes: 0,
             written: 0,
             stopped: None,
+            natural_complete: false,
         };
         r.write(header);
         if r.stopped.is_some() {
@@ -98,7 +100,8 @@ impl Recorder {
 impl Drop for Recorder {
     fn drop(&mut self) {
         let footer = json!({"schema":SCHEMA,"kind":"footer","written":self.written,
-            "complete":self.stopped.is_none(),"stop_reason":self.stopped});
+            "complete":self.natural_complete && self.stopped.is_none(),
+            "stop_reason":self.stopped.as_deref().or(if self.natural_complete {None} else {Some("capture ended without a natural terminal")})});
         let _ = writeln!(self.file, "{footer}");
         let _ = self.file.flush();
     }
@@ -138,7 +141,7 @@ pub fn run(path: &Path) -> Result<(), String> {
         .map(|(i, c)| {
             (
                 i.to_string(),
-                json!({"name":c.name,"type":format!("{:?}",c.types),"cost":format!("{:?}",c.cost)}),
+                json!({"name":c.name,"type":format!("{:?}",c.types),"mana_cost":mana_cost(c.cost)}),
             )
         })
         .collect::<serde_json::Map<String, Value>>();
@@ -176,6 +179,9 @@ pub fn run(path: &Path) -> Result<(), String> {
                 );
                 if !natural {
                     return Err("game did not reach a natural terminal".into());
+                }
+                if let Some(r) = &mut recorder {
+                    r.natural_complete = true;
                 }
                 break;
             }
@@ -286,4 +292,21 @@ pub fn run(path: &Path) -> Result<(), String> {
     }
     primary.flush().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn mana_cost(cost: crate::mana::Cost) -> String {
+    use crate::mana::Pip;
+    let mut s = "{X}".repeat(cost.x_count as usize);
+    if cost.generic > 0 {
+        s.push_str(&format!("{{{}}}", cost.generic));
+    }
+    for pip in cost.pips {
+        let symbol = match pip {
+            Pip::Colored(c) => format!("{c:?}"),
+            Pip::Hybrid(a, b) => format!("{a:?}/{b:?}"),
+            Pip::Phyrexian(c) | Pip::PhyrexianAnyColor(c) => format!("{c:?}/P"),
+        };
+        s.push_str(&format!("{{{symbol}}}"));
+    }
+    s
 }
