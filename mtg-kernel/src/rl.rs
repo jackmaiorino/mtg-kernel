@@ -1947,9 +1947,7 @@ fn build_observation_v2(
         acting_player,
         step_index,
         text_mode,
-        false,
-        false,
-        false,
+        (false, false, false),
     )
 }
 
@@ -1959,10 +1957,9 @@ fn build_observation_common_v2(
     acting_player: PlayerId,
     step_index: u64,
     text_mode: ObservationTextModeV2,
-    accept_cant_block: bool,
-    accept_temporary_control: bool,
-    accept_extra_turn: bool,
+    capabilities: (bool, bool, bool),
 ) -> Result<ObservationV2> {
+    let (accept_cant_block, accept_temporary_control, accept_extra_turn) = capabilities;
     crate::extra_turn_v1::validate(state).map_err(RlContractError)?;
     if !accept_extra_turn && state.extra_turn_v1.is_some() {
         return Err(RlContractError(
@@ -2256,9 +2253,7 @@ fn build_policy_observation_parts(
         acting_player,
         step_index,
         text_mode,
-        false,
-        false,
-        false,
+        (false, false, false),
     )
 }
 fn build_policy_observation_parts_common(
@@ -2267,19 +2262,20 @@ fn build_policy_observation_parts_common(
     acting_player: PlayerId,
     step_index: u64,
     text_mode: ObservationTextModeV2,
-    accept_cant_block: bool,
-    accept_temporary_control: bool,
-    accept_extra_turn: bool,
+    capabilities: (bool, bool, bool),
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
+    let (accept_cant_block, accept_temporary_control, accept_extra_turn) = capabilities;
     let base = build_observation_common_v2(
         state,
         surface.harness_surface(),
         acting_player,
         step_index,
         text_mode,
-        accept_cant_block,
-        accept_temporary_control,
-        accept_extra_turn,
+        (
+            accept_cant_block,
+            accept_temporary_control,
+            accept_extra_turn,
+        ),
     )?;
     let context = policy_surface_context_v5(
         state,
@@ -2777,9 +2773,11 @@ fn build_policy_observation_storage_common(
         acting_player,
         step_index,
         text_mode,
-        accept_cant_block,
-        accept_temporary_control,
-        accept_extra_turn,
+        (
+            accept_cant_block,
+            accept_temporary_control,
+            accept_extra_turn,
+        ),
     )?;
     if let Some(search) = &extensions.decision_local_library {
         let Some(PendingEffectChoiceSemanticV4::Targets { legal_targets, .. }) = base

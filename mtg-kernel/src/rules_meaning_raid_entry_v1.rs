@@ -189,10 +189,12 @@ mod tests {
             bad.card_db_hash ^= 1;
             assert!(meaning_v1(&bad, id, 0).is_err());
         } else {
-            assert!(!cfg!(all(
+            if cfg!(all(
                 feature = "limited-fdn-fixtures",
                 not(feature = "standard-magezero-fixtures")
-            )));
+            )) {
+                panic!("selected printed Raid catalog must provide its genuine selector");
+            }
         }
     }
 }
