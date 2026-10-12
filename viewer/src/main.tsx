@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { LayoutGroup, MotionConfig, motion, useReducedMotion } from 'motion/react';
 import { ArrowDown, ArrowLeft, ArrowRight, BookOpen, Check, ChevronDown, ChevronRight, CircleHelp, Cpu, ExternalLink, Eye, Focus, GitBranch, Layers, Maximize2, Pause, Play, RotateCcw, Shield, Sparkles, Upload, X } from 'lucide-react';
-import { type Board, type CardObject, type Frame, type Recording, type Seat, MAX_BYTES, isRoutine, objectList, probability, seatIndex } from './recording';
+import { type Board, type CardObject, type Frame, type Recording, type Seat, MAX_BYTES, comparePolicyMasses, policyFavorite, isRoutine, objectList, probability, seatIndex } from './recording';
 import { initialPlayback, playbackReducer } from './playback';
 import './style.css';
 
@@ -197,10 +197,10 @@ function App() {
   const ranked = useMemo(() => {
     if (!frame) return [];
     const stats = new Map(frame.search?.stats.map(s => [s.index, s]));
-    return frame.actions.map(action => ({ action, mass: frame.policy ? probability(frame.policy.masses[action.index]) : 0, stat: stats.get(action.index) }))
-      .sort((a, b) => view === 'search' && frame.search ? (b.stat?.visits ?? 0) - (a.stat?.visits ?? 0) || a.action.index - b.action.index : b.mass - a.mass || a.action.index - b.action.index);
+    return frame.actions.map(action => ({ action, numerator: frame.policy?.masses[action.index] ?? '0', mass: frame.policy ? probability(frame.policy.masses[action.index]) : 0, stat: stats.get(action.index) }))
+      .sort((a, b) => view === 'search' && frame.search ? (b.stat?.visits ?? 0) - (a.stat?.visits ?? 0) || a.action.index - b.action.index : comparePolicyMasses(a.numerator, b.numerator) || a.action.index - b.action.index);
   }, [frame, view]);
-  const mostLikely = frame?.policy ? [...frame.policy.masses].map(probability).indexOf(Math.max(...frame.policy.masses.map(probability))) : -1;
+  const mostLikely = frame?.policy ? policyFavorite(frame.policy.masses) : -1;
   const visitTotal = frame?.search?.stats.reduce((n, s) => n + s.visits, 0) ?? 0;
   const featured = recording ? seatIndex(recording.perspective) : 0;
   const opponent = 1 - featured;

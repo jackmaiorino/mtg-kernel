@@ -1,11 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import fixture from './fixtures/actor-visible.json';
 import native from './fixtures/native-root-excerpt.json';
-import { parseRecording, verifySearchDigests } from '../src/recording';
+import { comparePolicyMasses, policyFavorite, parseRecording, verifySearchDigests } from '../src/recording';
 import { initialPlayback, playbackReducer } from '../src/playback';
 
 const copy = () => structuredClone(fixture);
 describe('versioned recordings', () => {
+  it('ranks nearly equal Q64 masses without losing their exact favorite', () => {
+    const masses = ['9223372036854775807', '9223372036854775809'];
+    expect(Number(masses[0])).toBe(Number(masses[1]));
+    expect(masses.reduce((sum, mass) => sum + BigInt(mass), 0n)).toBe(1n << 64n);
+    expect(policyFavorite(masses)).toBe(1);
+    expect([0,1].sort((a,b) => comparePolicyMasses(masses[a], masses[b]))).toEqual([1,0]);
+    expect(policyFavorite(['9223372036854775808','9223372036854775808'])).toBe(0);
+  });
   it('verifies actual recorded root digests, including their work-count suffix', async () => {
     await expect(verifySearchDigests(parseRecording(native))).resolves.toBeUndefined();
   });
