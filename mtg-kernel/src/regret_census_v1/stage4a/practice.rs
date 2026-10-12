@@ -186,6 +186,9 @@ fn exposure(path: &str) -> Result<Value, String> {
             return Err(format!("suffix row {i} differs from the replay"));
         }
         first_step.get_or_insert(step);
+        // Labels before this row's menu and transition: offered/chosen flags
+        // are set by the menu observation, resolutions by the transition.
+        let before = fresh.json();
         if actor == focal.0 {
             learner_rows += 1;
             learner_physical.insert(d.physical_decision_id);
@@ -199,7 +202,6 @@ fn exposure(path: &str) -> Result<Value, String> {
                 observe(&mut fresh, &s, selected, focal, &defs);
             }
         }
-        let before = fresh.json();
         step2(&mut s, selected, focal, &mut [&mut whole, &mut fresh], &defs)?;
         let after = fresh.json();
         for k in [

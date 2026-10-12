@@ -238,11 +238,22 @@ def iterations(lineage: str, arm: str, decks: list[dict], bank: dict, srcs: dict
             eid = f"{NS}-{lineage}-{e['phase']}-o{e['own']}-t{e['other']}-j{e['j']}-s{e['seat']}"
             items.append({"episode": episode(eid, decks, e["own"], e["other"], e["seat"], e["seed"],
                                              e["starting_player"], reset),
-                          "opponent": pilot.opponent_assignment(e["opponent"])})
+                          "opponent": opponent_assignment(e["opponent"])})
         its.append({"episodes": items})
     for k in ("unique_sources", "unique_cuts"):
         summary[k] = len(summary[k])
     return its, summary
+
+
+INITIAL_ID = "initial-parent"
+
+
+def opponent_assignment(kind_: str) -> dict:
+    """The initial parent is pinned as a named fixed opponent, so chained blocks keep the
+    original parent (the trainer's "initial" kind means each run's own initial source)."""
+    if kind_ == "initial":
+        return {"kind": "fixed", "id": INITIAL_ID}
+    return pilot.opponent_assignment(kind_)
 
 
 # ---- evaluation panel (RUNNER section 4) ----
@@ -331,7 +342,8 @@ def main(argv=None) -> int:
         its, summary = iterations(a.lineage, a.arm, decks, bank, srcs)
         source = json.loads((a.source or a.parent).read_text())
         config = {"schema": pilot.ndb.SCHEMA, "initial_source": source,
-                  "opponents": [{"id": pilot.FIXED_OPPONENT_ID, "source": json.loads(a.a48.read_text())}],
+                  "opponents": [{"id": pilot.FIXED_OPPONENT_ID, "source": json.loads(a.a48.read_text())},
+                                {"id": INITIAL_ID, "source": json.loads(a.parent.read_text())}],
                   "iterations": its[a.first:a.first + a.count], **json.loads(json.dumps(pilot.ndb.FROZEN)),
                   "update_backend": {"kind": "cpu"}, "collection_workers": a.workers,
                   "preparation_workers": a.workers, "output_directory": a.output_directory}
