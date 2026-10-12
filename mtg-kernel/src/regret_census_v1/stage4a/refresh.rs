@@ -272,9 +272,12 @@ impl Searches<'_> {
     }
 }
 
-/// One arm's guide from the anchor. Returns the arm record.
+/// One arm's guide from the anchor. Returns the arm record. With a
+/// `scheduler` (track A of collab LANES/discovery-efficiency-plan-20261012),
+/// searches happen only when it chooses a positive amount at an unsupported
+/// focal decision; the support and fallback rules are unchanged.
 #[allow(clippy::too_many_arguments, reason = "explicit roles and identities")]
-fn guide(
+pub(super) fn guide(
     sh: &BankShared,
     roles: &mut Roles,
     live_focal: &mut FrozenPlayPolicyV1,
@@ -285,6 +288,7 @@ fn guide(
     allocation: Allocation,
     anchor_tree: Option<(Tree, Value)>,
     run: GuideRun,
+    mut scheduler: Option<&mut super::allocator::Scheduler>,
 ) -> Result<(Value, Option<Tree>), String> {
     let started = Instant::now();
     let focal = PlayerId(src.seat);
@@ -337,23 +341,56 @@ fn guide(
     let mut c = Counters::default();
     let (mut actions, mut decisions) = (Vec::new(), Vec::new());
     let mut invalid: Option<String> = None;
+    // Scheduler counters: focal nonforced substeps so far and the one of the
+    // last search.
+    let (mut nonforced, mut last_search_at) = (0u64, None::<u64>);
     while let Some(d) = decision(&s) {
         let a = if acting(&d) == focal && d.legal_action_count >= 2 {
             let remaining_before = allocation.total.saturating_sub(searches.used);
             let (mut lookup, mut hit) = cursor.lookup(&s, d)?;
             let mut refreshed = None;
-            let step = if run.opening && searches.records.is_empty() {
+            let mut scheduled = None;
+            let step = if let Some(sc) = scheduler.as_deref_mut() {
+                use super::allocator::{sched_rule, Counts, SchedStep};
+                match sched_rule(lookup, remaining_before, false) {
+                    SchedStep::Execute(e) => Step::Execute(e),
+                    SchedStep::Plain => Step::Plain,
+                    SchedStep::Consult => {
+                        let counts = Counts {
+                            remaining: remaining_before,
+                            cap: sc.cap,
+                            nonforced,
+                            since_search: last_search_at.map(|i| nonforced - i),
+                            searches: searches.records.len() as u64,
+                        };
+                        let (amount, record) = sc.consult(&s, focal, lookup, counts)?;
+                        scheduled = Some(record);
+                        if amount > 0 {
+                            Step::Refresh(amount)
+                        } else {
+                            Step::Plain
+                        }
+                    }
+                }
+            } else if run.opening && searches.records.is_empty() {
                 // The initial search: min(initial allocation, ceiling).
                 Step::Refresh(allocation.anchor.min(allocation.total))
             } else {
                 rule(lookup, allocation, searches.used, false)
             };
             if let Step::Refresh(budget) = step {
-                let reason = if searches.records.is_empty() {
+                let reason = if scheduled.is_some() {
+                    match lookup {
+                        Lookup::Unsupported => "scheduled_unsupported",
+                        Lookup::DepthLimit => "scheduled_depth_limit",
+                        _ => "scheduled_miss",
+                    }
+                } else if searches.records.is_empty() {
                     "initial"
                 } else {
                     lookup.reason()
                 };
+                last_search_at = Some(nonforced);
                 match searches.run(&s, budget, d.step, reason)? {
                     Some(tree) => {
                         cursor_keys.merge(&cursor.keyer.stats);
@@ -401,16 +438,19 @@ fn guide(
             // self-target through the next transition (the same rule as
             // selection, frozen execution and label replay).
             super::play::observe(suffix.as_mut(), &s, a, focal, &defs);
-            decisions.push(
-                json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
+            let mut row = json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
                 "substep":d.substep_index,"k":d.legal_action_count,"chooser":chooser,
                 "search":cursor.search,"lookup":lookup.reason(),"refreshed":refreshed,
                 "edge_backups":edge_backups,"remaining_before":remaining_before,
                 "remaining_after":allocation.total.saturating_sub(searches.used),
                 "spy_cast_offered":cast_offered,"spy_cast_chosen":cast_chosen,
                 "spy_self_offered":own_offered,"spy_self_chosen":own_chosen,
-                "dr_giant_offered":dr_offered,"dr_giant_chosen":dr_chosen}),
-            );
+                "dr_giant_offered":dr_offered,"dr_giant_chosen":dr_chosen});
+            if scheduler.is_some() {
+                row["scheduler"] = scheduled.unwrap_or(Value::Null);
+            }
+            decisions.push(row);
+            nonforced += 1;
             a
         } else if acting(&d) == focal {
             0
@@ -485,6 +525,7 @@ pub(super) fn budget_case(
             opening: true,
             mode,
         },
+        None,
     )?;
     Ok(
         json!({"kind":"budget_game","schema":"search-total-budget-v1/game","id":src.id,
@@ -595,6 +636,7 @@ pub(super) fn source_arms(
             Allocation::S512,
             None,
             GuideRun::ANCHOR_LEGACY,
+            None,
         )?;
         arms.insert("S512".into(), rec);
     } else {
@@ -609,6 +651,7 @@ pub(super) fn source_arms(
             Allocation::R,
             None,
             GuideRun::ANCHOR_LEGACY,
+            None,
         )?;
         let anchor_record = rec["searches"][0].clone();
         arms.insert("R".into(), rec);
@@ -626,6 +669,7 @@ pub(super) fn source_arms(
                     Allocation::S128,
                     Some((tree, anchor_record)),
                     GuideRun::ANCHOR_LEGACY,
+                    None,
                 )?
                 .0
             }

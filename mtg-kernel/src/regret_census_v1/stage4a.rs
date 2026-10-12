@@ -21,6 +21,7 @@
 //! `S4A_LIMITS=select_cap,eval_worlds,eval_cap` for cost-only engineering
 //! checks (rows record the limits and whether they are formal).
 
+mod allocator;
 mod arms;
 mod bank;
 mod bank_trace;
@@ -68,6 +69,7 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-canon-offline"
             | "s4a-budget"
             | "s4a-budget-replay"
+            | "s4a-allocator"
     )
 }
 
@@ -1173,6 +1175,66 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         }
         return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
     }
+    if cfg.mode == "s4a-allocator" {
+        // Learned search scheduler (collab
+        // LANES/discovery-efficiency-plan-20261012, track A): ALLOC_CASES is
+        // JSONL of allocator::AllocCase (arm, controller seed, source case);
+        // this process plays cases [first_game, first_game + games).
+        // ALLOC_WEIGHTS names the controller weights (required for a learned
+        // case); ALLOC_TOTAL (default 512,000) is the per-game ceiling, any
+        // other value an engineering check recorded as non-formal.
+        sh.spec.validate()?;
+        let binding = bank::bank_binding(policy, &sh)?;
+        let path = std::env::var("ALLOC_CASES").map_err(|_| "ALLOC_CASES is required")?;
+        let cases: Vec<allocator::AllocCase> = std::fs::read_to_string(&path)
+            .map_err(|e| format!("{path}: {e}"))?
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str(l).map_err(|e| format!("{path}: {e}")))
+            .collect::<Result<_, _>>()?;
+        let total: u64 = match std::env::var("ALLOC_TOTAL") {
+            Ok(v) => v.parse().map_err(|_| "ALLOC_TOTAL must be a count")?,
+            Err(_) => allocator::CAP,
+        };
+        let mode = match std::env::var("BUDGET_KEY_MODE").as_deref() {
+            Ok("repaired") => canon2::KeyMode::Repaired,
+            Ok("legacy") => canon2::KeyMode::Legacy,
+            _ => return Err("BUDGET_KEY_MODE must be repaired or legacy".into()),
+        };
+        let weights = match std::env::var("ALLOC_WEIGHTS") {
+            Ok(p) => Some(allocator::Weights::load(&p)?),
+            Err(_) => None,
+        };
+        let first = cfg.first_game as usize;
+        let end = (first + cfg.games as usize).min(cases.len());
+        let mut out = String::new();
+        for case in &cases[first..end] {
+            let row = std::thread::scope(|scope| {
+                std::thread::Builder::new()
+                    .stack_size(256 << 20)
+                    .spawn_scoped(scope, || {
+                        allocator::allocator_case(
+                            &sh,
+                            policy,
+                            case,
+                            weights.as_ref(),
+                            total,
+                            mode,
+                            &binding,
+                        )
+                    })
+                    .map_err(|e| e.to_string())?
+                    .join()
+                    .map_err(|_| "allocator worker panicked".to_owned())?
+            })
+            .unwrap_or_else(|e| json!({"kind":"error","id":case.id,"arm":case.arm,"error":e}));
+            out.push_str(&format!(
+                "{row}
+"
+            ));
+        }
+        return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
+    }
     if cfg.mode == "s4a-refresh" {
         sh.spec.validate()?;
         let binding = bank::bank_binding(policy, &sh)?;
@@ -1285,7 +1347,9 @@ fn run_bank_parity(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<
 pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(), String> {
     match cfg.mode.as_str() {
         "s4a-bank" | "s4a-bank-trace" | "s4a-refresh" | "s4a-branch" | "s4a-canon-offline"
-        | "s4a-budget" | "s4a-budget-replay" => return run_bank_mode(cfg, policy),
+        | "s4a-budget" | "s4a-budget-replay" | "s4a-allocator" => {
+            return run_bank_mode(cfg, policy)
+        }
         "s4a-bank-parity" => return run_bank_parity(cfg, policy),
         "s4a-label-replay" => return replay_labels::run(cfg),
         _ => {}
