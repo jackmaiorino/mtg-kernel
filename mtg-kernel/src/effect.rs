@@ -1658,6 +1658,8 @@ pub enum EffectOp {
     },
     /// Printed Fiery Annihilation, with independent legality and a committed death shield.
     FieryAnnihilation,
+    /// Definition-owned Krenko token batch; requires the private paid owner.
+    KrenkoCreateGoblinsV1,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -7969,6 +7971,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::banishing_light_v1::validate_state(state)?;
     crate::source_power_activation_v1::validate_state(state)?;
     crate::librarian_activation_v1::validate_state(state)?;
+    crate::krenko_v1::validate_state(state)?;
     crate::wildwood_capture_v1::validate_state(state)?;
     squad_rallier_resolution_v1::validate(state)?;
     frenzied_goblin_resolution_v1::validate(state)?;
@@ -18757,6 +18760,12 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             }
         }
         EffectOp::FieryAnnihilation => crate::fiery_annihilation_v1::execute(ctx, state),
+        EffectOp::KrenkoCreateGoblinsV1 => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
         EffectOp::PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness {
             target_index,
         } => {

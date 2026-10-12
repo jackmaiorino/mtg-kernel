@@ -309,6 +309,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         EffectOp::ReturnTwoDifferentControllerCreaturesToOwnersHands
         | EffectOp::PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness { .. }
         | EffectOp::StandardLegendV1(_)
+        | EffectOp::KrenkoCreateGoblinsV1
         | EffectOp::FieryAnnihilation
         | EffectOp::AnimateSource
         | EffectOp::AnimateSourcePermanentlyV1

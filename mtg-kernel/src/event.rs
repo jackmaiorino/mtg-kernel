@@ -1190,6 +1190,18 @@ pub enum CommittedEvent {
         turn: u32,
         active_player: PlayerId,
     },
+    KrenkoPaidV1 {
+        paid: Box<crate::krenko_v1::PaidV1>,
+    },
+    KrenkoRemovedV1 {
+        removed: Box<crate::krenko_v1::RemovedV1>,
+    },
+    KrenkoSampleV1 {
+        sample: Box<crate::krenko_v1::SampleV1>,
+    },
+    KrenkoCompletedV1 {
+        completed: Box<crate::krenko_v1::CompletedV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

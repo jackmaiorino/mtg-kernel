@@ -4539,6 +4539,24 @@ pub(crate) fn count_controlled_lands(player: PlayerId, state: &GameState) -> u32
 /// Samples one reusable board-dependent value from current state. Effects
 /// and mana abilities call this at resolution/activation time so intervening
 /// battlefield changes are reflected exactly once.
+/// The shared full-width membership query; callers choose their own numeric transport.
+pub(crate) fn controlled_permanents_with_subtype(
+    state: &GameState,
+    controller: PlayerId,
+    subtype: card_def::Subtype,
+) -> impl Iterator<Item = ObjectId> + '_ {
+    state.players[controller.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(move |object| {
+            let live = state.objects.get(*object);
+            live.controller == controller
+                && live.zone == Zone::Battlefield
+                && has_effective_subtype(state, *object, subtype)
+        })
+}
+
 pub(crate) fn evaluate_dynamic_value(
     state: &GameState,
     value: DynamicValueDef,
@@ -4553,17 +4571,9 @@ pub(crate) fn evaluate_dynamic_value(
                 object.zone == Zone::Battlefield && has_effective_subtype(state, *id, subtype)
             })
             .count(),
-        DynamicValueDef::ControlledPermanentsWithSubtype(subtype) => state.players
-            [controller.index()]
-        .battlefield
-        .iter()
-        .filter(|&&object| {
-            let live = state.objects.get(object);
-            live.controller == controller
-                && live.zone == Zone::Battlefield
-                && has_effective_subtype(state, object, subtype)
-        })
-        .count(),
+        DynamicValueDef::ControlledPermanentsWithSubtype(subtype) => {
+            controlled_permanents_with_subtype(state, controller, subtype).count()
+        }
         DynamicValueDef::ControllerGraveyardCardsWithType(card_type) => state.players
             [controller.index()]
         .graveyard
@@ -9106,6 +9116,7 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
         || crate::gorehorn_damage_v1::validate_state(state).is_err()
         || effect::crystal_prevention_v1::validate(state).is_err()
         || crate::arahbo_v1::validate_state(state).is_err()
+        || crate::krenko_v1::validate_state(state).is_err()
     {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
@@ -9170,6 +9181,7 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
     // before automatic step/cleanup work can mutate a restored malformed state.
     if crate::garruks_uprising_v1::validate_state(state).is_err()
         || crate::arahbo_v1::validate_state(state).is_err()
+        || crate::krenko_v1::validate_state(state).is_err()
     {
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
         return Decision::Halted {
@@ -9193,7 +9205,9 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
             source,
         };
     }
-    if crate::librarian_activation_v1::validate_state(state).is_err() {
+    if crate::librarian_activation_v1::validate_state(state).is_err()
+        || crate::krenko_v1::validate_state(state).is_err()
+    {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
         state.engine.halted = Some((mechanic, source));
@@ -13649,6 +13663,7 @@ pub(crate) fn validated_stack_item_target_spec(
     validate_spell_stack_source(state, item)?;
     crate::source_power_activation_v1::validate_item(state, item)?;
     crate::librarian_activation_v1::validate_item(state, item)?;
+    crate::krenko_v1::validate_item(state, item)?;
     validated_stack_item_target_metadata(item, state)
 }
 
@@ -14198,6 +14213,7 @@ pub(crate) fn counter_stack_item_by_id(
     let banishing_owner = crate::banishing_light_v1::acquire(state, &item)?;
     let librarian_counter_owner =
         crate::librarian_activation_v1::acquire_counter_owner(state, &item)?;
+    let krenko_counter_owner = crate::krenko_v1::acquire(state, &item)?;
     let ashroot_owner = crate::ashroot_dispatch_v2::acquire(state, &item)?;
     let gorehorn_owner = crate::gorehorn_damage_v1::acquire_owner(state, &item)?;
     let raid_counter_owner = crate::raid_entry_custody_v1::counter_owner(state, &item)?;
@@ -14253,6 +14269,7 @@ pub(crate) fn counter_stack_item_by_id(
     crate::authority_of_the_consuls_v1::record_countered(state, &item);
     crate::cerberus_capture_v1::record_countered(state, &item);
     crate::librarian_activation_v1::record_countered(state, &item, librarian_counter_owner)?;
+    crate::krenko_v1::countered(state, krenko_counter_owner)?;
     crate::librarian_activation_v1::finish(state, &item);
     crate::authority_of_the_consuls_v1::finish(state, &item);
     crate::cerberus_capture_v1::finish(state, &item);
@@ -14677,6 +14694,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    let krenko_owner = match crate::krenko_v1::acquire(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let initialized_entry =
         match crate::garruks_uprising_v1::acquire_permanent_entry(state, &current, targets_legal) {
             Ok(owner) => owner,
@@ -14732,6 +14759,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         x_value: item.v4.x_value,
     };
 
+    if let Some(owner) = krenko_owner {
+        if crate::krenko_v1::resolve(state, owner, &ctx).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
     if let Some(owner) = arahbo_owner {
         if crate::arahbo_v1::resolve_removed(state, owner, &ctx).is_err() {
             state.engine.halted =
@@ -20879,6 +20914,7 @@ struct FrozenActivationSource {
     source: AbilitySourceContractV4,
     granted_by: Option<AbilitySourceContractV4>,
     fixed_departure: Option<u32>,
+    payment_history_start: usize,
 }
 
 fn freeze_activation_source(
@@ -20907,6 +20943,7 @@ fn freeze_activation_source(
         source,
         granted_by,
         fixed_departure: None,
+        payment_history_start: state.engine.event_history.len(),
     }
 }
 
@@ -21020,6 +21057,13 @@ fn push_paid_activation(
     });
     crate::source_power_activation_v1::record_paid(state, stack_item_id);
     crate::librarian_activation_v1::record_paid(state, stack_item_id);
+    if crate::krenko_v1::record_paid(state, stack_item_id, frozen.payment_history_start).is_err() {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            pending.source,
+        ));
+        return;
+    }
     crate::fixed_source_damage_v3::record_paid(state, stack_item_id, frozen.fixed_departure);
     if log_final_targeting_events(state, stack_item_id).is_err() {
         state.engine.halted = Some((
