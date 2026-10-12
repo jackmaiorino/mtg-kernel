@@ -711,6 +711,12 @@ fn genuine_legend_waiting_raid_trigger_keeps_its_original_controller_before_lege
                 ProposedEvent::zone_change(second_legend, Zone::Battlefield),
             ],
         );
+        // Direct event proposals do not own the ordinary engine checkpoint.
+        // Capture the genuine ETB, run the actual SBA/legend stage, and retain
+        // any ordinary returned rows exactly as collect_and_queue_triggers does.
+        let ready = mtg_kernel::trigger::collect_and_process(&mut state);
+        state.engine.pending_triggers.extend(ready);
+        assert!(state.pending_legend_rule_v1.is_some());
         let Decision::ChooseLegendPermanent { candidates, .. } = next(&mut state) else {
             panic!("actual duplicate legends must hold genuine entry triggers");
         };

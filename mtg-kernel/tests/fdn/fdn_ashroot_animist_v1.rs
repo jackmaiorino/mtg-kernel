@@ -101,7 +101,7 @@ fn refuses_readonly(mut state: GameState) {
 }
 
 #[test]
-fn genuine_attack_requires_uncollected_pending_and_finalized_owner_both_seats() {
+fn genuine_attack_requires_collected_pending_and_finalized_owner_both_seats() {
     use mtg_kernel::ashroot_dispatch_v2::JournalV2;
     use mtg_kernel::event::CommittedEvent;
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -109,16 +109,38 @@ fn genuine_attack_requires_uncollected_pending_and_finalized_owner_both_seats() 
         let source = source(&mut state, actor);
         let target = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
         declare_attack(&mut state, source);
-        let mut erased = restore(&state);
-        erased.engine.event_log.retain(|e| {
-            !matches!(
-                e,
-                CommittedEvent::AshrootDispatchV2 {
-                    journal: JournalV2::Capture { .. }
-                }
-            )
-        });
-        refuses_readonly(erased);
+        // The public action has already performed the production collection
+        // checkpoint. The private pre-collection boundary is covered separately
+        // by engine::ashroot_declaration_boundary_tests.
+        assert!(!state.engine.event_log.iter().any(|e| matches!(
+            e,
+            CommittedEvent::AshrootDispatchV2 {
+                journal: JournalV2::Capture { .. }
+            }
+        )));
+        assert_eq!(
+            state
+                .engine
+                .event_history
+                .iter()
+                .filter(|e| matches!(
+                    e,
+                    CommittedEvent::AshrootDispatchV2 {
+                        journal: JournalV2::Collected { .. }
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(
+            state
+                .engine
+                .pending_triggers
+                .iter()
+                .filter(|p| p.source == source)
+                .count(),
+            1
+        );
         assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
         let mut erased = restore(&state);
         erased.engine.pending_triggers.clear();

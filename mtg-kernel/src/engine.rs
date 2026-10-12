@@ -19058,6 +19058,14 @@ fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> R
 
 /// Completes a validated declaration once every attacker's target is known.
 pub(crate) fn finish_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) {
+    commit_attack_declaration(state, attackers);
+    collect_and_queue_triggers(state);
+    reset_priority(state);
+}
+
+// Commit the validated declaration before the ordinary trigger/SBA checkpoint.
+// This is the production stage, not an externally selectable pause or callback.
+fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
     #[cfg(feature = "standard-magezero-fixtures")]
     if !attackers.is_empty() {
         let mut objects = state
@@ -19163,8 +19171,6 @@ pub(crate) fn finish_declare_attackers(state: &mut GameState, attackers: Vec<Obj
             }
         }
     }
-    collect_and_queue_triggers(state);
-    reset_priority(state);
 }
 
 #[cfg(all(
@@ -27515,3 +27521,10 @@ mod tests {
     not(feature = "standard-magezero-fixtures")
 ))]
 mod divine_variable_targeting_tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod ashroot_declaration_boundary_tests;
