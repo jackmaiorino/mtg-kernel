@@ -35,6 +35,16 @@ test('recorded block and stack targeting relationships render', async ({page}) =
   await expect(page.locator('.connections > path')).toHaveCount(1);
   await expect(page.locator('.stack-zone')).toContainText('Lightning Bolt');
 });
+test('exact policy favorite survives numeric display rounding', async ({page}) => {
+  await openFixture(page);
+  const recording=structuredClone(native);
+  recording.frames[0].policy!.masses=['9223372036854775807','9223372036854775809'];
+  await page.locator('input[type=file]').setInputFiles({name:'precision.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(recording))});
+  await expect(page.getByRole('heading',{name:native.title})).toBeVisible();
+  await expect(page.locator('.action-option').first()).toContainText('Policy favorite');
+  await expect(page.locator('.action-option').first()).toContainText('Assign Voldaren Epicure to block Clockwork Percussionist');
+  await expect(page.locator('.action-option').nth(1)).not.toContainText('Policy favorite');
+});
 for (const size of [{width:1440,height:900},{width:1920,height:1080},{width:320,height:900}]) {
   test(`layout fits ${size.width}px and reduced motion`, async ({page}) => {
     await page.setViewportSize(size); await page.emulateMedia({reducedMotion:'reduce'}); await openFixture(page);
