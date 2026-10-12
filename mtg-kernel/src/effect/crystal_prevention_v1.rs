@@ -137,6 +137,15 @@ pub struct BatchCaptureV2 {
     pub initial_outcomes: Vec<BatchOutcomeV2>,
     pub choice_order: Vec<usize>,
     pub active_player: PlayerId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fight: Option<FightCaptureV3>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preparation: Option<u32>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FightCaptureV3 {
+    pub creatures: [Option<crate::state::GameObject>; 2],
+    pub signed_powers: [i32; 2],
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct BatchProgressV2 {
@@ -356,11 +365,12 @@ impl OwnerV1 {
         (removed || waiting)
             && capture.ctx == context(&self.expected)
             && effect_op_at_structural_path(&self.root, &capture.path) == Some(&capture.op)
-            && matches!(capture.op, EffectOp::DamageAllCreatures { .. })
+            && (matches!(capture.op, EffectOp::DamageAllCreatures { .. })
+                || fight_recipe(&capture.op))
             && events.iter().all(|e| {
                 matches!(e, crate::event::ProposedEvent::Damage(d)
-                if !d.is_combat && d.historical_source.is_none() && d.source == self.expected.source
-                    && capture.proposals.iter().any(|original| original.target == d.target
+                if !d.is_combat && d.historical_source.is_none()
+                    && capture.proposals.iter().any(|original| original.source == d.source && original.target == d.target
                         && d.amount > 0 && d.amount <= original.amount))
             })
     }
@@ -488,6 +498,37 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         | EffectOp::MoveAllTargets { .. }
         | EffectOp::Sacrifice { .. }
         | EffectOp::SacrificeCreature { .. }
+        | EffectOp::RevealTopAndPartitionByType { .. }
+        | EffectOp::MillCards { .. }
+        | EffectOp::LookAtLibraryTopAndReorder { .. }
+        | EffectOp::MayShuffleLibrary { .. }
+        | EffectOp::PutCardsFromHandOnLibraryTop { .. }
+        | EffectOp::Scry { .. }
+        | EffectOp::Surveil { .. }
+        | EffectOp::SurveilOne { .. }
+        | EffectOp::SearchLibraryToHand { .. }
+        | EffectOp::SearchLibraryToHandUpTo { .. }
+        | EffectOp::SearchLibraryToBattlefieldTapped { .. }
+        | EffectOp::SearchLibraryCardsToDestination { .. }
+        | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
+        | EffectOp::LookTopPickToHandBottomRest { .. }
+        | EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. }
+        | EffectOp::LookTopTakeCreaturesManaValueAtMostThenShuffle { .. }
+        | EffectOp::RevealUntilCardTypeAndMill { .. }
+        | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. }
+        | EffectOp::PutObjectInOwnersLibraryTopOrBottom { .. }
+        | EffectOp::PutBoundObjectInOwnersLibrary { .. }
+        | EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard { .. }
+        | EffectOp::RevealTargetHandChooseNonlandDiscard { .. }
+        | EffectOp::RevealHandChooseNonlandToLinkedExile { .. }
+        | EffectOp::ReturnLinkedExiledCardToOwnersHand
+        | EffectOp::ImpulseDraw { .. }
+        | EffectOp::ExilePlayersGraveyard { .. }
+        | EffectOp::ExileOneFromPlayersGraveyard { .. }
+        | EffectOp::ExileAllGraveyards
+        | EffectOp::ExileAllArtifactTargets
+        | EffectOp::ExileTargetPlayersGraveyards
+        | EffectOp::DestroyTargetLandThenMaySearchBasicTapped { .. }
         | EffectOp::TapObject { .. }
         | EffectOp::UntapObject { .. }
         | EffectOp::SkipNextUntap { .. }
@@ -626,7 +667,23 @@ pub(crate) fn source_power_payment_matches(
         && boundary.root
             == EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1)
 }
+fn fight_recipe(op: &EffectOp) -> bool {
+    matches!(
+        op,
+        EffectOp::FightObjects {
+            first: ObjectRef::Target(0),
+            second: ObjectRef::Target(1),
+            target_spec: crate::card_def::TargetSpec::ControlledCreatureThenOpponentCreature,
+        }
+    )
+}
+fn batch_recipe(op: &EffectOp) -> bool {
+    matches!(op, EffectOp::DamageAllCreatures { .. }) || fight_recipe(op)
+}
 fn has_damage(op: &EffectOp) -> bool {
+    if fight_recipe(op) {
+        return true;
+    }
     match op {
         EffectOp::DealDamage { .. }
         | EffectOp::DamageAllCreatures { .. }
@@ -647,7 +704,7 @@ fn optional_discard_draw(op: &EffectOp) -> bool {
     } if **then == (EffectOp::DrawCards { player: PlayerRef::Controller, count: 1 }))
 }
 fn supported(op: &EffectOp) -> bool {
-    if optional_discard_draw(op) {
+    if optional_discard_draw(op) || fight_recipe(op) {
         return true;
     }
     match op {
@@ -677,6 +734,7 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
                 CommittedEvent::CrystalShieldOperationV1 { .. }
                     | CommittedEvent::CrystalExecutionV1 { .. }
                     | CommittedEvent::CrystalDamageOperationV3 { .. }
+                    | CommittedEvent::CrystalBatchPreparedV3 { .. }
             )
         })
         || state
@@ -798,12 +856,14 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
                 | CommittedEvent::CrystalShieldOperationV1 { .. }
                 | CommittedEvent::CrystalExecutionV1 { .. }
                 | CommittedEvent::CrystalDamageOperationV3 { .. }
+                | CommittedEvent::CrystalBatchPreparedV3 { .. }
         )
     }) {
         return Err("private Crystal ownership cannot enter the public trigger log".into());
     }
     validate_shields(state)?;
     validate_damage_operations(state)?;
+    validate_batch_preparations(state)?;
     validate_executions(state)?;
     for (index, event) in state.engine.event_history.iter().enumerate() {
         let CommittedEvent::CrystalPreventionBoundaryV1 { boundary: b } = event else {
@@ -1237,7 +1297,7 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                 }
                 step.creature_power_capture = Some(capture);
             }
-            EffectOp::DamageAllCreatures { .. } => {
+            op if batch_recipe(op) => {
                 let capture = capture_batch(state, owner, &pending.ctx, op, path)?;
                 if !capture.choice_order.is_empty() {
                     let progress = BatchProgressV2 {
@@ -1499,7 +1559,7 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                     "Crystal other instruction carries foreign creature-power capture".into(),
                 );
             }
-            if !matches!(op, EffectOp::DamageAllCreatures { .. }) && step.batch_capture.is_some() {
+            if !batch_recipe(op) && step.batch_capture.is_some() {
                 return Err("Crystal nonbatch instruction carries foreign batch authority".into());
             }
             if !matches!(op, EffectOp::GainLife { .. }) && !step.nondamage_history.is_empty() {
@@ -1746,12 +1806,13 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                         }
                     }
                 }
-                EffectOp::DamageAllCreatures { .. } => {
+                op if batch_recipe(op) => {
                     let capture = step
                         .batch_capture
                         .as_ref()
                         .ok_or("Crystal simultaneous damage lost its capture")?;
                     validate_batch_capture(capture, &pending.ctx, op, path)?;
+                    validate_batch_preparation_ref(state, capture, previous_index, index)?;
                     if step.conditional_result.is_some() {
                         return Err("Crystal batch carries foreign branch".into());
                     }
@@ -2523,6 +2584,71 @@ fn batch_choice(
         remaining_frames: frames,
     })
 }
+fn resolve_fighter(state: &GameState, ctx: &ExecCtx, slot: usize) -> Option<ObjectId> {
+    if !ctx.target_incarnation_matches(slot, state)
+        || !crate::engine::effect_target_is_legal(
+            state,
+            ctx.source,
+            ctx.controller,
+            crate::card_def::TargetSpec::ControlledCreatureThenOpponentCreature,
+            &ctx.targets,
+            slot,
+        )
+    {
+        return None;
+    }
+    let Target::Object(id) = *ctx.targets.get(slot)? else {
+        return None;
+    };
+    let live = state.objects.try_get(id)?;
+    (live.zone == Zone::Battlefield
+        && crate::engine::object_has_type(state, id, crate::card_def::CardType::Creature))
+    .then_some(id)
+}
+fn fight_proposals(ctx: &ExecCtx, fight: &FightCaptureV3) -> Result<Vec<BatchDamageV2>, String> {
+    let mut ids = [ctx.source; 2];
+    for (slot, snapshot) in fight.creatures.iter().enumerate() {
+        let Some(Target::Object(id)) = ctx.targets.get(slot) else {
+            return Err("Crystal fight lost ordered creature targets".into());
+        };
+        ids[slot] = *id;
+        let Some(snapshot) = snapshot.as_ref() else {
+            continue;
+        };
+        if snapshot.zone != Zone::Battlefield
+            || snapshot.controller
+                != if slot == 0 {
+                    ctx.controller
+                } else {
+                    ctx.controller.opponent()
+                }
+            || !matches!(ctx.target_contracts.get(slot),
+                Some(crate::state::StackTargetContractV4::Object { object, owner, zone, zone_change_count, .. })
+                if object == id && *owner == snapshot.owner && *zone == snapshot.zone
+                    && *zone_change_count == snapshot.zone_change_count)
+        {
+            return Err("Crystal fight changed original legal source incarnation".into());
+        }
+    }
+    if ids[0] == ids[1] {
+        return Err("Crystal fight repeated physical fighter".into());
+    }
+    if fight.creatures.iter().any(Option::is_none) {
+        if fight.signed_powers != [0, 0] {
+            return Err("Crystal incomplete fight nevertheless captured power".into());
+        }
+        return Ok(Vec::new());
+    }
+    Ok((0..2)
+        .filter(|slot| fight.signed_powers[*slot] > 0)
+        .map(|slot| BatchDamageV2 {
+            source: ids[slot],
+            target: Target::Object(ids[1 - slot]),
+            amount: fight.signed_powers[slot],
+            touched: Vec::new(),
+        })
+        .collect())
+}
 fn capture_batch(
     state: &mut GameState,
     owner: &OwnerV1,
@@ -2530,9 +2656,31 @@ fn capture_batch(
     op: &EffectOp,
     path: &[u16],
 ) -> Result<BatchCaptureV2, String> {
-    let EffectOp::DamageAllCreatures { filter, amount } = op else {
+    if !batch_recipe(op) {
         return Err("Crystal batch is not a supported printed recipe".into());
+    }
+    let fight = if fight_recipe(op) {
+        let ids = [
+            resolve_fighter(state, ctx, 0),
+            resolve_fighter(state, ctx, 1),
+        ];
+        let creatures = ids.map(|id| id.map(|id| state.objects.get(id).clone()));
+        let signed_powers = if ids.iter().all(Option::is_some) {
+            ids.map(|id| crate::engine::effective_power(state, id.unwrap()))
+        } else {
+            [0, 0]
+        };
+        Some(FightCaptureV3 {
+            creatures,
+            signed_powers,
+        })
+    } else {
+        None
     };
+    let proposals = fight
+        .as_ref()
+        .map(|f| fight_proposals(ctx, f))
+        .transpose()?;
     let roster = [PlayerId::P0, PlayerId::P1]
         .into_iter()
         .flat_map(|p| state.players[p.index()].battlefield.iter().copied())
@@ -2547,7 +2695,16 @@ fn capture_batch(
                 owner: object.owner,
                 controller: object.controller,
                 card_def: object.card_def,
-                selected: creature_matches_filter(state, id, filter, ctx.controller),
+                selected: match op {
+                    EffectOp::DamageAllCreatures { filter, .. } => {
+                        creature_matches_filter(state, id, filter, ctx.controller)
+                    }
+                    _ => proposals
+                        .as_ref()
+                        .unwrap()
+                        .iter()
+                        .any(|p| p.target == Target::Object(id)),
+                },
             }
         })
         .collect::<Vec<_>>();
@@ -2555,19 +2712,24 @@ fn capture_batch(
     if roster.iter().any(|r| !unique.insert(r.object.object)) {
         return Err("Crystal prebatch battlefield has duplicate physical recipients".into());
     }
-    let proposals = roster
-        .iter()
-        .filter(|r| r.selected)
-        .map(|r| BatchDamageV2 {
-            source: ctx.source,
-            target: Target::Object(r.object.object),
-            amount: *amount,
-            touched: Vec::new(),
-        })
-        .collect::<Vec<_>>();
-    // Determine every menu before consuming any shield. With the current
-    // replacement algebra each shield has one fixed recipient, so the distinct
-    // creature recipients cannot consume one another's shield.
+    let proposals = proposals.unwrap_or_else(|| {
+        let EffectOp::DamageAllCreatures { amount, .. } = op else {
+            unreachable!()
+        };
+        roster
+            .iter()
+            .filter(|r| r.selected)
+            .map(|r| BatchDamageV2 {
+                source: ctx.source,
+                target: Target::Object(r.object.object),
+                amount: *amount,
+                touched: Vec::new(),
+            })
+            .collect()
+    });
+    // All menus and both fight powers are fixed before any shield is consumed.
+    // Each current shield has one fixed recipient, so these distinct recipients
+    // cannot consume one another's shield or require cross-packet allocation.
     let options = proposals
         .iter()
         .map(|p| {
@@ -2589,22 +2751,41 @@ fn capture_batch(
         };
         usize::from(state.objects.get(id).controller != state.active_player)
     });
-    let mut initial_outcomes = Vec::with_capacity(proposals.len());
-    for (proposal, options) in proposals.iter().zip(&options) {
-        let event = crate::event::ProposedEvent::Damage(proposal.proposed());
-        if !owner.permits_damage(state, &event) {
-            return Err("Crystal batch lost pre-pop loan".into());
-        }
+    let mut capture = BatchCaptureV2 {
+        ctx: ctx.clone(),
+        op: op.clone(),
+        path: path.to_vec(),
+        roster,
+        proposals,
+        options,
+        initial_outcomes: Vec::new(),
+        choice_order,
+        active_player: state.active_player,
+        fight,
+        preparation: None,
+    };
+    let events = capture
+        .proposals
+        .iter()
+        .map(|p| crate::event::ProposedEvent::Damage(p.proposed()))
+        .collect::<Vec<_>>();
+    if !owner.permits_batch(state, &capture, &events) {
+        return Err("Crystal batch lost exact pre-pop source loan".into());
+    }
+    for (proposal, options) in capture.proposals.iter().zip(&capture.options) {
         if options.is_some() {
-            initial_outcomes.push(BatchOutcomeV2::Waiting);
+            capture.initial_outcomes.push(BatchOutcomeV2::Waiting);
         } else if proposal.amount <= 0 {
-            initial_outcomes.push(BatchOutcomeV2::Prevented);
+            capture.initial_outcomes.push(BatchOutcomeV2::Prevented);
         } else {
-            let outcome = crate::event::apply_replacements(state, event);
+            let outcome = crate::event::apply_replacements(
+                state,
+                crate::event::ProposedEvent::Damage(proposal.proposed()),
+            );
             if state.engine.halted.is_some() {
                 return Err("Crystal batch replacement preparation halted".into());
             }
-            initial_outcomes.push(match outcome {
+            capture.initial_outcomes.push(match outcome {
                 Some(crate::event::ProposedEvent::Damage(d)) => {
                     BatchOutcomeV2::Damage(BatchDamageV2 {
                         source: d.source,
@@ -2618,17 +2799,74 @@ fn capture_batch(
             });
         }
     }
-    Ok(BatchCaptureV2 {
-        ctx: ctx.clone(),
-        op: op.clone(),
-        path: path.to_vec(),
-        roster,
-        proposals,
-        options,
-        initial_outcomes,
-        choice_order,
-        active_player: state.active_player,
-    })
+    let at = u32::try_from(state.engine.event_history.len())
+        .map_err(|_| "Crystal batch preparation exceeds u32")?;
+    capture.preparation = Some(at);
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::CrystalBatchPreparedV3 {
+            capture: Box::new(capture.clone()),
+        });
+    Ok(capture)
+}
+fn validate_batch_preparations(state: &GameState) -> Result<(), String> {
+    for (at, event) in state.engine.event_history.iter().enumerate() {
+        let CommittedEvent::CrystalBatchPreparedV3 { capture } = event else {
+            continue;
+        };
+        if capture.preparation.map(|p| p as usize) != Some(at) {
+            return Err("Crystal batch preparation lost exact occurrence".into());
+        }
+        let mut owners = state
+            .engine
+            .event_history
+            .iter()
+            .filter_map(|event| match event {
+                CommittedEvent::CrystalExecutionV1 { execution } => Some(execution.as_ref()),
+                _ => None,
+            })
+            .flat_map(|execution| {
+                execution.steps.iter().filter_map(move |step| {
+                    step.batch_capture
+                        .as_ref()
+                        .filter(|c| c.preparation == capture.preparation)
+                        .map(|c| (execution, c))
+                })
+            });
+        let (execution, saved) = owners
+            .next()
+            .ok_or("Crystal actual batch preparation lost executing owner")?;
+        if owners.next().is_some()
+            || saved != capture.as_ref()
+            || at <= execution.previous as usize
+            || at >= execution.history_index as usize
+            || capture.ctx != execution.before.ctx
+        {
+            return Err("Crystal batch preparation changed its unique original execution".into());
+        }
+        validate_batch_capture(capture, &execution.before.ctx, &capture.op, &capture.path)?;
+    }
+    Ok(())
+}
+fn validate_batch_preparation_ref(
+    state: &GameState,
+    capture: &BatchCaptureV2,
+    previous: usize,
+    end: usize,
+) -> Result<(), String> {
+    let at = capture
+        .preparation
+        .ok_or("Crystal batch lost actual preparation")? as usize;
+    if at <= previous
+        || at >= end
+        || !matches!(state.engine.event_history.get(at),
+        Some(CommittedEvent::CrystalBatchPreparedV3 { capture: original })
+            if original.as_ref() == capture)
+    {
+        return Err("Crystal batch completion skipped or changed actual preparation".into());
+    }
+    Ok(())
 }
 fn validate_batch_capture(
     capture: &BatchCaptureV2,
@@ -2636,10 +2874,8 @@ fn validate_batch_capture(
     op: &EffectOp,
     path: &[u16],
 ) -> Result<(), String> {
-    let EffectOp::DamageAllCreatures { amount, .. } = op else {
-        return Err("Crystal captured a foreign batch recipe".into());
-    };
-    if capture.ctx != *ctx
+    if !batch_recipe(op)
+        || capture.ctx != *ctx
         || capture.op != *op
         || capture.path != path
         || capture.proposals.len() != capture.options.len()
@@ -2655,17 +2891,60 @@ fn validate_batch_capture(
     if capture.roster.iter().any(|r| !ids.insert(r.object.object)) {
         return Err("Crystal batch repeated battlefield recipient".into());
     }
-    let expected = capture
-        .roster
-        .iter()
-        .filter(|r| r.selected)
-        .map(|r| BatchDamageV2 {
-            source: ctx.source,
-            target: Target::Object(r.object.object),
-            amount: *amount,
-            touched: Vec::new(),
-        })
-        .collect::<Vec<_>>();
+    let expected = match op {
+        EffectOp::DamageAllCreatures { amount, .. } => {
+            if capture.fight.is_some() {
+                return Err("Crystal area damage carries foreign fight".into());
+            }
+            capture
+                .roster
+                .iter()
+                .filter(|r| r.selected)
+                .map(|r| BatchDamageV2 {
+                    source: ctx.source,
+                    target: Target::Object(r.object.object),
+                    amount: *amount,
+                    touched: Vec::new(),
+                })
+                .collect::<Vec<_>>()
+        }
+        _ => {
+            let fight = capture
+                .fight
+                .as_ref()
+                .ok_or("Crystal fight lost both source captures")?;
+            let proposals = fight_proposals(ctx, fight)?;
+            if capture.roster.iter().any(|r| {
+                r.selected
+                    != proposals
+                        .iter()
+                        .any(|p| p.target == Target::Object(r.object.object))
+            }) {
+                return Err("Crystal fight changed actual selected recipients".into());
+            }
+            for (slot, creature) in fight.creatures.iter().enumerate() {
+                if let Some(creature) = creature {
+                    let Some(Target::Object(id)) = ctx.targets.get(slot) else {
+                        return Err("Crystal fight snapshot lost target".into());
+                    };
+                    if capture
+                        .roster
+                        .iter()
+                        .find(|r| r.object.object == *id)
+                        .is_none_or(|r| {
+                            r.owner != creature.owner
+                                || r.controller != creature.controller
+                                || r.card_def != creature.card_def
+                                || r.object.expected_zone_change_count != creature.zone_change_count
+                        })
+                    {
+                        return Err("Crystal fight lost prebatch physical source".into());
+                    }
+                }
+            }
+            proposals
+        }
+    };
     if expected != capture.proposals {
         return Err("Crystal batch changed complete ordered proposals".into());
     }
@@ -2675,6 +2954,14 @@ fn validate_batch_capture(
         .enumerate()
         .filter_map(|(i, o)| o.as_ref().map(|_| i))
         .collect::<Vec<_>>();
+    if capture.proposals.iter().any(|p| {
+        let Target::Object(id) = p.target else {
+            return true;
+        };
+        !capture.roster.iter().any(|r| r.object.object == id)
+    }) {
+        return Err("Crystal batch proposal lost captured recipient".into());
+    }
     choices.sort_by_key(|at| {
         let Target::Object(id) = capture.proposals[*at].target else {
             unreachable!()
@@ -2720,9 +3007,6 @@ fn validate_batch_capture(
     Ok(())
 }
 fn validate_live_batch(state: &GameState, capture: &BatchCaptureV2) -> Result<(), String> {
-    let EffectOp::DamageAllCreatures { filter, .. } = &capture.op else {
-        return Err("foreign batch".into());
-    };
     let ids = [PlayerId::P0, PlayerId::P1]
         .into_iter()
         .flat_map(|p| state.players[p.index()].battlefield.iter().copied())
@@ -2741,16 +3025,36 @@ fn validate_live_batch(state: &GameState, capture: &BatchCaptureV2) -> Result<()
                     || live.owner != r.owner
                     || live.controller != r.controller
                     || live.card_def != r.card_def
-                    || creature_matches_filter(
-                        state,
-                        r.object.object,
-                        filter,
-                        capture.ctx.controller,
-                    ) != r.selected
+                    || match &capture.op {
+                        EffectOp::DamageAllCreatures { filter, .. } => {
+                            creature_matches_filter(
+                                state,
+                                r.object.object,
+                                filter,
+                                capture.ctx.controller,
+                            ) != r.selected
+                        }
+                        _ => false,
+                    }
             })
         })
     {
         return Err("Crystal waiting batch changed prebatch battlefield".into());
+    }
+    if let Some(fight) = capture.fight.as_ref() {
+        for slot in 0..2 {
+            let id = resolve_fighter(state, &capture.ctx, slot);
+            if id.and_then(|id| state.objects.try_get(id)) != fight.creatures[slot].as_ref()
+                || id.map(|id| crate::engine::effective_power(state, id))
+                    != fight.creatures[slot]
+                        .as_ref()
+                        .map(|_| fight.signed_powers[slot])
+            {
+                return Err(
+                    "Crystal waiting fight changed source incarnation/control/power".into(),
+                );
+            }
+        }
     }
     Ok(())
 }

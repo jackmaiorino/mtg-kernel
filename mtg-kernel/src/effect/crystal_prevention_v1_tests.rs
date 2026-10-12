@@ -257,3 +257,50 @@ fn typed_nondamage_effects_preserve_their_own_dispatch_and_reject_nested_damage(
     }));
     assert!(!ordinary_nondamage(&EffectOp::BindAuthorityEntryGainLifeV1));
 }
+
+#[test]
+fn registered_fight_primitive_without_crystal_keeps_generic_batch_and_restore() {
+    let op = EffectOp::FightObjects {
+        first: ObjectRef::Target(0),
+        second: ObjectRef::Target(1),
+        target_spec: crate::card_def::TargetSpec::ControlledCreatureThenOpponentCreature,
+    };
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state();
+        let spell = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+        let first = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        let second = put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let mut ctx = ExecCtx::no_targets(spell, actor);
+        ctx.targets = vec![Target::Object(first), Target::Object(second)];
+        ctx.target_contracts = ctx
+            .targets
+            .iter()
+            .map(|target| crate::state::StackTargetContractV4::capture(&state, *target))
+            .collect();
+        let bytes = serde_json::to_vec(&state).unwrap();
+        let mut replay: GameState = serde_json::from_slice(&bytes).unwrap();
+        for current in [&mut state, &mut replay] {
+            assert!(!requires_successor(current));
+            crate::effect::execute(&op, &ctx, current);
+            assert_eq!(current.objects.get(first).damage, 1);
+            assert_eq!(current.objects.get(second).damage, 1);
+            assert!(!current.engine.event_history.iter().any(|event| matches!(
+                event,
+                CommittedEvent::CrystalBatchPreparedV3 { .. }
+                    | CommittedEvent::CrystalExecutionV1 { .. }
+            )));
+            validate(current).unwrap();
+            assert!(!requires_successor(current));
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+        assert_eq!(state.state_hash(), replay.state_hash());
+    }
+}

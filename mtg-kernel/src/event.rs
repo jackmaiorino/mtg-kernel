@@ -924,6 +924,9 @@ pub enum CommittedEvent {
     CrystalDamageOperationV3 {
         operation: Box<crate::effect::crystal_prevention_v1::DamageOperationV3>,
     },
+    CrystalBatchPreparedV3 {
+        capture: Box<crate::effect::crystal_prevention_v1::BatchCaptureV2>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

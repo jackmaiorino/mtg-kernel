@@ -2243,3 +2243,484 @@ fn mixed_environment_preserves_actual_permanent_pump_and_both_token_modes() {
         }
     }
 }
+
+fn announce_fight(
+    state: &mut GameState,
+    actor: PlayerId,
+    first: ObjectId,
+    second: ObjectId,
+) -> ObjectId {
+    let spell = put(state, actor, "Bushwhack", Zone::Hand);
+    state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 1;
+    priority(state, actor);
+    engine::step(state, Action::CastSpell(spell)).unwrap();
+    assert!(matches!(next(state), Decision::ChooseSpellMode { .. }));
+    engine::step(state, Action::ChooseSpellMode(1)).unwrap();
+    for target in [first, second] {
+        assert!(
+            matches!(next(state), Decision::ChooseTargets { legal_targets, .. }
+            if legal_targets.contains(&Target::Object(target)))
+        );
+        engine::step(state, Action::ChooseTarget(Target::Object(target))).unwrap();
+    }
+    let _ = next(state);
+    assert!(state.stack.iter().any(|item| item.source == spell
+        && item.targets == vec![Target::Object(first), Target::Object(second)]));
+    spell
+}
+fn fight_fixture(
+    actor: PlayerId,
+    opposing_wall: bool,
+) -> (GameState, [ObjectId; 2], [ObjectId; 2], ObjectId) {
+    let mut state = ready(actor);
+    let wall = source(&mut state, actor);
+    // A real registered definition used as a static battlefield operand.
+    let other_wall = if opposing_wall {
+        put(
+            &mut state,
+            actor.opponent(),
+            "Crystal Barricade",
+            Zone::Battlefield,
+        )
+    } else {
+        wall
+    };
+    let first = put(&mut state, actor, "Shivan Dragon", Zone::Battlefield);
+    let second = put(
+        &mut state,
+        actor.opponent(),
+        "Shivan Dragon",
+        Zone::Battlefield,
+    );
+    state.objects.get_mut(first).v4.lifelink_keyword_counters = 1;
+    state.objects.get_mut(second).v4.lifelink_keyword_counters = 1;
+    shield(&mut state, wall, first, 1);
+    shield(&mut state, other_wall, second, 1);
+    let spell = announce_fight(&mut state, actor, first, second);
+    (state, [wall, other_wall], [first, second], spell)
+}
+#[test]
+fn real_bushwhack_fight_uses_two_sources_and_apnap_before_simultaneous_commit() {
+    use mtg_kernel::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for opposing_wall in [false, true] {
+            for choose_shield in [false, true] {
+                let (mut state, _, fighters, spell) = fight_fixture(actor, opposing_wall);
+                mixed_menu(&mut state);
+                let lives = state.players.each_ref().map(|p| p.life);
+                let mut replay = restore(&state);
+                for current in [&mut state, &mut replay] {
+                    let choosers = if opposing_wall {
+                        vec![actor, actor.opponent()]
+                    } else {
+                        vec![actor]
+                    };
+                    for (ordinal, chooser) in choosers.iter().copied().enumerate() {
+                        assert!(
+                            matches!(next(current), Decision::ChooseEffectOption { player, .. }
+                            if player == chooser)
+                        );
+                        let choice = match current
+                            .engine
+                            .pending_effect
+                            .as_ref()
+                            .unwrap()
+                            .choice
+                            .as_ref()
+                            .unwrap()
+                        {
+                            PendingEffectChoice::ChooseOption {
+                                purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                                ..
+                            } => choice,
+                            _ => panic!("real fight replacement menu"),
+                        };
+                        let recipient = fighters[ordinal];
+                        let source = fighters[1 - ordinal];
+                        assert_eq!(choice.source, source);
+                        assert_eq!(choice.target, Target::Object(recipient));
+                        assert_eq!(choice.original_amount, 5);
+                        let public = mtg_kernel::crystal_public_v1::observe_v1(
+                            current,
+                            &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+                            chooser,
+                            0,
+                            0,
+                            0,
+                            1,
+                        )
+                        .unwrap();
+                        let menu = public.prevention_menu.unwrap();
+                        assert_ne!(menu.source, menu.resolving_source);
+                        assert!(menu.source_history.is_none());
+                        assert_eq!(
+                            menu.simultaneous_choices_remaining,
+                            Some(choosers.len() - ordinal)
+                        );
+                        assert_eq!(current.objects.get(fighters[0]).damage, 0);
+                        assert_eq!(current.objects.get(fighters[1]).damage, 0);
+                        let snapshot = restore(current);
+                        assert_eq!(
+                            snapshot.engine.pending_effect,
+                            current.engine.pending_effect
+                        );
+                        if choose_shield {
+                            let selected = option(current, true);
+                            engine::step(current, Action::ChooseEffectOption(selected)).unwrap();
+                            assert!(
+                                matches!(next(current), Decision::ChooseEffectOption { player, .. }
+                                if player == chooser)
+                            );
+                            assert_eq!(current.objects.get(fighters[0]).damage, 0);
+                            assert_eq!(current.objects.get(fighters[1]).damage, 0);
+                        }
+                        let selected = option(current, false);
+                        engine::step(current, Action::ChooseEffectOption(selected)).unwrap();
+                        if opposing_wall && ordinal == 0 {
+                            assert_eq!(current.objects.get(fighters[0]).damage, 0);
+                            assert_eq!(current.objects.get(fighters[1]).damage, 0);
+                        }
+                    }
+                    finish(current);
+                    assert_eq!(current.objects.get(spell).zone, Zone::Graveyard);
+                    assert_eq!(current.objects.get(fighters[0]).damage, 0);
+                    assert_eq!(
+                        current.objects.get(fighters[1]).damage,
+                        if opposing_wall { 0 } else { 4 }
+                    );
+                    assert_eq!(
+                        current.players[actor.index()].life,
+                        lives[actor.index()] + if opposing_wall { 0 } else { 4 }
+                    );
+                    assert_eq!(
+                        current.players[actor.opponent().index()].life,
+                        lives[actor.opponent().index()]
+                    );
+                    assert!(current
+                        .engine
+                        .event_history
+                        .iter()
+                        .any(|event| matches!(event,
+                        event::CommittedEvent::CrystalBatchPreparedV3 { capture }
+                            if capture.ctx.source == spell && capture.fight.is_some())));
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&replay).unwrap()
+                );
+            }
+        }
+    }
+}
+#[test]
+fn real_bushwhack_rechecks_control_zero_power_and_blinked_target_before_fight() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for case in 0..4 {
+            let (mut state, _, fighters, spell) = fight_fixture(actor, false);
+            match case {
+                0 => {
+                    // A typed current-power grant before resolution, not a rewrite of capture.
+                    let binding = mtg_kernel::effect::EffectObjectBinding {
+                        object: fighters[0],
+                        expected_zone: Zone::Battlefield,
+                        expected_zone_change_count: state
+                            .objects
+                            .get(fighters[0])
+                            .zone_change_count,
+                    };
+                    state.engine.until_end_of_turn.push(
+                        engine::UntilEndOfTurnEffect::ResolvedObjectEffect {
+                            object_id: binding.object,
+                            object_zone_change_count: binding.expected_zone_change_count,
+                            layer: engine::Layers::POWER_TOUGHNESS,
+                            timestamp: 1,
+                            duration: engine::EffectDuration::EndOfTurn,
+                            power: -5,
+                            toughness: 0,
+                            grant_haste: false,
+                        },
+                    );
+                }
+                1 => control_primitive(&mut state, fighters[0], actor.opponent()),
+                _ => {
+                    event::propose_and_commit(
+                        &mut state,
+                        ProposedEvent::zone_change(fighters[case - 2], Zone::Exile),
+                    );
+                    event::propose_and_commit(
+                        &mut state,
+                        ProposedEvent::zone_change(fighters[case - 2], Zone::Battlefield),
+                    );
+                    assert!(state.objects.get(fighters[case - 2]).zone_change_count > 0);
+                }
+            }
+            let mut replay = restore(&state);
+            for current in [&mut state, &mut replay] {
+                if case == 0 {
+                    mixed_menu(current);
+                    let chosen = option(current, false);
+                    engine::step(current, Action::ChooseEffectOption(chosen)).unwrap();
+                }
+                finish(current);
+                assert_eq!(current.objects.get(spell).zone, Zone::Graveyard);
+                assert_eq!(current.objects.get(fighters[0]).damage, 0);
+                assert_eq!(current.objects.get(fighters[1]).damage, 0);
+                assert!(!current
+                    .engine
+                    .event_history
+                    .iter()
+                    .any(|event| matches!(event,
+                    event::CommittedEvent::Damage { source, .. } if fighters.contains(source))));
+                assert!(matches!(
+                    current.engine.active_replacements[0].kind,
+                    event::ReplacementEffectKind::PreventNextDamage { remaining: 1, .. }
+                ));
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&replay).unwrap()
+            );
+        }
+    }
+}
+#[test]
+fn waiting_fight_and_independent_preparation_forgeries_refuse_readonly() {
+    use event::CommittedEvent;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, _, fighters, _) = fight_fixture(actor, true);
+        mixed_menu(&mut state);
+        for case in 0..5 {
+            let mut bad = restore(&state);
+            match case {
+                0 => bad.objects.get_mut(fighters[0]).counters.plus1_plus1 += 1,
+                1 => control_primitive(&mut bad, fighters[0], actor.opponent()),
+                2 => {
+                    for event in &mut bad.engine.event_history {
+                        if let CommittedEvent::CrystalBatchPreparedV3 { capture } = event {
+                            capture.fight.as_mut().unwrap().signed_powers[0] += 1;
+                        }
+                    }
+                }
+                3 => bad.engine.event_history.retain(|event| {
+                    !matches!(event, CommittedEvent::CrystalBatchPreparedV3 { .. })
+                }),
+                _ => {
+                    for event in &mut bad.engine.event_history {
+                        if let CommittedEvent::CrystalExecutionV1 { execution } = event {
+                            for step in &mut execution.steps {
+                                if let Some(capture) = step.batch_capture.as_mut() {
+                                    capture.preparation = None;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let bytes = serde_json::to_vec(&bad).unwrap();
+            assert!(engine::step(&mut bad, Action::Pass).is_err(), "case {case}");
+            assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+            assert!(mtg_kernel::crystal_public_v1::observe_v1(
+                &bad,
+                &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+                actor,
+                0,
+                0,
+                0,
+                1
+            )
+            .is_err());
+            assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+            assert!(matches!(
+                engine::advance_until_decision(&mut bad),
+                Decision::Halted { .. }
+            ));
+            bad.engine.halted = None;
+            assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+        }
+    }
+}
+
+#[test]
+fn real_fight_without_menu_commits_both_powers_lifelink_and_requires_preparation() {
+    use event::CommittedEvent;
+    use mtg_kernel::effect::crystal_prevention_v1::{BatchOutcomeV2, ExecutionV1};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for power in [0, 5] {
+            let mut state = ready(actor);
+            let wall = source(&mut state, actor);
+            let other = put(
+                &mut state,
+                actor.opponent(),
+                "Shivan Dragon",
+                Zone::Battlefield,
+            );
+            // Physical counter/keyword fixture setup before announcement.
+            state.objects.get_mut(wall).counters.plus1_plus1 = power;
+            for object in [wall, other] {
+                state.objects.get_mut(object).v4.lifelink_keyword_counters = 1;
+                shield(&mut state, wall, object, 1);
+            }
+            let spell = announce_fight(&mut state, actor, wall, other);
+            let before_resolution = restore(&state);
+            let lives = state.players.each_ref().map(|p| p.life);
+            let mut replay = restore(&state);
+            for current in [&mut state, &mut replay] {
+                finish(current);
+                assert_eq!(current.objects.get(spell).zone, Zone::Graveyard);
+                assert_eq!(
+                    current.objects.get(other).damage,
+                    if power > 0 { 4 } else { 0 }
+                );
+                assert_eq!(
+                    current.objects.get(wall).zone,
+                    if power > 0 {
+                        Zone::Battlefield
+                    } else {
+                        Zone::Graveyard
+                    }
+                );
+                assert_eq!(
+                    current.players[actor.index()].life,
+                    lives[actor.index()] + if power > 0 { 4 } else { 0 }
+                );
+                assert_eq!(
+                    current.players[actor.opponent().index()].life,
+                    lives[actor.opponent().index()] + 4
+                );
+                assert!(!current
+                    .engine
+                    .event_history
+                    .iter()
+                    .any(|event| matches!(event,
+                    CommittedEvent::CrystalPreventionBoundaryV1 { boundary }
+                        if boundary.pending.as_ref().is_some_and(|p| p.choice.is_some()))));
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&replay).unwrap()
+            );
+            let initial = state
+                .engine
+                .event_history
+                .iter()
+                .find_map(|event| match event {
+                    CommittedEvent::CrystalPreventionBoundaryV1 { boundary }
+                        if boundary.item.source == spell && boundary.previous.is_none() =>
+                    {
+                        Some(boundary.clone())
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            let actual_step = state
+                .engine
+                .event_history
+                .iter()
+                .find_map(|event| match event {
+                    CommittedEvent::CrystalExecutionV1 { execution }
+                        if execution.item.source == spell =>
+                    {
+                        execution
+                            .steps
+                            .iter()
+                            .find(|s| s.batch_capture.is_some())
+                            .cloned()
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            let mut bad = before_resolution;
+            bad.engine.event_history =
+                state.engine.event_history[..=initial.history_index as usize].to_vec();
+            let mut step = actual_step;
+            step.damage_history.clear();
+            let capture = step.batch_capture.as_mut().unwrap();
+            capture.preparation = None;
+            capture.initial_outcomes.fill(BatchOutcomeV2::Prevented);
+            let execution = ExecutionV1 {
+                history_index: u32::try_from(bad.engine.event_history.len()).unwrap(),
+                previous: initial.history_index,
+                item: initial.item.clone(),
+                before: initial.pending.clone().unwrap(),
+                after: None,
+                steps: vec![step],
+                batch_commit: None,
+                discard_commit: None,
+            };
+            let mut closed = initial;
+            closed.history_index = execution.history_index + 1;
+            closed.previous = Some(execution.previous);
+            closed.pending = None;
+            closed.answer = None;
+            bad.stack.retain(|item| item.source != spell);
+            bad.engine.pending_effect = None;
+            bad.engine
+                .event_history
+                .push(CommittedEvent::CrystalExecutionV1 {
+                    execution: Box::new(execution),
+                });
+            bad.engine
+                .event_history
+                .push(CommittedEvent::CrystalPreventionBoundaryV1 { boundary: closed });
+            let bytes = serde_json::to_vec(&bad).unwrap();
+            assert!(engine::step(&mut bad, Action::Pass).is_err());
+            assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+            assert!(matches!(
+                engine::advance_until_decision(&mut bad),
+                Decision::Halted { .. }
+            ));
+            bad.engine.halted = None;
+            assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+        }
+    }
+}
+
+#[test]
+fn real_bushwhack_basic_land_mode_keeps_its_existing_private_search_owner() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let wall = source(&mut state, actor);
+        let creature = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        shield(&mut state, wall, creature, 1);
+        let original_shields = state.engine.active_replacements.clone();
+        let spell = put(&mut state, actor, "Bushwhack", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 1;
+        priority(&mut state, actor);
+        engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+        assert!(matches!(next(&mut state), Decision::ChooseSpellMode { .. }));
+        engine::step(&mut state, Action::ChooseSpellMode(0)).unwrap();
+        for _ in 0..12 {
+            let decision = next(&mut state);
+            if matches!(decision, Decision::ChooseEffectTargets { player, can_finish: true, .. }
+                if player == actor)
+            {
+                break;
+            }
+            assert!(
+                matches!(decision, Decision::CastSpellOrPass { .. }),
+                "{decision:?}"
+            );
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        assert!(
+            matches!(next(&mut state), Decision::ChooseEffectTargets { player, can_finish: true, .. }
+            if player == actor)
+        );
+        let mut replay = restore(&state);
+        for current in [&mut state, &mut replay] {
+            engine::step(current, Action::FinishEffectSelection).unwrap();
+            finish(current);
+            assert_eq!(current.objects.get(spell).zone, Zone::Graveyard);
+            assert_eq!(current.engine.active_replacements, original_shields);
+            assert!(!current.engine.event_history.iter().any(|event| matches!(
+                event,
+                event::CommittedEvent::CrystalPreventionBoundaryV1 { .. }
+                    | event::CommittedEvent::CrystalBatchPreparedV3 { .. }
+            )));
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+    }
+}
