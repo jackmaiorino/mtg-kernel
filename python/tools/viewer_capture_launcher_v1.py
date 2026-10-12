@@ -50,6 +50,16 @@ def capture_complete(result: dict) -> bool:
     except (OSError, ValueError, TypeError):
         return False
 
+def verify_development_capture(result: dict, steps: int, replay_steps: tuple[int, ...]):
+    rows=[json.loads(line) for line in Path(result['capture']).open(encoding='utf-8')]
+    decisions=[r for r in rows if r['kind']=='decision']
+    if len(decisions) != steps or rows[-1].get('written') != steps:
+        raise ValueError('Development recorder lost a decision; inspect retained capture footer')
+    for r in decisions:
+        if r['decision']['step'] in replay_steps and r['decision']['acting_player']=='p0':
+            if not r['search'].get('replay',{}).get('complete'):
+                raise ValueError('Requested development search replay unavailable')
+
 def require_guard(root: Path, lane: str = 'cinematic-viewer-232'):
     claim = os.environ.get('HOST_SLOTS_CLAIM')
     if not claim: raise ValueError('Use host_slots_v1.py run; unguarded capture refused')
@@ -119,6 +129,7 @@ def main():
         on = invoke(args.binary,args.source,args.root,'parity-on',2026101201,True,check_steps,180,replay_steps)
         if any(r['exit_code'] != 0 or r['selected_steps'] != check_steps for r in (off,on)) or off['primary_sha256'] != on['primary_sha256']:
             raise ValueError('Capture on/off primary parity failed; inspect retained process logs')
+        verify_development_capture(on,check_steps,replay_steps)
         serial_start=time.perf_counter()
         serial=[invoke(args.binary,args.source,args.root,f'serial-{i}',2026101201+i,True,check_steps,180,replay_steps) for i in range(2)]
         serial_seconds=time.perf_counter()-serial_start
@@ -132,6 +143,8 @@ def main():
         for a,b in zip(serial,parallel):
             if a['exit_code'] != 0 or b['exit_code'] != 0 or a['selected_steps'] != check_steps or b['selected_steps'] != check_steps or a['primary_sha256'] != b['primary_sha256']:
                 raise ValueError('Serial/parallel completed-work parity failed')
+            verify_development_capture(a,check_steps,replay_steps)
+            verify_development_capture(b,check_steps,replay_steps)
         report={'schema':'mtg-kernel-viewer-qualification/v1','pins':pins,'inventory_sha256':sha(args.inventory),
             'cores':guard['cores'],'replay_steps':args.replay_steps,'qualification_steps':check_steps,'primary_parity_sha256':on['primary_sha256'],'serial_seconds':serial_seconds,
             'parallel_seconds':parallel_seconds,'workers':2 if parallel_seconds < serial_seconds else 1,
