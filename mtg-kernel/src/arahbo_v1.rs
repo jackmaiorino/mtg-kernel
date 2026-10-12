@@ -788,6 +788,39 @@ pub(crate) mod future_tests;
 mod tests {
     use super::*;
     #[test]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    fn registered_changeling_materializes_avatar_through_entry_and_restore_both_seats() {
+        use crate::card_def::Subtype;
+        for actor in [crate::ids::PlayerId::P0, crate::ids::PlayerId::P1] {
+            let mut state = crate::policy_observation_v6::tests::ready_state();
+            let source = crate::policy_observation_v6::tests::put(
+                &mut state,
+                actor,
+                "Webweaver Changeling",
+                Zone::Hand,
+            );
+            crate::event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            for snapshot in [
+                state.clone(),
+                serde_json::from_slice::<GameState>(&serde_json::to_vec(&state).unwrap()).unwrap(),
+            ] {
+                let live = snapshot.objects.get(source);
+                assert_eq!(live.zone, Zone::Battlefield);
+                assert_eq!(live.controller, actor);
+                assert!(Subtype::Avatar.is_in_subtype_ids(&live.v4.effective_subtype_ids));
+                assert!(Subtype::Cat.is_in_subtype_ids(&live.v4.effective_subtype_ids));
+                assert!(!Subtype::Aura.is_in_subtype_ids(&live.v4.effective_subtype_ids));
+            }
+        }
+    }
+
+    #[test]
     fn registered_absent_source_hooks_preserve_bytes_and_hash_both_seats() {
         if enabled() {
             return;

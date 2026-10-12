@@ -626,6 +626,11 @@ impl Subtype {
             not(feature = "standard-magezero-fixtures")
         ))]
         Subtype::Devil,
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        Subtype::Avatar,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
