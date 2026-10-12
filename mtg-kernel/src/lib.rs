@@ -88,6 +88,7 @@ pub mod crystal_public_v1;
 pub mod effect;
 pub mod employment_public_v1;
 pub mod engine;
+mod equipment_damage_source_v4;
 pub mod event;
 pub mod expanded_deck_training_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]

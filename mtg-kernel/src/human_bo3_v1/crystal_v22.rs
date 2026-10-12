@@ -125,9 +125,23 @@ pub struct HumanCrystalProgramMenuV22 {
     pub requires_original_source_creature: bool,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HumanEquipmentDamageSourceV22 {
+    pub stack_ordinal: u32,
+    pub source: HumanCardRefV1,
+    pub equipment: HumanCardRefV1,
+    pub ability_controller: PlayerSeatV1,
+    pub damage_controller: PlayerSeatV1,
+    pub historical: bool,
+    pub color_mask: u8,
+    pub lifelink: bool,
+    pub deathtouch: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HumanCrystalExtensionsV22 {
     pub predecessor: HumanExtensionsV9,
     pub static_sources: Vec<HumanCrystalSourceV22>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub equipment_damage_sources: Vec<HumanEquipmentDamageSourceV22>,
     pub prevention_menu: Option<HumanCrystalMenuV22>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub optional_discard_menu: Option<HumanCrystalDiscardMenuV22>,
@@ -226,6 +240,23 @@ fn state(
                 opponent_attacked_this_turn: observation.attacked_this_turn[1 - seat],
             },
             static_sources,
+            equipment_damage_sources: observation
+                .equipment_damage_sources
+                .iter()
+                .map(|row| {
+                    Ok(HumanEquipmentDamageSourceV22 {
+                        stack_ordinal: row.stack_ordinal,
+                        source: handles.get(&row.source)?.clone(),
+                        equipment: handles.get(&row.equipment)?.clone(),
+                        ability_controller: row.ability_controller,
+                        damage_controller: row.damage_controller,
+                        historical: row.historical,
+                        color_mask: row.color_mask,
+                        lifelink: row.lifelink,
+                        deathtouch: row.deathtouch,
+                    })
+                })
+                .collect::<Result<Vec<_>, Error>>()?,
             prevention_menu,
             optional_discard_menu,
             optional_fight_menu,
@@ -389,6 +420,10 @@ fn project_base(
     for row in &observation.static_sources {
         handles.insert(&row.source)?;
     }
+    for row in &observation.equipment_damage_sources {
+        handles.insert(&row.source)?;
+        handles.insert(&row.equipment)?;
+    }
     if let Some(row) = observation.prevention_menu.as_ref() {
         handles.insert(&row.source)?;
         handles.insert(&row.resolving_source)?;
@@ -408,6 +443,12 @@ fn project_base(
         .predecessor
         .ward_life_card_traits
     {
+        unary
+            .entry(row.source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    for row in &initial.extensions.equipment_damage_sources {
         unary
             .entry(row.source.handle.clone())
             .or_default()

@@ -122,6 +122,8 @@ pub struct CrystalObservationV1 {
     pub extensions: crate::policy_observation_v8::PolicyObservationExtensionsV8,
     pub attacked_this_turn: [bool; 2],
     pub static_sources: Vec<StaticSourceV1>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub equipment_damage_sources: Vec<crate::equipment_damage_source_v4::PublicSourceV4>,
     pub prevention_menu: Option<MenuV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub optional_discard_menu: Option<DiscardMenuV2>,
@@ -158,6 +160,9 @@ pub fn producer_sha256_v1() -> String {
         include_str!("standard_cards_v1.rs"),
         include_str!("source_power_activation_v1.rs"),
         include_str!("fixed_source_damage_v3.rs"),
+        include_str!("equipment_damage_source_v4.rs"),
+        include_str!("trigger.rs"),
+        include_str!("legend_rule_v1.rs"),
         include_str!("gorehorn_damage_v1.rs"),
         include_str!("gorehorn_crystal_v1.rs"),
         include_str!("raid_entry_custody_v1.rs"),
@@ -519,6 +524,8 @@ pub fn observe_v1(
         prevention_menu: menu(state)?,
         optional_discard_menu,
         optional_fight_menu,
+        equipment_damage_sources: crate::equipment_damage_source_v4::public_sources(state)
+            .map_err(RlContractError)?,
         projection_sha256: String::new(),
     };
     o.projection_sha256 = commitment(&o)?;
