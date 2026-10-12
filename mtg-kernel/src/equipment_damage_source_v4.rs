@@ -2,9 +2,9 @@
 use crate::card_def::CARD_DEFS;
 use crate::effect::{EffectOp, ExecCtx, TargetRef};
 use crate::event::{CommittedEvent, HistoricalDamageSourceV1, ProposedEvent};
-use crate::ids::ObjectId;
+use crate::ids::{ObjectId, StackItemId};
 use crate::state::{
-    AbilitySourceContractV4, GameObject, GameState, StackItem, StackItemId, StackItemKind, Zone,
+    AbilitySourceContractV4, GameObject, GameState, StackItem, StackItemKind, Zone,
 };
 use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
