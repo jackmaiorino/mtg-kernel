@@ -4408,6 +4408,29 @@ fn primary_mana_ability_colors(card: &CardJson) -> Vec<&str> {
 
 fn mana_ability_includes_chosen_color(name: &str) -> bool {
     matches!(name, "Citadel Gate" | "Sea Gate")
+        || (cfg!(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        )) && name == "Heraldic Banner")
+}
+
+fn as_enters_color_choice_v1(name: &str) -> &'static str {
+    if cfg!(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    )) && name == "Heraldic Banner"
+    {
+        "Some(AsEntersColorChoiceDefV1::AnyWubrg)"
+    } else {
+        "None"
+    }
+}
+fn chosen_color_creature_boost_v1(name: &str) -> &'static str {
+    if as_enters_color_choice_v1(name) != "None" {
+        "Some(ChosenColorCreatureBoostDefV1 { power: 1, toughness: 0 })"
+    } else {
+        "None"
+    }
 }
 
 fn as_enters_choose_color_other_than(name: &str) -> &'static str {
@@ -10101,6 +10124,26 @@ fn codegen(cards: &[CardJson]) -> String {
             combat_static_rules_for(&c.name)
         )
         .unwrap();
+        writeln!(
+            out,
+            "        as_enters_color_choice_v1: {},",
+            if executable {
+                as_enters_color_choice_v1(&c.name)
+            } else {
+                "None"
+            }
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        chosen_color_creature_boost_v1: {},",
+            if executable {
+                chosen_color_creature_boost_v1(&c.name)
+            } else {
+                "None"
+            }
+        )
+        .unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -10304,6 +10347,13 @@ fn codegen(cards: &[CardJson]) -> String {
             },
         );
         canon.push('|');
+        // Absent new descriptors add no semantic token to any predecessor.
+        if c.engine_capability != EngineCapabilityJson::NoEffect
+            && as_enters_color_choice_v1(&c.name) != "None"
+        {
+            canon
+                .push_str("as_enters_color_choice_v1=AnyWubrg|chosen_color_creature_boost_v1=1,0|");
+        }
         canon.push_str("as_enters_choose_color_other_than=");
         canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
             as_enters_choose_color_other_than(&c.name)

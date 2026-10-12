@@ -485,12 +485,18 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         animation,
         activated_ability_generic_reductions,
         combat_static_rules,
+        as_enters_color_choice_v1,
+        chosen_color_creature_boost_v1,
         // Cast bookkeeping for a program's `ManaSpentToCast` count, which
         // the program's own facets already carry.
         records_mana_spent: _,
     } = def;
 
     let mut printed = Vec::new();
+    assert!(
+        as_enters_color_choice_v1.is_none() && chosen_color_creature_boost_v1.is_none(),
+        "as-enters color and chosen-color anthem require their precise successor"
+    );
     for &t in types.iter() {
         printed.push(PrintedF::Type(t.into()));
     }
