@@ -12835,7 +12835,11 @@ fn validate_pending_trigger_for_stack(
             ..StackStateV4::default()
         },
     };
-    validated_stack_item_target_spec(&candidate, state)?;
+    // Prospective rows have no publication or live ownership yet. Their
+    // producer/source/target metadata is still fully definition-validated.
+    // Only this private placement probe uses the metadata path.
+    validate_spell_stack_source(state, &candidate)?;
+    validated_stack_item_target_metadata(&candidate, state)?;
     Ok(())
 }
 
@@ -13456,6 +13460,15 @@ pub(crate) fn validated_stack_item_target_spec(
     validate_spell_stack_source(state, item)?;
     crate::source_power_activation_v1::validate_item(state, item)?;
     crate::librarian_activation_v1::validate_item(state, item)?;
+    validated_stack_item_target_metadata(item, state)
+}
+
+/// Pure metadata portion shared by the private prospective placement probe.
+/// Live/public callers always enter through the mandatory authority wrapper.
+fn validated_stack_item_target_metadata(
+    item: &StackItem,
+    state: &GameState,
+) -> Result<Option<TargetSpec>, String> {
     if item.madness_offer != (item.kind == StackItemKind::MadnessOffer) {
         return Err("Madness-offer kind and flag disagree".to_string());
     }
