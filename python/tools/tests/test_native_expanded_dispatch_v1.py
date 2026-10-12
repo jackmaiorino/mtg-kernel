@@ -70,7 +70,7 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
                             "reserve_bytes": dispatch.DISK_RESERVE_BYTES, "projected_additional_bytes": 1000,
                             "projected_volume_bytes": {self.root.drive.upper(): 1000}}}
 
-    def trial(self, workers, seconds):
+    def trial(self, workers, seconds, e_packet=None):
         request = self.request(workers)
         original = dispatch.read(dispatch.checked(request["config"]))
         config = dispatch.placed_config(request, original, True)
@@ -80,10 +80,17 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
         trajectory = self.save({"terminal": {"terminal_classification": "natural"}, "tensors": [1, 2]},
                                native/"episode.json")
         collection = self.save({"complete": True, "trajectories": [trajectory]}, native/"collection.json")
+        e_supported = None
+        if e_packet is not None:
+            packet = self.save(e_packet, native/"update"/"e-supported-teacher.json")
+            e_supported = {"continuation": {"treatment": True}, "packet": packet}
         checkpoint = self.save({"trajectories": [trajectory], "parameters": [123],
-                                "first_moments": [456], "second_moments": [789], "adam_step": 32401},
+                                "first_moments": [456], "second_moments": [789], "adam_step": 32401}
+                               | ({"e_supported": e_supported} if e_supported else {}),
                                native/"checkpoint.json")
-        update = self.save({"complete": True, "checkpoint": checkpoint})
+        update = self.save({"complete": True, "checkpoint": checkpoint}
+                           | ({"e_supported": {"packet": e_supported["packet"],
+                                               "scheduled": e_packet["scheduled"]}} if e_supported else {}))
         receipt = self.save({"iteration": 0, "collection": collection, "update": update})
         result = {"complete": False, "completed_iterations": 1, "planned_iterations": 64,
                   "iterations": [receipt]}
@@ -180,6 +187,38 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
         actual = dispatch.output_fingerprint(dispatch.read(second["executed_config"]["path"]),
                                              "training", result, self.runtime, True)
         self.assertNotEqual(first["fingerprint"], actual)
+
+    def test_e_packet_is_bound_by_content_not_output_root(self):
+        packet = {"schema": "mtg-kernel-e-supported-teacher-packet/v1", "scheduled": 1, "valid": 1}
+        first = dispatch.read(self.trial(1, 10, packet)["path"])
+        second = dispatch.read(self.trial(2, 6, packet)["path"])
+        self.assertEqual(first["fingerprint"], second["fingerprint"])
+        self.assertIn("e_packet_sha256", first["fingerprint"]["iterations"][0])
+        changed = dispatch.read(self.trial(3, 6, packet | {"valid": 0})["path"])
+        self.assertNotEqual(first["fingerprint"], changed["fingerprint"])
+        result = dispatch.read(second["native_result"]["path"])
+        receipt = dispatch.read(result["iterations"][0]["path"])
+        update = dispatch.read(receipt["update"]["path"])
+        update["e_supported"]["scheduled"] = 2
+        receipt["update"] = self.save(update)
+        result["iterations"][0] = self.save(receipt)
+        with self.assertRaisesRegex(ValueError, "teacher packet"):
+            dispatch.output_fingerprint(dispatch.read(second["executed_config"]["path"]),
+                                        "training", result, self.runtime, True)
+
+    def test_e_case_ids_are_replica_identifiers_but_slots_are_bound(self):
+        config = copy.deepcopy(self.config)
+        config["e_supported"] = {"treatment": True, "slots": [[{"trajectory_index": 0, "case_id": "r1/u0"}]]}
+        replica = copy.deepcopy(config)
+        replica["e_supported"]["slots"][0][0]["case_id"] = "r2/u0"
+        self.assertEqual(dispatch.workload(replica, "training"), dispatch.workload(config, "training"))
+        self.assertNotEqual(dispatch.workload(config, "training"), dispatch.workload(self.config, "training"))
+        moved = copy.deepcopy(config)
+        moved["e_supported"]["slots"][0][0]["trajectory_index"] = 1
+        self.assertNotEqual(dispatch.workload(moved, "training"), dispatch.workload(config, "training"))
+        control = copy.deepcopy(config)
+        control["e_supported"]["treatment"] = False
+        self.assertNotEqual(dispatch.workload(control, "training"), dispatch.workload(config, "training"))
 
     def test_exposure_projection_collection_preserves_fingerprint(self):
         report = dispatch.read(self.trial(1, 10)["path"])

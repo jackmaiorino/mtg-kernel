@@ -1150,8 +1150,13 @@ pub fn run_native_expanded_training_v1(
                 "update-input.json",
                 &json!({"collection":collection}),
             )?;
-            let update_command =
-                update_command(config, index, &current, trajectories, attempt.join("update"));
+            let update_command = update_command(
+                config,
+                index,
+                &current,
+                trajectories,
+                attempt.join("update"),
+            );
             publish(&attempt, "update-command.json", &update_command)?;
             let started = Instant::now();
             execute_v1(update_command)?;
@@ -1535,7 +1540,13 @@ mod tests {
         assert!(default_manifest
             .get("max_prepared_tensor_mebibytes")
             .is_none());
-        match update_command(&raised, 0, &raised.initial_source, Vec::new(), PathBuf::new()) {
+        match update_command(
+            &raised,
+            0,
+            &raised.initial_source,
+            Vec::new(),
+            PathBuf::new(),
+        ) {
             ExpandedTrainingCommandV1::UpdatePrepared {
                 max_prepared_tensor_mebibytes,
                 ..
@@ -2130,7 +2141,8 @@ mod tests {
     }
 
     fn iteration_receipt_v1(result: &Value, index: usize) -> Value {
-        let pin: PinnedFileV1 = serde_json::from_value(result["iterations"][index].clone()).unwrap();
+        let pin: PinnedFileV1 =
+            serde_json::from_value(result["iterations"][index].clone()).unwrap();
         read_pin(&pin).unwrap()
     }
 
@@ -2154,11 +2166,17 @@ mod tests {
         assert_eq!(checkpoint["e_supported"]["continuation"]["treatment"], true);
         assert_eq!(result["actual_identity"]["adam_step"], 2);
         // A complete rerun only verifies; a fresh directory replays identically.
-        assert_eq!(run_native_expanded_training_v1(&config, None).unwrap(), result);
+        assert_eq!(
+            run_native_expanded_training_v1(&config, None).unwrap(),
+            result
+        );
         let mut replay = config.clone();
         replay.output_directory = config.output_directory.with_file_name("run-replay");
         let again = run_native_expanded_training_v1(&replay, None).unwrap();
-        assert_eq!(again["actual_identity"]["state_sha256"], result["actual_identity"]["state_sha256"]);
+        assert_eq!(
+            again["actual_identity"]["state_sha256"],
+            result["actual_identity"]["state_sha256"]
+        );
         assert_eq!(
             iteration_receipt_v1(&again, 0)["e_supported"]["packet"]["sha256"],
             supervised["e_supported"]["packet"]["sha256"]
