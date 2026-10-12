@@ -1084,6 +1084,23 @@ pub enum CommittedEvent {
         resolving_stack_item: crate::ids::StackItemId,
         initial_boundary_history_index: u32,
     },
+    StrongboxPermissionGrantedV1 {
+        installation: Box<crate::effect::exile_top_choose_v1::PermissionInstallationV1>,
+    },
+    StrongboxPermissionTurnStartedV1 {
+        installation: u32,
+        turn: u32,
+        holder: PlayerId,
+    },
+    StrongboxPermissionCleanupV1 {
+        turn: u32,
+        holder: PlayerId,
+        installations: Vec<u32>,
+    },
+    StrongboxPermissionExpiredV1 {
+        installation: u32,
+        cleanup: u32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

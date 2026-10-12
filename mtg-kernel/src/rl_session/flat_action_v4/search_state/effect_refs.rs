@@ -1172,6 +1172,10 @@ pub(super) fn conflicts(
             | PrivateKeepOneLibraryConsumedV1 { .. }
             | ExilePlaySelectionCapturedV1 { .. }
             | ExilePlaySelectionConsumedV1 { .. }
+            | StrongboxPermissionGrantedV1 { .. }
+            | StrongboxPermissionTurnStartedV1 { .. }
+            | StrongboxPermissionCleanupV1 { .. }
+            | StrongboxPermissionExpiredV1 { .. }
             | StrongboxRaidSkippedV1 { .. }
             | PrivateKeepOneRaidSkippedV1 { .. }
             | RaidEntrySourceV1 { .. }

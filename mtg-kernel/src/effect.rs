@@ -5201,6 +5201,7 @@ fn surveil_top_card(
 
 pub(crate) mod exile_top_choose_v1;
 mod private_keep_one_v1;
+pub(crate) mod strongbox_permission_v1;
 pub(crate) use private_keep_one_v1::selection_shape;
 pub use private_keep_one_v1::PrivateKeepOneBindingV1;
 mod surveil_many;

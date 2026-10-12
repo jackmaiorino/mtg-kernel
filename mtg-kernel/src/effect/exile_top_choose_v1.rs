@@ -1,4 +1,5 @@
 //! Exact public selection from a newly exiled library batch.
+pub use super::strongbox_permission_v1::PermissionInstallationV1;
 use super::*;
 use sha2::{Digest, Sha256};
 
@@ -115,7 +116,7 @@ pub(crate) fn capture_exiled_top(
         requested_count: count,
         stack_item_id: ctx.stack_item_id,
         source: ctx.source,
-        granted_turn: state.turn,
+        granted_turn: state.turn_key_v1(),
         granted_active_player: state.active_player,
         original_library,
         resulting_library: bind_library_exact(state, player),
@@ -256,7 +257,7 @@ pub(super) fn validate_required_stage(
 fn validate_live_batch(state: &GameState, binding: &ExileTopChoiceBindingV1) -> Result<(), String> {
     if binding.requested_count != 2
         || binding.provenance_digest != digest(binding)?
-        || binding.granted_turn != state.turn
+        || binding.granted_turn != state.turn_key_v1()
         || binding.granted_active_player != state.active_player
         || binding.exiled.len() > usize::from(binding.requested_count)
         || binding.exiled.len() != binding.exile_event_indices.len()
@@ -546,19 +547,33 @@ pub(crate) fn grant_selected(
         return Ok(());
     }; // unsupported card remains exiled without executable admission
     consume_capture_record(state, binding, Some(chosen));
-    state
-        .engine
-        .exile_play_permissions
-        .push(crate::engine::PlayPermission {
-            without_mana_cost: crate::engine::FreeCastV1::default(),
-            object: chosen.object,
-            holder: binding.player,
-            zone_change_generation: chosen.expected_zone_change_count,
-            play_or_cast,
-            expiry: crate::engine::PlayPermissionExpiry::UntilHoldersNextTurn {
-                holder_turn_started: false,
-            },
-        });
+    let permission = crate::engine::PlayPermission {
+        without_mana_cost: crate::engine::FreeCastV1::default(),
+        object: chosen.object,
+        holder: binding.player,
+        zone_change_generation: chosen.expected_zone_change_count,
+        play_or_cast,
+        expiry: crate::engine::PlayPermissionExpiry::UntilHoldersNextTurn {
+            holder_turn_started: false,
+        },
+    };
+    state.engine.exile_play_permissions.push(permission.clone());
+    if let Some(stack) = binding.stack_item_id {
+        let index = u32::try_from(state.engine.event_history.len())
+            .map_err(|_| "Strongbox permission overflow")?;
+        state
+            .engine
+            .event_history
+            .push(event::CommittedEvent::StrongboxPermissionGrantedV1 {
+                installation: Box::new(PermissionInstallationV1 {
+                    index,
+                    stack,
+                    chosen,
+                    permission,
+                    granted_turn: state.turn_key_v1(),
+                }),
+            });
+    }
     Ok(())
 }
 
@@ -686,15 +701,48 @@ pub(crate) fn validate_closed(
             return Err("Strongbox closure lacks genuine ordered exile incarnation".into());
         }
     }
+    let grants = state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| match event {
+            event::CommittedEvent::StrongboxPermissionGrantedV1 { installation }
+                if installation.stack == stack =>
+            {
+                Some((index, installation.as_ref()))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if let Some(chosen) = selected {
+        let definition =
+            &crate::card_def::CARD_DEFS[state.objects.get(chosen.object).card_def as usize];
+        if definition.is_playable_land() || definition.is_castable() {
+            if !matches!(grants.as_slice(),[(index,g)] if g.chosen==*chosen && *index>*consume && *index<closed as usize)
+            {
+                return Err("Strongbox selection lost actual permission installation".into());
+            }
+        } else if !grants.is_empty() {
+            return Err("unsupported selection acquired permission".into());
+        }
+    } else if !grants.is_empty() {
+        return Err("empty exile acquired permission".into());
+    }
     Ok(())
 }
 
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    super::strongbox_permission_v1::validate(state)?;
     if state.engine.event_log.iter().any(|e| {
         matches!(
             e,
             event::CommittedEvent::ExilePlaySelectionCapturedV1 { .. }
                 | event::CommittedEvent::ExilePlaySelectionConsumedV1 { .. }
+                | event::CommittedEvent::StrongboxPermissionGrantedV1 { .. }
+                | event::CommittedEvent::StrongboxPermissionTurnStartedV1 { .. }
+                | event::CommittedEvent::StrongboxPermissionCleanupV1 { .. }
+                | event::CommittedEvent::StrongboxPermissionExpiredV1 { .. }
                 | event::CommittedEvent::StrongboxRaidSkippedV1 { .. }
         )
     }) {

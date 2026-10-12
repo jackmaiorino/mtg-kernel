@@ -180,3 +180,118 @@ fn genuine_empty_declaration_never_exiles_or_grants() {
         assert!(state.engine.exile_play_permissions.is_empty());
     }
 }
+
+fn granted(actor: PlayerId) -> GameState {
+    let mut state = ready(actor, 5);
+    raid(&mut state, actor, true);
+    cast(&mut state, actor);
+    let decision = settle(&mut state).expect("actual selection");
+    let Decision::ChooseEffectTargets { legal_targets, .. } = decision else {
+        panic!("{decision:?}")
+    };
+    engine::step(&mut state, Action::ChooseEffectTarget(legal_targets[0])).unwrap();
+    settle(&mut state);
+    state
+}
+fn natural_pass(state: &mut GameState) {
+    match next(state) {
+        Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
+        Decision::DeclareAttackers { .. } => {
+            engine::step(state, Action::DeclareAttackers(vec![])).unwrap()
+        }
+        Decision::DeclareBlockers { .. } => {
+            engine::step(state, Action::DeclareBlockers(vec![])).unwrap()
+        }
+        other => panic!("unexpected natural boundary {other:?}"),
+    }
+}
+#[test]
+#[ignore = "Strongbox remains unregistered; root owns actual qualification"]
+fn actual_holder_next_turn_cleanup_permissions_survive_opponent_and_restore_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = granted(actor);
+        let round = state.turn;
+        let mut saw_opponent = false;
+        let mut saw_next_holder = false;
+        for _ in 0..160 {
+            next(&mut state);
+            if state.active_player == actor.opponent() && state.turn == round {
+                saw_opponent = true;
+                assert_eq!(state.engine.exile_play_permissions.len(), 1);
+            }
+            if state.active_player == actor && state.turn == round + 1 && state.step == Step::Main1
+            {
+                saw_next_holder = true;
+                assert_eq!(state.engine.exile_play_permissions.len(), 1);
+                assert!(matches!(
+                    state.engine.exile_play_permissions[0].expiry,
+                    engine::PlayPermissionExpiry::UntilHoldersNextTurn {
+                        holder_turn_started: true
+                    }
+                ));
+                let mut restored = replay(&state);
+                natural_pass(&mut state);
+                natural_pass(&mut restored);
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&restored).unwrap()
+                );
+            }
+            if state.engine.event_history.iter().any(|event| {
+                matches!(
+                    event,
+                    mtg_kernel::event::CommittedEvent::StrongboxPermissionExpiredV1 { .. }
+                )
+            }) {
+                assert!(saw_opponent && saw_next_holder);
+                assert!(state.engine.exile_play_permissions.is_empty());
+                break;
+            }
+            natural_pass(&mut state);
+        }
+        assert!(state.engine.event_history.iter().any(|event| matches!(
+            event,
+            mtg_kernel::event::CommittedEvent::StrongboxPermissionExpiredV1 { .. }
+        )));
+    }
+}
+#[test]
+#[ignore = "Strongbox remains unregistered; root owns actual qualification"]
+fn erased_permission_and_coherent_early_expiry_refuse_before_action_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let state = granted(actor);
+        let installation = state
+            .engine
+            .event_history
+            .iter()
+            .find_map(|event| match event {
+                mtg_kernel::event::CommittedEvent::StrongboxPermissionGrantedV1 {
+                    installation,
+                } => Some(installation.clone()),
+                _ => None,
+            })
+            .unwrap();
+        for mode in [0, 1] {
+            let mut bad = replay(&state);
+            bad.engine.exile_play_permissions.clear();
+            if mode == 1 {
+                bad.engine.event_history.push(
+                    mtg_kernel::event::CommittedEvent::StrongboxPermissionExpiredV1 {
+                        installation: installation.index,
+                        cleanup: installation.index,
+                    },
+                );
+            }
+            let before = serde_json::to_vec(&bad).unwrap();
+            assert!(engine::step(&mut bad, Action::Pass).is_err());
+            assert_eq!(before, serde_json::to_vec(&bad).unwrap());
+            let mut restored = replay(&bad);
+            assert!(matches!(
+                engine::advance_until_decision(&mut restored),
+                Decision::Halted { .. }
+            ));
+            restored.engine.halted = None;
+            assert_eq!(before, serde_json::to_vec(&restored).unwrap());
+        }
+    }
+}
