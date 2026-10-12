@@ -16052,6 +16052,13 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         EffectOp::DealDamage { target, amount } => {
+            if crate::gorehorn_damage_v1::owns_context(ctx) {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
             let target = ctx.resolve_target(*target);
             event::propose_and_commit(
                 state,

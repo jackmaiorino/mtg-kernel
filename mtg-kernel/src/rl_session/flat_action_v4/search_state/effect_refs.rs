@@ -955,6 +955,11 @@ pub(super) fn conflicts(
                 | crate::event::CommittedEvent::LibrarianActivationCounterRemovalV1 { .. }
                 | crate::event::CommittedEvent::LibrarianActivationOperationV1 { .. }
                 | crate::event::CommittedEvent::LibrarianActivationFinishedV1 { .. }
+                | crate::event::CommittedEvent::GorehornDepartureV1 { .. }
+                | crate::event::CommittedEvent::GorehornPublishedV1 { .. }
+                | crate::event::CommittedEvent::GorehornPreparedV1 { .. }
+                | crate::event::CommittedEvent::GorehornDamageOperationV1 { .. }
+                | crate::event::CommittedEvent::GorehornOperationV1 { .. }
         )
     }) {
         return true;
@@ -1109,6 +1114,11 @@ pub(super) fn conflicts(
             | PrivateKeepOneLibraryConsumedV1 { .. }
             | PrivateKeepOneRaidSkippedV1 { .. }
             | RaidEntrySourceV1 { .. }
+            | GorehornDepartureV1 { .. }
+            | GorehornPublishedV1 { .. }
+            | GorehornPreparedV1 { .. }
+            | GorehornDamageOperationV1 { .. }
+            | GorehornOperationV1 { .. }
             | SquadRallierResolutionBoundaryV1 { .. }
             | SowerRestrictionInstalledV1 { .. }
             | SowerRestrictionExpiredV1 { .. }

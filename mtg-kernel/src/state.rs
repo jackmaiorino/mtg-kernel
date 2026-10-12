@@ -1494,6 +1494,25 @@ pub struct StackStateV4 {
     pub frenzied_goblin_started_v1: FrenziedGoblinStartedV1,
     #[serde(default, skip_serializing_if = "FrenziedGoblinPublicationV1::is_empty")]
     pub frenzied_goblin_publication_v1: FrenziedGoblinPublicationV1,
+    #[serde(default, skip_serializing_if = "GorehornPublishedV1::is_empty")]
+    pub gorehorn_published_v1: GorehornPublishedV1,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct GorehornPublishedV1(pub Option<u32>);
+impl GorehornPublishedV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl Hash for GorehornPublishedV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(index) = self.0 {
+            "gorehorn-publication/v1".hash(state);
+            index.hash(state);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
