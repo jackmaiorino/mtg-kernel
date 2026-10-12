@@ -2389,7 +2389,7 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
         crate::effect::EffectObjectBinding,
     )>,
 ) {
-    let mut garruk_batch = crate::garruks_uprising_v1::EntryBatchV1::capture();
+    let garruk_batch = crate::garruks_uprising_v1::EntryBatchV1::capture();
     let raid_history_start = state.engine.event_history.len();
     if crate::effect::crystal_prevention_v1::validate(state).is_err() {
         state.engine.halted = Some((
@@ -2417,7 +2417,16 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
         .into_iter()
         .filter_map(|e| apply_replacements(state, e))
         .collect();
-    commit_batch_survivors(state, survivors, authority_batch);
+    commit_batch_survivors(
+        state,
+        survivors,
+        authority_batch,
+        EntryBatchCommitContextV1 {
+            garruk_batch,
+            attachments,
+            raid_history_start,
+        },
+    );
 }
 /// The private owning driver has already finished every replacement choice.
 /// It cannot submit a foreign root, owner, source or recipient packet.
@@ -2435,13 +2444,32 @@ pub(crate) fn commit_crystal_prepared_batch(
         return;
     }
     let authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
-    commit_batch_survivors(state, survivors, authority_batch);
+    let context = EntryBatchCommitContextV1 {
+        garruk_batch: crate::garruks_uprising_v1::EntryBatchV1::capture(),
+        attachments: Vec::new(),
+        raid_history_start: state.engine.event_history.len(),
+    };
+    commit_batch_survivors(state, survivors, authority_batch, context);
+}
+struct EntryBatchCommitContextV1 {
+    garruk_batch: Option<crate::garruks_uprising_v1::EntryBatchV1>,
+    attachments: Vec<(
+        crate::effect::EffectObjectBinding,
+        crate::effect::EffectObjectBinding,
+    )>,
+    raid_history_start: usize,
 }
 fn commit_batch_survivors(
     state: &mut GameState,
     survivors: Vec<ProposedEvent>,
     mut authority_batch: Option<crate::authority_of_the_consuls_v1::EntryBatchV1>,
+    context: EntryBatchCommitContextV1,
 ) {
+    let EntryBatchCommitContextV1 {
+        mut garruk_batch,
+        attachments,
+        raid_history_start,
+    } = context;
     #[cfg(feature = "standard-magezero-fixtures")]
     for event in &survivors {
         if let ProposedEvent::ZoneChange(change) = event {
