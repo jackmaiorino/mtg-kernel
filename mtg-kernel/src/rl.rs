@@ -1973,6 +1973,11 @@ fn build_observation_common_v2(
         accept_strongbox,
         accept_fiery,
     ) = capabilities;
+    if crate::zul_ashur_v1::requires_successor(state) {
+        return Err(RlContractError(
+            "Zul requires selected V35 transport".into(),
+        ));
+    }
     if !accept_fiery && crate::fiery_annihilation_v1::requires_successor(state) {
         return Err(RlContractError(
             "Fiery requires selected V33 transport".into(),
@@ -2316,6 +2321,11 @@ fn build_policy_observation_parts_common(
         accept_strongbox,
         accept_fiery,
     ) = capabilities;
+    if crate::zul_ashur_v1::requires_successor(state) {
+        return Err(RlContractError(
+            "Zul requires selected V35 transport".into(),
+        ));
+    }
     if !accept_fiery && crate::fiery_annihilation_v1::requires_successor(state) {
         return Err(RlContractError(
             "Fiery requires selected V33 transport".into(),
@@ -3051,6 +3061,11 @@ fn build_policy_observation_storage_common(
         accept_strongbox,
         accept_fiery,
     ) = accepted_statics;
+    if crate::zul_ashur_v1::requires_successor(request.state) {
+        return Err(RlContractError(
+            "Zul requires selected V35 transport".into(),
+        ));
+    }
     if !accept_fiery && crate::fiery_annihilation_v1::requires_successor(request.state) {
         return Err(RlContractError(
             "Fiery requires selected V33 transport".into(),

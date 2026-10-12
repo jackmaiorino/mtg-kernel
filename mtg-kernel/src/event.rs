@@ -1205,6 +1205,26 @@ pub enum CommittedEvent {
     EquipmentDamageCounterRemovalV4 {
         removal: Box<crate::equipment_damage_source_v4::CounterRemovalV4>,
     },
+    ZulAshurPublishedV1 {
+        publication: Box<crate::zul_ashur_v1::PublicationV1>,
+    },
+    ZulAshurRemovedV1 {
+        removal: Box<crate::zul_ashur_v1::RemovalV1>,
+    },
+    ZulAshurInstalledV1 {
+        installation: Box<crate::zul_ashur_v1::InstallationV1>,
+    },
+    ZulAshurCleanupEnteredV1 {
+        index: u32,
+        turn: u32,
+        active_player: PlayerId,
+    },
+    ZulAshurCleanupV1 {
+        cleanup: Box<crate::zul_ashur_v1::CleanupV1>,
+    },
+    ZulAshurExpiredV1 {
+        expiry: crate::zul_ashur_v1::ExpiryV1,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

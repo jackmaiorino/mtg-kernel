@@ -402,6 +402,9 @@ fn activated(walk: &mut Walk, ctx: CtxF, key: &str, ability: &ActivatedAbilityDe
         }
         match activation_target_filter {
             crate::card_def::ActivationTargetFilter::TargetSpecOnly => {}
+            crate::card_def::ActivationTargetFilter::CreatureSubtype(_) => {
+                out.atoms.push(Atom::Opaque);
+            }
             crate::card_def::ActivationTargetFilter::CreatureBlockedBySource => {
                 out.target(TargetAtom::Object {
                     obj: ObjF::Typed(CardTypeF::Creature),
