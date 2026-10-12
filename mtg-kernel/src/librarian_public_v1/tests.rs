@@ -11,6 +11,12 @@ pub(crate) fn ready(actor: PlayerId) -> GameState {
     let mut state = ready_state();
     state.active_player = actor;
     state.priority_player = actor;
+    // Keep actual draw and hidden-library substitution fixtures on live cards.
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for _ in 0..10 {
+            put(&mut state, player, "Plains", Zone::Library);
+        }
+    }
     state
 }
 fn observe(state: &GameState, actor: PlayerId) -> LibrarianObservationV1 {
@@ -132,6 +138,10 @@ pub(crate) fn paid(actor: PlayerId) -> (GameState, crate::ids::ObjectId) {
     engine::step(&mut state, Action::CastSpell(source)).unwrap();
     finish(&mut state);
     assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+    // A real instant response keeps the paid activation visible to the actor
+    // instead of letting the session automatically skip pure Pass decisions.
+    put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+    state.players[actor.index()].mana_pool[crate::mana::ManaColor::R.pool_index()] = 1;
     state.players[actor.index()].mana_pool[crate::mana::ManaColor::G.pool_index()] = 4;
     assert!(
         matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, activatable_abilities, .. }

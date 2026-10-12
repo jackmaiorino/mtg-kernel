@@ -741,8 +741,9 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             return Err("Ashroot actual boost skipped or fabricated".into());
         }
         if let Some(installation) = installation {
-            if !matches!(installed.as_slice(),[(at,_) ] if at==installation)
-                || !(remove_at < *installation && *installation < op_at)
+            if !(matches!(installed.as_slice(),[(at,_) ] if at==installation)
+                && remove_at < *installation
+                && *installation < op_at)
             {
                 return Err("Ashroot installation reference changed".into());
             }

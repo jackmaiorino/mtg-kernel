@@ -1028,6 +1028,21 @@ pub enum CommittedEvent {
     GorehornOperationV1 {
         operation: Box<crate::gorehorn_damage_v1::OperationV1>,
     },
+    RaidEntryCaptureV1 {
+        capture: Box<crate::raid_entry_custody_v1::CaptureV1>,
+    },
+    RaidEntryPublishedV1 {
+        publication: Box<crate::raid_entry_custody_v1::PublishedV1>,
+    },
+    RaidEntryDroppedV1 {
+        dropped: Box<crate::raid_entry_custody_v1::DroppedV1>,
+    },
+    RaidEntryCounteredV1 {
+        countered: Box<crate::raid_entry_custody_v1::CounteredV1>,
+    },
+    RaidEntryStartedV1 {
+        started: Box<crate::raid_entry_custody_v1::StartedV1>,
+    },
     GarrukEntryObservationV1 {
         entry: Box<crate::garruks_uprising_v1::EntryV1>,
         effective_creature: bool,
@@ -1507,7 +1522,7 @@ pub(crate) fn commit_garruk_initialized_entry(
             None,
             None,
             None,
-            Some(entering),
+            (Some(entering), false),
         );
     }
     Ok(())
@@ -1614,7 +1629,7 @@ fn commit_with_ability_lki(
         frozen_death_captures,
         None,
         None,
-        None,
+        (None, false),
     );
 }
 
@@ -1625,11 +1640,12 @@ fn commit_with_ability_lki_and_entry_batch(
     frozen_death_captures: Option<Vec<CommittedEvent>>,
     mut authority_batch: Option<&mut crate::authority_of_the_consuls_v1::EntryBatchV1>,
     mut garruk_batch: Option<&mut crate::garruks_uprising_v1::EntryBatchV1>,
-    entering_characteristics: Option<(
-        ObjectId,
-        crate::garruks_uprising_v1::EntryCharacteristicsV1,
-    )>,
+    entry_context: (
+        Option<(ObjectId, crate::garruks_uprising_v1::EntryCharacteristicsV1)>,
+        bool,
+    ),
 ) {
+    let (entering_characteristics, defer_raid_entry) = entry_context;
     let mut event = event;
     if let ProposedEvent::ZoneChange(change) = &mut event {
         if change.to_zone == Zone::Graveyard
@@ -2091,7 +2107,11 @@ fn commit_with_ability_lki_and_entry_batch(
     if let Some(source) = single_graveyard_entry {
         crate::soul_shackled_zombie_v1::record_entry(state, source);
     }
-    crate::raid_entry_v1::record_entry(state, entry_history_index);
+    if let Some(capture) = crate::raid_entry_v1::record_entry(state, entry_history_index) {
+        if !defer_raid_entry {
+            crate::raid_entry_custody_v1::capture_entry(state, capture);
+        }
+    }
     if let Some(batch) = garruk_batch.as_mut() {
         batch.record(state, entry_history_index)
     } else {
@@ -2166,6 +2186,7 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
     )>,
 ) {
     let mut garruk_batch = crate::garruks_uprising_v1::EntryBatchV1::capture();
+    let raid_history_start = state.engine.event_history.len();
     let mut authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
     let survivors: Vec<ProposedEvent> = events
         .into_iter()
@@ -2242,7 +2263,7 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
                 captures,
                 authority_batch.as_mut(),
                 garruk_batch.as_mut(),
-                None,
+                (None, true),
             );
         }
     } else {
@@ -2257,7 +2278,7 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
                 captures,
                 authority_batch.as_mut(),
                 garruk_batch.as_mut(),
-                None,
+                (None, true),
             );
         }
     }
@@ -2289,6 +2310,8 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
         batch.finish(state);
     }
 
+    crate::raid_entry_custody_v1::capture_batch_entries(state, raid_history_start);
+    crate::raid_entry_custody_v1::capture_batch_entries(state, raid_history_start);
     for (_, player, amount) in lifelink_gains {
         commit(state, ProposedEvent::life_gain(player, amount));
     }
@@ -3535,7 +3558,7 @@ mod authority_visibility_tests {
                     None,
                     Some(&mut batch),
                     None,
-                    None,
+                    (None, false),
                 );
                 // A typed physical hidden-characteristic boundary before
                 // deferred entry capture, not an admitted FDN disguise card.
@@ -3693,7 +3716,7 @@ mod garruk_entry_tests {
                         None,
                         None,
                         Some(&mut batch),
-                        hidden,
+                        (hidden, false),
                     );
                 }
                 if !face_down {

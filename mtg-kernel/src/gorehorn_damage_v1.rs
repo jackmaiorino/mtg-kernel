@@ -152,16 +152,21 @@ pub(crate) fn owns_definition(id: u16) -> bool {
 pub(crate) fn selected(item: &StackItem) -> bool {
     enabled()
         && item.kind == StackItemKind::TriggeredAbility
+        && item.v4.granted_by.is_none()
+        && item.inline_effect.as_ref() == Some(&crate::trigger::gorehorn_raider_effect())
         && item
             .v4
             .ability_source_contract
             .is_some_and(|s| owns_definition(s.card_def))
 }
-pub(crate) fn owns_context(ctx: &ExecCtx) -> bool {
-    ctx.stack_item_id.is_some()
-        && ctx
-            .ability_source_contract
-            .is_some_and(|s| owns_definition(s.card_def))
+pub(crate) fn owns_context(state: &GameState, ctx: &ExecCtx) -> bool {
+    ctx.stack_item_id.is_some_and(|id| {
+        has_publication(state, id)
+            || state
+                .stack
+                .iter()
+                .any(|item| item.v4.stack_item_id == id && selected(item))
+    })
 }
 fn tracked(state: &GameState, item: &StackItem) -> bool {
     selected(item)
@@ -226,6 +231,7 @@ pub(crate) fn before_departure(state: &mut GameState, id: ObjectId) {
             .engine
             .pending_triggers
             .iter()
+            .chain(state.raid_waiting_v1.iter().flatten())
             .chain(state.legend_pending_v1.iter().flatten())
             .chain(
                 state

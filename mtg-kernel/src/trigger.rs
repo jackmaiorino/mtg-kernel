@@ -4567,6 +4567,7 @@ pub fn collect_and_process(state: &mut GameState) -> Vec<PendingTrigger> {
 pub(crate) fn capture_triggers_without_sba(state: &mut GameState) -> Vec<PendingTrigger> {
     crate::engine::refresh_face_down_lookers(state);
     let mut waiting = crate::wildwood_scourge_v1::take_captures(state);
+    waiting.extend(crate::raid_entry_custody_v1::take_captures(state));
     match crate::life_gain_turn_v1::take_captures(state) {
         Ok(captures) => waiting.extend(captures),
         Err(source) => {
@@ -4621,6 +4622,7 @@ pub(crate) fn collect_and_process_with_waiting(
     // SBA entry/replacement work can itself commit counters. Merge those
     // immediate captures before the same checkpoint's one APNAP ordering.
     new_triggers.extend(crate::wildwood_scourge_v1::take_captures(state));
+    new_triggers.extend(crate::raid_entry_custody_v1::take_captures(state));
     let sba_events: Vec<CommittedEvent> = state.engine.event_log.drain(..).collect();
     #[cfg(feature = "standard-magezero-fixtures")]
     new_triggers.extend(crate::standard_keywords_v1::note_life_loss(
@@ -4641,6 +4643,7 @@ pub(crate) fn collect_and_process_with_waiting(
             crate::banishing_light_v1::discard_without_targets(state, pending);
             if crate::stromkirk_dispatch_v1::unavailable(state, pending).is_err()
                 || crate::ashroot_dispatch_v2::unavailable(state, pending).is_err()
+                || crate::raid_entry_custody_v1::record_drop(state, pending).is_err()
             {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -4968,6 +4971,11 @@ fn triggers_from_events(
                     && crate::banishing_light_v1::owns_definition(obj.card_def)
                 {
                     continue;
+                }
+                if crate::raid_entry_v1::owns_definition(obj.card_def)
+                    && def.condition == TriggerCondition::EtbAfterControllerAttackedThisTurn
+                {
+                    continue; // Genuine event-time eligibility already owns the exact occurrence.
                 }
                 if def.condition == TriggerCondition::BeginningAnyEndStepIfCreatureDied
                     && crate::card_def::CARD_DEFS[usize::from(obj.card_def)].name

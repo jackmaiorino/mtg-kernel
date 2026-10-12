@@ -12493,6 +12493,7 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
             // `ChooseTargets` with no legal choice.
             if crate::stromkirk_dispatch_v1::unavailable(state, &pending).is_err()
                 || crate::ashroot_dispatch_v2::unavailable(state, &pending).is_err()
+                || crate::raid_entry_custody_v1::record_drop(state, &pending).is_err()
             {
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
@@ -12528,6 +12529,7 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
                 // avoids for spell casts.
                 if crate::stromkirk_dispatch_v1::unavailable(state, &pending).is_err()
                     || crate::ashroot_dispatch_v2::unavailable(state, &pending).is_err()
+                    || crate::raid_entry_custody_v1::record_drop(state, &pending).is_err()
                 {
                     state.engine.halted = Some((
                         UnsupportedMechanic::InvalidEffectContinuation,
@@ -13011,6 +13013,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
         },
     });
     crate::gorehorn_damage_v1::publish(state, stack_item_id)?;
+    crate::raid_entry_custody_v1::publish(state, stack_item_id)?;
     if t.target_spec != TargetSpec::None {
         if let Err(error) = log_final_targeting_events(state, stack_item_id) {
             state.stack.pop();
@@ -14046,6 +14049,7 @@ pub(crate) fn counter_stack_item_by_id(
         crate::librarian_activation_v1::acquire_counter_owner(state, &item)?;
     let ashroot_owner = crate::ashroot_dispatch_v2::acquire(state, &item)?;
     let gorehorn_owner = crate::gorehorn_damage_v1::acquire_owner(state, &item)?;
+    let raid_counter_owner = crate::raid_entry_custody_v1::counter_owner(state, &item)?;
     let temporal_owner = crate::extra_turn_v1::acquire_counter(state, &item)?;
     if temporal_owner.is_some() && item.is_copy {
         if let Some(plan) = departure.take() {
@@ -14073,6 +14077,7 @@ pub(crate) fn counter_stack_item_by_id(
         &item,
     )?;
 
+    crate::raid_entry_custody_v1::record_countered(state, raid_counter_owner)?;
     crate::gorehorn_damage_v1::record_removed(
         state,
         gorehorn_owner,
@@ -19296,6 +19301,14 @@ fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> R
 
 /// Completes a validated declaration once every attacker's target is known.
 pub(crate) fn finish_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) {
+    commit_attack_declaration(state, attackers);
+    collect_and_queue_triggers(state);
+    reset_priority(state);
+}
+
+// Commit the validated declaration before the ordinary trigger/SBA checkpoint.
+// This is the production stage, not an externally selectable pause or callback.
+fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
     #[cfg(feature = "standard-magezero-fixtures")]
     if !attackers.is_empty() {
         let mut objects = state
@@ -19403,8 +19416,6 @@ pub(crate) fn finish_declare_attackers(state: &mut GameState, attackers: Vec<Obj
             }
         }
     }
-    collect_and_queue_triggers(state);
-    reset_priority(state);
 }
 
 #[cfg(all(
@@ -27759,3 +27770,10 @@ mod tests {
     not(feature = "standard-magezero-fixtures")
 ))]
 mod divine_variable_targeting_tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod ashroot_declaration_boundary_tests;

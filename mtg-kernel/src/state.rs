@@ -2074,6 +2074,8 @@ pub struct GameState {
     /// Kept separate from already ordered or target-suspended pending triggers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wildwood_waiting_v1: Option<Vec<crate::trigger::PendingTrigger>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raid_waiting_v1: Option<Vec<crate::trigger::PendingTrigger>>,
 }
 
 /// The round counter and active seat together identify the declaring turn.
@@ -2261,6 +2263,10 @@ impl Hash for GameState {
         }
         if let Some(waiting) = &self.wildwood_waiting_v1 {
             "wildwood-waiting-v1".hash(state);
+            waiting.hash(state);
+        }
+        if let Some(waiting) = &self.raid_waiting_v1 {
+            "raid-entry-waiting/v1".hash(state);
             waiting.hash(state);
         }
     }
@@ -2471,6 +2477,7 @@ impl GameState {
             legend_pending_v1: None,
             attack_declaration_turn_v1: None,
             wildwood_waiting_v1: None,
+            raid_waiting_v1: None,
         };
         crate::life_gain_turn_v1::initialize_for_pool(&mut state);
         crate::life_loss_turn_v1::initialize_for_catalog(&mut state);

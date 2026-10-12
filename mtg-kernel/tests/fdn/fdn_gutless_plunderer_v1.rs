@@ -711,6 +711,12 @@ fn genuine_legend_waiting_raid_trigger_keeps_its_original_controller_before_lege
                 ProposedEvent::zone_change(second_legend, Zone::Battlefield),
             ],
         );
+        // Direct event proposals do not own the ordinary engine checkpoint.
+        // Capture the genuine ETB, run the actual SBA/legend stage, and retain
+        // any ordinary returned rows exactly as collect_and_queue_triggers does.
+        let ready = mtg_kernel::trigger::collect_and_process(&mut state);
+        state.engine.pending_triggers.extend(ready);
+        assert!(state.pending_legend_rule_v1.is_some());
         let Decision::ChooseLegendPermanent { candidates, .. } = next(&mut state) else {
             panic!("actual duplicate legends must hold genuine entry triggers");
         };
@@ -744,5 +750,114 @@ fn genuine_legend_waiting_raid_trigger_keeps_its_original_controller_before_lege
         assert!(
             matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { player, .. }) if player == actor)
         );
+    }
+}
+
+fn published_before_private_look(state: &mut GameState, source: ObjectId) {
+    for _ in 0..16 {
+        let decision = next(state);
+        if state.stack.iter().any(|item| {
+            item.source == source && item.kind == mtg_kernel::state::StackItemKind::TriggeredAbility
+        }) {
+            assert!(state.engine.pending_effect.is_none());
+            return;
+        }
+        match decision {
+            Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
+            other => panic!("expected real entry resolution {other:?}"),
+        }
+    }
+    panic!("Gutless entry was not published");
+}
+#[test]
+fn actual_gutless_prelook_mandatory_publication_erasure_and_foreign_row_refuse_after_restore() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut original = ready(actor, 5);
+        raid(&mut original, actor, true);
+        let source = cast(&mut original, actor);
+        published_before_private_look(&mut original, source);
+        assert!(original.engine.event_history.iter().any(|e|matches!(e,event::CommittedEvent::RaidEntryCaptureV1{capture} if capture.source.source==source && capture.pending.is_some())));
+        for mode in 0..4 {
+            let mut bad = replay(&original);
+            match mode {
+                0 => bad.stack.clear(),
+                1 => bad
+                    .engine
+                    .event_history
+                    .retain(|e| !matches!(e, event::CommittedEvent::RaidEntryPublishedV1 { .. })),
+                2 => {
+                    bad.stack.clear();
+                    bad.engine.event_history.retain(|e| {
+                        !matches!(e, event::CommittedEvent::RaidEntryPublishedV1 { .. })
+                    });
+                }
+                _ => {
+                    let row = bad.stack.last_mut().unwrap();
+                    row.controller = actor.opponent();
+                    row.v4.ability_source_contract.as_mut().unwrap().controller = actor.opponent();
+                }
+            }
+            let before = serde_json::to_vec(&bad).unwrap();
+            assert!(effect::validate_pending_effect_choice(&bad).is_err());
+            assert!(engine::step(&mut bad, Action::Pass).is_err());
+            assert_eq!(before, serde_json::to_vec(&bad).unwrap());
+        }
+        let mut restored = replay(&original);
+        assert!(matches!(
+            settle(&mut original),
+            Some(Decision::ChooseEffectTargets { .. })
+        ));
+        assert!(matches!(
+            settle(&mut restored),
+            Some(Decision::ChooseEffectTargets { .. })
+        ));
+        let cards = original.players[actor.index()]
+            .library
+            .iter()
+            .take(3)
+            .copied()
+            .collect::<Vec<_>>();
+        choose(&mut original, &cards);
+        choose(&mut restored, &cards);
+        assert!(settle(&mut original).is_none());
+        assert!(settle(&mut restored).is_none());
+        assert_eq!(
+            serde_json::to_vec(&original).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+    }
+}
+
+#[test]
+fn actual_gutless_started_instruction_cannot_be_reintroduced_by_coherent_progress_erasure() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor, 5);
+        raid(&mut state, actor, true);
+        cast(&mut state, actor);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { .. })
+        ));
+        assert!(state
+            .engine
+            .event_history
+            .iter()
+            .any(|e| matches!(e, event::CommittedEvent::RaidEntryStartedV1 { .. })));
+        let mut bad = replay(&state);
+        bad.engine.pending_effect = None;
+        bad.stack.last_mut().unwrap().v4.squad_rallier_started_v1.0 = None;
+        bad.engine.event_history.retain(|e| {
+            !matches!(
+                e,
+                event::CommittedEvent::SquadRallierResolutionBoundaryV1 { .. }
+                    | event::CommittedEvent::PrivateKeepOneLibraryCapturedV1 { .. }
+                    | event::CommittedEvent::PrivateKeepOneLibraryConsumedV1 { .. }
+                    | event::CommittedEvent::PrivateKeepOneRaidSkippedV1 { .. }
+            )
+        });
+        let before = serde_json::to_vec(&bad).unwrap();
+        assert!(engine::step(&mut bad, Action::Pass).is_err());
+        assert_eq!(before, serde_json::to_vec(&bad).unwrap());
+        assert!(effect::validate_pending_effect_choice(&bad).is_err());
     }
 }

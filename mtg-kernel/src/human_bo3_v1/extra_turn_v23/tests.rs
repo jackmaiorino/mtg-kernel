@@ -10,7 +10,7 @@ use crate::state::Zone;
 #[test]
 fn future_actual_cast_queue_restore_order_privacy_and_old_projection_refusal_both_seats() {
     use crate::extra_turn_v1::tests::{
-        future_printed::{cast, next_turn, resolve},
+        future_printed::{cast, main, next_turn, resolve},
         ready,
     };
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -19,6 +19,12 @@ fn future_actual_cast_queue_restore_order_privacy_and_old_projection_refusal_bot
         let (_, copy_id) =
             crate::engine::copy_spell_for(&mut state, original.source, actor.opponent()).unwrap();
         resolve(&mut state);
+        // Actual playable lands keep the owning session at a genuine decision;
+        // its constructor is allowed to advance states offering only Pass.
+        for player in [actor, actor.opponent()] {
+            put(&mut state, player, "Forest", Zone::Hand);
+        }
+        let queued_key = state.turn_key_v1();
         let core = FastActorSessionV1::from_extra_turn_v23_fixture_state(state.clone());
         let old = HumanRaidSessionV9::from_session(core.clone());
         let mut session = HumanExtraTurnSessionV23::from_session(core).unwrap();
@@ -29,6 +35,10 @@ fn future_actual_cast_queue_restore_order_privacy_and_old_projection_refusal_bot
                 .is_err());
         }
         let public = session.public_observation(current).unwrap();
+        assert_eq!(
+            session.inner.extra_turn_fixture_state_mut().turn_key_v1(),
+            queued_key
+        );
         let queue = &public.turn_schedule.as_ref().unwrap().queued_next_first;
         assert_eq!(
             queue
@@ -48,10 +58,20 @@ fn future_actual_cast_queue_restore_order_privacy_and_old_projection_refusal_bot
         );
         let mut projector = HumanExtraTurnProjectorV23::new(actor.into());
         let prompt = projector.project_current(&session, current).unwrap();
+        assert!(prompt
+            .actions
+            .iter()
+            .any(|row| row.label.starts_with("Play Forest")));
         safe(&serde_json::to_value(&prompt).unwrap());
         let snapshot = session.snapshot_v23();
         let request = action(&prompt, "Pass priority");
-        projector.submit(&mut session, request.clone()).unwrap();
+        let receipt = projector.submit(&mut session, request.clone()).unwrap();
+        let after = session.inner.privileged_core_environment_hash();
+        assert_eq!(
+            projector.submit(&mut session, request.clone()).unwrap(),
+            receipt
+        );
+        assert_eq!(session.inner.privileged_core_environment_hash(), after);
         session.restore_v23(&snapshot).unwrap();
         let before = session.inner.privileged_core_environment_hash();
         assert_eq!(
@@ -81,31 +101,47 @@ fn future_actual_cast_queue_restore_order_privacy_and_old_projection_refusal_bot
             forged_before
         );
         session.restore_v23(&snapshot).unwrap();
-        for _ in 0..2 {
-            next_turn(&mut state);
-        }
+        next_turn(&mut state);
+        assert_eq!(state.active_player, actor);
+        assert_eq!(
+            state.extra_turn_v1.as_ref().unwrap().current_extra,
+            Some(original.v4.stack_item_id)
+        );
+        assert_eq!(state.extra_turn_v1.as_ref().unwrap().queued.len(), 1);
+        main(&mut state);
+        next_turn(&mut state);
+        assert_eq!(state.active_player, actor.opponent());
         assert_eq!(
             state.extra_turn_v1.as_ref().unwrap().current_extra,
             Some(copy_id)
         );
-        let extra = HumanExtraTurnSessionV23::from_session(
-            FastActorSessionV1::from_extra_turn_v23_fixture_state(state),
+        assert!(state.extra_turn_v1.as_ref().unwrap().queued.is_empty());
+        main(&mut state);
+        let extra_key = state.turn_key_v1();
+        let mut extra = HumanExtraTurnSessionV23::from_session(
+            FastActorSessionV1::from_extra_turn_v23_fixture_state(state.clone()),
         )
         .unwrap();
+        assert_eq!(
+            extra.inner.extra_turn_fixture_state_mut().turn_key_v1(),
+            extra_key
+        );
         let projected = HumanExtraTurnProjectorV23::new(actor.opponent().into())
             .project_current(&extra, expected(&extra))
             .unwrap();
-        assert_eq!(
-            projected
-                .state
-                .extensions
-                .turn_schedule
-                .unwrap()
-                .current_extra
-                .unwrap()
-                .captured_controller,
-            actor.opponent().into()
-        );
+        let current_extra = projected
+            .state
+            .extensions
+            .turn_schedule
+            .unwrap()
+            .current_extra
+            .unwrap();
+        assert_eq!(current_extra.captured_controller, actor.opponent().into());
+        assert!(current_extra.spell_copy);
+        next_turn(&mut state);
+        assert_eq!(state.active_player, actor.opponent());
+        assert_eq!(state.extra_turn_v1.as_ref().unwrap().current_extra, None);
+        assert_eq!(state.own_turn_count_v1(actor.opponent()), 2);
     }
 }
 
