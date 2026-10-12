@@ -778,7 +778,6 @@ mod future_printed_tests {
     use crate::policy_observation_v6::tests::{put, ready_state};
 
     #[test]
-    #[ignore = "requires genuine Stromkirk registration; source preparation"]
     fn actual_exact_id_counter_closes_original_trigger_and_refuses_saved_publication_replay() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state();

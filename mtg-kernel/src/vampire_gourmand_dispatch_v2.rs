@@ -575,7 +575,6 @@ mod future_counter_primitive {
     use crate::ids::PlayerId;
     use crate::policy_observation_v6::tests::{put, ready_state};
     #[test]
-    #[ignore = "requires actual Gourmand registration; declaration/counter primitive only"]
     fn actual_declaration_publication_counter_removal_and_restore_reject_replay() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state();
