@@ -539,6 +539,7 @@ pub enum StandardOpV1 {
     SourceLastPowerDamageV1,
     /// Untap only the captured ability-source incarnation, through stun replacement.
     UntapCapturedSourceV1,
+    ZulAshurPermissionV1,
 }
 
 impl StandardOpV1 {
@@ -676,6 +677,12 @@ fn transform_resolving_source(ctx: &ExecCtx, state: &mut GameState) {
 
 pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        StandardOpV1::ZulAshurPermissionV1 => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
         StandardOpV1::UntapCapturedSourceV1 => {
             crate::slumbering_cerberus_v1::untap_captured_source(ctx, state);
         }
@@ -2835,11 +2842,15 @@ pub(crate) fn graveyard_cast_granted(
     holder: PlayerId,
     zone_change_count: u32,
 ) -> bool {
-    state.standard_v1.as_ref().is_some_and(|standard| {
-        standard
-            .graveyard_casts
-            .contains(&(object, zone_change_count, holder, state.turn_key_v1()))
-    })
+    crate::zul_ashur_v1::permission(state, object, holder, zone_change_count)
+        || state.standard_v1.as_ref().is_some_and(|standard| {
+            standard.graveyard_casts.contains(&(
+                object,
+                zone_change_count,
+                holder,
+                state.turn_key_v1(),
+            ))
+        })
 }
 
 fn gain_one_life() -> EffectOp {

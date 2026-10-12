@@ -4271,6 +4271,15 @@ fn activation_legal_targets_with_source_lki(
     .into_iter()
     .filter(|target| match ability.activation_target_filter {
         ActivationTargetFilter::TargetSpecOnly => true,
+        ActivationTargetFilter::CreatureSubtype(subtype) => match target {
+            Target::Object(object) => state.objects.try_get(*object).is_some_and(|live| {
+                card_def::CARD_DEFS[live.card_def as usize]
+                    .types
+                    .contains(&CardType::Creature)
+                    && has_effective_subtype(state, *object, subtype)
+            }),
+            _ => false,
+        },
         ActivationTargetFilter::CreatureBlockedBySource => {
             let Target::Object(attacker) = target else {
                 return false;
@@ -9116,6 +9125,7 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
     if crate::raid_entry_v1::validate_state(state).is_err()
         || crate::gorehorn_damage_v1::validate_state(state).is_err()
         || crate::equipment_damage_source_v4::validate_state(state).is_err()
+        || crate::zul_ashur_v1::validate_state(state).is_err()
         || effect::crystal_prevention_v1::validate(state).is_err()
         || crate::arahbo_v1::validate_state(state).is_err()
         || crate::krenko_v1::validate_state(state).is_err()
@@ -9133,6 +9143,7 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
     if crate::raid_entry_v1::validate_state(state).is_err()
         || crate::gorehorn_damage_v1::validate_state(state).is_err()
         || crate::equipment_damage_source_v4::validate_state(state).is_err()
+        || crate::zul_ashur_v1::validate_state(state).is_err()
     {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
@@ -13957,6 +13968,15 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
     let Some(spec) = validated_stack_item_target_spec(item, state)? else {
         return Ok(true);
     };
+    if item.kind == StackItemKind::ActivatedAbility
+        && item.v4.granted_by.is_none()
+        && item
+            .v4
+            .ability_source_contract
+            .is_some_and(|s| crate::zul_ashur_v1::owns_definition(s.card_def))
+    {
+        return Ok(crate::zul_ashur_v1::target_legal(state, item));
+    }
     if spec == TargetSpec::CreatureThenUpToOneAttachedEquipment {
         return Ok(crate::fiery_annihilation_v1::target_legalities(
             state,
@@ -14222,6 +14242,7 @@ pub(crate) fn counter_stack_item_by_id(
     let ashroot_owner = crate::ashroot_dispatch_v2::acquire(state, &item)?;
     let gorehorn_owner = crate::gorehorn_damage_v1::acquire_owner(state, &item)?;
     let equipment_owner = crate::equipment_damage_source_v4::counter_owner(state, &item)?;
+    let zul_owner = crate::zul_ashur_v1::acquire(state, &item)?;
     let raid_counter_owner = crate::raid_entry_custody_v1::counter_owner(state, &item)?;
     let temporal_owner = crate::extra_turn_v1::acquire_counter(state, &item)?;
     if temporal_owner.is_some() && item.is_copy {
@@ -14261,6 +14282,9 @@ pub(crate) fn counter_stack_item_by_id(
 
     crate::raid_entry_custody_v1::record_countered(state, raid_counter_owner)?;
     crate::equipment_damage_source_v4::record_countered(state, equipment_owner)?;
+    if let Some(owner) = zul_owner {
+        crate::zul_ashur_v1::remove_owned(state, owner, crate::zul_ashur_v1::OutcomeV1::Countered)?;
+    }
     crate::gorehorn_damage_v1::record_removed(
         state,
         gorehorn_owner,
@@ -14681,6 +14705,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    let zul_owner = match crate::zul_ashur_v1::acquire(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let banishing_source_present = current
         .v4
         .ability_source_contract
@@ -14803,6 +14837,20 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     }
     if let Some(owner) = garruk_owner {
         if crate::garruks_uprising_v1::resolve_removed(state, owner, &ctx).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
+    if let Some(owner) = zul_owner {
+        let outcome = if targets_legal {
+            crate::zul_ashur_v1::OutcomeV1::Resolved
+        } else {
+            crate::zul_ashur_v1::OutcomeV1::NoLegalTarget
+        };
+        if crate::zul_ashur_v1::remove_owned(state, owner, outcome).is_err() {
+            state.stack.push(item.clone());
             state.engine.halted =
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
             return ResolutionProgress::Suspended;
@@ -15192,7 +15240,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
 /// doc and the replay comparator's handling of an empty `eligible`.
 fn advance_step(state: &mut GameState) {
     if state.step == Step::Cleanup
-        && (crate::ashroot_dispatch_v2::has_active(state)
+        && (crate::zul_ashur_v1::has_active(state)
+            || crate::ashroot_dispatch_v2::has_active(state)
             || state.engine.active_replacements.iter().any(|r| {
                 matches!(
                     r.kind,
@@ -15677,6 +15726,13 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     PlayPermissionExpiry::LaterTurn { .. }
                     | PlayPermissionExpiry::UntilHoldersNextEndStep => true,
                 });
+            if crate::zul_ashur_v1::note_cleanup(state).is_err()
+                || crate::zul_ashur_v1::expire(state).is_err()
+            {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                return;
+            }
             let hand_size = state.players[p.index()].hand.len();
             if hand_size > 7 {
                 state.engine.pending_discard = Some(PendingDiscard {
@@ -21091,6 +21147,7 @@ fn push_paid_activation(
         frozen.source,
     )
     .is_err()
+        || crate::zul_ashur_v1::publish(state, stack_item_id).is_err()
     {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,

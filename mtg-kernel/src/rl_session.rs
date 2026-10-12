@@ -52,6 +52,7 @@ pub(crate) mod garruk_v30;
 pub(crate) mod gourmand_v29;
 pub(crate) mod krenko_v34;
 pub(crate) mod strongbox_v32;
+pub(crate) mod zul_ashur_v35;
 
 pub(crate) mod human_opening_v1;
 pub(crate) mod human_v8;
@@ -4335,6 +4336,7 @@ fn flat_validate_expected_decision_v1(
     // numeric ranges. Refuse before publishing any incomplete buffers.
     if (crate::krenko_v1::requires_successor(&session.state)
         && session.flat_action_contract_mode != FlatActionContractModeV1::KrenkoV34)
+        || (crate::zul_ashur_v1::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::ZulAshurV35)
         || (crate::fiery_annihilation_v1::requires_successor(&session.state)
         && session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33)
         || (crate::combat_static_rules_v1::requires_successor(&session.state)
@@ -4472,6 +4474,7 @@ enum FlatActionContractModeV1 {
     StrongboxV32,
     FieryV33,
     KrenkoV34,
+    ZulAshurV35,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -7590,6 +7593,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:krenko_v34:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::ZulAshurV35 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = zul_ashur_v35::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:zul_ashur_v35:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));

@@ -996,6 +996,12 @@ pub(super) fn conflicts(
                 | crate::event::CommittedEvent::EquipmentDamagePreparedV4 { .. }
                 | crate::event::CommittedEvent::EquipmentDamageClosedV4 { .. }
                 | crate::event::CommittedEvent::EquipmentDamageCounterRemovalV4 { .. }
+                | crate::event::CommittedEvent::ZulAshurPublishedV1 { .. }
+                | crate::event::CommittedEvent::ZulAshurRemovedV1 { .. }
+                | crate::event::CommittedEvent::ZulAshurInstalledV1 { .. }
+                | crate::event::CommittedEvent::ZulAshurCleanupEnteredV1 { .. }
+                | crate::event::CommittedEvent::ZulAshurCleanupV1 { .. }
+                | crate::event::CommittedEvent::ZulAshurExpiredV1 { .. }
         )
     }) {
         return true;
@@ -1275,6 +1281,12 @@ pub(super) fn conflicts(
             | crate::event::CommittedEvent::EquipmentDamagePreparedV4 { .. }
             | crate::event::CommittedEvent::EquipmentDamageClosedV4 { .. }
             | crate::event::CommittedEvent::EquipmentDamageCounterRemovalV4 { .. }
+            | crate::event::CommittedEvent::ZulAshurPublishedV1 { .. }
+            | crate::event::CommittedEvent::ZulAshurRemovedV1 { .. }
+            | crate::event::CommittedEvent::ZulAshurInstalledV1 { .. }
+            | crate::event::CommittedEvent::ZulAshurCleanupEnteredV1 { .. }
+            | crate::event::CommittedEvent::ZulAshurCleanupV1 { .. }
+            | crate::event::CommittedEvent::ZulAshurExpiredV1 { .. }
             | SquadRallierResolutionBoundaryV1 { .. }
             | SowerRestrictionInstalledV1 { .. }
             | SowerRestrictionExpiredV1 { .. }

@@ -1595,6 +1595,7 @@ impl ActivatedAbilityDef {
 pub enum ActivationTargetFilter {
     TargetSpecOnly,
     CreatureBlockedBySource,
+    CreatureSubtype(Subtype),
 }
 
 /// Cost paid by one printed mana ability. Special mana costs live here rather

@@ -100,6 +100,10 @@ mod fixed_source_damage_v3;
 pub mod frenzied_public_v1;
 pub mod garruk_public_v1;
 mod gorehorn_damage_v1;
+pub mod rules_meaning_zul_ashur_v1;
+pub mod zul_ashur_observation_v1;
+pub mod zul_ashur_public_v1;
+mod zul_ashur_v1;
 
 pub mod gourmand_public_v1;
 

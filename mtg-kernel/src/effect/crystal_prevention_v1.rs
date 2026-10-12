@@ -489,6 +489,7 @@ fn probe(item: &StackItem) -> EffectContinuation {
 /// Generated Ward roots retain the ordinary stack and payment validators.
 pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
     match op {
+        EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::ZulAshurPermissionV1) => true,
         EffectOp::Sequence(ops) => ops.iter().all(ordinary_nondamage),
         EffectOp::Conditional { then, else_, .. } => {
             ordinary_nondamage(then) && ordinary_nondamage(else_)
