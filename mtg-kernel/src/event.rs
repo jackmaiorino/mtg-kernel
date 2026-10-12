@@ -1205,6 +1205,24 @@ pub enum CommittedEvent {
     EquipmentDamageCounterRemovalV4 {
         removal: Box<crate::equipment_damage_source_v4::CounterRemovalV4>,
     },
+    KrenkoPaidV1 {
+        paid: Box<crate::krenko_v1::PaidV1>,
+    },
+    KrenkoRemovedV1 {
+        removed: Box<crate::krenko_v1::RemovedV1>,
+    },
+    KrenkoSampleV1 {
+        sample: Box<crate::krenko_v1::SampleV1>,
+    },
+    KrenkoCompletedV1 {
+        completed: Box<crate::krenko_v1::CompletedV1>,
+    },
+    KrenkoRemovalInputV1 {
+        input: Box<crate::krenko_v1::RemovalInputV1>,
+    },
+    KrenkoPaymentInputV1 {
+        input: Box<crate::krenko_v1::PaymentInputV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

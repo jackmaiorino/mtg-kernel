@@ -278,6 +278,8 @@ impl HumanDecisionProjectorV1 {
 
 mod fiery_v33;
 pub use fiery_v33::*;
+mod krenko_v34;
+pub use krenko_v34::*;
 
 mod strongbox_v32;
 pub use strongbox_v32::*;

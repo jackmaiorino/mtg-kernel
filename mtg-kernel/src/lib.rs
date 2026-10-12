@@ -50,6 +50,7 @@ pub mod combat_damage_v1;
 pub(crate) mod continuous_characteristics_v1;
 mod creature_death_capture_v1;
 mod creature_stats_lki_v1;
+pub(crate) mod krenko_v1;
 pub mod legend_rule_v1;
 mod librarian_activation_v1;
 pub mod librarian_public_v1;
@@ -611,3 +612,7 @@ pub mod rules_meaning_strongbox_v1;
 pub mod strongbox_public_v1;
 
 pub mod fiery_observation_v1;
+
+pub mod krenko_observation_v1;
+pub mod krenko_public_v1;
+pub mod rules_meaning_krenko_v1;
