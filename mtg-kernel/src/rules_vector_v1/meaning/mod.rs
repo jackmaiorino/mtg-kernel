@@ -147,6 +147,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         EffectOp::BindArahboCatEntryV1 | EffectOp::ArahboTokenFromCaptureV1 { .. } => {
             out.atoms.push(Atom::Opaque)
         }
+        EffectOp::ExileTopChooseOneUntilNextTurn { .. } => out.atoms.push(Atom::Opaque),
         EffectOp::BindGarrukEtbDrawV1
         | EffectOp::BindGarrukPowerEntryDrawV1
         | EffectOp::GarrukDrawFromCaptureV1 { .. } => out.atoms.push(Atom::Opaque),

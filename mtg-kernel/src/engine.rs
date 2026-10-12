@@ -15322,6 +15322,11 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             // Percussionist, Reckless Impulse) -- only flips once (the
             // first such Untap after the permission was granted), not
             // re-armed on a later one.
+            if crate::effect::strongbox_permission_v1::untap(state).is_err() {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                return;
+            }
             for perm in state.engine.exile_play_permissions.iter_mut() {
                 if perm.holder == p {
                     if let PlayPermissionExpiry::UntilHoldersNextTurn {
@@ -15530,6 +15535,11 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             });
             let p = state.active_player;
             state.players[p.index()].lands_played_this_turn = 0;
+            if crate::effect::strongbox_permission_v1::cleanup(state).is_err() {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                return;
+            }
             // `EndOfTurn` permissions expire at the very next Cleanup,
             // whoever's; `UntilHoldersNextTurn` only once it's the
             // *holder's* own Cleanup, and only after their own Untap has

@@ -1575,6 +1575,18 @@ const GOREHORN_RAIDER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef 
     condition: TriggerCondition::EtbAfterControllerAttackedThisTurn,
     ..etb_trigger(gorehorn_raider_effect)
 }];
+pub(crate) fn strongbox_raider_effect() -> EffectOp {
+    EffectOp::Conditional {
+        cond: EffectCond::ControllerAttackedThisTurn,
+        then: Box::new(EffectOp::ExileTopChooseOneUntilNextTurn { count: 2 }),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    }
+}
+const STRONGBOX_RAIDER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::EtbAfterControllerAttackedThisTurn,
+    ..etb_trigger(strongbox_raider_effect)
+}];
+
 pub(crate) fn gutless_plunderer_effect() -> EffectOp {
     EffectOp::Conditional {
         cond: EffectCond::ControllerAttackedThisTurn,
@@ -3554,6 +3566,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Skyship Buccaneer" => &SKYSHIP_BUCCANEER_TRIGGERS,
         "Gorehorn Raider" => &GOREHORN_RAIDER_TRIGGERS,
         "Gutless Plunderer" => &GUTLESS_PLUNDERER_TRIGGERS,
+        "Strongbox Raider" => &STRONGBOX_RAIDER_TRIGGERS,
         "Stromkirk Bloodthief" => &STROMKIRK_BLOODTHIEF_TRIGGERS,
         #[cfg(all(
             feature = "limited-fdn-fixtures",
