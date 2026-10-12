@@ -1559,8 +1559,8 @@ const MICROMANCER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(micromancer_
 pub(crate) fn gorehorn_raider_effect() -> EffectOp {
     EffectOp::Conditional {
         cond: EffectCond::ControllerAttackedThisTurn,
-        then: Box::new(EffectOp::DamageTarget {
-            target_index: 0,
+        then: Box::new(EffectOp::DealDamage {
+            target: crate::effect::TargetRef::Target(0),
             amount: 2,
         }),
         else_: Box::new(EffectOp::Sequence(vec![])),
