@@ -323,6 +323,8 @@ fn guide(
         None,
         #[cfg(feature = "viewer-recording-v1")]
         None,
+        #[cfg(feature = "viewer-recording-v1")]
+        None,
     )
 }
 
@@ -341,6 +343,7 @@ pub(super) fn guide_viewer(
     observer: Option<&mut super::viewer_uct::Recorder>,
     max_step: u64,
 ) -> Result<Value, String> {
+    let mut actual_core_hash = 0u64;
     guide_inner(
         sh,
         roles,
@@ -354,8 +357,12 @@ pub(super) fn guide_viewer(
         GuideRun::ANCHOR_LEGACY,
         observer,
         Some(max_step),
+        Some(&mut actual_core_hash),
     )
-    .map(|(v, _)| v)
+    .map(|(mut v, _)| {
+        v["actual_core_hash"] = json!(actual_core_hash);
+        v
+    })
 }
 
 #[allow(
@@ -375,6 +382,7 @@ fn guide_inner(
     run: GuideRun,
     #[cfg(feature = "viewer-recording-v1")] observer: Option<&mut super::viewer_uct::Recorder>,
     #[cfg(feature = "viewer-recording-v1")] max_step: Option<u64>,
+    #[cfg(feature = "viewer-recording-v1")] actual_core_hash: Option<&mut u64>,
 ) -> Result<(Value, Option<Tree>), String> {
     let started = Instant::now();
     let focal = PlayerId(src.seat);
@@ -531,6 +539,10 @@ fn guide_inner(
         }
     }
     cursor_keys.merge(&cursor.keyer.stats);
+    #[cfg(feature = "viewer-recording-v1")]
+    if let Some(hash) = actual_core_hash {
+        *hash = s.privileged_core_environment_hash();
+    }
     let end = if invalid.is_some() {
         None
     } else {

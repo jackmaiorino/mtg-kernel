@@ -48,6 +48,13 @@ fn refs(v: &Value, out: &mut Vec<u64>) {
 }
 
 /// Only names transported in explicit public zones can describe a sampled action.
+fn public_name(reference: &Value, fallback: &str) -> String {
+    reference["card_db_id"]
+        .as_u64()
+        .and_then(|id| crate::card_def::CARD_DEFS.get(id as usize))
+        .map_or_else(|| fallback.to_owned(), |card| card.name.to_owned())
+}
+
 fn action(v: &Value, board: &Value, index: usize) -> Value {
     let p = &board["projection"];
     let mut public = HashMap::<u64, String>::new();
@@ -58,10 +65,7 @@ fn action(v: &Value, board: &Value, index: usize) -> Value {
                     objects(x, names);
                 }
             } else if let Some(id) = v["stable"]["arena_id"].as_u64() {
-                names.insert(
-                    id,
-                    v["card_name"].as_str().unwrap_or("Public card").to_owned(),
-                );
+                names.insert(id, public_name(&v["stable"], "Public card"));
             }
         }
         objects(&p[zone], &mut public);
@@ -69,13 +73,7 @@ fn action(v: &Value, board: &Value, index: usize) -> Value {
     if let Some(stack) = p["stack"].as_array() {
         for x in stack {
             if let Some(id) = x["source"]["arena_id"].as_u64() {
-                public.insert(
-                    id,
-                    x["source_name"]
-                        .as_str()
-                        .unwrap_or("Public spell or ability")
-                        .to_owned(),
-                );
+                public.insert(id, public_name(&x["source"], "Public spell or ability"));
             }
         }
     }
@@ -212,6 +210,9 @@ impl SearchCapture {
             }
             if matches!(s.current_response(), FastActorResponseV1::Terminal(_)) {
                 this.current["leaf"] = json!(this.snapshot(s)?);
+                if let FastActorResponseV1::Terminal(t) = s.current_response() {
+                    this.current["terminal"] = json!(t);
+                }
             }
             this.charge(&v)?;
             this.current["rollout"]
@@ -227,7 +228,11 @@ impl SearchCapture {
             if this.simulations.len() >= 4096 {
                 return Err("UCT attempt bound".into());
             }
-            this.current["reason"] = json!(reason);
+            this.current["reason"] = json!(if reason == "loss" {
+                "natural_nonwin"
+            } else {
+                reason
+            });
             this.current["backed_up"] = json!(matches!(reason, "win" | "loss"));
             this.simulations.push(std::mem::take(&mut this.current));
             Ok(())
@@ -541,7 +546,10 @@ pub(super) fn run(path: &Path) -> Result<(), String> {
         Ok(())
     })?;
     let searches=game["searches"].as_array().ok_or("Search records missing")?.iter().map(|r|json!({"index":r["search"],"step":r["step"],"budget":r["budget"],"transitions":r["transitions"],"completed":r["completed_natural"],"attempted":r["attempted"],"tree":r["tree"]})).collect::<Vec<_>>();
-    let primary = json!({"actions":prefix,"searches":searches,"decisions":game["decisions"],"end":game["end"],"complete":complete,"core_hash":final_state.privileged_core_environment_hash()});
+    if game["actual_core_hash"] != final_state.privileged_core_environment_hash() {
+        return Err("Actual capture game and action replay core states differ".into());
+    }
+    let primary = json!({"actions":prefix,"searches":searches,"decisions":game["decisions"],"end":game["end"],"complete":complete,"core_hash":game["actual_core_hash"],"replay_core_hash":final_state.privileged_core_environment_hash()});
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
