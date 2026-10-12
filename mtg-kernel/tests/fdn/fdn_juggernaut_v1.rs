@@ -105,7 +105,7 @@ fn target_spell(state: &mut GameState, actor: PlayerId, name: &str, target: Obje
     assert!(
         matches!(next(state), Decision::ChooseTargets { legal_targets, .. } if legal_targets.contains(&target))
     );
-    engine::step(state, Action::ChooseTargets(vec![target])).unwrap();
+    engine::step(state, Action::ChooseTarget(target)).unwrap();
     settle(state);
 }
 

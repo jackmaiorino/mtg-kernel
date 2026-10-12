@@ -438,7 +438,7 @@ mod future_printed {
                 .unwrap();
             let snapshot = session.snapshot_v21();
             let mut decisions = 0;
-            while crate::planeswalker_v1::loyalty(&session.inner.raid_entry_fixture_state(), walker)
+            while crate::planeswalker_v1::loyalty(session.inner.raid_entry_fixture_state(), walker)
                 == Some(4)
                 && decisions < 12
             {
@@ -460,13 +460,13 @@ mod future_printed {
                 decisions += 1;
             }
             assert_eq!(
-                crate::planeswalker_v1::loyalty(&session.inner.raid_entry_fixture_state(), walker),
+                crate::planeswalker_v1::loyalty(session.inner.raid_entry_fixture_state(), walker),
                 Some(2)
             );
             let first = session.inner.privileged_core_environment_hash();
             session.restore_v21(&snapshot).unwrap();
             decisions = 0;
-            while crate::planeswalker_v1::loyalty(&session.inner.raid_entry_fixture_state(), walker)
+            while crate::planeswalker_v1::loyalty(session.inner.raid_entry_fixture_state(), walker)
                 == Some(4)
                 && decisions < 12
             {
