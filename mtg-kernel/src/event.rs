@@ -1083,6 +1083,11 @@ pub enum CommittedEvent {
     ExileIfDiesReplacementInstalledV1 {
         replacement: ActiveReplacement,
     },
+    ExileIfDiesReplacementExpiredV1 {
+        replacement: ActiveReplacement,
+        turn: u32,
+        active_player: PlayerId,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1308,7 +1313,7 @@ fn replacement_applies(
 ) -> bool {
     match (&repl.kind, proposed) {
         (ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { target, turn, active_player, .. }, ProposedEvent::ZoneChange(change)) => {
-            *turn == state.turn && *active_player == state.active_player
+            *turn == state.turn_key_v1() && *active_player == state.active_player
                 && change.to_zone == Zone::Graveyard
                 && crate::fiery_annihilation_v1::original_battlefield_target(state, Target::Object(change.object), *target)
                 && state.engine.event_history.iter().any(|event| matches!(event,
@@ -1491,7 +1496,7 @@ pub(crate) fn install_exile_if_dies(
         kind: ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 {
             target,
             source,
-            turn: state.turn,
+            turn: state.turn_key_v1(),
             active_player: state.active_player,
         },
     };
@@ -1505,6 +1510,25 @@ pub(crate) fn install_exile_if_dies(
 }
 
 pub(crate) fn validate_exile_if_dies_replacements(state: &GameState) -> Result<(), ObjectId> {
+    for event in &state.engine.event_history {
+        let CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement } = event else {
+            continue;
+        };
+        let live = state
+            .engine
+            .active_replacements
+            .iter()
+            .filter(|r| *r == replacement)
+            .count();
+        let expired = state.engine.event_history.iter().filter(|e| matches!(e,
+            CommittedEvent::ExileIfDiesReplacementExpiredV1 { replacement: r, turn, active_player }
+            if r == replacement && matches!(r.kind,
+                ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { turn: original, active_player: actor, .. }
+                if original == *turn && actor == *active_player))).count();
+        if !matches!((live, expired), (1, 0) | (0, 1)) {
+            return Err(replacement.source);
+        }
+    }
     for replacement in &state.engine.active_replacements {
         let ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 {
             target,
@@ -1550,12 +1574,45 @@ pub(crate) fn validate_exile_if_dies_replacements(state: &GameState) -> Result<(
                 .filter(|other| other.id == replacement.id)
                 .count()
                 != 1
-            || *turn != state.turn
+            || *turn != state.turn_key_v1()
             || *active_player != state.active_player
         {
             return Err(replacement.source);
         }
     }
+    Ok(())
+}
+
+pub(crate) fn expire_exile_if_dies_replacements(state: &mut GameState) -> Result<(), ObjectId> {
+    validate_exile_if_dies_replacements(state)?;
+    let expired: Vec<_> = state
+        .engine
+        .active_replacements
+        .iter()
+        .filter(|r| {
+            matches!(
+                r.kind,
+                ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. }
+            )
+        })
+        .cloned()
+        .collect();
+    for replacement in expired {
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::ExileIfDiesReplacementExpiredV1 {
+                replacement,
+                turn: state.turn_key_v1(),
+                active_player: state.active_player,
+            });
+    }
+    state.engine.active_replacements.retain(|r| {
+        !matches!(
+            r.kind,
+            ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. }
+        )
+    });
     Ok(())
 }
 

@@ -15395,6 +15395,11 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 return;
             }
             state.engine.until_end_of_turn.clear();
+            if let Err(source) = event::expire_exile_if_dies_replacements(state) {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, source));
+                return;
+            }
             state.engine.active_replacements.retain(|replacement| {
                 !matches!(
                     replacement.kind,

@@ -517,4 +517,119 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn actual_installed_shield_erasure_refuses_step_and_advance_after_restore() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, _, _, ctx) = fixture(actor, false, true);
+            execute(&ctx, &mut state);
+            state.engine.active_replacements.clear();
+            let bytes = serde_json::to_vec(&state).unwrap();
+            let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
+            assert!(engine::step(&mut restored, Action::Pass).is_err());
+            assert_eq!(serde_json::to_vec(&restored).unwrap(), bytes);
+            let mut expected = restored.clone();
+            expected.engine.halted = Some((
+                engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+            assert!(matches!(
+                engine::advance_until_decision(&mut restored),
+                Decision::Halted { .. }
+            ));
+            assert_eq!(
+                serde_json::to_vec(&restored).unwrap(),
+                serde_json::to_vec(&expected).unwrap()
+            );
+        }
+    }
+
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    fn genuine_extra_turn_shield_uses_occurrence_and_real_cleanup_closes_once_both_seats() {
+        use crate::extra_turn_v1::tests::{
+            future_printed::{cast, main, next_turn, resolve},
+            ready,
+        };
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor);
+            let source = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+            let creature = put(
+                &mut state,
+                actor.opponent(),
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            state.objects.get_mut(creature).counters.plus1_plus1 = 6;
+            let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+            let land = state.players[actor.index()]
+                .hand
+                .iter()
+                .copied()
+                .find(|id| state.objects.get(*id).card_def == forest)
+                .unwrap();
+            engine::step(&mut state, Action::PlayLand(land)).unwrap();
+            cast(&mut state, actor);
+            resolve(&mut state);
+            cast(&mut state, actor);
+            resolve(&mut state);
+            next_turn(&mut state);
+            main(&mut state);
+            assert_ne!(state.turn_key_v1(), state.turn);
+            let land = state.players[actor.index()]
+                .hand
+                .iter()
+                .copied()
+                .find(|id| state.objects.get(*id).card_def == forest)
+                .unwrap();
+            engine::step(&mut state, Action::PlayLand(land)).unwrap();
+            let mut ctx = ExecCtx::no_targets(source, actor);
+            ctx.targets = vec![Target::Object(creature)];
+            ctx.target_contracts = vec![StackTargetContractV4::capture(&state, ctx.targets[0])];
+            // This remains a named physical Fiery opcode probe. Both extra turns
+            // are genuinely scheduled by the actual printed Temporal casts.
+            execute(&ctx, &mut state);
+            let installed = state.engine.active_replacements.last().unwrap().clone();
+            assert!(
+                matches!(installed.kind, event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { turn, .. } if turn == state.turn_key_v1())
+            );
+            event::validate_exile_if_dies_replacements(&state).unwrap();
+            let mut corrupt = state.clone();
+            let old_round = corrupt.turn;
+            if let event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { turn, .. } =
+                &mut corrupt.engine.active_replacements.last_mut().unwrap().kind
+            {
+                *turn = old_round;
+            }
+            let forged = corrupt.engine.active_replacements.last().unwrap().clone();
+            for row in &mut corrupt.engine.event_history {
+                if let event::CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement } =
+                    row
+                {
+                    *replacement = forged.clone();
+                }
+            }
+            let bytes = serde_json::to_vec(&corrupt).unwrap();
+            assert!(engine::step(&mut corrupt, Action::Pass).is_err());
+            assert_eq!(serde_json::to_vec(&corrupt).unwrap(), bytes);
+            next_turn(&mut state);
+            assert_eq!(state.active_player, actor);
+            assert!(!state
+                .engine
+                .active_replacements
+                .iter()
+                .any(|r| r.id == installed.id));
+            assert_eq!(state.engine.event_history.iter().filter(|e| matches!(e, event::CommittedEvent::ExileIfDiesReplacementExpiredV1 { replacement, .. } if replacement == &installed)).count(), 1);
+            event::validate_exile_if_dies_replacements(&state).unwrap();
+            let mut resurrected: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            resurrected.engine.active_replacements.push(installed);
+            let bytes = serde_json::to_vec(&resurrected).unwrap();
+            assert!(engine::step(&mut resurrected, Action::Pass).is_err());
+            assert_eq!(serde_json::to_vec(&resurrected).unwrap(), bytes);
+        }
+    }
 }
