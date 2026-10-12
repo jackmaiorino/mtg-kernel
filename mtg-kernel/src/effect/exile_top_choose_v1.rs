@@ -840,7 +840,11 @@ mod tests {
                 let mut state = ready_state();
                 state.active_player = actor;
                 let source = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
-                let foreign = put(&mut state, actor, "Forest", Zone::Exile);
+                let foreign = put(&mut state, actor, "Forest", Zone::Hand);
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change(foreign, Zone::Exile),
+                );
                 if size == 1 {
                     put(&mut state, actor, "Lightning Bolt", Zone::Library);
                 }
