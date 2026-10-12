@@ -39,6 +39,43 @@ pub struct CheckpointV1 {
     pub capture_history_index: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GeneralAnswerV36 {
+    Host(AnswerV1),
+    Color {
+        choice: crate::heraldic_banner_v1::ChoiceV1,
+        color: crate::mana::ManaColor,
+    },
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GeneralChoiceV36 {
+    Host {
+        choice: HostChoiceV1,
+        capture: u64,
+    },
+    Color {
+        choice: crate::heraldic_banner_v1::ChoiceV1,
+        capture: u32,
+    },
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeneralCheckpointV36 {
+    pub original: Box<GameState>,
+    pub operation: OperationV1,
+    pub answers: Vec<GeneralAnswerV36>,
+    pub choice: GeneralChoiceV36,
+    pub operation_history_index: u32,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ColorPlanV36 {
+    choice: crate::heraldic_banner_v1::ChoiceV1,
+    capture: u32,
+    color: Option<crate::mana::ManaColor>,
+    answer: Option<u32>,
+    committed: Option<u32>,
+}
+
 /// Runtime ownership cannot be deserialized or constructed outside this
 /// module. It exists only inside one synchronous engine invocation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,20 +84,27 @@ struct RunnerV1 {
     original_history_len: usize,
     batch_depth: usize,
     deferred_departures: Vec<(crate::ids::ObjectId, u32)>,
-    answers: Vec<AnswerV1>,
+    answers: Vec<GeneralAnswerV36>,
     cursor: usize,
-    checkpoint: Option<(Box<GameState>, HostChoiceV1, u64)>,
+    checkpoint: Option<(Box<GameState>, GeneralChoiceV36)>,
+    operation: OperationV1,
+    original_sha256: String,
+    banner_start: Option<u32>,
+    color_plans: Vec<ColorPlanV36>,
+    used_banner: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StateV1 {
     pub pending: Option<Box<CheckpointV1>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_general_v36: Option<Box<GeneralCheckpointV36>>,
     #[serde(skip)]
     runtime: Option<Box<RunnerV1>>,
 }
 impl StateV1 {
     pub fn is_empty(&self) -> bool {
-        self.pending.is_none()
+        self.pending.is_none() && self.pending_general_v36.is_none()
     }
 }
 impl Hash for StateV1 {
@@ -71,6 +115,12 @@ impl Hash for StateV1 {
                 .expect("owned checkpoint serializes")
                 .hash(hasher);
         }
+        if let Some(pending) = &self.pending_general_v36 {
+            "banner-entry-operation/v36".hash(hasher);
+            serde_json::to_vec(pending)
+                .expect("owned Banner checkpoint serializes")
+                .hash(hasher);
+        }
     }
 }
 
@@ -78,7 +128,14 @@ pub(crate) fn locally_owned(state: &GameState) -> bool {
     state.engine.linked_aura_operation_v1.runtime.is_some()
 }
 pub fn has_pending(state: &GameState) -> bool {
-    state.engine.linked_aura_operation_v1.pending.is_some()
+    state.engine.linked_aura_operation_v1.pending.is_some() || has_banner_pending(state)
+}
+pub(crate) fn has_banner_pending(state: &GameState) -> bool {
+    state
+        .engine
+        .linked_aura_operation_v1
+        .pending_general_v36
+        .is_some()
 }
 fn potentially_returns_aura(state: &GameState) -> bool {
     state
@@ -155,6 +212,10 @@ fn invoke(state: &mut GameState, operation: &OperationV1) -> Result<Option<Decis
         }
     }
 }
+fn potential_operation(state: &GameState) -> bool {
+    potentially_returns_aura(state) || crate::heraldic_banner_v1::potentially_enters(state)
+}
+
 fn original_sha256(state: &GameState) -> String {
     Sha256::digest(serde_json::to_vec(state).expect("genuine origin serializes"))
         .iter()
@@ -167,11 +228,22 @@ fn replay(
     operation: &OperationV1,
     answers: &[AnswerV1],
 ) -> Result<(GameState, Option<Decision>), String> {
+    let answers = answers
+        .iter()
+        .cloned()
+        .map(GeneralAnswerV36::Host)
+        .collect::<Vec<_>>();
+    replay_general(original, operation, &answers, false)
+}
+fn replay_general(
+    original: &GameState,
+    operation: &OperationV1,
+    answers: &[GeneralAnswerV36],
+    used_banner: bool,
+) -> Result<(GameState, Option<Decision>), String> {
     if has_pending(original) || locally_owned(original) {
-        return Err("linked Aura operation cannot recursively own another checkpoint".into());
+        return Err("entry operation cannot recursively own another public checkpoint".into());
     }
-    // Authenticate the genuine starting state before granting a synchronous
-    // private loan. No validator is bypassed by restored external state.
     crate::effect::validate_pending_effect_choice(original)?;
     let mut staged = original.clone();
     staged.engine.linked_aura_operation_v1.runtime = Some(Box::new(RunnerV1 {
@@ -182,35 +254,88 @@ fn replay(
         answers: answers.to_vec(),
         cursor: 0,
         checkpoint: None,
+        operation: operation.clone(),
+        original_sha256: original_sha256(original),
+        banner_start: None,
+        color_plans: Vec::new(),
+        used_banner,
     }));
-    staged
-        .engine
-        .event_history
-        .push(CommittedEvent::BanishingAuraOperationStartedV1 {
-            operation: Box::new(operation.clone()),
-            original_sha256: original_sha256(original),
-        });
+    if potentially_returns_aura(original) {
+        staged
+            .engine
+            .event_history
+            .push(CommittedEvent::BanishingAuraOperationStartedV1 {
+                operation: Box::new(operation.clone()),
+                original_sha256: original_sha256(original),
+            });
+    }
     let result = invoke(&mut staged, operation);
     let runner = staged
         .engine
         .linked_aura_operation_v1
         .runtime
         .take()
-        .ok_or("linked Aura operation lost synchronous owner")?;
+        .ok_or("entry operation lost synchronous owner")?;
     if runner.cursor != answers.len() {
-        return Err("linked Aura replay did not consume every original answer".into());
+        return Err("entry replay did not consume every confirmed answer".into());
     }
-    if let Some((mut checkpoint, choice, capture_history_index)) = runner.checkpoint {
-        checkpoint.engine.linked_aura_operation_v1.pending = Some(Box::new(CheckpointV1 {
-            original: Box::new(original.clone()),
-            operation: operation.clone(),
-            answers: answers.to_vec(),
-            choice,
-            capture_history_index,
-        }));
+    if let Some((mut checkpoint, choice)) = runner.checkpoint {
+        if runner.used_banner {
+            checkpoint
+                .engine
+                .linked_aura_operation_v1
+                .pending_general_v36 = Some(Box::new(GeneralCheckpointV36 {
+                original: Box::new(original.clone()),
+                operation: operation.clone(),
+                answers: answers.to_vec(),
+                choice,
+                operation_history_index: runner
+                    .banner_start
+                    .ok_or("Banner checkpoint lost actual operation")?,
+            }));
+        } else {
+            let GeneralChoiceV36::Host { choice, capture } = choice else {
+                return Err("legacy host checkpoint changed kind".into());
+            };
+            let answers = answers
+                .iter()
+                .map(|answer| match answer {
+                    GeneralAnswerV36::Host(host) => Ok(host.clone()),
+                    _ => Err("legacy host checkpoint contains color answer"),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            checkpoint.engine.linked_aura_operation_v1.pending = Some(Box::new(CheckpointV1 {
+                original: Box::new(original.clone()),
+                operation: operation.clone(),
+                answers,
+                choice,
+                capture_history_index: capture,
+            }));
+        }
         return Ok((*checkpoint, None));
     }
-    Ok((staged, result?))
+    let result = result?;
+    if let Some(operation) = runner.banner_start {
+        if runner.color_plans.is_empty()
+            || runner
+                .color_plans
+                .iter()
+                .any(|plan| plan.committed.is_none())
+        {
+            return Err("Banner operation ended without all actual entries")
+                .map_err(str::to_string);
+        }
+        let entries = runner
+            .color_plans
+            .iter()
+            .map(|plan| plan.committed.unwrap())
+            .collect();
+        staged
+            .engine
+            .event_history
+            .push(CommittedEvent::BannerEntryOperationCompletedV1 { operation, entries });
+    }
+    Ok((staged, result))
 }
 
 /// The first unanswered return snapshots the exact departure point. Later
@@ -274,6 +399,9 @@ fn choose(
         return Ok(None);
     }
     if let Some(answer) = runner.answers.get(runner.cursor).cloned() {
+        let GeneralAnswerV36::Host(answer) = answer else {
+            return Err("entry replay changed its confirmed choice kind".into());
+        };
         if answer.choice != choice || !choice.original_candidates.contains(&answer.host) {
             return Err("linked Aura replay changed an already committed owner answer".into());
         }
@@ -321,7 +449,13 @@ fn choose(
             .runtime
             .as_mut()
             .unwrap()
-            .checkpoint = Some((Box::new(snapshot), choice, at));
+            .checkpoint = Some((
+            Box::new(snapshot),
+            GeneralChoiceV36::Host {
+                choice,
+                capture: at,
+            },
+        ));
         Ok(None)
     }
 }
@@ -421,6 +555,30 @@ pub(crate) fn return_departures(state: &mut GameState, departures: &[(crate::ids
 /// Complete checkpoint reconstruction authenticates source incarnation,
 /// owner, menu, already committed choices, actual journal and operation tail.
 pub fn validate(state: &GameState) -> Result<(), String> {
+    if let Some(pending) = state
+        .engine
+        .linked_aura_operation_v1
+        .pending_general_v36
+        .as_ref()
+    {
+        if locally_owned(state) || state.engine.linked_aura_operation_v1.pending.is_some() {
+            return Err("Banner checkpoint has foreign runtime/second owner".into());
+        }
+        if !matches!(state.engine.event_history.get(pending.operation_history_index as usize), Some(CommittedEvent::BannerEntryOperationStartedV1 { operation, original_sha256: digest }) if **operation == pending.operation && *digest == original_sha256(&pending.original))
+        {
+            return Err("Banner checkpoint lost independently committed operation".into());
+        }
+        let (expected, _) = replay_general(
+            &pending.original,
+            &pending.operation,
+            &pending.answers,
+            true,
+        )?;
+        if expected != *state || !has_banner_pending(&expected) {
+            return Err("Banner checkpoint/original operation changed".into());
+        }
+        return Ok(());
+    }
     let Some(pending) = state.engine.linked_aura_operation_v1.pending.as_ref() else {
         return Ok(());
     };
@@ -443,6 +601,34 @@ pub fn validate(state: &GameState) -> Result<(), String> {
 }
 fn decision(state: &GameState) -> Result<Decision, String> {
     validate(state)?;
+    if let Some(pending) = state
+        .engine
+        .linked_aura_operation_v1
+        .pending_general_v36
+        .as_ref()
+    {
+        return Ok(match &pending.choice {
+            GeneralChoiceV36::Color { choice, .. } => Decision::ChooseEntryColorV36 {
+                player: choice.controller,
+                entry_ordinal: choice.ordinal,
+                colors: crate::heraldic_banner_v1::COLORS,
+            },
+            GeneralChoiceV36::Host { choice, .. } => Decision::ChooseEffectTargets {
+                player: choice.owner,
+                source: choice.aura.object,
+                selected_count: 0,
+                min_targets: 1,
+                max_targets: 1,
+                can_finish: false,
+                legal_targets: choice
+                    .original_candidates
+                    .iter()
+                    .map(|binding| Target::Object(binding.object))
+                    .collect(),
+            },
+        });
+    }
+
     let pending = state
         .engine
         .linked_aura_operation_v1
@@ -465,7 +651,47 @@ fn decision(state: &GameState) -> Result<Decision, String> {
     })
 }
 pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> {
-    if locally_owned(state) || (!has_pending(state) && !potentially_returns_aura(state)) {
+    if let Some(pending) = state
+        .engine
+        .linked_aura_operation_v1
+        .pending_general_v36
+        .as_ref()
+    {
+        validate(state)?;
+        let answer = match (&pending.choice, action) {
+            (GeneralChoiceV36::Color { choice, .. }, Action::ChooseEffectOption(index)) => {
+                GeneralAnswerV36::Color {
+                    choice: choice.clone(),
+                    color: *crate::heraldic_banner_v1::COLORS
+                        .get(index as usize)
+                        .ok_or("color index outside WUBRG")?,
+                }
+            }
+            (
+                GeneralChoiceV36::Host { choice, .. },
+                Action::ChooseEffectTarget(Target::Object(id)),
+            ) => GeneralAnswerV36::Host(AnswerV1 {
+                choice: choice.clone(),
+                host: *choice
+                    .original_candidates
+                    .iter()
+                    .find(|binding| binding.object == id)
+                    .ok_or("host outside original entry menu")?,
+            }),
+            _ => {
+                return Err(
+                    "only the exact pre-entry owner choice may advance this operation".into(),
+                )
+            }
+        };
+        let mut answers = pending.answers.clone();
+        answers.push(answer);
+        let (next, _) = replay_general(&pending.original, &pending.operation, &answers, true)?;
+        *state = next;
+        return Ok(());
+    }
+    crate::heraldic_banner_v1::validate_state(state)?;
+    if locally_owned(state) || (!has_pending(state) && !potential_operation(state)) {
         return crate::engine::step_without_linked_aura_v1(state, action);
     }
     if let Some(pending) = state.engine.linked_aura_operation_v1.pending.as_ref() {
@@ -502,13 +728,11 @@ pub(crate) fn advance(state: &mut GameState) -> Decision {
                 .linked_aura_operation_v1
                 .pending
                 .as_ref()
-                .unwrap()
-                .choice
-                .aura
-                .object,
+                .map(|pending| pending.choice.aura.object)
+                .unwrap_or(crate::ids::ObjectId(0)),
         });
     }
-    if locally_owned(state) || !potentially_returns_aura(state) {
+    if locally_owned(state) || !potential_operation(state) {
         return crate::engine::advance_without_linked_aura_v1(state);
     }
     match replay(state, &OperationV1::Advance, &[]) {
@@ -527,7 +751,7 @@ pub(crate) fn needs_event_owner(state: &GameState) -> bool {
 }
 
 pub(crate) fn event(state: &mut GameState, operation: OperationV1) -> bool {
-    if locally_owned(state) || (!has_pending(state) && !potentially_returns_aura(state)) {
+    if locally_owned(state) || (!has_pending(state) && !potential_operation(state)) {
         return false;
     }
     if has_pending(state) {
