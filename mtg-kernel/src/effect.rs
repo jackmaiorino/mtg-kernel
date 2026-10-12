@@ -16052,7 +16052,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         EffectOp::DealDamage { target, amount } => {
-            if crate::gorehorn_damage_v1::owns_context(ctx) {
+            if crate::gorehorn_damage_v1::owns_context(state, ctx) {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
