@@ -2651,7 +2651,8 @@ mod tests {
         assert!(CARD_DEFS[390].keywords.has(Keywords::FLYING));
         assert_eq!(crate::trigger::triggers_for(390).len(), 1);
         assert!(crate::trigger::triggers_for(391).is_empty());
-        assert!(card_id_by_name("Gorehorn Raider").is_none());
+        assert_eq!(card_id_by_name("Gorehorn Raider"), Some(412));
+        assert_eq!(card_id_by_name("Gutless Plunderer"), Some(413));
         assert!(card_id_by_name("Strongbox Raider").is_none());
     }
 

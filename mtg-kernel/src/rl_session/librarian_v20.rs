@@ -239,9 +239,9 @@ mod tests {
     #[test]
     fn registered_restore_rebuilds_derived_menu_before_publication() {
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let mut session = FastActorSessionV1::from_librarian_v20_fixture_state(
-                crate::librarian_public_v1::tests::ready(actor),
-            );
+            let mut state = crate::librarian_public_v1::tests::ready(actor);
+            put(&mut state, actor, "Forest", Zone::Hand);
+            let mut session = FastActorSessionV1::from_librarian_v20_fixture_state(state);
             let mut snapshot = session.snapshot_v1();
             snapshot.0.current.as_mut().unwrap().bound_policy_step_count += 1;
             let before = session.privileged_core_environment_hash();
