@@ -3,6 +3,7 @@ import fixture from '../fixtures/actor-visible.json' with { type: 'json' };
 import native from '../fixtures/native-root-excerpt.json' with { type: 'json' };
 import replay from '../fixtures/search-replay.json' with { type: 'json' };
 import graph from '../fixtures/search-graph.json' with {type:'json'};
+import rootChoices from '../fixtures/root-choices.json' with {type:'json'};
 import retained from '../fixtures/retained-search.json' with {type:'json'};
 import { createHash } from 'node:crypto';
 
@@ -71,6 +72,34 @@ test('search replay stepping, seeking, pause and deep link restore',async({page}
   const noPolicy=JSON.parse(JSON.stringify(replay));noPolicy.frames[0].policy=null;
   await page.locator('input[type=file]').setInputFiles({name:'search-only.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(noPolicy))});
   await expect(region.locator('.search-selection-summary')).toContainText('Policy sample: Not recorded');
+});
+
+test('every root move remains visible, including evaluations without stored children',async({page})=>{
+  await openFixture(page);
+  await page.locator('input[type=file]').setInputFiles({name:'root-choices.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(rootChoices))});
+  const region=page.getByRole('region',{name:'Recorded search replay'}),svg=region.getByRole('group',{name:'Accumulated explored search graph'});
+  await expect(svg.locator('.search-graph-root-choice')).toHaveCount(4);
+  await expect(svg.locator('[data-node]')).toHaveCount(1);
+  await expect(svg.locator('[data-root-evaluation]')).toHaveCount(0);
+  await expect(region.locator('.search-root-options')).toContainText('Not evaluated yet');
+  await region.getByRole('button',{name:'See complete graph'}).click();
+  await expect(svg.locator('[data-node]')).toHaveCount(2);
+  await expect(svg.locator('[data-root-evaluation]')).toHaveCount(3);
+  await expect(region.locator('.search-root-status').filter({hasText:'Evaluated once · not expanded'})).toHaveCount(3);
+  const lava=svg.locator('.search-graph-root-choice[data-root-choice="1"]');
+  await lava.focus();await page.keyboard.press('Enter');
+  await expect(region.locator('.search-node-detail')).toContainText('Initial evaluation from simulation 2: -7786');
+  await expect(region.locator('.search-preview-label')).toContainText('Initial evaluation of move 1');
+  await expect(region.getByRole('slider',{name:'Search event timeline'})).toHaveValue('14');
+  await region.screenshot({path:'test-results/root-choices-desktop.png'});
+  await page.setViewportSize({width:320,height:900});await page.emulateMedia({reducedMotion:'reduce'});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+  await expect(svg.locator('.search-graph-root-choice')).toHaveCount(4);
+  await region.screenshot({path:'test-results/root-choices-320.png'});
+  await region.getByRole('slider',{name:'Search event timeline'}).fill('0');
+  await expect(svg.locator('[data-root-evaluation]')).toHaveCount(0);
+  await expect(region.locator('.search-preview-label')).toHaveCount(0);
+  await expect(svg.locator('.search-graph-root-choice')).toHaveCount(4);
 });
 
 test('the graph retains discovered branches, inspects positions and rewinds',async({page})=>{
