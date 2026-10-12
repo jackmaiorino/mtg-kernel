@@ -34,6 +34,15 @@ class ViewerExportTests(unittest.TestCase):
         result=replay_export.export_replay(raw,exporter,{'episode':1,'step':1,'physical':1,'substep':0,'actor':'p0'},root_actions,search)
         self.assertNotIn('SECRET',json.dumps(result));self.assertNotIn('PRIVATE',json.dumps(result));self.assertEqual(exporter.cards,{})
         self.assertEqual(result['nodes'][1]['actions'][0]['label'],'Cast spell')
+        import copy
+        compact=copy.deepcopy(raw);compact['snapshots']=[]
+        for context in compact['contexts']:
+            snapshot={'board':context.pop('board')}
+            if 'actions' in context:snapshot['actions']=context.pop('actions')
+            context['snapshot']=len(compact['snapshots']);compact['snapshots'].append(snapshot)
+        self.assertEqual(replay_export.export_replay(compact,exporter,result['key'],root_actions,search),result)
+        compact['contexts'][0]['snapshot']=999
+        with self.assertRaisesRegex(ValueError,'snapshot'):replay_export.export_replay(compact,exporter,result['key'],root_actions,search)
         raw['nodes'][0]['edge_visits'][0]=2
         with self.assertRaisesRegex(ValueError,'statistics'):replay_export.export_replay(raw,exporter,result['key'],root_actions,search)
 

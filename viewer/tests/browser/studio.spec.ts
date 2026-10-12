@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import fixture from '../fixtures/actor-visible.json' with { type: 'json' };
 import native from '../fixtures/native-root-excerpt.json' with { type: 'json' };
 import replay from '../fixtures/search-replay.json' with { type: 'json' };
+import { createHash } from 'node:crypto';
 
 async function openFixture(page: import('@playwright/test').Page) {
   await page.route('**/demo/manifest.json', route => route.fulfill({status:404}));
@@ -9,6 +10,23 @@ async function openFixture(page: import('@playwright/test').Page) {
   await page.locator('input[type=file]').setInputFiles({name:'recording.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(fixture))});
   await expect(page.getByRole('region', { name:'Game replay' })).toBeVisible();
 }
+
+test('a hash link switches manifest games and restores its search event', async ({page}) => {
+  const games = [fixture, replay].map(recording => {
+    const body = JSON.stringify(recording);
+    return {id:recording.id, file:`${recording.id}.json`, sha256:createHash('sha256').update(body).digest('hex'), body};
+  });
+  await page.route('**/demo/manifest.json', route => route.fulfill({json:{games:games.map(({body:_, ...game})=>game)}}));
+  for (const game of games) await page.route(`**/demo/${game.file}`, route => route.fulfill({body:game.body, contentType:'application/json'}));
+  await page.goto(`/#game=${fixture.id}&decision=${fixture.frames[0].id}`);
+  await expect(page.getByRole('heading',{name:fixture.title})).toBeVisible();
+  await page.evaluate(hash => {window.location.hash=hash;}, `game=${replay.id}&decision=${replay.frames[0].id}&searchEvent=5`);
+  await expect(page.getByRole('heading',{name:replay.title})).toBeVisible();
+  await expect(page.getByRole('region',{name:'Recorded search replay'}).locator('.search-buttons')).toContainText('Event 6 / 6');
+  await expect(page).toHaveURL(/searchEvent=5/);
+  await page.evaluate(hash => {window.location.hash=hash;}, `game=${fixture.id}&decision=${fixture.frames[0].id}`);
+  await expect(page.getByRole('heading',{name:fixture.title})).toBeVisible();
+});
 test('search replay stepping, seeking, pause and deep link restore',async({page})=>{
   await openFixture(page);
   const load=()=>page.locator('input[type=file]').setInputFiles({name:'replay.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(replay))});
@@ -28,6 +46,9 @@ test('search replay stepping, seeking, pause and deep link restore',async({page}
   await page.setViewportSize({width:320,height:900});await page.emulateMedia({reducedMotion:'reduce'});
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
   await region.screenshot({path:'test-results/search-replay-320.png'});
+  const noPolicy=JSON.parse(JSON.stringify(replay));noPolicy.frames[0].policy=null;
+  await page.locator('input[type=file]').setInputFiles({name:'search-only.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(noPolicy))});
+  await expect(region.locator('.search-selection-summary')).toContainText('Policy sample: Not recorded');
 });
 test('import stays local; policy, cards, playback and deep links work', async ({ page }) => {
   const unexpected: string[] = [];

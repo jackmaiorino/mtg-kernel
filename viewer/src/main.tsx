@@ -86,6 +86,7 @@ function Connections({ board, refs, container }: { board: Board; refs: string[];
 function App() {
   const [recording, setRecording] = useState<Recording | null>(null);
   const [assetBase, setAssetBase] = useState('');
+  const [demoGames,setDemoGames]=useState<{id:string;title?:string}[]>([]);
   const [status, setStatus] = useState('Loading the studio');
   const [error, setError] = useState('');
   const [playback, dispatch] = useReducer(playbackReducer, initialPlayback);
@@ -136,6 +137,7 @@ function App() {
       if (!response.ok) throw new Error('Demo recording unavailable. Import a viewer recording to explore it locally.');
       return response.json();
     }).then(async (manifest: { games: { id: string; file: string; sha256: string }[] }) => {
+      setDemoGames(manifest.games);
       const game = manifest.games.find(g => g.id === params.get('game')) ?? manifest.games[0];
       if (!game || !/^[-a-zA-Z0-9_/]+\.json$/.test(game.file) || game.file.split('/').includes('..')) throw new Error('Invalid demo manifest');
       const response = await fetch(`${import.meta.env.BASE_URL}demo/${game.file}`, { signal: abort.signal });
@@ -192,11 +194,16 @@ function App() {
     const listener = () => {
       if (!recording) return;
       const params = new URLSearchParams(window.location.hash.slice(1));
+      const game = params.get('game');
+      if (game !== recording.id && demoGames.some(candidate => candidate.id === game)) {
+        window.location.reload();
+        return;
+      }
       const index = recording.frames.findIndex(f => f.id === params.get('decision'));
-      if (params.get('game') === recording.id && index >= 0) dispatch({ type: 'seek', index });
+      if (game === recording.id && index >= 0) dispatch({ type: 'seek', index });
     };
     window.addEventListener('hashchange', listener); return () => window.removeEventListener('hashchange', listener);
-  }, [recording]);
+  }, [recording, demoGames]);
 
   const ranked = useMemo(() => {
     if (!frame) return [];
@@ -227,6 +234,7 @@ function App() {
   return <MotionConfig reducedMotion="user"><div className="studio">
     <header className="topbar" inert={modalOpen}><a className="brand" href={import.meta.env.BASE_URL} aria-label="MTG Kernel Decision Studio"><span className="brand-mark"><GitBranch size={20} /></span><span>MTG <b>KERNEL</b><small>DECISION STUDIO</small></span></a><div className="topbar-center"><span className="status-dot" /> Recorded gameplay</div><nav><button className="quiet-button" onClick={() => setShowAbout(true)}><BookOpen size={15} /><span>About the agent</span></button><button className="quiet-button" onClick={() => fileRef.current?.click()}><Upload size={15} /><span>Import recording</span></button><input ref={fileRef} hidden type="file" accept=".json,application/json" onChange={async event => { const file = event.target.files?.[0]; if (!file) return; if (file.size > MAX_BYTES) { setError('Recording exceeds the 64 MiB viewer limit'); return; } openText(await file.text(), ''); event.target.value = ''; }} /></nav></header>
     <main inert={modalOpen}>
+      {recording&&demoGames.length>1&&<label className="game-selector">Recorded game <select aria-label="Recorded game" value={recording.id} onChange={e=>{const game=e.target.value;if(demoGames.some(g=>g.id===game))window.location.assign(`${import.meta.env.BASE_URL}?game=${encodeURIComponent(game)}#game=${encodeURIComponent(game)}`);}}>{!demoGames.some(g=>g.id===recording.id)&&<option value={recording.id}>Imported recording</option>}{demoGames.map(g=><option key={g.id} value={g.id}>{g.title??g.id.replace(/-/g,' ')}</option>)}</select></label>}
       <div className="intro"><div><div className="eyebrow"><span className="little-line" /> MACHINE INTELLIGENCE, AT THE TABLE</div><h1>Every move is a decision.</h1><p>Watch the game. Explore the alternatives. See what the agent chose.</p></div><button className="perspective" onClick={() => setHelp('Perspective')}><Eye size={16} /> Agent’s perspective</button></div>
       {status && <div role="status" className="notice">{status}…</div>}
       {error && <div role="alert" className="notice error"><span>{error}</span><button onClick={() => setError('')} aria-label="Dismiss error"><X size={16} /></button></div>}
