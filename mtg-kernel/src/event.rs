@@ -2311,7 +2311,6 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
     }
 
     crate::raid_entry_custody_v1::capture_batch_entries(state, raid_history_start);
-    crate::raid_entry_custody_v1::capture_batch_entries(state, raid_history_start);
     for (_, player, amount) in lifelink_gains {
         commit(state, ProposedEvent::life_gain(player, amount));
     }

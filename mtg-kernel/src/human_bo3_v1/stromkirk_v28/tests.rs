@@ -229,7 +229,6 @@ mod future_printed {
     use crate::mana::ManaColor;
     use crate::state::{GameState, Step, Target};
     #[test]
-    #[ignore = "requires actual root-owned Stromkirk registration; source preparation"]
     fn actual_cast_endstep_public_human_target_binding_restore_and_hidden_privacy() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut cards = vec![card_id_by_name("Forest").unwrap(); 40];

@@ -6720,6 +6720,99 @@
         "nonland_permanent_target",
         "linked_aura_return"
       ]
+    },
+    {
+      "name": "Stromkirk Bloodthief",
+      "mana_cost": "{2}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Vampire",
+        "Rogue"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/s/StromkirkBloodthief.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_stromkirk_bloodthief.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "intervening_end_step",
+        "actual_opponent_life_loss",
+        "vampire_permanent_counter"
+      ]
+    },
+    {
+      "name": "Vampire Gourmand",
+      "mana_cost": "{1}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Vampire"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/v/VampireGourmand.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_vampire_gourmand.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "attack_trigger",
+        "optional_sacrifice_cost",
+        "draw",
+        "incarnation_unblockable"
+      ]
+    },
+    {
+      "name": "Garruk's Uprising",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/g/GarruksUprising.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_garruks_uprising.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "own_etb_intervening_ferocious",
+        "controlled_creature_power_entry",
+        "controlled_creature_trample"
+      ]
     }
   ]
 }

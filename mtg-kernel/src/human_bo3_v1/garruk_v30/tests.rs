@@ -5,7 +5,6 @@ use super::*;
     not(feature = "standard-magezero-fixtures")
 ))]
 #[test]
-#[ignore = "requires actual Garruk/Banishing registration; source-only composition"]
 fn genuine_later_apnap_aura_owner_has_v30_public_choices_restore_and_retry_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for suppress in [false, true] {

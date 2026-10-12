@@ -359,7 +359,6 @@ mod future_printed {
         panic!("actual Gourmand cost absent");
     }
     #[test]
-    #[ignore = "requires actual parent Gourmand registration; genuine printed V29 qualification"]
     fn actual_cast_attack_optional_cost_safe_labels_submit_restore_and_actor_privacy() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for pay in [false, true] {
