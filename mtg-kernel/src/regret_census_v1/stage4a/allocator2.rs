@@ -32,7 +32,6 @@ use super::refresh::{
     ANCHOR_BUDGET, REFRESH_BUDGET,
 };
 use crate::native_policy_value_net_v1::{PooledRepresentationV1, POOLING_SCHEMA_V1};
-use crate::rl_session::FastActorSessionV1;
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
 use crate::state::SplitMix64;
 use serde::Deserialize;
@@ -816,6 +815,7 @@ mod tests {
     use super::super::allocator::Counts;
     use super::super::refresh::{NodeSummary, TreeSummary};
     use super::*;
+    use crate::rl_session::FastActorSessionV1;
 
     fn parent() -> ParentBinding {
         ParentBinding {
@@ -942,8 +942,8 @@ mod tests {
         let mut h = vec![0.0; HIDDEN];
         for (j, hj) in h.iter_mut().enumerate() {
             let mut z = c.b1[j];
-            for k in 0..c.nf {
-                z += c.w1[j * c.nf + k] * (x[k] - c.mean[k]) / c.scale[k];
+            for (k, xk) in x.iter().enumerate() {
+                z += c.w1[j * c.nf + k] * (xk - c.mean[k]) / c.scale[k];
             }
             *hj = z.tanh();
         }
