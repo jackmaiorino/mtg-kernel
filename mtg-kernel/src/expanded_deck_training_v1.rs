@@ -2647,6 +2647,17 @@ pub enum ExpandedTrainingCommandV1 {
         probes: Vec<e_supported_teacher_v1::ESupportedProbeV1>,
         output_directory: PathBuf,
     },
+    /// Teacher diagnostic at fixed probes: the bound E choice against the
+    /// parent's sampled raw choice under identical frozen plain continuation
+    /// on fresh lawful worlds (no search, reset, update or checkpoint).
+    ESupportedTeacherDiagnostic {
+        teacher: ExpandedModelSourceV1,
+        prior_deck_indices: Vec<usize>,
+        worlds_per_probe: u64,
+        max_transitions: u64,
+        probes: Vec<e_supported_teacher_v1::ETeacherDiagnosticProbeV1>,
+        output_directory: PathBuf,
+    },
     /// Line (b) end-of-run head distance between a treatment and its matched
     /// control (proposal 12:51); reads both sources, writes nothing.
     LineBHeadDistance {
@@ -2691,6 +2702,21 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             probes,
             output_directory,
         } => e_supported_teacher_v1::probe_score(&source, &probes, &output_directory),
+        ExpandedTrainingCommandV1::ESupportedTeacherDiagnostic {
+            teacher,
+            prior_deck_indices,
+            worlds_per_probe,
+            max_transitions,
+            probes,
+            output_directory,
+        } => e_supported_teacher_v1::teacher_diagnostic(
+            &teacher,
+            &prior_deck_indices,
+            worlds_per_probe,
+            max_transitions,
+            &probes,
+            &output_directory,
+        ),
         ExpandedTrainingCommandV1::LineBHeadDistance { treatment, control } => {
             line_b_teacher_packet_v1::line_b_head_distance_v1(&treatment, &control)
         }
@@ -9300,6 +9326,136 @@ pub(crate) mod tests {
             "E replay primary state SHA256 {} packet SHA256 {}",
             a["after_state_sha256"], pin.sha256
         );
+    }
+
+    #[test]
+    fn e_teacher_diagnostic_replays_binds_teacher_root_and_couples_identical_choices() {
+        let started = std::time::Instant::now();
+        let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
+        let root =
+            std::env::temp_dir().join(format!("e-teacher-diagnostic-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let descriptor =
+            fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
+                &root.join("source"),
+                feature_identity,
+                |_parameters| {},
+            );
+        let descriptor_path = root.join("descriptor.json");
+        let bytes = serde_json::to_vec(&descriptor).unwrap();
+        fs::write(&descriptor_path, &bytes).unwrap();
+        let source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: descriptor_path.canonicalize().unwrap(),
+                sha256: hex(&Sha256::digest(bytes)),
+            },
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: feature_identity.feature_contract_digest.into(),
+                expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
+            },
+            checkpoint: None,
+        };
+        let decks = [list("Affinity"), list("Terror")];
+        let episode = ExpandedEpisodeV1 {
+            id: "e-teacher-diagnostic-engineering".into(),
+            seed: 2026101201,
+            starting_player: 0,
+            learner_seat: 0,
+            opponent: Some(source.clone()),
+            opponent_search: None,
+            opponent_kind: None,
+            registered: decks.clone(),
+            selected: decks,
+            postboard: false,
+            max_physical_decisions: 100000,
+            max_policy_steps: 1000000,
+            runtime_rules: None,
+            reset: None,
+        };
+        let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
+            source: source.clone(),
+            episodes: vec![episode],
+            max_non_natural_episode_fraction: 0.0,
+            collection_sampler: CollectionSamplerV1::Legacy,
+            output_directory: root.join("collect"),
+        })
+        .unwrap();
+        let trajectories: Vec<PinnedFileV1> =
+            serde_json::from_value(collection["trajectories"].clone()).unwrap();
+        let trajectory: ExpandedTrajectoryV1 = read_pinned(&trajectories[0]).unwrap();
+        // A nonforced learner row in the middle of the game.
+        let rows: Vec<usize> = (0..trajectory.decisions.len())
+            .filter(|&i| {
+                trajectory.decisions[i].actor == trajectory.episode.learner_seat
+                    && trajectory.decisions[i].logits.len() >= 2
+            })
+            .collect();
+        let row_index = rows[rows.len() / 2];
+        let run = |label: &str, teacher_live: usize| {
+            let result = execute_v1(ExpandedTrainingCommandV1::ESupportedTeacherDiagnostic {
+                teacher: source.clone(),
+                prior_deck_indices: vec![0, 1, 2, 3, 4, 5, 6, 7, 8],
+                worlds_per_probe: 3,
+                max_transitions: 256,
+                probes: vec![e_supported_teacher_v1::ETeacherDiagnosticProbeV1 {
+                    probe_id: "engineering-diagnostic-probe".into(),
+                    trajectory: trajectories[0].clone(),
+                    row_index,
+                    teacher_live,
+                }],
+                output_directory: root.join(label),
+            })
+            .unwrap();
+            let bytes = fs::read(root.join(label).join("diagnostic.json")).unwrap();
+            (result, bytes)
+        };
+        let (first, first_bytes) = run("first", 0);
+        let (_, replay_bytes) = run("replay", 0);
+        assert_eq!(first_bytes, replay_bytes, "deterministic replay");
+        let worlds = first["probes"][0]["worlds"].as_array().unwrap();
+        assert_eq!(worlds.len(), 3);
+        assert_eq!(first["totals"]["worlds_attempted"], 3);
+        let sampled: Vec<&Value> = worlds.iter().filter(|w| w["rejected"] == false).collect();
+        assert!(!sampled.is_empty(), "every engineering world was rejected");
+        assert_eq!(
+            first["totals"]["worlds_rejected"].as_u64().unwrap() + sampled.len() as u64,
+            3
+        );
+        for w in &sampled {
+            // Branch A starts with the bound teacher choice, branch B with the raw draw.
+            assert_eq!(w["teacher"]["first_action"], 0);
+            assert_eq!(w["raw"]["first_action"], w["raw_choice"]);
+            for b in ["teacher", "raw"] {
+                assert!(w[b]["transitions"].as_u64().unwrap() <= 256);
+                assert_eq!(w[b]["truncated"], w[b]["end"] == "truncated");
+            }
+        }
+        // Bind the teacher to the raw draw of the first sampled world: both
+        // branches there must produce the same suffix.
+        let w0 = sampled[0]["world"].as_u64().unwrap() as usize;
+        let raw = sampled[0]["raw_choice"].as_u64().unwrap() as usize;
+        let (equal, _) = run("equal", raw);
+        let world = &equal["probes"][0]["worlds"][w0];
+        assert_eq!(world["first_actions_coincide"], true);
+        assert_eq!(world["raw_choice"], raw);
+        assert_eq!(world["teacher"], world["raw"]);
+        assert_eq!(world["world_state_hash"], sampled[0]["world_state_hash"]);
+        // The raw draw and the world do not depend on the teacher's choice.
+        for (a, b) in worlds
+            .iter()
+            .zip(equal["probes"][0]["worlds"].as_array().unwrap())
+        {
+            assert_eq!(a["raw_choice"], b["raw_choice"]);
+            assert_eq!(a["world_seed"], b["world_seed"]);
+            assert_eq!(a["raw"], b["raw"]);
+        }
+        println!(
+            "E teacher diagnostic row {row_index} receipt SHA256 {} totals {} elapsed {:.2}s",
+            hex(&Sha256::digest(&first_bytes)),
+            first["totals"],
+            started.elapsed().as_secs_f64()
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 
     mod reset_start_tests;
