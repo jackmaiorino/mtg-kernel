@@ -176,7 +176,6 @@ fn registered_real_ward_payment_preserves_predecessor_public_menu_and_fields() {
     not(feature = "standard-magezero-fixtures")
 ))]
 #[test]
-#[ignore = "requires genuine Arahbo registration; owning transport is source-only"]
 fn actual_human_cast_created_token_anthem_controller_restore_and_coherent_binding_both_seats() {
     use crate::engine;
     use crate::event::{CommittedEvent, ProposedEvent};

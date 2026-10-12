@@ -384,7 +384,6 @@ mod future_printed {
         (state, source)
     }
     #[test]
-    #[ignore = "Strongbox definition remains unregistered; root owns qualification"]
     fn actual_exile_choice_safe_labels_private_binding_restore_and_permission_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let (state, source) = actual_menu(actor);
@@ -467,7 +466,6 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "Strongbox definition remains unregistered; root owns qualification"]
     fn actual_choice_hidden_substitution_foreign_label_and_corrupt_capture_refuse_readonly() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let (state, _) = actual_menu(actor);
@@ -524,7 +522,6 @@ mod future_printed {
     }
 
     #[test]
-    #[ignore = "Strongbox definition remains unregistered; root owns qualification"]
     fn actual_short_library_automatic_choice_and_exiled_spell_uses_real_costs() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for size in [0, 1] {
@@ -629,7 +626,6 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "Strongbox definition remains unregistered; root owns qualification"]
     fn actual_original_controller_survives_source_transfer_departure_and_unstarted_counter_closes()
     {
         for actor in [PlayerId::P0, PlayerId::P1] {

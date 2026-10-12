@@ -6813,6 +6813,72 @@
         "controlled_creature_power_entry",
         "controlled_creature_trample"
       ]
+    },
+    {
+      "name": "Arahbo, the First Fang",
+      "mana_cost": "{2}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Cat",
+        "Avatar"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/a/ArahboTheFirstFang.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_arahbo.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "controlled_other_cat_creature_bonus",
+        "self_or_other_nontoken_cat_permanent_entry",
+        "white_cat_token"
+      ]
+    },
+    {
+      "name": "Strongbox Raider",
+      "mana_cost": "{2}{R}{R}",
+      "mana_value": 4,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Orc",
+        "Pirate"
+      ],
+      "supertypes": [],
+      "power": 5,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/s/StrongboxRaider.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_strongbox_raider.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "raid_capture_and_recheck",
+        "exile_top_two_choose_exact_one",
+        "ordinary_play_until_holder_next_cleanup"
+      ]
     }
   ]
 }

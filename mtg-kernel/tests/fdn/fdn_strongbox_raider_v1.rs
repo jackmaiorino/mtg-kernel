@@ -122,7 +122,6 @@ fn replay(state: &GameState) -> GameState {
 }
 
 #[test]
-#[ignore = "Strongbox definition remains unregistered; root owns qualification"]
 fn genuine_both_seat_raid_exile_exact_one_and_restored_answer_permissions() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor, 5);
@@ -168,7 +167,6 @@ fn genuine_both_seat_raid_exile_exact_one_and_restored_answer_permissions() {
     }
 }
 #[test]
-#[ignore = "Strongbox definition remains unregistered; root owns qualification"]
 fn genuine_empty_declaration_never_exiles_or_grants() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor, 5);
@@ -206,7 +204,6 @@ fn natural_pass(state: &mut GameState) {
     }
 }
 #[test]
-#[ignore = "Strongbox remains unregistered; root owns actual qualification"]
 fn actual_holder_next_turn_cleanup_permissions_survive_opponent_and_restore_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = granted(actor);
@@ -256,7 +253,6 @@ fn actual_holder_next_turn_cleanup_permissions_survive_opponent_and_restore_both
     }
 }
 #[test]
-#[ignore = "Strongbox remains unregistered; root owns actual qualification"]
 fn erased_permission_and_coherent_early_expiry_refuse_before_action_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let state = granted(actor);
@@ -297,7 +293,6 @@ fn erased_permission_and_coherent_early_expiry_refuse_before_action_both_seats()
 }
 
 #[test]
-#[ignore = "Strongbox remains unregistered; root owns actual qualification"]
 fn actual_printed_meaning_reconstructs_full_root_and_refuses_each_edited_fact() {
     use mtg_kernel::rules_meaning_strongbox_v1 as meaning;
     let selector = meaning::live_selector().unwrap();
@@ -332,7 +327,6 @@ fn assert_corrupt_permission_readonly(state: &GameState) {
     assert_eq!(before, serde_json::to_vec(&bad).unwrap());
 }
 #[test]
-#[ignore = "Strongbox remains unregistered; root owns actual qualification"]
 fn coherent_permission_kind_edit_refuses_original_public_forest_characteristics_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut bad = granted(actor);
@@ -353,7 +347,6 @@ fn coherent_permission_kind_edit_refuses_original_public_forest_characteristics_
     }
 }
 #[test]
-#[ignore = "Strongbox remains unregistered; root owns actual qualification"]
 fn genuine_two_grant_cleanup_cannot_omit_one_original_permission_and_resurrect_it_both_seats() {
     use mtg_kernel::event::CommittedEvent;
     for actor in [PlayerId::P0, PlayerId::P1] {
