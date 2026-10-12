@@ -219,6 +219,9 @@ def export_capture(path: Path, exporter: Exporter) -> tuple[dict, list[dict], bo
                         label += ": " + ", ".join(dict.fromkeys(exporter.cards[o["card"]]["name"] for o in revealed))
                     actions = [{"index":0,"label":label,"kind":semantic["action_kind"],"refs":public_refs}]
                     selected, policy, search = 0, None, None
+                if featured and row['search'].get('replay') is not None:
+                    from viewer_search_export_v1 import export_replay
+                    search['replay'] = export_replay(row['search']['replay'], exporter, key(d), actions, search)
                 frames.append({"id":f"d{d['step']}","key":key(d),"board":before,"after":after,"actions":actions,
                     "executed":selected,"policy":policy,"search":search,"terminal":terminal(row["terminal"])})
             else:
@@ -257,7 +260,8 @@ def build_recording(path: Path, identifier: str, title: str, exporter: Exporter,
     identity = header.get("identity", {})
     checkpoint = identity.get("checkpoint_sha256") or identity.get("actual_model", {}).get("parameter_values_sha256", "historical-recorded-model")
     decks = header.get("decks", ["Recorded deck", "Recorded deck"])
-    return {"schema":SCHEMA,"id":identifier,"title":title,
+    version = 'mtg-kernel-viewer-recording/v2' if any(f['search'] and f['search'].get('replay') for f in frames) else SCHEMA
+    return {"schema":version,"id":identifier,"title":title,
         "description":"Illustrative self-play with a frozen model. Recorded behavior is not a playing-strength benchmark." if native else "Historical actor-visible diagnostic recording.",
         "perspective":exporter.perspective,"complete":complete,"coverage":"every-step" if native else "decision-snapshots",
         "identity":{"source":runtime.get("engine_commit", "unknown"),"runtime":runtime.get("executable_sha256", "unknown"),
