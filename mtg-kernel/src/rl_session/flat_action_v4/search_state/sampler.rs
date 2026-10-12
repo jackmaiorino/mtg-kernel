@@ -7,6 +7,15 @@ fn conflicts(
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    if crate::arahbo_v1::requires_successor(state)
+        || state
+            .engine
+            .event_history
+            .iter()
+            .any(crate::arahbo_v1::is_history)
+    {
+        return true;
+    }
     if state
         .engine
         .event_history

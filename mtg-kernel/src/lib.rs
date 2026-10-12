@@ -84,6 +84,7 @@ mod authority_public_capture_v1;
 pub mod authority_public_v1;
 #[allow(dead_code)]
 pub(crate) mod common_model_snapshot_v1;
+pub mod crystal_public_v1;
 pub mod effect;
 pub mod employment_public_v1;
 pub mod engine;
@@ -93,6 +94,7 @@ pub mod expanded_deck_training_v1;
 mod experimental_burn_net8_packed_v1;
 pub mod extra_turn_v1;
 mod fdn_raid_v1;
+mod fixed_source_damage_v3;
 pub mod frenzied_public_v1;
 pub mod garruk_public_v1;
 mod gorehorn_damage_v1;
@@ -105,6 +107,7 @@ pub mod human_opening_v1;
 pub mod native_expanded_training_run_v1;
 mod raid_entry_custody_v1;
 mod raid_entry_v1;
+pub mod rules_meaning_crystal_ordering_v1;
 pub mod rules_meaning_fiery_v1;
 pub mod rules_meaning_gourmand_v1;
 mod source_power_activation_v1;
@@ -589,5 +592,10 @@ pub mod rules_meaning_banishing_v1;
 pub mod rules_meaning_extra_turn_v1;
 pub mod rules_meaning_raid_entry_v1;
 
+pub mod arahbo_v1;
 pub mod banishing_public_v1;
 pub mod garruks_uprising_v1;
+
+pub mod rules_meaning_arahbo_v1;
+
+pub mod arahbo_public_v1;

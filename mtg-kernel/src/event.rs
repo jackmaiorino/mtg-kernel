@@ -1079,6 +1079,72 @@ pub enum CommittedEvent {
         removal_history_index: u64,
         draw_history_index: Option<u64>,
     },
+    CrystalPreventionBoundaryV1 {
+        boundary: Box<crate::effect::crystal_prevention_v1::BoundaryV1>,
+    },
+    CrystalShieldOperationV1 {
+        operation: crate::effect::crystal_prevention_v1::ShieldOperationV1,
+    },
+    CrystalExecutionV1 {
+        execution: Box<crate::effect::crystal_prevention_v1::ExecutionV1>,
+    },
+    CrystalDamageOperationV3 {
+        operation: Box<crate::effect::crystal_prevention_v1::DamageOperationV3>,
+    },
+    CrystalBatchPreparedV3 {
+        capture: Box<crate::effect::crystal_prevention_v1::BatchCaptureV2>,
+    },
+    CrystalProgramChoiceV3 {
+        operation: Box<crate::effect::crystal_prevention_v1::ProgramChoiceOperationV3>,
+    },
+    FixedDamageDepartureV3 {
+        departure: Box<crate::fixed_source_damage_v3::DepartureV3>,
+    },
+    FixedDamagePaidV3 {
+        payment: Box<crate::fixed_source_damage_v3::PaidV3>,
+    },
+    FixedDamageRemovedV3 {
+        removal: Box<crate::fixed_source_damage_v3::RemovedV3>,
+    },
+    GorehornCrystalBeginV1 {
+        begin: Box<crate::gorehorn_damage_v1::crystal::BeginV1>,
+    },
+    GorehornCrystalCompletionV1 {
+        completion: Box<crate::gorehorn_damage_v1::crystal::CompletionV1>,
+    },
+    ArahboEntryObservationV1 {
+        entry: Box<crate::arahbo_v1::EntryV1>,
+        effective_cat: bool,
+        was_token: bool,
+        sources: Vec<(
+            crate::state::AbilitySourceContractV4,
+            crate::arahbo_v1::RootV1,
+        )>,
+    },
+    ArahboTokenCaptureV1 {
+        capture: crate::arahbo_v1::CaptureV1,
+    },
+    ArahboTokenCollectedV1 {
+        capture_history_index: u64,
+    },
+    ArahboTokenPublishedV1 {
+        capture_history_index: u64,
+        item: Box<crate::state::StackItem>,
+    },
+    ArahboTokenRemovedV1 {
+        capture_history_index: u64,
+        item: Box<crate::state::StackItem>,
+        kind: crate::arahbo_v1::RemovalKindV1,
+    },
+    ArahboTokenCompletedV1 {
+        capture_history_index: u64,
+        removal_history_index: u64,
+        token_history_index: Option<u64>,
+    },
+    ArahboCounterInputV1 {
+        capture_history_index: u64,
+        item: Box<crate::state::StackItem>,
+    },
     /// Exact resolved Fiery death-shield installation.
     ExileIfDiesReplacementInstalledV1 {
         replacement: ActiveReplacement,
@@ -1096,6 +1162,8 @@ pub enum CommittedEvent {
         active_player: PlayerId,
     },
 }
+
+pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct HistoricalDamageSourceV1 {
@@ -1250,6 +1318,13 @@ pub fn apply_replacements(
         crate::standard_cards_v1::replace_damage(state, damage);
     }
     if let ProposedEvent::Damage(damage) = &proposed {
+        if crate::effect::crystal_prevention_v1::needs_choice(state, damage) {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                damage.source,
+            ));
+            return None;
+        }
         if !damage_cannot_be_prevented && crate::crystal_barricade_v1::prevents(state, damage) {
             return None;
         }
@@ -1313,7 +1388,7 @@ pub fn apply_replacements(
     }
 }
 
-fn replacement_applies(
+pub(crate) fn replacement_applies(
     repl: &ActiveReplacement,
     proposed: &ProposedEvent,
     state: &GameState,
@@ -1366,7 +1441,7 @@ fn replacement_applies(
 /// Applies `repl` to `proposed`, mutating the replacement's own bookkeeping
 /// in `state.engine.active_replacements` (e.g. decrementing/expiring a
 /// prevention shield's remaining count) as a side effect.
-fn replacement_apply(
+pub(crate) fn replacement_apply(
     repl: &ActiveReplacement,
     proposed: ProposedEvent,
     state: &mut GameState,
@@ -1383,6 +1458,15 @@ fn replacement_apply(
             ReplacementEffectKind::PreventNextDamage { remaining, .. },
             ProposedEvent::Damage(mut d),
         ) => {
+            if crate::effect::crystal_prevention_v1::shield_operation(state, repl, d.amount)
+                .is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    d.source,
+                ));
+                return None;
+            }
             let prevented = (*remaining).min(d.amount);
             d.amount -= prevented;
 
@@ -1782,6 +1866,159 @@ pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
 }
 
 pub(crate) fn propose_without_linked_aura_v1(state: &mut GameState, event: ProposedEvent) {
+    if crate::effect::crystal_prevention_v1::validate(state).is_err() {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            crate::ids::ObjectId(0),
+        ));
+        return;
+    }
+    propose_and_commit_inner(state, event);
+}
+/// Only the scoped pre-pop Crystal interpreter calls this while holding the
+/// privately constructed removed-item loan. Generic public begin/resume refuse it.
+pub(crate) fn propose_and_commit_crystal_owned(
+    state: &mut GameState,
+    damage: DamageProposed,
+    ctx: &crate::effect::ExecCtx,
+    op: &crate::effect::EffectOp,
+    path: &[u16],
+    owner: &crate::effect::crystal_prevention_v1::OwnerV1,
+) -> Result<u32, String> {
+    if !owner.permits_damage(state, &ProposedEvent::Damage(damage.clone())) {
+        return Err("Crystal damage lost private removed-item authority".into());
+    }
+    prepare_commit_crystal_damage(state, damage, ctx, op, path)
+}
+pub(crate) fn propose_and_commit_crystal_power_owned(
+    state: &mut GameState,
+    damage: DamageProposed,
+    capture: &crate::effect::crystal_prevention_v1::CreaturePowerCaptureV2,
+    owner: &crate::effect::crystal_prevention_v1::OwnerV1,
+) -> Result<u32, String> {
+    if !owner.permits_creature_power(state, capture, &ProposedEvent::Damage(damage.clone())) {
+        return Err("Crystal chosen-power damage lost private removed-item authority".into());
+    }
+    prepare_commit_crystal_damage(state, damage, &capture.ctx, &capture.op, &capture.path)
+}
+/// Separate actual interpreter operation. Completion alone cannot invent its
+/// replacement preparation or omit its accepted positive/fully-prevented result.
+fn prepare_commit_crystal_damage(
+    state: &mut GameState,
+    damage: DamageProposed,
+    ctx: &crate::effect::ExecCtx,
+    op: &crate::effect::EffectOp,
+    path: &[u16],
+) -> Result<u32, String> {
+    use crate::effect::crystal_prevention_v1::{BatchDamageV2, DamageOperationV3};
+    if crate::effect::temporary_control_v1::authority::validate(state).is_err()
+        || damage.amount <= 0
+        || damage.is_combat
+    {
+        return Err("Crystal damage operation has invalid input or foreign authority".into());
+    }
+    let preventers = crate::effect::crystal_prevention_v1::applicable(state, &damage);
+    let original = BatchDamageV2 {
+        source: damage.source,
+        target: damage.target,
+        amount: damage.amount,
+        touched: damage.touched_by.clone(),
+    };
+    let historical_source = damage.historical_source;
+    let prepared = apply_replacements(state, ProposedEvent::Damage(damage));
+    if state.engine.halted.is_some() {
+        return Err("Crystal damage preparation halted".into());
+    }
+    let output = match prepared {
+        Some(ProposedEvent::Damage(ref d)) => Some(BatchDamageV2 {
+            source: d.source,
+            target: d.target,
+            amount: d.amount,
+            touched: d.touched_by.clone(),
+        }),
+        None => None,
+        _ => return Err("Crystal damage operation changed proposal class".into()),
+    };
+    let mut damage_history = None;
+    if let Some(final_event) = prepared {
+        let gain = lifelink_gain_for(state, &final_event);
+        let at = u32::try_from(state.engine.event_history.len())
+            .map_err(|_| "Crystal damage history exceeds u32")?;
+        commit(state, final_event);
+        if !matches!(
+            state.engine.event_history.get(at as usize),
+            Some(CommittedEvent::Damage { .. })
+        ) {
+            return Err("Crystal positive damage lost actual committed occurrence".into());
+        }
+        damage_history = Some(at);
+        if let Some((player, amount)) = gain {
+            commit(state, ProposedEvent::life_gain(player, amount));
+        }
+    }
+    let at = u32::try_from(state.engine.event_history.len())
+        .map_err(|_| "Crystal operation history exceeds u32")?;
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::CrystalDamageOperationV3 {
+            operation: Box::new(DamageOperationV3 {
+                history_index: at,
+                ctx: ctx.clone(),
+                op: op.clone(),
+                path: path.to_vec(),
+                input: original,
+                historical_source,
+                preventers,
+                output,
+                damage_history,
+            }),
+        });
+    Ok(at)
+}
+pub(crate) fn propose_and_commit_crystal_discard_draw_owned(
+    state: &mut GameState,
+    capture: &crate::effect::crystal_prevention_v1::DiscardCaptureV2,
+    selected: crate::effect::EffectObjectBinding,
+    owner: &crate::effect::crystal_prevention_v1::OwnerV1,
+) {
+    if !owner.permits_discard_draw(state, capture, selected) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            capture.ctx.source,
+        ));
+        return;
+    }
+    propose_and_commit_inner(state, ProposedEvent::draw(capture.ctx.controller));
+}
+pub(crate) fn propose_and_commit_crystal_life_gain_owned(
+    state: &mut GameState,
+    player: crate::effect::PlayerRef,
+    amount: i32,
+    owner: &crate::effect::crystal_prevention_v1::OwnerV1,
+) {
+    let beneficiary = match player {
+        crate::effect::PlayerRef::Controller => owner.controller(),
+        crate::effect::PlayerRef::Opponent => owner.controller().opponent(),
+        _ => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                crate::ids::ObjectId(0),
+            ));
+            return;
+        }
+    };
+    let proposed = ProposedEvent::life_gain(beneficiary, amount);
+    if !owner.permits_life_gain(state, &proposed, player, amount) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            crate::ids::ObjectId(0),
+        ));
+        return;
+    }
+    propose_and_commit_inner(state, proposed);
+}
+fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
     if crate::effect::temporary_control_v1::authority::validate(state).is_err() {
         return;
     }
@@ -1815,7 +2052,7 @@ pub(crate) fn commit_garruk_initialized_entry(
             None,
             None,
             None,
-            None,
+            (None, None),
             (Some(entering), false),
         );
     }
@@ -1922,7 +2159,7 @@ fn commit_with_ability_lki(
         abilities_removed_before,
         frozen_death_captures,
         None,
-        None,
+        (None, None),
         (None, false),
     );
 }
@@ -1933,13 +2170,17 @@ fn commit_with_ability_lki_and_entry_batch(
     abilities_removed_before: Option<bool>,
     frozen_death_captures: Option<Vec<CommittedEvent>>,
     mut authority_batch: Option<&mut crate::authority_of_the_consuls_v1::EntryBatchV1>,
-    mut garruk_batch: Option<&mut crate::garruks_uprising_v1::EntryBatchV1>,
+    entry_batches: (
+        Option<&mut crate::garruks_uprising_v1::EntryBatchV1>,
+        Option<&mut crate::arahbo_v1::EntryBatchV1>,
+    ),
     entry_context: (
         Option<(ObjectId, crate::garruks_uprising_v1::EntryCharacteristicsV1)>,
         bool,
     ),
 ) {
     let (entering_characteristics, defer_raid_entry) = entry_context;
+    let (mut garruk_batch, mut arahbo_batch) = entry_batches;
     let mut event = event;
     if let ProposedEvent::ZoneChange(change) = &mut event {
         if change.to_zone == Zone::Graveyard
@@ -2412,6 +2653,11 @@ fn commit_with_ability_lki_and_entry_batch(
         crate::garruks_uprising_v1::record_single_entry(state, entry_history_index)
     }
 
+    if let Some(batch) = arahbo_batch.as_mut() {
+        batch.record(state, entry_history_index);
+    } else {
+        crate::arahbo_v1::record_single_entry(state, entry_history_index);
+    }
     if let Some(batch) = authority_batch.as_mut() {
         batch.record(entry_history_index);
     } else {
@@ -2479,13 +2725,92 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
         crate::effect::EffectObjectBinding,
     )>,
 ) {
-    let mut garruk_batch = crate::garruks_uprising_v1::EntryBatchV1::capture();
+    let garruk_batch = crate::garruks_uprising_v1::EntryBatchV1::capture();
+    let arahbo_batch = crate::arahbo_v1::EntryBatchV1::capture();
     let raid_history_start = state.engine.event_history.len();
-    let mut authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
+    if crate::effect::crystal_prevention_v1::validate(state).is_err() {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            crate::ids::ObjectId(0),
+        ));
+        return;
+    }
+    if let Some(source) = events.iter().find_map(|e| match e {
+        ProposedEvent::Damage(d)
+            if crate::effect::crystal_prevention_v1::needs_choice(state, d) =>
+        {
+            Some(d.source)
+        }
+        _ => None,
+    }) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        ));
+        return;
+    }
+    let authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
     let survivors: Vec<ProposedEvent> = events
         .into_iter()
         .filter_map(|e| apply_replacements(state, e))
         .collect();
+    commit_batch_survivors(
+        state,
+        survivors,
+        authority_batch,
+        EntryBatchCommitContextV1 {
+            garruk_batch,
+            arahbo_batch,
+            attachments,
+            raid_history_start,
+        },
+    );
+}
+/// The private owning driver has already finished every replacement choice.
+/// It cannot submit a foreign root, owner, source or recipient packet.
+pub(crate) fn commit_crystal_prepared_batch(
+    state: &mut GameState,
+    survivors: Vec<ProposedEvent>,
+    capture: &crate::effect::crystal_prevention_v1::BatchCaptureV2,
+    owner: &crate::effect::crystal_prevention_v1::OwnerV1,
+) {
+    if !owner.permits_batch(state, capture, &survivors) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            capture.ctx.source,
+        ));
+        return;
+    }
+    let authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
+    let context = EntryBatchCommitContextV1 {
+        garruk_batch: crate::garruks_uprising_v1::EntryBatchV1::capture(),
+        arahbo_batch: crate::arahbo_v1::EntryBatchV1::capture(),
+        attachments: Vec::new(),
+        raid_history_start: state.engine.event_history.len(),
+    };
+    commit_batch_survivors(state, survivors, authority_batch, context);
+}
+struct EntryBatchCommitContextV1 {
+    garruk_batch: Option<crate::garruks_uprising_v1::EntryBatchV1>,
+    arahbo_batch: Option<crate::arahbo_v1::EntryBatchV1>,
+    attachments: Vec<(
+        crate::effect::EffectObjectBinding,
+        crate::effect::EffectObjectBinding,
+    )>,
+    raid_history_start: usize,
+}
+fn commit_batch_survivors(
+    state: &mut GameState,
+    survivors: Vec<ProposedEvent>,
+    mut authority_batch: Option<crate::authority_of_the_consuls_v1::EntryBatchV1>,
+    context: EntryBatchCommitContextV1,
+) {
+    let EntryBatchCommitContextV1 {
+        mut garruk_batch,
+        mut arahbo_batch,
+        attachments,
+        raid_history_start,
+    } = context;
     #[cfg(feature = "standard-magezero-fixtures")]
     for event in &survivors {
         if let ProposedEvent::ZoneChange(change) = event {
@@ -2556,7 +2881,7 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
                 Some(removed),
                 captures,
                 authority_batch.as_mut(),
-                garruk_batch.as_mut(),
+                (garruk_batch.as_mut(), arahbo_batch.as_mut()),
                 (None, true),
             );
         }
@@ -2571,7 +2896,7 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
                 None,
                 captures,
                 authority_batch.as_mut(),
-                garruk_batch.as_mut(),
+                (garruk_batch.as_mut(), arahbo_batch.as_mut()),
                 (None, true),
             );
         }
@@ -2605,6 +2930,9 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
     }
 
     crate::raid_entry_custody_v1::capture_batch_entries(state, raid_history_start);
+    if let Some(batch) = arahbo_batch {
+        batch.finish(state);
+    }
     for (_, player, amount) in lifelink_gains {
         commit(state, ProposedEvent::life_gain(player, amount));
     }
@@ -3850,7 +4178,7 @@ mod authority_visibility_tests {
                     None,
                     None,
                     Some(&mut batch),
-                    None,
+                    (None, None),
                     (None, false),
                 );
                 // A typed physical hidden-characteristic boundary before
@@ -4008,7 +4336,7 @@ mod garruk_entry_tests {
                         None,
                         None,
                         None,
-                        Some(&mut batch),
+                        (Some(&mut batch), None),
                         (hidden, false),
                     );
                 }
@@ -4093,6 +4421,75 @@ mod garruk_entry_tests {
                 }
                 crate::garruks_uprising_v1::validate_state(&state).unwrap();
             }
+        }
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod arahbo_entry_tests {
+    use super::*;
+    use crate::arahbo_v1::future_tests::{cast, ready, settle};
+    use crate::arahbo_v1::{EntryBatchV1, RootV1};
+    use crate::engine;
+    use crate::ids::PlayerId;
+    use crate::policy_observation_v6::tests::put;
+    #[test]
+    #[ignore = "requires genuine Arahbo registration; physical characteristic boundary"]
+    fn nontoken_cat_permanent_does_not_require_creature_type_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor);
+            cast(&mut state, actor);
+            // Labeled physical layer-4 substrate: an accepted Equipment with Cat
+            // subtype, not a claim of a natural printed FDN type-grant producer.
+            let equipment = put(&mut state, actor, "Bonesplitter", Zone::Hand);
+            crate::event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(equipment, Zone::Battlefield),
+            );
+            let start = state.engine.event_history.len() - 1;
+            // Re-enter through the genuine event pipeline with its retained cached
+            // Cat characteristic. The definition remains a noncreature artifact.
+            crate::event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(equipment, Zone::Hand),
+            );
+            state
+                .objects
+                .get_mut(equipment)
+                .v4
+                .effective_subtype_ids
+                .push(crate::card_def::Subtype::Cat.stable_id());
+            let mut batch = EntryBatchV1::capture().unwrap();
+            // Cache reset on entry means this boundary belongs immediately before
+            // observation, after actual committed movement, as other typed tests do.
+            commit_with_ability_lki_and_entry_batch(
+                &mut state,
+                ProposedEvent::zone_change(equipment, Zone::Battlefield),
+                None,
+                None,
+                None,
+                (None, Some(&mut batch)),
+                (None, false),
+            );
+            state
+                .objects
+                .get_mut(equipment)
+                .v4
+                .effective_subtype_ids
+                .push(crate::card_def::Subtype::Cat.stable_id());
+            batch.finish(&mut state);
+            assert!(!engine::object_has_type(
+                &state,
+                equipment,
+                crate::card_def::CardType::Creature
+            ));
+            assert!(state.engine.event_history[start..].iter().any(|event|matches!(event,CommittedEvent::ArahboTokenCaptureV1 {capture} if capture.root==RootV1::OtherNontokenCatEntry)));
+            settle(&mut state);
+            assert_eq!(state.engine.event_history.iter().filter(|event|matches!(event,CommittedEvent::CreateToken {token_def,..} if Some(*token_def)==crate::card_def::card_id_by_name("Cat Token"))).count(),2);
         }
     }
 }

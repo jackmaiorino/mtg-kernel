@@ -30,6 +30,18 @@ Own branch `codex/fdn-fiery-current-source-20261012` composes preserved
 `8c53207a6aa9ad39d9bdaa0ee5eb89fe94e9b014`. Original source and old worktree
 remain retained. This is unregistered preparation, not gameplay acceptance.
 
+The current source also joins later Arahbo/Crystal checkpoint
+`7a7b17ef8bcc2ba1e7fabee08ce4923135a2d7b5`. All three separately reviewed
+Fiery modules remain exact blobs. Existing later EffectOp 213, CommittedEvent
+157, ReplacementEffectKind 3 and TargetSpec 84 variant prefixes remain exact;
+Fiery appends one, three, one and one respectively. Conflict resolution retains
+both families of sampler references and public module exports. Actual batch
+context retains Aura attachments, Garruk/Arahbo entry observers and the original
+Raid history origin; outer validation retains both Fiery and Arahbo before Aura.
+Eight existing consumer capabilities and their values remain intact, with Fiery
+still explicitly refused until the complete V33 successor is implemented.
+Catalog registrations, frozen pool inputs and profile identities are unchanged.
+
 Existing TargetSpec, EffectOp, ReplacementEffectKind and CommittedEvent variants
 remain an unchanged prefix. The optional dependent target appends physically and
 uses the already reserved stable target ID64; Condemn61, Run Away62, Divine63,

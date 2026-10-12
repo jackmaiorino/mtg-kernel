@@ -343,7 +343,7 @@ fn published_matches_base(state: &GameState, item: &StackItem, p: &PublishedV1) 
         }
         normalized.v4.squad_rallier_started_v1 = p.item.v4.squad_rallier_started_v1;
     }
-    normalized == *p.item
+    crate::gorehorn_damage_v1::publication_matches(state, &normalized, &p.item)
 }
 
 fn published_matches(state: &GameState, item: &StackItem, p: &PublishedV1) -> bool {
@@ -615,6 +615,10 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
       if o.item.v4.stack_item_id==p.item.v4.stack_item_id)
                         })
                         .count()
+                        + crate::gorehorn_damage_v1::crystal::completed_count(
+                            state,
+                            p.item.v4.stack_item_id,
+                        )
                         == 1
                 } else {
                     let receipts = state
@@ -993,6 +997,71 @@ mod tests {
                 assert_eq!(before, serde_json::to_vec(&bad).unwrap());
                 assert_advance_halt_only(bad);
             }
+        }
+    }
+
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    fn genuine_gorehorn_prospective_target_placement_then_mandatory_live_publication_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, source) = entered(actor, "Gorehorn Raider", true);
+            let mut bad: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            let pending = bad.raid_waiting_v1.as_mut().unwrap().first_mut().unwrap();
+            if let EffectOp::Conditional { then, .. } = &mut pending.effect {
+                **then = EffectOp::DealDamage {
+                    target: crate::effect::TargetRef::Target(0),
+                    amount: 3,
+                };
+            } else {
+                panic!("genuine printed conditional");
+            }
+            let before = serde_json::to_vec(&bad).unwrap();
+            assert!(crate::engine::step(&mut bad, crate::engine::Action::Pass).is_err());
+            assert_eq!(before, serde_json::to_vec(&bad).unwrap());
+            assert_advance_halt_only(bad);
+            assert!(matches!(crate::engine::advance_until_decision(&mut state),
+                crate::engine::Decision::ChooseTargets { legal_targets, .. }
+                if legal_targets.contains(&crate::state::Target::Player(actor.opponent()))));
+            crate::engine::step(
+                &mut state,
+                crate::engine::Action::ChooseTarget(crate::state::Target::Player(actor.opponent())),
+            )
+            .unwrap();
+            assert!(matches!(
+                crate::engine::advance_until_decision(&mut state),
+                crate::engine::Decision::CastSpellOrPass { .. }
+            ));
+            let item = state
+                .stack
+                .iter()
+                .find(|i| i.source == source)
+                .unwrap()
+                .clone();
+            assert!(!item.v4.gorehorn_published_v1.is_empty());
+            assert_eq!(
+                crate::engine::validated_stack_item_target_spec(&item, &state).unwrap(),
+                Some(crate::card_def::TargetSpec::AnyTarget)
+            );
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            let mut changed = item.clone();
+            changed.v4.gorehorn_published_v1 = Default::default();
+            let before = serde_json::to_vec(&restored).unwrap();
+            assert!(crate::engine::validated_stack_item_target_spec(&changed, &restored).is_err());
+            assert_eq!(before, serde_json::to_vec(&restored).unwrap());
+            restored
+                .engine
+                .event_history
+                .retain(|e| !matches!(e, CommittedEvent::GorehornPublishedV1 { .. }));
+            let before = serde_json::to_vec(&restored).unwrap();
+            assert!(crate::engine::validated_stack_item_target_spec(&item, &restored).is_err());
+            assert!(crate::engine::step(&mut restored, crate::engine::Action::Pass).is_err());
+            assert_eq!(before, serde_json::to_vec(&restored).unwrap());
+            assert_advance_halt_only(restored);
         }
     }
 }
