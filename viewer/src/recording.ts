@@ -35,9 +35,25 @@ const policySchema = z.object({
   kind: z.literal('hamilton_q64'), masses: z.array(z.string().regex(/^\d{1,20}$/)),
   sampled: integer, value: z.number().finite(), valueScale: text,
 }).strict();
+const replaySchema = z.object({
+  schema: z.literal('mtg-kernel-search-replay/v1'), complete: z.literal(true), key: keySchema, worlds: text,
+  nodes: z.array(z.object({ id: u32, actor: seat, visits: u32, priors: z.array(u32),
+    actions: z.array(actionSchema).min(1), children: z.array(z.array(u32)),
+    edgeVisits: z.array(u32), edgeValueSums: z.array(i64),
+  }).strict()).min(1).max(513),
+  simulations: z.array(z.object({ ordinal: u32, value: i64,
+    reason: z.enum(['natural','expanded','depth','transition_budget','coverage']),
+    choices: z.array(z.object({ node: u32, action: u32,
+      mode: z.enum(['coverage','round_robin','unvisited','prior_free','puct']),
+      scores: z.array(i64.nullable()), board: boardSchema,
+    }).strict()).min(1).max(64), leaf: boardSchema,
+  }).strict()).min(1).max(512),
+}).strict();
+export type SearchReplay = z.infer<typeof replaySchema>;
 const searchSchema = z.object({
   digest: hash, stats: z.array(z.object({ index: u32, visits: u32, valueSum: i64, meanValue: i64 }).strict()),
   simulations: u32, transitions: u32, nodes: u32, tier: text, stabilityHalves: z.boolean(), valueScale: text,
+  replay: replaySchema.optional(),
 }).strict();
 const frameSchema = z.object({
   id: text, key: keySchema, board: boardSchema, after: boardSchema,
@@ -46,7 +62,7 @@ const frameSchema = z.object({
   terminal: z.object({ kind: text, winner: seat.nullable() }).strict().nullable(),
 }).strict();
 const recordingSchema = z.object({
-  schema: z.literal(SCHEMA), id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,95}$/), title: text,
+  schema: z.enum([SCHEMA,'mtg-kernel-viewer-recording/v2']), id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,95}$/), title: text,
   description: text, perspective: seat, complete: z.boolean(), coverage: z.enum(['every-step', 'decision-snapshots']),
   identity: z.object({ source: text, runtime: text, checkpoint: text, cardDatabase: text, sourceSha256: hash }).strict(),
   seats: z.tuple([z.object({ name: text, deck: text }).strict(), z.object({ name: text, deck: text }).strict()]),
@@ -62,6 +78,8 @@ export type Seat = 'p0' | 'p1';
 export const seatIndex = (s: Seat) => s === 'p0' ? 0 : 1;
 export const objectList = (b: Board) => [...b.players.flatMap(p => [...p.battlefield, ...p.hand, ...p.graveyard]), ...b.exile];
 export const probability = (mass: string) => Number(BigInt(mass)) / 2 ** 64;
+export const comparePolicyMasses = (a: string, b: string) => BigInt(a) > BigInt(b) ? -1 : BigInt(a) < BigInt(b) ? 1 : 0;
+export const policyFavorite = (masses: string[]) => masses.reduce((best, mass, index) => comparePolicyMasses(mass, masses[best]) < 0 ? index : best, 0);
 export const frameKey = (k: Frame['key']) => `${k.episode}:${k.step}:${k.physical}:${k.substep}:${k.actor}`;
 export const isRoutine = (f: Frame) => ['pass', 'pass_priority'].includes(f.actions[f.executed].kind) &&
   JSON.stringify(f.board.players) === JSON.stringify(f.after.players) &&
@@ -101,11 +119,50 @@ export function parseRecording(raw: unknown): Recording {
       const indices = f.search.stats.map(s => s.index);
       if (indices.length !== f.actions.length || new Set(indices).size !== indices.length || indices.some(i => i >= f.actions.length)) throw new Error('Search action mapping is invalid');
       if (f.search.stats.some(s => s.meanValue !== (s.visits ? BigInt(s.valueSum) / BigInt(s.visits) : 0n).toString())) throw new Error('Search mean differs from captured visit/value sum');
+      if (f.search.replay) {
+        if (r.schema === SCHEMA) throw new Error('Search replay requires recording format v2');
+        validateReplay(f, r);
+      }
     }
   }
   if (r.bookmarks.some(b => !ids.has(b.frame))) throw new Error('Bookmark points to a missing decision');
   if (r.complete && !r.frames.at(-1)?.terminal) throw new Error('Complete game has no recorded terminal state');
   return r;
+}
+
+function validateReplay(frame: Frame, recording: Recording) {
+  const search = frame.search!, replay = search.replay!;
+  if (frameKey(replay.key) !== frameKey(frame.key)) throw new Error('Search replay belongs to a different decision');
+  if (replay.nodes.length !== search.nodes || replay.simulations.length !== search.simulations ||
+      JSON.stringify(replay.nodes[0].actions) !== JSON.stringify(frame.actions) || replay.nodes[0].actor !== frame.key.actor) throw new Error('Search replay root mapping differs');
+  const visits = replay.nodes.map(n => n.actions.map(() => 0));
+  const sums = replay.nodes.map(n => n.actions.map(() => 0n));
+  for (const [i,n] of replay.nodes.entries()) {
+    if (n.id !== i || n.actions.some((a,j) => a.index !== j) ||
+      [n.priors,n.children,n.edgeVisits,n.edgeValueSums].some(a => a.length !== n.actions.length) ||
+      n.priors.reduce((s,v) => s+v,0) !== 1000000 || n.children.flat().some(c => c >= replay.nodes.length)) throw new Error('Broken search node or action reference');
+  }
+  let transitions = 0;
+  for (const [i,s] of replay.simulations.entries()) {
+    if (s.ordinal !== i || s.choices[0].node !== 0) throw new Error('Search simulation order is invalid');
+    for (const [j,c] of s.choices.entries()) {
+      const n = replay.nodes[c.node];
+      if (!n || c.action >= n.actions.length || c.scores.length !== n.actions.length) throw new Error('Broken search choice reference');
+      if (j > 0) { const p = s.choices[j-1]; if (!replay.nodes[p.node].children[p.action].includes(c.node)) throw new Error('Search path is not in the captured graph'); }
+      visits[c.node][c.action]++; sums[c.node][c.action] += BigInt(s.value); transitions++;
+    }
+    for (const b of [...s.choices.map(c => c.board),s.leaf]) {
+      if (b.players.some(p => p.hand.length)) throw new Error('Hypothetical search exposes a sampled hand');
+      const objects = objectList(b), ids = new Set(objects.map(o => o.id));
+      if (ids.size !== objects.length || objects.some(o => !recording.cards[o.card]) ||
+        b.combat.some(c => !ids.has(c.attacker) || c.blockers.some(id => !ids.has(id)))) throw new Error('Broken hypothetical board reference');
+    }
+  }
+  if (transitions !== search.transitions) throw new Error('Search replay transition count differs');
+  for (const [i,n] of replay.nodes.entries()) {
+    if (n.edgeVisits.some((v,j) => v !== visits[i][j]) || n.edgeValueSums.some((v,j) => BigInt(v) !== sums[i][j])) throw new Error('Replay differs from final search node statistics');
+  }
+  if (search.stats.some(s => s.visits !== visits[0][s.index] || BigInt(s.valueSum) !== sums[0][s.index])) throw new Error('Replay differs from its root digest table');
 }
 
 export async function verifySearchDigests(r: Recording): Promise<void> {

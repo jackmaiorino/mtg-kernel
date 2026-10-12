@@ -567,6 +567,21 @@ pub(crate) struct Keyer<S: std::borrow::BorrowMut<KeyStats>> {
 }
 
 impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
+    pub(crate) fn with_history(
+        mode: KeyMode,
+        stats: S,
+        history: &[super::e_supported::VisibleFrame],
+    ) -> Result<Self, PlayErr> {
+        let mut keyer = Self::new(mode, stats);
+        for frame in history {
+            if frame.selected as usize >= frame.menu.len() {
+                return Err(PlayErr::Fault("E history action outside menu".into()));
+            }
+            let step = keyer.key_raw(frame.observation.clone(), frame.menu.clone())?;
+            keyer.advance(step, frame.selected);
+        }
+        Ok(keyer)
+    }
     pub(crate) fn new(mode: KeyMode, stats: S) -> Self {
         Self {
             mode,

@@ -1,11 +1,42 @@
 import { describe, expect, it } from 'vitest';
 import fixture from './fixtures/actor-visible.json';
 import native from './fixtures/native-root-excerpt.json';
-import { parseRecording, verifySearchDigests } from '../src/recording';
+import replayFixture from './fixtures/search-replay.json';
+import { initialSearchPlayback, searchReducer, searchEvents, rootHistory } from '../src/search-playback';
+import { comparePolicyMasses, policyFavorite, parseRecording, verifySearchDigests } from '../src/recording';
 import { initialPlayback, playbackReducer } from '../src/playback';
 
 const copy = () => structuredClone(fixture);
+describe('recorded search replay',()=>{
+  it('loads v2 and reconciles exact root statistics',async()=>{
+    const r=parseRecording(replayFixture);await verifySearchDigests(r);
+    const replay=r.frames[0].search!.replay!,history=rootHistory(replay);
+    expect(history[0].visits).toEqual([0,0]);expect(history.at(-1)?.sums).toEqual([900n,-500n]);
+    expect(searchEvents(replay).map(e=>e.phase)).toEqual(['select','evaluate','backup','select','evaluate','backup']);
+  });
+  it('rejects another decision, broken trace sums and exposed sampled hands',()=>{
+    const key=structuredClone(replayFixture);key.frames[0].search!.replay!.key.step++;
+    expect(()=>parseRecording(key)).toThrow(/different decision/);
+    const sums=structuredClone(replayFixture);sums.frames[0].search!.replay!.simulations[0].value='901';
+    expect(()=>parseRecording(sums)).toThrow(/statistics/);
+    const privateCards=parseRecording(replayFixture);privateCards.frames[0].search!.replay!.simulations[0].leaf.players[0].hand=structuredClone(parseRecording(native).frames[0].board.players[0].hand);
+    expect(()=>parseRecording(privateCards)).toThrow(/sampled hand/);
+  });
+  it('seeking cancels playback and stops at the last event',()=>{
+    const playing={...initialSearchPlayback,playing:true};
+    expect(searchReducer(playing,{type:'seek',event:4})).toMatchObject({event:4,playing:false,epoch:1});
+    expect(searchReducer({...playing,event:5},{type:'advance',length:6}).playing).toBe(false);
+  });
+});
 describe('versioned recordings', () => {
+  it('ranks nearly equal Q64 masses without losing their exact favorite', () => {
+    const masses = ['9223372036854775807', '9223372036854775809'];
+    expect(Number(masses[0])).toBe(Number(masses[1]));
+    expect(masses.reduce((sum, mass) => sum + BigInt(mass), 0n)).toBe(1n << 64n);
+    expect(policyFavorite(masses)).toBe(1);
+    expect([0,1].sort((a,b) => comparePolicyMasses(masses[a], masses[b]))).toEqual([1,0]);
+    expect(policyFavorite(['9223372036854775808','9223372036854775808'])).toBe(0);
+  });
   it('verifies actual recorded root digests, including their work-count suffix', async () => {
     await expect(verifySearchDigests(parseRecording(native))).resolves.toBeUndefined();
   });

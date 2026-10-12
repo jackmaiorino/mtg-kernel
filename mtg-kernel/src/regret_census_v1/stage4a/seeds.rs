@@ -74,6 +74,13 @@ pub(crate) struct RootSeeds {
 
 impl RootSeeds {
     pub(crate) fn get(&self, purpose: Purpose, arm: &str, index: u64, path: &[u8]) -> u64 {
+        if self.model == super::e_supported::METHOD {
+            let key = serde_json::json!({"arm":arm,"case_id":self.root,"index":index,
+                "namespace":super::e_supported::METHOD,"path":path,"role":purpose.label()});
+            let digest = Sha256::digest(serde_json::to_vec(&key).expect("seed JSON"));
+            return u64::from_le_bytes(digest[..8].try_into().expect("eight bytes"))
+                & i64::MAX as u64;
+        }
         seed(&self.model, &self.root, purpose, arm, index, path)
     }
 

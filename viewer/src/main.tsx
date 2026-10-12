@@ -2,8 +2,9 @@ import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { LayoutGroup, MotionConfig, motion, useReducedMotion } from 'motion/react';
 import { ArrowDown, ArrowLeft, ArrowRight, BookOpen, Check, ChevronDown, ChevronRight, CircleHelp, Cpu, ExternalLink, Eye, Focus, GitBranch, Layers, Maximize2, Pause, Play, RotateCcw, Shield, Sparkles, Upload, X } from 'lucide-react';
-import { type Board, type CardObject, type Frame, type Recording, type Seat, MAX_BYTES, isRoutine, objectList, probability, seatIndex } from './recording';
+import { type Board, type CardObject, type Frame, type Recording, type Seat, MAX_BYTES, comparePolicyMasses, policyFavorite, isRoutine, objectList, probability, seatIndex } from './recording';
 import { initialPlayback, playbackReducer } from './playback';
+import { SearchReplayView } from './SearchReplay';
 import './style.css';
 
 const glossary: Record<string, string> = {
@@ -85,6 +86,7 @@ function Connections({ board, refs, container }: { board: Board; refs: string[];
 function App() {
   const [recording, setRecording] = useState<Recording | null>(null);
   const [assetBase, setAssetBase] = useState('');
+  const [demoGames,setDemoGames]=useState<{id:string;title?:string}[]>([]);
   const [status, setStatus] = useState('Loading the studio');
   const [error, setError] = useState('');
   const [playback, dispatch] = useReducer(playbackReducer, initialPlayback);
@@ -135,6 +137,7 @@ function App() {
       if (!response.ok) throw new Error('Demo recording unavailable. Import a viewer recording to explore it locally.');
       return response.json();
     }).then(async (manifest: { games: { id: string; file: string; sha256: string }[] }) => {
+      setDemoGames(manifest.games);
       const game = manifest.games.find(g => g.id === params.get('game')) ?? manifest.games[0];
       if (!game || !/^[-a-zA-Z0-9_/]+\.json$/.test(game.file) || game.file.split('/').includes('..')) throw new Error('Invalid demo manifest');
       const response = await fetch(`${import.meta.env.BASE_URL}demo/${game.file}`, { signal: abort.signal });
@@ -150,7 +153,10 @@ function App() {
   useEffect(() => {
     if (!recording || !frame) return;
     setSelectedAction(null); setSelectedCard(null); setShowAll(false); setActionPage(0); setZone(null);
-    window.history.replaceState(null, '', `#${new URLSearchParams({ game: recording.id, decision: frame.id })}`);
+    const oldParams=new URLSearchParams(window.location.hash.slice(1));
+    const nextParams=new URLSearchParams({game:recording.id,decision:frame.id});
+    if(oldParams.get('game')===recording.id&&oldParams.get('decision')===frame.id&&oldParams.has('searchEvent'))nextParams.set('searchEvent',oldParams.get('searchEvent')!);
+    window.history.replaceState(null, '', `#${nextParams}`);
   }, [recording, frame]);
   useEffect(() => {
     if (!playback.playing || !recording || !frame || modalOpen) return;
@@ -188,19 +194,24 @@ function App() {
     const listener = () => {
       if (!recording) return;
       const params = new URLSearchParams(window.location.hash.slice(1));
+      const game = params.get('game');
+      if (game !== recording.id && demoGames.some(candidate => candidate.id === game)) {
+        window.location.reload();
+        return;
+      }
       const index = recording.frames.findIndex(f => f.id === params.get('decision'));
-      if (params.get('game') === recording.id && index >= 0) dispatch({ type: 'seek', index });
+      if (game === recording.id && index >= 0) dispatch({ type: 'seek', index });
     };
     window.addEventListener('hashchange', listener); return () => window.removeEventListener('hashchange', listener);
-  }, [recording]);
+  }, [recording, demoGames]);
 
   const ranked = useMemo(() => {
     if (!frame) return [];
     const stats = new Map(frame.search?.stats.map(s => [s.index, s]));
-    return frame.actions.map(action => ({ action, mass: frame.policy ? probability(frame.policy.masses[action.index]) : 0, stat: stats.get(action.index) }))
-      .sort((a, b) => view === 'search' && frame.search ? (b.stat?.visits ?? 0) - (a.stat?.visits ?? 0) || a.action.index - b.action.index : b.mass - a.mass || a.action.index - b.action.index);
+    return frame.actions.map(action => ({ action, numerator: frame.policy?.masses[action.index] ?? '0', mass: frame.policy ? probability(frame.policy.masses[action.index]) : 0, stat: stats.get(action.index) }))
+      .sort((a, b) => view === 'search' && frame.search ? (b.stat?.visits ?? 0) - (a.stat?.visits ?? 0) || a.action.index - b.action.index : comparePolicyMasses(a.numerator, b.numerator) || a.action.index - b.action.index);
   }, [frame, view]);
-  const mostLikely = frame?.policy ? [...frame.policy.masses].map(probability).indexOf(Math.max(...frame.policy.masses.map(probability))) : -1;
+  const mostLikely = frame?.policy ? policyFavorite(frame.policy.masses) : -1;
   const visitTotal = frame?.search?.stats.reduce((n, s) => n + s.visits, 0) ?? 0;
   const featured = recording ? seatIndex(recording.perspective) : 0;
   const opponent = 1 - featured;
@@ -223,6 +234,7 @@ function App() {
   return <MotionConfig reducedMotion="user"><div className="studio">
     <header className="topbar" inert={modalOpen}><a className="brand" href={import.meta.env.BASE_URL} aria-label="MTG Kernel Decision Studio"><span className="brand-mark"><GitBranch size={20} /></span><span>MTG <b>KERNEL</b><small>DECISION STUDIO</small></span></a><div className="topbar-center"><span className="status-dot" /> Recorded gameplay</div><nav><button className="quiet-button" onClick={() => setShowAbout(true)}><BookOpen size={15} /><span>About the agent</span></button><button className="quiet-button" onClick={() => fileRef.current?.click()}><Upload size={15} /><span>Import recording</span></button><input ref={fileRef} hidden type="file" accept=".json,application/json" onChange={async event => { const file = event.target.files?.[0]; if (!file) return; if (file.size > MAX_BYTES) { setError('Recording exceeds the 64 MiB viewer limit'); return; } openText(await file.text(), ''); event.target.value = ''; }} /></nav></header>
     <main inert={modalOpen}>
+      {recording&&demoGames.length>1&&<label className="game-selector">Recorded game <select aria-label="Recorded game" value={recording.id} onChange={e=>{const game=e.target.value;if(demoGames.some(g=>g.id===game))window.location.assign(`${import.meta.env.BASE_URL}?game=${encodeURIComponent(game)}#game=${encodeURIComponent(game)}`);}}>{!demoGames.some(g=>g.id===recording.id)&&<option value={recording.id}>Imported recording</option>}{demoGames.map(g=><option key={g.id} value={g.id}>{g.title??g.id.replace(/-/g,' ')}</option>)}</select></label>}
       <div className="intro"><div><div className="eyebrow"><span className="little-line" /> MACHINE INTELLIGENCE, AT THE TABLE</div><h1>Every move is a decision.</h1><p>Watch the game. Explore the alternatives. See what the agent chose.</p></div><button className="perspective" onClick={() => setHelp('Perspective')}><Eye size={16} /> Agent’s perspective</button></div>
       {status && <div role="status" className="notice">{status}…</div>}
       {error && <div role="alert" className="notice error"><span>{error}</span><button onClick={() => setError('')} aria-label="Dismiss error"><X size={16} /></button></div>}
@@ -254,8 +266,10 @@ function App() {
             {frame.search && <div className="search-summary"><GitBranch size={15} /><div><strong>{frame.policy && frame.policy.sampled !== frame.executed ? 'Search changed the policy sample' : 'Recorded search choice'}</strong><span>{frame.search.simulations.toLocaleString()} simulations · {frame.search.transitions.toLocaleString()} transitions · {frame.search.tier}</span></div></div>}
             {(frame.policy || frame.search) && <details className="value-details"><summary>Interpret these numbers <ChevronDown size={12} /></summary><p>Selection probability describes the sampler’s behavior. It is not confidence that a move is correct.</p><p>{view === 'search' && frame.search ? frame.search.valueScale : frame.policy?.valueScale}</p>{frame.policy && <p>Position value: {frame.policy.value.toFixed(3)}. Perspective: acting player.</p>}{frame.search && <p>Search visits measure exploration. Value estimates use the captured scale; these are not calibrated win probabilities.</p>}</details>}
             <div className="inspector-note"><Eye size={13} /><span>Recorded outputs. No model runs in your browser.</span></div>
+            {frame.search?.replay ? <button className="search-watch" onClick={()=>{dispatch({type:'seek',index:playback.index});document.getElementById('search-replay')?.scrollIntoView({behavior:reduceMotion?'instant':'smooth',block:'start'});}}><GitBranch size={15}/>Watch this search unfold</button> : view==='search'&&frame.search&&<p className="search-replay-missing">Search replay not recorded at this decision.</p>}
           </aside>
         </div>
+        {frame.search?.replay && <SearchReplayView key={`${recording.identity.sourceSha256}:${frame.id}`} frame={frame} recording={recording} assetBase={assetBase} onInteract={()=>{if(playback.playing||playback.after)dispatch({type:'seek',index:playback.index});}}/>}
         <section className="guided-section" aria-label="Guided moments"><div className="section-heading"><div><span className="eyebrow">LOOK A LITTLE CLOSER</span><h2>Three moments worth exploring.</h2></div><span className="authored-label"><BookOpen size={13} /> Authored commentary</span></div><div className="moment-grid">{recording.bookmarks.map((b, i) => <button key={b.frame} className={`moment ${b.frame === frame.id ? 'moment-active' : ''}`} onClick={() => dispatch({ type: 'seek', index: recording.frames.findIndex(f => f.id === b.frame) })}><span className="moment-number">0{i + 1}</span><span className="moment-content"><strong>{b.title}</strong><span>{b.situation}</span></span><ChevronRight size={17} /></button>)}</div>{bookmark && <div className="commentary" aria-live="polite"><span><b>Alternatives</b>{bookmark.alternatives}</span><span><b>Observed consequence</b>{bookmark.consequence}</span></div>}</section>
         <details className="event-log"><summary>Every recorded decision <span>{recording.frames.length} decisions</span><ChevronDown size={14} /></summary><div className="log-content">{(() => { const result = []; let i = 0; while (i < recording.frames.length) { const start = i; if (isRoutine(recording.frames[i])) { while (i < recording.frames.length && isRoutine(recording.frames[i])) i++; result.push(<details key={start}><summary>{i - start} routine priority passes</summary>{recording.frames.slice(start, i).map((f, offset) => <button key={f.id} onClick={() => dispatch({ type: 'seek', index: start + offset })}>#{start + offset + 1} · {cleanLabel(f.actions[f.executed].label)}</button>)}</details>); } else { const f = recording.frames[i]; result.push(<button key={f.id} onClick={() => dispatch({ type: 'seek', index: start })}>#{i + 1} · Round {f.board.turn} · {cleanLabel(f.actions[f.executed].label)}</button>); i++; } } return result; })()}</div></details>
       </>}

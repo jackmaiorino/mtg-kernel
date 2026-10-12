@@ -22,7 +22,7 @@ use std::sync::Mutex;
 
 mod duel;
 mod search;
-mod stage4a;
+pub(crate) mod stage4a;
 mod validity;
 
 pub(crate) use stage4a::decision_replay_key;
