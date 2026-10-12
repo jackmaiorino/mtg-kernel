@@ -331,3 +331,6 @@ impl std::hash::Hash for ChoiceV1 {
             .hash(state);
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -1,6 +1,6 @@
 # Heraldic Banner source preparation
 
-Owned base `3cb3f10ebaf54a970a53f296d9dc349d7ba05c86`. This first checkpoint supplies immutable definition descriptors and source design only. Entry execution, precise meaning and Public/HumanV36 are still in progress. Heraldic Banner stays unregistered; no ID, metadata, catalog/profile, native, model/sampler or gameplay admission is changed.
+Owned base `3cb3f10ebaf54a970a53f296d9dc349d7ba05c86`. The current intermediate source supplies immutable descriptors and owned entry/batch color execution. Precise meaning and Public/HumanV36 are still in progress. Heraldic Banner stays unregistered; no ID, metadata, catalog/profile, native, model/sampler or gameplay admission is changed.
 
 Pinned Mage `a5c90fe180021e70e2a644ade00eeab07f857a40`, `Mage.Sets/src/mage/cards/h/HeraldicBanner.java`:2739 actual Git bytes, SHA-256 `1d9cc1bbc53db1ed859703745c3910752197979aafc2f063686e351ee1ebd8d0`. Printed behavior is a colorless artifact costing{3}: **as it enters**, choose a color; creatures its current controller controls of that color get+1/+0; tap to add one mana of that chosen color. Legal choices are exactly W/U/B/R/G. This is a pre-entry choice, not an ETB trigger, colorless choice or permanent chosen-controller grant.
 
@@ -15,3 +15,5 @@ V36 will use genuine common V8/Ward/Raid storage with the ten earlier capability
 Working checkpoint: generalized linked-entry runner and Banner lifecycle skeleton are retained as incomplete source. Event variants, actual entry hooks, typed decisions and consumers are not yet integrated. This checkpoint is not build-ready and has no native verification.
 
 Second working checkpoint retains the actual entry/batch hook skeleton, ordered color replay and chosen-color initialization before observers. Exhaustive frozen consumers and selected V36 integration remain incomplete; this is still not a build-ready deliverable. Actual parent Native84 compile prerequisites will be composed before final source review.
+
+The actual Native84 source prerequisites from parent `a30ee86959735529f306b19f128965072f7725ae` are composed as `e6dcb69fb`. This includes the existing serialized OperationV1 Hash implementation, not a second representation. Current core fixtures comprise one all-catalog absence/Gate preservation group and three ignored genuine printing groups; all are uncompiled and unexecuted. The entire lane remains intermediate until the distinct public/backend/Human consumer and its frozen refusals are complete.
