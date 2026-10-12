@@ -24,6 +24,14 @@ pub enum OperationV1 {
     },
 }
 
+impl Hash for OperationV1 {
+    fn hash<H: Hasher>(&self, hasher: &mut H) {
+        serde_json::to_vec(self)
+            .expect("typed linked operation serializes")
+            .hash(hasher);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnswerV1 {
     pub choice: HostChoiceV1,

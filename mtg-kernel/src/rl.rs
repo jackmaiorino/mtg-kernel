@@ -8349,6 +8349,7 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
                             | crate::effect::EffectTargetSelectionPurpose::Hideaway { .. }
                             | crate::effect::EffectTargetSelectionPurpose::DiscardDraw { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { .. }
                             | crate::effect::EffectTargetSelectionPurpose::WardCards { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand {
