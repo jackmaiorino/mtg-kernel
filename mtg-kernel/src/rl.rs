@@ -1959,6 +1959,11 @@ fn build_observation_common_v2(
     text_mode: ObservationTextModeV2,
     capabilities: (bool, bool, bool, bool, bool, bool),
 ) -> Result<ObservationV2> {
+    if crate::fiery_annihilation_v1::requires_successor(state) {
+        return Err(RlContractError(
+            "Fiery Annihilation requires its selected V33 public/Human successor".into(),
+        ));
+    }
     let (
         accept_cant_block,
         accept_temporary_control,

@@ -4328,7 +4328,8 @@ fn flat_validate_expected_decision_v1(
     }
     // The frozen flat formats cannot represent these extended mechanics or
     // numeric ranges. Refuse before publishing any incomplete buffers.
-    if (crate::combat_static_rules_v1::requires_successor(&session.state)
+    if crate::fiery_annihilation_v1::requires_successor(&session.state)
+        || (crate::combat_static_rules_v1::requires_successor(&session.state)
         && session.flat_action_contract_mode != FlatActionContractModeV1::JuggernautV25)
         || session.state.objects.iter().any(|(_, object)| {
         i16::try_from(object.counters.plus1_plus1).is_err()

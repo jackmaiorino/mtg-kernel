@@ -7,6 +7,47 @@ use crate::state::{
     AbilitySourceContractV4, GameState, ObjectLinkV4, StackTargetContractV4, Target, Zone,
 };
 
+/// Predecessor consumers lack the dependent target relation and replacement
+/// lifetime, including the original history after active expiry.
+pub(crate) fn requires_successor(state: &GameState) -> bool {
+    state.engine.pending_cast.as_ref().is_some_and(|pending| {
+        pending.target_spec == TargetSpec::CreatureThenUpToOneAttachedEquipment
+    }) || state
+        .stack
+        .iter()
+        .chain(
+            state
+                .engine
+                .pending_effect
+                .as_ref()
+                .map(|pending| &pending.resolving_item),
+        )
+        .any(|item| {
+            item.inline_effect == Some(crate::effect::EffectOp::FieryAnnihilation)
+                || state
+                    .objects
+                    .try_get(item.source)
+                    .and_then(|source| crate::card_def::CARD_DEFS.get(source.card_def as usize))
+                    .is_some_and(|def| {
+                        (def.spell_effect)() == Some(crate::effect::EffectOp::FieryAnnihilation)
+                    })
+        })
+        || state.engine.active_replacements.iter().any(|replacement| {
+            matches!(
+                replacement.kind,
+                crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. }
+            )
+        })
+        || state.engine.event_history.iter().any(|event| {
+            matches!(
+                event,
+                crate::event::CommittedEvent::ExileIfDiesReplacementInstalledV1 { .. }
+                    | crate::event::CommittedEvent::ExileIfDiesReplacementExpiredV1 { .. }
+                    | crate::event::CommittedEvent::ExileIfDiesReplacementCleanupV1 { .. }
+            )
+        })
+}
+
 pub(crate) fn original_battlefield_target(
     state: &GameState,
     target: Target,
@@ -168,6 +209,24 @@ mod tests {
     use crate::card_def::Keywords;
     use crate::engine::{self, Action, Decision, EffectDuration, Layers, UntilEndOfTurnEffect};
     use crate::policy_observation_v6::tests::{put, ready_state};
+
+    fn assert_predecessor_observation_refuses(state: &GameState, actor: PlayerId) {
+        let before = serde_json::to_vec(state).unwrap();
+        let result = crate::rl::observe_policy_v6(
+            state,
+            &crate::policy_surface_v5::PolicySurfaceV5::new_for_session(),
+            actor,
+            0,
+            0,
+            0,
+            1,
+        );
+        assert_eq!(
+            result.unwrap_err().0,
+            "Fiery Annihilation requires its selected V33 public/Human successor"
+        );
+        assert_eq!(serde_json::to_vec(state).unwrap(), before);
+    }
 
     fn fixture(
         caster: PlayerId,
@@ -584,6 +643,7 @@ mod tests {
             )];
             execute(&second_ctx, &mut state);
             let second = state.engine.active_replacements.last().unwrap().clone();
+            assert_predecessor_observation_refuses(&state, actor);
             let ending_key = state.turn_key_v1();
             state.step = crate::state::Step::End;
             let mut cleanup = false;
@@ -596,6 +656,8 @@ mod tests {
                         assert_eq!((player, count), (actor, 2));
                         assert_eq!(state.step, crate::state::Step::Cleanup);
                         assert_eq!(state.turn_key_v1(), ending_key);
+                        assert!(state.engine.active_replacements.is_empty());
+                        assert_predecessor_observation_refuses(&state, actor);
                         cleanup = true;
                         break;
                     }

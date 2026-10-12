@@ -18,6 +18,13 @@ real-cast prevention/source-departure and Cleanup tests check these facts,
 restore equality and malformed lifecycle refusal. Full observation, pending
 target menus and the owning Human V33 adapter remain work to complete.
 
+Frozen observation and flat-action publishers now explicitly refuse Fiery
+pending targets, live printed roots and installation history, including after
+Cleanup clears active shields. The actual two-shield End-to-Cleanup discard
+fixture checks read-only V6 refusal both before and after actual expiry. V33
+must add its explicit capability and complete observation before admitting these
+states; the standalone public facts precursor grants no frozen-format admission.
+
 Own branch `codex/fdn-fiery-current-source-20261012` composes preserved
 `6af6b446b14acaf25cd60becedd1667d9316ff5c` on later source
 `8c53207a6aa9ad39d9bdaa0ee5eb89fe94e9b014`. Original source and old worktree
