@@ -342,7 +342,7 @@ mod future_printed {
     }
 
     #[test]
-    #[ignore = "Requires genuine parent Krenko registration and V34 qualification"]
+
     fn actual_cast_tap_public_count_complete_tokens_safe_labels_restore_and_old_refusal_both_seats()
     {
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -419,7 +419,7 @@ mod future_printed {
     }
 
     #[test]
-    #[ignore = "Requires genuine parent Krenko registration and V34 qualification"]
+
     fn actual_paid_snapshot_erasure_and_coherent_token_receipt_rewrite_reject_before_submit_both_seats(
     ) {
         for actor in [PlayerId::P0, PlayerId::P1] {

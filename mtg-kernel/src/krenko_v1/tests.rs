@@ -212,7 +212,7 @@ mod future {
     }
 
     #[test]
-    #[ignore = "Requires genuine parent Krenko registration; no source admission bypass"]
+
     fn real_paid_private_counter_requires_original_removal_and_cannot_replay_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let (state, item) = paid_primitive(actor);

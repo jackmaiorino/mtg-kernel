@@ -1,5 +1,5 @@
-//! Genuine future definition only. Every printed case remains ignored until
-//! the parent registers and qualifies Krenko; no root/target admission bypass.
+//! Genuine registered Krenko candidate fixtures. Runtime qualification pending.
+//! No root or target admission bypass.
 #![cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
@@ -146,7 +146,7 @@ fn refuses(state: &mut GameState, action: Action) {
 }
 
 #[test]
-#[ignore = "Requires genuine parent Krenko registration"]
+
 fn printed_cast_metadata_tap_sickness_natural_untap_and_repeat_resolution_both_seats() {
     let def = &CARD_DEFS[usize::from(card_id_by_name("Krenko, Mob Boss").unwrap())];
     assert_eq!(
@@ -201,7 +201,7 @@ fn printed_cast_metadata_tap_sickness_natural_untap_and_repeat_resolution_both_s
 }
 
 #[test]
-#[ignore = "Requires genuine parent Krenko registration"]
+
 fn real_resolution_samples_current_goblin_permanents_source_departure_and_controller_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for departure in [false, true] {
@@ -269,7 +269,7 @@ fn real_resolution_samples_current_goblin_permanents_source_departure_and_contro
 }
 
 #[test]
-#[ignore = "Requires genuine parent Krenko registration"]
+
 fn paid_owner_source_metadata_payment_and_token_occurrence_forgeries_refuse_readonly_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
@@ -322,7 +322,7 @@ fn paid_owner_source_metadata_payment_and_token_occurrence_forgeries_refuse_read
 }
 
 #[test]
-#[ignore = "Requires genuine parent Krenko registration"]
+
 fn real_witness_response_suppression_uses_current_members_without_cancelling_paid_source_both_seats(
 ) {
     use mtg_kernel::state::Target;
@@ -360,7 +360,7 @@ fn real_witness_response_suppression_uses_current_members_without_cancelling_pai
 }
 
 #[test]
-#[ignore = "Requires genuine parent Krenko registration"]
+
 fn real_large_permanent_roster_never_narrows_through_u8_and_restores_same_complete_batch_both_seats(
 ) {
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -389,7 +389,7 @@ fn real_large_permanent_roster_never_narrows_through_u8_and_restores_same_comple
 }
 
 #[test]
-#[ignore = "Requires genuine parent Krenko registration"]
+
 fn actual_kicked_bushwhacker_haste_and_bolt_response_keep_resolution_time_count_both_seats() {
     use mtg_kernel::state::Target;
     for actor in [PlayerId::P0, PlayerId::P1] {

@@ -6940,6 +6940,39 @@
         "controller_hexproof",
         "other_controlled_creature_noncombat_prevention"
       ]
+    },
+    {
+      "name": "Krenko, Mob Boss",
+      "mana_cost": "{2}{R}{R}",
+      "mana_value": 4,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Goblin",
+        "Warrior"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "is_token": false,
+      "java_file": "Mage.Sets/src/mage/cards/k/KrenkoMobBoss.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_krenko_mob_boss.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "tap_create_goblins_from_resolution_time_controlled_permanent_count"
+      ]
     }
   ]
 }

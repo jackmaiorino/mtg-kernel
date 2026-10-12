@@ -286,7 +286,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Requires genuine parent Krenko registration"]
     #[cfg(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
