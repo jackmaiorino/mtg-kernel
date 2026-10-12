@@ -6,6 +6,7 @@ const seat = z.enum(['p0', 'p1']);
 const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const text = z.string().max(4096);
 const hash = z.string().regex(/^[0-9a-f]{64}$/);
+const commit = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
 const u32 = z.number().int().nonnegative().max(0xffffffff);
 const i64 = z.string().regex(/^-?\d+$/).refine(s => BigInt(s) >= -(1n << 63n) && BigInt(s) < (1n << 63n), 'Value exceeds signed 64-bit capture range');
 const safeImage = z.string().max(1024).refine(s => /^assets\/[a-zA-Z0-9/_\.\-]+$/.test(s) && !s.split('/').includes('..'), 'Invalid asset path');
@@ -54,20 +55,25 @@ const searchSchema = z.object({
   digest: hash, stats: z.array(z.object({ index: u32, visits: u32, valueSum: i64, meanValue: i64 }).strict()),
   simulations: u32, transitions: u32, nodes: u32, tier: text, stabilityHalves: z.boolean(), valueScale: text,
   replay: replaySchema.optional(),
+  algorithm: z.literal('persistent-uct').optional(), digestOrigin: z.literal('exported-table').optional(),
 }).strict();
 const frameSchema = z.object({
   id: text, key: keySchema, board: boardSchema, after: boardSchema,
   actions: z.array(actionSchema).min(1).max(65536), executed: integer,
   policy: policySchema.nullable(), search: searchSchema.nullable(),
   terminal: z.object({ kind: text, winner: seat.nullable() }).strict().nullable(),
+  decisionSource: z.object({ kind: z.enum(['search-root','search-continuation']), root: text,
+    treeDigest: hash, artifactSha256: hash }).strict().optional(),
 }).strict();
 const recordingSchema = z.object({
-  schema: z.enum([SCHEMA,'mtg-kernel-viewer-recording/v2']), id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,95}$/), title: text,
+  schema: z.enum([SCHEMA,'mtg-kernel-viewer-recording/v2','mtg-kernel-viewer-recording/v3']), id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,95}$/), title: text,
   description: text, perspective: seat, complete: z.boolean(), coverage: z.enum(['every-step', 'decision-snapshots']),
   identity: z.object({ source: text, runtime: text, checkpoint: text, cardDatabase: text, sourceSha256: hash }).strict(),
   seats: z.tuple([z.object({ name: text, deck: text }).strict(), z.object({ name: text, deck: text }).strict()]),
   cards: z.record(z.string(), cardSchema), frames: z.array(frameSchema).min(1).max(100000),
   bookmarks: z.array(z.object({ frame: text, title: text, situation: text, alternatives: text, consequence: text }).strict()).max(30),
+  reconstruction: z.object({ kind: z.literal('recorded-actions'), originalSource: commit, originalRuntime: hash,
+    sourceArtifactSha256: hash, openingArtifactSha256: hash, runtimeRules: text }).strict().optional(),
 }).strict();
 export type Recording = z.infer<typeof recordingSchema>;
 export type Frame = Recording['frames'][number];
@@ -92,12 +98,15 @@ export function parseRecording(raw: unknown): Recording {
     throw new Error(`Recording cannot be opened: ${issue.path.join('.')} ${issue.message}`);
   }
   const r = result.data;
+  if (r.reconstruction && r.schema !== 'mtg-kernel-viewer-recording/v3') throw new Error('Reconstruction provenance requires recording format v3');
   const ids = new Set<string>();
   const keys = new Set<string>();
   for (const [id, card] of Object.entries(r.cards)) if (id !== card.id) throw new Error('Card identifier mismatch');
   for (const f of r.frames) {
     if (ids.has(f.id) || keys.has(frameKey(f.key))) throw new Error('Duplicate decision identity');
     ids.add(f.id); keys.add(frameKey(f.key));
+    if ((f.decisionSource || f.search?.algorithm || f.search?.digestOrigin) && r.schema !== 'mtg-kernel-viewer-recording/v3') throw new Error('Recorded decision provenance requires recording format v3');
+    if (f.decisionSource && f.key.actor !== r.perspective) throw new Error('Recorded search choice belongs to a different perspective');
     if (f.key.actor !== r.perspective && (f.policy || f.search || f.actions.length !== 1)) throw new Error('Opposing private decision diagnostics are not permitted');
     if (f.actions.some((a, i) => a.index !== i) || f.executed >= f.actions.length) throw new Error('Executed action or engine order is invalid');
     for (const b of [f.board, f.after]) {
@@ -116,14 +125,28 @@ export function parseRecording(raw: unknown): Recording {
       if (f.key.actor !== r.perspective) throw new Error('Policy belongs to a different viewing perspective');
     }
     if (f.search) {
+      if (Boolean(f.search.algorithm) !== Boolean(f.search.digestOrigin)) throw new Error('Search algorithm or table provenance is missing');
       const indices = f.search.stats.map(s => s.index);
       if (indices.length !== f.actions.length || new Set(indices).size !== indices.length || indices.some(i => i >= f.actions.length)) throw new Error('Search action mapping is invalid');
       if (f.search.stats.some(s => s.meanValue !== (s.visits ? BigInt(s.valueSum) / BigInt(s.visits) : 0n).toString())) throw new Error('Search mean differs from captured visit/value sum');
+      if (f.search.algorithm==='persistent-uct' && (!f.decisionSource || f.decisionSource.kind!=='search-root' ||
+          f.search.stats.reduce((n,s)=>n+s.visits,0)!==f.search.simulations ||
+          f.search.stats.some(s=>BigInt(s.valueSum)<0n || BigInt(s.valueSum)>BigInt(s.visits)*1000000n || BigInt(s.valueSum)%1000000n!==0n))) throw new Error('Recorded rollout table has inconsistent source or outcome counts');
       if (f.search.replay) {
         if (r.schema === SCHEMA) throw new Error('Search replay requires recording format v2');
         validateReplay(f, r);
       }
     }
+  }
+  const byId = new Map(r.frames.map(f => [f.id,f]));
+  for (const f of r.frames) if (f.decisionSource) {
+    const source=f.decisionSource, root=byId.get(source.root);
+    if (r.reconstruction && source.artifactSha256 !== r.reconstruction.sourceArtifactSha256) throw new Error('Recorded search choice belongs to a different reconstruction source');
+    if (!root?.search || root.search.algorithm !== 'persistent-uct' || root.key.actor !== r.perspective ||
+        !root.decisionSource || root.decisionSource.kind !== 'search-root' || root.decisionSource.root !== root.id ||
+        root.key.episode !== f.key.episode || root.key.step > f.key.step || root.decisionSource.treeDigest !== source.treeDigest ||
+        root.decisionSource.artifactSha256 !== source.artifactSha256 ||
+        (source.kind==='search-root') !== (f.id===root.id) || (source.kind==='search-continuation' && f.search)) throw new Error('Recorded search continuation has a broken root or source binding');
   }
   if (r.bookmarks.some(b => !ids.has(b.frame))) throw new Error('Bookmark points to a missing decision');
   if (r.complete && !r.frames.at(-1)?.terminal) throw new Error('Complete game has no recorded terminal state');

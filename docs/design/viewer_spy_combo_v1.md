@@ -1,0 +1,9 @@
+# Recorded Spy combo example
+
+Add the completed qualification case r1-o4-t0-s0 to the studio. It has a plain-policy opening, a persistent-search guide from step181, and a recorded win after search chose Balustrade Spy self-target at188 and Dread Return on Lotleth Giant at192. This selected qualification anecdote is illustrative, not representative of the refresh pilot or evidence of learned combo play.
+
+Reconstruct the game from the stopped bank's exact opening actions and the retained R guide actions. A separate opt-in native replay tool validates input hashes, the anchor observation/menu/state identity, complete decision keys, legal action mappings, search-root canonical order and the natural terminal. It executes recorded actions only, without inference, sampling or search. Existing research outputs and the exhausted original demo acquisition allowance remain unchanged.
+
+Export a public recording/v3 with the existing board/action allowlist, optional recorded-decision evidence and the two retained root tables. Search-continuation choices link to their recorded root. Explain that individual simulations and descendant action statistics were not retained. Never invent a tree, policy distribution, changed-policy choice or counterfactual victory. Values are the observed natural-terminal rollout win fraction on sampled worlds, displayed per million outcomes, not calibrated probabilities.
+
+Publish three authored bookmarks: the refresh that found supported continuations, self-milling, and reanimating the Giant. Preserve both earlier games in an immutable expanded demo pack. Validate exact moves/anchor/outcome against the source artifacts, redaction, root-order mappings and table digests, legacy formats, responsive rendering and deployed bookmarks. Retain source references, failures and QA with independent recovery; deliver through issue239 and one source PR.
