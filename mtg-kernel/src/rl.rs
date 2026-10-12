@@ -1831,11 +1831,24 @@ pub fn card_name(card_id: u16) -> String {
     }
 }
 
+fn refuse_unrepresented_shroud(state: &GameState) -> Result<()> {
+    if state.objects.iter().any(|(id, object)| {
+        object.zone == Zone::Battlefield
+            && engine::has_effective_keyword(state, id, Keywords::SHROUD)
+    }) {
+        return Err(RlContractError(
+            "shroud requires an explicit public keyword representation".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub fn observe_v1(
     state: &GameState,
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
+    refuse_unrepresented_shroud(state)?;
     crate::extra_turn_v1::validate(state).map_err(RlContractError)?;
     if state.extra_turn_v1.is_some() {
         return Err(RlContractError(
@@ -2304,6 +2317,7 @@ fn build_policy_observation_parts_common(
     text_mode: ObservationTextModeV2,
     capabilities: (bool, bool, bool, bool, bool, bool, bool, bool, bool, bool),
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
+    refuse_unrepresented_shroud(state)?;
     let (
         accept_cant_block,
         accept_temporary_control,

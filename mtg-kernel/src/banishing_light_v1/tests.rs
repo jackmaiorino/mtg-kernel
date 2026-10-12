@@ -1,4 +1,4 @@
-//! Actual future definition and accepted physical copy/attachment boundaries.
+//! Registered Banishing definition and accepted typed physical copy boundaries.
 #![cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
@@ -75,7 +75,6 @@ fn replay(state: &GameState) -> GameState {
 }
 
 #[test]
-#[ignore = "requires future actual Banishing Light registration; no admission bypass"]
 fn genuine_copied_token_source_self_exile_never_returns_before_sba_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
@@ -134,7 +133,6 @@ fn genuine_copied_token_source_self_exile_never_returns_before_sba_both_seats() 
 }
 
 #[test]
-#[ignore = "requires future actual Banishing Light registration; no admission bypass"]
 fn exiled_aura_without_host_stays_exiled_and_its_capture_cannot_be_erased_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
@@ -234,7 +232,6 @@ fn assert_owner_choice(state: &mut GameState, owner: PlayerId, aura: ObjectId, h
 }
 
 #[test]
-#[ignore = "requires future actual Banishing Light registration; no admission bypass"]
 fn actual_source_departure_returns_aura_by_untargeted_owner_choice_with_shroud_and_hexproof() {
     use crate::card_def::Keywords;
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -252,6 +249,24 @@ fn actual_source_departure_returns_aura_by_untargeted_owner_choice_with_shroud_a
                 0,
                 keyword,
             );
+            assert!(engine::has_effective_keyword(&state, host, keyword));
+            for chooser in [actor, actor.opponent()] {
+                let legal = engine::legal_targets_for_controller(
+                    crate::card_def::TargetSpec::Creature,
+                    &[],
+                    chooser,
+                    &state,
+                );
+                assert_eq!(
+                    legal.contains(&Target::Object(host)),
+                    keyword == Keywords::HEXPROOF && chooser == actor.opponent()
+                );
+            }
+            if keyword == Keywords::SHROUD {
+                let before = serde_json::to_vec(&state).unwrap();
+                assert!(crate::rl::observe_v1(&state, actor, 0).is_err());
+                assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+            }
             let targeted = state
                 .engine
                 .event_history
@@ -294,7 +309,6 @@ fn actual_source_departure_returns_aura_by_untargeted_owner_choice_with_shroud_a
 }
 
 #[test]
-#[ignore = "requires future actual Banishing Light registration; no admission bypass"]
 fn real_broken_wings_resolution_is_owned_until_attachment_and_departure_then_restores_exactly() {
     use crate::mana::ManaColor;
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -356,7 +370,6 @@ fn real_broken_wings_resolution_is_owned_until_attachment_and_departure_then_res
 }
 
 #[test]
-#[ignore = "requires future actual Banishing Light registration; no admission bypass"]
 fn restored_owner_checkpoint_erasure_coherent_menu_and_operation_rewrites_refuse_readonly() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, source, aura, host) = linked_aura(actor);
@@ -423,7 +436,6 @@ fn restored_owner_checkpoint_erasure_coherent_menu_and_operation_rewrites_refuse
 }
 
 #[test]
-#[ignore = "requires future actual Banishing Light registration; no admission bypass"]
 fn accepted_physical_sequence_stops_before_draw_and_shuffle_and_replays_rng_once() {
     use crate::effect::{EffectOp, ExecCtx, ObjectRef, PlayerRef};
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -480,7 +492,6 @@ fn accepted_physical_sequence_stops_before_draw_and_shuffle_and_replays_rng_once
 }
 
 #[test]
-#[ignore = "requires future actual Banishing Light registration; no admission bypass"]
 fn simultaneous_departures_complete_before_returns_and_keep_prior_owner_answers_on_restore() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, first_source, first_aura, host) = linked_aura(actor);
@@ -581,7 +592,6 @@ fn simultaneous_departures_complete_before_returns_and_keep_prior_owner_answers_
 }
 
 #[test]
-#[ignore = "requires future actual Banishing Light registration; no admission bypass"]
 fn real_registered_activation_cost_pauses_before_publication_at_physical_copy_boundary() {
     use crate::mana::ManaColor;
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -589,22 +599,45 @@ fn real_registered_activation_cost_pauses_before_publication_at_physical_copy_bo
         let heartfire = card_id_by_name("Heartfire Immolator").expect("actual admitted operand");
         let generation = state.objects.get(source).zone_change_count;
         let original = state.objects.get(source).card_def;
-        // Physical copiable-characteristics substrate only. This does not
-        // claim an admitted printed producer which makes this copy in FDN.
+        // Accepted typed Aegis copy substrate with registered physical
+        // stand-ins. This does not claim Longbow has a printed copy ability.
+        let attachment = put(&mut state, actor, "Viridian Longbow", Zone::Battlefield);
+        let donor = put(&mut state, actor, "Heartfire Immolator", Zone::Hand);
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(donor, Zone::Exile));
+        let host_link = crate::state::ObjectLinkV4 {
+            object: source,
+            zone_change_count: generation,
+        };
         state
-            .standard_v1
-            .get_or_insert_with(Default::default)
-            .copied_card_defs
-            .extend([
-                (source, generation, original),
-                (source, generation, heartfire),
-            ]);
-        let live = state.objects.get_mut(source);
-        live.card_def = heartfire;
-        live.name = CARD_DEFS[heartfire as usize].object_name.into();
-        live.v4.effective_color_mask = ObjectStateV4::from_card_def(heartfire).effective_color_mask;
-        live.v4.effective_subtype_ids =
-            ObjectStateV4::from_card_def(heartfire).effective_subtype_ids;
+            .attach_object_exact(attachment, 0, source, generation)
+            .unwrap();
+        let attachment_source = crate::state::AbilitySourceContractV4::capture(&state, attachment);
+        state.objects.get_mut(donor).v4.exiled_by = Some(crate::state::ObjectLinkV4 {
+            object: attachment,
+            zone_change_count: attachment_source.zone_change_count,
+        });
+        let mut copy_ctx = crate::effect::ExecCtx::no_targets(attachment, actor);
+        copy_ctx.ability_source_contract = Some(attachment_source);
+        let timestamp = state.objects.get(attachment).v4.layer_timestamp.unwrap();
+        let binding = crate::effect::EffectObjectBinding {
+            object: donor,
+            expected_zone: Zone::Exile,
+            expected_zone_change_count: state.objects.get(donor).zone_change_count,
+        };
+        assert!(crate::standard_cards_v1::aegis_copy_candidates(
+            &state, &copy_ctx, host_link, timestamp
+        )
+        .contains(&binding));
+        crate::standard_cards_v1::apply_aegis_copy(
+            &mut state, &copy_ctx, host_link, timestamp, binding,
+        );
+        assert_eq!(state.objects.get(source).card_def, heartfire);
+        assert!(crate::standard_cards_v1::had_card_def(
+            &state, source, generation, original
+        ));
+        assert!(crate::standard_cards_v1::had_card_def(
+            &state, source, generation, heartfire
+        ));
         state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
         for _ in 0..4 {
             if matches!(next(&mut state),Decision::CastSpellOrPass {player,..} if player==actor) {
@@ -653,7 +686,6 @@ fn real_registered_activation_cost_pauses_before_publication_at_physical_copy_bo
 }
 
 #[test]
-#[ignore = "requires future actual Banishing Light registration; no admission bypass"]
 fn simultaneous_creature_and_aura_returns_use_only_pre_entry_hosts_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for alternate_host in [false, true] {
@@ -737,7 +769,6 @@ fn simultaneous_creature_and_aura_returns_use_only_pre_entry_hosts_both_seats() 
 }
 
 #[test]
-#[ignore = "requires future actual Banishing Light registration; no admission bypass"]
 fn simultaneous_opposite_owner_choices_follow_apnap_before_any_entry_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for reverse in [false, true] {
@@ -804,7 +835,6 @@ fn simultaneous_opposite_owner_choices_follow_apnap_before_any_entry_both_seats(
 }
 
 #[test]
-#[ignore = "requires genuine future Banishing Light registration and V26 qualification"]
 fn actual_aura_choice_public_human_owner_restore_retry_and_forgery_both_seats() {
     use crate::human_bo3_v1::*;
     use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
@@ -887,7 +917,6 @@ fn actual_aura_choice_public_human_owner_restore_retry_and_forgery_both_seats() 
 }
 
 #[test]
-#[ignore = "requires genuine future Banishing Light registration and V26 qualification"]
 fn later_apnap_owner_sees_confirmed_answer_before_entry_and_restores_it_both_seats() {
     use crate::human_bo3_v1::*;
     use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
@@ -987,7 +1016,6 @@ fn later_apnap_owner_sees_confirmed_answer_before_entry_and_restores_it_both_sea
 }
 
 #[test]
-#[ignore = "requires genuine future Banishing Light registration and V26 qualification"]
 fn actual_printed_cast_and_etb_meaning_public_binding_both_seats() {
     use crate::mana::ManaColor;
     for actor in [PlayerId::P0, PlayerId::P1] {

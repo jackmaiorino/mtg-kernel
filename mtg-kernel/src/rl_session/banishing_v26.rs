@@ -239,7 +239,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires genuine future Banishing Light registration"]
     #[cfg(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")

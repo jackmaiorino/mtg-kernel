@@ -3883,8 +3883,9 @@ fn legal_targets_for_controller_from_source(
         };
         let live = state.objects.get(object);
         live.zone != Zone::Battlefield
-            || live.controller == controller
-            || !has_effective_keyword(state, object, Keywords::HEXPROOF)
+            || (!has_effective_keyword(state, object, Keywords::SHROUD)
+                && (live.controller == controller
+                    || !has_effective_keyword(state, object, Keywords::HEXPROOF)))
     });
     if source.is_some_and(targeting_source_is_monocolored) {
         targets.retain(|target| {
@@ -28093,3 +28094,6 @@ mod divine_variable_targeting_tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 mod ashroot_declaration_boundary_tests;
+
+#[cfg(test)]
+mod shroud_target_tests;
