@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import struct
+import subprocess
 import time
 import urllib.parse
 import urllib.request
@@ -32,6 +33,9 @@ def references(value) -> list[str]:
         for child in value:
             result.extend(references(child))
     return list(dict.fromkeys(result))
+
+def public_ids(board: dict) -> set[str]:
+    return {o['id'] for p in board['players'] for zone in ('battlefield','graveyard','hand') for o in p[zone]} | {o['id'] for o in board['exile']} | {s['source'] for s in board['stack'] if s['source']}
 
 def digest_search(result: dict) -> str:
     stats = result["root_action_stats"]
@@ -71,12 +75,18 @@ class Exporter:
                 if saved.exists():
                     data = json.loads(saved.read_text(encoding="utf-8"))
                 else:
-                    request = urllib.request.Request("https://api.scryfall.com/cards/named?" + urllib.parse.urlencode({"exact": name}),
+                    lookup_name = name.removesuffix(' Token')
+                    request = urllib.request.Request("https://api.scryfall.com/cards/named?" + urllib.parse.urlencode({"exact": lookup_name}),
                         headers={"User-Agent": "MTGKernelDecisionStudio/1.0", "Accept": "application/json"})
-                    with urllib.request.urlopen(request, timeout=20) as response:
-                        data = json.load(response)
+                    try:
+                        with urllib.request.urlopen(request, timeout=20) as response:
+                            data = json.load(response)
+                    except urllib.error.URLError:
+                        # Native curl uses the platform trust store, preserving TLS verification.
+                        subprocess.run(['curl.exe' if __import__('os').name == 'nt' else 'curl','--silent','--show-error','--fail','--retry','2','--retry-delay','2','--max-time','20',request.full_url,'--output',str(saved)],check=True,capture_output=True,timeout=70)
+                        data=json.loads(saved.read_text(encoding='utf-8'))
                     saved.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-                    time.sleep(.12)
+                    time.sleep(.25)
                 faces = data.get("card_faces", [])
                 selected = faces[min(face, len(faces) - 1)] if faces else data
                 card["manaCost"] = card["manaCost"] or selected.get("mana_cost", "")
@@ -88,10 +98,15 @@ class Exporter:
                 if image_url:
                     image_path = self.assets / f"{data['id']}-{face}.jpg"
                     if not image_path.exists():
-                        with urllib.request.urlopen(urllib.request.Request(image_url, headers={"User-Agent":"MTGKernelDecisionStudio/1.0"}), timeout=20) as response:
-                            image_path.write_bytes(response.read(2 * 1024 * 1024))
+                        if urllib.parse.urlparse(image_url).hostname != 'cards.scryfall.io':
+                            raise ValueError('Unexpected image host')
+                        try:
+                            with urllib.request.urlopen(urllib.request.Request(image_url, headers={"User-Agent":"MTGKernelDecisionStudio/1.0"}), timeout=20) as response:
+                                image_path.write_bytes(response.read(2 * 1024 * 1024))
+                        except urllib.error.URLError:
+                            subprocess.run(['curl.exe' if __import__('os').name == 'nt' else 'curl','--silent','--show-error','--fail','--max-time','20',image_url,'--output',str(image_path)],check=True,capture_output=True,timeout=25)
                     card["image"] = f"assets/{image_path.name}"
-            except (OSError, ValueError, KeyError) as error:
+            except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
                 print(f"Text-card fallback for {name}: {type(error).__name__}")
         self.cards[identifier] = card
         return identifier
@@ -122,7 +137,7 @@ class Exporter:
             if isinstance(source, dict) and "arena_id" in source:
                 card = self.cards[self.card(source, s.get("source_name", ""))]
                 name = card["name"]
-                source_ref = object_id(source) if object_id(source) in present else None
+                source_ref = object_id(source)
             else:
                 name = s.get("source_name") or s.get("card_name") or "Recorded spell or ability"
                 source_ref = None
@@ -174,7 +189,7 @@ def export_capture(path: Path, exporter: Exporter) -> tuple[dict, list[dict], bo
                 before, after = exporter.board(row["before"]), exporter.board(row["after"])
                 d = row["decision"]
                 actor = d["acting_player"]
-                present = {o["id"] for b in (before, after) for pl in b["players"] for zone in ("battlefield", "graveyard", "hand") for o in pl[zone]} | {o["id"] for b in (before, after) for o in b["exile"]}
+                present = public_ids(before) | public_ids(after)
                 result = row["search"]["result"]
                 if digest_search(result) != row["search"]["digest"]:
                     raise ValueError("Search digest mismatch")
@@ -221,7 +236,7 @@ def export_legacy(path: Path, exporter: Exporter) -> tuple[dict, list[dict], boo
         if row["actor"] != exporter.perspective:
             continue
         before, after = exporter.board(row["observation"]), exporter.board(row["transition"]["observation"])
-        present = {o["id"] for b in (before, after) for pl in b["players"] for zone in ("battlefield", "graveyard", "hand") for o in pl[zone]} | {o["id"] for b in (before, after) for o in b["exile"]}
+        present = public_ids(before) | public_ids(after)
         nxt = row["transition"]["next"]
         frames.append({"id":f"d{row['decision']['step']}", "key":key(row["decision"], row["actor"]), "board":before,"after":after,
             "actions":[{"index":a["engine_index"],"label":a["label"],"kind":a["semantic"]["action_kind"],"refs":[r for r in references(a["semantic"]) if r in present]} for a in row["ordered_actions"]],

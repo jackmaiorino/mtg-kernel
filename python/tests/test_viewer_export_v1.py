@@ -7,6 +7,7 @@ from pathlib import Path
 TOOLS = Path(__file__).resolve().parents[1] / 'tools'
 sys.path.insert(0, str(TOOLS))
 import viewer_export_v1 as export
+import viewer_demo_pack_v1 as pack
 
 class ViewerExportTests(unittest.TestCase):
     def test_reference_walk_keeps_only_object_identity(self):
@@ -35,5 +36,11 @@ class ViewerExportTests(unittest.TestCase):
 
     def test_legacy_outcome_preserves_winner(self):
         self.assertEqual(export.terminal({'classification':'natural','outcome':'p1_win'})['winner'],'p1')
+
+    def test_release_paths_cannot_escape_on_either_platform(self):
+        root=Path.cwd()
+        for value in ('C:/outside.json','C:outside.json','//server/share/a','\\\\server\\share\\a','../outside.json','assets/../../a'):
+            with self.subTest(path=value),self.assertRaises(ValueError):pack.safe_path(root,value)
+        self.assertEqual(pack.safe_path(root,'assets/card.jpg'),root/'assets/card.jpg')
 
 if __name__ == '__main__': unittest.main()

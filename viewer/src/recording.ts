@@ -90,7 +90,7 @@ export function parseRecording(raw: unknown): Recording {
       const present = new Set(objects.map(o => o.id));
       if (b.combat.some(c => !present.has(c.attacker) || c.blockers.some(x => !present.has(x)))) throw new Error('Broken combat reference');
     }
-    const visible = new Set([...objectList(f.board), ...objectList(f.after)].map(o => o.id));
+    const visible = new Set([...objectList(f.board), ...objectList(f.after)].map(o => o.id).concat([...f.board.stack, ...f.after.stack].flatMap(s => s.source ? [s.source] : [])));
     if (f.actions.some(a => a.refs.some(ref => !visible.has(ref)))) throw new Error('Broken action reference');
     if (f.policy) {
       if (f.policy.masses.length !== f.actions.length || f.policy.sampled >= f.actions.length ||

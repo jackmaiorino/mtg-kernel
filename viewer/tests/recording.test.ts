@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import fixture from './fixtures/actor-visible.json';
+import native from './fixtures/native-root-excerpt.json';
 import { parseRecording, verifySearchDigests } from '../src/recording';
 import { initialPlayback, playbackReducer } from '../src/playback';
 
 const copy = () => structuredClone(fixture);
 describe('versioned recordings', () => {
+  it('verifies actual recorded root digests, including their work-count suffix', async () => {
+    await expect(verifySearchDigests(parseRecording(native))).resolves.toBeUndefined();
+  });
   it('loads a real actor-visible historical excerpt', () => {
     const r = parseRecording(copy()); expect(r.frames.length).toBeGreaterThan(0);
     expect(r.frames.every(f => f.policy && !f.search)).toBe(true);

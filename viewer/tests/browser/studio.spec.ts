@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import fixture from '../fixtures/actor-visible.json' with { type: 'json' };
+import native from '../fixtures/native-root-excerpt.json' with { type: 'json' };
 
 async function openFixture(page: import('@playwright/test').Page) {
   await page.route('**/demo/manifest.json', route => route.fulfill({status:404}));
@@ -21,6 +22,18 @@ test('import stays local; policy, cards, playback and deep links work', async ({
   await page.getByRole('button',{name:'Pause playback'}).click();
   await expect(page.getByRole('button',{name:'Play recording'})).toBeVisible();
   expect(unexpected).toEqual([]);
+});
+test('recorded block and stack targeting relationships render', async ({page}) => {
+  await openFixture(page);
+  await page.locator('input[type=file]').setInputFiles({name:'native.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(native))});
+  await expect(page.getByRole('heading',{name:native.title})).toBeVisible();
+  await expect(page.locator('.connections > path')).toHaveCount(1);
+  await page.getByRole('tab',{name:'Search'}).click();
+  await expect(page.getByText('Share of search visits',{exact:true})).toBeVisible();
+  await expect(page.getByText('Search changed the policy sample',{exact:true})).toBeVisible();
+  await page.getByRole('slider',{name:'Decision timeline'}).fill('1');
+  await expect(page.locator('.connections > path')).toHaveCount(1);
+  await expect(page.locator('.stack-zone')).toContainText('Lightning Bolt');
 });
 for (const size of [{width:1440,height:900},{width:1920,height:1080},{width:320,height:900}]) {
   test(`layout fits ${size.width}px and reduced motion`, async ({page}) => {
