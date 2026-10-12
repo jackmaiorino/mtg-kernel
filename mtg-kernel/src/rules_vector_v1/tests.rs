@@ -224,15 +224,45 @@ fn every_program_source_emits_facts() {
                 def.name
             );
         }
+        let mut activated_index = 0;
+        let mut trigger_index = 0;
         for (k, ability) in rules.abilities.iter().enumerate() {
             if matches!(ability.ctx, CtxF::Trigger | CtxF::Activated) {
+                let (key, index) = match ability.ctx {
+                    CtxF::Activated => ("activated", &mut activated_index),
+                    CtxF::Trigger => ("trigger", &mut trigger_index),
+                    _ => unreachable!(),
+                };
+                let has_effect = ability.atoms.iter().any(|a| matches!(a, Atom::Effect(_)));
+                // A successor-only effect deliberately has no ordinary V1
+                // effect atom. Verify that exact recorded program, rather
+                // than accepting an opaque cost or trigger condition.
+                let explicit_opaque_program = if has_effect {
+                    false
+                } else {
+                    let record = &rules.record[key][*index];
+                    let program: EffectOp = serde_json::from_value(record["program"].clone())
+                        .expect("actual ability record contains its typed program");
+                    let target_spec: TargetSpec =
+                        serde_json::from_value(record["target_spec"].clone())
+                            .expect("actual ability record contains its target specification");
+                    let mut program_facts = Collector::default();
+                    meaning::effect_op(&program, &Env { target_spec }, &mut program_facts);
+                    program_facts.atoms.contains(&Atom::Opaque)
+                        && !program_facts
+                            .atoms
+                            .iter()
+                            .any(|a| matches!(a, Atom::Effect(_)))
+                        && ability.atoms.contains(&Atom::Opaque)
+                };
                 assert!(
-                    ability.atoms.iter().any(|a| matches!(a, Atom::Effect(_))),
-                    "{}: {:?} ability {k} has no effect atom: {:?}",
+                    has_effect || explicit_opaque_program,
+                    "{}: {:?} ability {k} has neither an effect nor its explicit opaque program: {:?}",
                     def.name,
                     ability.ctx,
                     ability.atoms
                 );
+                *index += 1;
             }
         }
     }

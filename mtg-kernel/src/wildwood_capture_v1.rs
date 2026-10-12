@@ -575,10 +575,17 @@ mod tests {
             let recipient = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
             let before = state.engine.event_history.len();
             event::add_plus_one_counters(&mut state, recipient, actor.opponent(), 2).unwrap();
-            assert_eq!(state.engine.event_history.len(), before + 1);
-            assert!(
-                matches!(state.engine.event_history.last(), Some(CommittedEvent::PlusOneCountersAdded { object, count: 2, .. }) if *object == recipient)
-            );
+            assert_eq!(state.objects.get(recipient).counters.plus1_plus1, 2);
+            if cfg!(feature = "limited-fdn-fixtures") {
+                assert_eq!(state.engine.event_history.len(), before + 1);
+                assert!(
+                    matches!(state.engine.event_history.last(), Some(CommittedEvent::PlusOneCountersAdded { object, count: 2, .. }) if *object == recipient)
+                );
+            } else {
+                // The existing default/Standard counter path emits no Limited
+                // receipt. Preserve that absence and the unchanged placement.
+                assert_eq!(state.engine.event_history.len(), before);
+            }
             assert!(state.wildwood_waiting_v1.is_none());
             assert!(active(&state).unwrap().is_empty());
             refuse_legacy(&state).unwrap();
