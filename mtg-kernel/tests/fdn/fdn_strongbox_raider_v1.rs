@@ -318,3 +318,100 @@ fn actual_printed_meaning_reconstructs_full_root_and_refuses_each_edited_fact() 
     unknown["hidden_library"] = serde_json::Value::Bool(true);
     assert!(serde_json::from_value::<meaning::MeaningV1>(unknown).is_err());
 }
+
+fn assert_corrupt_permission_readonly(state: &GameState) {
+    let mut bad = replay(state);
+    let before = serde_json::to_vec(&bad).unwrap();
+    assert!(engine::step(&mut bad, Action::Pass).is_err());
+    assert_eq!(before, serde_json::to_vec(&bad).unwrap());
+    assert!(matches!(
+        engine::advance_until_decision(&mut bad),
+        Decision::Halted { .. }
+    ));
+    bad.engine.halted = None;
+    assert_eq!(before, serde_json::to_vec(&bad).unwrap());
+}
+#[test]
+#[ignore = "Strongbox remains unregistered; root owns actual qualification"]
+fn coherent_permission_kind_edit_refuses_original_public_forest_characteristics_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut bad = granted(actor);
+        assert_eq!(
+            bad.engine.exile_play_permissions[0].play_or_cast,
+            engine::PlayOrCast::Play
+        );
+        for event in &mut bad.engine.event_history {
+            if let mtg_kernel::event::CommittedEvent::StrongboxPermissionGrantedV1 {
+                installation,
+            } = event
+            {
+                installation.permission.play_or_cast = engine::PlayOrCast::Cast;
+            }
+        }
+        bad.engine.exile_play_permissions[0].play_or_cast = engine::PlayOrCast::Cast;
+        assert_corrupt_permission_readonly(&bad);
+    }
+}
+#[test]
+#[ignore = "Strongbox remains unregistered; root owns actual qualification"]
+fn genuine_two_grant_cleanup_cannot_omit_one_original_permission_and_resurrect_it_both_seats() {
+    use mtg_kernel::event::CommittedEvent;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = granted(actor);
+        cast(&mut state, actor);
+        let decision = settle(&mut state).expect("second genuine exact-one choice");
+        let Decision::ChooseEffectTargets { legal_targets, .. } = decision else {
+            panic!("{decision:?}")
+        };
+        engine::step(&mut state, Action::ChooseEffectTarget(legal_targets[0])).unwrap();
+        settle(&mut state);
+        assert_eq!(state.engine.exile_play_permissions.len(), 2);
+        let grants = state
+            .engine
+            .event_history
+            .iter()
+            .filter_map(|event| match event {
+                CommittedEvent::StrongboxPermissionGrantedV1 { installation } => {
+                    Some(installation.clone())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for _ in 0..160 {
+            next(&mut state);
+            if state
+                .engine
+                .event_history
+                .iter()
+                .any(|event| matches!(event, CommittedEvent::StrongboxPermissionCleanupV1 { .. }))
+            {
+                break;
+            }
+            natural_pass(&mut state);
+        }
+        assert!(state.engine.exile_play_permissions.is_empty());
+        assert_eq!(grants.len(), 2);
+        let mut bad = replay(&state);
+        let omitted = grants[1].index;
+        for event in &mut bad.engine.event_history {
+            if let CommittedEvent::StrongboxPermissionCleanupV1 { installations, .. } = event {
+                assert_eq!(installations.len(), 2);
+                installations.retain(|id| *id != omitted);
+            }
+        }
+        bad.engine.event_history.retain(|event|!matches!(event,CommittedEvent::StrongboxPermissionExpiredV1 {installation,..} if *installation==omitted));
+        let mut resurrected = grants[1].permission.clone();
+        resurrected.expiry = engine::PlayPermissionExpiry::UntilHoldersNextTurn {
+            holder_turn_started: true,
+        };
+        bad.engine.exile_play_permissions.push(resurrected);
+        assert_corrupt_permission_readonly(&bad);
+        let mut restored = replay(&state);
+        natural_pass(&mut state);
+        natural_pass(&mut restored);
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+    }
+}

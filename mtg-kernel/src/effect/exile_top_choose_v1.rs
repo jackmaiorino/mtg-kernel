@@ -111,6 +111,17 @@ pub(crate) fn capture_exiled_top(
             expected_zone_change_count: live.zone_change_count,
         });
     }
+    let exiled_public = exiled
+        .iter()
+        .map(|binding| crate::rl::card_ref(state, binding.object).map_err(|e| e.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    if exiled
+        .iter()
+        .zip(&exiled_public)
+        .any(|(binding, public)| state.objects.get(binding.object).card_def != public.card_db_id)
+    {
+        return Err("Strongbox refuses unexpected hidden exile characteristics".into());
+    }
     let mut binding = ExileTopChoiceBindingV1 {
         player,
         requested_count: count,
@@ -121,6 +132,7 @@ pub(crate) fn capture_exiled_top(
         original_library,
         resulting_library: bind_library_exact(state, player),
         exiled,
+        exiled_public,
         exile_event_indices,
         canonical_path: path,
         expected_remaining_frames: remainder,
@@ -309,6 +321,14 @@ fn validate_live_batch(state: &GameState, binding: &ExileTopChoiceBindingV1) -> 
             })
         })
         .collect::<Vec<_>>();
+    let actual_public = binding
+        .exiled
+        .iter()
+        .map(|card| crate::rl::card_ref(state, card.object).map_err(|e| e.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    if binding.exiled_public != actual_public {
+        return Err("Strongbox public exile snapshot changed".into());
+    }
     if binding.exiled != expected_exiled {
         return Err("newly exiled candidates no longer match the original ordered prefix".into());
     }
@@ -679,6 +699,20 @@ pub(crate) fn validate_closed(
             "Strongbox closed operation changed source/selected incarnation/lifecycle".into(),
         );
     }
+    if binding.exiled_public.len() != binding.exiled.len()
+        || binding
+            .exiled
+            .iter()
+            .zip(&binding.exiled_public)
+            .any(|(card, public)| {
+                public.arena_id != card.object.0
+                    || public.zone != Zone::Exile
+                    || public.zone_change_count != card.expected_zone_change_count
+                    || public.owner != source.controller.into()
+            })
+    {
+        return Err("Strongbox closed public exile characteristics changed".into());
+    }
     for (card, index) in binding.exiled.iter().zip(&binding.exile_event_indices) {
         let original = binding
             .original_library
@@ -716,8 +750,15 @@ pub(crate) fn validate_closed(
         })
         .collect::<Vec<_>>();
     if let Some(chosen) = selected {
-        let definition =
-            &crate::card_def::CARD_DEFS[state.objects.get(chosen.object).card_def as usize];
+        let public = binding
+            .exiled_public
+            .iter()
+            .find(|public| {
+                public.arena_id == chosen.object.0
+                    && public.zone_change_count == chosen.expected_zone_change_count
+            })
+            .ok_or("Strongbox selected snapshot missing")?;
+        let definition = &crate::card_def::CARD_DEFS[usize::from(public.card_db_id)];
         if definition.is_playable_land() || definition.is_castable() {
             if !matches!(grants.as_slice(),[(index,g)] if g.chosen==*chosen && *index>*consume && *index<closed as usize)
             {

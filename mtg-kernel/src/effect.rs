@@ -2655,6 +2655,7 @@ pub struct ExileTopChoiceBindingV1 {
     pub original_library: Vec<EffectObjectBinding>,
     pub resulting_library: Vec<EffectObjectBinding>,
     pub exiled: Vec<EffectObjectBinding>,
+    pub exiled_public: Vec<crate::rl::CardStableRefV1>,
     pub exile_event_indices: Vec<u32>,
     pub canonical_path: Vec<u16>,
     pub expected_remaining_frames: Vec<EffectFrame>,

@@ -72,9 +72,30 @@ pub(super) fn validate(state: &GameState) -> Result<(), String> {
                 let [binding] = bindings.as_slice() else {
                     return Err("Strongbox grant lacks unique original exile capture".into());
                 };
+                let public = binding
+                    .exiled_public
+                    .iter()
+                    .find(|public| {
+                        public.arena_id == g.chosen.object.0
+                            && public.zone_change_count == g.chosen.expected_zone_change_count
+                    })
+                    .ok_or("Strongbox grant lost selected event-time characteristics")?;
+                let definition = crate::card_def::CARD_DEFS
+                    .get(usize::from(public.card_db_id))
+                    .ok_or("Strongbox selected definition missing")?;
+                let kind = if definition.is_playable_land() {
+                    crate::engine::PlayOrCast::Play
+                } else if definition.is_castable() {
+                    crate::engine::PlayOrCast::Cast
+                } else {
+                    return Err("unsupported captured definition acquired permission".into());
+                };
                 if g.index as usize != at
                     || g.granted_turn != binding.granted_turn
                     || !binding.exiled.contains(&g.chosen)
+                    || public.zone != Zone::Exile
+                    || public.owner != binding.player.into()
+                    || g.permission.play_or_cast != kind
                     || g.permission.object != g.chosen.object
                     || g.permission.holder != binding.player
                     || g.permission.zone_change_generation != g.chosen.expected_zone_change_count
@@ -144,6 +165,26 @@ pub(super) fn validate(state: &GameState) -> Result<(), String> {
                 holder,
                 installations: ids,
             } => {
+                let expected = installations(state)
+                    .into_iter()
+                    .filter(|g| {
+                        (g.index as usize) < at
+                            && g.permission.holder == *holder
+                            && starts(state, g.index)
+                                .iter()
+                                .any(|(before, _, actor)| *before < at && *actor == *holder)
+                            && !expires(state, g.index)
+                                .iter()
+                                .any(|(before, _)| *before < at)
+                    })
+                    .map(|g| g.index)
+                    .collect::<Vec<_>>();
+                if *ids != expected {
+                    return Err(
+                        "Strongbox Cleanup omitted/reordered an original eligible permission"
+                            .into(),
+                    );
+                }
                 if ids.is_empty() || ids.iter().enumerate().any(|(i, id)| ids[..i].contains(id)) {
                     return Err("Strongbox Cleanup roster invalid".into());
                 }
