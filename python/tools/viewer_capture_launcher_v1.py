@@ -93,11 +93,19 @@ def main():
     ap.add_argument('--inventory',type=Path,required=True)
     ap.add_argument('--lane',default='cinematic-viewer-232')
     ap.add_argument('--replay-steps',type=int,nargs='*',default=[])
+    ap.add_argument('--qualification-steps',type=int,default=8)
+    ap.add_argument('--max-games',type=int,default=3)
+    ap.add_argument('--previous-acquisition',type=Path)
     args = ap.parse_args()
     args.root.mkdir(parents=True,exist_ok=True)
     if len(args.replay_steps) > 3 or len(set(args.replay_steps)) != len(args.replay_steps) or any(n < 0 for n in args.replay_steps):
         raise ValueError('At most three distinct nonnegative replay steps')
     replay_steps = tuple(args.replay_steps)
+    if not 1 <= args.qualification_steps <= 32 or not 1 <= args.max_games <= 3: raise ValueError('Invalid bounded development settings')
+    prior = json.loads(args.previous_acquisition.read_text()) if args.previous_acquisition else None
+    prior_games = len(prior['results']) if prior else 0
+    if prior_games + args.max_games > 3: raise ValueError('Development game allowance exceeded')
+    check_steps = args.qualification_steps
     guard = require_guard(args.root,args.lane)
     pins = pin_inputs(args.binary,args.source)
     inventory = json.loads(args.inventory.read_text())
@@ -105,27 +113,27 @@ def main():
     report_path = args.root/'qualification.json'
     if args.mode == 'qualify':
         if report_path.exists(): raise ValueError('Retain the existing qualification; do not overwrite it')
-        off = invoke(args.binary,args.source,args.root,'parity-off',2026101201,False,8,180,replay_steps)
-        on = invoke(args.binary,args.source,args.root,'parity-on',2026101201,True,8,180,replay_steps)
-        if any(r['exit_code'] != 0 or r['selected_steps'] != 8 for r in (off,on)) or off['primary_sha256'] != on['primary_sha256']:
+        off = invoke(args.binary,args.source,args.root,'parity-off',2026101201,False,check_steps,180,replay_steps)
+        on = invoke(args.binary,args.source,args.root,'parity-on',2026101201,True,check_steps,180,replay_steps)
+        if any(r['exit_code'] != 0 or r['selected_steps'] != check_steps for r in (off,on)) or off['primary_sha256'] != on['primary_sha256']:
             raise ValueError('Capture on/off primary parity failed; inspect retained process logs')
         serial_start=time.perf_counter()
-        serial=[invoke(args.binary,args.source,args.root,f'serial-{i}',2026101201+i,True,8,180,replay_steps) for i in range(2)]
+        serial=[invoke(args.binary,args.source,args.root,f'serial-{i}',2026101201+i,True,check_steps,180,replay_steps) for i in range(2)]
         serial_seconds=time.perf_counter()-serial_start
         parallel_workers=min(2,len(guard['cores']))
         if parallel_workers != 2: raise ValueError('Two admitted cores required for parallel qualification')
         parallel_start=time.perf_counter()
         with concurrent.futures.ThreadPoolExecutor(2) as pool:
-            jobs=[pool.submit(invoke,args.binary,args.source,args.root,f'parallel-{i}',2026101201+i,True,8,180,replay_steps) for i in range(2)]
+            jobs=[pool.submit(invoke,args.binary,args.source,args.root,f'parallel-{i}',2026101201+i,True,check_steps,180,replay_steps) for i in range(2)]
             parallel=[j.result() for j in jobs]
         parallel_seconds=time.perf_counter()-parallel_start
         for a,b in zip(serial,parallel):
-            if a['exit_code'] != 0 or b['exit_code'] != 0 or a['selected_steps'] != 8 or b['selected_steps'] != 8 or a['primary_sha256'] != b['primary_sha256']:
+            if a['exit_code'] != 0 or b['exit_code'] != 0 or a['selected_steps'] != check_steps or b['selected_steps'] != check_steps or a['primary_sha256'] != b['primary_sha256']:
                 raise ValueError('Serial/parallel completed-work parity failed')
         report={'schema':'mtg-kernel-viewer-qualification/v1','pins':pins,'inventory_sha256':sha(args.inventory),
-            'cores':guard['cores'],'replay_steps':args.replay_steps,'primary_parity_sha256':on['primary_sha256'],'serial_seconds':serial_seconds,
+            'cores':guard['cores'],'replay_steps':args.replay_steps,'qualification_steps':check_steps,'primary_parity_sha256':on['primary_sha256'],'serial_seconds':serial_seconds,
             'parallel_seconds':parallel_seconds,'workers':2 if parallel_seconds < serial_seconds else 1,
-            'scope':'Eight real T512 decisions per case; startup, inference, search, stepping, and recording included. No strength claim.'}
+            'scope':f'{check_steps} real T512 decisions per case; startup, inference, search, stepping, and recording included. No strength claim.'}
         report_path.write_text(json.dumps(report,indent=2),encoding='utf-8')
         print(json.dumps(report))
     else:
@@ -137,10 +145,13 @@ def main():
         results=[]
         acquisition=args.root/'acquisition.json'
         if acquisition.exists(): raise ValueError('Acquisition already dispatched; retain and inspect its result')
-        acquisition.write_text(json.dumps({'state':'started','max_games':3,'seconds':5400,'raw_cap':RAW_CAP,'pins':pins}),encoding='utf-8')
-        for i in range(3):
-            if used_bytes(args.root) >= RAW_CAP or shutil.disk_usage(args.root).free < RESERVE: break
-            remaining=int(5400-(time.monotonic()-started))
+        if prior and prior['pins']['checkpoint']['sha256'] != pins['checkpoint']['sha256']: raise ValueError('Prior acquisition checkpoint differs')
+        prior_bytes = prior['raw_bytes'] if prior else 0
+        prior_seconds = sum(r['seconds'] for r in prior['results']) if prior else 0
+        acquisition.write_text(json.dumps({'state':'started','max_games':args.max_games,'prior_games':prior_games,'seconds':5400-prior_seconds,'raw_cap':RAW_CAP-prior_bytes,'pins':pins}),encoding='utf-8')
+        for i in range(args.max_games):
+            if prior_bytes + used_bytes(args.root) >= RAW_CAP or shutil.disk_usage(args.root).free < RESERVE: break
+            remaining=int(5400-prior_seconds-(time.monotonic()-started))
             if remaining <= 0: break
             # Each attempt is one independent full game. Stop when a complete demonstration exists.
             result=invoke(args.binary,args.source,args.root,f'game-{i+1}',2026101201+i,True,100000,remaining,replay_steps)

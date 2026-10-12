@@ -8,6 +8,11 @@ def export_replay(raw, exporter, decision_key, root_actions, search):
     contexts = defaultdict(list)
     leaves = {}
     for row in raw['contexts']:
+        if 'snapshot' in row:
+            index = row['snapshot']
+            if not isinstance(index,int) or not 0 <= index < len(raw.get('snapshots',[])):
+                raise ValueError('Broken search snapshot reference')
+            row = dict(raw['snapshots'][index], **row)
         simulation = row['simulation']
         if row.get('leaf'):
             if simulation in leaves: raise ValueError('Repeated search leaf')

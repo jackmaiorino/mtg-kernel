@@ -238,6 +238,8 @@ pub fn run(path: &Path) -> Result<(), String> {
         };
         let mut contexts = Vec::new();
         let mut context_bytes = 0;
+        let mut snapshots = Vec::new();
+        let mut snapshot_ids = std::collections::BTreeMap::<[u8; 32], usize>::new();
         let mut replay_error = None;
         let replay_enabled = capture.is_some()
             && config.search_replay_steps.contains(&decision.step)
@@ -258,18 +260,16 @@ pub fn run(path: &Path) -> Result<(), String> {
                             FastActorResponseV1::Decision(d) => d,
                             _ => return Err("search context has no decision".into()),
                         };
-                        let fixed = sample
+                        let mut fixed = sample
                             .viewer_observation_v1(PlayerSeatV1::P0)
                             .map_err(|e| format!("{e:?}"))?;
-                        let (actor, actions) = sample
+                        fixed.own_hand.clear();
+                        let (_, actions) = sample
                             .gameplay_trace_visible_v1(d, true)
                             .map_err(|e| format!("{e:?}"))?;
-                        let labels =
-                            crate::human_bo3_v1::gameplay_trace_labels_v1(&actor, &actions)
-                                .map_err(|e| format!("{e:?}"))?;
                         Ok(
                             json!({"simulation":simulation,"node":node,"action":action,"actor":d.acting_player,
-                            "board":fixed,"actions":actions,"labels":labels}),
+                            "board":fixed,"actions":actions}),
                         )
                     }
                     ViewerEvent::Leaf {
@@ -277,9 +277,10 @@ pub fn run(path: &Path) -> Result<(), String> {
                         simulation,
                         reason,
                     } => {
-                        let board = sample
+                        let mut board = sample
                             .viewer_observation_v1(PlayerSeatV1::P0)
                             .map_err(|e| format!("{e:?}"))?;
+                        board.own_hand.clear();
                         Ok(
                             json!({"simulation":simulation,"leaf":true,"reason":reason,"board":board}),
                         )
@@ -287,7 +288,24 @@ pub fn run(path: &Path) -> Result<(), String> {
                 }
             })();
             match result {
-                Ok(row) => {
+                Ok(mut row) => {
+                    let fields = row.as_object_mut().unwrap();
+                    let mut snapshot = json!({"board":fields.remove("board").unwrap()});
+                    if let Some(actions) = fields.remove("actions") {
+                        snapshot["actions"] = actions;
+                    }
+                    let encoded = snapshot.to_string();
+                    let digest: [u8; 32] = Sha256::digest(encoded.as_bytes()).into();
+                    let index = if let Some(index) = snapshot_ids.get(&digest) {
+                        *index
+                    } else {
+                        let index = snapshots.len();
+                        context_bytes += encoded.len();
+                        snapshots.push(snapshot);
+                        snapshot_ids.insert(digest, index);
+                        index
+                    };
+                    row["snapshot"] = json!(index);
                     context_bytes += row.to_string().len();
                     if context_bytes > 6 * 1024 * 1024 {
                         replay_error = Some("search replay byte bound".into());
@@ -304,12 +322,13 @@ pub fn run(path: &Path) -> Result<(), String> {
             search_inner(&session, limits, &evaluator, None)
         }
         .map_err(|e| format!("search at {}: {e:?}", decision.step))?;
-        if replay_error.is_some() {
+        if let Some(error) = &replay_error {
+            eprintln!("search replay incomplete: {error}");
             recorder.as_mut().unwrap().stopped =
-                Some("search replay projection unavailable".into());
+                Some(format!("search replay unavailable: {error}"));
         }
         let replay = replay_enabled.then(|| json!({"schema":"mtg-kernel-search-capture/v1",
-            "complete":replay_error.is_none(),"nodes":outcome.tree,"trace":outcome.trace,"contexts":contexts}));
+            "complete":replay_error.is_none(),"nodes":outcome.tree,"trace":outcome.trace,"contexts":contexts,"snapshots":snapshots}));
         let selected = outcome.selected;
         let stats: Vec<_> = outcome
             .root_visits
