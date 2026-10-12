@@ -289,7 +289,8 @@ pub(super) fn teach(
     ))
 }
 
-pub(super) fn continuation_identity(options: &ESupportedTeacherOptionsV1) -> Value {
+/// Bound into every E checkpoint; a continuing update or run must reproduce it.
+pub fn continuation_identity(options: &ESupportedTeacherOptionsV1) -> Value {
     json!({"method":e_supported::METHOD,"teacher":options.teacher,"treatment":options.treatment,
         "prior_deck_indices":options.prior_deck_indices,"selection_transition_cap":options.selection_transition_cap,
         "runtime_commit":env!("MTG_KERNEL_BUILD_GIT_HEAD"),

@@ -4,6 +4,10 @@
 use crate::durable_publication_v1::{
     capture_existing_publication_parent_v1, publish_new_file_v1, DurableFileExpectationV1,
 };
+use crate::expanded_deck_training_v1::e_supported_teacher_v1::{
+    continuation_identity as e_supported_continuation_identity_v1, ESupportedSlotV1,
+    ESupportedTeacherOptionsV1,
+};
 use crate::expanded_deck_training_v1::{
     execute_v1, line_b_frozen_sha256_v1, load_expanded_inference_v1,
     load_expanded_update_inference_v1, CollectionSamplerV1, ExpandedEpisodeV1,
@@ -61,6 +65,31 @@ pub struct ScheduledExpandedEpisodeV1 {
 #[serde(deny_unknown_fields)]
 pub struct ExpandedRunIterationV1 {
     pub episodes: Vec<ScheduledExpandedEpisodeV1>,
+}
+
+/// Frozen E supported-choice teacher for every update of a run
+/// (`e_supported_update`). `slots[i]` is update i's schedule; an empty entry is
+/// a declared ordinary update that still preserves the E continuation identity.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ESupportedRunOptionsV1 {
+    pub teacher: ExpandedModelSourceV1,
+    pub treatment: bool,
+    pub prior_deck_indices: Vec<usize>,
+    pub selection_transition_cap: u64,
+    pub slots: Vec<Vec<ESupportedSlotV1>>,
+}
+
+impl ESupportedRunOptionsV1 {
+    fn teacher_options_v1(&self, index: usize) -> ESupportedTeacherOptionsV1 {
+        ESupportedTeacherOptionsV1 {
+            teacher: self.teacher.clone(),
+            treatment: self.treatment,
+            slots: self.slots[index].clone(),
+            prior_deck_indices: self.prior_deck_indices.clone(),
+            selection_transition_cap: self.selection_transition_cap,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -124,6 +153,10 @@ pub struct NativeExpandedTrainingRunV1 {
     /// when absent, so every existing config and run identity is unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_b: Option<LineBUpdateOptionsV1>,
+    /// E supported-choice policy supervision; omitted when absent, so every
+    /// existing config and run identity is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub e_supported: Option<ESupportedRunOptionsV1>,
     pub output_directory: PathBuf,
 }
 
@@ -215,6 +248,39 @@ impl NativeExpandedTrainingRunV1 {
             "opponent roster exceeds 128 entries",
         )?;
         validate_source_paths(&self.initial_source)?;
+        if let Some(options) = &self.e_supported {
+            // The E command is the sequential CPU GAE update with full Adam and
+            // the unchanged deployment sampler; nothing else may be combined.
+            check(
+                self.line_b.is_none()
+                    && self.update_backend.is_cpu()
+                    && self.update_backward_execution.is_sequential()
+                    && self.preparation_workers == 1
+                    && self.collection_sampler.is_legacy()
+                    && matches!(
+                        self.loss_selection,
+                        ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                    ),
+                "E requires ordinary sequential CPU GAE, serial preparation and the legacy sampler",
+            )?;
+            validate_source_paths(&options.teacher)?;
+            check(
+                options.slots.len() == self.iterations.len(),
+                "E schedule needs one slot list per iteration",
+            )?;
+            let mut cases = BTreeSet::new();
+            for (slots, iteration) in options.slots.iter().zip(&self.iterations) {
+                for slot in slots {
+                    check(
+                        slot.trajectory_index < iteration.episodes.len()
+                            && !slot.case_id.is_empty()
+                            && slot.case_id.len() <= 256
+                            && cases.insert(slot.case_id.as_str()),
+                        "E slot outside its batch, or empty or repeated case id",
+                    )?;
+                }
+            }
+        }
         let mut roster = BTreeSet::new();
         for opponent in &self.opponents {
             check(
@@ -642,8 +708,10 @@ fn validate_update(
     preparation_workers: usize,
     max_prepared_tensor_mebibytes: usize,
     line_b_frozen_sha256: Option<&str>,
+    e_supported: Option<&ESupportedTeacherOptionsV1>,
 ) -> Result<(ExpandedModelSourceV1, ExpandedInferenceIdentityV1), String> {
     let document = read_pin(update)?;
+    validate_e_supported_update(&document, e_supported)?;
     // A masked run's every update repeats the initial source's frozen digest.
     check(
         document
@@ -684,6 +752,34 @@ fn validate_update(
         "update does not advance exactly one optimizer step",
     )?;
     Ok((next, after))
+}
+
+/// An E run's update must carry its packet, bound into the new checkpoint with
+/// this run's exact continuation identity; an ordinary run's must carry neither.
+fn validate_e_supported_update(
+    document: &Value,
+    e_supported: Option<&ESupportedTeacherOptionsV1>,
+) -> Result<(), String> {
+    let Some(options) = e_supported else {
+        return check(
+            document.get("e_supported").is_none(),
+            "ordinary run recovered an E update",
+        );
+    };
+    let checkpoint = read_pin_bounded(&parse_pin(document, "checkpoint")?, ARTIFACT_CAP)?;
+    let receipt = document
+        .get("e_supported")
+        .ok_or("E run update lacks its teacher receipt")?;
+    let packet_pin = parse_pin(receipt, "packet")?;
+    let packet = read_pin_bounded(&packet_pin, ARTIFACT_CAP)?;
+    check(
+        checkpoint["e_supported"]["continuation"] == e_supported_continuation_identity_v1(options)
+            && checkpoint["e_supported"]["packet"] == value(&packet_pin)?
+            && packet["options"] == value(options)?
+            && packet["scheduled"] == options.slots.len()
+            && receipt["scheduled"] == options.slots.len(),
+        "E update does not bind this run's teacher, schedule and packet",
+    )
 }
 
 fn collection_command(
@@ -743,11 +839,22 @@ fn record_collection_execution(config: &NativeExpandedTrainingRunV1, document: &
 
 fn update_command(
     config: &NativeExpandedTrainingRunV1,
+    index: usize,
     source: &ExpandedModelSourceV1,
     trajectories: Vec<PinnedFileV1>,
     output_directory: PathBuf,
 ) -> ExpandedTrainingCommandV1 {
-    if config.preparation_workers == 1 {
+    if let Some(options) = &config.e_supported {
+        ExpandedTrainingCommandV1::ESupportedUpdate {
+            source: source.clone(),
+            trajectories,
+            learning_rate: config.learning_rate,
+            value_coefficient: config.value_coefficient,
+            loss_selection: config.loss_selection,
+            teacher: options.teacher_options_v1(index),
+            output_directory,
+        }
+    } else if config.preparation_workers == 1 {
         ExpandedTrainingCommandV1::Update {
             line_b: config.line_b.clone(),
             source: source.clone(),
@@ -861,6 +968,10 @@ pub fn run_native_expanded_training_v1(
         let complete_path = directory.join("complete.json");
         let episodes = resolve_episodes(config, index, &current, &history)?;
         let episode_digest = identity(&episodes)?;
+        let e_options = config
+            .e_supported
+            .as_ref()
+            .map(|options| options.teacher_options_v1(index));
         if complete_path.exists() {
             let receipt = read_json(&complete_path, SMALL_CAP)?;
             check(
@@ -889,6 +1000,7 @@ pub fn run_native_expanded_training_v1(
                 config.preparation_workers,
                 config.max_prepared_tensor_mebibytes,
                 line_b_frozen_sha256.as_deref(),
+                e_options.as_ref(),
             )?;
             check(
                 receipt["output_identity"] == value(&after)?,
@@ -989,6 +1101,7 @@ pub fn run_native_expanded_training_v1(
                     config.preparation_workers,
                     config.max_prepared_tensor_mebibytes,
                     line_b_frozen_sha256.as_deref(),
+                    e_options.as_ref(),
                 )?;
                 update_validation_seconds += started.elapsed().as_secs_f64();
                 check(document["complete"] == true, "incomplete update receipt")?;
@@ -1038,7 +1151,7 @@ pub fn run_native_expanded_training_v1(
                 &json!({"collection":collection}),
             )?;
             let update_command =
-                update_command(config, &current, trajectories, attempt.join("update"));
+                update_command(config, index, &current, trajectories, attempt.join("update"));
             publish(&attempt, "update-command.json", &update_command)?;
             let started = Instant::now();
             execute_v1(update_command)?;
@@ -1075,6 +1188,7 @@ pub fn run_native_expanded_training_v1(
             config.preparation_workers,
             config.max_prepared_tensor_mebibytes,
             line_b_frozen_sha256.as_deref(),
+            e_options.as_ref(),
         )?;
         update_validation_seconds += started.elapsed().as_secs_f64();
         let mut receipt = json!({"schema":"mtg-kernel-native-expanded-iteration/v1", "iteration":index,
@@ -1082,6 +1196,12 @@ pub fn run_native_expanded_training_v1(
             "output_identity":after});
         if let Some(ledger_pin) = collection_non_natural_ledger_pin(&collection)? {
             receipt["non_natural_ledger"] = value(&ledger_pin)?;
+        }
+        if e_options.is_some() {
+            let document = read_pin(&update)?;
+            let e = &document["e_supported"];
+            receipt["e_supported"] =
+                json!({"packet":e["packet"],"scheduled":e["scheduled"],"valid":e["valid"]});
         }
         receipts.push(publish(&directory, "complete.json", &receipt)?);
         current = next;
@@ -1274,6 +1394,7 @@ mod tests {
             max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
             collection_sampler: CollectionSamplerV1::Legacy,
             line_b: None,
+            e_supported: None,
             output_directory: std::env::temp_dir().join("native-expanded-validation-only"),
         }
     }
@@ -1345,6 +1466,7 @@ mod tests {
         let output = serial.output_directory.join("update");
         let serial_command = value(&update_command(
             &serial,
+            0,
             &serial.initial_source,
             trajectories.clone(),
             output.clone(),
@@ -1357,6 +1479,7 @@ mod tests {
         assert_ne!(identity(&serial).unwrap(), identity(&parallel).unwrap());
         let mut parallel_command = value(&update_command(
             &parallel,
+            0,
             &parallel.initial_source,
             trajectories,
             output,
@@ -1412,7 +1535,7 @@ mod tests {
         assert!(default_manifest
             .get("max_prepared_tensor_mebibytes")
             .is_none());
-        match update_command(&raised, &raised.initial_source, Vec::new(), PathBuf::new()) {
+        match update_command(&raised, 0, &raised.initial_source, Vec::new(), PathBuf::new()) {
             ExpandedTrainingCommandV1::UpdatePrepared {
                 max_prepared_tensor_mebibytes,
                 ..
@@ -1804,6 +1927,7 @@ mod tests {
         // The forwarded selection reaches the actual Update command.
         let legacy_command = update_command(
             &legacy,
+            0,
             &legacy.initial_source,
             vec![],
             legacy.output_directory.clone(),
@@ -1816,6 +1940,7 @@ mod tests {
         }
         let gae_command = update_command(
             &gae,
+            0,
             &gae.initial_source,
             vec![],
             gae.output_directory.clone(),
@@ -1930,6 +2055,7 @@ mod tests {
             max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
             collection_sampler: CollectionSamplerV1::Legacy,
             line_b: None,
+            e_supported: None,
             output_directory: root.join("run"),
         }
     }
@@ -1973,6 +2099,104 @@ mod tests {
         let manifest: Value =
             read_json(&config.output_directory.join("run.json"), SMALL_CAP).unwrap();
         assert_eq!(manifest["loss_selection"]["kind"], "gae_advantage_value_v1");
+    }
+
+    fn e_supported_run_config_v1(label: &str) -> NativeExpandedTrainingRunV1 {
+        let mut config = real_two_iteration_config_v1(
+            label,
+            ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+                gamma: 1.0,
+                lambda: 0.9,
+                entropy_coefficient: 0.0,
+            },
+            ExpandedUpdateBackendV1::Cpu,
+        );
+        config.learning_rate = 0.0001;
+        config.e_supported = Some(ESupportedRunOptionsV1 {
+            teacher: config.initial_source.clone(),
+            treatment: true,
+            prior_deck_indices: (0..9).collect(),
+            selection_transition_cap: 128,
+            // Update 0 is supervised; update 1 is a declared ordinary update.
+            slots: vec![
+                vec![ESupportedSlotV1 {
+                    trajectory_index: 0,
+                    case_id: format!("{label}/main/update/0/episode/0"),
+                }],
+                vec![],
+            ],
+        });
+        config
+    }
+
+    fn iteration_receipt_v1(result: &Value, index: usize) -> Value {
+        let pin: PinnedFileV1 = serde_json::from_value(result["iterations"][index].clone()).unwrap();
+        read_pin(&pin).unwrap()
+    }
+
+    #[test]
+    fn e_supported_run_binds_packets_resumes_and_replays() {
+        let config = e_supported_run_config_v1("e-run-a");
+        config.validate_v1().unwrap();
+        let first = run_native_expanded_training_v1(&config, Some(1)).unwrap();
+        assert_eq!(first["completed_iterations"], 1);
+        // The second invocation re-validates the E prefix before its new update.
+        let result = run_native_expanded_training_v1(&config, None).unwrap();
+        assert_eq!(result["complete"], true);
+        let supervised = iteration_receipt_v1(&result, 0);
+        let ordinary = iteration_receipt_v1(&result, 1);
+        assert_eq!(supervised["e_supported"]["scheduled"], 1);
+        assert_eq!(ordinary["e_supported"]["scheduled"], 0);
+        assert_eq!(ordinary["e_supported"]["valid"], 0);
+        let update: PinnedFileV1 = serde_json::from_value(ordinary["update"].clone()).unwrap();
+        let checkpoint = parse_pin(&read_pin(&update).unwrap(), "checkpoint").unwrap();
+        let checkpoint = read_pin_bounded(&checkpoint, ARTIFACT_CAP).unwrap();
+        assert_eq!(checkpoint["e_supported"]["continuation"]["treatment"], true);
+        assert_eq!(result["actual_identity"]["adam_step"], 2);
+        // A complete rerun only verifies; a fresh directory replays identically.
+        assert_eq!(run_native_expanded_training_v1(&config, None).unwrap(), result);
+        let mut replay = config.clone();
+        replay.output_directory = config.output_directory.with_file_name("run-replay");
+        let again = run_native_expanded_training_v1(&replay, None).unwrap();
+        assert_eq!(again["actual_identity"]["state_sha256"], result["actual_identity"]["state_sha256"]);
+        assert_eq!(
+            iteration_receipt_v1(&again, 0)["e_supported"]["packet"]["sha256"],
+            supervised["e_supported"]["packet"]["sha256"]
+        );
+        // The plan, including the treatment bit, is bound for resume.
+        let mut changed = config.clone();
+        changed.e_supported.as_mut().unwrap().treatment = false;
+        let error = run_native_expanded_training_v1(&changed, None).unwrap_err();
+        assert!(error.contains("resume plan"), "{error}");
+    }
+
+    #[test]
+    fn e_supported_run_rejects_incompatible_execution_and_schedules() {
+        let base = e_supported_run_config_v1("e-run-validation");
+        base.validate_v1().unwrap();
+        let mut prepared = base.clone();
+        prepared.preparation_workers = 2;
+        assert!(prepared.validate_v1().is_err());
+        let mut short = base.clone();
+        short.e_supported.as_mut().unwrap().slots.pop();
+        assert!(short.validate_v1().is_err());
+        let mut outside = base.clone();
+        outside.e_supported.as_mut().unwrap().slots[1] = vec![ESupportedSlotV1 {
+            trajectory_index: 1,
+            case_id: "outside".into(),
+        }];
+        assert!(outside.validate_v1().is_err());
+        let mut repeated = base.clone();
+        let slot = repeated.e_supported.as_ref().unwrap().slots[0][0].clone();
+        repeated.e_supported.as_mut().unwrap().slots[1] = vec![slot];
+        assert!(repeated.validate_v1().is_err());
+        let mut legacy_loss = base.clone();
+        legacy_loss.loss_selection = ExpandedLossSelectionV1::TerminalReinforceValueV3;
+        assert!(legacy_loss.validate_v1().is_err());
+        // Absent E keeps the existing wire bytes.
+        let mut ordinary = base;
+        ordinary.e_supported = None;
+        assert!(value(&ordinary).unwrap().get("e_supported").is_none());
     }
 
     #[test]
