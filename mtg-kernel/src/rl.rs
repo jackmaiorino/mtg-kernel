@@ -1831,11 +1831,24 @@ pub fn card_name(card_id: u16) -> String {
     }
 }
 
+fn refuse_unrepresented_shroud(state: &GameState) -> Result<()> {
+    if state.objects.iter().any(|(id, object)| {
+        object.zone == Zone::Battlefield
+            && engine::has_effective_keyword(state, id, Keywords::SHROUD)
+    }) {
+        return Err(RlContractError(
+            "shroud requires an explicit public keyword representation".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub fn observe_v1(
     state: &GameState,
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
+    refuse_unrepresented_shroud(state)?;
     crate::extra_turn_v1::validate(state).map_err(RlContractError)?;
     if state.extra_turn_v1.is_some() {
         return Err(RlContractError(
@@ -2304,6 +2317,7 @@ fn build_policy_observation_parts_common(
     text_mode: ObservationTextModeV2,
     capabilities: (bool, bool, bool, bool, bool, bool, bool, bool, bool, bool),
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
+    refuse_unrepresented_shroud(state)?;
     let (
         accept_cant_block,
         accept_temporary_control,
@@ -8210,6 +8224,7 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
                             | crate::effect::EffectTargetSelectionPurpose::Hideaway { .. }
                             | crate::effect::EffectTargetSelectionPurpose::DiscardDraw { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { .. }
                             | crate::effect::EffectTargetSelectionPurpose::WardCards { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand {
@@ -8907,6 +8922,153 @@ fn stack_item_public_v2(
     })
 }
 
+/// Selected Crystal transport: derive the resolving identity from the real
+/// owned continuation and captured producer, never its newer arena printing.
+pub(crate) fn crystal_resolving_source_ref(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<CardStableRefV1> {
+    crate::effect::crystal_prevention_v1::validate(state).map_err(RlContractError)?;
+    let pending = state.engine.pending_effect.as_ref().ok_or_else(|| {
+        RlContractError("Crystal resolving source lost its genuine continuation".into())
+    })?;
+    if pending.resolving_item != *item {
+        return Err(RlContractError(
+            "Crystal resolving source differs from its owned continuation".into(),
+        ));
+    }
+    let positions: Vec<_> = state
+        .stack
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| row.v4.stack_item_id == item.v4.stack_item_id)
+        .collect();
+    let [(ordinal, live)] = positions.as_slice() else {
+        return Err(RlContractError(
+            "Crystal resolving source lost its unique live owner".into(),
+        ));
+    };
+    if **live != *item {
+        return Err(RlContractError(
+            "Crystal resolving source changed its published row".into(),
+        ));
+    }
+    crate::engine::validated_stack_item_target_spec(item, state).map_err(RlContractError)?;
+    let ordinal = u32::try_from(*ordinal)
+        .map_err(|_| RlContractError("Crystal stack ordinal overflow".into()))?;
+    if crate::equipment_damage_source_v4::has_publication(state, item.v4.stack_item_id) {
+        // This producer authenticates original publication, departure or
+        // preparation and its existing hidden/copied-source refusal.
+        return crate::equipment_damage_source_v4::public_sources(state)
+            .map_err(RlContractError)?
+            .into_iter()
+            .find(|row| row.stack_ordinal == ordinal)
+            .map(|row| row.source)
+            .ok_or_else(|| RlContractError("Crystal grant lost original public source".into()));
+    }
+    if crate::gorehorn_damage_v1::has_publication(state, item.v4.stack_item_id) {
+        let row = crate::gorehorn_damage_v1::public_sources(state)
+            .map_err(RlContractError)?
+            .into_iter()
+            .find(|row| row.stack_ordinal == ordinal)
+            .ok_or_else(|| RlContractError("Crystal Raid lost original public source".into()))?;
+        let captured = state
+            .engine
+            .event_history
+            .iter()
+            .find_map(|event| match event {
+                CommittedEvent::GorehornPublishedV1 { publication }
+                    if publication.item.v4.stack_item_id == item.v4.stack_item_id =>
+                {
+                    publication.item.v4.ability_source_contract
+                }
+                _ => None,
+            })
+            .ok_or_else(|| {
+                RlContractError("Crystal Raid publication lost captured source".into())
+            })?;
+        if captured.source != item.source
+            || captured.card_def != row.printed_card_db_id
+            || PlayerSeatV1::from(captured.controller) != row.ability_controller
+        {
+            return Err(RlContractError(
+                "Crystal Raid source differs from authenticated publication".into(),
+            ));
+        }
+        return Ok(CardStableRefV1 {
+            arena_id: captured.source.0,
+            card_db_id: captured.card_def,
+            owner: captured.owner.into(),
+            controller: captured.controller.into(),
+            zone: captured.zone,
+            zone_change_count: captured.zone_change_count,
+        });
+    }
+    crate::source_power_activation_v1::validate_item(state, item).map_err(RlContractError)?;
+    let (source, card_def, owner, controller, zone, zone_change_count) = match item.kind {
+        StackItemKind::Spell => {
+            let s = item
+                .v4
+                .source_contract
+                .ok_or_else(|| RlContractError("Crystal spell lost captured source".into()))?;
+            (
+                s.source,
+                s.card_def,
+                s.owner,
+                s.controller,
+                s.zone,
+                s.zone_change_count,
+            )
+        }
+        StackItemKind::ActivatedAbility | StackItemKind::TriggeredAbility => {
+            let s = item
+                .v4
+                .ability_source_contract
+                .ok_or_else(|| RlContractError("Crystal ability lost captured source".into()))?;
+            crate::engine::validate_historical_ability_source_contract(state, s)
+                .map_err(RlContractError)?;
+            // Fixed/source-power validators above authenticate real payment
+            // and captured facts while the printed source may be elsewhere.
+            (
+                s.source,
+                s.card_def,
+                s.owner,
+                s.controller,
+                s.zone,
+                s.zone_change_count,
+            )
+        }
+        StackItemKind::MadnessOffer => {
+            return Err(RlContractError(
+                "Madness is not a Crystal resolving program".into(),
+            ))
+        }
+    };
+    if source != item.source {
+        return Err(RlContractError(
+            "Crystal captured source changed arena identity".into(),
+        ));
+    }
+    // Keep the predecessor copied-source boundary. This is refusal only:
+    // the current object's definition never supplies the emitted identity.
+    if state
+        .objects
+        .try_get(source)
+        .is_none_or(|live| live.card_def != card_def || live.owner != owner)
+    {
+        return Err(RlContractError(
+            "Crystal copied source needs separate historical transport".into(),
+        ));
+    }
+    Ok(CardStableRefV1 {
+        arena_id: source.0,
+        card_db_id: card_def,
+        owner: owner.into(),
+        controller: controller.into(),
+        zone,
+        zone_change_count,
+    })
+}
 fn stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRefV1> {
     crate::engine::validated_stack_item_target_spec(item, state)
         .map_err(|error| RlContractError(format!("invalid stack source metadata: {error}")))?;
@@ -10441,6 +10603,97 @@ mod adventure_and_monarch_rl_tests {
             assert_eq!(public_paid.zone, Zone::Battlefield);
             assert_eq!(public_paid.zone_change_count, paid.zone_change_count);
             assert_eq!(state.stack.last().unwrap().v4.paid_cost_refs, vec![paid]);
+        }
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod crystal_resolving_source_ref_native84_tests {
+    use super::*;
+    use crate::engine::{self, Action, Decision};
+    use crate::event::{ActiveReplacement, ReplacementEffectKind};
+    use crate::policy_observation_v6::tests::{put, ready_state};
+
+    #[test]
+    fn actual_bolt_owned_menu_ref_uses_captured_contract_and_refuses_missing_or_foreign_owner_readonly_both_seats(
+    ) {
+        for receiver in [PlayerId::P0, PlayerId::P1] {
+            let caster = receiver.opponent();
+            let mut state = ready_state();
+            state.active_player = caster;
+            state.priority_player = caster;
+            state.step = crate::state::Step::Main1;
+            let wall = put(&mut state, receiver, "Crystal Barricade", Zone::Battlefield);
+            let target = put(&mut state, receiver, "Llanowar Elves", Zone::Battlefield);
+            state.engine.next_replacement_id = 1;
+            state.engine.active_replacements.push(ActiveReplacement {
+                id: 1,
+                source: wall,
+                kind: ReplacementEffectKind::PreventNextDamage {
+                    target: Target::Object(target),
+                    remaining: 5,
+                },
+            });
+            let bolt = put(&mut state, caster, "Lightning Bolt", Zone::Hand);
+            state.players[caster.index()].mana_pool[crate::mana::ManaColor::R.pool_index()] = 1;
+            engine::step(&mut state, Action::CastSpell(bolt)).unwrap();
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+            let _ = engine::advance_until_decision(&mut state);
+            for _ in 0..12 {
+                let d = engine::advance_until_decision(&mut state);
+                if matches!(d, Decision::ChooseEffectOption { player, .. } if player == receiver) {
+                    break;
+                }
+                assert!(matches!(d, Decision::CastSpellOrPass { .. }), "{d:?}");
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            assert!(
+                matches!(engine::advance_until_decision(&mut state), Decision::ChooseEffectOption { player, .. } if player == receiver)
+            );
+            let item = state
+                .engine
+                .pending_effect
+                .as_ref()
+                .unwrap()
+                .resolving_item
+                .clone();
+            let captured = item.v4.source_contract.unwrap();
+            let original = CardStableRefV1 {
+                arena_id: captured.source.0,
+                card_db_id: captured.card_def,
+                owner: captured.owner.into(),
+                controller: captured.controller.into(),
+                zone: captured.zone,
+                zone_change_count: captured.zone_change_count,
+            };
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(
+                crystal_resolving_source_ref(&state, &item).unwrap(),
+                original
+            );
+            assert_eq!(
+                crystal_resolving_source_ref(&restored, &item).unwrap(),
+                original
+            );
+            for mode in 0..3 {
+                let mut bad = restored.clone();
+                let mut supplied = item.clone();
+                match mode {
+                    0 => supplied.source = target,
+                    1 => bad.engine.pending_effect = None,
+                    _ => bad
+                        .stack
+                        .retain(|row| row.v4.stack_item_id != item.v4.stack_item_id),
+                }
+                let bytes = serde_json::to_vec(&bad).unwrap();
+                assert!(crystal_resolving_source_ref(&bad, &supplied).is_err());
+                assert_eq!(bytes, serde_json::to_vec(&bad).unwrap());
+            }
         }
     }
 }

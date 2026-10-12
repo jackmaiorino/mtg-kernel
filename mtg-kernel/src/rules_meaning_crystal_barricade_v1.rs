@@ -178,7 +178,14 @@ pub fn meaning(
         def.types,
         def.colors,
         def.subtypes,
-        def.supertypes,
+        def.supertypes
+            .iter()
+            .map(|supertype| match supertype {
+                crate::card_def::Supertype::Basic => "Basic",
+                crate::card_def::Supertype::Snow => "Snow",
+                crate::card_def::Supertype::Legendary => "Legendary",
+            })
+            .collect::<Vec<_>>(),
         def.mana_value,
         def.power,
         def.toughness,

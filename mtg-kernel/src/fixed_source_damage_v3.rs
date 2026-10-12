@@ -475,6 +475,7 @@ pub(crate) fn legal_targets(state: &GameState, facts: HistoricalDamageSourceV1) 
     .into_iter()
     .filter(|target| match *target {
         Target::Player(_) => true,
+        Target::StackItem(_) => false,
         Target::Object(id) => {
             !crate::source_power_activation_v1::protected(state, facts, id)
                 && !crate::standard_legends_v1::hexproof_from_historical_color(

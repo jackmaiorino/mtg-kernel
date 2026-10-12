@@ -103,6 +103,10 @@ pub struct CardRulesV1 {
 }
 
 fn keyword_bits(keywords: crate::card_def::Keywords) -> impl Iterator<Item = u8> {
+    assert!(
+        !keywords.has(crate::card_def::Keywords::SHROUD),
+        "shroud requires a successor keyword representation"
+    );
     (0..32u8).filter(move |bit| keywords.0 & (1 << bit) != 0)
 }
 

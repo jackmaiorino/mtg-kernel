@@ -1202,6 +1202,8 @@ impl Keywords {
     /// gives that player a poison counter. The Phyrexian Mite token is the
     /// first consumer.
     pub const TOXIC_1: Keywords = Keywords(1 << 17);
+    /// This permanent cannot be targeted by any player (702.18).
+    pub const SHROUD: Keywords = Keywords(1 << 18);
 
     pub const fn has(self, other: Keywords) -> bool {
         self.0 & other.0 != 0
