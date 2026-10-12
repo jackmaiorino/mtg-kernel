@@ -4173,7 +4173,6 @@ mod arahbo_entry_tests {
     use crate::ids::PlayerId;
     use crate::policy_observation_v6::tests::put;
     #[test]
-    #[ignore = "requires genuine Arahbo registration; physical characteristic boundary"]
     fn nontoken_cat_permanent_does_not_require_creature_type_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);

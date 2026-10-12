@@ -2615,12 +2615,12 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 421 (Garruk after Gourmand, Stromkirk, Banishing,
+        // batches append through id 423 (Strongbox after Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                422
+                424
             } else {
                 192
             }
@@ -2658,7 +2658,8 @@ mod tests {
         assert!(crate::trigger::triggers_for(391).is_empty());
         assert_eq!(card_id_by_name("Gorehorn Raider"), Some(412));
         assert_eq!(card_id_by_name("Gutless Plunderer"), Some(413));
-        assert!(card_id_by_name("Strongbox Raider").is_none());
+        assert_eq!(card_id_by_name("Arahbo, the First Fang"), Some(422));
+        assert_eq!(card_id_by_name("Strongbox Raider"), Some(423));
     }
 
     #[test]

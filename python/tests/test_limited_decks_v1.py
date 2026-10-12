@@ -200,7 +200,8 @@ class LimitedDeckTest(unittest.TestCase):
             self.assertEqual(resolved.count(card_id), 4)
         self.assertEqual(self.registry["Gorehorn Raider"].card_id, 412)
         self.assertNotIn(412, resolved)
-        self.assertNotIn("Strongbox Raider", self.registry)
+        self.assertEqual(self.registry["Arahbo, the First Fang"].card_id, 422)
+        self.assertEqual(self.registry["Strongbox Raider"].card_id, 423)
 
     def test_original_decks_are_40_cards_and_fully_resolve(self) -> None:
         for filename, supported_copies, source_sha256 in [
@@ -404,7 +405,7 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("FDN_top_*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
-        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 217)
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 219)
         self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
                              for card in report["cards"]), 0)
 

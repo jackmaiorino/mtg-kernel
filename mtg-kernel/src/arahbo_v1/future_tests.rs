@@ -97,7 +97,6 @@ pub(crate) fn published(state: &mut GameState) -> StackItem {
 }
 
 #[test]
-#[ignore = "requires genuine Arahbo registration, source preparation only"]
 fn real_cast_cat_token_anthem_controller_and_noncat_conditions_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
@@ -139,7 +138,6 @@ fn real_cast_cat_token_anthem_controller_and_noncat_conditions_both_seats() {
 }
 
 #[test]
-#[ignore = "requires genuine Arahbo registration, source preparation only"]
 fn real_token_copy_self_entry_is_included_other_token_entry_is_excluded_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
@@ -177,7 +175,6 @@ fn real_token_copy_self_entry_is_included_other_token_entry_is_excluded_both_sea
 }
 
 #[test]
-#[ignore = "requires genuine Arahbo registration, source preparation only"]
 fn real_complete_batch_source_and_nontoken_cat_permanent_scope_before_sba() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for reversed in [false, true] {
@@ -203,7 +200,6 @@ fn real_complete_batch_source_and_nontoken_cat_permanent_scope_before_sba() {
 }
 
 #[test]
-#[ignore = "requires genuine Arahbo registration, source preparation only"]
 fn real_original_controller_departure_reentry_response_and_restore_do_not_change_beneficiary() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
@@ -234,7 +230,6 @@ fn real_original_controller_departure_reentry_response_and_restore_do_not_change
 }
 
 #[test]
-#[ignore = "requires genuine Arahbo registration; accepted physical attachment primitive"]
 fn witness_suppression_removes_current_anthem_and_new_observers_not_old_captures() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
@@ -285,7 +280,6 @@ fn witness_suppression_removes_current_anthem_and_new_observers_not_old_captures
 }
 
 #[test]
-#[ignore = "requires genuine Arahbo registration, source preparation only"]
 fn genuine_uncollected_held_published_closed_owners_refuse_erasure_and_replay() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
@@ -397,7 +391,6 @@ fn genuine_uncollected_held_published_closed_owners_refuse_erasure_and_replay() 
 }
 
 #[test]
-#[ignore = "requires genuine Arahbo and Garruk registration, source preparation only"]
 fn genuine_garruk_and_arahbo_rows_publish_independently_of_authority_leaf() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
