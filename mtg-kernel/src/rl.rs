@@ -9102,7 +9102,7 @@ pub(crate) fn crystal_resolving_source_ref(
             .event_history
             .iter()
             .find_map(|event| match event {
-                CommittedEvent::GorehornPublishedV1 { publication }
+                crate::event::CommittedEvent::GorehornPublishedV1 { publication }
                     if publication.item.v4.stack_item_id == item.v4.stack_item_id =>
                 {
                     publication.item.v4.ability_source_contract
