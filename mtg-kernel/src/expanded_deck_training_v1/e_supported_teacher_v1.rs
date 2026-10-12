@@ -21,6 +21,113 @@ pub struct ESupportedTeacherOptionsV1 {
     pub selection_transition_cap: u64,
 }
 
+/// One fixed probe: a saved learner row and the recorded E target's live index.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ESupportedProbeV1 {
+    pub probe_id: String,
+    pub trajectory: PinnedFileV1,
+    pub row_index: usize,
+    pub target_live: usize,
+}
+
+/// Deployment-path CE and Hamilton mass of `source` on fixed E targets. The
+/// saved trajectory is replayed to its row and the source's own collection
+/// scorer runs there (no sampling, search, update or teacher query); the
+/// encoded input must equal the saved row's.
+pub(super) fn probe_score(
+    source: &ExpandedModelSourceV1,
+    probes: &[ESupportedProbeV1],
+    output_directory: &Path,
+) -> Result<Value, String> {
+    ensure(
+        !probes.is_empty() && probes.len() <= 4096,
+        "E probe count outside 1..4096",
+    )?;
+    ensure(
+        !output_directory.exists(),
+        "E probe output directory must be fresh",
+    )?;
+    let (policy, identity) = load_expanded_inference_v1(source)?;
+    let mut ids = BTreeSet::new();
+    let mut rows = Vec::new();
+    for probe in probes {
+        ensure(ids.insert(&probe.probe_id), "duplicate E probe id")?;
+        let trajectory: ExpandedTrajectoryV1 = read_pinned(&probe.trajectory)?;
+        let row = trajectory
+            .decisions
+            .get(probe.row_index)
+            .ok_or("E probe row outside trajectory")?;
+        let episode = &trajectory.episode;
+        ensure(
+            episode.reset.is_none(),
+            "E probes use ordinary-start trajectories",
+        )?;
+        let mut session = episode_session_v1(episode, &episode.configurations()?)?;
+        for saved in &trajectory.decisions[..probe.row_index] {
+            let FastActorResponseV1::Decision(d) = session.current_response() else {
+                return Err("E probe replay ended before its row".into());
+            };
+            ensure(
+                d.step == saved.step && d.legal_action_count as usize == saved.logits.len(),
+                "E probe replay row mismatch",
+            )?;
+            session
+                .step(d.episode_id, d.step, saved.selected)
+                .map_err(err)?;
+        }
+        let FastActorResponseV1::Decision(d) = session.current_response() else {
+            return Err("E probe replay ended before its row".into());
+        };
+        ensure(
+            d.step == row.step
+                && d.physical_decision_id == row.physical_decision_id
+                && d.substep_index == row.substep_index
+                && seat(d.acting_player) == row.actor
+                && row.actor == episode.learner_seat
+                && d.legal_action_count as usize == row.logits.len()
+                && probe.target_live < row.logits.len(),
+            "E probe root differs from its saved learner row",
+        )?;
+        let mut capture = policy.fork_for_collection_v3()?;
+        capture.reset_sampling_v1([0, 0]);
+        let (logits, tensor) = match trajectory_generation_v1(&trajectory) {
+            FreshLineageGenerationV1::V3 => {
+                let (_, scores, tensor) = capture.select_with_training_tensor_v3(&session)?;
+                (scores.logits, TensorBitsV1::from_tensor(&tensor.common))
+            }
+            FreshLineageGenerationV1::V4 => {
+                let (_, scores, tensor) = capture.select_with_training_tensor_v4(&session)?;
+                (scores.logits, TensorBitsV1::from_tensor(&tensor.common))
+            }
+        };
+        ensure(
+            serde_json::to_vec(&tensor).map_err(err)?
+                == serde_json::to_vec(&row.tensor).map_err(err)?,
+            "E probe encoded input differs from the saved row",
+        )?;
+        ensure(
+            logits.iter().all(|z| z.is_finite()),
+            "E probe nonfinite logits",
+        )?;
+        let mut sampler = WideCategoricalScratchV1::default();
+        let mass = sampler.apportion(&logits).map_err(err)?[probe.target_live];
+        rows.push(json!({"probe_id":probe.probe_id,"trajectory":probe.trajectory,
+            "row_index":probe.row_index,"target_live":probe.target_live,
+            "ce":ce_readout(&logits, probe.target_live)?,
+            "deployed_mass":mass as f64/(u64::MAX as f64+1.0),"deployed_mass_u128":mass.to_string(),
+            "argmax":logits.iter().enumerate().fold(0, |b, (i, z)| if *z > logits[b] { i } else { b }),
+            "logits_bits":logits.iter().map(|z| z.to_bits()).collect::<Vec<_>>()}));
+    }
+    let result = json!({"schema":"mtg-kernel-e-supported-probe-score/v1","method":e_supported::METHOD,
+        "complete":true,"source":source,"identity":identity,"rows":rows,
+        "runtime_commit":env!("MTG_KERNEL_BUILD_GIT_HEAD"),
+        "runtime_tree":env!("MTG_KERNEL_BUILD_TRACKED_TREE_SHA256")});
+    fs::create_dir_all(output_directory).map_err(err)?;
+    publish_json(output_directory, "probes.json", &result)?;
+    Ok(result)
+}
+
 fn rank(case: &str, row: usize) -> [u8; 32] {
     Sha256::digest(
         serde_json::to_vec(&json!({"case_id":case,"namespace":e_supported::METHOD,

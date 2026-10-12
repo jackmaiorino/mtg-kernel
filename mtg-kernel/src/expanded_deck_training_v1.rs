@@ -2641,6 +2641,12 @@ pub enum ExpandedTrainingCommandV1 {
         teacher: ESupportedTeacherOptionsV1,
         output_directory: PathBuf,
     },
+    /// Fixed-probe readout of E targets for one source (no update or search).
+    ESupportedProbeScore {
+        source: ExpandedModelSourceV1,
+        probes: Vec<e_supported_teacher_v1::ESupportedProbeV1>,
+        output_directory: PathBuf,
+    },
     /// Line (b) end-of-run head distance between a treatment and its matched
     /// control (proposal 12:51); reads both sources, writes nothing.
     LineBHeadDistance {
@@ -2680,6 +2686,11 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             membership_sha256,
             output_directory,
         } => exploration_probe_v1::score_v1(source, probes, membership_sha256, output_directory),
+        ExpandedTrainingCommandV1::ESupportedProbeScore {
+            source,
+            probes,
+            output_directory,
+        } => e_supported_teacher_v1::probe_score(&source, &probes, &output_directory),
         ExpandedTrainingCommandV1::LineBHeadDistance { treatment, control } => {
             line_b_teacher_packet_v1::line_b_head_distance_v1(&treatment, &control)
         }
@@ -9257,6 +9268,28 @@ pub(crate) mod tests {
             .unwrap()
             .is_empty());
         assert!(packet["slots"][0]["cost"]["transitions"].as_u64().unwrap() <= 128);
+        // The fixed-probe readout replays the same row through the source's own
+        // collection scorer: its logits are the recorded collection logits.
+        let row_index = packet["slots"][0]["row_ordinal"].as_u64().unwrap() as usize;
+        let target_live = packet["slots"][0]["actual_student_action"]
+            .as_u64()
+            .unwrap() as usize;
+        let probe = execute_v1(ExpandedTrainingCommandV1::ESupportedProbeScore {
+            source: source.clone(),
+            probes: vec![e_supported_teacher_v1::ESupportedProbeV1 {
+                probe_id: "engineering-probe".into(),
+                trajectory: trajectories[0].clone(),
+                row_index,
+                target_live,
+            }],
+            output_directory: root.join("probe"),
+        })
+        .unwrap();
+        assert_eq!(
+            probe["rows"][0]["logits_bits"],
+            packet["slots"][0]["collection_logits"]
+        );
+        assert!(probe["rows"][0]["ce"].as_f64().unwrap().is_finite());
         let checkpoint: PinnedFileV1 = serde_json::from_value(a["checkpoint"].clone()).unwrap();
         let checkpoint: Value =
             serde_json::from_slice(&read_pinned_bytes(&checkpoint).unwrap()).unwrap();
