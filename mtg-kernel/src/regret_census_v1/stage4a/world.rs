@@ -41,7 +41,7 @@ pub(crate) struct DeckPrior {
 
 impl DeckPrior {
     /// Condition the approximate public prior on every supplied actor-visible
-    /// frame. Physical cards are deduplicated within a frame; tokens are excluded.
+    /// frame. Physical cards are deduplicated across the prefix; tokens are excluded.
     /// This uses only transported public/known-card objects, never private state.
     pub(crate) fn with_visible_history(
         mut self,
@@ -88,17 +88,17 @@ impl DeckPrior {
         } else {
             "p1"
         };
+        let mut visible = std::collections::BTreeMap::new();
         for frame in history {
-            let mut visible = std::collections::BTreeMap::new();
             cards(&frame.observation, owner, &mut visible);
-            let mut visible: Vec<_> = visible.values().copied().collect();
-            visible.sort_unstable();
-            let keep: Vec<_> = (0..self.decks.len())
-                .filter(|&i| is_submultiset(&visible, &self.decks[i]))
-                .collect();
-            self.ids = keep.iter().map(|&i| self.ids[i]).collect();
-            self.decks = keep.iter().map(|&i| self.decks[i].clone()).collect();
         }
+        let mut visible: Vec<_> = visible.values().copied().collect();
+        visible.sort_unstable();
+        let keep: Vec<_> = (0..self.decks.len())
+            .filter(|&i| is_submultiset(&visible, &self.decks[i]))
+            .collect();
+        self.ids = keep.iter().map(|&i| self.ids[i]).collect();
+        self.decks = keep.iter().map(|&i| self.decks[i].clone()).collect();
         self
     }
     pub(crate) fn new(deck_indices: &[usize]) -> Self {
@@ -315,6 +315,34 @@ pub(crate) fn sample(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn e_supported_public_prior_preserves_distinct_cards_seen_across_frames() {
+        use super::super::e_supported::VisibleFrame;
+        let prior = DeckPrior::new(&[0]);
+        let card = prior.decks[0][0];
+        let count = prior.decks[0].iter().filter(|&&c| c == card).count();
+        let frame = |id| VisibleFrame {
+            observation: serde_json::json!({"known_hand_cards":[[],[{
+            "card_name":"visible","stable":{"arena_id":id,"owner":"p1","card_db_id":card}}]]}),
+            menu: vec![],
+            selected: 0,
+        };
+        let repeated: Vec<_> = (0..count + 1).map(|_| frame(1)).collect();
+        assert_eq!(
+            prior
+                .clone()
+                .with_visible_history(&repeated, PlayerId(0))
+                .ids()
+                .len(),
+            1
+        );
+        let distinct: Vec<_> = (0..count + 1).map(|i| frame(i as u64)).collect();
+        assert!(prior
+            .with_visible_history(&distinct, PlayerId(0))
+            .ids()
+            .is_empty());
+    }
 
     #[test]
     fn multiset_helpers() {

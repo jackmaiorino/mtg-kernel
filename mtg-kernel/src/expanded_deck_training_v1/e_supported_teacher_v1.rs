@@ -228,6 +228,7 @@ pub(super) fn teach(
         packet["case_id"] = json!(slot.case_id);
         packet["trajectory_index"] = json!(slot.trajectory_index);
         packet["row_ordinal"] = json!(index);
+        packet["temporal_fraction"] = json!(index as f64 / trajectory.decisions.len() as f64);
         packet["rank"] = json!(hex(&r));
         packet["eligible"] = json!(eligible);
         packet["episode"] = json!(episode);
@@ -243,6 +244,28 @@ pub(super) fn teach(
         packets.push(packet);
     }
     let binary = fs::read(std::env::current_exe().map_err(err)?).map_err(err)?;
+    let mut census: std::collections::BTreeMap<String, Value> = Default::default();
+    for slot in &packets {
+        let episode = &slot["episode"];
+        let seat = episode["learner_seat"]
+            .as_u64()
+            .expect("typed learner seat") as usize;
+        let key=serde_json::to_string(&json!({"deck":episode["selected"][seat]["label"],
+            "seat":seat,"family":slot["decision"]["family"],"width":slot["decision"]["legal_width"]})).map_err(err)?;
+        let counts = census
+            .entry(key)
+            .or_insert(json!({"scheduled":0,"available":0,"valid":0,"disagreement":0}));
+        for (name, increment) in [
+            ("scheduled", true),
+            ("available", slot["row_ordinal"].is_number()),
+            ("valid", slot["selected_live"].is_number()),
+            ("disagreement", slot["readout"]["disagreement"] == true),
+        ] {
+            if increment {
+                counts[name] = json!(counts[name].as_u64().expect("counter") + 1);
+            }
+        }
+    }
     let packet = json!({"schema":"mtg-kernel-e-supported-teacher-packet/v1","method":e_supported::METHOD,
         "runtime_commit":env!("MTG_KERNEL_BUILD_GIT_HEAD"),"runtime_tree":env!("MTG_KERNEL_BUILD_TRACKED_TREE_SHA256"),
         "runtime_binary_sha256":hex(&Sha256::digest(binary)),"student_state_sha256":student_hash,
@@ -250,7 +273,7 @@ pub(super) fn teach(
             "contract":student.feature_identity_v1().feature_contract_digest,
             "encoding":student.feature_identity_v1().feature_encoding_digest},
         "teacher_identity":teacher_identity,"options":options,"scheduled":options.slots.len(),
-        "valid":rows.len(),"slots":packets});
+        "valid":rows.len(),"census_by_deck_seat_family_width":census,"slots":packets});
     Ok((
         packet,
         ESupportedPolicyInputV1 {

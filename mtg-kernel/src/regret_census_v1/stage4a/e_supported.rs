@@ -48,8 +48,10 @@ pub(crate) fn query(
     prior_indices: &[usize],
     select_cap: u64,
 ) -> Result<(Option<usize>, Value), String> {
+    let mut prior_history = history.to_vec();
+    prior_history.push(visible_frame(session, d, 0)?);
     let prior =
-        DeckPrior::new(prior_indices).with_visible_history(history, super::play::acting(&d));
+        DeckPrior::new(prior_indices).with_visible_history(&prior_history, super::play::acting(&d));
     let ctx = RootCtx {
         visible_history: history,
         root: session,
