@@ -18,6 +18,7 @@ pub(crate) struct LineBAuxiliaryRootV1 {
 }
 
 pub(crate) struct LineBAuxiliaryInputV1 {
+    pub(crate) scheduled_count: Option<usize>,
     pub(crate) direction: LineBDivergenceV1,
     /// `c`; the mean runs over all selected roots, censored ones included.
     pub(crate) coefficient: f64,
@@ -27,6 +28,7 @@ pub(crate) struct LineBAuxiliaryInputV1 {
 /// Outcome-free telemetry of one update (proposal 12:51).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LineBAuxiliaryResultV1 {
+    pub(crate) gradient_components: serde_json::Value,
     /// Per root: the divergence at the start-of-update parameters, `None` for
     /// a censored root.
     pub(crate) divergences_before: Vec<Option<f64>>,
@@ -61,7 +63,10 @@ pub(super) fn line_b_auxiliary_terms_v1(
     group_tapes: &[GroupTapeV1<'_>],
     parameters: &[NativeNamedParameterV1],
 ) -> Result<LineBAuxiliaryTermsV1, NativePolicyTrainErrorV1> {
-    let count = input.roots.len();
+    let count = input.scheduled_count.unwrap_or(input.roots.len());
+    if count < input.roots.len() {
+        return Err(invalid("auxiliary-scheduled-count"));
+    }
     if count == 0 {
         return Err(invalid("line-b-auxiliary-no-roots"));
     }
@@ -152,6 +157,29 @@ impl LineBAuxiliaryTermsV1 {
         let ordinary_head_l2 = l2(gradients);
         let auxiliary_head_l2 = l2(&self.gradients);
         let auxiliary_bias_residual = self.gradients[SCORER_SECOND_BIAS][0];
+        let component = |kind: &str| {
+            let (mut a, mut b, mut dot) = (0.0_f64, 0.0_f64, 0.0_f64);
+            for (i, parameter) in parameters.iter().enumerate() {
+                let value = parameter.name.starts_with("value_head.");
+                let policy = parameter.name.starts_with("scorer.");
+                if kind == "all"
+                    || (kind == "value" && value)
+                    || (kind == "policy" && policy)
+                    || (kind == "shared" && !value && !policy)
+                {
+                    for (&x, &y) in self.gradients[i].iter().zip(&gradients[i]) {
+                        let (x, y) = (f64::from(x), f64::from(y));
+                        a += x * x;
+                        b += y * y;
+                        dot += x * y;
+                    }
+                }
+            }
+            serde_json::json!({"auxiliary_l2":a.sqrt(),"ordinary_l2":b.sqrt(),"dot":dot,
+                "ratio":(b>0.0).then(||(a/b).sqrt())})
+        };
+        let gradient_components = serde_json::json!({"all":component("all"),
+            "policy":component("policy"),"shared":component("shared"),"value":component("value")});
         if self.active {
             for (destination, source) in gradients.iter_mut().zip(&self.gradients) {
                 for (value, auxiliary) in destination.iter_mut().zip(source) {
@@ -163,6 +191,7 @@ impl LineBAuxiliaryTermsV1 {
             }
         }
         Ok(LineBAuxiliaryResultV1 {
+            gradient_components,
             divergences_before: self.divergences,
             auxiliary_loss: self.loss,
             auxiliary_head_l2,
@@ -238,6 +267,7 @@ pub(crate) fn line_b_permuted_input_v1(
         .collect();
     (
         LineBAuxiliaryInputV1 {
+            scheduled_count: input.scheduled_count,
             direction: input.direction,
             coefficient: input.coefficient,
             roots,
