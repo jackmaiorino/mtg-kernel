@@ -211,6 +211,7 @@ pub(super) fn validate_required_stage(
 ) -> Result<(), String> {
     let printed_strongbox = pending.resolving_item.kind
         == crate::state::StackItemKind::TriggeredAbility
+        && pending.resolving_item.v4.granted_by.is_none()
         && state
             .objects
             .try_get(pending.ctx.source)

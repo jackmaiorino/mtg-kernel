@@ -59,7 +59,10 @@ fn registered_rod_and_elves_actual_cast_equip_and_departed_grant_resolve_without
         }
         panic!("registered Rod fixture did not finish");
     }
-    for actor in [crate::ids::PlayerId::P0, crate::ids::PlayerId::P1] {
+    for (actor, host_name) in [crate::ids::PlayerId::P0, crate::ids::PlayerId::P1]
+        .into_iter()
+        .flat_map(|actor| ["Llanowar Elves", "Strongbox Raider"].map(|host| (actor, host)))
+    {
         let mut state = crate::policy_observation_v6::tests::ready_state();
         state.active_player = actor;
         state.priority_player = actor;
@@ -67,7 +70,7 @@ fn registered_rod_and_elves_actual_cast_equip_and_departed_grant_resolve_without
         let host = crate::policy_observation_v6::tests::put(
             &mut state,
             actor,
-            "Llanowar Elves",
+            host_name,
             Zone::Battlefield,
         );
         for seat in [actor, actor.opponent()] {
