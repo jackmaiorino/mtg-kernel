@@ -3818,6 +3818,7 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
     }
     match (template, effect) {
         (EffectOp::BindAshrootAttackBoostV1, EffectOp::AshrootAttackBoostV1 { .. }) => true,
+        (EffectOp::BindAshrootAttackBoostV1, EffectOp::AshrootBoostFromCaptureV2 { .. }) => true,
         (
             EffectOp::Conditional { cond, then, else_ },
             EffectOp::Conditional {
@@ -4573,6 +4574,17 @@ pub(crate) fn collect_and_process_with_waiting(
     // checkpoint, rather than at the earlier event-matching snapshot. The
     // targets must be legal for the trigger's own source (protection,
     // "other than this"), the same set its target decision will offer.
+    for pending in &new_triggers {
+        if !crate::engine::pending_trigger_targets_can_complete(pending, state)
+            && crate::ashroot_dispatch_v2::unavailable(state, pending).is_err()
+        {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                pending.source,
+            ));
+            return Vec::new();
+        }
+    }
     new_triggers
         .retain(|pending| crate::engine::pending_trigger_targets_can_complete(pending, state));
 
@@ -4638,6 +4650,16 @@ fn triggers_from_events(
                 })
     });
     let mut new_triggers = state.legend_pending_v1.take().unwrap_or_default();
+    match crate::ashroot_dispatch_v2::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
     match crate::cerberus_capture_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
@@ -4833,6 +4855,9 @@ fn triggers_from_events(
                 }
             }
             for (ability_index, def) in triggers_for(obj.card_def).iter().enumerate() {
+                if (def.effect)() == EffectOp::BindAshrootAttackBoostV1 {
+                    continue;
+                }
                 if def.condition == TriggerCondition::BeginningAnyEndStepIfCreatureDied
                     && crate::card_def::CARD_DEFS[usize::from(obj.card_def)].name
                         == "Slumbering Cerberus"
