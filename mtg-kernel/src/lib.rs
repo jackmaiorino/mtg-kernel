@@ -605,3 +605,7 @@ pub mod rules_meaning_strongbox_v1;
 pub mod strongbox_public_v1;
 
 pub mod fiery_observation_v1;
+
+pub mod krenko_observation_v1;
+pub mod krenko_public_v1;
+pub mod rules_meaning_krenko_v1;

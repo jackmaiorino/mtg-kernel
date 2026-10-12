@@ -50,6 +50,7 @@ pub(crate) mod fiery_v33;
 pub(crate) mod frenzied_v15;
 pub(crate) mod garruk_v30;
 pub(crate) mod gourmand_v29;
+pub(crate) mod krenko_v34;
 pub(crate) mod strongbox_v32;
 
 pub(crate) mod human_opening_v1;
@@ -4332,7 +4333,9 @@ fn flat_validate_expected_decision_v1(
     }
     // The frozen flat formats cannot represent these extended mechanics or
     // numeric ranges. Refuse before publishing any incomplete buffers.
-    if (crate::fiery_annihilation_v1::requires_successor(&session.state)
+    if (crate::krenko_v1::requires_successor(&session.state)
+        && session.flat_action_contract_mode != FlatActionContractModeV1::KrenkoV34)
+        || (crate::fiery_annihilation_v1::requires_successor(&session.state)
         && session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33)
         || (crate::combat_static_rules_v1::requires_successor(&session.state)
         && session.flat_action_contract_mode != FlatActionContractModeV1::JuggernautV25)
@@ -4468,6 +4471,7 @@ enum FlatActionContractModeV1 {
     ArahboV31,
     StrongboxV32,
     FieryV33,
+    KrenkoV34,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -5423,6 +5427,17 @@ impl RlEpisodeSessionV1 {
         mut profile: Option<&mut RlPhaseProfileV1>,
     ) {
         self.current = None;
+        if crate::krenko_v1::requires_successor(&self.state) {
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:krenko_v34_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         if crate::arahbo_v1::requires_successor(&self.state) {
             self.terminal = Some(halted_terminal(
                 &self.deck_ids,
@@ -7168,6 +7183,20 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
+        if crate::krenko_v1::requires_successor(&self.state)
+            && self.flat_action_contract_mode != FlatActionContractModeV1::KrenkoV34
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:krenko_v34_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         if crate::arahbo_v1::requires_successor(&self.state)
             && self.flat_action_contract_mode != FlatActionContractModeV1::ArahboV31
         {
@@ -7546,6 +7575,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:fiery_v33:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::KrenkoV34 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = krenko_v34::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:krenko_v34:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));

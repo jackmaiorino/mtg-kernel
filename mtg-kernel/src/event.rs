@@ -1202,6 +1202,12 @@ pub enum CommittedEvent {
     KrenkoCompletedV1 {
         completed: Box<crate::krenko_v1::CompletedV1>,
     },
+    KrenkoRemovalInputV1 {
+        input: Box<crate::krenko_v1::RemovalInputV1>,
+    },
+    KrenkoPaymentInputV1 {
+        input: Box<crate::krenko_v1::PaymentInputV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

@@ -124,6 +124,56 @@ fn unrelated_registered_activation_and_hooks_emit_no_krenko_bytes_both_seats() {
     }
 }
 
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn genuine_complete_token_batch_keeps_garruk_post_anthem_power_and_whole_roster_before_sba() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state();
+        state.active_player = actor;
+        state.priority_player = actor;
+        put(&mut state, actor, "Garruk's Uprising", Zone::Battlefield);
+        for _ in 0..3 {
+            put(&mut state, actor, "Anthem of Champions", Zone::Battlefield);
+        }
+        let token = token_definition().unwrap();
+        let start = state.engine.event_history.len();
+        crate::event::batch_without_linked_aura_v1(
+            &mut state,
+            (0..3)
+                .map(|_| ProposedEvent::create_token(token, actor))
+                .collect(),
+        );
+        let entries = state.engine.event_history[start..]
+            .iter()
+            .filter_map(|e| match e {
+                CommittedEvent::CreateToken { object, .. } => Some(*object),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(entries.len(), 3);
+        for object in &entries {
+            assert_eq!(crate::engine::effective_power(&state, *object), 4);
+        }
+        let captures = state.engine.event_history[start..]
+            .iter()
+            .filter_map(|e| match e {
+                CommittedEvent::GarrukDrawCaptureV1 { capture } => Some(capture.as_ref()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(captures.len(), 3);
+        assert!(captures.iter().all(|c| c.source.controller == actor));
+        let restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        crate::garruks_uprising_v1::validate_state(&restored).unwrap();
+        // This is the registered shared batch boundary, not printed Krenko admission.
+        assert!(!requires_successor(&state));
+    }
+}
+
 #[cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
@@ -184,12 +234,82 @@ mod future {
                     }),
                 });
             refuses(closed_only);
+            // Coherent removal+completion still lacks the independently
+            // committed actual input; preserve every original journal.
+            let mut fake_counter = state.clone();
+            fake_counter.stack.clear();
+            let paid = paid(&fake_counter, item.v4.stack_item_id).unwrap().index;
+            let index = fake_counter.engine.event_history.len() as u64;
+            fake_counter
+                .engine
+                .event_history
+                .push(CommittedEvent::KrenkoRemovedV1 {
+                    removed: Box::new(RemovedV1 {
+                        index,
+                        paid,
+                        item: Box::new(item.clone()),
+                        kind: RemovalV1::Countered,
+                        input: index,
+                    }),
+                });
+            fake_counter
+                .engine
+                .event_history
+                .push(CommittedEvent::KrenkoCompletedV1 {
+                    completed: Box::new(CompletedV1 {
+                        index: index + 1,
+                        removed: index,
+                        sample: None,
+                        token_history: vec![],
+                    }),
+                });
+            refuses(fake_counter);
+            let mut controller_rewrite = state.clone();
+            let source = item.source;
+            // Physical control transfer boundary after actual payment.
+            controller_rewrite.players[actor.index()]
+                .battlefield
+                .retain(|&id| id != source);
+            controller_rewrite.players[actor.opponent().index()]
+                .battlefield
+                .push(source);
+            controller_rewrite.objects.get_mut(source).controller = actor.opponent();
+            for row in &mut controller_rewrite.stack {
+                row.controller = actor.opponent();
+                row.v4.ability_source_contract.as_mut().unwrap().controller = actor.opponent();
+            }
+            let event = controller_rewrite
+                .engine
+                .event_history
+                .iter_mut()
+                .find(|e| matches!(e, CommittedEvent::KrenkoPaidV1 { .. }))
+                .unwrap();
+            let CommittedEvent::KrenkoPaidV1 { paid } = event else {
+                unreachable!()
+            };
+            paid.item.controller = actor.opponent();
+            paid.item
+                .v4
+                .ability_source_contract
+                .as_mut()
+                .unwrap()
+                .controller = actor.opponent();
+            refuses(controller_rewrite);
             let mut countered = state;
             assert_eq!(
                 engine::counter_stack_item_by_id(&mut countered, item.v4.stack_item_id).unwrap(),
                 Some(item.clone())
             );
             validate_state(&countered).unwrap();
+            let mut erased_input = countered.clone();
+            let input = erased_input
+                .engine
+                .event_history
+                .iter()
+                .position(|e| matches!(e, CommittedEvent::KrenkoRemovalInputV1 { .. }))
+                .unwrap();
+            erased_input.engine.event_history[input] = CommittedEvent::Tap { object: source };
+            refuses(erased_input);
             assert!(
                 engine::counter_stack_item_by_id(&mut countered, item.v4.stack_item_id)
                     .unwrap()
