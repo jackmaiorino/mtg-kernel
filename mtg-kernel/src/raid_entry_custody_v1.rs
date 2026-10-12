@@ -812,6 +812,7 @@ mod tests {
                         let before = serde_json::to_vec(&bad).unwrap();
                         assert!(crate::engine::step(&mut bad, crate::engine::Action::Pass).is_err());
                         assert_eq!(before, serde_json::to_vec(&bad).unwrap());
+                        assert_advance_halt_only(bad);
                     }
                 }
             }
@@ -916,6 +917,73 @@ mod tests {
                 serde_json::to_vec(&state).unwrap(),
                 serde_json::to_vec(&restored).unwrap()
             );
+        }
+    }
+
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    fn assert_advance_halt_only(mut bad: GameState) {
+        let mut expected = bad.clone();
+        expected.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            crate::ids::ObjectId(0),
+        ));
+        assert!(matches!(
+            crate::engine::advance_until_decision(&mut bad),
+            crate::engine::Decision::Halted {
+                mechanic: crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source: crate::ids::ObjectId(0)
+            }
+        ));
+        assert_eq!(
+            serde_json::to_vec(&expected).unwrap(),
+            serde_json::to_vec(&bad).unwrap()
+        );
+    }
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    fn unstarted_published_raid_owner_erasure_refuses_advance_before_mutation_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for name in ["Gorehorn Raider", "Gutless Plunderer"] {
+                let (mut state, source) = entered(actor, name, true);
+                loop {
+                    match crate::engine::advance_until_decision(&mut state) {
+                        crate::engine::Decision::ChooseTargets { legal_targets, .. } => {
+                            crate::engine::step(
+                                &mut state,
+                                crate::engine::Action::ChooseTarget(legal_targets[0]),
+                            )
+                            .unwrap();
+                        }
+                        crate::engine::Decision::CastSpellOrPass { .. } => break,
+                        other => panic!("expected real Raid publication, got {other:?}"),
+                    }
+                }
+                assert!(state.engine.pending_effect.is_none());
+                let item = state
+                    .stack
+                    .iter()
+                    .find(|i| i.source == source)
+                    .unwrap()
+                    .clone();
+                assert!(state.engine.event_history.iter().any(|e| matches!(
+                    e, CommittedEvent::RaidEntryPublishedV1 { publication }
+                    if publication.item.v4.stack_item_id == item.v4.stack_item_id
+                )));
+                let mut bad: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                bad.stack
+                    .retain(|i| i.v4.stack_item_id != item.v4.stack_item_id);
+                let before = serde_json::to_vec(&bad).unwrap();
+                assert!(crate::engine::step(&mut bad, crate::engine::Action::Pass).is_err());
+                assert_eq!(before, serde_json::to_vec(&bad).unwrap());
+                assert_advance_halt_only(bad);
+            }
         }
     }
 }
