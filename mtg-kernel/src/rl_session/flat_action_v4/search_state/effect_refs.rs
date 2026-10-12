@@ -164,6 +164,9 @@ impl Scan<'_> {
             | PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness { .. }
             | GrantKeywordToDeclaredTargetsUntilEndOfTurn { .. }
             | ReturnTwoDifferentControllerCreaturesToOwnersHands
+            | BindGarrukEtbDrawV1
+            | BindGarrukPowerEntryDrawV1
+            | GarrukDrawFromCaptureV1 {..}
             | BindAuthorityEntryGainLifeV1
             | AuthorityEntryGainLifeV1 { .. }
             | CerberusUntapV1 { .. }
@@ -1059,6 +1062,12 @@ pub(super) fn conflicts(
             }
             CerberusPublishedV1 { item, .. } => s.raw(item.source),
             CerberusOperationV1 { source, .. } => s.raw(source.source),
+            GarrukEntryObservationV1 { .. }
+            | GarrukDrawCaptureV1 { .. }
+            | GarrukDrawCollectedV1 { .. }
+            | GarrukDrawPublishedV1 { .. }
+            | GarrukDrawRemovedV1 { .. }
+            | GarrukDrawCompletedV1 { .. } => true,
             AuthorityEntryPublishedV1 { item, .. } => {
                 s.raw(item.source)
                     || item.v4.ability_source_contract.is_some_and(|source| {

@@ -1609,6 +1609,11 @@ pub enum EffectOp {
     CerberusUntapV1 {
         capture_history_index: u64,
     },
+    BindGarrukEtbDrawV1,
+    BindGarrukPowerEntryDrawV1,
+    GarrukDrawFromCaptureV1 {
+        capture_history_index: u64,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -7771,6 +7776,7 @@ fn validate_standard_choose_permanent_origin(
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     temporary_control_v1::authority::validate(state)?;
+    crate::garruks_uprising_v1::validate_state(state)?;
     crate::self_reflection_v1::validate_live_stack(state)?;
     crate::authority_of_the_consuls_v1::validate_state(state)?;
     crate::cerberus_capture_v1::validate_state(state)?;
@@ -18528,6 +18534,16 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             crate::sower_of_chaos_v1::install(state, ctx, *target_index);
         }
         EffectOp::BindAuthorityEntryGainLifeV1 => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        EffectOp::BindGarrukEtbDrawV1
+        | EffectOp::BindGarrukPowerEntryDrawV1
+        | EffectOp::GarrukDrawFromCaptureV1 { .. } => {
+            // Actual execution requires the private removed-row owner in
+            // resolve_top_of_stack, never a caller-constructed generic ctx.
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,

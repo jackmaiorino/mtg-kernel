@@ -8961,6 +8961,13 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
     // A closed Cerberus operation still owns historical authority. Validate it
     // before automatic step/cleanup work can mutate a restored malformed state.
+    if crate::garruks_uprising_v1::validate_state(state).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        return Decision::Halted {
+            mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+            source: ObjectId(0),
+        };
+    }
     if crate::cerberus_capture_v1::validate_state(state).is_err() {
         let source = state
             .engine
@@ -12840,6 +12847,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
     ) {
         let published = state.stack.last().expect("just published trigger").clone();
         crate::authority_of_the_consuls_v1::publish(state, &published)?;
+        crate::garruks_uprising_v1::publish(state, &published)?;
     }
     let finalized = state.stack.last().expect("trigger just published").clone();
     crate::wildwood_capture_v1::publish(state, &finalized);
@@ -13044,6 +13052,7 @@ fn triggered_stack_item_expected_target_spec(
         ability_source_contract,
     )?;
     crate::frenzied_goblin_v1::validate_source(state, source_card_def, ability_source_contract)?;
+    crate::garruks_uprising_v1::validate_source(state, inline_effect, ability_source_contract)?;
     crate::authority_of_the_consuls_v1::validate_source(
         state,
         inline_effect,
@@ -13788,12 +13797,16 @@ pub(crate) fn counter_stack_item_by_id(
         // on the stack after the attempt, so callers finish the effect normally.
         return Ok(Some(item));
     }
+    let garruk_owner = crate::garruks_uprising_v1::before_remove(state, &item)?;
     let departure = if item.kind == StackItemKind::Spell {
         Some(plan_spell_departure(state, &item, Zone::Graveyard)?)
     } else {
         None
     };
     state.stack.remove(position);
+    if let Some(owner) = garruk_owner {
+        crate::garruks_uprising_v1::counter_removed(state, owner)?;
+    }
     effect::frenzied_goblin_resolution_v1::complete_unstarted(
         state,
         &item,
@@ -14083,6 +14096,17 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         ));
         return ResolutionProgress::Suspended;
     }
+    let garruk_owner =
+        match crate::garruks_uprising_v1::before_remove(state, state.stack.last().unwrap()) {
+            Ok(owner) => owner,
+            Err(_) => {
+                state.engine.halted = Some((
+                    UnsupportedMechanic::InvalidEffectContinuation,
+                    resolving_source,
+                ));
+                return ResolutionProgress::Suspended;
+            }
+        };
     let item = state
         .stack
         .pop()
@@ -14119,6 +14143,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         x_value: item.v4.x_value,
     };
 
+    if let Some(owner) = garruk_owner {
+        if crate::garruks_uprising_v1::resolve_removed(state, owner, &ctx).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
     if !targets_legal {
         if item.kind == StackItemKind::Spell && item.v4.cast_method == Some(CastMethodV4::Bestow) {
             effect::execute(

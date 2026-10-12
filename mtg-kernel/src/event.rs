@@ -820,6 +820,35 @@ pub enum CommittedEvent {
         stack_item_id: StackItemId,
         operation_history_index: u64,
     },
+    GarrukEntryObservationV1 {
+        entry: Box<crate::garruks_uprising_v1::EntryV1>,
+        effective_creature: bool,
+        effective_power: Option<i32>,
+        sources: Vec<(
+            crate::state::AbilitySourceContractV4,
+            crate::garruks_uprising_v1::RootV1,
+        )>,
+    },
+    GarrukDrawCaptureV1 {
+        capture: crate::garruks_uprising_v1::CaptureV1,
+    },
+    GarrukDrawCollectedV1 {
+        capture_history_index: u64,
+    },
+    GarrukDrawPublishedV1 {
+        capture_history_index: u64,
+        item: Box<crate::state::StackItem>,
+    },
+    GarrukDrawRemovedV1 {
+        capture_history_index: u64,
+        item: Box<crate::state::StackItem>,
+        kind: crate::garruks_uprising_v1::RemovalKindV1,
+    },
+    GarrukDrawCompletedV1 {
+        capture_history_index: u64,
+        removal_history_index: u64,
+        draw_history_index: Option<u64>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1254,6 +1283,7 @@ fn commit_with_ability_lki(
         abilities_removed_before,
         frozen_death_captures,
         None,
+        None,
     );
 }
 
@@ -1263,6 +1293,7 @@ fn commit_with_ability_lki_and_entry_batch(
     abilities_removed_before: Option<bool>,
     frozen_death_captures: Option<Vec<CommittedEvent>>,
     mut authority_batch: Option<&mut crate::authority_of_the_consuls_v1::EntryBatchV1>,
+    mut garruk_batch: Option<&mut crate::garruks_uprising_v1::EntryBatchV1>,
 ) {
     let mut event = event;
     if let ProposedEvent::ZoneChange(change) = &mut event {
@@ -1715,6 +1746,11 @@ fn commit_with_ability_lki_and_entry_batch(
     if let Some(source) = single_graveyard_entry {
         crate::soul_shackled_zombie_v1::record_entry(state, source);
     }
+    if let Some(batch) = garruk_batch.as_mut() {
+        batch.record(state, entry_history_index)
+    } else {
+        crate::garruks_uprising_v1::record_single_entry(state, entry_history_index)
+    }
     if let Some(batch) = authority_batch.as_mut() {
         batch.record(entry_history_index);
     } else {
@@ -1757,6 +1793,7 @@ fn commit_with_ability_lki_and_entry_batch(
 /// / trigger collection exactly once after the whole batch (see
 /// `engine::deal_combat_damage`), not per event.
 pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent>) {
+    let mut garruk_batch = crate::garruks_uprising_v1::EntryBatchV1::capture();
     let mut authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
     let survivors: Vec<ProposedEvent> = events
         .into_iter()
@@ -1829,6 +1866,7 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
                 Some(removed),
                 captures,
                 authority_batch.as_mut(),
+                garruk_batch.as_mut(),
             );
         }
     } else {
@@ -1842,10 +1880,14 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
                 None,
                 captures,
                 authority_batch.as_mut(),
+                garruk_batch.as_mut(),
             );
         }
     }
 
+    if let Some(batch) = garruk_batch {
+        batch.finish(state)
+    }
     if let Some(batch) = authority_batch {
         batch.finish(state);
     }
@@ -2999,6 +3041,7 @@ mod authority_visibility_tests {
                     None,
                     None,
                     Some(&mut batch),
+                    None,
                 );
                 // A typed physical hidden-characteristic boundary before
                 // deferred entry capture, not an admitted FDN disguise card.

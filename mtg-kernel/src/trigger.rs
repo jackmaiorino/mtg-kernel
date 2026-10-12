@@ -257,6 +257,8 @@ pub enum TriggerCondition {
     AnotherControlledNonHydraCreatureGetsPlusOneCounters,
     /// Scoped committed opposing-creature entry captures; generic matching is unused.
     OpponentCreatureEntersV1,
+    GarrukOwnEtbFerociousV1,
+    GarrukControlledCreaturePowerEntryV1,
 }
 
 pub struct TriggeredAbilityDef {
@@ -1544,6 +1546,23 @@ fn micromancer_effect() -> EffectOp {
 }
 
 const MICROMANCER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(micromancer_effect)];
+
+fn garruk_etb_draw() -> EffectOp {
+    EffectOp::BindGarrukEtbDrawV1
+}
+fn garruk_power_entry_draw() -> EffectOp {
+    EffectOp::BindGarrukPowerEntryDrawV1
+}
+const GARRUKS_UPRISING_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::GarrukOwnEtbFerociousV1,
+        ..etb_trigger(garruk_etb_draw)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::GarrukControlledCreaturePowerEntryV1,
+        ..etb_trigger(garruk_power_entry_draw)
+    },
+];
 
 fn skyship_buccaneer_effect() -> EffectOp {
     EffectOp::Conditional {
@@ -3452,6 +3471,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Nessian Hornbeetle" => &NESSIAN_HORNBEETLE_TRIGGERS,
         "Micromancer" => &MICROMANCER_TRIGGERS,
         "Skyship Buccaneer" => &SKYSHIP_BUCCANEER_TRIGGERS,
+        "Garruk's Uprising" => &GARRUKS_UPRISING_TRIGGERS,
         "Searslicer Goblin" => &SEARSLICER_GOBLIN_TRIGGERS,
         "Authority of the Consuls" => &AUTHORITY_OF_THE_CONSULS_TRIGGERS,
         "Ruby, Daring Tracker" => &RUBY_DARING_TRACKER_TRIGGERS,
@@ -3962,6 +3982,10 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    if matches!(effect, EffectOp::GarrukDrawFromCaptureV1 { .. }) {
+        return crate::garruks_uprising_v1::selected_definition(card_def)
+            .then_some(TargetSpec::None);
+    }
     if matches!(effect, EffectOp::WildwoodCounterFromReceiptV1 { .. }) {
         return crate::wildwood_capture_v1::owns_definition(card_def).then_some(TargetSpec::None);
     }
@@ -4602,6 +4626,16 @@ fn triggers_from_events(
         }
     }
     match crate::authority_of_the_consuls_v1::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
+    match crate::garruks_uprising_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
             state.engine.halted = Some((
