@@ -186,7 +186,7 @@ fn exiled_aura_without_host_stays_exiled_and_its_capture_cannot_be_erased_both_s
     }
 }
 
-fn linked_aura(actor: PlayerId) -> (GameState, ObjectId, ObjectId, ObjectId) {
+pub(crate) fn linked_aura(actor: PlayerId) -> (GameState, ObjectId, ObjectId, ObjectId) {
     let mut state = ready(actor);
     for player in [actor, actor.opponent()] {
         put(&mut state, player, "Lightning Bolt", Zone::Hand);
@@ -785,5 +785,245 @@ fn simultaneous_opposite_owner_choices_follow_apnap_before_any_entry_both_seats(
                 serde_json::to_vec(&restored).unwrap()
             );
         }
+    }
+}
+
+#[test]
+#[ignore = "requires genuine future Banishing Light registration and V26 qualification"]
+fn actual_aura_choice_public_human_owner_restore_retry_and_forgery_both_seats() {
+    use crate::human_bo3_v1::*;
+    use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source, aura, host) = linked_aura(actor);
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+        let owner = actor.opponent();
+        let backend = FastActorSessionV1::from_banishing_v26_fixture_state(state);
+        let mut session = HumanBanishingSessionV26::from_session(backend).unwrap();
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("actual owner choice")
+        };
+        let mut projector = HumanBanishingProjectorV26::new(owner.into());
+        let prompt = projector.project_current(&session, expected).unwrap();
+        let choice = prompt.state.extensions.attachment_choice.as_ref().unwrap();
+        assert_eq!(choice.owner, owner.into());
+        assert!(choice.untargeted && choice.mandatory);
+        let public = session.public_observation(expected).unwrap();
+        assert_eq!(
+            public.attachment_choice.as_ref().unwrap().aura.arena_id,
+            aura.0
+        );
+        assert!(public
+            .attachment_choice
+            .as_ref()
+            .unwrap()
+            .legal_hosts
+            .iter()
+            .any(|row| row.arena_id == host.0));
+        let value = serde_json::to_value(&prompt).unwrap();
+        let text = serde_json::to_string(&value).unwrap();
+        for forbidden in [
+            "arena_id",
+            "card_db_id",
+            "event_history",
+            "original_sha256",
+            "capture_history_index",
+            "engine_indexes",
+        ] {
+            assert!(!text.contains(forbidden), "private field {forbidden}");
+        }
+        let snapshot = session.snapshot_v26();
+        let input = HumanActionRequestV1 {
+            prompt_seq: prompt.prompt_seq,
+            action_index: prompt
+                .actions
+                .iter()
+                .find(|row| row.label.starts_with("Attach returning Pacifism"))
+                .unwrap()
+                .action_index,
+        };
+        let receipt = projector.submit(&mut session, input.clone()).unwrap();
+        assert_eq!(
+            projector.submit(&mut session, input.clone()).unwrap(),
+            receipt
+        );
+        let after = session
+            .public_observation(match session.current_response() {
+                FastActorResponseV1::Decision(d) => d,
+                _ => panic!("post-return priority"),
+            })
+            .unwrap();
+        assert!(after.links.iter().all(|row| row.expired));
+        session.restore_v26(&snapshot).unwrap();
+        assert_eq!(
+            projector.submit(&mut session, input),
+            Err(HumanDecisionErrorV1::StaleDecision)
+        );
+        let FastActorResponseV1::Decision(refreshed) = session.current_response() else {
+            panic!("restored owner")
+        };
+        let fresh = projector.project_current(&session, refreshed).unwrap();
+        assert!(fresh.prompt_seq > prompt.prompt_seq);
+        assert_eq!(fresh.state, prompt.state);
+        assert_eq!(fresh.actions, prompt.actions);
+        let mut forged = public.clone();
+        forged.attachment_choice.as_mut().unwrap().owner = actor.into();
+        assert!(forged.validate_artifact().is_err());
+    }
+}
+
+#[test]
+#[ignore = "requires genuine future Banishing Light registration and V26 qualification"]
+fn later_apnap_owner_sees_confirmed_answer_before_entry_and_restores_it_both_seats() {
+    use crate::human_bo3_v1::*;
+    use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, opponent_source, opponent_aura, host) = linked_aura(actor);
+        let active_aura = put(&mut state, actor, "Pacifism", Zone::Battlefield);
+        state
+            .attach_object_exact(
+                active_aura,
+                0,
+                host,
+                state.objects.get(host).zone_change_count,
+            )
+            .unwrap();
+        let active_source = put(&mut state, actor.opponent(), "Banishing Light", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(active_source, Zone::Battlefield),
+        );
+        assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
+        engine::step(
+            &mut state,
+            Action::ChooseTarget(Target::Object(active_aura)),
+        )
+        .unwrap();
+        finish_stack(&mut state);
+        event::propose_and_commit_batch(
+            &mut state,
+            vec![
+                ProposedEvent::zone_change(opponent_source, Zone::Hand),
+                ProposedEvent::zone_change(active_source, Zone::Hand),
+            ],
+        );
+        let backend = FastActorSessionV1::from_banishing_v26_fixture_state(state);
+        let mut session = HumanBanishingSessionV26::from_session(backend).unwrap();
+        let mut active = HumanBanishingProjectorV26::new(actor.into());
+        let FastActorResponseV1::Decision(first) = session.current_response() else {
+            panic!("first owner")
+        };
+        let first_prompt = active.project_current(&session, first).unwrap();
+        active
+            .submit(
+                &mut session,
+                HumanActionRequestV1 {
+                    prompt_seq: first_prompt.prompt_seq,
+                    action_index: first_prompt.actions[0].action_index,
+                },
+            )
+            .unwrap();
+        let FastActorResponseV1::Decision(second) = session.current_response() else {
+            panic!("second owner")
+        };
+        assert_eq!(second.acting_player, actor.opponent().into());
+        let mut opponent = HumanBanishingProjectorV26::new(actor.opponent().into());
+        let second_prompt = opponent.project_current(&session, second).unwrap();
+        assert_eq!(
+            second_prompt.state.extensions.confirmed_attachments.len(),
+            1
+        );
+        let prior = &second_prompt.state.extensions.confirmed_attachments[0];
+        assert_eq!(prior.owner, actor.into());
+        assert!(prior.current_chosen_host.is_some());
+        let public = session.public_observation(second).unwrap();
+        assert_eq!(public.confirmed_attachments[0].aura.arena_id, active_aura.0);
+        assert_eq!(
+            public.attachment_choice.as_ref().unwrap().aura.arena_id,
+            opponent_aura.0
+        );
+        assert_eq!(public.confirmed_attachments[0].aura.zone, Zone::Exile);
+        let snapshot = session.snapshot_v26();
+        session.restore_v26(&snapshot).unwrap();
+        let FastActorResponseV1::Decision(restored) = session.current_response() else {
+            panic!("restored second owner")
+        };
+        let restored_prompt = opponent.project_current(&session, restored).unwrap();
+        assert_eq!(restored_prompt.state, second_prompt.state);
+        assert_eq!(restored_prompt.actions, second_prompt.actions);
+        opponent
+            .submit(
+                &mut session,
+                HumanActionRequestV1 {
+                    prompt_seq: restored_prompt.prompt_seq,
+                    action_index: restored_prompt.actions[0].action_index,
+                },
+            )
+            .unwrap();
+        let FastActorResponseV1::Decision(completed) = session.current_response() else {
+            panic!("return priority")
+        };
+        assert!(session
+            .public_observation(completed)
+            .unwrap()
+            .links
+            .iter()
+            .all(|row| row.expired));
+    }
+}
+
+#[test]
+#[ignore = "requires genuine future Banishing Light registration and V26 qualification"]
+fn actual_printed_cast_and_etb_meaning_public_binding_both_seats() {
+    use crate::mana::ManaColor;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let target = put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let source = put(&mut state, actor, "Banishing Light", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::W.pool_index()] = 1;
+        state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 2;
+        engine::step(&mut state, Action::CastSpell(source)).unwrap();
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        for _ in 0..12 {
+            match next(&mut state) {
+                Decision::ChooseTargets {
+                    player,
+                    legal_targets,
+                    ..
+                } => {
+                    assert_eq!(player, actor);
+                    assert!(legal_targets.contains(&Target::Object(target)));
+                    break;
+                }
+                Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+                other => panic!("actual ETB placement {other:?}"),
+            }
+        }
+        let surface = crate::policy_surface_v5::PolicySurfaceV5::new_for_session();
+        let observation =
+            crate::banishing_public_v1::observe_v1(&state, &surface, actor, 0, 0, 0, 1).unwrap();
+        assert_eq!(observation.roots.len(), 3);
+        assert_eq!(observation.triggers.len(), 1);
+        assert_eq!(observation.triggers[0].captured_controller, actor.into());
+        assert_eq!(observation.triggers[0].source_at_entry.arena_id, source.0);
+        assert!(crate::policy_observation_v9::observe_policy_v9(
+            &state, &surface, actor, 0, 0, 0, 1
+        )
+        .is_err());
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+        finish_stack(&mut state);
+        let observation =
+            crate::banishing_public_v1::observe_v1(&state, &surface, actor, 0, 0, 0, 1).unwrap();
+        assert_eq!(observation.links.len(), 1);
+        assert_eq!(
+            observation.links[0].recipient_owner,
+            actor.opponent().into()
+        );
+        assert!(!observation.links[0].expired);
+        assert_eq!(state.objects.get(target).zone, Zone::Exile);
     }
 }

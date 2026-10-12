@@ -37,6 +37,7 @@ use sha2::{Digest, Sha256};
 use std::fmt;
 
 pub(crate) mod authority_v17;
+pub(crate) mod banishing_v26;
 pub mod census_future_v2;
 pub(crate) mod cerberus_v19;
 pub(crate) mod employment_v18;
@@ -4433,6 +4434,7 @@ enum FlatActionContractModeV1 {
     AuthorityV17,
     EmploymentV18,
     CerberusV19,
+    BanishingV26,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -5405,6 +5407,17 @@ impl RlEpisodeSessionV1 {
                 return;
             }
         };
+        if crate::banishing_light_v1::requires_successor(&self.state) {
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:banishing_requires_v26".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         match &surfaced {
             PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::GameOver { winner })) => {
                 self.terminal = Some(terminal_from_winner(
@@ -7097,6 +7110,19 @@ impl FastActorSessionV1 {
                 return;
             }
         };
+        if crate::banishing_light_v1::requires_successor(&self.state)
+            && self.flat_action_contract_mode != FlatActionContractModeV1::BanishingV26
+        {
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:banishing_requires_v26".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         match &surfaced {
             PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::GameOver { winner })) => {
                 self.terminal = Some(terminal_from_winner(
@@ -7365,6 +7391,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:cerberus_v19:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::BanishingV26 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = banishing_v26::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:banishing_v26:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));

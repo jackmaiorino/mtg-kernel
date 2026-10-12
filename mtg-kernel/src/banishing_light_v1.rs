@@ -689,4 +689,4 @@ pub fn validate_state(state: &GameState) -> Result<(), String> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
