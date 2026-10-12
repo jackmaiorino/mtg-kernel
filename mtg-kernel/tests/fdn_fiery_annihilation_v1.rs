@@ -28,6 +28,11 @@ fn ready(player: PlayerId) -> GameState {
 fn actual_fiery_cast_during_madness_cleanup_priority_expires_before_player_flip() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
+        // The library constructor leaves hands empty; physically draw this
+        // fixture's opening seven before producing its real Discard(2).
+        for _ in 0..7 {
+            event::propose_and_commit(&mut state, ProposedEvent::draw(actor));
+        }
         let target = put(
             &mut state,
             actor.opponent(),
