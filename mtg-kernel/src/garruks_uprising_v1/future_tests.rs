@@ -395,6 +395,19 @@ fn accepted_nyxborn_x_and_bestow_entry_characteristics_precede_actual_draw_captu
             settle(&mut state);
             settle(&mut replay);
             assert_eq!(state.objects.get(hydra).counters.plus1_plus1, 4);
+            let generation = state.objects.get(hydra).zone_change_count;
+            let placements = state.engine.event_history[start..]
+                .iter()
+                .filter(|event| {
+                    matches!(event,
+                    CommittedEvent::PlusOneCountersAdded {object,zone_change_count,player,count:4}
+                    if *object==hydra && *zone_change_count==generation && *player==actor)
+                })
+                .count();
+            assert_eq!(
+                placements, 1,
+                "the shared entry logger retains one genuine X-counter occurrence"
+            );
             assert_eq!(
                 serde_json::to_vec(&state).unwrap(),
                 serde_json::to_vec(&replay).unwrap()
