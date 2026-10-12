@@ -21,6 +21,25 @@ pub enum LifecycleV1 {
     Unexpired,
     ExpiredAtCleanup,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CastTargetPhaseV1 {
+    MandatoryCreature,
+    OptionalAttachedEquipment,
+    TargetsCommitted,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PendingCastTargetsV1 {
+    pub announced_source: CardStableRefV1,
+    pub caster: PlayerSeatV1,
+    pub phase: CastTargetPhaseV1,
+    pub selected_targets: Vec<TargetIncarnationV1>,
+    pub mandatory_creature_count: u8,
+    pub equipment_minimum: u8,
+    pub equipment_maximum: u8,
+    pub can_finish_without_equipment: bool,
+    pub printed_root_sha256: String,
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeathReplacementV1 {
@@ -38,7 +57,75 @@ pub struct FactsV1 {
     pub schema: String,
     pub card_db_hash: u64,
     pub producer_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_cast_targets: Option<PendingCastTargetsV1>,
     pub death_replacements: Vec<DeathReplacementV1>,
+}
+
+fn pending_targets(state: &GameState) -> Result<Option<PendingCastTargetsV1>, RlContractError> {
+    let Some(pending) = state.engine.pending_cast.as_ref().filter(|pending| {
+        pending.target_spec == crate::card_def::TargetSpec::CreatureThenUpToOneAttachedEquipment
+            || crate::card_def::CARD_DEFS
+                .get(pending.source_contract.card_def as usize)
+                .is_some_and(|definition| {
+                    (definition.spell_effect)() == Some(crate::effect::EffectOp::FieryAnnihilation)
+                })
+    }) else {
+        return Ok(None);
+    };
+    crate::engine::validate_pending_cast(state, pending).map_err(RlContractError)?;
+    let source = pending.source_contract;
+    let selector = crate::rules_meaning_fiery_v1::live_selector().map_err(|_| {
+        RlContractError("Fiery pending targets require selected Limited catalog".into())
+    })?;
+    let meaning =
+        crate::rules_meaning_fiery_v1::meaning(&selector, source.card_def, 0).map_err(|_| {
+            RlContractError("Fiery pending targets require genuine printed source".into())
+        })?;
+    let selected_targets = pending
+        .target_contracts
+        .iter()
+        .map(|contract| {
+            let StackTargetContractV4::Object {
+                object,
+                zone: Zone::Battlefield,
+                zone_change_count,
+                ..
+            } = contract
+            else {
+                return Err(RlContractError(
+                    "Fiery selected target lost original battlefield relation".into(),
+                ));
+            };
+            Ok(TargetIncarnationV1 {
+                arena_id: object.0,
+                zone_change_count: *zone_change_count,
+            })
+        })
+        .collect::<Result<Vec<_>, RlContractError>>()?;
+    let phase = match selected_targets.len() {
+        0 => CastTargetPhaseV1::MandatoryCreature,
+        1 if !pending.target_selection_finished => CastTargetPhaseV1::OptionalAttachedEquipment,
+        _ => CastTargetPhaseV1::TargetsCommitted,
+    };
+    Ok(Some(PendingCastTargetsV1 {
+        announced_source: CardStableRefV1 {
+            arena_id: source.source.0,
+            card_db_id: source.card_def,
+            owner: source.owner.into(),
+            controller: source.controller.into(),
+            zone: source.zone,
+            zone_change_count: source.zone_change_count,
+        },
+        caster: pending.controller.into(),
+        phase,
+        selected_targets,
+        mandatory_creature_count: 1,
+        equipment_minimum: 0,
+        equipment_maximum: 1,
+        can_finish_without_equipment: phase == CastTargetPhaseV1::OptionalAttachedEquipment,
+        printed_root_sha256: meaning.root_sha256,
+    }))
 }
 pub fn producer_sha256_v1() -> String {
     let mut hash = Sha256::new();
@@ -134,6 +221,7 @@ pub fn facts_v1(state: &GameState) -> Result<FactsV1, RlContractError> {
         schema: SCHEMA.into(),
         card_db_hash: crate::card_def::KERNEL_CARDDB_HASH,
         producer_sha256: producer_sha256_v1(),
+        pending_cast_targets: pending_targets(state)?,
         death_replacements,
     })
 }

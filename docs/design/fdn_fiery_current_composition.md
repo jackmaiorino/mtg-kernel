@@ -51,6 +51,13 @@ existing capability values and Strongbox's exact V32 scope remain intact;
 Fiery full observation/V33 is still unimplemented and explicitly refused by
 predecessor consumers. No new registration or native qualification is claimed.
 
+Pending-cast public facts now authenticate the real pending cast and genuine
+printed root before deriving mandatory-creature, optional-attached-Equipment
+and targets-committed phases. Original selected targets remain definition-free
+incarnation relations. Candidate real-cast tests check both genuine choices,
+restore equality and read-only refusal when the target specification is erased.
+The full observation and owning V33 session/projector remain pending.
+
 Existing TargetSpec, EffectOp, ReplacementEffectKind and CommittedEvent variants
 remain an unchanged prefix. The optional dependent target appends physically and
 uses the already reserved stable target ID64; Condemn61, Run Away62, Divine63,

@@ -329,7 +329,33 @@ fn fiery_printed_metadata_real_equip_optional_target_and_pending_stack_restore()
                     assert_eq!(serde_json::to_vec(&state).unwrap(), before);
                 }
                 state = copy(&state); // pending creature target
+                let initial = mtg_kernel::fiery_public_v1::facts_v1(&state).unwrap();
+                let context = initial.pending_cast_targets.unwrap();
+                assert_eq!(
+                    context.phase,
+                    mtg_kernel::fiery_public_v1::CastTargetPhaseV1::MandatoryCreature
+                );
+                assert!(context.selected_targets.is_empty());
+                assert!(!context.can_finish_without_equipment);
+                let mut forged = copy(&state);
+                forged.engine.pending_cast.as_mut().unwrap().target_spec = TargetSpec::None;
+                let before = serde_json::to_vec(&forged).unwrap();
+                assert!(mtg_kernel::fiery_public_v1::facts_v1(&forged).is_err());
+                assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
                 engine::step(&mut state, Action::ChooseTarget(Target::Object(creature))).unwrap();
+                let public = mtg_kernel::fiery_public_v1::facts_v1(&state).unwrap();
+                let context = public.pending_cast_targets.as_ref().unwrap();
+                assert_eq!(
+                    context.phase,
+                    mtg_kernel::fiery_public_v1::CastTargetPhaseV1::OptionalAttachedEquipment
+                );
+                assert_eq!(context.selected_targets.len(), 1);
+                assert_eq!(context.selected_targets[0].arena_id, creature.0);
+                assert!(context.can_finish_without_equipment);
+                assert_eq!(
+                    mtg_kernel::fiery_public_v1::facts_v1(&copy(&state)).unwrap(),
+                    public
+                );
                 assert!(
                     matches!(next(&mut state), Decision::ChooseTargets { can_finish: true, legal_targets, .. } if legal_targets == vec![Target::Object(equipment)])
                 );
