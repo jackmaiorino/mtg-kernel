@@ -380,6 +380,7 @@ fn small_root_package_is_deterministic_and_within_ceilings() {
         let d = play::decision(&session).unwrap();
         let probs = arms::softmax(&roles.scorer.score_fast_session_v1(&session).unwrap().logits);
         let ctx = RootCtx {
+            visible_history: &[],
             root: &session,
             d,
             focal: focal_id,
@@ -920,6 +921,7 @@ fn diagnostic_trace_is_passive_and_reconstructs_backups() {
         let d = play::decision(&session).unwrap();
         let probs = arms::softmax(&roles.scorer.score_fast_session_v1(&session).unwrap().logits);
         let ctx = RootCtx {
+            visible_history: &[],
             root: &session,
             d,
             focal: focal_id,

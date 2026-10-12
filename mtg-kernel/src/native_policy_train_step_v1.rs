@@ -70,10 +70,12 @@ use std::sync::Arc;
 use std::thread;
 
 mod carryover_probe_v1;
+mod e_supported_policy_v1;
 pub(crate) mod exploration_v1;
 mod gae_v1;
 mod head_only_mask_v1;
 mod line_b_auxiliary_v1;
+pub(crate) use e_supported_policy_v1::{ESupportedPolicyInputV1, ESupportedPolicyRowV1};
 pub(crate) use head_only_mask_v1::{
     HeadOnlyMaskV1, HEAD_ONLY_MASK_VERSION_V1, HEAD_ONLY_TRAINABLE_TENSORS_V1,
 };

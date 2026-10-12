@@ -1,0 +1,116 @@
+{
+  "schema": "engineering-checks/v1",
+  "source_commit": "483c8e6d11dbe21a342656df2b59a8210baefd4c",
+  "worktree": "D:/mtg-kernel-e-supported-policy-ce-20261012",
+  "host": "JacksPC",
+  "cores": "16-17",
+  "jobs": 2,
+  "features": [],
+  "rustc": "1.94.1 (e408947bf 2026-03-25)",
+  "cargo": "1.94.1 (29ea6fb6a 2026-03-24)",
+  "linker": {
+    "path": "C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/VC/Tools/MSVC/14.50.35717/bin/HostX64/x64/link.exe",
+    "version": "14.50.35725.0"
+  },
+  "checks": [
+    {
+      "failed": 0,
+      "log_sha256": "ae06d60e8be53fd7c2ef9cbeb29ab4b879267df6a377275c6a1c390143d439c1",
+      "filter": "e_supported",
+      "passed": 6,
+      "tested_source_commit": "483c8e6d11dbe21a342656df2b59a8210baefd4c",
+      "exit_code": 0,
+      "exit": "D:/compute-acceleration-20261012/jack-e-supported-483c8e6d1.exit",
+      "compile_seconds": 178,
+      "seconds": 95.43,
+      "log": "D:/compute-acceleration-20261012/jack-e-supported-483c8e6d1.log",
+      "exit_sha256": "9aca8dfce962538fb8131d73f84cada05e4dc79f5a0d3612c511b1150f3e33e2"
+    },
+    {
+      "exit": "D:/compute-acceleration-20261012/jack-gae-v1.exit",
+      "exit_sha256": "9aca8dfce962538fb8131d73f84cada05e4dc79f5a0d3612c511b1150f3e33e2",
+      "filter": "gae_v1",
+      "passed": 11,
+      "log_sha256": "143de4bc083b2abc893d622889965e66fe57d0b64bb34ef7da4cab2481d1523f",
+      "exit_code": 0,
+      "seconds": 12.9,
+      "failed": 0,
+      "log": "D:/compute-acceleration-20261012/jack-gae-v1.log",
+      "tested_source_commit": "43f521730644c0fd4e7e8b0ffaec5fc72571d41f",
+      "reused": true,
+      "reuse_basis": "Retained on author instruction; GAE implementation and existing empty-prefix E/A/D path unchanged"
+    },
+    {
+      "exit": "D:/compute-acceleration-20261012/jack-small-root.exit",
+      "seconds": 866.68,
+      "failed": 0,
+      "passed": 1,
+      "log": "D:/compute-acceleration-20261012/jack-small-root.log",
+      "exit_sha256": "9aca8dfce962538fb8131d73f84cada05e4dc79f5a0d3612c511b1150f3e33e2",
+      "exit_code": 0,
+      "log_sha256": "5a9b8dc54e01d22c6f5d96a07c2c1428d03fcfb11980bb55c2c76018953d2e88",
+      "filter": "small_root_package_is_deterministic_and_within_ceilings",
+      "tested_source_commit": "43f521730644c0fd4e7e8b0ffaec5fc72571d41f",
+      "reused": true,
+      "reuse_basis": "Retained on author instruction; GAE implementation and existing empty-prefix E/A/D path unchanged"
+    }
+  ],
+  "root_check": {
+    "session_id": 47674,
+    "seconds": 866.68,
+    "owned_processes_terminal": true,
+    "status": "passed",
+    "native_exit_code": 0,
+    "filter": "small_root_package_is_deterministic_and_within_ceilings",
+    "claim": "a76904785cb543639cf02a09795dc7e7",
+    "tested_source_commit": "43f521730644c0fd4e7e8b0ffaec5fc72571d41f"
+  },
+  "primary_state_sha256": "5c4d2ffff148e9397b23fc21416adab4d3f2fbe72549befb10003b6d1a8acc66",
+  "packet_sha256": "1db69bb11a06356bab5b5fd94339b97e8f3e6ca1f424d30ff1410a8f0c9369ce",
+  "engineering_only": true,
+  "validation_status": "affected_E_passed_and_compatible_checks_retained",
+  "archived_baseline_checks": [
+    {
+      "exit": "D:/compute-acceleration-20261012/jack-e-supported-43f521730.exit",
+      "exit_sha256": "9aca8dfce962538fb8131d73f84cada05e4dc79f5a0d3612c511b1150f3e33e2",
+      "filter": "e_supported",
+      "passed": 6,
+      "log_sha256": "fc6fd0dccee932aa6bbdc4c045b89c019a950c7798591df6db2459a6cb5372ad",
+      "exit_code": 0,
+      "seconds": 96.53,
+      "failed": 0,
+      "log": "D:/compute-acceleration-20261012/jack-e-supported-43f521730.log",
+      "tested_source_commit": "43f521730644c0fd4e7e8b0ffaec5fc72571d41f"
+    },
+    {
+      "exit": "D:/compute-acceleration-20261012/jack-gae-v1.exit",
+      "exit_sha256": "9aca8dfce962538fb8131d73f84cada05e4dc79f5a0d3612c511b1150f3e33e2",
+      "filter": "gae_v1",
+      "passed": 11,
+      "log_sha256": "143de4bc083b2abc893d622889965e66fe57d0b64bb34ef7da4cab2481d1523f",
+      "exit_code": 0,
+      "seconds": 12.9,
+      "failed": 0,
+      "log": "D:/compute-acceleration-20261012/jack-gae-v1.log",
+      "tested_source_commit": "43f521730644c0fd4e7e8b0ffaec5fc72571d41f",
+      "reused": true,
+      "reuse_basis": "Retained on author instruction; GAE implementation and existing empty-prefix E/A/D path unchanged"
+    },
+    {
+      "exit": "D:/compute-acceleration-20261012/jack-small-root.exit",
+      "seconds": 866.68,
+      "failed": 0,
+      "passed": 1,
+      "log": "D:/compute-acceleration-20261012/jack-small-root.log",
+      "exit_sha256": "9aca8dfce962538fb8131d73f84cada05e4dc79f5a0d3612c511b1150f3e33e2",
+      "exit_code": 0,
+      "log_sha256": "5a9b8dc54e01d22c6f5d96a07c2c1428d03fcfb11980bb55c2c76018953d2e88",
+      "filter": "small_root_package_is_deterministic_and_within_ceilings",
+      "tested_source_commit": "43f521730644c0fd4e7e8b0ffaec5fc72571d41f",
+      "reused": true,
+      "reuse_basis": "Retained on author instruction; GAE implementation and existing empty-prefix E/A/D path unchanged"
+    }
+  ],
+  "baseline_source_commit": "43f521730644c0fd4e7e8b0ffaec5fc72571d41f",
+  "embedded_build_source_commit": "483c8e6d11dbe21a342656df2b59a8210baefd4c"
+}
