@@ -153,11 +153,11 @@ function App() {
     window.history.replaceState(null, '', `#${new URLSearchParams({ game: recording.id, decision: frame.id })}`);
   }, [recording, frame]);
   useEffect(() => {
-    if (!playback.playing || !recording || !frame) return;
+    if (!playback.playing || !recording || !frame || modalOpen) return;
     const wait = (isRoutine(frame) ? 260 : playback.after ? 1000 : frame.search ? 2600 : 1800) / playback.speed;
     const timer = window.setTimeout(() => dispatch({ type: 'advance', length: recording.frames.length }), wait);
     return () => window.clearTimeout(timer);
-  }, [playback, recording, frame]);
+  }, [playback, recording, frame, modalOpen]);
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { setHelp(null); setSelectedCard(null); setZone(null); setShowAbout(false); return; }

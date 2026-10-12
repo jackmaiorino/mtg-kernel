@@ -6,6 +6,8 @@ const seat = z.enum(['p0', 'p1']);
 const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const text = z.string().max(4096);
 const hash = z.string().regex(/^[0-9a-f]{64}$/);
+const u32 = z.number().int().nonnegative().max(0xffffffff);
+const i64 = z.string().regex(/^-?\d+$/).refine(s => BigInt(s) >= -(1n << 63n) && BigInt(s) < (1n << 63n), 'Value exceeds signed 64-bit capture range');
 const safeImage = z.string().max(1024).refine(s => /^assets\/[a-zA-Z0-9/_\.\-]+$/.test(s) && !s.split('/').includes('..'), 'Invalid asset path');
 const cardSchema = z.object({
   id: text, name: text, manaCost: text, type: text, rules: text,
@@ -34,8 +36,8 @@ const policySchema = z.object({
   sampled: integer, value: z.number().finite(), valueScale: text,
 }).strict();
 const searchSchema = z.object({
-  digest: hash, stats: z.array(z.object({ index: integer, visits: integer, valueSum: z.string().regex(/^-?\d+$/), meanValue: z.string().regex(/^-?\d+$/) }).strict()),
-  simulations: integer, transitions: integer, nodes: integer, tier: text, stabilityHalves: z.boolean(), valueScale: text,
+  digest: hash, stats: z.array(z.object({ index: u32, visits: u32, valueSum: i64, meanValue: i64 }).strict()),
+  simulations: u32, transitions: u32, nodes: u32, tier: text, stabilityHalves: z.boolean(), valueScale: text,
 }).strict();
 const frameSchema = z.object({
   id: text, key: keySchema, board: boardSchema, after: boardSchema,
@@ -78,6 +80,7 @@ export function parseRecording(raw: unknown): Recording {
   for (const f of r.frames) {
     if (ids.has(f.id) || keys.has(frameKey(f.key))) throw new Error('Duplicate decision identity');
     ids.add(f.id); keys.add(frameKey(f.key));
+    if (f.key.actor !== r.perspective && (f.policy || f.search || f.actions.length !== 1)) throw new Error('Opposing private decision diagnostics are not permitted');
     if (f.actions.some((a, i) => a.index !== i) || f.executed >= f.actions.length) throw new Error('Executed action or engine order is invalid');
     for (const b of [f.board, f.after]) {
       const objects = objectList(b);
@@ -97,6 +100,7 @@ export function parseRecording(raw: unknown): Recording {
     if (f.search) {
       const indices = f.search.stats.map(s => s.index);
       if (indices.length !== f.actions.length || new Set(indices).size !== indices.length || indices.some(i => i >= f.actions.length)) throw new Error('Search action mapping is invalid');
+      if (f.search.stats.some(s => s.meanValue !== (s.visits ? BigInt(s.valueSum) / BigInt(s.visits) : 0n).toString())) throw new Error('Search mean differs from captured visit/value sum');
     }
   }
   if (r.bookmarks.some(b => !ids.has(b.frame))) throw new Error('Bookmark points to a missing decision');

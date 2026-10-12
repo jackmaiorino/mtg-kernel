@@ -33,4 +33,7 @@ class ViewerExportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             export.terminal({'terminal_classification':'truncated','winner':'p0'})
 
+    def test_legacy_outcome_preserves_winner(self):
+        self.assertEqual(export.terminal({'classification':'natural','outcome':'p1_win'})['winner'],'p1')
+
 if __name__ == '__main__': unittest.main()
