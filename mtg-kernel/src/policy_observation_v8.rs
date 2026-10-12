@@ -104,7 +104,7 @@ pub struct QueuedWardLifePaymentV8 {
     pub payment: WardLifePaymentV8,
 }
 
-fn projected_card_sources(base: &ObservationV6) -> Vec<CardStableRefV1> {
+fn projected_card_sources(base: &crate::rl::PolicyObservationStorageV6) -> Vec<CardStableRefV1> {
     let public = &base.projection.surface;
     let mut sources: Vec<_> = public
         .battlefield
@@ -145,7 +145,7 @@ fn projected_card_sources(base: &ObservationV6) -> Vec<CardStableRefV1> {
     sources
 }
 
-fn life_ward_card_traits(
+pub(crate) fn life_ward_card_traits(
     state: &GameState,
     sources: impl IntoIterator<Item = CardStableRefV1>,
 ) -> Result<Vec<WardLifeCardTraitV8>> {
@@ -191,72 +191,8 @@ impl ObservationV8 {
         actor: PlayerId,
         base: ObservationV6,
     ) -> Result<Self> {
-        // Discover identities from the projection, never from hidden objects.
-        let mut sources = projected_card_sources(&base);
-        let v7 = crate::policy_observation_v7::policy_observation_extensions_v7_from_v6(
-            state,
-            actor,
-            base.extensions,
-        )?;
-        sources.extend(
-            v7.historical_public_sources
-                .iter()
-                .map(|row| row.source.clone()),
-        );
-        let ward_life_card_traits = life_ward_card_traits(state, sources)?;
-        let payment = |trigger: &StackItem| -> Result<Option<WardLifePaymentV8>> {
-            crate::effect::validated_life_ward_observation_targeter(state, trigger)
-                .map_err(RlContractError)?
-                .map(|(targeter, life)| {
-                    let index = state
-                        .stack
-                        .iter()
-                        .position(|live| live.v4.stack_item_id == targeter.v4.stack_item_id)
-                        .ok_or_else(|| {
-                            RlContractError("life Ward targeter lost public membership".into())
-                        })?;
-                    Ok(WardLifePaymentV8 {
-                        targeting_stack_index: u32::try_from(index).map_err(|_| {
-                            RlContractError("life Ward targeter index exceeds u32".into())
-                        })?,
-                        payer: targeter.controller.into(),
-                        life,
-                    })
-                })
-                .transpose()
-        };
-        let mut queued_ward_life_payments = Vec::new();
-        for (index, trigger) in state.stack.iter().enumerate() {
-            if state.engine.pending_effect.as_ref().is_some_and(|pending| {
-                pending.resolving_item.v4.stack_item_id == trigger.v4.stack_item_id
-            }) {
-                continue;
-            }
-            if let Some(payment) = payment(trigger)? {
-                queued_ward_life_payments.push(QueuedWardLifePaymentV8 {
-                    stack_index: u32::try_from(index).map_err(|_| {
-                        RlContractError("life Ward trigger index exceeds u32".into())
-                    })?,
-                    payment,
-                });
-            }
-        }
-        let mut pending_ward_life_payment = None;
-        if let Some(pending) = &state.engine.pending_effect {
-            crate::effect::validate_pending_effect_choice(state).map_err(RlContractError)?;
-            if matches!(
-                pending.choice.as_ref(),
-                Some(crate::effect::PendingEffectChoice::ChooseBoolean {
-                    purpose: crate::effect::EffectBooleanChoicePurpose::CounterUnlessPaysLife { .. },
-                    ..
-                })
-            ) {
-                pending_ward_life_payment =
-                    Some(payment(&pending.resolving_item)?.ok_or_else(|| {
-                        RlContractError("pending life Ward has no live targeter".into())
-                    })?);
-            }
-        }
+        let parts = observation_storage_v8(state, actor, base.into())?;
+        let base = parts.base;
         Ok(Self {
             schema_version: OBSERVATION_SCHEMA_VERSION_V8,
             kernel_version: base.kernel_version,
@@ -273,29 +209,110 @@ impl ObservationV8 {
             known_library_cards: base.known_library_cards,
             known_hand_cards: base.known_hand_cards,
             known_face_down_cards: base.known_face_down_cards,
-            extensions: PolicyObservationExtensionsV8 {
-                pending_cast_object_cost: v7.pending_cast_object_cost,
-                decision_local_library: v7.decision_local_library,
-                historical_public_sources: v7
-                    .historical_public_sources
-                    .into_iter()
-                    .map(|row| HistoricalPublicSourceV8 {
-                        context: row.context,
-                        source: row.source,
-                        stack_item_kind: row.stack_item_kind,
-                    })
-                    .collect(),
-                pending_chosen_creature_cost: v7.pending_chosen_creature_cost,
-                finalized_chosen_creature_costs: v7.finalized_chosen_creature_costs,
-                pending_ward_payment: v7.pending_ward_payment,
-                queued_ward_payments: v7.queued_ward_payments,
-                pending_ward_life_payment,
-                queued_ward_life_payments,
-                ward_life_card_traits,
-            },
+            extensions: parts.extensions,
             visible_projection_hash: 0,
         })
     }
+}
+
+pub(crate) struct PolicyObservationStorageV8 {
+    pub base: crate::rl::PolicyObservationStorageV6,
+    pub extensions: PolicyObservationExtensionsV8,
+}
+
+pub(crate) fn observation_storage_v8(
+    state: &GameState,
+    actor: PlayerId,
+    base: crate::rl::PolicyObservationStorageV6,
+) -> Result<PolicyObservationStorageV8> {
+    // Discover identities from the projection, never from hidden objects.
+    let mut sources = projected_card_sources(&base);
+    let v7 = crate::policy_observation_v7::policy_observation_extensions_v7_from_v6(
+        state,
+        actor,
+        base.extensions.clone(),
+    )?;
+    sources.extend(
+        v7.historical_public_sources
+            .iter()
+            .map(|row| row.source.clone()),
+    );
+    let ward_life_card_traits = life_ward_card_traits(state, sources)?;
+    let payment = |trigger: &StackItem| -> Result<Option<WardLifePaymentV8>> {
+        crate::effect::validated_life_ward_observation_targeter(state, trigger)
+            .map_err(RlContractError)?
+            .map(|(targeter, life)| {
+                let index = state
+                    .stack
+                    .iter()
+                    .position(|live| live.v4.stack_item_id == targeter.v4.stack_item_id)
+                    .ok_or_else(|| {
+                        RlContractError("life Ward targeter lost public membership".into())
+                    })?;
+                Ok(WardLifePaymentV8 {
+                    targeting_stack_index: u32::try_from(index).map_err(|_| {
+                        RlContractError("life Ward targeter index exceeds u32".into())
+                    })?,
+                    payer: targeter.controller.into(),
+                    life,
+                })
+            })
+            .transpose()
+    };
+    let mut queued_ward_life_payments = Vec::new();
+    for (index, trigger) in state.stack.iter().enumerate() {
+        if state.engine.pending_effect.as_ref().is_some_and(|pending| {
+            pending.resolving_item.v4.stack_item_id == trigger.v4.stack_item_id
+        }) {
+            continue;
+        }
+        if let Some(payment) = payment(trigger)? {
+            queued_ward_life_payments.push(QueuedWardLifePaymentV8 {
+                stack_index: u32::try_from(index)
+                    .map_err(|_| RlContractError("life Ward trigger index exceeds u32".into()))?,
+                payment,
+            });
+        }
+    }
+    let mut pending_ward_life_payment = None;
+    if let Some(pending) = &state.engine.pending_effect {
+        crate::effect::validate_pending_effect_choice(state).map_err(RlContractError)?;
+        if matches!(
+            pending.choice.as_ref(),
+            Some(crate::effect::PendingEffectChoice::ChooseBoolean {
+                purpose: crate::effect::EffectBooleanChoicePurpose::CounterUnlessPaysLife { .. },
+                ..
+            })
+        ) {
+            pending_ward_life_payment =
+                Some(payment(&pending.resolving_item)?.ok_or_else(|| {
+                    RlContractError("pending life Ward has no live targeter".into())
+                })?);
+        }
+    }
+    Ok(PolicyObservationStorageV8 {
+        base,
+        extensions: PolicyObservationExtensionsV8 {
+            pending_cast_object_cost: v7.pending_cast_object_cost,
+            decision_local_library: v7.decision_local_library,
+            historical_public_sources: v7
+                .historical_public_sources
+                .into_iter()
+                .map(|row| HistoricalPublicSourceV8 {
+                    context: row.context,
+                    source: row.source,
+                    stack_item_kind: row.stack_item_kind,
+                })
+                .collect(),
+            pending_chosen_creature_cost: v7.pending_chosen_creature_cost,
+            finalized_chosen_creature_costs: v7.finalized_chosen_creature_costs,
+            pending_ward_payment: v7.pending_ward_payment,
+            queued_ward_payments: v7.queued_ward_payments,
+            pending_ward_life_payment,
+            queued_ward_life_payments,
+            ward_life_card_traits,
+        },
+    })
 }
 
 #[cfg(test)]

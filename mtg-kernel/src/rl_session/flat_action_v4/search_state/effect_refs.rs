@@ -52,6 +52,10 @@ impl Scan<'_> {
     fn op(&self, op: &EffectOp) -> bool {
         use EffectOp::*;
         match op {
+            WildwoodCounterFromReceiptV1 { capture_history_index, .. } => usize::try_from(*capture_history_index).ok().and_then(|index| self.state.engine.event_history.get(index)).is_none_or(|event| {
+                let crate::event::CommittedEvent::WildwoodCounterCaptureV1 { capture } = event else { return true; };
+                capture.observers.iter().any(|source| self.raw(source.source)) || matches!(capture.recipient, crate::state::StackTargetContractV4::Object { object, .. } if self.raw(object))
+            }),
             CopySpellSnapshot { spell } => self.copy(spell),
             CastExiledWithoutMana { card, .. } | PlayExiledLand { card } => self.b(card),
             CreatureChoiceV1(kind) | CreatureChoiceAnswerV1 { kind, .. } => {
@@ -148,6 +152,7 @@ impl Scan<'_> {
             | CounterTargetUnlessPaysGeneric { .. }
             | GainLifeDynamic { .. }
             | UntapObject { .. }
+            | GainControlOfTargetCreatureUntilEndOfTurn { .. }
             | AnimateSource
             | AnimateSourcePermanentlyV1
             | LookTopSelectV1 { .. }
@@ -157,7 +162,12 @@ impl Scan<'_> {
             | CreateTokensWithHasteUntilEndOfTurnV1 { .. }
             | PumpTargetUntilEndOfTurnDynamic { .. }
             | PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness { .. }
+            | GrantKeywordToDeclaredTargetsUntilEndOfTurn { .. }
             | ReturnTwoDifferentControllerCreaturesToOwnersHands
+            | BindAuthorityEntryGainLifeV1
+            | AuthorityEntryGainLifeV1 { .. }
+            | CerberusUntapV1 { .. }
+            | CreateControlledCreatureTargetCopyV1
             | DoubleTargetPowerUntilEndOfTurn { .. }
             | DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
             | CreateTokensForOtherControlledCreaturesNamed { .. }
@@ -217,6 +227,8 @@ impl Scan<'_> {
             | CounterTargetSpellThenCreateTokens { .. }
             | BoostPlayerCreaturesUntilEndOfTurn { .. }
             | ExileGraveyardTargetsDrainPerCreature { .. }
+            | ExileGraveyardTargetThenGrowSourceIfCreature
+            | ExileSingleGraveyardTargetsThenDrainTwoV1
             | RemoveTimeCounterFromSource
             | ReturnSourceAsEnduringEnchantment
             | SearchLibraryCardsToDestination { .. }
@@ -238,6 +250,8 @@ impl Scan<'_> {
             | MaterializeStormCopies
             | CreateStormCopies { .. }
             | DamageCannotBePreventedThisTurn
+            | PreventTargetBlockingUntilEndOfTurn { .. }
+
             | AddMinusOneMinusOneCounter { .. }
             | RevealHandChooseNonlandToLinkedExile { .. }
             | ReturnLinkedExiledCardToOwnersHand
@@ -983,7 +997,13 @@ pub(super) fn conflicts(
             Damage { source, target, .. } => {
                 s.raw(*source) || matches!(target,crate::state::Target::Object(id) if s.raw(*id))
             }
+            SingleGraveyardEntryV1 {
+                source_contract, ..
+            } => s.a(source_contract),
             LeftBattlefieldCopyV1 { source, .. } => s.raw(source.source),
+            SourcePowerActivationCommittedV1 { item, .. } => s.copy(item),
+            SourceDamageBeforeLeavingV1 { damage_source } => s.a(&damage_source.source),
+            SourcePowerActivationFinishedV1 { .. } => false,
             ZoneChange { object, .. }
             | Tap { object }
             | CreateToken { object, .. }
@@ -1016,9 +1036,68 @@ pub(super) fn conflicts(
                     || s.raw(died.object)
                     || source.attached_to.is_some_and(|link| s.raw(link.object))
             }
+            AuthorityEntryCaptureV1 { capture } => {
+                s.raw(capture.source.source)
+                    || s.raw(capture.entrant.object)
+                    || capture
+                        .source
+                        .attached_to
+                        .is_some_and(|link| s.raw(link.object))
+            }
+            AuthorityEntryObserversV1 {
+                entrant, sources, ..
+            } => {
+                s.raw(entrant.object)
+                    || sources.iter().any(|source| {
+                        s.raw(source.source)
+                            || source.attached_to.is_some_and(|link| s.raw(link.object))
+                    })
+            }
+            CerberusCaptureV1 { capture } => s.raw(capture.source.source),
+            CerberusObserversV1 { sources, .. } => {
+                sources.iter().any(|source| s.raw(source.source))
+            }
+            CerberusPublishedV1 { item, .. } => s.raw(item.source),
+            CerberusOperationV1 { source, .. } => s.raw(source.source),
+            AuthorityEntryPublishedV1 { item, .. } => {
+                s.raw(item.source)
+                    || item.v4.ability_source_contract.is_some_and(|source| {
+                        source.attached_to.is_some_and(|link| s.raw(link.object))
+                    })
+            }
+            AuthorityEntryOperationV1 { source, .. } => {
+                s.raw(source.source) || source.attached_to.is_some_and(|link| s.raw(link.object))
+            }
             InitiativeTrigger { binding } => s.raw(binding.source.source),
             MonarchTrigger { binding } => s.raw(binding.source.source),
             ControlledCreatureDeathCaptureCollectedV1 { .. }
+            | AuthorityEntryCollectedV1 { .. }
+            | AuthorityEntryCompletedV1 { .. }
+            | CerberusCollectedV1 { .. }
+            | CerberusCompletedV1 { .. }
+            | SquadRallierResolutionBoundaryV1 { .. }
+            | SowerRestrictionInstalledV1 { .. }
+            | SowerRestrictionExpiredV1 { .. }
+            | SowerRestrictionResolutionV1 { .. }
+            | AuthorityEntryPublicFactsV1 { .. }
+            | WildwoodCounterCaptureV1 { .. }
+            | WildwoodTriggerPublishedV1 { .. }
+            | WildwoodTriggerResolvingV1 { .. }
+            | WildwoodTriggerOperationV1 { .. }
+            | WildwoodTriggerClosedV1 { .. }
+            | WildwoodTriggerCounteredV1 { .. }
+            | TemporaryControlResolutionV1 { .. }
+            | TemporaryControlInstalledV1 { .. }
+            | TemporaryControlCleanupV1 { .. }
+            | TemporaryControlExpiredV1 { .. }
+            | FrenziedGoblinPublishedV1 { .. }
+            | FrenziedGoblinResolutionBoundaryV1 { .. }
+            | FrenziedGoblinPaymentV1 { .. }
+            | FrenziedGoblinCompletedV1 { .. }
+            | FrenziedGoblinRemovalV1 { .. }
+            | FrenziedGoblinInstalledV1 { .. }
+            | FrenziedGoblinExpiredV1 { .. }
+            | FrenziedGoblinCleanupV1 { .. }
             | DifferentControllerTargetDepartureV1 { .. }
             | LifeLoss { .. }
             | LifeGain { .. }

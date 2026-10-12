@@ -7,6 +7,23 @@ fn conflicts(
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    // Receipt-owned references remain binding through legend/deferred stages
+    // and after the physical source or recipient returns to a hidden zone.
+    match crate::wildwood_capture_v1::active(state) {
+        Ok(rows) if rows.iter().any(|(_, _, capture)| {
+            capture.observers.iter().any(|source| pool.contains(&source.source))
+                || matches!(capture.recipient, crate::state::StackTargetContractV4::Object { object, .. } if pool.contains(&object))
+        }) => return true,
+        Err(_) => return true,
+        _ => {},
+    }
+    if state.wildwood_waiting_v1.as_ref().is_some_and(|waiting| {
+        waiting
+            .iter()
+            .any(|row| super::effect_refs::op_conflicts(state, pool, &row.effect))
+    }) {
+        return true;
+    }
     if super::effect_refs::conflicts(state, pool, plan) {
         return true;
     }
@@ -125,6 +142,16 @@ fn conflicts(
                 ..
             }
             | ResolvedObjectKeywordEffect {
+                object_id,
+                object_zone_change_count,
+                ..
+            }
+            | ResolvedObjectCantBlock {
+                object_id,
+                object_zone_change_count,
+                ..
+            }
+            | ResolvedObjectControlEffect {
                 object_id,
                 object_zone_change_count,
                 ..

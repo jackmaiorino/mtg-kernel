@@ -1,0 +1,18 @@
+{
+  "schema": "fdn-heartfire-immolator-prepared/v1",
+  "disposition": "unregistered_source_only",
+  "not_generator_input": true,
+  "base_commit": "9c43b100a1594564d8e55c25692c214a2aec616d",
+  "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "mage_source": "Mage.Sets/src/mage/cards/h/HeartfireImmolator.java",
+  "printed": {
+    "name": "Heartfire Immolator",
+    "mana_cost": "{1}{R}",
+    "types": ["Creature"],
+    "subtypes": ["Human", "Wizard"],
+    "power": 2,
+    "toughness": 2,
+    "abilities": ["Prowess", "{R}, Sacrifice Heartfire Immolator: It deals damage equal to its power to target creature or planeswalker."]
+  },
+  "qualification": "No native typecheck, gameplay, FDN registration, public/model or rooted RulesMeaning qualification has been run."
+}

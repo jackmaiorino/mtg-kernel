@@ -198,7 +198,45 @@ mod fdn {
 
     #[test]
     fn successor_extraction_does_not_rewrite_any_serialized_predecessor_record_or_vector() {
-        let table_before = crate::rules_vector_v1::build_table().canonical_bytes();
+        let excluded: Vec<u16> = crate::card_def::CARD_DEFS
+            .iter()
+            .enumerate()
+            .filter(|(_, def)| {
+                def.target_spec == TargetSpec::KickerControlledCreatures
+                    || def.kicked_target_spec == Some(TargetSpec::KickerControlledCreatures)
+            })
+            .map(|(id, _)| id as u16)
+            .collect();
+        assert_eq!(
+            excluded,
+            vec![card_id_by_name("Divine Resilience").unwrap()]
+        );
+        assert!(matches!(
+            (crate::card_def::CARD_DEFS[excluded[0] as usize].spell_effect)(),
+            Some(crate::effect::EffectOp::GrantKeywordToDeclaredTargetsUntilEndOfTurn { .. })
+        ));
+        // V1 deliberately refuses the new variable-target definition. Compare
+        // every supported record and vector rather than invoking its whole-table
+        // builder on an incompatible current catalog or weakening that refusal.
+        let snapshot = || {
+            (0..crate::card_def::CARD_DEFS.len())
+                .map(|id| id as u16)
+                .filter(|id| !excluded.contains(id))
+                .map(|id| {
+                    (
+                        id,
+                        serde_json::to_vec(&crate::rules_vector_v1::sources::card_rules(id))
+                            .unwrap(),
+                        serde_json::to_vec(
+                            &crate::rules_vector_v1::vectorize::card_feature_counts(id),
+                        )
+                        .unwrap(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let records_before = snapshot();
+        let vocabulary_before = crate::rules_vector_v1::vectorize::pauper_vocabulary();
         let extractor_before = crate::rules_vector_v1::extractor_sha256();
         let selector = live_selector_v2().unwrap();
         for (name, root) in [
@@ -219,9 +257,16 @@ mod fdn {
             );
         }
         assert_eq!(extractor_before, crate::rules_vector_v1::extractor_sha256());
+        assert_eq!(records_before, snapshot());
         assert_eq!(
-            table_before,
-            crate::rules_vector_v1::build_table().canonical_bytes()
+            vocabulary_before,
+            crate::rules_vector_v1::vectorize::pauper_vocabulary()
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "variable cast target effects require a RulesMeaning successor")]
+    fn divine_resilience_still_refuses_frozen_predecessor_extraction() {
+        crate::rules_vector_v1::sources::card_rules(card_id_by_name("Divine Resilience").unwrap());
     }
 }

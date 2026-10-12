@@ -183,6 +183,7 @@ fn put_spell_on_stack(
     object_v4.finalized_cast_binding = Some(FinalizedCastBindingV1 {
         x_value: 0,
         chosen_creature_cost: None,
+        variable_targeting_kicked: None,
     });
     let id = state.objects.push(GameObject {
         card_def,

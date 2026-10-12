@@ -1,0 +1,29 @@
+# Heartfire Immolator scoped consumer successors
+
+Prepared on reviewed core `02f375bcccd071926d77660ff47ef51000234339`. Heartfire remains unregistered. This source adds no card ID, registry, catalog profile, model admission or native qualification. Core source review is CLEAR; these companions require their own source review and serial execution.
+
+The primary reference is Mage `a5c90fe180021e70e2a644ade00eeab07f857a40`, `Mage.Sets/src/mage/cards/h/HeartfireImmolator.java`, constructor lines 25-44: a {1}{R} Human Wizard 2/2 with prowess and {R}, sacrifice this creature to deal its power to target creature or planeswalker. The pinned implementation uses `SourcePermanentPowerValue.NOT_NEGATIVE`. The reviewed departure capture and finalized activation receipt implement those semantics; see `fdn_heartfire_immolator_source_v1.md`.
+
+## Prepared interfaces
+
+`rules-meaning/heartfire/v1` selects the actual executable printed activation by catalog identity, definition-owned root, exact cost, zone, speed and target specification. Its typed meaning states one creature or planeswalker, mana payment followed by sacrifice, signed departing power clamped to zero, exact target incarnation, captured source incarnation/controller/color/lifelink/deathtouch/werewolf and the ordinary damage replacement/protection pipeline. Other roots and altered schema/catalog/source/meaning identities refuse. This is a scoped companion; frozen RulesMeaning vectors and Standard opaque-op meaning stay unchanged.
+
+`public-heartfire/v1` retains a genuine ObservationV9 predecessor and adds independently authenticated saved damage facts related by public stack ordinal. The sealed constructor validates complete production capture/receipt state before reading facts. Its new relation does not expose raw historical object or stack IDs. A serialized companion's public validator checks shape and identity, not committed-history authority. Coherently rewriting a public artifact cannot authorize execution: the sealed backend regenerates it from current core history and the complete owning V12 decision binding.
+
+HumanHeartfireV12 wraps the actual Human/RaidV9 common state and preserves Standard, private-knowledge, restricted-mana and historical-source fields. Its separate owning input mode admits the exact real Partial Ajani damage-recipient ledger while frozen V8/V9 session guards retain their refusal; see `fdn_heartfire_v12_input_native58_repair_v1.md`. Safe captured facts use canonical Human source handles. Only the genuine selected printed activation gets the new cost and damage label; inherited actions and Ward prompts retain existing labels. V10 and V11 remain reserved for Gutless and Ooze. Frozen labels continue to refuse the new leaf. No constructor fabricates a predecessor projection.
+
+An owning Human session carries allocation identity and a monotonically increasing restore generation outside snapshots. Pending prompts and accepted retry receipts bind both. Owning restore invalidates retained accepted, pending and previously issued future requests, including after exact future reconstruction; same-generation retries remain idempotent. Exhaustion refuses before restoring core state.
+
+## Exact remaining copied-source input gap
+
+The engine permits historical authenticated same-incarnation definition changes. Frozen `rl.rs::stack_source_ref` instead requires `historical.card_def == captured.card_def` before it emits V8/V9 historical sources. A permanent that copies Heartfire and loses that copy on sacrifice can therefore have a legal core activation but no representable frozen predecessor. V12 deliberately refuses this case.
+
+A complete input successor must derive an ability's historical source from its authenticated captured definition/owner/controller/zone-change generation, accepting production `source_card_def_matches` / `had_card_def` history; emit the captured printed name/catalog identity independently of the current restored definition; distinguish the departed producer from any reentered current permanent; and carry this relation through successor observation, normalized action/binding identity and canonical safe Human handle allocation. It must preserve unknown-zone privacy and existing public source provenance. This requires a fresh observation/input identity, not a widened V8/V9 contract. The current companion supports ordinary printed Heartfire and same-definition source reentry while this copied-source gap remains.
+
+## Prepared verification and remaining qualification
+
+Both-seat registered predecessor fixtures cover unchanged safe state/menu, hidden-hand independence, generic Ward payment and decline, real action application, stale bindings, retry and exact core replay. Owning rollback fixtures retain the same projectors and test accepted, pending, rebuilt-future, foreign-wrapper and exhausted-generation authority.
+
+Future true printed fixtures cast Heartfire, trigger prowess through an actual spell, pay its activation and sacrifice, select a creature or labeled Partial Ajani recipient, and resolve through real priority. They cover positive/negative saved power, source reentry, captured controller/color/keywords, forged committed power, safe historical handles and exact restore. Temporary boost/control/keyword setup is explicitly a physical primitive, not invented printed producers. Partial Ajani is a damage recipient only; no printed loyalty-ability or planeswalker-combat admission is claimed. Printed fixtures require real serial registration and currently remain unexecuted.
+
+Only pinned rustfmt and diff checks are performed here. Affected native typecheck/gameplay and default/Standard parity execution remain with the serial owner. Global model/vector/tensor transport, weights, profile identity and actual Full-pool admission remain separate incomplete dependencies.

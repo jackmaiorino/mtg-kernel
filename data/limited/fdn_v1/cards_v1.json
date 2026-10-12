@@ -6036,6 +6036,446 @@
         "controlled_creature_death_capture",
         "targeted_opponent_drain"
       ]
+    },
+    {
+      "name": "Divine Resilience",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/d/DivineResilience.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_divine_resilience.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "kicker",
+        "variable_controlled_creature_targets",
+        "indestructible_until_cleanup"
+      ]
+    },
+    {
+      "name": "Scavenging Ooze",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Ooze"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/s/ScavengingOoze.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_scavenging_ooze.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "graveyard_exile_activation",
+        "captured_creature_type",
+        "exact_source_counter",
+        "captured_controller_gain"
+      ]
+    },
+    {
+      "name": "Soul-Shackled Zombie",
+      "mana_cost": "{3}{B}",
+      "mana_value": 4,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Zombie"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/s/SoulShackledZombie.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_soul_shackled_zombie.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "shared_graveyard_optional_targets",
+        "successful_creature_exile_conditional_drain",
+        "captured_entry_controller"
+      ]
+    },
+    {
+      "name": "Heartfire Immolator",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Wizard"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/h/HeartfireImmolator.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_heartfire_immolator.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "prowess",
+        "sacrifice_source_captured_power_damage",
+        "creature_or_planeswalker_target",
+        "historical_damage_color_and_keywords"
+      ]
+    },
+    {
+      "name": "Searslicer Goblin",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Goblin",
+        "Warrior"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/s/SearslicerGoblin.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_searslicer_goblin.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "raid",
+        "captured_controller_end_step"
+      ]
+    },
+    {
+      "name": "Self-Reflection",
+      "mana_cost": "{4}{U}{U}",
+      "mana_value": 6,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/s/SelfReflection.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_self_reflection.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "flashback",
+        "controlled_creature_copiable_token",
+        "neutral_face_down_copy"
+      ]
+    },
+    {
+      "name": "Nameless Creature Copy Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/util/functions/CopyTokenFunction.java",
+      "is_token": true
+    },
+    {
+      "name": "Squad Rallier",
+      "mana_cost": "{3}{W}",
+      "mana_value": 4,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Scout"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/s/SquadRallier.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_squad_rallier.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "private_look_four",
+        "optional_reveal_creature_power_at_most_two",
+        "random_bottom_rest"
+      ]
+    },
+    {
+      "name": "Sower of Chaos",
+      "mana_cost": "{3}{R}",
+      "mana_value": 4,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Devil"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/s/SowerOfChaos.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_sower_of_chaos.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "incarnation_bound_cannot_block_until_cleanup"
+      ]
+    },
+    {
+      "name": "Frenzied Goblin",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Goblin",
+        "Berserker"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/f/FrenziedGoblin.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_frenzied_goblin.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "name": "Slumbering Cerberus",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dog"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/s/SlumberingCerberus.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_slumbering_cerberus.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "name": "Wildwood Scourge",
+      "mana_cost": "{X}{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Hydra"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 0,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/w/WildwoodScourge.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_wildwood_scourge.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "is_token": true,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [],
+      "name": "Face-down creature"
+    },
+    {
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "is_token": true,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [],
+      "name": "Face-down card"
+    },
+    {
+      "name": "Authority of the Consuls",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/a/AuthorityOfTheConsuls.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_authority_of_the_consuls.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "name": "Involuntary Employment",
+      "mana_cost": "{3}{R}",
+      "mana_value": 4,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/i/InvoluntaryEmployment.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_involuntary_employment.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": []
     }
   ]
 }

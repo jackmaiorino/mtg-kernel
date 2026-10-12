@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "admission": "unregistered",
+  "source_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "java_file": "Mage.Sets/src/mage/cards/f/FrenziedGoblin.java",
+  "name": "Frenzied Goblin",
+  "mana_cost": "{R}",
+  "mana_value": 1,
+  "colors": ["R"],
+  "types": ["Creature"],
+  "subtypes": ["Goblin", "Berserker"],
+  "supertypes": [],
+  "power": 1,
+  "toughness": 1,
+  "is_land": false,
+  "produces_mana": [],
+  "mechanics": [],
+  "rules": "Whenever Frenzied Goblin attacks, you may pay {R}. If you do, target creature can't block this turn.",
+  "qualification": "Prepared source only, unregistered. No card ID, catalog/profile, model or native claim."
+}

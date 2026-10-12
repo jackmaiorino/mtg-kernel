@@ -334,6 +334,13 @@ pub enum Subtype {
     Wurm,
     Artificer,
     Orc,
+    /// Current-main append reservations 147-148; historical old-base IDs are superseded.
+    Juggernaut,
+    Minotaur,
+    /// Prepared Scavenging Ooze; choice-array admission remains separate.
+    Ooze,
+    /// Prepared Sower source; choice-array admission remains separate.
+    Devil,
 }
 
 impl Subtype {
@@ -604,6 +611,21 @@ impl Subtype {
         Subtype::Artificer,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Orc,
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        Subtype::Ooze,
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        Subtype::Scout,
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        Subtype::Devil,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -796,6 +818,10 @@ impl Subtype {
                 | Subtype::Siren
                 | Subtype::Praetor
                 | Subtype::Elder
+                | Subtype::Juggernaut
+                | Subtype::Minotaur
+                | Subtype::Ooze
+                | Subtype::Devil
         )
     }
 }
@@ -1025,6 +1051,14 @@ pub enum TargetSpec {
     AttackingCreature,
     /// Exactly two distinct effective creatures with different current controllers.
     TwoCreaturesWithDifferentControllers,
+    /// Unkicked exactly one controlled creature; kicked any finite number.
+    /// Appended after composed Condemn60 and Run Away Together61.
+    KickerControlledCreatures,
+    /// Exactly one nontoken card in either player's graveyard.
+    CardInGraveyards,
+    /// Zero to two distinct nontoken cards from one physical graveyard.
+    /// Stable id 66 is reserved for this unregistered FDN successor.
+    UpToTwoCardsInSingleGraveyard,
 }
 
 impl TargetSpec {
@@ -1114,6 +1148,9 @@ impl TargetSpec {
             TargetSpec::ArtifactOrEnchantmentThenPlayer => 74,
             TargetSpec::AttackingCreature => 61,
             TargetSpec::TwoCreaturesWithDifferentControllers => 62,
+            TargetSpec::KickerControlledCreatures => 63,
+            TargetSpec::CardInGraveyards => 65,
+            TargetSpec::UpToTwoCardsInSingleGraveyard => 66,
         }
     }
 }
@@ -2505,7 +2542,8 @@ mod tests {
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     fn creature_type_choice_ids_preserve_pauper_and_foundations_profiles() {
         // Preserve the ordered lists from ddff546a, with Elder appended to
-        // Foundations by v68. These also define the changeling subtype
+        // Foundations by v68, Ooze149, then Scout and Devil in this candidate.
+        // These also define the changeling subtype
         // projection and creature-type choice surface in these profiles.
         let expected: &[u16] = &[
             0, 2, 3, 5, 6, 7, 8, 9, 10, 11, 13, 14, 18, 19, 20, 21, 22, 24, 25, 26, 27, 29, 30, 31,
@@ -2516,8 +2554,9 @@ mod tests {
         if cfg!(feature = "limited-fdn-fixtures") {
             expected.extend_from_slice(&[
                 79, 80, 81, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99,
-                100, 101, 102, 103, 104, 119, 124, 125, 126, 127, 109,
+                100, 101, 102, 103, 104, 119, 124, 125, 126, 127, 109, 149,
             ]);
+            expected.extend_from_slice(&[Subtype::Scout.stable_id(), Subtype::Devil.stable_id()]);
         }
         assert_eq!(
             Subtype::CREATURE_TYPES
@@ -2553,12 +2592,12 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 394 (Vengeful Bloodwitch after Condemn,
+        // batches append through id 403 (Sower of Chaos after Squad, neutral copy, Self and Searslicer,
         // Run Away Together, Raid, Skyknight and Sire).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                395
+                411
             } else {
                 192
             }
@@ -2691,6 +2730,7 @@ mod tests {
             (TargetSpec::ArtifactOrEnchantmentThenPlayer, 74),
             (TargetSpec::AttackingCreature, 61),
             (TargetSpec::TwoCreaturesWithDifferentControllers, 62),
+            (TargetSpec::KickerControlledCreatures, 63),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);
@@ -2720,8 +2760,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v73_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x7c8c_36e6_236b_5681;
+    fn card_db_hash_v79_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0xd907_cd57_6aa6_015c;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

@@ -1,0 +1,33 @@
+{
+  "schema": "fdn-soul-shackled-zombie-prepared/v1",
+  "status": "unregistered_source_only",
+  "base_commit": "9c43b100a1594564d8e55c25692c214a2aec616d",
+  "name": "Soul-Shackled Zombie",
+  "mana_cost": "{3}{B}",
+  "types": [
+    "Creature"
+  ],
+  "subtypes": [
+    "Zombie"
+  ],
+  "power": 4,
+  "toughness": 2,
+  "oracle_text": "When this creature enters, exile up to two target cards from a single graveyard. If at least one creature card was exiled this way, each opponent loses 2 life and you gain 2 life.",
+  "primary_source": {
+    "repository": "https://github.com/magefree/mage",
+    "commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+    "path": "Mage.Sets/src/mage/cards/s/SoulShackledZombie.java"
+  },
+  "frozen_membership": {
+    "inventory": "E:/storage-records/fdn110/fdn110-v69-actual-default-inventory.json",
+    "in_reference": true,
+    "status": "missing"
+  },
+  "prepared_target": {
+    "variant": "UpToTwoCardsInSingleGraveyard",
+    "reserved_stable_id": 66,
+    "minimum": 0,
+    "maximum": 2
+  },
+  "qualification": "static_source_only_native_unrun"
+}

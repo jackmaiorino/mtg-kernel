@@ -41,6 +41,7 @@ fn threshold(out: &mut Collector, player: RelF, zone: ZoneF, obj: ObjF, minimum:
 /// The event a triggered ability waits for, plus any intervening reads.
 pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector) {
     match condition {
+        TriggerCondition::OpponentCreatureEntersV1 => out.atoms.push(Atom::Opaque),
         TriggerCondition::ThisOrControlledCreatureDies => {
             // The frozen vocabulary lacks self-or-controlled-other death.
             // Mark the gap instead of inventing an exact predecessor facet.
@@ -64,6 +65,21 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
                 Some(ObjF::Typed(CardTypeF::Creature)),
                 AggF::EventThisTurn,
             );
+            out.atoms.push(Atom::Opaque);
+        }
+        TriggerCondition::BeginningControllerEndStepAfterControllerAttackedThisTurn => {
+            out.trigger(TrigF::StepBegins {
+                step: StepF::EndStep,
+                yours_only: true,
+            });
+            out.control(ControlF::Conditional);
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Typed(CardTypeF::Creature)),
+                AggF::EventThisTurn,
+            );
+            // Frozen EventThisTurn cannot encode successful declarations.
             out.atoms.push(Atom::Opaque);
         }
         TriggerCondition::StandardV1(_) => {
@@ -268,6 +284,15 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
             // own. Same read as `EffectCond::ControllerGraveyardCardCountAtLeast`.
             out.trigger(TrigF::Attacks);
             threshold(out, RelF::You, ZoneF::Graveyard, ObjF::AnyCard, minimum);
+        }
+        TriggerCondition::BeginningAnyEndStepIfCreatureDied => {
+            // Exact each-end timing plus Morbid is preserved in the source payload.
+            // The new complete printed rule has no frozen full-vector admission.
+            out.atoms.push(Atom::Opaque);
+        }
+        TriggerCondition::AnotherControlledNonHydraCreatureGetsPlusOneCounters => {
+            // Event-time recipient subtype/control and grouped counters are new semantics.
+            out.atoms.push(Atom::Opaque);
         }
         TriggerCondition::BeginningControllerEndStepIfCreatureDied => {
             // The controller's end step begins, gated on the event's flag

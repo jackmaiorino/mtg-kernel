@@ -24,6 +24,15 @@ coverage; the feature-gated FDN/Standard suites are skipped when unavailable.
 Raid entry fixtures are admitted with their registered cards and run in the
 FDN group alongside Condemn, Run Away Together and Vengeful Bloodwitch.
 
+Later candidate Authority, Employment, Frenzied, Cerberus and Wildwood fixtures
+are grouped with their executable candidate definitions. The two standalone
+`prepared_crystal_barricade*` targets are future qualification fixtures for an
+unregistered card whose mixed prevention ordering is still incomplete. Their
+source bodies are preserved exactly and all-test typechecks still compile them.
+They are outside the registered FDN execution group; no Crystal gameplay or
+meaning pass is claimed. After completing the mechanic and real registration,
+run both prepared targets and move them into the FDN group before admission.
+
 The optional `python/tools/check_rust_integration_inventory.py` compares compiled
 test names with a pre-consolidation checkout. It normalizes only the original
 source-module prefix, includes ignored test names, and refuses omissions or

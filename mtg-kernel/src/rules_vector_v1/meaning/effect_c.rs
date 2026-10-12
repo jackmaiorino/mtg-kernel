@@ -22,6 +22,9 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
     const GRAVEYARD: Option<ZoneF> = Some(ZoneF::Graveyard);
     match spec {
         TargetSpec::StandardV1(filter) => targets::standard_target_origin(filter),
+        TargetSpec::KickerControlledCreatures => {
+            panic!("variable cast cardinality requires a RulesMeaning successor")
+        }
         TargetSpec::None => (None, None),
         TargetSpec::CardInOwnGraveyardWithAnySubtype(_) => (GRAVEYARD, Some(RelF::You)),
         TargetSpec::OpponentArtifactEnchantmentOrNonbasicLand => {
@@ -128,7 +131,9 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
         }
         TargetSpec::CreatureOrLandCardInGraveyard
         | TargetSpec::UpToTwoCardsInGraveyards
-        | TargetSpec::UpToOneCardInGraveyards => (GRAVEYARD, None),
+        | TargetSpec::UpToOneCardInGraveyards
+        | TargetSpec::UpToTwoCardsInSingleGraveyard
+        | TargetSpec::CardInGraveyards => (GRAVEYARD, None),
         TargetSpec::UpToTwoCreatureCardsInOwnGraveyard | TargetSpec::CreatureCardInOwnGraveyard => {
             (GRAVEYARD, Some(RelF::You))
         }

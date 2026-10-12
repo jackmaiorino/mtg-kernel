@@ -1,0 +1,28 @@
+{
+  "schema": "mtg-kernel/prepared-fdn-definition/v1",
+  "registered": false,
+  "card_id": null,
+  "name": "Involuntary Employment",
+  "reference": {
+    "repository": "mage",
+    "commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+    "path": "Mage.Sets/src/mage/cards/i/InvoluntaryEmployment.java"
+  },
+  "printed_text": "Gain control of target creature until end of turn. Untap that creature. It gains haste until end of turn. Create a Treasure token.",
+  "mana_cost": "{3}{R}",
+  "mana_value": 4,
+  "types": [
+    "Sorcery"
+  ],
+  "target_spec": "Creature",
+  "target_count": 1,
+  "recipe": [
+    "GainControlOfTargetCreatureUntilEndOfTurn(Target0,Controller)",
+    "UntapObject(Target0)",
+    "GrantKeywordTargetUntilEndOfTurn(Target0,Haste)",
+    "CreateToken(Treasure Token,Controller)"
+  ],
+  "live_registration_changed": false,
+  "native_qualification": "unexecuted",
+  "catalog_profile_model_admission": false
+}

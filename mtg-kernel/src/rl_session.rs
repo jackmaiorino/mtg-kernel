@@ -36,9 +36,15 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fmt;
 
+pub(crate) mod authority_v17;
 pub mod census_future_v2;
+pub(crate) mod cerberus_v19;
+pub(crate) mod employment_v18;
+pub(crate) mod frenzied_v15;
 pub(crate) mod human_opening_v1;
 pub(crate) mod human_v8;
+pub(crate) mod sower_v14;
+pub(crate) mod wildwood_v16;
 
 pub const RL_SESSION_SCHEMA_VERSION: u32 = 5;
 pub const RL_SESSION_PROTOCOL_VERSION: u32 = 5;
@@ -293,7 +299,11 @@ pub(crate) use v3_spell_target_adapter_v1::{
 };
 mod flat_action_v4;
 mod flat_action_v5;
+pub(crate) mod heartfire_history_v1;
+pub(crate) mod heartfire_v12;
 mod raid_v9;
+mod soul_shackled_zombie_v13;
+pub mod variable_cast_v1;
 #[cfg(test)]
 pub(crate) use flat_action_v3::{
     avenging_hunter_hidden_source_with_stack_historical_rows_state_v1,
@@ -2678,7 +2688,9 @@ fn flat_validate_origin_decision_v1(
                 }
             }
         }
-        Decision::ChooseCombatDamageRange { .. }
+        Decision::ChooseVariableCastTargets { .. }
+        | Decision::ChooseVariableCastKicker { .. }
+        | Decision::ChooseCombatDamageRange { .. }
         | Decision::ChooseLegendPermanent { .. }
         | Decision::ChooseLondonMulligan { .. }
         | Decision::ChooseLondonBottom { .. }
@@ -4413,6 +4425,14 @@ enum FlatActionContractModeV1 {
     V3,
     HumanV8,
     V5,
+    HeartfireHistoryV1,
+    SowerV14,
+    HeartfireV12,
+    WildwoodV16,
+    FrenziedV15,
+    AuthorityV17,
+    EmploymentV18,
+    CerberusV19,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -7240,6 +7260,126 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:human_v8:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::HeartfireV12 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = heartfire_v12::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:heartfire_v12:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::SowerV14 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = sower_v14::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:sower_v14:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::WildwoodV16 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = wildwood_v16::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:wildwood_v16:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::FrenziedV15 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = frenzied_v15::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:frenzied_v15:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::AuthorityV17 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = authority_v17::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:authority_v17:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::EmploymentV18 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = employment_v18::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:employment_v18:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::CerberusV19 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = cerberus_v19::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:cerberus_v19:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::HeartfireHistoryV1 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = heartfire_history_v1::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:heartfire_history_v1:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));

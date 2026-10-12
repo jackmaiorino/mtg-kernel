@@ -233,6 +233,16 @@ fn run_goldfish(state: &mut GameState) -> RunResult {
             }
             // Chain Lightning isn't in this script's card pool.
             Decision::Halted { .. } => unreachable!("no card in this script can halt the walk"),
+            Decision::ChooseVariableCastTargets { .. } => {
+                unreachable!(
+                    "Rally goldfish's fixed roster has no variable-cardinality spell; its script cannot answer this target successor"
+                )
+            }
+            Decision::ChooseVariableCastKicker { .. } => {
+                unreachable!(
+                    "Rally goldfish's only kicker is Goblin Bushwhacker; its script cannot answer a variable-target kicker successor"
+                )
+            }
             Decision::ChooseKicker { player, .. } => {
                 assert_eq!(
                     player,

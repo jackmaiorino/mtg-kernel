@@ -1,0 +1,28 @@
+{
+  "schema": "fdn-wildwood-scourge-prepared/v1",
+  "disposition": "unregistered_source_only",
+  "not_generator_input": true,
+  "base_commit": "cf0ea5a0133fcfc5dff1d19f655f178baedca016",
+  "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "mage_source": "Mage.Sets/src/mage/cards/w/WildwoodScourge.java",
+  "printed": {
+    "name": "Wildwood Scourge",
+    "mana_cost": "{X}{G}",
+    "types": [
+      "Creature"
+    ],
+    "subtypes": [
+      "Hydra"
+    ],
+    "colors": [
+      "G"
+    ],
+    "power": 0,
+    "toughness": 0,
+    "abilities": [
+      "Wildwood Scourge enters the battlefield with X +1/+1 counters on it.",
+      "Whenever one or more +1/+1 counters are put on another non-Hydra creature you control, put a +1/+1 counter on Wildwood Scourge."
+    ]
+  },
+  "qualification": "Unregistered source. No native, generated catalog hash, profile, Human/model/precise meaning admission."
+}

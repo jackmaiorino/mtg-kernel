@@ -421,6 +421,36 @@ const FROZEN_CARD_DB_HASH_U64_HEX_FDN_BLOODWITCH_V1: &str = "7c8c36e6236b5681";
 const FROZEN_RUNTIME_CATALOG_SHA256_FDN_BLOODWITCH_V1: &str =
     "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
 
+// v74 candidate derives Divine Resilience from actual native generator output.
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_DIVINE_RESILIENCE_V1: &str = "9a77854e83bfb1bc";
+const FROZEN_RUNTIME_CATALOG_SHA256_FDN_DIVINE_RESILIENCE_V1: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+
+// v75 candidate derives Scavenging Ooze from actual native generator output.
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_SCAVENGING_OOZE_V1: &str = "7c55bd95d42ed77d";
+const FROZEN_RUNTIME_CATALOG_SHA256_FDN_SCAVENGING_OOZE_V1: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+
+// v76 candidate derives Soul-Shackled Zombie from actual native generator output.
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_SOUL_SHACKLED_ZOMBIE_V1: &str = "a0d5d4a32275d739";
+const FROZEN_RUNTIME_CATALOG_SHA256_FDN_SOUL_SHACKLED_ZOMBIE_V1: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+
+// v77 source batch derives solely from Native51 actual404 generator output.
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_NEXT_SOURCE_BATCH_V1: &str = "ea06551203d063f8";
+const FROZEN_RUNTIME_CATALOG_SHA256_FDN_NEXT_SOURCE_BATCH_V1: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+
+// v78 derives solely from Native59 actual409 generator output.
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_LATER_SOURCE_BATCH_V1: &str = "45fdca1dd861b679";
+const FROZEN_RUNTIME_CATALOG_SHA256_FDN_LATER_SOURCE_BATCH_V1: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+
+// v79 derives solely from Native61 actual411 generator output.
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_AUTHORITY_EMPLOYMENT_V1: &str = "d907cd576aa6015c";
+const FROZEN_RUNTIME_CATALOG_SHA256_FDN_AUTHORITY_EMPLOYMENT_V1: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+
 const FROZEN_PROTOCOL_V2: &str = "kernel_rl_jsonl";
 const FROZEN_PROTOCOL_VERSION_V2: u32 = 5;
 const FROZEN_SCHEMA_VERSION_V2: u32 = 5;
@@ -2149,6 +2179,12 @@ pub(crate) enum NativeRunCatalogProfileV1 {
     FdnRaidEntries,
     FdnCondemnReturn,
     FdnBloodwitch,
+    FdnDivineResilience,
+    FdnScavengingOoze,
+    FdnSoulShackledZombie,
+    FdnNextSourceBatch,
+    FdnLaterSourceBatch,
+    FdnAuthorityEmployment,
 }
 
 impl ValidatedTrainRunV2 {
@@ -2833,6 +2869,36 @@ fn classify_catalog_profile_from_identity_v1(
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_BLOODWITCH_V1,
             FROZEN_RUNTIME_CATALOG_SHA256_FDN_BLOODWITCH_V1,
             NativeRunCatalogProfileV1::FdnBloodwitch,
+        ),
+        (
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_DIVINE_RESILIENCE_V1,
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_DIVINE_RESILIENCE_V1,
+            NativeRunCatalogProfileV1::FdnDivineResilience,
+        ),
+        (
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_SCAVENGING_OOZE_V1,
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_SCAVENGING_OOZE_V1,
+            NativeRunCatalogProfileV1::FdnScavengingOoze,
+        ),
+        (
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_SOUL_SHACKLED_ZOMBIE_V1,
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_SOUL_SHACKLED_ZOMBIE_V1,
+            NativeRunCatalogProfileV1::FdnSoulShackledZombie,
+        ),
+        (
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_NEXT_SOURCE_BATCH_V1,
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_NEXT_SOURCE_BATCH_V1,
+            NativeRunCatalogProfileV1::FdnNextSourceBatch,
+        ),
+        (
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_LATER_SOURCE_BATCH_V1,
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_LATER_SOURCE_BATCH_V1,
+            NativeRunCatalogProfileV1::FdnLaterSourceBatch,
+        ),
+        (
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_AUTHORITY_EMPLOYMENT_V1,
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_AUTHORITY_EMPLOYMENT_V1,
+            NativeRunCatalogProfileV1::FdnAuthorityEmployment,
         ),
         (
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_CELESTIAL_ARMOR_V1,
@@ -5694,6 +5760,36 @@ pub(crate) fn test_fixture_bytes_fdn_raid_entries_v1() -> Vec<u8> {
 pub(crate) fn test_fixture_bytes_fdn_condemn_return_v1() -> Vec<u8> {
     tests::fixture_bytes_fdn_condemn_return()
 }
+
+#[cfg(all(test, windows, feature = "limited-fdn-fixtures"))]
+pub(crate) fn test_fixture_bytes_fdn_bloodwitch_v1() -> Vec<u8> {
+    tests::fixture_bytes_fdn_bloodwitch()
+}
+
+#[cfg(all(test, windows, feature = "limited-fdn-fixtures"))]
+pub(crate) fn test_fixture_bytes_fdn_scavenging_ooze_v1() -> Vec<u8> {
+    tests::fixture_bytes_fdn_scavenging_ooze()
+}
+
+#[cfg(all(test, windows, feature = "limited-fdn-fixtures"))]
+pub(crate) fn test_fixture_bytes_fdn_soul_shackled_zombie_v1() -> Vec<u8> {
+    tests::fixture_bytes_fdn_soul_shackled_zombie()
+}
+
+#[cfg(all(test, windows, feature = "limited-fdn-fixtures"))]
+pub(crate) fn test_fixture_bytes_fdn_next_source_batch_v1() -> Vec<u8> {
+    tests::fixture_bytes_fdn_next_source_batch()
+}
+
+#[cfg(all(test, windows, feature = "limited-fdn-fixtures"))]
+pub(crate) fn test_fixture_bytes_fdn_later_source_batch_v1() -> Vec<u8> {
+    tests::fixture_bytes_fdn_later_source_batch()
+}
+
+#[cfg(all(test, windows, feature = "limited-fdn-fixtures"))]
+pub(crate) fn test_fixture_bytes_fdn_divine_resilience_v1() -> Vec<u8> {
+    tests::fixture_bytes_fdn_divine_resilience()
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6682,6 +6778,162 @@ mod tests {
         assert_eq!(
             validated.catalog_profile_v1(),
             NativeRunCatalogProfileV1::FdnCondemnReturn
+        );
+        assert_eq!(validated.canonical_bytes(), bytes);
+        assert!(!current_profile_matches_live_build_identity_v1(
+            validated.record().environment()
+        ));
+    }
+
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(super) fn fixture_bytes_fdn_bloodwitch() -> Vec<u8> {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_BLOODWITCH_V1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_BLOODWITCH_V1.to_owned();
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn fdn_bloodwitch_profile_remains_readable_but_is_not_live() {
+        let bytes = fixture_bytes_fdn_bloodwitch();
+        let validated = decode_train_run_v2(&bytes).unwrap();
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnBloodwitch
+        );
+        assert_eq!(validated.canonical_bytes(), bytes);
+        assert!(!current_profile_matches_live_build_identity_v1(
+            validated.record().environment()
+        ));
+    }
+
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(super) fn fixture_bytes_fdn_divine_resilience() -> Vec<u8> {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_DIVINE_RESILIENCE_V1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_DIVINE_RESILIENCE_V1.to_owned();
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn fdn_divine_resilience_profile_remains_readable_but_is_not_live() {
+        let bytes = fixture_bytes_fdn_divine_resilience();
+        let validated = decode_train_run_v2(&bytes).unwrap();
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnDivineResilience
+        );
+        assert_eq!(validated.canonical_bytes(), bytes);
+        assert!(!current_profile_matches_live_build_identity_v1(
+            validated.record().environment()
+        ));
+    }
+
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(super) fn fixture_bytes_fdn_scavenging_ooze() -> Vec<u8> {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_SCAVENGING_OOZE_V1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_SCAVENGING_OOZE_V1.to_owned();
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn fdn_scavenging_ooze_profile_remains_readable_but_is_not_live() {
+        let bytes = fixture_bytes_fdn_scavenging_ooze();
+        let validated = decode_train_run_v2(&bytes).unwrap();
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnScavengingOoze
+        );
+        assert_eq!(validated.canonical_bytes(), bytes);
+        assert!(!current_profile_matches_live_build_identity_v1(
+            validated.record().environment()
+        ));
+    }
+
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(super) fn fixture_bytes_fdn_soul_shackled_zombie() -> Vec<u8> {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_SOUL_SHACKLED_ZOMBIE_V1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_SOUL_SHACKLED_ZOMBIE_V1.to_owned();
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn fdn_soul_shackled_zombie_profile_remains_readable_but_is_not_live() {
+        let bytes = fixture_bytes_fdn_soul_shackled_zombie();
+        let validated = decode_train_run_v2(&bytes).unwrap();
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnSoulShackledZombie
+        );
+        assert_eq!(validated.canonical_bytes(), bytes);
+        assert!(!current_profile_matches_live_build_identity_v1(
+            validated.record().environment()
+        ));
+    }
+
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(super) fn fixture_bytes_fdn_next_source_batch() -> Vec<u8> {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_NEXT_SOURCE_BATCH_V1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_NEXT_SOURCE_BATCH_V1.to_owned();
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn fdn_next_source_batch_profile_remains_readable_but_is_not_live() {
+        let bytes = fixture_bytes_fdn_next_source_batch();
+        let validated = decode_train_run_v2(&bytes).unwrap();
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnNextSourceBatch
+        );
+        assert_eq!(validated.canonical_bytes(), bytes);
+        assert!(!current_profile_matches_live_build_identity_v1(
+            validated.record().environment()
+        ));
+    }
+
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(super) fn fixture_bytes_fdn_later_source_batch() -> Vec<u8> {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_LATER_SOURCE_BATCH_V1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_LATER_SOURCE_BATCH_V1.to_owned();
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn fdn_later_source_batch_profile_remains_readable_but_is_not_live() {
+        let bytes = fixture_bytes_fdn_later_source_batch();
+        let validated = decode_train_run_v2(&bytes).unwrap();
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnLaterSourceBatch
         );
         assert_eq!(validated.canonical_bytes(), bytes);
         assert!(!current_profile_matches_live_build_identity_v1(
@@ -8065,20 +8317,20 @@ mod tests {
     /// the frozen literals were typed wrong when this successor landed.
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn fdn_bloodwitch_frozen_literal_matches_the_live_build_constant() {
+    fn fdn_authority_employment_frozen_literal_matches_the_live_build_constant() {
         use crate::card_def::KERNEL_CARDDB_HASH;
         use crate::runtime_decks::RUNTIME_DECK_CATALOG_FILE_SHA256;
         assert_eq!(
             format!("{KERNEL_CARDDB_HASH:016x}"),
             if cfg!(feature = "limited-fdn-fixtures") {
-                FROZEN_CARD_DB_HASH_U64_HEX_FDN_BLOODWITCH_V1
+                FROZEN_CARD_DB_HASH_U64_HEX_FDN_AUTHORITY_EMPLOYMENT_V1
             } else {
                 FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1
             }
         );
         assert_eq!(
             RUNTIME_DECK_CATALOG_FILE_SHA256,
-            FROZEN_RUNTIME_CATALOG_SHA256_FDN_BLOODWITCH_V1
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_AUTHORITY_EMPLOYMENT_V1
         );
     }
 
@@ -8409,22 +8661,22 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn fdn_bloodwitch_fixture_decodes_with_its_own_profile_and_live_identity() {
+    fn fdn_authority_employment_fixture_decodes_with_its_own_profile_and_live_identity() {
         let validated = decode_train_run_v2(&fixture_bytes()).unwrap();
         assert_eq!(
             validated.catalog_profile_v1(),
-            NativeRunCatalogProfileV1::FdnBloodwitch
+            NativeRunCatalogProfileV1::FdnAuthorityEmployment
         );
         assert!(current_profile_matches_live_build_identity_v1(
             validated.record().environment()
         ));
         assert_ne!(
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_BLOODWITCH_V1,
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_AUTHORITY_EMPLOYMENT_V1,
             FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
         );
         assert_eq!(
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_BLOODWITCH_V1,
-            "7c8c36e6236b5681"
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_AUTHORITY_EMPLOYMENT_V1,
+            "d907cd576aa6015c"
         );
     }
 
@@ -8734,7 +8986,7 @@ mod tests {
         assert_eq!(
             validated.catalog_profile_v1(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnBloodwitch
+                NativeRunCatalogProfileV1::FdnAuthorityEmployment
             } else {
                 NativeRunCatalogProfileV1::PauperMetaW1
             }

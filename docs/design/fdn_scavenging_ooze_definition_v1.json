@@ -1,0 +1,52 @@
+{
+  "schema": "prepared_card_definition_v1",
+  "name": "Scavenging Ooze",
+  "registered": false,
+  "card_id": null,
+  "status": "prepared_unqualified",
+  "base": "9c43b100a1594564d8e55c25692c214a2aec616d",
+  "reference": {
+    "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+    "mage_path": "Mage.Sets/src/mage/cards/s/ScavengingOoze.java",
+    "primary_rulings": "https://magic.wizards.com/en/news/feature/foundations-release-notes"
+  },
+  "printed": {
+    "cost": "{1}{G}",
+    "types": [
+      "Creature"
+    ],
+    "subtypes": [
+      "Ooze"
+    ],
+    "power": 2,
+    "toughness": 2,
+    "activated_text": "{G}: Exile target card from a graveyard. If it was a creature card, put a +1/+1 counter on this creature and you gain 1 life."
+  },
+  "recipe": {
+    "spell": "ordinary_creature",
+    "cost": "G",
+    "activation_zone": "Battlefield",
+    "sorcery_speed_only": false,
+    "target_spec": "CardInGraveyards",
+    "target_stable_id": 65,
+    "effect": "ExileGraveyardTargetThenGrowSourceIfCreature",
+    "source_counter": "exact_captured_battlefield_incarnation",
+    "life_gain": "captured_controller_independent_of_source_survival"
+  },
+  "subtype_composition": {
+    "accepted_orc": 146,
+    "reserved_juggernaut": 147,
+    "reserved_minotaur": 148,
+    "ooze": 149,
+    "creature_type_choice_array_admission": "delayed, current arrays unchanged"
+  },
+  "qualified": false,
+  "native_tests": "unrun",
+  "model_admission": false,
+  "remaining": [
+    "Actual printed registration",
+    "Native gameplay/restore qualification",
+    "Creature-type choice arrays and consumer successor qualification",
+    "Precise pre-move/exact-source RulesMeaning companion and Human label successor"
+  ]
+}
