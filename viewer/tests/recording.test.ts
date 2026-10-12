@@ -15,11 +15,13 @@ describe('growing search graph',()=>{
     const before=graphAt(replay,{simulation:1,phase:'select',choice:0});expect([...before.nodes.keys()]).toEqual([0]);
     const evaluated=graphAt(replay,{simulation:1,phase:'evaluate',choice:0});expect([...evaluated.nodes.keys()]).toEqual([0,1]);
     expect(evaluated.nodes.get(1)?.visits).toBe(0);expect(evaluated.frontier).toBe(1);
+    expect(evaluated.explored.has(1)).toBe(false);
     const backedUp=graphAt(replay,{simulation:1,phase:'backup',choice:0});expect(backedUp.nodes.get(1)?.visits).toBe(1);
     const branched=graphAt(replay,{simulation:2,phase:'evaluate',choice:0});expect([...branched.edges.keys()]).toEqual(['0:0:1','0:0:2']);
     const final=graphAt(replay,{simulation:4,phase:'backup',choice:0});expect(final.nodes.size).toBe(4);expect(final.edges.size).toBe(3);
     expect(final.nodes.get(0)).toMatchObject({visits:5,sum:11600n});expect(final.nodes.get(1)).toMatchObject({visits:2,sum:1200n});
     expect(graphLayout(replay).get(3)?.depth).toBe(2);
+    expect(graphAt(replay,{simulation:3,phase:'evaluate',choice:1}).explored.has(1)).toBe(true);
     expect(graphAt(replay,{simulation:0,phase:'select',choice:0}).nodes.size).toBe(1);
   });
   it('rejects wrong leaf identities, early node visits and unrecorded graph connections',()=>{

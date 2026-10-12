@@ -3,13 +3,13 @@ import type { SearchEvent } from './search-playback';
 
 export type GraphEdge = {from:number; to:number; action:number; key:string};
 export type GraphNodeState = {id:number; born:number; visits:number; sum:bigint; board:Board; estimate:string|null};
-export type SearchGraphState = {nodes:Map<number,GraphNodeState>; edges:Map<string,GraphEdge>; activeNodes:number[]; activeEdges:Set<string>; frontier:number|null; completed:number};
+export type SearchGraphState = {nodes:Map<number,GraphNodeState>; edges:Map<string,GraphEdge>; explored:Set<number>; activeNodes:number[]; activeEdges:Set<string>; frontier:number|null; completed:number};
 export const edgeKey=(from:number,action:number,to:number)=>`${from}:${action}:${to}`;
 
 // Only replayed arrivals reveal topology. A new leaf appears at evaluation;
 // visits and sums change at backup. Seeking reconstructs the same prefix.
 export function graphAt(replay:SearchReplay,event:SearchEvent):SearchGraphState {
-  const nodes=new Map<number,GraphNodeState>(),edges=new Map<string,GraphEdge>();
+  const nodes=new Map<number,GraphNodeState>(),edges=new Map<string,GraphEdge>(),explored=new Set<number>();
   const add=(id:number,board:Board,born:number,estimate:string|null=null)=>{
     if(!nodes.has(id))nodes.set(id,{id,born,board,estimate,visits:0,sum:0n});
   };
@@ -20,6 +20,7 @@ export function graphAt(replay:SearchReplay,event:SearchEvent):SearchGraphState 
     const limit=current&&event.phase==='select'?event.choice+1:s.choices.length;
     for(let j=0;j<limit;j++){
       const c=s.choices[j];add(c.node,c.board,i);
+      if(!current||event.phase!=='select'||j<event.choice)explored.add(c.node);
       if(j){const p=s.choices[j-1];link(p.node,p.action,c.node);}
     }
     const evaluated=!current||event.phase!=='select';
@@ -36,7 +37,7 @@ export function graphAt(replay:SearchReplay,event:SearchEvent):SearchGraphState 
   for(let i=1;i<limit;i++){const p=s.choices[i-1];activeEdges.add(edgeKey(p.node,p.action,s.choices[i].node));}
   const frontier=event.phase!=='select'?s.leafNode??null:null;
   if(frontier!==null){const p=s.choices.at(-1)!;activeNodes.push(frontier);activeEdges.add(edgeKey(p.node,p.action,frontier));}
-  return {nodes,edges,activeNodes,activeEdges,frontier,completed:event.simulation+(event.phase==='backup'?1:0)};
+  return {nodes,edges,explored,activeNodes,activeEdges,frontier,completed:event.simulation+(event.phase==='backup'?1:0)};
 }
 
 export type GraphPoint={x:number;y:number;depth:number};
