@@ -99,7 +99,11 @@ impl FastActorSessionV1 {
         session
     }
 
-    #[cfg(test)]
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     pub(crate) fn crystal_fixture_state(&self) -> &GameState {
         &self.state
     }

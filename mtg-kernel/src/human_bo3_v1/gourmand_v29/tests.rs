@@ -280,7 +280,7 @@ mod future_printed {
     use super::*;
     use crate::engine::{self, Action, Decision, EffectDuration, Layers, UntilEndOfTurnEffect};
     use crate::mana::ManaColor;
-    use crate::state::{Step, Target};
+    use crate::state::Step;
     fn next(state: &mut GameState) -> Decision {
         let decision = engine::advance_until_decision(state);
         assert!(!matches!(decision, Decision::Halted { .. }), "{decision:?}");

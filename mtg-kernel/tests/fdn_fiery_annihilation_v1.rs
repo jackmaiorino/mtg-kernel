@@ -45,7 +45,11 @@ fn actual_fiery_cast_during_madness_cleanup_priority_expires_before_player_flip(
         assert_eq!(state.players[actor.index()].hand.len(), 9);
         let discard_land = *state.players[actor.index()].hand.last().unwrap();
         state.step = Step::End;
-        let ending_turn = state.turn_key_v1();
+        let ending_turn = (
+            state.turn,
+            state.active_player,
+            state.extra_turn_v1.as_ref().map(|turn| turn.occurrence),
+        );
         let mut discarded = false;
         for _ in 0..20 {
             match next(&mut state) {
@@ -78,7 +82,14 @@ fn actual_fiery_cast_during_madness_cleanup_priority_expires_before_player_flip(
                 let decision = next(branch);
                 if branch.objects.get(spell).zone == Zone::Graveyard {
                     assert_eq!(branch.step, Step::Cleanup);
-                    assert_eq!(branch.turn_key_v1(), ending_turn);
+                    assert_eq!(
+                        (
+                            branch.turn,
+                            branch.active_player,
+                            branch.extra_turn_v1.as_ref().map(|turn| turn.occurrence),
+                        ),
+                        ending_turn
+                    );
                     assert_eq!(shield_count(branch), 1);
                     installed = true;
                     break;
