@@ -611,10 +611,13 @@ fn contains(op: &EffectOp) -> bool {
 /// semantics merely by relabeling it as their generic CardSelection purpose.
 pub(crate) fn require_legacy_consumer_supported(state: &GameState) -> Result<(), String> {
     let pending = state.engine.pending_effect.as_ref();
-    let unsupported = state
-        .stack
-        .iter()
-        .any(|item| item.inline_effect.as_ref().is_some_and(contains))
+    let public_capture=state.engine.event_history.iter().any(|event|matches!(event,
+        event::CommittedEvent::RaidEntryCaptureV1 {capture} if capture.pending.is_some() && crate::card_def::CARD_DEFS[usize::from(capture.source.card_def)].name=="Strongbox Raider"));
+    let unsupported = public_capture
+        || state
+            .stack
+            .iter()
+            .any(|item| item.inline_effect.as_ref().is_some_and(contains))
         || pending.is_some_and(|pending| {
             matches!(
                 pending.choice,

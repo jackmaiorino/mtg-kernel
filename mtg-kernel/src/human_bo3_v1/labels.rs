@@ -1470,6 +1470,51 @@ pub(super) fn label_gourmand_v29(
     label_parts_v8(action, &parts, handles, human)
 }
 
+pub(super) fn label_strongbox_v32(
+    action: &A,
+    observation: &crate::strongbox_public_v1::StrongboxObservationV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    if let Some(menu) = &observation.selection_menu {
+        let selector = crate::rules_meaning_strongbox_v1::live_selector()
+            .map_err(|_| Error::UnsupportedPrompt)?;
+        crate::rules_meaning_strongbox_v1::meaning(&selector, menu.source_at_entry.card_db_id, 0)
+            .map_err(|_| Error::UnsupportedPrompt)?;
+        match action {
+            A::ChooseEffectTarget {actor,source,target:crate::rl::TargetRefV1::Object {object:card},selected_count,min_targets,max_targets}
+                if *actor==human && menu.chooser==human && *source==menu.source_at_entry && *selected_count as usize==menu.selected.len()
+                    && *min_targets==menu.minimum && *max_targets==menu.maximum && menu.legal.contains(card) =>
+                return Ok(format!("Choose {} from {}'s newly exiled cards: may play it with ordinary timing and costs until the end of your next turn",handles.name(card)?,handles.name(source)?)),
+            A::FinishEffectSelection {actor,source,selected_count}
+                if *actor==human && menu.chooser==human && *source==menu.source_at_entry && menu.can_finish && *selected_count==1 && menu.selected.len()==1 =>
+                return Ok(format!("Confirm {} for {}: ordinary play permission until the end of your next turn",handles.name(&menu.selected[0])?,handles.name(source)?)),
+            A::ChooseEffectTarget {..}|A::FinishEffectSelection {..}=>return Err(Error::UnsupportedPrompt),_=>{}
+        }
+    }
+    if let A::CastSpell { actor, source } = action {
+        if definition(source)?.name == "Strongbox Raider" {
+            if *actor != human {
+                return Err(Error::UnsupportedPrompt);
+            }
+            let selector = crate::rules_meaning_strongbox_v1::live_selector()
+                .map_err(|_| Error::UnsupportedPrompt)?;
+            crate::rules_meaning_strongbox_v1::meaning(&selector, source.card_db_id, 0)
+                .map_err(|_| Error::UnsupportedPrompt)?;
+            return Ok(format!("Begin casting {} (printed cost {{2}}{{R}}{{R}}): its Raid entry exiles two cards and grants ordinary play permission to one until the end of your next turn",handles.name(source)?));
+        }
+    }
+    let parts = super::life_ward_v8::ProjectionPartsV8 {
+        projection: &observation.projection,
+        own_hand: &observation.own_hand,
+        known_library_cards: &observation.known_library_cards,
+        known_hand_cards: &observation.known_hand_cards,
+        known_face_down_cards: &observation.known_face_down_cards,
+        extensions: &observation.extensions,
+    };
+    label_parts_v8(action, &parts, handles, human)
+}
+
 #[cfg(test)]
 mod variable_target_refusal_tests {
     use super::*;

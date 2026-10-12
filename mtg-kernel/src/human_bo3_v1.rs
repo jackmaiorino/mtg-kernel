@@ -274,6 +274,9 @@ impl HumanDecisionProjectorV1 {
     }
 }
 
+mod strongbox_v32;
+pub use strongbox_v32::*;
+
 #[cfg(test)]
 mod tests;
 

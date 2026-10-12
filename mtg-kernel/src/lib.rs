@@ -590,3 +590,5 @@ pub mod banishing_public_v1;
 pub mod garruks_uprising_v1;
 
 pub mod rules_meaning_strongbox_v1;
+
+pub mod strongbox_public_v1;

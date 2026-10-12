@@ -47,6 +47,7 @@ pub mod extra_turn_v23;
 pub(crate) mod frenzied_v15;
 pub(crate) mod garruk_v30;
 pub(crate) mod gourmand_v29;
+pub(crate) mod strongbox_v32;
 
 pub(crate) mod human_opening_v1;
 pub(crate) mod human_v8;
@@ -4455,6 +4456,7 @@ enum FlatActionContractModeV1 {
     StromkirkV28,
     GourmandV29,
     GarrukV30,
+    StrongboxV32,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -7472,6 +7474,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:gourmand_v29:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::StrongboxV32 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = strongbox_v32::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:strongbox_v32:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));
