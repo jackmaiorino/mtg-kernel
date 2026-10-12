@@ -13,6 +13,7 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 sha2 = { version = "0.10", features = ["compress"] }
 
 [features]
+viewer-recording-v1 = ["gameplay-decision-trace-v1"]
 saved-input-scalar-diagnostic = []
 gameplay-checkpoint-reconstruction-v1 = ["gameplay-decision-trace-v1"]
 # Diagnostic sidecars only. No fields, hooks or I/O in default builds.
@@ -52,6 +53,11 @@ native-training-store-v2-production = []
 name = "mtg-kernel-native"
 path = "src/bin/mtg-kernel-native.rs"
 required-features = ["native-training-store-v2-production"]
+
+[[bin]]
+name = "viewer_capture_v1"
+path = "src/bin/viewer_capture_v1.rs"
+required-features = ["viewer-recording-v1"]
 
 # Cycle-4 arm launcher. Gated behind the same two features the production
 # CUDA training lane already requires: the Windows-only production Store

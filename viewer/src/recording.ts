@@ -1,0 +1,124 @@
+import { z } from 'zod';
+
+export const SCHEMA = 'mtg-kernel-viewer-recording/v1';
+export const MAX_BYTES = 64 * 1024 * 1024;
+const seat = z.enum(['p0', 'p1']);
+const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const text = z.string().max(4096);
+const hash = z.string().regex(/^[0-9a-f]{64}$/);
+const safeImage = z.string().max(1024).refine(s => /^assets\/[a-zA-Z0-9/_\.\-]+$/.test(s) && !s.split('/').includes('..'), 'Invalid asset path');
+const cardSchema = z.object({
+  id: text, name: text, manaCost: text, type: text, rules: text,
+  image: safeImage.nullable(), printing: text.nullable(), face: integer,
+}).strict();
+const objectSchema = z.object({
+  id: text, card: text, owner: seat, controller: seat, tapped: z.boolean(),
+  power: z.number().int().nullable(), toughness: z.number().int().nullable(),
+  damage: integer, counters: z.record(z.string(), integer), token: z.boolean(),
+}).strict();
+const playerSchema = z.object({
+  life: z.number().int(), handCount: integer, libraryCount: integer,
+  mana: z.array(integer).length(6), battlefield: z.array(objectSchema),
+  graveyard: z.array(objectSchema), hand: z.array(objectSchema),
+}).strict();
+const boardSchema = z.object({
+  turn: integer, phase: text, active: seat, priority: seat,
+  players: z.tuple([playerSchema, playerSchema]), exile: z.array(objectSchema),
+  stack: z.array(z.object({ id: text, name: text, controller: seat, source: text.nullable(), targets: z.array(text) }).strict()),
+  combat: z.array(z.object({ attacker: text, blockers: z.array(text) }).strict()),
+}).strict();
+const actionSchema = z.object({ index: integer, label: text, kind: text, refs: z.array(text) }).strict();
+const keySchema = z.object({ episode: integer, step: integer, physical: integer, substep: integer, actor: seat }).strict();
+const policySchema = z.object({
+  kind: z.literal('hamilton_q64'), masses: z.array(z.string().regex(/^\d{1,20}$/)),
+  sampled: integer, value: z.number().finite(), valueScale: text,
+}).strict();
+const searchSchema = z.object({
+  digest: hash, stats: z.array(z.object({ index: integer, visits: integer, valueSum: z.string().regex(/^-?\d+$/), meanValue: z.string().regex(/^-?\d+$/) }).strict()),
+  simulations: integer, transitions: integer, nodes: integer, tier: text, stabilityHalves: z.boolean(), valueScale: text,
+}).strict();
+const frameSchema = z.object({
+  id: text, key: keySchema, board: boardSchema, after: boardSchema,
+  actions: z.array(actionSchema).min(1).max(65536), executed: integer,
+  policy: policySchema.nullable(), search: searchSchema.nullable(),
+  terminal: z.object({ kind: text, winner: seat.nullable() }).strict().nullable(),
+}).strict();
+const recordingSchema = z.object({
+  schema: z.literal(SCHEMA), id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,95}$/), title: text,
+  description: text, perspective: seat, complete: z.boolean(), coverage: z.enum(['every-step', 'decision-snapshots']),
+  identity: z.object({ source: text, runtime: text, checkpoint: text, cardDatabase: text, sourceSha256: hash }).strict(),
+  seats: z.tuple([z.object({ name: text, deck: text }).strict(), z.object({ name: text, deck: text }).strict()]),
+  cards: z.record(z.string(), cardSchema), frames: z.array(frameSchema).min(1).max(100000),
+  bookmarks: z.array(z.object({ frame: text, title: text, situation: text, alternatives: text, consequence: text }).strict()).max(30),
+}).strict();
+export type Recording = z.infer<typeof recordingSchema>;
+export type Frame = Recording['frames'][number];
+export type Board = Frame['board'];
+export type CardObject = Board['players'][number]['battlefield'][number];
+export type Card = Recording['cards'][string];
+export type Seat = 'p0' | 'p1';
+export const seatIndex = (s: Seat) => s === 'p0' ? 0 : 1;
+export const objectList = (b: Board) => [...b.players.flatMap(p => [...p.battlefield, ...p.hand, ...p.graveyard]), ...b.exile];
+export const probability = (mass: string) => Number(BigInt(mass)) / 2 ** 64;
+export const frameKey = (k: Frame['key']) => `${k.episode}:${k.step}:${k.physical}:${k.substep}:${k.actor}`;
+export const isRoutine = (f: Frame) => f.actions[f.executed].kind === 'pass_priority' &&
+  JSON.stringify(f.board.players) === JSON.stringify(f.after.players) &&
+  JSON.stringify(f.board.stack) === JSON.stringify(f.after.stack) && !f.terminal;
+
+export function parseRecording(raw: unknown): Recording {
+  const result = recordingSchema.safeParse(raw);
+  if (!result.success) {
+    const issue = result.error.issues[0];
+    throw new Error(`Recording cannot be opened: ${issue.path.join('.')} ${issue.message}`);
+  }
+  const r = result.data;
+  const ids = new Set<string>();
+  const keys = new Set<string>();
+  for (const [id, card] of Object.entries(r.cards)) if (id !== card.id) throw new Error('Card identifier mismatch');
+  for (const f of r.frames) {
+    if (ids.has(f.id) || keys.has(frameKey(f.key))) throw new Error('Duplicate decision identity');
+    ids.add(f.id); keys.add(frameKey(f.key));
+    if (f.actions.some((a, i) => a.index !== i) || f.executed >= f.actions.length) throw new Error('Executed action or engine order is invalid');
+    for (const b of [f.board, f.after]) {
+      const objects = objectList(b);
+      if (new Set(objects.map(o => o.id)).size !== objects.length) throw new Error('Duplicate object reference in a snapshot');
+      if (objects.some(o => !r.cards[o.card])) throw new Error('Unknown card reference');
+      if (b.players[1 - seatIndex(r.perspective)].hand.length) throw new Error('Recording exposes the opposing hand');
+      const present = new Set(objects.map(o => o.id));
+      if (b.combat.some(c => !present.has(c.attacker) || c.blockers.some(x => !present.has(x)))) throw new Error('Broken combat reference');
+    }
+    const visible = new Set([...objectList(f.board), ...objectList(f.after)].map(o => o.id));
+    if (f.actions.some(a => a.refs.some(ref => !visible.has(ref)))) throw new Error('Broken action reference');
+    if (f.policy) {
+      if (f.policy.masses.length !== f.actions.length || f.policy.sampled >= f.actions.length ||
+        f.policy.masses.reduce((sum, n) => sum + BigInt(n), 0n) !== 1n << 64n) throw new Error('Invalid exact sampling distribution');
+      if (f.key.actor !== r.perspective) throw new Error('Policy belongs to a different viewing perspective');
+    }
+    if (f.search) {
+      const indices = f.search.stats.map(s => s.index);
+      if (indices.length !== f.actions.length || new Set(indices).size !== indices.length || indices.some(i => i >= f.actions.length)) throw new Error('Search action mapping is invalid');
+    }
+  }
+  if (r.bookmarks.some(b => !ids.has(b.frame))) throw new Error('Bookmark points to a missing decision');
+  if (r.complete && !r.frames.at(-1)?.terminal) throw new Error('Complete game has no recorded terminal state');
+  return r;
+}
+
+export async function verifySearchDigests(r: Recording): Promise<void> {
+  for (const f of r.frames) {
+    if (!f.search) continue;
+    const stats = f.search.stats;
+    const bytes = new ArrayBuffer(24 + stats.length * 24);
+    const data = new DataView(bytes);
+    data.setBigUint64(0, BigInt(stats.length), true);
+    stats.forEach((s, i) => {
+      const offset = 8 + i * 24;
+      data.setUint32(offset, s.index, true); data.setUint32(offset + 4, s.visits, true);
+      data.setBigInt64(offset + 8, BigInt(s.valueSum), true); data.setBigInt64(offset + 16, BigInt(s.meanValue), true);
+    });
+    const suffix = 8 + stats.length * 24;
+    [f.executed, f.search.transitions, f.search.simulations, f.search.nodes].forEach((n, i) => data.setUint32(suffix + i * 4, n, true));
+    const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(n => n.toString(16).padStart(2, '0')).join('');
+    if (digest !== f.search.digest) throw new Error('Search table does not match its recorded digest');
+  }
+}
