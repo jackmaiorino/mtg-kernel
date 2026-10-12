@@ -58,11 +58,18 @@ pub(super) fn teach(
             == options.prior_deck_indices.len(),
         "duplicate E prior deck",
     )?;
-    let (teacher, teacher_identity) = load_expanded_inference_v1(&options.teacher)?;
-    ensure(
-        teacher.feature_identity_v1() == student.feature_identity_v1(),
-        "E teacher feature identity mismatch",
-    )?;
+    let loaded = if options.slots.is_empty() {
+        None
+    } else {
+        Some(load_expanded_inference_v1(&options.teacher)?)
+    };
+    if let Some((teacher, _)) = &loaded {
+        ensure(
+            teacher.feature_identity_v1() == student.feature_identity_v1(),
+            "E teacher feature identity mismatch",
+        )?;
+    }
+    let teacher_identity = loaded.as_ref().map(|(_, identity)| identity);
     let mut seen = BTreeSet::new();
     let mut rows = Vec::new();
     let mut packets = Vec::new();
@@ -110,6 +117,8 @@ pub(super) fn teach(
                 {
                     best = Some((index, r, session.clone(), history.clone()));
                 }
+            }
+            if row.actor == episode.learner_seat {
                 history.push(e_supported::visible_frame(&session, d, row.selected)?);
             }
             session
@@ -166,7 +175,7 @@ pub(super) fn teach(
             &root,
             d,
             &history,
-            &teacher,
+            &loaded.as_ref().expect("queried slots loaded teacher").0,
             &opponent,
             &seeds,
             &options.prior_deck_indices,
@@ -222,7 +231,10 @@ pub(super) fn teach(
         packet["rank"] = json!(hex(&r));
         packet["eligible"] = json!(eligible);
         packet["episode"] = json!(episode);
-        packet["decision"] = json!(d);
+        packet["decision"] = json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
+            "substep_index":d.substep_index,"substep_count":d.substep_count,"actor":row.actor,
+            "environment_revision":d.environment_revision,"family":format!("{:?}",d.decision_kind),
+            "legal_width":d.legal_action_count});
         packet["actual_student_action"] = json!(row.selected);
         packet["encoded_input_sha256"] = json!(hex(&Sha256::digest(&input_bytes)));
         packet["collection_logits"] = json!(row.logits);
@@ -234,7 +246,9 @@ pub(super) fn teach(
     let packet = json!({"schema":"mtg-kernel-e-supported-teacher-packet/v1","method":e_supported::METHOD,
         "runtime_commit":env!("MTG_KERNEL_BUILD_GIT_HEAD"),"runtime_tree":env!("MTG_KERNEL_BUILD_TRACKED_TREE_SHA256"),
         "runtime_binary_sha256":hex(&Sha256::digest(binary)),"student_state_sha256":student_hash,
-        "student_identity":student.identity_v1(),"feature_identity":student.feature_identity_v1(),
+        "student_identity":student.identity_v1(),"feature_identity":{
+            "contract":student.feature_identity_v1().feature_contract_digest,
+            "encoding":student.feature_identity_v1().feature_encoding_digest},
         "teacher_identity":teacher_identity,"options":options,"scheduled":options.slots.len(),
         "valid":rows.len(),"slots":packets});
     Ok((

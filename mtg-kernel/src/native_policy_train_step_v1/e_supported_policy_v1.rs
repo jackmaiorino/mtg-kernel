@@ -90,7 +90,7 @@ impl NativePolicyValueTrainStateV1 {
             coefficient: 0.1 * roots.len() as f64 / input.scheduled as f64,
             roots,
         };
-        let (mut result, dose) = self.train_step_gae_feature_transfer_line_b_v1(
+        let (result, dose) = self.train_step_gae_feature_transfer_line_b_v1(
             generation,
             groups,
             value_targets,
@@ -101,13 +101,15 @@ impl NativePolicyValueTrainStateV1 {
             &auxiliary,
         )?;
         // Existing loss is preserved in policy_sum/value_sum; total reports CE.
-        result.loss += dose.auxiliary_loss as f32;
+
+        let total_loss = f64::from(result.loss) + dose.auxiliary_loss;
         Ok((
             result,
             Some(
                 serde_json::json!({"method":"e-supported-choice-ce-v1-20261012",
             "scheduled":input.scheduled,"valid":input.rows.len(),"coefficient":0.1,
             "ce":dose.divergences_before,"auxiliary_loss":dose.auxiliary_loss,
+            "total_loss":total_loss,
             "gradient_components":dose.gradient_components,
             "auxiliary_bias_residual":dose.auxiliary_bias_residual}),
             ),

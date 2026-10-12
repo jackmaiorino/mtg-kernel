@@ -3026,9 +3026,12 @@ fn execute_update_v1(
                     .as_ref()
                     .map(e_supported_teacher_v1::continuation_identity)
                     .as_ref()
-                    == Some(identity),
+                    == identity.get("continuation"),
                 "E continuation must preserve method, teacher, runtime and treatment identity",
             )?;
+            let packet: PinnedFileV1 =
+                serde_json::from_value(identity["packet"].clone()).map_err(err)?;
+            read_pinned_bytes(&packet)?;
         }
     }
     let (policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
@@ -3664,6 +3667,10 @@ fn execute_update_v1(
     let checkpoint_started = std::time::Instant::now();
     let snapshot = state.snapshot_v1().map_err(err)?;
     let after = hex(&snapshot.state_sha256_v1().map_err(err)?);
+    let e_packet_pin = e_teacher
+        .as_ref()
+        .map(|(packet, _)| publish_json(&output_directory, "e-supported-teacher.json", packet))
+        .transpose()?;
     let checkpoint = ExpandedCheckpointV1 {
         schema: match &transfer {
             Some(context) if context.is_fresh_v1() => {
@@ -3682,9 +3689,8 @@ fn execute_update_v1(
         card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
         source_import: policy.identity_v1().clone(),
         state_sha256: after.clone(),
-        e_supported: e_supported
-            .as_ref()
-            .map(e_supported_teacher_v1::continuation_identity),
+        e_supported:e_supported.as_ref().map(|options|json!({
+            "continuation":e_supported_teacher_v1::continuation_identity(options),"packet":e_packet_pin})),
         adam_step: snapshot.adam_step,
         scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
         parameters: snapshot
@@ -3829,7 +3835,9 @@ fn execute_update_v1(
     // Timings include checkpoint readback, but not this final receipt's
     // publication. They never enter checkpoint parameters or state hashes.
     if let Some((packet, _)) = &e_teacher {
-        let pin = publish_json(&output_directory, "e-supported-teacher.json", packet)?;
+        let pin = e_packet_pin
+            .as_ref()
+            .expect("E packet published before checkpoint");
         result["e_supported"] = json!({"method":crate::regret_census_v1::stage4a::e_supported::METHOD,
             "packet":pin,"scheduled":packet["scheduled"],"valid":packet["valid"],
             "gradient_exposure":e_auxiliary,"teacher_seconds":teacher_seconds});
@@ -9141,6 +9149,124 @@ pub(crate) mod tests {
         assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V4);
         assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V4);
         println!("{GAE_CUDA_SUBPROCESS_HASH_PREFIX_V1}{state}");
+    }
+
+    #[test]
+    fn e_supported_real_update_binds_packet_replays_and_preserves_zero_treatment() {
+        use e_supported_teacher_v1::{ESupportedSlotV1, ESupportedTeacherOptionsV1};
+        let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
+        let root = std::env::temp_dir().join(format!("e-supported-update-{}", std::process::id()));
+        let descriptor =
+            fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
+                &root.join("source"),
+                feature_identity,
+                |_parameters| {},
+            );
+        let descriptor_path = root.join("descriptor.json");
+        let bytes = serde_json::to_vec(&descriptor).unwrap();
+        fs::write(&descriptor_path, &bytes).unwrap();
+        let source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: descriptor_path.canonicalize().unwrap(),
+                sha256: hex(&Sha256::digest(bytes)),
+            },
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: feature_identity.feature_contract_digest.into(),
+                expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
+            },
+            checkpoint: None,
+        };
+        let decks = [list("Affinity"), list("Terror")];
+        let episode = ExpandedEpisodeV1 {
+            id: "e-generic-engineering".into(),
+            seed: 2026101201,
+            starting_player: 0,
+            learner_seat: 0,
+            opponent: Some(source.clone()),
+            opponent_search: None,
+            opponent_kind: None,
+            registered: decks.clone(),
+            selected: decks,
+            postboard: false,
+            max_physical_decisions: 100000,
+            max_policy_steps: 1000000,
+            runtime_rules: None,
+            reset: None,
+        };
+        let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
+            source: source.clone(),
+            episodes: vec![episode],
+            max_non_natural_episode_fraction: 0.0,
+            collection_sampler: CollectionSamplerV1::Legacy,
+            output_directory: root.join("collect"),
+        })
+        .unwrap();
+        let trajectories: Vec<PinnedFileV1> =
+            serde_json::from_value(collection["trajectories"].clone()).unwrap();
+        let teacher = |treatment| ESupportedTeacherOptionsV1 {
+            teacher: source.clone(),
+            treatment,
+            slots: vec![ESupportedSlotV1 {
+                trajectory_index: 0,
+                case_id: "lineage/engineering/update/0/episode/0".into(),
+            }],
+            prior_deck_indices: vec![0, 1, 2, 3, 4, 5, 6, 7, 8],
+            selection_transition_cap: 128,
+        };
+        let ordinary = execute_v1(ExpandedTrainingCommandV1::Update {
+            source: source.clone(),
+            trajectories: trajectories.clone(),
+            learning_rate: 0.0001,
+            value_coefficient: 0.5,
+            update_backend: ExpandedUpdateBackendV1::Cpu,
+            update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+            loss_selection: gae_loss_selection_v1(),
+            line_b: None,
+            output_directory: root.join("ordinary"),
+        })
+        .unwrap();
+        let run = |label, treatment| {
+            execute_v1(ExpandedTrainingCommandV1::ESupportedUpdate {
+                source: source.clone(),
+                trajectories: trajectories.clone(),
+                learning_rate: 0.0001,
+                value_coefficient: 0.5,
+                loss_selection: gae_loss_selection_v1(),
+                teacher: teacher(treatment),
+                output_directory: root.join(label),
+            })
+            .unwrap()
+        };
+        let control = run("control", false);
+        assert_eq!(
+            control["after_state_sha256"],
+            ordinary["after_state_sha256"]
+        );
+        let a = run("treatment-a", true);
+        let b = run("treatment-b", true);
+        assert_eq!(a["after_state_sha256"], b["after_state_sha256"]);
+        assert_eq!(
+            a["e_supported"]["packet"]["sha256"],
+            b["e_supported"]["packet"]["sha256"]
+        );
+        let pin: PinnedFileV1 = serde_json::from_value(a["e_supported"]["packet"].clone()).unwrap();
+        let packet: Value = serde_json::from_slice(&read_pinned_bytes(&pin).unwrap()).unwrap();
+        assert_eq!(packet["scheduled"], 1);
+        assert!(!packet["slots"][0]["encoded_input_sha256"]
+            .as_str()
+            .unwrap()
+            .is_empty());
+        assert!(packet["slots"][0]["cost"]["transitions"].as_u64().unwrap() <= 128);
+        let checkpoint: PinnedFileV1 = serde_json::from_value(a["checkpoint"].clone()).unwrap();
+        let checkpoint: Value =
+            serde_json::from_slice(&read_pinned_bytes(&checkpoint).unwrap()).unwrap();
+        assert_eq!(checkpoint["e_supported"]["packet"]["sha256"], pin.sha256);
+        assert_eq!(a["adam_step"], 1);
+        assert!(a.get("line_b").is_none());
+        println!(
+            "E replay primary state SHA256 {} packet SHA256 {}",
+            a["after_state_sha256"], pin.sha256
+        );
     }
 
     mod reset_start_tests;
