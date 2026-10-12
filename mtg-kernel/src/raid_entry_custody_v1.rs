@@ -1007,8 +1007,8 @@ mod tests {
             let mut bad: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
             let pending = bad.raid_waiting_v1.as_mut().unwrap().first_mut().unwrap();
-            if let EffectOp::Conditional { then, .. } = &mut pending.effect {
-                **then = EffectOp::DealDamage {
+            if let crate::effect::EffectOp::Conditional { then, .. } = &mut pending.effect {
+                **then = crate::effect::EffectOp::DealDamage {
                     target: crate::effect::TargetRef::Target(0),
                     amount: 3,
                 };
