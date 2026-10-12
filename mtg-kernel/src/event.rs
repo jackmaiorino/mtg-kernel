@@ -1010,6 +1010,35 @@ pub enum CommittedEvent {
         publication_history_index: u32,
         removal_history_index: u32,
     },
+    GarrukEntryObservationV1 {
+        entry: Box<crate::garruks_uprising_v1::EntryV1>,
+        effective_creature: bool,
+        effective_power: Option<i32>,
+        sources: Vec<(
+            crate::state::AbilitySourceContractV4,
+            crate::garruks_uprising_v1::RootV1,
+        )>,
+    },
+    GarrukDrawCaptureV1 {
+        capture: crate::garruks_uprising_v1::CaptureV1,
+    },
+    GarrukDrawCollectedV1 {
+        capture_history_index: u64,
+    },
+    GarrukDrawPublishedV1 {
+        capture_history_index: u64,
+        item: Box<crate::state::StackItem>,
+    },
+    GarrukDrawRemovedV1 {
+        capture_history_index: u64,
+        item: Box<crate::state::StackItem>,
+        kind: crate::garruks_uprising_v1::RemovalKindV1,
+    },
+    GarrukDrawCompletedV1 {
+        capture_history_index: u64,
+        removal_history_index: u64,
+        draw_history_index: Option<u64>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1438,6 +1467,34 @@ pub(crate) fn propose_without_linked_aura_v1(state: &mut GameState, event: Propo
     }
 }
 
+/// The selected observer sees genuine as-entry Disguise, X counters and
+/// attachment characteristics. Ordinary catalogs retain their old entry path.
+pub(crate) fn commit_garruk_initialized_entry(
+    state: &mut GameState,
+    owner: &crate::garruks_uprising_v1::PermanentEntryOwnerV1,
+) -> Result<(), String> {
+    crate::effect::temporary_control_v1::authority::validate(state)?;
+    state
+        .validate_attachment_relations()
+        .map_err(|_| "Garruk entry begins with invalid attachment relations")?;
+    let entering = owner.entering_characteristics(state)?;
+    if let Some(event) = apply_replacements(
+        state,
+        ProposedEvent::zone_change(entering.0, Zone::Battlefield),
+    ) {
+        commit_with_ability_lki_and_entry_batch(
+            state,
+            event,
+            None,
+            None,
+            None,
+            None,
+            Some(entering),
+        );
+    }
+    Ok(())
+}
+
 /// Applies the (possibly rewritten) proposal to `GameState` and appends the
 /// resulting `CommittedEvent` to the event log for this resolution.
 pub fn commit(state: &mut GameState, event: ProposedEvent) {
@@ -1468,6 +1525,8 @@ fn commit_with_ability_lki(
         abilities_removed_before,
         frozen_death_captures,
         None,
+        None,
+        None,
     );
 }
 
@@ -1477,6 +1536,11 @@ fn commit_with_ability_lki_and_entry_batch(
     abilities_removed_before: Option<bool>,
     frozen_death_captures: Option<Vec<CommittedEvent>>,
     mut authority_batch: Option<&mut crate::authority_of_the_consuls_v1::EntryBatchV1>,
+    mut garruk_batch: Option<&mut crate::garruks_uprising_v1::EntryBatchV1>,
+    entering_characteristics: Option<(
+        ObjectId,
+        crate::garruks_uprising_v1::EntryCharacteristicsV1,
+    )>,
 ) {
     let mut event = event;
     if let ProposedEvent::ZoneChange(change) = &mut event {
@@ -1665,9 +1729,15 @@ fn commit_with_ability_lki_and_entry_batch(
                 z.force_battlefield_tapped,
                 z.battlefield_face_index,
                 z.battlefield_controller,
-                authority_batch
-                    .as_ref()
-                    .map(|batch| batch.observers.as_slice()),
+                (
+                    authority_batch
+                        .as_ref()
+                        .map(|batch| batch.observers.as_slice()),
+                    entering_characteristics
+                        .as_ref()
+                        .filter(|(object, _)| *object == z.object)
+                        .map(|(_, face)| *face),
+                ),
             );
             #[cfg(feature = "limited-fdn-fixtures")]
             if creature_died && state.objects.get(z.object).zone == Zone::Graveyard {
@@ -1933,6 +2003,12 @@ fn commit_with_ability_lki_and_entry_batch(
         crate::soul_shackled_zombie_v1::record_entry(state, source);
     }
     crate::raid_entry_v1::record_entry(state, entry_history_index);
+    if let Some(batch) = garruk_batch.as_mut() {
+        batch.record(state, entry_history_index)
+    } else {
+        crate::garruks_uprising_v1::record_single_entry(state, entry_history_index)
+    }
+
     if let Some(batch) = authority_batch.as_mut() {
         batch.record(entry_history_index);
     } else {
@@ -2000,6 +2076,7 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
         crate::effect::EffectObjectBinding,
     )>,
 ) {
+    let mut garruk_batch = crate::garruks_uprising_v1::EntryBatchV1::capture();
     let mut authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
     let survivors: Vec<ProposedEvent> = events
         .into_iter()
@@ -2074,6 +2151,8 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
                 Some(removed),
                 captures,
                 authority_batch.as_mut(),
+                garruk_batch.as_mut(),
+                None,
             );
         }
     } else {
@@ -2087,6 +2166,8 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
                 None,
                 captures,
                 authority_batch.as_mut(),
+                garruk_batch.as_mut(),
+                None,
             );
         }
     }
@@ -2112,6 +2193,9 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
         }
     }
     if let Some(batch) = authority_batch {
+        batch.finish(state);
+    }
+    if let Some(batch) = garruk_batch {
         batch.finish(state);
     }
 
@@ -2419,8 +2503,13 @@ fn commit_zone_change(
     force_battlefield_tapped: bool,
     battlefield_face_index: Option<u8>,
     battlefield_controller: Option<PlayerId>,
-    authority_observers: Option<&[crate::state::AbilitySourceContractV4]>,
+    entry_context: (
+        Option<&[crate::state::AbilitySourceContractV4]>,
+        Option<crate::garruks_uprising_v1::EntryCharacteristicsV1>,
+    ),
 ) {
+    let (authority_observers, entering_characteristics) = entry_context;
+    let entering_face_down = entering_characteristics.and_then(|entry| entry.face_down);
     #[cfg(feature = "standard-magezero-fixtures")]
     let battlefield_face_index = battlefield_face_index.or_else(|| {
         (to_zone == Zone::Battlefield
@@ -2501,7 +2590,9 @@ fn commit_zone_change(
 
     let turn = state.turn_key_v1();
     let enters_battlefield_tapped = to_zone == Zone::Battlefield
-        && (force_battlefield_tapped || permanent_enters_battlefield_tapped(state, id, owner));
+        && (force_battlefield_tapped
+            || (entering_face_down.is_none()
+                && permanent_enters_battlefield_tapped(state, id, owner)));
     {
         let obj = state.objects.get_mut(id);
         obj.zone = to_zone;
@@ -2531,6 +2622,12 @@ fn commit_zone_change(
             }
         }
         obj.v4.reset_for_zone_change(obj.card_def, to_zone, turn);
+        if to_zone == Zone::Battlefield {
+            if let Some(face_down) = entering_face_down {
+                obj.v4.face_down_v1 = Some(face_down);
+                obj.v4.ward_generic = 2;
+            }
+        }
         obj.name = crate::card_def::CARD_DEFS[obj.card_def as usize]
             .object_name
             .to_string();
@@ -2565,6 +2662,29 @@ fn commit_zone_change(
         }
     }
     if to_zone == Zone::Battlefield {
+        if let Some(entry) = entering_characteristics {
+            if let Some(host) = entry.attached_to {
+                if cfg!(feature = "limited-fdn-fixtures") {
+                    let timestamp = crate::engine::next_timestamp(state);
+                    state.objects.get_mut(id).v4.layer_timestamp = Some(timestamp);
+                }
+                if entry.bestowed {
+                    state.objects.get_mut(id).v4.effective_subtype_ids =
+                        vec![crate::card_def::Subtype::Aura.stable_id()];
+                }
+                let generation = state.objects.get(id).zone_change_count;
+                if state
+                    .attach_object_exact(id, generation, host.object, host.zone_change_count)
+                    .is_err()
+                {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        id,
+                    ));
+                    return;
+                }
+            }
+        }
         // Evaluate this new static rule with the actual entering controller
         // and initialized battlefield characteristics, preserving the earlier
         // legacy entry checks and their order.
@@ -2579,12 +2699,19 @@ fn commit_zone_change(
         ) {
             state.objects.get_mut(id).tapped = true;
         }
-        if cfg!(feature = "limited-fdn-fixtures") {
+        if cfg!(feature = "limited-fdn-fixtures")
+            && entering_characteristics.is_none_or(|entry| entry.attached_to.is_none())
+        {
             let timestamp = crate::engine::next_timestamp(state);
             state.objects.get_mut(id).v4.layer_timestamp = Some(timestamp);
         }
         let kicked = from_zone == Zone::Stack && state.engine.pending_kicked_source == Some(id);
-        initialize_entry_counters(state, id, kicked);
+        if entering_face_down.is_none() {
+            initialize_entry_counters(state, id, kicked);
+        }
+        if let Some(count) = entering_characteristics.and_then(|entry| entry.x_counters) {
+            state.objects.get_mut(id).counters.plus1_plus1 = count;
+        }
     }
     crate::planeswalker_v1::after_zone_change(state, id);
     if to_zone == Zone::Library {
@@ -3303,6 +3430,8 @@ mod authority_visibility_tests {
                     None,
                     None,
                     Some(&mut batch),
+                    None,
+                    None,
                 );
                 // A typed physical hidden-characteristic boundary before
                 // deferred entry capture, not an admitted FDN disguise card.
@@ -3413,6 +3542,136 @@ mod authority_visibility_tests {
                         crate::rl_session::FastActorResponseV1::Terminal(_)
                     ));
                 }
+            }
+        }
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod garruk_entry_tests {
+    use super::*;
+    use crate::policy_observation_v6::tests::{put, ready_state};
+
+    #[test]
+    fn event_time_power_precedes_sba_and_distinguishes_plain_from_face_down_entry() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for face_down in [false, true] {
+                let mut state = ready_state();
+                state.active_player = actor;
+                state.priority_player = actor;
+                state.step = crate::state::Step::Main1;
+                let source = put(&mut state, actor, "Garruk's Uprising", Zone::Hand);
+                let entrant = put(&mut state, actor, "Myr Enforcer", Zone::Hand);
+                let mut batch = crate::garruks_uprising_v1::EntryBatchV1::capture().unwrap();
+                for id in [source, entrant] {
+                    let hidden = (face_down && id == entrant).then_some((
+                        id,
+                        crate::garruks_uprising_v1::EntryCharacteristicsV1 {
+                            face_down: Some(crate::state::FaceDownV1 {
+                                disguised: true,
+                                lookers: 1 << actor.index(),
+                                hidden_by: None,
+                                hidden_by_source: None,
+                            }),
+                            ..Default::default()
+                        },
+                    ));
+                    // Genuine entry commit with explicitly labeled physical
+                    // as-entry characteristics, not a printed FDN Disguise claim.
+                    commit_with_ability_lki_and_entry_batch(
+                        &mut state,
+                        ProposedEvent::zone_change(id, Zone::Battlefield),
+                        None,
+                        None,
+                        None,
+                        Some(&mut batch),
+                        hidden,
+                    );
+                }
+                if !face_down {
+                    // Physical post-entry counter boundary before observation:
+                    // 4 power / 0 toughness. No fabricated trigger/root/history.
+                    state.objects.get_mut(entrant).counters.minus0_minus1 = 4;
+                }
+                batch.finish(&mut state);
+                let captures: Vec<_> = state
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter_map(|event| {
+                        if let CommittedEvent::GarrukDrawCaptureV1 { capture } = event {
+                            Some(capture.root)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if face_down {
+                    assert_eq!(crate::engine::effective_power(&state, entrant), 2);
+                    assert!(captures.is_empty());
+                    let observation = state
+                        .engine
+                        .event_history
+                        .iter()
+                        .find_map(|event| {
+                            if let CommittedEvent::GarrukEntryObservationV1 {
+                                entry,
+                                effective_power,
+                                ..
+                            } = event
+                            {
+                                (entry.object == entrant).then_some((entry, effective_power))
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap();
+                    assert!(observation.0.snapshot.v4.face_down_v1.is_some());
+                    assert_eq!(*observation.1, Some(2));
+                } else {
+                    assert_eq!(
+                        captures,
+                        [
+                            crate::garruks_uprising_v1::RootV1::OwnEtbFerocious,
+                            crate::garruks_uprising_v1::RootV1::ControlledCreaturePowerEntry
+                        ]
+                    );
+                    let before = state.players[actor.index()].hand.len();
+                    for _ in 0..40 {
+                        match crate::engine::advance_until_decision(&mut state) {
+                            crate::engine::Decision::OrderTriggers { pending, .. } => {
+                                crate::engine::step(
+                                    &mut state,
+                                    crate::engine::Action::OrderTriggers(
+                                        (0..pending.len()).collect(),
+                                    ),
+                                )
+                                .unwrap();
+                            }
+                            crate::engine::Decision::CastSpellOrPass { .. }
+                                if state.stack.is_empty() =>
+                            {
+                                break
+                            }
+                            crate::engine::Decision::CastSpellOrPass { .. } => {
+                                crate::engine::step(&mut state, crate::engine::Action::Pass)
+                                    .unwrap()
+                            }
+                            other => panic!("genuine event-time draw traversal {other:?}"),
+                        }
+                    }
+                    assert_eq!(state.objects.get(entrant).zone, Zone::Graveyard);
+                    assert_eq!(
+                        state.players[actor.index()].hand.len(),
+                        before + 1,
+                        "entry draw survives zero toughness; own ETB condition becomes false"
+                    );
+                }
+                crate::garruks_uprising_v1::validate_state(&state).unwrap();
             }
         }
     }

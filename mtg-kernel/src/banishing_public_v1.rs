@@ -130,7 +130,7 @@ pub fn producer_sha256_v1() -> String {
     }
     hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
-fn roots() -> Result<Vec<RootV1>, RlContractError> {
+pub(crate) fn roots() -> Result<Vec<RootV1>, RlContractError> {
     if !cfg!(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
@@ -215,13 +215,13 @@ fn current_host(
         .map(|live| crate::sower_restriction_capture_v1::masked_ref(binding.object, live))
         .transpose()
 }
-type FactsV1 = (
+pub(crate) type FactsV1 = (
     Vec<TriggerV1>,
     Vec<LinkV1>,
     Option<AttachmentChoiceV1>,
     Vec<ConfirmedAttachmentV1>,
 );
-fn facts(state: &GameState) -> Result<FactsV1, RlContractError> {
+pub(crate) fn facts(state: &GameState) -> Result<FactsV1, RlContractError> {
     crate::banishing_light_v1::validate_state(state).map_err(RlContractError)?;
     let mut triggers = Vec::new();
     let mut links = Vec::new();

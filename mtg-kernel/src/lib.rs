@@ -94,7 +94,9 @@ mod experimental_burn_net8_packed_v1;
 pub mod extra_turn_v1;
 mod fdn_raid_v1;
 pub mod frenzied_public_v1;
+pub mod garruk_public_v1;
 pub mod gourmand_public_v1;
+
 pub mod human_opening_v1;
 pub mod native_expanded_training_run_v1;
 mod raid_entry_v1;
@@ -131,6 +133,7 @@ pub mod policy_observation_v9;
 pub mod policy_observation_variable_cast_v1;
 pub mod rl_variable_cast_v1;
 pub mod rules_meaning_authority_v1;
+pub mod rules_meaning_garruk_v1;
 pub mod rules_meaning_heartfire_v1;
 pub mod rules_meaning_ooze_v1;
 pub mod unclamped_softmax_sampler_v1;
@@ -580,3 +583,4 @@ pub mod rules_meaning_extra_turn_v1;
 pub mod rules_meaning_raid_entry_v1;
 
 pub mod banishing_public_v1;
+pub mod garruks_uprising_v1;

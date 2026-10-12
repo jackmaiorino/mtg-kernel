@@ -7,6 +7,14 @@ fn conflicts(
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    if state
+        .engine
+        .event_history
+        .iter()
+        .any(crate::garruks_uprising_v1::is_history)
+    {
+        return true;
+    }
     // This source preparation does not admit retained linked-duration history
     // to hidden-state sampling, including already-closed rows.
     if crate::banishing_light_v1::requires_successor(state) {

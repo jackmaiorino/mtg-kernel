@@ -144,7 +144,12 @@ fn exiled_aura_without_host_stays_exiled_and_its_capture_cannot_be_erased_both_s
             "Llanowar Elves",
             Zone::Battlefield,
         );
-        let aura = put(&mut state, actor.opponent(), "Pacifism", Zone::Battlefield);
+        let aura = put(
+            &mut state,
+            actor.opponent(),
+            "Twinblade Blessing",
+            Zone::Battlefield,
+        );
         state.attach_object_exact(aura, 0, creature, 0).unwrap();
         let source = put(&mut state, actor, "Banishing Light", Zone::Hand);
         event::propose_and_commit(
@@ -198,7 +203,12 @@ pub(crate) fn linked_aura(actor: PlayerId) -> (GameState, ObjectId, ObjectId, Ob
         "Llanowar Elves",
         Zone::Battlefield,
     );
-    let aura = put(&mut state, actor.opponent(), "Pacifism", Zone::Battlefield);
+    let aura = put(
+        &mut state,
+        actor.opponent(),
+        "Twinblade Blessing",
+        Zone::Battlefield,
+    );
     state.attach_object_exact(aura, 0, host, 0).unwrap();
     let source = put(&mut state, actor, "Banishing Light", Zone::Hand);
     event::propose_and_commit(
@@ -474,7 +484,12 @@ fn accepted_physical_sequence_stops_before_draw_and_shuffle_and_replays_rng_once
 fn simultaneous_departures_complete_before_returns_and_keep_prior_owner_answers_on_restore() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, first_source, first_aura, host) = linked_aura(actor);
-        let second_aura = put(&mut state, actor.opponent(), "Pacifism", Zone::Battlefield);
+        let second_aura = put(
+            &mut state,
+            actor.opponent(),
+            "Twinblade Blessing",
+            Zone::Battlefield,
+        );
         state
             .attach_object_exact(
                 second_aura,
@@ -727,7 +742,7 @@ fn simultaneous_opposite_owner_choices_follow_apnap_before_any_entry_both_seats(
     for actor in [PlayerId::P0, PlayerId::P1] {
         for reverse in [false, true] {
             let (mut state, opponent_aura_source, opponent_aura, host) = linked_aura(actor);
-            let active_aura = put(&mut state, actor, "Pacifism", Zone::Battlefield);
+            let active_aura = put(&mut state, actor, "Twinblade Blessing", Zone::Battlefield);
             state
                 .attach_object_exact(
                     active_aura,
@@ -837,7 +852,7 @@ fn actual_aura_choice_public_human_owner_restore_retry_and_forgery_both_seats() 
             action_index: prompt
                 .actions
                 .iter()
-                .find(|row| row.label.starts_with("Attach returning Pacifism"))
+                .find(|row| row.label.starts_with("Attach returning Twinblade Blessing"))
                 .unwrap()
                 .action_index,
         };
@@ -878,7 +893,7 @@ fn later_apnap_owner_sees_confirmed_answer_before_entry_and_restores_it_both_sea
     use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, opponent_source, opponent_aura, host) = linked_aura(actor);
-        let active_aura = put(&mut state, actor, "Pacifism", Zone::Battlefield);
+        let active_aura = put(&mut state, actor, "Twinblade Blessing", Zone::Battlefield);
         state
             .attach_object_exact(
                 active_aura,
