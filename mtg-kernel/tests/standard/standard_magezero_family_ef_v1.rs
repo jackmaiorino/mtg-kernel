@@ -2392,7 +2392,16 @@ fn the_irencrag_becomes_everflame_when_a_legend_enters() {
     assert_eq!(engine::effective_power(&state, elves), 1);
 
     // Everflame lost the trigger: another legend asks nothing.
-    put(&mut state, P0, "Cecil, Dark Knight", Zone::Battlefield);
+    let second_cecil = put(&mut state, P0, "Cecil, Dark Knight", Zone::Battlefield);
+    let Decision::ChooseLegendPermanent { player, candidates } = next(&mut state) else {
+        panic!("the two genuine Cecils require the legend rule");
+    };
+    assert_eq!(player, P0);
+    assert_eq!(candidates, vec![cecil, second_cecil]);
+    act(&mut state, Action::ChooseLegendPermanent(cecil));
+    assert_eq!(state.objects.get(cecil).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(second_cecil).zone, Zone::Graveyard);
+    assert_eq!(engine::effective_power(&state, cecil), power + 3);
     assert!(!resolve_everflame(&mut state, true));
 }
 
