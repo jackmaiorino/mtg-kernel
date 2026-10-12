@@ -29,3 +29,13 @@ candidate inputs and current store profiles are untouched. Original prepared
 printed tests remain unrun. Precise meaning, public/HumanV33 and complete
 replacement-choice qualification are still required before registration or
 Full support; old frozen model/observation/sampler representations refuse.
+
+Review found three source gaps in the first current checkpoint. Expiry now
+references an independent ordered Cleanup occurrence containing the actual
+installed roster; an appended early expiry alone refuses after restore.
+A shield installed during real Madness Cleanup priority requests another
+Cleanup before the player changes. Its prepared actual printed test remains
+explicitly ignored until genuine Fiery registration, then must be enabled and
+run. Historical expiry and Cleanup records have explicit reference/sampler
+classification, including the previously missing exhaustive event arm. These
+repairs are formatted and committed; native qualification remains pending.

@@ -1087,6 +1087,13 @@ pub enum CommittedEvent {
         replacement: ActiveReplacement,
         turn: u32,
         active_player: PlayerId,
+        cleanup_index: u32,
+    },
+    ExileIfDiesReplacementCleanupV1 {
+        index: u32,
+        installations: Vec<ActiveReplacement>,
+        turn: u32,
+        active_player: PlayerId,
     },
 }
 
@@ -1510,6 +1517,37 @@ pub(crate) fn install_exile_if_dies(
 }
 
 pub(crate) fn validate_exile_if_dies_replacements(state: &GameState) -> Result<(), ObjectId> {
+    for (at, event) in state.engine.event_history.iter().enumerate() {
+        let CommittedEvent::ExileIfDiesReplacementExpiredV1 {
+            replacement,
+            turn,
+            active_player,
+            cleanup_index,
+        } = event
+        else {
+            continue;
+        };
+        let Some(CommittedEvent::ExileIfDiesReplacementCleanupV1 {
+            index,
+            installations,
+            turn: ending_turn,
+            active_player: ending_player,
+        }) = state.engine.event_history.get(*cleanup_index as usize)
+        else {
+            return Err(replacement.source);
+        };
+        let installed = state.engine.event_history.iter().position(|e| matches!(e,
+            CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement: r } if r == replacement));
+        if *index != *cleanup_index
+            || installed.is_none_or(|i| i >= *cleanup_index as usize)
+            || *cleanup_index as usize >= at
+            || turn != ending_turn
+            || active_player != ending_player
+            || installations.iter().filter(|r| *r == replacement).count() != 1
+        {
+            return Err(replacement.source);
+        }
+    }
     for event in &state.engine.event_history {
         let CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement } = event else {
             continue;
@@ -1521,7 +1559,7 @@ pub(crate) fn validate_exile_if_dies_replacements(state: &GameState) -> Result<(
             .filter(|r| *r == replacement)
             .count();
         let expired = state.engine.event_history.iter().filter(|e| matches!(e,
-            CommittedEvent::ExileIfDiesReplacementExpiredV1 { replacement: r, turn, active_player }
+            CommittedEvent::ExileIfDiesReplacementExpiredV1 { replacement: r, turn, active_player, .. }
             if r == replacement && matches!(r.kind,
                 ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { turn: original, active_player: actor, .. }
                 if original == *turn && actor == *active_player))).count();
@@ -1597,6 +1635,23 @@ pub(crate) fn expire_exile_if_dies_replacements(state: &mut GameState) -> Result
         })
         .cloned()
         .collect();
+    if expired.is_empty() {
+        return Ok(());
+    }
+    if state.step != crate::state::Step::Cleanup {
+        return Err(expired[0].source);
+    }
+    let cleanup_index =
+        u32::try_from(state.engine.event_history.len()).map_err(|_| expired[0].source)?;
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::ExileIfDiesReplacementCleanupV1 {
+            index: cleanup_index,
+            installations: expired.clone(),
+            turn: state.turn_key_v1(),
+            active_player: state.active_player,
+        });
     for replacement in expired {
         state
             .engine
@@ -1605,6 +1660,7 @@ pub(crate) fn expire_exile_if_dies_replacements(state: &mut GameState) -> Result
                 replacement,
                 turn: state.turn_key_v1(),
                 active_player: state.active_player,
+                cleanup_index,
             });
     }
     state.engine.active_replacements.retain(|r| {

@@ -22,6 +22,113 @@ fn ready(player: PlayerId) -> GameState {
     state
 }
 
+#[test]
+#[ignore = "requires genuine Fiery registration; actual Madness Cleanup qualification"]
+fn actual_fiery_cast_during_madness_cleanup_priority_expires_before_player_flip() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let target = put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        state.objects.get_mut(target).counters.plus1_plus1 = 6;
+        let temper = put(&mut state, actor, "Fiery Temper", Zone::Hand);
+        event::propose_and_commit(&mut state, ProposedEvent::draw(actor));
+        assert_eq!(state.players[actor.index()].hand.len(), 9);
+        let discard_land = *state.players[actor.index()].hand.last().unwrap();
+        state.step = Step::End;
+        let ending_turn = state.turn_key_v1();
+        let mut discarded = false;
+        for _ in 0..20 {
+            match next(&mut state) {
+                Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+                Decision::Discard {
+                    player,
+                    count,
+                    choices,
+                } => {
+                    assert_eq!((player, count), (actor, 2));
+                    assert!(choices.contains(&temper) && choices.contains(&discard_land));
+                    engine::step(&mut state, Action::Discard(vec![temper, discard_land])).unwrap();
+                    discarded = true;
+                    break;
+                }
+                other => panic!("actual Cleanup discard {other:?}"),
+            }
+        }
+        assert!(discarded);
+        assert!(
+            matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+        );
+        assert_eq!(state.step, Step::Cleanup);
+        assert!(state.stack.iter().any(|i| i.madness_offer));
+        let spell = announce(&mut state, actor, target, None);
+        let mut restored = copy(&state);
+        for branch in [&mut state, &mut restored] {
+            let mut installed = false;
+            for _ in 0..20 {
+                let decision = next(branch);
+                if branch.objects.get(spell).zone == Zone::Graveyard {
+                    assert_eq!(branch.step, Step::Cleanup);
+                    assert_eq!(branch.turn_key_v1(), ending_turn);
+                    assert_eq!(shield_count(branch), 1);
+                    installed = true;
+                    break;
+                }
+                assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
+                engine::step(branch, Action::Pass).unwrap();
+            }
+            assert!(installed);
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+        for branch in [&mut state, &mut restored] {
+            let mut declined = false;
+            for _ in 0..40 {
+                let decision = next(branch);
+                if branch.active_player != actor {
+                    break;
+                }
+                match decision {
+                    Decision::CastSpellOrPass { .. } => engine::step(branch, Action::Pass).unwrap(),
+                    Decision::ChooseMadnessCast { player, card } => {
+                        assert_eq!((player, card), (actor, temper));
+                        engine::step(branch, Action::ChooseMadnessCast(false)).unwrap();
+                        declined = true;
+                    }
+                    other => panic!("actual Cleanup response {other:?}"),
+                }
+            }
+            assert!(declined);
+            assert_eq!(branch.active_player, actor.opponent());
+            assert_eq!(shield_count(branch), 0);
+            assert_eq!(branch.objects.get(target).damage, 0);
+            assert_eq!(branch.objects.get(target).zone, Zone::Battlefield);
+            assert_eq!(branch.objects.get(temper).zone, Zone::Graveyard);
+            assert_eq!(
+                branch
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter(|e| matches!(
+                        e,
+                        event::CommittedEvent::ExileIfDiesReplacementExpiredV1 { .. }
+                    ))
+                    .count(),
+                1
+            );
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+    }
+}
+
 fn put(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -> ObjectId {
     let card_def =
         card_id_by_name(name).expect("reviewed Fiery Annihilation catalog admission required");

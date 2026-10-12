@@ -14958,7 +14958,15 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
 /// obviously-combat-shaped divergence. See `Decision::DeclareAttackers`'s
 /// doc and the replay comparator's handling of an empty `eligible`.
 fn advance_step(state: &mut GameState) {
-    if state.step == Step::Cleanup && crate::ashroot_dispatch_v2::has_active(state) {
+    if state.step == Step::Cleanup
+        && (crate::ashroot_dispatch_v2::has_active(state)
+            || state.engine.active_replacements.iter().any(|r| {
+                matches!(
+                    r.kind,
+                    event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. }
+                )
+            }))
+    {
         for player in &mut state.players {
             player.mana_pool = [0; 6];
             player.restricted_mana_pool.0.clear();

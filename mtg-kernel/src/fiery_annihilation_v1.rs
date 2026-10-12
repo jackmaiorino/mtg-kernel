@@ -523,6 +523,22 @@ mod tests {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let (mut state, _, _, ctx) = fixture(actor, false, true);
             execute(&ctx, &mut state);
+            let mut early = state.clone();
+            let replacement = early.engine.active_replacements.pop().unwrap();
+            let installation = early.engine.event_history.iter().position(|e| matches!(e,
+                event::CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement: r } if r == &replacement)).unwrap();
+            early.engine.event_history.push(
+                event::CommittedEvent::ExileIfDiesReplacementExpiredV1 {
+                    replacement,
+                    turn: early.turn_key_v1(),
+                    active_player: actor,
+                    cleanup_index: installation.try_into().unwrap(),
+                },
+            );
+            let bytes = serde_json::to_vec(&early).unwrap();
+            let mut early: GameState = serde_json::from_slice(&bytes).unwrap();
+            assert!(engine::step(&mut early, Action::Pass).is_err());
+            assert_eq!(serde_json::to_vec(&early).unwrap(), bytes);
             state.engine.active_replacements.clear();
             let bytes = serde_json::to_vec(&state).unwrap();
             let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();

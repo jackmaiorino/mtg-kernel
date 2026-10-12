@@ -1054,7 +1054,8 @@ pub(super) fn conflicts(
             | StromkirkCounterRemovedV2 { .. }
             | StromkirkOperationV2 { .. }
             | StromkirkCompletedV2 { .. } => true,
-            ExileIfDiesReplacementInstalledV1 { replacement } => {
+            ExileIfDiesReplacementInstalledV1 { replacement }
+            | ExileIfDiesReplacementExpiredV1 { replacement, .. } => {
                 s.raw(replacement.source)
                     || match replacement.kind {
                         crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 {
@@ -1063,6 +1064,15 @@ pub(super) fn conflicts(
                         } => s.raw(object),
                         _ => false,
                     }
+            }
+            ExileIfDiesReplacementCleanupV1 { installations, .. } => {
+                installations.iter().any(|r| {
+                    s.raw(r.source)
+                        || matches!(r.kind,
+                    crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 {
+                        target: crate::state::StackTargetContractV4::Object { object, .. }, ..
+                    } if s.raw(object))
+                })
             }
             Damage { source, target, .. } => {
                 s.raw(*source) || matches!(target,crate::state::Target::Object(id) if s.raw(*id))
