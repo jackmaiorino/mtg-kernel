@@ -28,6 +28,30 @@ struct LabelInput<'a> {
 }
 
 impl<'a> LabelInput<'a> {
+    fn from_history(
+        observation: &'a crate::heartfire_history_v1::HeartfireHistoryObservationV1,
+    ) -> Self {
+        Self {
+            projection: &observation.projection,
+            pending_chosen_creature_cost: observation
+                .extensions
+                .pending_chosen_creature_cost
+                .as_ref(),
+            pending_ward_payment: observation.extensions.pending_ward_payment.as_ref(),
+            resolving_spell_sources: observation
+                .extensions
+                .historical_public_sources
+                .iter()
+                .filter(|record| {
+                    record.context
+                        == crate::policy_observation_v7::HistoricalSourceContextV7::PendingEffect
+                        && record.stack_item_kind == StackItemKindV2::Spell
+                })
+                .map(|record| &record.source)
+                .collect(),
+        }
+    }
+
     fn from_v6(observation: &'a ObservationV6) -> Self {
         Self {
             projection: &observation.projection,
@@ -49,9 +73,9 @@ impl<'a> LabelInput<'a> {
         }
     }
 
-    fn from_v8(observation: &'a crate::policy_observation_v8::ObservationV8) -> Self {
+    fn from_parts_v8(observation: &super::life_ward_v8::ProjectionPartsV8<'a>) -> Self {
         Self {
-            projection: &observation.projection,
+            projection: observation.projection,
             pending_chosen_creature_cost: observation
                 .extensions
                 .pending_chosen_creature_cost
@@ -194,9 +218,19 @@ fn effect_condition(condition: &EffectCond) -> Result<String, Error> {
     })
 }
 
+#[cfg(test)]
+#[test]
+fn frozen_human_labels_refuse_ooze_atomic_program() {
+    assert!(matches!(
+        describe_effect(&EffectOp::ExileGraveyardTargetThenGrowSourceIfCreature),
+        Err(Error::UnsupportedPrompt)
+    ));
+}
+
 fn describe_effect(effect: &EffectOp) -> Result<String, Error> {
     Ok(match effect {
         EffectOp::StandardLegendV1(crate::standard_legends_v1::LegendEffectV1::GwennaMana(first,second)) => format!("add {{{}}}{{{}}}; spend only on creature spells or abilities of creatures",color(*first),color(*second)),
+        EffectOp::GrantKeywordToDeclaredTargetsUntilEndOfTurn { .. } => return Err(Error::UnsupportedPrompt),
         EffectOp::Sequence(ops) if ops.is_empty() => "do nothing".into(),
         EffectOp::Sequence(ops) => ops.iter().map(describe_effect).collect::<Result<Vec<_>, _>>()?.join("; then "),
         EffectOp::Conditional { cond, then, else_ } => format!("if {}, {}; otherwise {}", effect_condition(cond)?, describe_effect(then)?, describe_effect(else_)?),
@@ -414,6 +448,20 @@ pub(super) fn label_v8(
     handles: &Handles,
     human: PlayerSeatV1,
 ) -> Result<String, Error> {
+    label_parts_v8(
+        action,
+        &super::life_ward_v8::ProjectionPartsV8::from(observation),
+        handles,
+        human,
+    )
+}
+
+pub(super) fn label_parts_v8(
+    action: &A,
+    observation: &super::life_ward_v8::ProjectionPartsV8<'_>,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
     if let Some(payment) = &observation.extensions.pending_ward_life_payment {
         let A::ChooseEffectBoolean {
             actor,
@@ -468,7 +516,227 @@ pub(super) fn label_v8(
             },
         ));
     }
-    label_common(action, &LabelInput::from_v8(observation), handles, human)
+    label_common(
+        action,
+        &LabelInput::from_parts_v8(observation),
+        handles,
+        human,
+    )
+}
+
+/// Opt-in label successor. Predecessor entry points never call this function.
+pub(super) fn label_ooze_v11(
+    action: &A,
+    observation: &crate::policy_observation_v8::ObservationV8,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    if let A::ActivateAbility {
+        source,
+        ability_index,
+        granted_ability,
+        ..
+    } = action
+    {
+        let (card_id, index) = granted_ability
+            .as_ref()
+            .map(|(donor, local)| (donor.card_db_id, u32::from(*local)))
+            .unwrap_or((source.card_db_id, u32::from(*ability_index)));
+        if crate::rules_meaning_ooze_v1::root_meaning(card_id, index).is_ok() {
+            if actor(action) != Some(human) || source.zone != Zone::Battlefield {
+                return Err(Error::UnsupportedPrompt);
+            }
+            let name = handles.name(source)?;
+            return Ok(format!("Activate {name}: pay {{G}}: exile one target card from either graveyard; if it was a creature card before the move, put a +1/+1 counter on this same permanent and gain 1 life. You still gain life if this permanent has left the battlefield"));
+        }
+    }
+    label_v8(action, observation, handles, human)
+}
+
+/// Definition-owned Sower opt-in. No predecessor entry point calls this.
+pub(super) fn label_frenzied_v15(
+    action: &A,
+    observation: &crate::frenzied_public_v1::FrenziedObservationV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    if let A::ChooseEffectBoolean {
+        actor,
+        source,
+        value,
+    } = action
+    {
+        let rows: Vec<_> = observation
+            .resolutions
+            .iter()
+            .filter(|row| row.phase == "optional_red_payment")
+            .collect();
+        if let [row] = rows.as_slice() {
+            let pending = observation
+                .projection
+                .surface
+                .engine_context
+                .pending_effect
+                .as_ref()
+                .ok_or(Error::UnsupportedPrompt)?;
+            let Some(PendingEffectChoiceSemanticV4::Boolean {
+                player, purpose, ..
+            }) = &pending.choice
+            else {
+                return Err(Error::UnsupportedPrompt);
+            };
+            if *actor != human
+                || row.captured_payer != human
+                || *player != human
+                || *purpose != BooleanChoicePurposeV4::PayCost
+                || source.arena_id != row.source_at_attack.arena_id
+                || pending.controller != human
+                || row.live_stack_index.is_none()
+                || observation.extensions.pending_ward_life_payment.is_some()
+                || observation.extensions.pending_ward_payment.is_some()
+            {
+                return Err(Error::UnsupportedPrompt);
+            }
+            let selector = crate::rules_meaning_frenzied_goblin_v1::live_selector()
+                .map_err(|_| Error::UnsupportedPrompt)?;
+            crate::rules_meaning_frenzied_goblin_v1::meaning(
+                &selector,
+                row.source_at_attack.card_db_id,
+                0,
+            )
+            .map_err(|_| Error::UnsupportedPrompt)?;
+            return Ok(format!(
+                "{} {{R}} for {}: {}",
+                if *value { "Pay" } else { "Decline to pay" },
+                handles.name(&row.source_at_attack)?,
+                if *value {
+                    format!(
+                        "{} cannot block until the next cleanup",
+                        handles.name(&row.target_at_placement)?
+                    )
+                } else {
+                    "do not install a restriction".into()
+                }
+            ));
+        }
+    }
+    let parts = super::life_ward_v8::ProjectionPartsV8 {
+        projection: &observation.projection,
+        own_hand: &observation.own_hand,
+        known_library_cards: &observation.known_library_cards,
+        known_hand_cards: &observation.known_hand_cards,
+        known_face_down_cards: &observation.known_face_down_cards,
+        extensions: &observation.extensions,
+    };
+    label_parts_v8(action, &parts, handles, human)
+}
+
+pub(super) fn label_sower_v14(
+    action: &A,
+    observation: &super::life_ward_v8::ProjectionPartsV8<'_>,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    if let A::ActivateAbility {
+        source,
+        ability_index,
+        granted_ability,
+        ..
+    } = action
+    {
+        if granted_ability.is_none() && definition(source)?.name == "Sower of Chaos" {
+            let selector = crate::rules_meaning_sower_v1::live_selector_v1()
+                .map_err(|_| Error::UnsupportedPrompt)?;
+            crate::rules_meaning_sower_v1::meaning_v1(
+                &selector,
+                source.card_db_id,
+                u16::from(*ability_index),
+            )
+            .map_err(|_| Error::UnsupportedPrompt)?;
+            if actor(action) != Some(human) || source.zone != Zone::Battlefield {
+                return Err(Error::UnsupportedPrompt);
+            }
+            return Ok(format!("Activate {}: pay {{2}}{{R}}; one target creature cannot block until the next cleanup. Control changes and ability removal do not end the restriction; this source need not remain on the battlefield", handles.name(source)?));
+        }
+    }
+    label_parts_v8(action, observation, handles, human)
+}
+
+/// Definition-owned Heartfire label opt-in. Predecessors retain their refusal.
+pub(super) fn label_heartfire_v12(
+    action: &A,
+    observation: &crate::policy_observation_v8::ObservationV8,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    if let A::ActivateAbility {
+        source,
+        ability_index,
+        granted_ability,
+        ..
+    } = action
+    {
+        if granted_ability.is_none()
+            && crate::rules_meaning_heartfire_v1::root_meaning(
+                source.card_db_id,
+                u32::from(*ability_index),
+            )
+            .is_ok()
+        {
+            if actor(action) != Some(human) || source.zone != Zone::Battlefield {
+                return Err(Error::UnsupportedPrompt);
+            }
+            let name = handles.name(source)?;
+            return Ok(format!("Activate {name}: pay {{R}} and sacrifice this permanent: it deals damage equal to its power as it left the battlefield to one target creature or planeswalker. Negative power deals no damage; use its captured controller, color and damage keywords"));
+        }
+    }
+    label_v8(action, observation, handles, human)
+}
+
+#[cfg(test)]
+#[test]
+fn frozen_human_labels_refuse_heartfire_historical_damage_program() {
+    assert_eq!(
+        describe_effect(&EffectOp::StandardV1(
+            crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1
+        )),
+        Err(Error::UnsupportedPrompt)
+    );
+}
+
+pub(super) fn label_heartfire_history_v1(
+    action: &A,
+    observation: &crate::heartfire_history_v1::HeartfireHistoryObservationV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    if let A::ActivateAbility {
+        source,
+        ability_index,
+        granted_ability,
+        ..
+    } = action
+    {
+        if granted_ability.is_none()
+            && crate::rules_meaning_heartfire_v1::root_meaning(
+                source.card_db_id,
+                u32::from(*ability_index),
+            )
+            .is_ok()
+        {
+            if actor(action) != Some(human) || source.zone != Zone::Battlefield {
+                return Err(Error::UnsupportedPrompt);
+            }
+            let name = handles.name(source)?;
+            return Ok(format!("Activate {name}: pay {{R}} and sacrifice this permanent: it deals damage equal to its power as it left the battlefield to one target creature or planeswalker. Negative power deals no damage; use its captured controller, color and damage keywords"));
+        }
+    }
+    label_common(
+        action,
+        &LabelInput::from_history(observation),
+        handles,
+        human,
+    )
 }
 
 fn label_common(
@@ -1075,4 +1343,47 @@ fn label_common(
         | A::ChooseAttackTarget { .. }
         | A::Ambiguous { .. } => return Err(Error::UnsupportedPrompt),
     })
+}
+
+/// Separate exact printed control label; predecessor labels are unchanged.
+pub(super) fn label_employment_v18(
+    action: &A,
+    observation: &super::life_ward_v8::ProjectionPartsV8<'_>,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    if let A::CastSpell { source, .. } = action {
+        if definition(source)?.name == "Involuntary Employment" {
+            let selector = crate::rules_meaning_employment_v1::live_selector()
+                .map_err(|_| Error::UnsupportedPrompt)?;
+            crate::rules_meaning_employment_v1::meaning(
+                &selector,
+                source.card_db_id,
+                crate::rules_meaning_employment_v1::RootV1::PrintedSpell,
+            )
+            .map_err(|_| Error::UnsupportedPrompt)?;
+            if actor(action) != Some(human) {
+                return Err(Error::UnsupportedPrompt);
+            }
+            return Ok(format!("Begin casting {} (printed cost {{3}}{{R}}): gain control of one target creature until cleanup, untap it, grant haste until cleanup, then create a Treasure. An illegal target stops the entire spell", handles.name(source)?));
+        }
+    }
+    label_parts_v8(action, observation, handles, human)
+}
+
+#[cfg(test)]
+mod variable_target_refusal_tests {
+    use super::*;
+
+    #[test]
+    fn human_legacy_prompt_refuses_variable_declared_target_grant() {
+        let op = EffectOp::GrantKeywordToDeclaredTargetsUntilEndOfTurn {
+            target_spec: card_def::TargetSpec::KickerControlledCreatures,
+            keyword: card_def::Keywords::INDESTRUCTIBLE,
+        };
+        assert!(matches!(
+            describe_effect(&op),
+            Err(Error::UnsupportedPrompt)
+        ));
+    }
 }

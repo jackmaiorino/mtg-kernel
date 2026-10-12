@@ -84,12 +84,20 @@ pub(crate) fn target_ref(target: TargetRef, env: &Env) -> (Option<RelF>, ObjF) {
 /// Facets of one resolution program. Recurses through nested programs.
 pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
+        EffectOp::ExileGraveyardTargetThenGrowSourceIfCreature => {
+            // Pre-move creature type and exact source identity have no v1 facets.
+            out.atoms.push(Atom::Opaque);
+        }
         EffectOp::StandardV1(_) => {
             // Preserve the exact serialized payload in the source record.
             // Do not invent ordinary facets for new histories, counters,
             // copy/control/type changes or Standard continuation semantics.
             out.atoms.push(Atom::Opaque);
         }
+        EffectOp::GrantKeywordToDeclaredTargetsUntilEndOfTurn {
+            target_spec: _,
+            keyword: _,
+        } => panic!("variable cast target effects require a RulesMeaning successor"),
         EffectOp::Sequence(..)
         | EffectOp::Conditional { .. }
         | EffectOp::Choice { .. }
@@ -136,6 +144,11 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
         | EffectOp::LookTopPickToHandBottomRest { .. }
         | EffectOp::LookTopSelectV1 { .. } => effect_b::effect_op(op, env, out),
+        EffectOp::BindAuthorityEntryGainLifeV1
+        | EffectOp::AuthorityEntryGainLifeV1 { .. }
+        | EffectOp::CerberusUntapV1 { .. }
+        | EffectOp::PreventTargetBlockingUntilEndOfTurn { .. } => out.atoms.push(Atom::Opaque),
+        EffectOp::WildwoodCounterFromReceiptV1 { .. } => out.atoms.push(Atom::Opaque),
         EffectOp::GainLifeEqualToPaidCostManaValue { .. }
         | EffectOp::MoveAllTargets { .. }
         | EffectOp::ExploreTarget { .. }
@@ -271,6 +284,13 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::ExileGraveyardTargetsDrainPerCreature { .. }
         | EffectOp::RemoveTimeCounterFromSource
         | EffectOp::ReturnSourceAsEnduringEnchantment => effect_h::effect_op(op, env, out),
+        EffectOp::GainControlOfTargetCreatureUntilEndOfTurn { .. } => out.atoms.push(Atom::Opaque),
+        EffectOp::ExileSingleGraveyardTargetsThenDrainTwoV1 => {
+            // The frozen vocabulary cannot bind successful creature exile
+            // to this once-only drain. A rooted successor is required.
+            out.atoms.push(Atom::Opaque);
+        }
+        EffectOp::CreateControlledCreatureTargetCopyV1 => out.atoms.push(Atom::Opaque),
         EffectOp::ReturnTwoDifferentControllerCreaturesToOwnersHands
         | EffectOp::PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness { .. }
         | EffectOp::StandardLegendV1(_)
@@ -340,6 +360,24 @@ mod standard_completion_tests {
                         && *actual == controller && *zone == ZoneF::Battlefield)));
             assert!(out.atoms.contains(&Atom::Opaque));
         }
+    }
+
+    #[test]
+    fn ooze_atomic_effect_is_opaque_and_graveyard_target_is_mandatory() {
+        let env = Env {
+            target_spec: TargetSpec::CardInGraveyards,
+        };
+        let mut effect = Collector::default();
+        effect_op(
+            &EffectOp::ExileGraveyardTargetThenGrowSourceIfCreature,
+            &env,
+            &mut effect,
+        );
+        assert_eq!(effect.atoms, [Atom::Opaque]);
+        let mut target = Collector::default();
+        targets::target_spec(TargetSpec::CardInGraveyards, &mut target);
+        assert!(!target.atoms.contains(&Atom::Target(TargetAtom::UpTo)));
+        assert_eq!(TargetSpec::CardInGraveyards.stable_id(), 65);
     }
 
     #[test]

@@ -48,10 +48,12 @@ pub mod card_def;
 pub mod combat_damage_v1;
 pub(crate) mod continuous_characteristics_v1;
 mod creature_death_capture_v1;
+mod creature_stats_lki_v1;
 pub mod legend_rule_v1;
 pub mod native_search_collection_v3;
 pub mod native_search_trajectory_v3;
 pub mod planeswalker_v1;
+mod soul_shackled_zombie_v1;
 pub mod standard_cards_v1;
 pub mod standard_creature_choices_v1;
 pub mod standard_creatures_v1;
@@ -71,17 +73,26 @@ pub mod environment_randomization_v2;
 // no-replace move; replaceable pointer files use a distinct receipt type.
 pub mod durable_move_publication_v2;
 // Strict Python-authoritative initial-model snapshot loader for matched trials.
+mod authority_public_capture_v1;
+pub mod authority_public_v1;
 #[allow(dead_code)]
 pub(crate) mod common_model_snapshot_v1;
 pub mod effect;
+pub mod employment_public_v1;
 pub mod engine;
 pub mod event;
 pub mod expanded_deck_training_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 mod experimental_burn_net8_packed_v1;
 mod fdn_raid_v1;
+pub mod frenzied_public_v1;
 pub mod human_opening_v1;
 pub mod native_expanded_training_run_v1;
+mod source_power_activation_v1;
+pub mod sower_of_chaos_v1;
+pub mod sower_public_v1;
+mod sower_restriction_capture_v1;
+pub mod wildwood_public_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 pub use experimental_burn_net8_packed_v1::run_public_entropy_gradient_probe_v1;
 pub mod fast_sampler;
@@ -91,8 +102,11 @@ pub mod flat_policy_v2;
 pub mod flat_policy_v3;
 pub mod flat_policy_v4;
 pub mod flat_policy_v5;
+pub mod heartfire_history_v1;
+pub mod heartfire_public_v1;
 pub mod ids;
 pub mod line_b_teacher_target_v1;
+pub mod ooze_public_v1;
 pub mod phase1_agent_v1;
 pub mod phase1_bo3_collection_v1;
 pub mod phase1_bo3_learning_v1;
@@ -101,6 +115,11 @@ pub mod policy_observation_v6;
 pub mod policy_observation_v7;
 pub mod policy_observation_v8;
 pub mod policy_observation_v9;
+pub mod policy_observation_variable_cast_v1;
+pub mod rl_variable_cast_v1;
+pub mod rules_meaning_authority_v1;
+pub mod rules_meaning_heartfire_v1;
+pub mod rules_meaning_ooze_v1;
 pub mod unclamped_softmax_sampler_v1;
 // Calibration-only harness for the kernel-native search opponent: every
 // function in this module either is, or exists only to call,
@@ -455,6 +474,9 @@ pub mod sideboard_search_campaign_v1;
 // the real read-only `validate_native_training_store_v2` genesis-to-latest
 // walk against an externally supplied Store copy. Test-only, ignored by
 // default, never built into the product binary.
+mod authority_of_the_consuls_v1;
+pub(crate) mod cerberus_capture_v1;
+pub mod cerberus_public_v1;
 pub(crate) mod life_gain_turn_v1;
 pub mod phase_profile;
 pub mod policy_surface_v5;
@@ -464,9 +486,13 @@ pub(crate) mod private_physical_trajectory_v2;
 pub mod regret_census_v1;
 pub mod rl;
 pub mod rl_session;
+pub mod rules_meaning_soul_shackled_zombie_v1;
 pub mod runtime_decks;
+mod self_reflection_v1;
 pub mod sideboard;
+mod slumbering_cerberus_v1;
 pub mod snapshot;
+pub mod soul_shackled_zombie_public_v1;
 pub mod standard_legends_v1;
 pub mod state;
 #[cfg(test)]
@@ -478,13 +504,23 @@ pub mod surface;
 pub mod surface_v2;
 pub mod trace;
 pub mod trigger;
+mod wildwood_capture_v1;
+mod wildwood_scourge_v1;
 pub mod xmage_observed_inference_v1;
 
 pub const KERNEL_VERSION: &str = "0.0.4-spike";
 
+mod frenzied_goblin_v1;
 pub mod public_cost_features_v1;
 pub(crate) mod public_stack_features_v1;
+pub mod rules_meaning_crystal_barricade_v1;
+pub mod rules_meaning_frenzied_goblin_v1;
+pub mod rules_meaning_searslicer_v1;
+pub mod rules_meaning_self_reflection_v1;
+pub mod rules_meaning_sower_v1;
+pub mod rules_meaning_squad_rallier_v1;
 pub mod rules_meaning_v2;
+pub mod rules_meaning_wildwood_v1;
 /// Engine-derived per-card rules features (no names or registry labels).
 pub mod rules_vector_v1;
 
@@ -506,3 +542,6 @@ pub fn run_experimental_burn_net8_cuda_train_v1() -> Result<(), Box<dyn std::err
 }
 
 pub mod cauldron_grants_v1;
+mod crystal_barricade_v1;
+pub mod rules_meaning_cerberus_v1;
+pub mod rules_meaning_employment_v1;

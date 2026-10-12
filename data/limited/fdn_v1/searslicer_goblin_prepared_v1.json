@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "admission": "unregistered",
+  "source_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "java_file": "Mage.Sets/src/mage/cards/s/SearslicerGoblin.java",
+  "name": "Searslicer Goblin",
+  "mana_cost": "{1}{R}",
+  "mana_value": 2,
+  "colors": ["R"],
+  "types": ["Creature"],
+  "subtypes": ["Goblin", "Warrior"],
+  "supertypes": [],
+  "power": 2,
+  "toughness": 1,
+  "is_land": false,
+  "produces_mana": [],
+  "mechanics": ["Raid"],
+  "rules": "At the beginning of your end step, if you attacked this turn, create a 1/1 red Goblin creature token.",
+  "qualification": "Prepared source and future printed fixtures only. No catalog ID, capability, profile or model admission is assigned."
+}

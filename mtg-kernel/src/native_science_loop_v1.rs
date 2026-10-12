@@ -642,7 +642,13 @@ fn run_native_science_loop_with_opponents_v1(
         | NativeRunCatalogProfileV1::FdnPaladinSkyknightSire
         | NativeRunCatalogProfileV1::FdnRaidEntries
         | NativeRunCatalogProfileV1::FdnCondemnReturn
-        | NativeRunCatalogProfileV1::FdnBloodwitch => {}
+        | NativeRunCatalogProfileV1::FdnBloodwitch
+        | NativeRunCatalogProfileV1::FdnDivineResilience
+        | NativeRunCatalogProfileV1::FdnScavengingOoze
+        | NativeRunCatalogProfileV1::FdnSoulShackledZombie
+        | NativeRunCatalogProfileV1::FdnNextSourceBatch
+        | NativeRunCatalogProfileV1::FdnLaterSourceBatch
+        | NativeRunCatalogProfileV1::FdnAuthorityEmployment => {}
     }
 
     if ladder_opponent.is_some() && population_opponent.is_some() {

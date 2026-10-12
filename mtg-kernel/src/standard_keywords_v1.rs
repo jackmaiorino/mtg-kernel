@@ -88,9 +88,7 @@ pub(crate) fn note_life_loss(
     state: &mut GameState,
     events: &[CommittedEvent],
 ) -> Option<crate::trigger::PendingTrigger> {
-    let Some(current) = state.speed_v1 else {
-        return None;
-    };
+    let current = state.speed_v1?;
     let active = state.active_player;
     let stamp = CreatureDeathTurnV1 {
         turn: state.turn,

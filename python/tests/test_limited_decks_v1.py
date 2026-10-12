@@ -256,6 +256,75 @@ class LimitedDeckTest(unittest.TestCase):
         self.assertEqual(ids.count(394), 4)
         self.assertEqual(self.registry["Vengeful Bloodwitch"].card_id, 394)
 
+    def test_divine_reference_keeps_prior_rows_and_resolves_appended_spell(self) -> None:
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_divine_resilience.dck").read_text(encoding="utf-8"))
+        ids = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(ids), 40)
+        self.assertEqual(ids[:4], [395] * 4)
+        self.assertEqual(self.registry["Divine Resilience"].card_id, 395)
+        self.assertEqual(self.registry["Vengeful Bloodwitch"].card_id, 394)
+
+    def test_ooze_reference_appends_after_divine_without_renumbering(self) -> None:
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_scavenging_ooze.dck").read_text(encoding="utf-8"))
+        ids = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(ids), 40)
+        self.assertEqual(ids[:4], [396] * 4)
+        self.assertEqual(self.registry["Scavenging Ooze"].card_id, 396)
+        self.assertEqual(self.registry["Divine Resilience"].card_id, 395)
+
+    def test_zombie_reference_appends_after_ooze_without_renumbering(self) -> None:
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_soul_shackled_zombie.dck").read_text(encoding="utf-8"))
+        ids = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(ids), 40)
+        self.assertEqual(ids[:4], [397] * 4)
+        self.assertEqual(self.registry["Soul-Shackled Zombie"].card_id, 397)
+        self.assertEqual(self.registry["Scavenging Ooze"].card_id, 396)
+
+    def test_heartfire_reference_appends_after_zombie_without_renumbering(self) -> None:
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_heartfire_immolator.dck").read_text(encoding="utf-8"))
+        ids = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(ids), 40)
+        self.assertEqual(ids[:4], [398] * 4)
+        self.assertEqual(self.registry["Heartfire Immolator"].card_id, 398)
+        self.assertEqual(self.registry["Soul-Shackled Zombie"].card_id, 397)
+
+    def test_next_source_batch_appends_and_internal_copy_is_not_a_booster(self) -> None:
+        for slug, name, ident in [("searslicer_goblin", "Searslicer Goblin", 399),
+                                  ("self_reflection", "Self-Reflection", 400),
+                                  ("squad_rallier", "Squad Rallier", 402),
+                                  ("sower_of_chaos", "Sower of Chaos", 403)]:
+            deck = limited.parse_dck((FIXTURES / f"FDN_reference_{slug}.dck").read_text(encoding="utf-8"))
+            ids = limited.resolve_mainboard(deck, self.registry)
+            self.assertEqual(len(ids), 40)
+            self.assertEqual(ids[:4], [ident] * 4)
+            self.assertEqual(self.registry[name].card_id, ident)
+        self.assertEqual(self.registry["Nameless Creature Copy Token"].card_id, 401)
+        self.assertEqual(limited.card_status("Nameless Creature Copy Token", self.registry), "token")
+        frozen_names = json.loads((FIXTURES / "booster_pool_v1.json").read_text(encoding="utf-8"))["cards"]
+        self.assertNotIn("Nameless Creature Copy Token", [card["name"] for card in frozen_names])
+
+    def test_later_source_batch_and_observer_sentinels_preserve_previous_ids(self) -> None:
+        for slug, name, ident in [("frenzied_goblin", "Frenzied Goblin", 404),
+                                  ("slumbering_cerberus", "Slumbering Cerberus", 405),
+                                  ("wildwood_scourge", "Wildwood Scourge", 406)]:
+            deck = limited.parse_dck((FIXTURES / f"FDN_reference_{slug}.dck").read_text(encoding="utf-8"))
+            self.assertEqual(limited.resolve_mainboard(deck, self.registry)[:4], [ident] * 4)
+            self.assertEqual(self.registry[name].card_id, ident)
+        for name, ident in [("Face-down creature", 407), ("Face-down card", 408)]:
+            self.assertEqual(self.registry[name].card_id, ident)
+            with self.assertRaisesRegex(ValueError, "token"):
+                limited.resolve_mainboard(limited.parse_dck("39 Plains\n1 " + name), self.registry)
+        self.assertEqual(self.registry["Sower of Chaos"].card_id, 403)
+
+    def test_authority_and_employment_candidate_preserves_prior_registry_ids(self) -> None:
+        for slug, name, ident in [("authority_of_the_consuls", "Authority of the Consuls", 409),
+                                  ("involuntary_employment", "Involuntary Employment", 410)]:
+            deck = limited.parse_dck((FIXTURES / f"FDN_reference_{slug}.dck").read_text(encoding="utf-8"))
+            self.assertEqual(limited.resolve_mainboard(deck, self.registry)[:4], [ident] * 4)
+            self.assertEqual(self.registry[name].card_id, ident)
+        self.assertEqual(self.registry["Wildwood Scourge"].card_id, 406)
+        self.assertEqual(self.registry["Face-down card"].card_id, 408)
+
     def test_unknown_partial_no_effect_and_token_are_all_rejected(self) -> None:
         registry = limited.registry_from_json({"version": 2, "cards": [
             {"name": "Supported", "engine_capability": "full"},
@@ -308,7 +377,7 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("FDN_top_*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
-        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 193)
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 206)
         self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
                              for card in report["cards"]), 0)
 

@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "admission": "unregistered",
+  "source_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "java_file": "Mage.Sets/src/mage/cards/c/CrystalBarricade.java",
+  "name": "Crystal Barricade",
+  "mana_cost": "{1}{W}",
+  "mana_value": 2,
+  "colors": [
+    "W"
+  ],
+  "types": [
+    "Artifact",
+    "Creature"
+  ],
+  "subtypes": [
+    "Wall"
+  ],
+  "supertypes": [],
+  "power": 0,
+  "toughness": 4,
+  "is_land": false,
+  "produces_mana": [],
+  "mechanics": [
+    "defender"
+  ],
+  "rules": "Defender. You have hexproof. Prevent all noncombat damage that would be dealt to other creatures you control.",
+  "qualification": "Prepared source only. No catalog ID, capability/profile or model admission. Mixed consumable-prevention replacement ordering and public/meaning successors remain explicit prerequisites."
+}

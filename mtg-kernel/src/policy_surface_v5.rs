@@ -84,6 +84,8 @@ impl PolicyDecisionV5 {
                     | Decision::ChooseLondonMulligan { player, .. }
                     | Decision::ChooseLondonBottom { player, .. }
                     | Decision::ChooseAttackTarget { player, .. }
+                    | Decision::ChooseVariableCastTargets { player, .. }
+                    | Decision::ChooseVariableCastKicker { player, .. }
                     | Decision::ChooseOptionalCost { player, .. }
                     | Decision::ChooseSpellCopyPayment { player, .. }
                     | Decision::ChooseSpellCopyRetarget { player, .. }

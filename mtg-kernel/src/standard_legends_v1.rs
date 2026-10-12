@@ -332,6 +332,23 @@ pub(crate) fn katilda_protected_from(
     has_printed_ability(state, target, "Katilda, Dawnhart Prime")
         && crate::engine::has_effective_subtype(state, source, crate::card_def::Subtype::Werewolf)
 }
+pub(crate) fn katilda_protected_from_historical(
+    state: &GameState,
+    target: ObjectId,
+    werewolf: bool,
+) -> bool {
+    werewolf && has_printed_ability(state, target, "Katilda, Dawnhart Prime")
+}
+pub(crate) fn hexproof_from_historical_color(
+    state: &GameState,
+    target: ObjectId,
+    color_mask: u8,
+    targeter: crate::ids::PlayerId,
+) -> bool {
+    state.objects.get(target).controller != targeter
+        && characteristics(state, target)
+            .is_some_and(|facts| facts.hexproof_color_mask & color_mask != 0)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SkrelvGrantV1 {

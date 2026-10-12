@@ -23,7 +23,9 @@ mod standard_copy;
 use standard_copy::CopyTargetChoice;
 mod standard_discard;
 use standard_discard::DiscardDrawChoice;
+mod scavenging_ooze_v1;
 mod standard_exile;
+pub(crate) mod temporary_control_v1;
 use standard_exile::{ExileBatchChoice, ExilePlayChoice, HideawayChoice};
 
 use crate::card_def::{
@@ -39,6 +41,24 @@ use crate::state::{
     StackSourceContractV4, StackTargetContractV4, Target, UndercityRoomV1, Zone,
 };
 use serde::{Deserialize, Serialize};
+pub(crate) mod frenzied_goblin_resolution_v1;
+pub(crate) use frenzied_goblin_resolution_v1::{
+    acquire_owner as acquire_frenzied_goblin_resolution_owner,
+    begin_owned as begin_owned_frenzied_goblin_resolution,
+    resume_owned as resume_owned_frenzied_goblin_resolution, FrenziedGoblinResolutionOwnerV1,
+};
+pub use frenzied_goblin_resolution_v1::{
+    FrenziedGoblinOutcomeV1, FrenziedGoblinPublicationRecordV1, FrenziedGoblinResolutionReceiptV1,
+    FrenziedGoblinRestrictionV1,
+};
+mod squad_rallier_resolution_v1;
+pub(crate) use squad_rallier_resolution_v1::owned_root as squad_rallier_root_is_exact;
+pub use squad_rallier_resolution_v1::SquadRallierResolutionReceiptV1;
+pub(crate) use squad_rallier_resolution_v1::{
+    acquire_owner as acquire_squad_rallier_resolution_owner,
+    begin_owned as begin_owned_squad_rallier_resolution,
+    resume_owned as resume_owned_squad_rallier_resolution, SquadRallierResolutionOwnerV1,
+};
 pub(crate) mod library_choice_search_v2;
 mod standard_payment_v1;
 pub mod standard_selection_v1;
@@ -1349,7 +1369,7 @@ pub enum EffectOp {
     /// which drives its end-step exile and its leave-the-battlefield exile
     /// replacement.
     ReturnSourceFromGraveyardUnearthed,
-    /// Ward—Discard a card: counters the exact stack incarnation that
+    /// Ward, discard a card: counters the exact stack incarnation that
     /// targeted the bound Ward permanent unless its controller discards a
     /// card. Like the other Standard ward costs it never asks: the payer
     /// pays whenever their hand is not empty, discarding its lowest mana
@@ -1556,6 +1576,39 @@ pub enum EffectOp {
     /// Run Away Together: freeze both current target legalities before returning
     /// all legal original incarnations to their owners' hands in one batch.
     ReturnTwoDifferentControllerCreaturesToOwnersHands,
+    /// Grant separately to each still-legal declared incarnation, using usize slots.
+    GrantKeywordToDeclaredTargetsUntilEndOfTurn {
+        target_spec: crate::card_def::TargetSpec,
+        keyword: Keywords,
+    },
+    /// Resolve Ooze's single graveyard target, preserving its pre-move type;
+    /// a creature card grants one counter to the exact source and one life.
+    ExileGraveyardTargetThenGrowSourceIfCreature,
+    /// Exile up to two targets from one graveyard; if a creature card was
+    /// actually exiled, each opponent loses 2 and the captured controller gains 2.
+    ExileSingleGraveyardTargetsThenDrainTwoV1,
+    /// A token copy of the current copiable values of one legal controlled
+    /// creature. Appended; ordinary copy/flashback authority is inherited.
+    CreateControlledCreatureTargetCopyV1,
+    /// Sower of Chaos: rule-changing restriction on the legal original target.
+    PreventTargetBlockingUntilEndOfTurn {
+        target_index: u8,
+    },
+    BindAuthorityEntryGainLifeV1,
+    AuthorityEntryGainLifeV1 {
+        capture_history_index: u64,
+    },
+    /// Gain control of one legal, exact targeted creature until cleanup.
+    GainControlOfTargetCreatureUntilEndOfTurn {
+        target_index: u8,
+    },
+    WildwoodCounterFromReceiptV1 {
+        capture_history_index: u64,
+        observer_index: u32,
+    },
+    CerberusUntapV1 {
+        capture_history_index: u64,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -1592,6 +1645,8 @@ pub enum LibraryPickFilterV1 {
     ArtifactOrCreatureManaValueAtMost(u16),
     AnySubtype([Subtype; 4]),
     LegendaryCreature,
+    /// Library cards use their front-face power, including accepted CDAs.
+    CreaturePowerAtMost(i32),
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LibraryPickSelectionV1 {
@@ -2963,6 +3018,10 @@ pub fn begin_resumable_resolution(
         return Err("cannot begin an effect while another continuation is pending".to_string());
     }
     validate_resumable_program(op)?;
+    let owned_squad_look =
+        squad_rallier_resolution_v1::preflight_begin(state, op, ctx, &resolving_item)?;
+    let owned_frenzied =
+        frenzied_goblin_resolution_v1::preflight_begin(state, op, ctx, &resolving_item)?;
     state.engine.pending_effect = Some(EffectContinuation {
         resolving_item,
         ctx: ctx.clone(),
@@ -2973,6 +3032,12 @@ pub fn begin_resumable_resolution(
         choice: None,
         answered_choice_guard: None,
     });
+    if owned_squad_look {
+        squad_rallier_resolution_v1::record_begin(state)?;
+    }
+    if owned_frenzied {
+        frenzied_goblin_resolution_v1::record_begin(state)?;
+    }
     drive_resumable(state)
 }
 
@@ -3321,6 +3386,7 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
     if selected.len() == usize::from(*max_targets) {
         complete_resumable_target_selection(continuation)?;
     }
+    squad_rallier_resolution_v1::record_boundary(state)?;
     Ok(())
 }
 
@@ -3387,7 +3453,8 @@ pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), St
             .map_err(|error| error.to_string())?;
         drop(token);
     }
-    complete_resumable_target_selection(state.engine.pending_effect.as_mut().unwrap())
+    complete_resumable_target_selection(state.engine.pending_effect.as_mut().unwrap())?;
+    squad_rallier_resolution_v1::record_boundary(state)
 }
 
 /// Records one generic Boolean answer without executing its consequence.
@@ -3898,6 +3965,7 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
                     }
                 }
             }
+            frenzied_goblin_resolution_v1::record_boundary(state)?;
             Ok(())
         }
         PendingEffectChoice::ChooseOption { .. } | PendingEffectChoice::SelectTargets { .. } => {
@@ -5320,6 +5388,7 @@ pub(crate) fn validated_life_ward_observation_targeter(
 /// targets the Ward source. Keep this coverage restriction at their boundary,
 /// rather than halting the rules engine for successor-aware consumers.
 pub(crate) fn validate_legacy_ward_observation(state: &GameState) -> Result<(), String> {
+    crate::engine::validate_legacy_variable_cast_targets(state)?;
     let pending = state
         .engine
         .pending_effect
@@ -7701,6 +7770,15 @@ fn validate_standard_choose_permanent_origin(
 }
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
+    temporary_control_v1::authority::validate(state)?;
+    crate::self_reflection_v1::validate_live_stack(state)?;
+    crate::authority_of_the_consuls_v1::validate_state(state)?;
+    crate::cerberus_capture_v1::validate_state(state)?;
+    crate::soul_shackled_zombie_v1::validate_state(state)?;
+    crate::source_power_activation_v1::validate_state(state)?;
+    crate::wildwood_capture_v1::validate_state(state)?;
+    squad_rallier_resolution_v1::validate(state)?;
+    frenzied_goblin_resolution_v1::validate(state)?;
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(());
     };
@@ -7757,6 +7835,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
         }
     }
     validate_exact_spell_search_continuation(state, pending)?;
+    crate::frenzied_goblin_v1::validate_continuation(state, pending)?;
     validate_answered_choice_guard(state, pending)?;
     if definition_has_nonterminal_discard(state, pending) {
         let discard = state
@@ -9727,6 +9806,10 @@ pub(crate) fn validate_resolution_play_authorization(
 }
 
 fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
+    frenzied_goblin_resolution_v1::drive(state)
+}
+
+fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, String> {
     let mut continuation = state
         .engine
         .pending_effect
@@ -10257,6 +10340,7 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     if !crate::engine::pay_effect_mana(player, &colored, generic, state) {
                         return Err("accepted optional mana payment became unpayable".to_string());
                     }
+                    frenzied_goblin_resolution_v1::record_payment(state, &continuation.ctx)?;
                     continuation
                         .frames
                         .push(EffectFrame::Program { op: *then, path });
@@ -15163,40 +15247,55 @@ fn library_partition_matching_prefix(
             .ok_or_else(|| "library-partition card definition is missing".to_string())?;
         let selectable = match filter {
             LibraryPartitionFilter::ByType(card_type) => definition.has_type(card_type),
-            LibraryPartitionFilter::Pick(rule) => {
-                rule.selection
-                    .is_none_or(|selection| match selection.filter {
-                        LibraryPickFilterV1::Any => true,
-                        LibraryPickFilterV1::LegendaryCreature => {
-                            definition.has_type(CardType::Creature)
-                                && definition
-                                    .supertypes
-                                    .contains(&crate::card_def::Supertype::Legendary)
+            LibraryPartitionFilter::Pick(rule) => match rule.selection {
+                None => true,
+                Some(selection) => match selection.filter {
+                    LibraryPickFilterV1::Any => true,
+                    LibraryPickFilterV1::CreaturePowerAtMost(max) => {
+                        if object.v4.face_index != 0 || object.v4.face_down_v1.is_some() {
+                            return Err(
+                                "library power selection requires the card's public front face"
+                                    .into(),
+                            );
                         }
-                        LibraryPickFilterV1::NoncreatureNonlandPermanentManaValueAtMost(max) => {
-                            !definition.has_type(CardType::Creature)
-                                && !definition.has_type(CardType::Land)
-                                && [
-                                    CardType::Artifact,
-                                    CardType::Enchantment,
-                                    CardType::Planeswalker,
-                                ]
-                                .iter()
-                                .any(|&t| definition.has_type(t))
-                                && definition.mana_value <= max
+                        if definition.has_type(CardType::Creature) {
+                            if crate::engine::effective_base_power(state, binding.object).is_none()
+                            {
+                                return Err("library creature power has no accepted characteristic authority".into());
+                            }
+                            crate::engine::effective_power(state, binding.object) <= max
+                        } else {
+                            false
                         }
-                        LibraryPickFilterV1::ArtifactOrCreatureManaValueAtMost(max) => {
-                            (definition.has_type(CardType::Artifact)
-                                || definition.has_type(CardType::Creature))
-                                && definition.mana_value <= max
-                        }
-                        LibraryPickFilterV1::AnySubtype(subtypes) => {
-                            subtypes.iter().any(|subtype| {
-                                subtype.is_in_subtype_ids(&object.v4.effective_subtype_ids)
-                            })
-                        }
-                    })
-            }
+                    }
+                    LibraryPickFilterV1::LegendaryCreature => {
+                        definition.has_type(CardType::Creature)
+                            && definition
+                                .supertypes
+                                .contains(&crate::card_def::Supertype::Legendary)
+                    }
+                    LibraryPickFilterV1::NoncreatureNonlandPermanentManaValueAtMost(max) => {
+                        !definition.has_type(CardType::Creature)
+                            && !definition.has_type(CardType::Land)
+                            && [
+                                CardType::Artifact,
+                                CardType::Enchantment,
+                                CardType::Planeswalker,
+                            ]
+                            .iter()
+                            .any(|&t| definition.has_type(t))
+                            && definition.mana_value <= max
+                    }
+                    LibraryPickFilterV1::ArtifactOrCreatureManaValueAtMost(max) => {
+                        (definition.has_type(CardType::Artifact)
+                            || definition.has_type(CardType::Creature))
+                            && definition.mana_value <= max
+                    }
+                    LibraryPickFilterV1::AnySubtype(subtypes) => subtypes
+                        .iter()
+                        .any(|subtype| subtype.is_in_subtype_ids(&object.v4.effective_subtype_ids)),
+                },
+            },
         };
         if selectable {
             matching.push(binding);
@@ -16510,6 +16609,12 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ));
             }
         }
+        EffectOp::ExileGraveyardTargetThenGrowSourceIfCreature => {
+            crate::effect::scavenging_ooze_v1::execute(ctx, state);
+        }
+        EffectOp::ExileSingleGraveyardTargetsThenDrainTwoV1 => {
+            crate::soul_shackled_zombie_v1::execute(state, ctx);
+        }
         EffectOp::ExileGraveyardTargetsDrainPerCreature { max_targets } => {
             let mut creatures = 0;
             for index in 0..usize::from(*max_targets).min(ctx.targets.len()) {
@@ -17381,6 +17486,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             let object = ctx.resolve_object(*object);
             event::propose_and_commit(state, event::ProposedEvent::tap(object));
         }
+        EffectOp::GainControlOfTargetCreatureUntilEndOfTurn { target_index } => {
+            temporary_control_v1::gain_control(ctx, usize::from(*target_index), state);
+        }
         EffectOp::UntapObject { object } => {
             let object = ctx.resolve_object(*object);
             crate::engine::attempt_untap(state, object);
@@ -18227,6 +18335,35 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 );
             }
         }
+        EffectOp::GrantKeywordToDeclaredTargetsUntilEndOfTurn {
+            target_spec,
+            keyword,
+        } => {
+            for index in 0..ctx.targets.len() {
+                if !ctx.target_incarnation_matches(index, state)
+                    || !crate::engine::effect_target_is_legal(
+                        state,
+                        ctx.source,
+                        ctx.controller,
+                        *target_spec,
+                        &ctx.targets,
+                        index,
+                    )
+                {
+                    continue;
+                }
+                let Some(Target::Object(object)) = ctx.targets.get(index).copied() else {
+                    continue;
+                };
+                let live = state.objects.get(object);
+                let binding = EffectObjectBinding {
+                    object,
+                    expected_zone: Zone::Battlefield,
+                    expected_zone_change_count: live.zone_change_count,
+                };
+                install_temporary_boost(state, binding, 0, 0, *keyword);
+            }
+        }
         EffectOp::DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { keyword } => {
             let objects: Vec<_> = state
                 .objects
@@ -18312,6 +18449,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 .collect();
             event::propose_and_commit_batch(state, events);
         }
+        EffectOp::CreateControlledCreatureTargetCopyV1 => {
+            crate::self_reflection_v1::execute(state, ctx);
+        }
         EffectOp::DoubleTargetPowerUntilEndOfTurn { target_index } => {
             let index = usize::from(*target_index);
             if !ctx.target_incarnation_matches(index, state) {
@@ -18375,6 +18515,33 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     },
                 );
             }
+        }
+        EffectOp::WildwoodCounterFromReceiptV1 { .. } => {
+            if crate::wildwood_capture_v1::execute(state, ctx, op).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
+        EffectOp::PreventTargetBlockingUntilEndOfTurn { target_index } => {
+            crate::sower_of_chaos_v1::install(state, ctx, *target_index);
+        }
+        EffectOp::BindAuthorityEntryGainLifeV1 => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        EffectOp::AuthorityEntryGainLifeV1 {
+            capture_history_index,
+        } => {
+            crate::authority_of_the_consuls_v1::resolve(state, ctx, *capture_history_index);
+        }
+        EffectOp::CerberusUntapV1 {
+            capture_history_index,
+        } => {
+            crate::cerberus_capture_v1::resolve(state, ctx, *capture_history_index);
         }
         EffectOp::GrantKeywordTargetUntilEndOfTurn { object, keyword } => {
             let object = ctx.resolve_object(*object);
@@ -21269,3 +21436,10 @@ mod condemn_tests;
 #[cfg(test)]
 #[path = "effect/run_away_together_tests.rs"]
 mod run_away_together_tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod divine_variable_targets_tests;

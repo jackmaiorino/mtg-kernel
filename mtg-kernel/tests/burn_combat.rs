@@ -63,6 +63,9 @@ fn kind_of(d: &Decision) -> Kind {
         Decision::DeclareBlockers { player, .. } => Kind::DeclareBlockers(*player),
         Decision::OrderTriggers { player, .. } => Kind::OrderTriggers(*player),
         Decision::GameOver { .. } => Kind::GameOver,
+        Decision::ChooseVariableCastTargets { .. } | Decision::ChooseVariableCastKicker { .. } => {
+            unreachable!("burn combat's fixed roster has no variable-target spell; its script cannot answer this successor")
+        }
         // This script's card pool (Mountain, Guttersnipe, Lightning Bolt,
         // Masked Meower) has no Plot/Madness/modal card, so none of these
         // are ever reachable here.
@@ -168,6 +171,10 @@ fn run_combat_game(state: &mut GameState) -> (Vec<Kind>, u32) {
         log.push(kind_of(&decision));
 
         match decision {
+            Decision::ChooseVariableCastTargets { .. }
+            | Decision::ChooseVariableCastKicker { .. } => {
+                unreachable!("burn combat's fixed roster has no variable-target spell; its script cannot answer this successor")
+            }
             Decision::GameOver { winner } => {
                 assert_eq!(
                     winner,
