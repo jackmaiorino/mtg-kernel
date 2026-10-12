@@ -179,7 +179,8 @@ pub(crate) fn run(path: &Path) -> Result<(), String> {
         let (observation, actions) = session
             .gameplay_trace_visible_v1(d, true)
             .map_err(|e| format!("{e:?}"))?;
-        let labels = crate::human_bo3_v1::gameplay_trace_labels_v1(&observation, &actions)?;
+        let labels = crate::human_bo3_v1::gameplay_trace_labels_v1(&observation, &actions)
+            .map_err(|e| format!("{e:?}"))?;
         let mut evidence = Value::Null;
         if let Some(record) = decisions.iter().find(|r| r["step"] == d.step) {
             if d.acting_player != PlayerSeatV1::P0
@@ -251,7 +252,9 @@ pub(crate) fn run(path: &Path) -> Result<(), String> {
         };
         write(
             &mut file,
-            json!({"kind":"decision","decision":d,"before":before,"after":after,
+            json!({"kind":"decision","decision":{"episode_id":d.episode_id,"step":d.step,
+                "physical_decision_id":d.physical_decision_id,"substep_index":d.substep_index,
+                "acting_player":d.acting_player},"before":before,"after":after,
             "actions":actions,"labels":labels,"selected":action,"evidence":evidence,"search":search,"terminal":terminal}),
         )?;
     }
