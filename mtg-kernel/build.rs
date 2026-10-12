@@ -6959,6 +6959,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Elegant Parlor" | "Lush Portico" | "Underground Mortuary" => "etb:surveil:1",
         "Humbling Elder" => "etb:target_opponent_creature:pump:-2:0:eot",
         "Meteor Golem" => "etb:target_opponent_nonland_permanent:destroy",
+        "Banishing Light" => "self_etb:target_opponent_nonland_permanent:exile_until_exact_source_incarnation_leaves:no_exile_if_source_already_left:immediate_return_exact_exile_incarnation_under_owner:independent_of_removed_source_abilities",
         "Dauntless Veteran" => "source_declared_attacker:boost_controlled_creatures:1:1:none:end_of_turn",
         "Crackling Cyclops" => "cast_noncreature:pump_bound_source:3:0:end_of_turn",
         "Reclamation Sage" => "etb:target_artifact_or_enchantment:may_destroy",

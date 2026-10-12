@@ -39,6 +39,7 @@ pub mod async_flat_scored_rollout_v2;
 pub mod async_rollout;
 pub mod async_rollout_v2;
 pub mod attack_target_v1;
+pub mod banishing_light_v1;
 pub mod bo3_match;
 pub mod bo3_session;
 pub mod bounded_staleness_async_harness_v1;
@@ -52,6 +53,8 @@ mod creature_stats_lki_v1;
 pub mod legend_rule_v1;
 mod librarian_activation_v1;
 pub mod librarian_public_v1;
+pub mod linked_aura_operation_v1;
+pub mod linked_aura_return_v1;
 pub mod mild_mannered_librarian_v1;
 pub mod native_search_collection_v3;
 pub mod native_search_trajectory_v3;
@@ -563,5 +566,8 @@ pub mod rules_meaning_employment_v1;
 
 pub mod extra_turn_public_v1;
 pub mod raid_entry_public_v1;
+pub mod rules_meaning_banishing_v1;
 pub mod rules_meaning_extra_turn_v1;
 pub mod rules_meaning_raid_entry_v1;
+
+pub mod banishing_public_v1;

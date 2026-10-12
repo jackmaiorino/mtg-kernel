@@ -2811,6 +2811,11 @@ fn journey_to_nowhere_etb_effect() -> EffectOp {
     }
 }
 
+/// Banishing Light has one ETB ability; its return is a duration expiration,
+/// committed immediately when the exact source incarnation leaves.
+const BANISHING_LIGHT_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(journey_to_nowhere_etb_effect)];
+
 fn journey_to_nowhere_ltb_effect() -> EffectOp {
     EffectOp::ReturnObjectsExiledBySource
 }
@@ -3540,6 +3545,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Saiba Cryptomancer" => &SAIBA_CRYPTOMANCER_TRIGGERS,
         "Spellstutter Sprite" => &SPELLSTUTTER_SPRITE_TRIGGERS,
         "Journey to Nowhere" => &JOURNEY_TO_NOWHERE_TRIGGERS,
+        "Banishing Light" => &BANISHING_LIGHT_TRIGGERS,
         "Lembas" => &LEMBAS_TRIGGERS,
         "Weather the Storm" => &WEATHER_THE_STORM_TRIGGERS,
         "Masked Vandal" => &MASKED_VANDAL_TRIGGERS,
@@ -3706,7 +3712,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         }
         "Humbling Elder" => TargetSpec::OpponentControlledCreature,
         "Battlesong Berserker" => TargetSpec::ControlledCreature,
-        "Meteor Golem" => TargetSpec::OpponentNonlandPermanent,
+        "Meteor Golem" | "Banishing Light" => TargetSpec::OpponentNonlandPermanent,
         "Reclamation Sage" => TargetSpec::ArtifactOrEnchantmentPermanent,
         "Saiba Cryptomancer" | "Aloe Alchemist" | "Frenzied Goblin" => TargetSpec::Creature,
         "Spellstutter Sprite" => TargetSpec::SpellManaValueAtMostControlledSubtypes {
@@ -4573,8 +4579,13 @@ pub(crate) fn collect_and_process_with_waiting(
     // checkpoint, rather than at the earlier event-matching snapshot. The
     // targets must be legal for the trigger's own source (protection,
     // "other than this"), the same set its target decision will offer.
-    new_triggers
-        .retain(|pending| crate::engine::pending_trigger_targets_can_complete(pending, state));
+    new_triggers.retain(|pending| {
+        let keep = crate::engine::pending_trigger_targets_can_complete(pending, state);
+        if !keep {
+            crate::banishing_light_v1::discard_without_targets(state, pending);
+        }
+        keep
+    });
 
     order_apnap(new_triggers, state.active_player)
 }
@@ -4638,6 +4649,16 @@ fn triggers_from_events(
                 })
     });
     let mut new_triggers = state.legend_pending_v1.take().unwrap_or_default();
+    match crate::banishing_light_v1::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
     match crate::cerberus_capture_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
@@ -4833,6 +4854,11 @@ fn triggers_from_events(
                 }
             }
             for (ability_index, def) in triggers_for(obj.card_def).iter().enumerate() {
+                if def.condition == TriggerCondition::Etb
+                    && crate::banishing_light_v1::owns_definition(obj.card_def)
+                {
+                    continue;
+                }
                 if def.condition == TriggerCondition::BeginningAnyEndStepIfCreatureDied
                     && crate::card_def::CARD_DEFS[usize::from(obj.card_def)].name
                         == "Slumbering Cerberus"

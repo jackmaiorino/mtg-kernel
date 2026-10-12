@@ -1947,9 +1947,7 @@ fn build_observation_v2(
         acting_player,
         step_index,
         text_mode,
-        false,
-        false,
-        false,
+        (false, false, false, false),
     )
 }
 
@@ -1959,10 +1957,10 @@ fn build_observation_common_v2(
     acting_player: PlayerId,
     step_index: u64,
     text_mode: ObservationTextModeV2,
-    accept_cant_block: bool,
-    accept_temporary_control: bool,
-    accept_extra_turn: bool,
+    capabilities: (bool, bool, bool, bool),
 ) -> Result<ObservationV2> {
+    let (accept_cant_block, accept_temporary_control, accept_extra_turn, accept_banishing) =
+        capabilities;
     crate::extra_turn_v1::validate(state).map_err(RlContractError)?;
     if !accept_extra_turn && state.extra_turn_v1.is_some() {
         return Err(RlContractError(
@@ -2011,7 +2009,7 @@ fn build_observation_common_v2(
         )?,
         object_relations: object_relations_public_v4(state, acting_player)?,
         exile_play_permissions: exile_play_permissions_public_v2(state)?,
-        engine_context: engine_context_v2(state, acting_player)?,
+        engine_context: engine_context_v2(state, acting_player, accept_banishing)?,
         surface_context: surface_context_v2(state, surface, acting_player)?,
     };
     let own_hand = state.players[acting_player.index()]
@@ -2256,9 +2254,7 @@ fn build_policy_observation_parts(
         acting_player,
         step_index,
         text_mode,
-        false,
-        false,
-        false,
+        (false, false, false, false),
     )
 }
 fn build_policy_observation_parts_common(
@@ -2267,19 +2263,22 @@ fn build_policy_observation_parts_common(
     acting_player: PlayerId,
     step_index: u64,
     text_mode: ObservationTextModeV2,
-    accept_cant_block: bool,
-    accept_temporary_control: bool,
-    accept_extra_turn: bool,
+    capabilities: (bool, bool, bool, bool),
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
+    let (accept_cant_block, accept_temporary_control, accept_extra_turn, accept_banishing) =
+        capabilities;
     let base = build_observation_common_v2(
         state,
         surface.harness_surface(),
         acting_player,
         step_index,
         text_mode,
-        accept_cant_block,
-        accept_temporary_control,
-        accept_extra_turn,
+        (
+            accept_cant_block,
+            accept_temporary_control,
+            accept_extra_turn,
+            accept_banishing,
+        ),
     )?;
     let context = policy_surface_context_v5(
         state,
@@ -2455,7 +2454,7 @@ fn build_policy_observation_storage_v6(
         false,
         false,
         false,
-        (false, false, false),
+        (false, false, false, false),
     )
 }
 
@@ -2485,7 +2484,7 @@ pub(crate) fn extra_turn_observation_storage_v1(
         false,
         false,
         false,
-        (false, true, false),
+        (false, true, false, false),
     )
 }
 
@@ -2542,7 +2541,7 @@ pub(crate) fn sower_observation_storage_v1(
         false,
         false,
         false,
-        (false, false, false),
+        (false, false, false, false),
     )
 }
 
@@ -2572,7 +2571,7 @@ pub(crate) fn employment_observation_storage_v1(
         false,
         true,
         false,
-        (false, false, false),
+        (false, false, false, false),
     )
 }
 
@@ -2602,7 +2601,7 @@ pub(crate) fn wildwood_observation_storage_v1(
         true,
         false,
         false,
-        (false, false, false),
+        (false, false, false, false),
     )
 }
 
@@ -2632,7 +2631,7 @@ pub(crate) fn cerberus_observation_storage_v1(
         false,
         false,
         true,
-        (false, false, false),
+        (false, false, false, false),
     )
 }
 
@@ -2662,7 +2661,7 @@ pub(crate) fn authority_observation_storage_v1(
         false,
         false,
         false,
-        (true, false, false),
+        (true, false, false, false),
     )
 }
 
@@ -2692,7 +2691,7 @@ pub(crate) fn frenzied_observation_storage_v1(
         false,
         false,
         false,
-        (false, false, false),
+        (false, false, false, false),
     )
 }
 
@@ -2722,7 +2721,37 @@ pub(crate) fn juggernaut_observation_storage_v1(
         false,
         false,
         false,
-        (false, false, true),
+        (false, false, true, false),
+    )
+}
+
+pub(crate) fn banishing_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::banishing_light_v1::validate_state(state).map_err(RlContractError)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_common(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
+        false,
+        false,
+        false,
+        false,
+        (false, false, false, true),
     )
 }
 
@@ -2733,9 +2762,15 @@ fn build_policy_observation_storage_common(
     accept_wildwood: bool,
     accept_temporary_control: bool,
     accept_cerberus: bool,
-    accepted_statics: (bool, bool, bool),
+    accepted_statics: (bool, bool, bool, bool),
 ) -> Result<PolicyObservationStorageV6> {
-    let (accept_authority, accept_extra_turn, accept_combat_rules) = accepted_statics;
+    let (accept_authority, accept_extra_turn, accept_combat_rules, accept_banishing) =
+        accepted_statics;
+    if !accept_banishing && crate::banishing_light_v1::requires_successor(request.state) {
+        return Err(RlContractError(
+            "Banishing Light requires its selected public/Human successor".into(),
+        ));
+    }
     if !accept_combat_rules && crate::combat_static_rules_v1::requires_successor(request.state) {
         return Err(RlContractError(
             "printed combat statics require their selected successor".into(),
@@ -2777,9 +2812,12 @@ fn build_policy_observation_storage_common(
         acting_player,
         step_index,
         text_mode,
-        accept_cant_block,
-        accept_temporary_control,
-        accept_extra_turn,
+        (
+            accept_cant_block,
+            accept_temporary_control,
+            accept_extra_turn,
+            accept_banishing,
+        ),
     )?;
     if let Some(search) = &extensions.decision_local_library {
         let Some(PendingEffectChoiceSemanticV4::Targets { legal_targets, .. }) = base
@@ -7476,7 +7514,11 @@ fn exile_play_permissions_public_v2(state: &GameState) -> Result<Vec<ExilePlayPe
     Ok(out)
 }
 
-fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<EngineContextV2> {
+fn engine_context_v2(
+    state: &GameState,
+    acting_player: PlayerId,
+    accept_banishing: bool,
+) -> Result<EngineContextV2> {
     let planeswalkers = if state.planeswalkers_v1.is_some() {
         state
             .objects
@@ -7642,7 +7684,23 @@ fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<Engin
             .engine
             .pending_activation
             .as_ref()
-            .map(|p| pending_activation_semantic_v2(state, acting_player, p))
+            .map(|p| {
+                if accept_banishing {
+                    if let Some(owner) = state.engine.linked_aura_operation_v1.pending.as_ref() {
+                        crate::linked_aura_operation_v1::validate(state)
+                            .map_err(RlContractError)?;
+                        if owner.original.engine.pending_activation.as_ref() != Some(p) {
+                            return Err(RlContractError(
+                                "linked Aura changed original activation announcement".into(),
+                            ));
+                        }
+                        // This is the genuine pre-operation announcement,
+                        // not a manufactured live source after sacrifice.
+                        return pending_activation_semantic_v2(&owner.original, acting_player, p);
+                    }
+                }
+                pending_activation_semantic_v2(state, acting_player, p)
+            })
             .transpose()?,
         pending_discard: state
             .engine

@@ -1071,6 +1071,18 @@ pub(super) fn conflicts(
                     })
             }
             AshrootPowerBeforeDepartureV1 { source, .. } => s.raw(source.object),
+            BanishingEntryV1 { .. }
+            | BanishingCollectedV1 { .. }
+            | BanishingNoTargetsV1 { .. }
+            | BanishingPublishedV1 { .. }
+            | BanishingRemovedV1 { .. }
+            | BanishingFinishedV1 { .. }
+            | BanishingLinkInstalledV1 { .. }
+            | BanishingLinkExpiredV1 { .. }
+            | BanishingRecipientCeasedV1 { .. }
+            | BanishingAuraHostsCapturedV1 { .. }
+            | BanishingAuraHostChosenV1 { .. }
+            | BanishingAuraOperationStartedV1 { .. } => true,
             CerberusCaptureV1 { capture } => s.raw(capture.source.source),
             CerberusObserversV1 { sources, .. } => {
                 sources.iter().any(|source| s.raw(source.source))

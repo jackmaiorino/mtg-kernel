@@ -7,6 +7,11 @@ fn conflicts(
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    // This source preparation does not admit retained linked-duration history
+    // to hidden-state sampling, including already-closed rows.
+    if crate::banishing_light_v1::requires_successor(state) {
+        return true;
+    }
     // The source's old definition and power remain authoritative after it returns
     // to a hidden zone. This lane does not admit a historical resampling scheme.
     if state.engine.event_history.iter().any(|event| {

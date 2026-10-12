@@ -290,6 +290,12 @@ pub struct EngineState {
     /// engine; omitted from snapshots and ignored by `Hash` while default.
     #[serde(default, skip_serializing_if = "RuntimeRulesV1::is_default")]
     pub runtime_rules: RuntimeRulesV1,
+    /// Genuine immediate owner operation; absent legacy bytes and hashes are unchanged.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::linked_aura_operation_v1::StateV1::is_empty"
+    )]
+    pub linked_aura_operation_v1: crate::linked_aura_operation_v1::StateV1,
 }
 
 /// Opt-in rules-presentation options that change which choices the engine
@@ -1559,7 +1565,7 @@ pub enum Decision {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Action {
     PlayLand(ObjectId),
     CastSpell(ObjectId),
@@ -5979,14 +5985,17 @@ fn commit_cost_components_from_plan_v1(
 /// half of a `SacrificeLands` sub-cost, once `Decision::ChooseCostTargets`
 /// has already decided *which* permanents (`PendingCast::sacrifice_chosen`).
 fn commit_sacrifice(state: &mut GameState, chosen: &[ObjectId]) {
+    crate::linked_aura_operation_v1::begin_batch(state);
     if chosen.len() > 1 && crate::creature_death_capture_v1::enabled() {
         event::commit_sacrifice_death_group_v1(state, chosen);
+        crate::linked_aura_operation_v1::end_batch(state);
         return;
     }
     for &id in chosen {
         event::log_sacrifice(state, id);
         event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
     }
+    crate::linked_aura_operation_v1::end_batch(state);
 }
 
 /// Zone-changes `id` to its owner's hand -- the actual payment half of a
@@ -9033,6 +9042,10 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    crate::linked_aura_operation_v1::advance(state)
+}
+
+pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision {
     if crate::ashroot_animist_v1::validate_state(state).is_err() {
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
         return Decision::Halted {
@@ -12939,6 +12952,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
     crate::wildwood_capture_v1::publish(state, &finalized);
     effect::frenzied_goblin_resolution_v1::publish(state)?;
     crate::cerberus_capture_v1::publish(state, &finalized)?;
+    crate::banishing_light_v1::publish(state, &finalized)?;
     // Same `priority_passes`/`priority_player` reset as `reset_priority`
     // (117.5: priority passes to the active player once a triggered
     // ability is put on the stack), but deliberately inlined instead of
@@ -13280,6 +13294,14 @@ fn triggered_stack_item_expected_target_spec(
             state,
             inline_effect,
             ability_source_contract,
+        )?;
+    }
+    if crate::banishing_light_v1::owns_definition(source_card_def)
+        && *inline_effect == crate::banishing_light_v1::recipe()
+    {
+        crate::banishing_light_v1::validate_source(
+            state,
+            ability_source_contract.ok_or("Banishing ETB lost source")?,
         )?;
     }
     let definition_target_spec = trigger::target_spec_for_trigger(source_card_def, inline_effect);
@@ -13915,6 +13937,7 @@ pub(crate) fn counter_stack_item_by_id(
     } else {
         None
     };
+    let banishing_owner = crate::banishing_light_v1::acquire(state, &item)?;
     let librarian_counter_owner =
         crate::librarian_activation_v1::acquire_counter_owner(state, &item)?;
     let temporal_owner = crate::extra_turn_v1::acquire_counter(state, &item)?;
@@ -13926,6 +13949,12 @@ pub(crate) fn counter_stack_item_by_id(
         state.stack.remove(position);
     }
     crate::extra_turn_v1::record_countered(state, temporal_owner);
+    crate::banishing_light_v1::record_removed(
+        state,
+        banishing_owner,
+        crate::banishing_light_v1::RemovalV1::Countered,
+    );
+    crate::banishing_light_v1::finish(state, &item);
     effect::frenzied_goblin_resolution_v1::complete_unstarted(
         state,
         &item,
@@ -14231,10 +14260,32 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 return ResolutionProgress::Suspended;
             }
         };
+    let banishing_owner = match crate::banishing_light_v1::acquire(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
+    let banishing_source_present = current
+        .v4
+        .ability_source_contract
+        .is_some_and(|source| crate::banishing_light_v1::source_present(state, source));
     let item = state
         .stack
         .pop()
         .expect("resolve_top_of_stack called with an empty stack");
+    crate::banishing_light_v1::record_removed(
+        state,
+        banishing_owner,
+        crate::banishing_light_v1::RemovalV1::Resolving {
+            source_present: banishing_source_present,
+            target_legal: targets_legal,
+        },
+    );
     // Single-shot signal to the trigger-collection pass that always
     // immediately follows this resolution (`collect_and_queue_triggers`,
     // called right after by every caller of `resolve_top_of_stack`) --
@@ -14296,6 +14347,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
             return ResolutionProgress::Suspended;
         }
+        crate::banishing_light_v1::finish(state, &item);
         crate::source_power_activation_v1::finish(state, &item);
         return ResolutionProgress::Complete;
     }
@@ -14315,6 +14367,21 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
 
     if let Some(effect) = item.inline_effect.clone() {
         let effect_history_start = state.engine.event_history.len();
+        if item
+            .v4
+            .ability_source_contract
+            .is_some_and(|source| crate::banishing_light_v1::owns_definition(source.card_def))
+            && effect == crate::banishing_light_v1::recipe()
+        {
+            // This definition-owned leaf is atomic. The original removal loan
+            // authenticates it while its actual row is absent from the stack.
+            effect::execute(&effect, &ctx, state);
+            if state.engine.halted.is_some() {
+                return ResolutionProgress::Suspended;
+            }
+            crate::banishing_light_v1::finish(state, &item);
+            return ResolutionProgress::Complete;
+        }
         let progress = execute_resolving_program(
             state,
             &item,
@@ -14331,6 +14398,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                     Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
                 return ResolutionProgress::Suspended;
             }
+            crate::banishing_light_v1::finish(state, &item);
             crate::source_power_activation_v1::finish(state, &item);
             crate::librarian_activation_v1::finish(state, &item);
             crate::authority_of_the_consuls_v1::finish(state, &item);
@@ -16895,6 +16963,13 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    crate::linked_aura_operation_v1::step(state, action)
+}
+
+pub(crate) fn step_without_linked_aura_v1(
+    state: &mut GameState,
+    action: Action,
+) -> Result<(), String> {
     // A restored continuation must be valid before any action can mutate
     // state, including when its separately saved discard slot was removed.
     effect::validate_pending_effect_choice(state)?;
