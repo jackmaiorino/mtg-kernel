@@ -823,6 +823,9 @@ pub enum CommittedEvent {
     VampireGourmandResolutionBoundaryV1 {
         receipt: crate::effect::VampireGourmandResolutionReceiptV1,
     },
+    VampireGourmandCostOperationV2 {
+        operation: Box<crate::effect::VampireGourmandCostOperationV2>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

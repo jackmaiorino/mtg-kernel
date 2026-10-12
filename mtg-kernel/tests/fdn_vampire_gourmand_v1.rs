@@ -737,3 +737,168 @@ fn real_answer_resumes_only_with_engine_removed_item_ownership_after_repeated_re
         }
     }
 }
+
+fn refused_cost_state(state: &GameState) {
+    let bytes = serde_json::to_vec(state).unwrap();
+    for _ in 0..2 {
+        let mut bad: GameState = serde_json::from_slice(&bytes).unwrap();
+        assert!(engine::step(&mut bad, Action::Pass).is_err());
+        assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+        assert!(matches!(
+            engine::advance_until_decision(&mut bad),
+            Decision::Halted { .. }
+        ));
+        bad.engine.halted = None;
+        assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+    }
+}
+
+#[test]
+fn manufactured_closed_boundary_cannot_skip_genuine_accepted_cost() {
+    use mtg_kernel::event::CommittedEvent;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source, other) = fixture(actor);
+        selection(&mut state, actor, source);
+        for paid in [false, true] {
+            let mut selected = restore(&state);
+            engine::step(
+                &mut selected,
+                if paid {
+                    Action::ChooseEffectTarget(Target::Object(other))
+                } else {
+                    Action::FinishEffectSelection
+                },
+            )
+            .unwrap();
+            let original_journal = selected.engine.event_history.clone();
+            let mut bad = restore(&selected);
+            let mut closed = bad
+                .engine
+                .event_history
+                .iter()
+                .rev()
+                .find_map(|e| {
+                    if let CommittedEvent::VampireGourmandResolutionBoundaryV1 { receipt } = e {
+                        Some(receipt.clone())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            let id = closed.stack_item_id;
+            closed.previous_history_index = Some(closed.history_index);
+            closed.history_index = bad.engine.event_history.len().try_into().unwrap();
+            closed.ordinal += 1;
+            closed.pending = None;
+            bad.engine.pending_effect = None;
+            bad.stack.retain(|i| i.v4.stack_item_id != id);
+            bad.engine
+                .event_history
+                .push(CommittedEvent::VampireGourmandResolutionBoundaryV1 { receipt: closed });
+            assert_eq!(
+                &bad.engine.event_history[..original_journal.len()],
+                &original_journal
+            );
+            refused_cost_state(&bad);
+            assert_eq!(bad.objects.get(other).zone, Zone::Battlefield);
+        }
+    }
+}
+
+#[test]
+fn actual_paid_and_declined_operations_restore_and_reject_missing_draw_or_replayed_row() {
+    use mtg_kernel::event::CommittedEvent;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for paid in [false, true] {
+            let (mut state, source, other) = fixture(actor);
+            selection(&mut state, actor, source);
+            engine::step(
+                &mut state,
+                if paid {
+                    Action::ChooseEffectTarget(Target::Object(other))
+                } else {
+                    Action::FinishEffectSelection
+                },
+            )
+            .unwrap();
+            let saved = state
+                .engine
+                .pending_effect
+                .as_ref()
+                .unwrap()
+                .resolving_item
+                .clone();
+            let hand_before = state.players[actor.index()].hand.len();
+            let mut replay = restore(&state);
+            finish(&mut state);
+            finish(&mut replay);
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&replay).unwrap()
+            );
+            assert_eq!(
+                state.players[actor.index()].hand.len(),
+                hand_before + usize::from(paid)
+            );
+            assert_eq!(
+                state.objects.get(other).zone,
+                if paid {
+                    Zone::Graveyard
+                } else {
+                    Zone::Battlefield
+                }
+            );
+            assert_eq!(restricted(&state, source), paid);
+            for case in 0..4 {
+                let mut bad = restore(&state);
+                match case {
+                    0 => bad.stack.push(saved.clone()),
+                    1 => bad.engine.event_history.retain(|e| {
+                        !matches!(e, CommittedEvent::VampireGourmandCostOperationV2 { .. })
+                    }),
+                    2 => {
+                        let operation = bad
+                            .engine
+                            .event_history
+                            .iter()
+                            .find(|e| {
+                                matches!(e, CommittedEvent::VampireGourmandCostOperationV2 { .. })
+                            })
+                            .unwrap()
+                            .clone();
+                        bad.engine.event_history.push(operation);
+                    }
+                    _ if paid => {
+                        let CommittedEvent::VampireGourmandCostOperationV2 { operation } = bad
+                            .engine
+                            .event_history
+                            .iter_mut()
+                            .find(|e| {
+                                matches!(e, CommittedEvent::VampireGourmandCostOperationV2 { .. })
+                            })
+                            .unwrap()
+                        else {
+                            unreachable!()
+                        };
+                        operation.result.draw_history_index = None;
+                    }
+                    _ => {
+                        let CommittedEvent::VampireGourmandCostOperationV2 { operation } = bad
+                            .engine
+                            .event_history
+                            .iter_mut()
+                            .find(|e| {
+                                matches!(e, CommittedEvent::VampireGourmandCostOperationV2 { .. })
+                            })
+                            .unwrap()
+                        else {
+                            unreachable!()
+                        };
+                        operation.result.draw_history_index = Some(0);
+                    }
+                }
+                refused_cost_state(&bad);
+            }
+        }
+    }
+}

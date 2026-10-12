@@ -181,8 +181,8 @@ pub(super) fn validate_prompt(
     validate_exact_binding_permutation(original, &all, "object selection candidates")
 }
 
-pub(super) fn apply_selection(
-    state: &mut GameState,
+pub(super) fn validate_answer(
+    state: &GameState,
     pending: &EffectContinuation,
     rule: ObjectSelectionRuleV1,
     original: &[EffectObjectBinding],
@@ -198,9 +198,21 @@ pub(super) fn apply_selection(
         return Err("object selection answer changed".into());
     }
     canonicalize_binding_subset(original, selected)?;
+    Ok(())
+}
+
+pub(super) fn apply_selection(
+    state: &mut GameState,
+    pending: &EffectContinuation,
+    rule: ObjectSelectionRuleV1,
+    original: &[EffectObjectBinding],
+    selected: &[EffectObjectBinding],
+    path: &[u16],
+) -> Result<(), String> {
+    validate_answer(state, pending, rule, original, selected, path)?;
     match rule.action {
         ObjectSelectionActionV1::SacrificeThenDrawAndMakeCapturedSourceUnblockableV1 => {
-            crate::vampire_gourmand_v1::pay_and_apply(state, pending, selected)?;
+            return Err("Gourmand cost requires the private removed-item owner".into());
         }
         ObjectSelectionActionV1::TapFiveThenTransformSource => {
             if !selected.is_empty() {

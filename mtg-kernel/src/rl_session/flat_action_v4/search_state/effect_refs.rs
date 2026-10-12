@@ -941,6 +941,15 @@ pub(super) fn conflicts(
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    if state.engine.event_history.iter().any(|e| {
+        matches!(
+            e,
+            crate::event::CommittedEvent::VampireGourmandResolutionBoundaryV1 { .. }
+                | crate::event::CommittedEvent::VampireGourmandCostOperationV2 { .. }
+        )
+    }) {
+        return true;
+    }
     let s = Scan { state, pool };
     if let Some(crate::engine::PendingDiscard {
         resume: crate::engine::DiscardResume::FinishEffectContinuation { original_hand, .. },
@@ -1099,6 +1108,7 @@ pub(super) fn conflicts(
             | FrenziedGoblinExpiredV1 { .. }
             | FrenziedGoblinCleanupV1 { .. }
             | VampireGourmandResolutionBoundaryV1 { .. }
+            | VampireGourmandCostOperationV2 { .. }
             | DifferentControllerTargetDepartureV1 { .. }
             | LifeLoss { .. }
             | LifeGain { .. }

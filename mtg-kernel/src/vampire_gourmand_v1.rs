@@ -68,11 +68,11 @@ pub(crate) fn cant_be_blocked(state: &GameState, object: ObjectId) -> bool {
         if *object_id == object && *object_zone_change_count == live.zone_change_count)
         })
 }
-pub(crate) fn pay_and_apply(
+pub(crate) fn pay_and_capture(
     state: &mut GameState,
     pending: &EffectContinuation,
     selected: &[EffectObjectBinding],
-) -> Result<(), String> {
+) -> Result<crate::effect::VampireGourmandCostResultV2, String> {
     let source = pending
         .ctx
         .ability_source_contract
@@ -88,8 +88,16 @@ pub(crate) fn pay_and_apply(
     {
         return Err("Gourmand sacrifice consequence has the wrong originating ability".into());
     }
+    let mut result = crate::effect::VampireGourmandCostResultV2 {
+        selected: selected.first().copied(),
+        source_before: Box::new(state.objects.get(source.source).clone()),
+        sacrifice_history_index: None,
+        move_history_index: None,
+        draw_history_index: None,
+        installed: None,
+    };
     let Some(chosen) = selected.first().copied() else {
-        return Ok(());
+        return Ok(result);
     };
     let live = state.objects.get(chosen.object);
     if live.zone != Zone::Battlefield
@@ -105,15 +113,29 @@ pub(crate) fn pay_and_apply(
     {
         return Err("Gourmand sacrifice is not another exact controlled creature".into());
     }
+    let payment_begin = state.engine.event_history.len();
     crate::event::commit_sacrifice_death_group_v1(state, &[chosen.object]);
+    result.sacrifice_history_index = state.engine.event_history[payment_begin..]
+        .iter()
+        .position(
+            |e| matches!(e, CommittedEvent::Sacrificed { object, .. } if *object == chosen.object),
+        )
+        .map(|at| u32::try_from(payment_begin + at))
+        .transpose()
+        .map_err(|_| "Gourmand payment history exceeds u32")?;
+    result.move_history_index = state.engine.event_history[payment_begin..].iter()
+        .position(|e| matches!(e, CommittedEvent::ZoneChange { object, from: Zone::Battlefield, .. } if *object == chosen.object))
+        .map(|at| u32::try_from(payment_begin + at)).transpose()
+        .map_err(|_| "Gourmand payment history exceeds u32")?;
     // A replaced move to exile still pays the sacrifice. A prevented move
     // which leaves the exact battlefield incarnation cannot pay it.
     let after = state.objects.get(chosen.object);
     if after.zone == Zone::Battlefield
         && after.zone_change_count == chosen.expected_zone_change_count
     {
-        return Ok(());
+        return Ok(result);
     }
+    let draw_begin = state.engine.event_history.len();
     crate::effect::execute(
         &EffectOp::DrawCards {
             player: PlayerRef::Controller,
@@ -122,8 +144,18 @@ pub(crate) fn pay_and_apply(
         &pending.ctx,
         state,
     );
+    result.draw_history_index = state.engine.event_history[draw_begin..]
+        .iter()
+        .position(
+            |e| matches!(e, CommittedEvent::Draw { player, .. } if *player == source.controller),
+        )
+        .map(|at| u32::try_from(draw_begin + at))
+        .transpose()
+        .map_err(|_| "Gourmand draw history exceeds u32")?;
+    let previous = state.engine.until_end_of_turn.len();
     install(state, source);
-    Ok(())
+    result.installed = state.engine.until_end_of_turn.get(previous).cloned();
+    Ok(result)
 }
 
 pub(crate) fn install(state: &mut GameState, source: AbilitySourceContractV4) {

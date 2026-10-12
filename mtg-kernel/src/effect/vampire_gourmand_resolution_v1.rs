@@ -17,6 +17,23 @@ pub struct VampireGourmandResolutionReceiptV1 {
     pub pending: Option<Box<EffectContinuation>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct VampireGourmandCostResultV2 {
+    pub selected: Option<EffectObjectBinding>,
+    pub source_before: Box<crate::state::GameObject>,
+    pub sacrifice_history_index: Option<u32>,
+    pub move_history_index: Option<u32>,
+    pub draw_history_index: Option<u32>,
+    pub installed: Option<crate::engine::UntilEndOfTurnEffect>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct VampireGourmandCostOperationV2 {
+    pub history_index: u32,
+    pub boundary_history_index: u32,
+    pub before: Box<EffectContinuation>,
+    pub result: VampireGourmandCostResultV2,
+}
+
 fn owned_root(op: &EffectOp) -> bool {
     *op == crate::vampire_gourmand_v1::program()
 }
@@ -239,6 +256,191 @@ fn history(state: &GameState) -> Result<Vec<&VampireGourmandResolutionReceiptV1>
     Ok(receipts)
 }
 
+fn validate_cost_operations(
+    state: &GameState,
+    receipts: &[&VampireGourmandResolutionReceiptV1],
+) -> Result<(), String> {
+    let mut used = Vec::new();
+    for (index, event) in state.engine.event_history.iter().enumerate() {
+        let CommittedEvent::VampireGourmandCostOperationV2 { operation } = event else {
+            continue;
+        };
+        if operation.history_index as usize != index {
+            return Err("Gourmand actual operation moved in history".into());
+        }
+        let previous = receipts
+            .iter()
+            .find(|r| r.history_index == operation.boundary_history_index)
+            .ok_or("Gourmand operation lost accepted selection boundary")?;
+        if operation.before.as_ref()
+            != previous
+                .pending
+                .as_deref()
+                .ok_or("Gourmand operation follows closed boundary")?
+            || operation.boundary_history_index as usize >= index
+            || operation.before.choice.is_some()
+            || operation.before.answered_choice_guard.is_some()
+        {
+            return Err("Gourmand operation rewrote original accepted selection".into());
+        }
+        let [EffectFrame::ApplySelectedObjectsV1 {
+            rule,
+            original_candidates,
+            selected,
+            path,
+        }] = operation.before.frames.as_slice()
+        else {
+            return Err("Gourmand operation lacks exact selected consequence".into());
+        };
+        if !path.is_empty()
+            || crate::vampire_gourmand_v1::program() != (EffectOp::SelectObjectsV1 { rule: *rule })
+            || selected.len() > 1
+            || selected.first().copied() != operation.result.selected
+            || selected.iter().any(|b| !original_candidates.contains(b))
+        {
+            return Err("Gourmand operation changed cost cardinality or candidate".into());
+        }
+        let source = previous.source;
+        if operation.result.source_before.owner != source.owner {
+            return Err("Gourmand operation changed source owner".into());
+        }
+        let events =
+            &state.engine.event_history[operation.boundary_history_index as usize + 1..index];
+        match operation.result.selected {
+            None => {
+                if operation.result.sacrifice_history_index.is_some()
+                    || operation.result.move_history_index.is_some()
+                    || operation.result.draw_history_index.is_some()
+                    || operation.result.installed.is_some()
+                    || events.iter().any(|e| {
+                        matches!(
+                            e,
+                            CommittedEvent::Sacrificed { .. } | CommittedEvent::Draw { .. }
+                        )
+                    })
+                {
+                    return Err("Gourmand declined cost claimed consequences".into());
+                }
+            }
+            Some(chosen) => {
+                if chosen.expected_zone != Zone::Battlefield
+                    || (chosen.object == source.source
+                        && chosen.expected_zone_change_count == source.zone_change_count)
+                {
+                    return Err("Gourmand cost selected the original source".into());
+                }
+                let sacrifice = operation
+                    .result
+                    .sacrifice_history_index
+                    .ok_or("Gourmand payment lost actual sacrifice")?;
+                if sacrifice <= operation.boundary_history_index || sacrifice as usize >= index
+                    || !matches!(state.engine.event_history.get(sacrifice as usize), Some(CommittedEvent::Sacrificed {object,controller_before,..})
+                        if *object == chosen.object && *controller_before == source.controller)
+                    || events.iter().filter(|e| matches!(e, CommittedEvent::Sacrificed { object,.. } if *object == chosen.object)).count() != 1 {
+                    return Err("Gourmand cost lost exact actual sacrifice occurrence".into());
+                }
+                let moves: Vec<_> = events.iter().enumerate().filter_map(|(at,e)| matches!(e,
+                    CommittedEvent::ZoneChange { object, from:Zone::Battlefield, .. } if *object == chosen.object)
+                    .then_some(operation.boundary_history_index as usize + 1 + at)).collect();
+                if moves.as_slice()
+                    != operation
+                        .result
+                        .move_history_index
+                        .map(|at| vec![at as usize])
+                        .unwrap_or_default()
+                {
+                    return Err("Gourmand cost erased or duplicated actual payment move".into());
+                }
+                if let Some(moved) = operation.result.move_history_index {
+                    let draw = operation
+                        .result
+                        .draw_history_index
+                        .ok_or("Gourmand paid sacrifice skipped mandatory draw")?;
+                    if moved <= sacrifice
+                        || draw <= moved
+                        || draw as usize >= index
+                        || !matches!(state.engine.event_history.get(draw as usize), Some(CommittedEvent::Draw {player,..}) if *player == source.controller)
+                    {
+                        return Err("Gourmand draw lost actual ordered occurrence".into());
+                    }
+                    if events
+                        .iter()
+                        .filter(|e| {
+                            matches!(e,
+                        CommittedEvent::Draw { player, .. } if *player == source.controller)
+                        })
+                        .count()
+                        != 1
+                    {
+                        return Err("Gourmand paid cost duplicated its draw".into());
+                    }
+                    let original_alive = operation.result.source_before.zone == Zone::Battlefield
+                        && operation.result.source_before.zone_change_count
+                            == source.zone_change_count;
+                    if !original_alive {
+                        let declaration = state.engine.event_history[..operation.boundary_history_index as usize]
+                            .iter().rposition(|e| matches!(e,
+                                CommittedEvent::DeclaredAttacker { source: id, source_zone_change_count, controller }
+                                    if *id == source.source && *source_zone_change_count == source.zone_change_count
+                                        && *controller == source.controller))
+                            .ok_or("Gourmand result lost original attack occurrence")?;
+                        if !state.engine.event_history[declaration + 1..index].iter().any(|e| matches!(e,
+                            CommittedEvent::ZoneChange { object, from:Zone::Battlefield, .. } if *object == source.source)) {
+                            return Err("Gourmand absent-source result lacks actual departure".into());
+                        }
+                    }
+                    match operation.result.installed.as_ref() {
+                        Some(
+                            crate::engine::UntilEndOfTurnEffect::ResolvedObjectCantBeBlockedV1 {
+                                object_id,
+                                object_zone_change_count,
+                                duration: crate::engine::EffectDuration::EndOfTurn,
+                                ..
+                            },
+                        ) if original_alive
+                            && *object_id == source.source
+                            && *object_zone_change_count == source.zone_change_count => {}
+                        None if !original_alive => {}
+                        _ => {
+                            return Err(
+                                "Gourmand paid result skipped or redirected exact-source evasion"
+                                    .into(),
+                            )
+                        }
+                    }
+                } else if operation.result.draw_history_index.is_some()
+                    || operation.result.installed.is_some()
+                {
+                    return Err("Gourmand prevented sacrifice claimed paid consequences".into());
+                }
+            }
+        }
+        let next: Vec<_> = receipts
+            .iter()
+            .filter(|r| r.previous_history_index == Some(previous.history_index))
+            .collect();
+        if next.len() != 1 || next[0].pending.is_some() || next[0].history_index as usize <= index {
+            return Err("Gourmand actual operation lacks unique later completion".into());
+        }
+        if used.contains(&previous.stack_item_id) {
+            return Err("Gourmand paid selection executed twice".into());
+        }
+        used.push(previous.stack_item_id);
+    }
+    for receipt in receipts.iter().filter(|r| r.pending.is_none()) {
+        let previous = receipt
+            .previous_history_index
+            .ok_or("Gourmand completion has no prior selection")?;
+        if state.engine.event_history.iter().filter(|e| matches!(e,
+            CommittedEvent::VampireGourmandCostOperationV2 { operation }
+                if operation.boundary_history_index == previous && operation.history_index < receipt.history_index)).count() != 1
+            || state.stack.iter().any(|i| i.v4.stack_item_id == receipt.stack_item_id) {
+            return Err("Gourmand closed boundary lost actual operation or replayed live row".into());
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn validate(state: &GameState) -> Result<(), String> {
     validate_with_owner(state, None)
 }
@@ -250,11 +452,13 @@ fn validate_with_owner(
         matches!(
             event,
             CommittedEvent::VampireGourmandResolutionBoundaryV1 { .. }
+                | CommittedEvent::VampireGourmandCostOperationV2 { .. }
         )
     }) {
         return Err("optional sacrifice receipt cannot enter the public trigger event log".into());
     }
     let receipts = history(state)?;
+    validate_cost_operations(state, &receipts)?;
     // A started live root must retain its independent stack-owned marker.
     // Erasing pending_effect and every progress receipt cannot turn it back
     // into a genuinely unstarted stack item.
@@ -344,56 +548,20 @@ fn validate_with_owner(
 }
 
 pub(super) fn preflight_begin(
-    state: &GameState,
+    _state: &GameState,
     op: &EffectOp,
-    ctx: &ExecCtx,
+    _ctx: &ExecCtx,
     item: &StackItem,
 ) -> Result<bool, String> {
-    if item.kind != crate::state::StackItemKind::TriggeredAbility
-        || !item
+    if item.kind == crate::state::StackItemKind::TriggeredAbility
+        && item
             .v4
             .ability_source_contract
             .is_some_and(|source| source_owns_root(source, op))
     {
-        return Ok(false);
+        return Err("Gourmand initial resolution requires its private pre-pop owner".into());
     }
-    validate(state)?;
-    if !item.v4.vampire_gourmand_started_v1.is_empty() {
-        return Err("started optional sacrifice stack resolution cannot restart".into());
-    }
-    let tentative = EffectContinuation {
-        resolving_item: item.clone(),
-        ctx: ctx.clone(),
-        frames: vec![EffectFrame::Program {
-            op: op.clone(),
-            path: Vec::new(),
-        }],
-        choice: None,
-        answered_choice_guard: None,
-    };
-    if *validated_definition_owned_root_effect(state, &tentative)? != *op
-        || ctx.source != item.source
-        || ctx.controller != item.controller
-        || ctx.stack_item_id != Some(item.v4.stack_item_id)
-        || crate::engine::resolution_cast_v1::resolving_index(state, item.v4.stack_item_id)
-            .and_then(|index| state.stack.get(index))
-            != Some(item)
-    {
-        return Err(
-            "optional sacrifice begin lost its finalized definition-owned stack item".into(),
-        );
-    }
-    crate::engine::validated_stack_item_target_spec(item, state)?;
-    let receipts = history(state)?;
-    if receipts
-        .iter()
-        .any(|r| r.stack_item_id == item.v4.stack_item_id)
-    {
-        return Err("optional sacrifice stack resolution cannot restart".into());
-    }
-    u32::try_from(state.engine.event_history.len())
-        .map_err(|_| "resolution history exceeds u32")?;
-    Ok(true)
+    Ok(false)
 }
 
 pub(super) fn record_begin(state: &mut GameState) -> Result<(), String> {
@@ -477,16 +645,10 @@ pub(super) fn record_boundary(state: &mut GameState) -> Result<(), String> {
 }
 
 pub(super) fn drive(state: &mut GameState) -> Result<ResumableProgress, String> {
-    // The ordinary wrapper is unchanged for all predecessor programs.
-    let owned = tracked(state)?;
-    if owned {
-        validate(state)?;
+    if tracked(state)? {
+        return Err("Gourmand resolution requires its genuine private removed-item owner".into());
     }
-    let result = super::frenzied_goblin_resolution_v1::drive(state);
-    if owned && result.is_ok() {
-        record_boundary(state)?;
-    }
-    result
+    super::frenzied_goblin_resolution_v1::drive(state)
 }
 
 fn drive_owned(
@@ -494,9 +656,57 @@ fn drive_owned(
     owner: &VampireGourmandResolutionOwnerV1,
 ) -> Result<ResumableProgress, String> {
     validate_with_owner(state, Some(owner))?;
-    let result = super::frenzied_goblin_resolution_v1::drive(state);
-    if result.is_ok() {
-        record_boundary(state)?;
-    }
-    Ok(result?)
+    let before = state.engine.pending_effect.as_ref().unwrap().clone();
+    let result = if before.choice.is_some()
+        || matches!(before.frames.as_slice(),
+        [EffectFrame::Program { op, path }] if *op == crate::vampire_gourmand_v1::program() && path.is_empty())
+    {
+        super::frenzied_goblin_resolution_v1::drive(state)?
+    } else {
+        let [EffectFrame::ApplySelectedObjectsV1 {
+            rule,
+            original_candidates,
+            selected,
+            path,
+        }] = before.frames.as_slice()
+        else {
+            return Err("Gourmand consequence lost its exact accepted selection".into());
+        };
+        if before.answered_choice_guard.is_some()
+            || !path.is_empty()
+            || crate::vampire_gourmand_v1::program() != (EffectOp::SelectObjectsV1 { rule: *rule })
+        {
+            return Err("Gourmand consequence changed its definition-owned shape".into());
+        }
+        super::standard_selection_v1::validate_answer(
+            state,
+            &before,
+            *rule,
+            original_candidates,
+            selected,
+            path,
+        )?;
+        let boundary = history(state)?
+            .last()
+            .ok_or("Gourmand cost lost prior boundary")?
+            .history_index;
+        let result = crate::vampire_gourmand_v1::pay_and_capture(state, &before, selected)?;
+        let operation = VampireGourmandCostOperationV2 {
+            history_index: u32::try_from(state.engine.event_history.len())
+                .map_err(|_| "Gourmand operation history exceeds u32")?,
+            boundary_history_index: boundary,
+            before: Box::new(before.clone()),
+            result,
+        };
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::VampireGourmandCostOperationV2 {
+                operation: Box::new(operation),
+            });
+        state.engine.pending_effect = None;
+        ResumableProgress::Complete(Box::new(before.resolving_item))
+    };
+    record_boundary(state)?;
+    Ok(result)
 }
