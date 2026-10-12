@@ -3235,7 +3235,7 @@ fn activate_firebrand(
     engine::step(state, Action::ChooseTarget(target)).unwrap();
     let _ = next(state); // Genuine tap/sacrifice/payment publication.
     assert_eq!(state.objects.get(fire).zone, Zone::Graveyard);
-    let item = state.stack.iter().find(|i| i.source == fire).unwrap();
+    let item = state.stack.iter().rev().find(|i| i.source == fire).unwrap();
     assert!(item.v4.fixed_damage_paid_v3.0.is_some());
     item.v4.stack_item_id
 }
@@ -3570,5 +3570,234 @@ fn real_firebrand_damage_to_player_uses_captured_controller_without_a_crystal_on
             serde_json::to_vec(&state).unwrap(),
             serde_json::to_vec(&replay).unwrap()
         );
+    }
+}
+
+#[test]
+fn real_firebrand_two_paid_incarnations_on_one_arena_object_keep_distinct_original_facts() {
+    use mtg_kernel::event::CommittedEvent as E;
+    for caster in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(caster);
+        let wall = source(&mut state, caster);
+        control_primitive(&mut state, wall, caster.opponent());
+        let fire = cast_firebrand(&mut state, caster);
+        let target = put(
+            &mut state,
+            caster.opponent(),
+            "Shivan Dragon",
+            Zone::Battlefield,
+        );
+        shield(&mut state, wall, target, 1);
+        state.objects.get_mut(fire).v4.lifelink_keyword_counters = 1;
+        let original = activate_firebrand(&mut state, caster, fire, Target::Object(target));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(fire, Zone::Battlefield),
+        );
+        control_primitive(&mut state, fire, caster.opponent());
+        assert!(!engine::has_effective_keyword(
+            &state,
+            fire,
+            Keywords::LIFELINK
+        ));
+        // The later incarnation genuinely pays its own Tap/Sacrifice cost above
+        // the first activation, controlled by the other player.
+        let newer = activate_firebrand(&mut state, caster.opponent(), fire, Target::Player(caster));
+        assert_ne!(original, newer);
+        let payments = state
+            .engine
+            .event_history
+            .iter()
+            .filter_map(|e| match e {
+                E::FixedDamagePaidV3 { payment } => Some(payment.as_ref()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(payments.len(), 2);
+        assert_ne!(payments[0].departure, payments[1].departure);
+        assert_eq!(payments[0].item.controller, caster);
+        assert_eq!(payments[1].item.controller, caster.opponent());
+        let life = [state.players[0].life, state.players[1].life];
+        mixed_menu(&mut state); // Resolves newer ordinary player damage first.
+        assert_eq!(state.players[caster.index()].life, life[caster.index()] - 1);
+        assert_eq!(
+            state.players[caster.opponent().index()].life,
+            life[caster.opponent().index()]
+        );
+        assert!(state
+            .engine
+            .event_history
+            .iter()
+            .any(|e| matches!(e,E::FixedDamageRemovedV3{removal}
+            if removal.item.v4.stack_item_id==newer)));
+        assert_eq!(
+            state
+                .engine
+                .pending_effect
+                .as_ref()
+                .unwrap()
+                .resolving_item
+                .v4
+                .stack_item_id,
+            original
+        );
+        let public = mtg_kernel::crystal_public_v1::observe_v1(
+            &state,
+            &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+            caster.opponent(),
+            0,
+            0,
+            0,
+            1,
+        )
+        .unwrap();
+        let facts = public
+            .prevention_menu
+            .unwrap()
+            .fixed_source_history
+            .unwrap();
+        assert_eq!(facts.captured_controller, caster.into());
+        assert!(facts.lifelink);
+        let mut replay = restore(&state);
+        for current in [&mut state, &mut replay] {
+            let choice = option(current, false);
+            engine::step(current, Action::ChooseEffectOption(choice)).unwrap();
+            finish(current);
+            assert_eq!(
+                current
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter(|e| matches!(e, E::FixedDamageRemovedV3 { .. }))
+                    .count(),
+                2
+            );
+            assert_eq!(current.objects.get(target).damage, 0);
+            assert_eq!(
+                current.players[caster.index()].life,
+                life[caster.index()] - 1
+            );
+            assert_eq!(
+                current.players[caster.opponent().index()].life,
+                life[caster.opponent().index()]
+            );
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+    }
+}
+#[test]
+fn real_heartfire_shield_then_crystal_resumes_twice_and_retains_exact_completion_after_restore() {
+    use mtg_kernel::event::CommittedEvent as E;
+    for caster in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(caster);
+        let wall = source(&mut state, caster);
+        control_primitive(&mut state, wall, caster.opponent());
+        let fire = put(&mut state, caster, "Heartfire Immolator", Zone::Hand);
+        state.players[caster.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+        state.players[caster.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+        priority(&mut state, caster);
+        engine::step(&mut state, Action::CastSpell(fire)).unwrap();
+        finish(&mut state);
+        let target = put(
+            &mut state,
+            caster.opponent(),
+            "Shivan Dragon",
+            Zone::Battlefield,
+        );
+        shield(&mut state, wall, target, 1);
+        state.players[caster.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+        priority(&mut state, caster);
+        engine::step(&mut state, Action::ActivateAbility(fire, 0)).unwrap();
+        assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+        let _ = next(&mut state);
+        let id = state
+            .stack
+            .iter()
+            .find(|i| i.source == fire)
+            .unwrap()
+            .v4
+            .stack_item_id;
+        mixed_menu(&mut state);
+        let mut before_answer = restore(&state);
+        for current in [&mut state, &mut before_answer] {
+            let selected = option(current, true);
+            engine::step(current, Action::ChooseEffectOption(selected)).unwrap();
+            assert!(
+                matches!(next(current),Decision::ChooseEffectOption{player,..} if player==caster.opponent())
+            );
+            let mtg_kernel::effect::PendingEffectChoice::ChooseOption {
+                purpose:
+                    mtg_kernel::effect::EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                ..
+            } = current
+                .engine
+                .pending_effect
+                .as_ref()
+                .unwrap()
+                .choice
+                .as_ref()
+                .unwrap()
+            else {
+                panic!("remaining actual prevention");
+            };
+            assert_eq!(choice.original_amount, 2);
+            assert_eq!(choice.remaining_amount, 1);
+            assert_eq!(choice.historical_source, Some(id));
+            assert_eq!(current.objects.get(target).damage, 0);
+            assert!(!current
+                .engine
+                .event_history
+                .iter()
+                .any(|e| matches!(e, E::SourcePowerActivationFinishedV1 { .. })));
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&before_answer).unwrap()
+        );
+        let mut answered_restore = restore(&state);
+        for current in [&mut state, &mut answered_restore] {
+            let selected = option(current, false);
+            engine::step(current, Action::ChooseEffectOption(selected)).unwrap();
+            finish(current);
+            assert_eq!(
+                current
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter(|e| matches!(e,
+                E::SourcePowerActivationFinishedV1{stack_item_id} if *stack_item_id==id))
+                    .count(),
+                1
+            );
+            assert_eq!(current.objects.get(target).damage, 0);
+            assert!(current.engine.active_replacements.is_empty());
+            assert!(!current.stack.iter().any(|i| i.v4.stack_item_id == id));
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&answered_restore).unwrap()
+        );
+        for duplicate in [false, true] {
+            let mut bad = restore(&state);
+            if duplicate {
+                let receipt=bad.engine.event_history.iter().find(|e|matches!(e,E::SourcePowerActivationFinishedV1{stack_item_id} if *stack_item_id==id)).unwrap().clone();
+                bad.engine.event_history.push(receipt);
+            } else {
+                bad.engine.event_history.retain(|e|!matches!(e,E::SourcePowerActivationFinishedV1{stack_item_id} if *stack_item_id==id));
+            }
+            let bytes = serde_json::to_vec(&bad).unwrap();
+            assert!(engine::step(&mut bad, Action::Pass).is_err());
+            assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+            assert!(matches!(
+                engine::advance_until_decision(&mut bad),
+                Decision::Halted { .. }
+            ));
+            bad.engine.halted = None;
+            assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+        }
     }
 }
