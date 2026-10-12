@@ -42,6 +42,7 @@ pub(crate) mod banishing_v26;
 mod bloom_tender_v24;
 pub mod census_future_v2;
 pub(crate) mod cerberus_v19;
+pub(crate) mod crystal_v22;
 pub(crate) mod employment_v18;
 pub mod extra_turn_v23;
 pub(crate) mod frenzied_v15;
@@ -4455,6 +4456,7 @@ enum FlatActionContractModeV1 {
     StromkirkV28,
     GourmandV29,
     GarrukV30,
+    CrystalV22,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -7517,6 +7519,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:employment_v18:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::CrystalV22 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = crystal_v22::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:crystal_v22:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));

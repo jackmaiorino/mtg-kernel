@@ -131,6 +131,7 @@ fn selected_definition_uses_program(item: &StackItem) -> bool {
 
 pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), String> {
     crate::gorehorn_damage_v1::validate_item(state, item)?;
+    crate::fixed_source_damage_v3::validate_item(state, item)?;
     if !is_program(item.inline_effect.as_ref()) {
         if selected_definition_uses_program(item)
             || state.engine.event_history.iter().any(|event| {
@@ -178,7 +179,9 @@ pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), S
     let (saved, power, toughness, captured_damage_source) = receipts
         .next()
         .ok_or("source-power activation lost committed payment")?;
-    if receipts.next().is_some() || saved.as_ref() != item {
+    if receipts.next().is_some()
+        || !crate::effect::crystal_prevention_v1::source_power_payment_matches(state, item, saved)
+    {
         return Err("source-power activation differs from its unique committed payment".into());
     }
     if state
@@ -256,6 +259,7 @@ pub(crate) fn finish(state: &mut GameState, item: &StackItem) {
 
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     crate::gorehorn_damage_v1::validate_state(state)?;
+    crate::fixed_source_damage_v3::validate_state(state)?;
     // The operation owns a mandatory payment receipt. Receipt presence cannot
     // decide whether its live activation is validated: deletion must refuse
     // before any action mutates priority, mana, targets or continuation state.
@@ -327,6 +331,9 @@ pub(crate) fn damage_source(
 ) -> Result<HistoricalDamageSourceV1, String> {
     if crate::gorehorn_damage_v1::has_publication(state, id) {
         return crate::gorehorn_damage_v1::damage_source(state, id, source);
+    }
+    if crate::fixed_source_damage_v3::has_payment(state, id) {
+        return crate::fixed_source_damage_v3::damage_source(state, source, id);
     }
     let mut receipts =
         state

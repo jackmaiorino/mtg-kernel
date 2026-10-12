@@ -644,6 +644,7 @@ impl Scan<'_> {
                 then,
                 ..
             } => self.bs(original_graveyard) || self.bs(candidates) || self.op(then),
+            CrystalDiscardAfterDamageV2 { .. } => true,
             SelectObjectsV1 {
                 original_candidates,
                 ..
@@ -732,6 +733,7 @@ impl Scan<'_> {
                             ..
                         } => self.fs(expected_remaining_frames),
                         Generic => false,
+                        CrystalPreventionV1 { .. } => true,
                         CreatureChoiceV1 {
                             kind,
                             expected_remaining_frames,
@@ -979,8 +981,32 @@ pub(super) fn conflicts(
                 | crate::event::CommittedEvent::GorehornPreparedV1 { .. }
                 | crate::event::CommittedEvent::GorehornDamageOperationV1 { .. }
                 | crate::event::CommittedEvent::GorehornOperationV1 { .. }
+                | crate::event::CommittedEvent::GorehornCrystalBeginV1 { .. }
+                | crate::event::CommittedEvent::GorehornCrystalCompletionV1 { .. }
         )
     }) {
+        return true;
+    }
+    // Crystal execution captures whole historical item/context authority.
+    // Its private-history resampling semantics have not been qualified.
+    if state.engine.event_history.iter().any(|event| {
+        matches!(
+            event,
+            crate::event::CommittedEvent::CrystalPreventionBoundaryV1 { .. }
+                | crate::event::CommittedEvent::CrystalShieldOperationV1 { .. }
+                | crate::event::CommittedEvent::CrystalExecutionV1 { .. }
+                | crate::event::CommittedEvent::CrystalDamageOperationV3 { .. }
+                | crate::event::CommittedEvent::CrystalBatchPreparedV3 { .. }
+                | crate::event::CommittedEvent::CrystalProgramChoiceV3 { .. }
+                | crate::event::CommittedEvent::FixedDamageDepartureV3 { .. }
+                | crate::event::CommittedEvent::FixedDamagePaidV3 { .. }
+                | crate::event::CommittedEvent::FixedDamageRemovedV3 { .. }
+        )
+    }) || state
+        .stack
+        .iter()
+        .any(|item| item.v4.crystal_prevention_started_v1.0.is_some())
+    {
         return true;
     }
     let s = Scan { state, pool };
@@ -1053,6 +1079,17 @@ pub(super) fn conflicts(
             | StromkirkCounterRemovedV2 { .. }
             | StromkirkOperationV2 { .. }
             | StromkirkCompletedV2 { .. } => true,
+            // These are history-only owning records. Reject malformed log
+            // transport too, rather than implying sampler admission.
+            CrystalPreventionBoundaryV1 { .. }
+            | CrystalShieldOperationV1 { .. }
+            | CrystalExecutionV1 { .. }
+            | CrystalDamageOperationV3 { .. }
+            | CrystalBatchPreparedV3 { .. }
+            | CrystalProgramChoiceV3 { .. }
+            | FixedDamageDepartureV3 { .. }
+            | FixedDamagePaidV3 { .. }
+            | FixedDamageRemovedV3 { .. } => true,
             Damage { source, target, .. } => {
                 s.raw(*source) || matches!(target,crate::state::Target::Object(id) if s.raw(*id))
             }
@@ -1178,6 +1215,8 @@ pub(super) fn conflicts(
             | GorehornPreparedV1 { .. }
             | GorehornDamageOperationV1 { .. }
             | GorehornOperationV1 { .. }
+            | crate::event::CommittedEvent::GorehornCrystalBeginV1 { .. }
+            | crate::event::CommittedEvent::GorehornCrystalCompletionV1 { .. }
             | SquadRallierResolutionBoundaryV1 { .. }
             | SowerRestrictionInstalledV1 { .. }
             | SowerRestrictionExpiredV1 { .. }

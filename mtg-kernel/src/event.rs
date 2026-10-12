@@ -1072,7 +1072,42 @@ pub enum CommittedEvent {
         removal_history_index: u64,
         draw_history_index: Option<u64>,
     },
+    CrystalPreventionBoundaryV1 {
+        boundary: Box<crate::effect::crystal_prevention_v1::BoundaryV1>,
+    },
+    CrystalShieldOperationV1 {
+        operation: crate::effect::crystal_prevention_v1::ShieldOperationV1,
+    },
+    CrystalExecutionV1 {
+        execution: Box<crate::effect::crystal_prevention_v1::ExecutionV1>,
+    },
+    CrystalDamageOperationV3 {
+        operation: Box<crate::effect::crystal_prevention_v1::DamageOperationV3>,
+    },
+    CrystalBatchPreparedV3 {
+        capture: Box<crate::effect::crystal_prevention_v1::BatchCaptureV2>,
+    },
+    CrystalProgramChoiceV3 {
+        operation: Box<crate::effect::crystal_prevention_v1::ProgramChoiceOperationV3>,
+    },
+    FixedDamageDepartureV3 {
+        departure: Box<crate::fixed_source_damage_v3::DepartureV3>,
+    },
+    FixedDamagePaidV3 {
+        payment: Box<crate::fixed_source_damage_v3::PaidV3>,
+    },
+    FixedDamageRemovedV3 {
+        removal: Box<crate::fixed_source_damage_v3::RemovedV3>,
+    },
+    GorehornCrystalBeginV1 {
+        begin: Box<crate::gorehorn_damage_v1::crystal::BeginV1>,
+    },
+    GorehornCrystalCompletionV1 {
+        completion: Box<crate::gorehorn_damage_v1::crystal::CompletionV1>,
+    },
 }
+
+pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct HistoricalDamageSourceV1 {
@@ -1220,6 +1255,13 @@ pub fn apply_replacements(
         crate::standard_cards_v1::replace_damage(state, damage);
     }
     if let ProposedEvent::Damage(damage) = &proposed {
+        if crate::effect::crystal_prevention_v1::needs_choice(state, damage) {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                damage.source,
+            ));
+            return None;
+        }
         if !damage_cannot_be_prevented && crate::crystal_barricade_v1::prevents(state, damage) {
             return None;
         }
@@ -1283,7 +1325,7 @@ pub fn apply_replacements(
     }
 }
 
-fn replacement_applies(
+pub(crate) fn replacement_applies(
     repl: &ActiveReplacement,
     proposed: &ProposedEvent,
     state: &GameState,
@@ -1329,7 +1371,7 @@ fn replacement_applies(
 /// Applies `repl` to `proposed`, mutating the replacement's own bookkeeping
 /// in `state.engine.active_replacements` (e.g. decrementing/expiring a
 /// prevention shield's remaining count) as a side effect.
-fn replacement_apply(
+pub(crate) fn replacement_apply(
     repl: &ActiveReplacement,
     proposed: ProposedEvent,
     state: &mut GameState,
@@ -1339,6 +1381,15 @@ fn replacement_apply(
             ReplacementEffectKind::PreventNextDamage { remaining, .. },
             ProposedEvent::Damage(mut d),
         ) => {
+            if crate::effect::crystal_prevention_v1::shield_operation(state, repl, d.amount)
+                .is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    d.source,
+                ));
+                return None;
+            }
             let prevented = (*remaining).min(d.amount);
             d.amount -= prevented;
 
@@ -1488,6 +1539,159 @@ pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
 }
 
 pub(crate) fn propose_without_linked_aura_v1(state: &mut GameState, event: ProposedEvent) {
+    if crate::effect::crystal_prevention_v1::validate(state).is_err() {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            crate::ids::ObjectId(0),
+        ));
+        return;
+    }
+    propose_and_commit_inner(state, event);
+}
+/// Only the scoped pre-pop Crystal interpreter calls this while holding the
+/// privately constructed removed-item loan. Generic public begin/resume refuse it.
+pub(crate) fn propose_and_commit_crystal_owned(
+    state: &mut GameState,
+    damage: DamageProposed,
+    ctx: &crate::effect::ExecCtx,
+    op: &crate::effect::EffectOp,
+    path: &[u16],
+    owner: &crate::effect::crystal_prevention_v1::OwnerV1,
+) -> Result<u32, String> {
+    if !owner.permits_damage(state, &ProposedEvent::Damage(damage.clone())) {
+        return Err("Crystal damage lost private removed-item authority".into());
+    }
+    prepare_commit_crystal_damage(state, damage, ctx, op, path)
+}
+pub(crate) fn propose_and_commit_crystal_power_owned(
+    state: &mut GameState,
+    damage: DamageProposed,
+    capture: &crate::effect::crystal_prevention_v1::CreaturePowerCaptureV2,
+    owner: &crate::effect::crystal_prevention_v1::OwnerV1,
+) -> Result<u32, String> {
+    if !owner.permits_creature_power(state, capture, &ProposedEvent::Damage(damage.clone())) {
+        return Err("Crystal chosen-power damage lost private removed-item authority".into());
+    }
+    prepare_commit_crystal_damage(state, damage, &capture.ctx, &capture.op, &capture.path)
+}
+/// Separate actual interpreter operation. Completion alone cannot invent its
+/// replacement preparation or omit its accepted positive/fully-prevented result.
+fn prepare_commit_crystal_damage(
+    state: &mut GameState,
+    damage: DamageProposed,
+    ctx: &crate::effect::ExecCtx,
+    op: &crate::effect::EffectOp,
+    path: &[u16],
+) -> Result<u32, String> {
+    use crate::effect::crystal_prevention_v1::{BatchDamageV2, DamageOperationV3};
+    if crate::effect::temporary_control_v1::authority::validate(state).is_err()
+        || damage.amount <= 0
+        || damage.is_combat
+    {
+        return Err("Crystal damage operation has invalid input or foreign authority".into());
+    }
+    let preventers = crate::effect::crystal_prevention_v1::applicable(state, &damage);
+    let original = BatchDamageV2 {
+        source: damage.source,
+        target: damage.target,
+        amount: damage.amount,
+        touched: damage.touched_by.clone(),
+    };
+    let historical_source = damage.historical_source;
+    let prepared = apply_replacements(state, ProposedEvent::Damage(damage));
+    if state.engine.halted.is_some() {
+        return Err("Crystal damage preparation halted".into());
+    }
+    let output = match prepared {
+        Some(ProposedEvent::Damage(ref d)) => Some(BatchDamageV2 {
+            source: d.source,
+            target: d.target,
+            amount: d.amount,
+            touched: d.touched_by.clone(),
+        }),
+        None => None,
+        _ => return Err("Crystal damage operation changed proposal class".into()),
+    };
+    let mut damage_history = None;
+    if let Some(final_event) = prepared {
+        let gain = lifelink_gain_for(state, &final_event);
+        let at = u32::try_from(state.engine.event_history.len())
+            .map_err(|_| "Crystal damage history exceeds u32")?;
+        commit(state, final_event);
+        if !matches!(
+            state.engine.event_history.get(at as usize),
+            Some(CommittedEvent::Damage { .. })
+        ) {
+            return Err("Crystal positive damage lost actual committed occurrence".into());
+        }
+        damage_history = Some(at);
+        if let Some((player, amount)) = gain {
+            commit(state, ProposedEvent::life_gain(player, amount));
+        }
+    }
+    let at = u32::try_from(state.engine.event_history.len())
+        .map_err(|_| "Crystal operation history exceeds u32")?;
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::CrystalDamageOperationV3 {
+            operation: Box::new(DamageOperationV3 {
+                history_index: at,
+                ctx: ctx.clone(),
+                op: op.clone(),
+                path: path.to_vec(),
+                input: original,
+                historical_source,
+                preventers,
+                output,
+                damage_history,
+            }),
+        });
+    Ok(at)
+}
+pub(crate) fn propose_and_commit_crystal_discard_draw_owned(
+    state: &mut GameState,
+    capture: &crate::effect::crystal_prevention_v1::DiscardCaptureV2,
+    selected: crate::effect::EffectObjectBinding,
+    owner: &crate::effect::crystal_prevention_v1::OwnerV1,
+) {
+    if !owner.permits_discard_draw(state, capture, selected) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            capture.ctx.source,
+        ));
+        return;
+    }
+    propose_and_commit_inner(state, ProposedEvent::draw(capture.ctx.controller));
+}
+pub(crate) fn propose_and_commit_crystal_life_gain_owned(
+    state: &mut GameState,
+    player: crate::effect::PlayerRef,
+    amount: i32,
+    owner: &crate::effect::crystal_prevention_v1::OwnerV1,
+) {
+    let beneficiary = match player {
+        crate::effect::PlayerRef::Controller => owner.controller(),
+        crate::effect::PlayerRef::Opponent => owner.controller().opponent(),
+        _ => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                crate::ids::ObjectId(0),
+            ));
+            return;
+        }
+    };
+    let proposed = ProposedEvent::life_gain(beneficiary, amount);
+    if !owner.permits_life_gain(state, &proposed, player, amount) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            crate::ids::ObjectId(0),
+        ));
+        return;
+    }
+    propose_and_commit_inner(state, proposed);
+}
+fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
     if crate::effect::temporary_control_v1::authority::validate(state).is_err() {
         return;
     }
@@ -2187,11 +2391,57 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
 ) {
     let mut garruk_batch = crate::garruks_uprising_v1::EntryBatchV1::capture();
     let raid_history_start = state.engine.event_history.len();
-    let mut authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
+    if crate::effect::crystal_prevention_v1::validate(state).is_err() {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            crate::ids::ObjectId(0),
+        ));
+        return;
+    }
+    if let Some(source) = events.iter().find_map(|e| match e {
+        ProposedEvent::Damage(d)
+            if crate::effect::crystal_prevention_v1::needs_choice(state, d) =>
+        {
+            Some(d.source)
+        }
+        _ => None,
+    }) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        ));
+        return;
+    }
+    let authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
     let survivors: Vec<ProposedEvent> = events
         .into_iter()
         .filter_map(|e| apply_replacements(state, e))
         .collect();
+    commit_batch_survivors(state, survivors, authority_batch);
+}
+/// The private owning driver has already finished every replacement choice.
+/// It cannot submit a foreign root, owner, source or recipient packet.
+pub(crate) fn commit_crystal_prepared_batch(
+    state: &mut GameState,
+    survivors: Vec<ProposedEvent>,
+    capture: &crate::effect::crystal_prevention_v1::BatchCaptureV2,
+    owner: &crate::effect::crystal_prevention_v1::OwnerV1,
+) {
+    if !owner.permits_batch(state, capture, &survivors) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            capture.ctx.source,
+        ));
+        return;
+    }
+    let authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
+    commit_batch_survivors(state, survivors, authority_batch);
+}
+fn commit_batch_survivors(
+    state: &mut GameState,
+    survivors: Vec<ProposedEvent>,
+    mut authority_batch: Option<crate::authority_of_the_consuls_v1::EntryBatchV1>,
+) {
     #[cfg(feature = "standard-magezero-fixtures")]
     for event in &survivors {
         if let ProposedEvent::ZoneChange(change) = event {

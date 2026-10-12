@@ -343,7 +343,7 @@ fn published_matches_base(state: &GameState, item: &StackItem, p: &PublishedV1) 
         }
         normalized.v4.squad_rallier_started_v1 = p.item.v4.squad_rallier_started_v1;
     }
-    normalized == *p.item
+    crate::gorehorn_damage_v1::publication_matches(state, &normalized, &p.item)
 }
 
 fn published_matches(state: &GameState, item: &StackItem, p: &PublishedV1) -> bool {
@@ -615,6 +615,10 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
       if o.item.v4.stack_item_id==p.item.v4.stack_item_id)
                         })
                         .count()
+                        + crate::gorehorn_damage_v1::crystal::completed_count(
+                            state,
+                            p.item.v4.stack_item_id,
+                        )
                         == 1
                 } else {
                     let receipts = state

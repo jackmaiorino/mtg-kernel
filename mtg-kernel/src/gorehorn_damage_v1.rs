@@ -356,6 +356,7 @@ fn publication(state: &GameState, id: StackItemId) -> Result<&PublicationV1, Str
         || p.item.v4.target_contracts.len() != 1
         || p.item.v4.target_contracts.first().map(|c| c.target()) != p.item.targets.first().copied()
         || p.item.v4.granted_by.is_some()
+        || !p.item.v4.crystal_prevention_started_v1.is_empty()
     {
         return Err("Gorehorn original published row changed".into());
     }
@@ -366,16 +367,28 @@ fn publication(state: &GameState, id: StackItemId) -> Result<&PublicationV1, Str
     )?;
     Ok(p)
 }
-pub(crate) fn publication_matches(_state: &GameState, item: &StackItem, saved: &StackItem) -> bool {
-    item == saved
+#[path = "gorehorn_crystal_v1.rs"]
+pub(crate) mod crystal;
+pub(crate) fn publication_matches(state: &GameState, item: &StackItem, saved: &StackItem) -> bool {
+    if state.engine.event_history.iter().any(|e| matches!(e,
+        CommittedEvent::CrystalPreventionBoundaryV1 { boundary } if boundary.item.v4.stack_item_id == item.v4.stack_item_id))
+        && item.v4.crystal_prevention_started_v1.is_empty() {
+        return false;
+    }
+    crate::effect::crystal_prevention_v1::source_power_payment_matches(state, item, saved)
 }
 pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), String> {
     if !tracked(state, item) {
         return Ok(());
     }
     let p = publication(state, item.v4.stack_item_id)?;
+    if !item.v4.crystal_prevention_started_v1.is_empty()
+        && !crystal::has_begin(state, item.v4.stack_item_id)
+    {
+        return Err("Gorehorn marked Crystal owner lost actual begin".into());
+    }
     if !publication_matches(state,item,&p.item) || state.stack.iter().filter(|i|i.v4.stack_item_id==item.v4.stack_item_id).count()!=1
-  || state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::GorehornOperationV1{operation:o} if o.publication==p.index)) {
+  || state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::GorehornOperationV1{operation:o} if o.publication==p.index)) || crystal::completed_count(state,item.v4.stack_item_id)!=0 {
   return Err("Gorehorn lacks exact unclosed published owner".into());
  }
     Ok(())
@@ -628,49 +641,7 @@ pub(crate) fn execute_owned(
     let attacked = state.attack_declaration_turn_v1;
     let mut damage_operation = None;
     if met {
-        let s = owner.item.v4.ability_source_contract.unwrap();
-        let facts = source_facts(state, s)?;
-        let live = state.objects.try_get(s.source).filter(|o| {
-            o.zone == Zone::Battlefield
-                && o.owner == s.owner
-                && o.zone_change_count == s.zone_change_count
-        });
-        let snapshot = live.cloned();
-        let departure = if snapshot.is_some() {
-            None
-        } else {
-            Some(
-                state
-                    .engine
-                    .event_history
-                    .iter()
-                    .find_map(|e| match e {
-                        CommittedEvent::GorehornDepartureV1 { departure: d }
-                            if d.facts.source.source == s.source
-                                && d.facts.source.zone_change_count == s.zone_change_count =>
-                        {
-                            Some(d.index)
-                        }
-                        _ => None,
-                    })
-                    .ok_or("Gorehorn departure index missing")?,
-            )
-        };
-        let index = u32::try_from(state.engine.event_history.len())
-            .map_err(|_| "Gorehorn preparation overflow")?;
-        state
-            .engine
-            .event_history
-            .push(CommittedEvent::GorehornPreparedV1 {
-                prepared: Box::new(PreparedV1 {
-                    index,
-                    publication: owner.publication,
-                    ctx: ctx.clone(),
-                    facts,
-                    departure,
-                    snapshot,
-                }),
-            });
+        let index = record_preparation(state, owner, ctx)?;
         let d = crate::event::DamageProposed {
             source: ctx.source,
             target: ctx.targets[0],
@@ -690,6 +661,56 @@ pub(crate) fn execute_owned(
         Some((turn, active, attacked, met)),
         damage_operation,
     )
+}
+fn record_preparation(
+    state: &mut GameState,
+    owner: &OwnerV1,
+    ctx: &ExecCtx,
+) -> Result<u32, String> {
+    let s = owner.item.v4.ability_source_contract.unwrap();
+    let facts = source_facts(state, s)?;
+    let live = state.objects.try_get(s.source).filter(|o| {
+        o.zone == Zone::Battlefield
+            && o.owner == s.owner
+            && o.zone_change_count == s.zone_change_count
+    });
+    let snapshot = live.cloned();
+    let departure = if snapshot.is_some() {
+        None
+    } else {
+        Some(
+            state
+                .engine
+                .event_history
+                .iter()
+                .find_map(|e| match e {
+                    CommittedEvent::GorehornDepartureV1 { departure: d }
+                        if d.facts.source.source == s.source
+                            && d.facts.source.zone_change_count == s.zone_change_count =>
+                    {
+                        Some(d.index)
+                    }
+                    _ => None,
+                })
+                .ok_or("Gorehorn departure index missing")?,
+        )
+    };
+    let index = u32::try_from(state.engine.event_history.len())
+        .map_err(|_| "Gorehorn preparation overflow")?;
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::GorehornPreparedV1 {
+            prepared: Box::new(PreparedV1 {
+                index,
+                publication: owner.publication,
+                ctx: ctx.clone(),
+                facts,
+                departure,
+                snapshot,
+            }),
+        });
+    Ok(index)
 }
 fn record_operation(
     state: &mut GameState,
@@ -774,7 +795,13 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                         _ => None,
                     })
                     .collect::<Vec<_>>();
-                if !matches!((live, closed.as_slice()), (1, []) | (0, [_])) {
+                if !matches!(
+                    (
+                        live,
+                        closed.len() + crystal::completed_count(state, p.item.v4.stack_item_id)
+                    ),
+                    (1, 0) | (0, 1)
+                ) {
                     return Err("Gorehorn owner erased or reintroduced".into());
                 }
             }
@@ -795,7 +822,11 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
       CommittedEvent::GorehornDamageOperationV1{operation:o} if o.preparation==r.index)
                         })
                         .count()
-                        != 1
+                        != if crystal::prepared_is_owned(state, r) {
+                            0
+                        } else {
+                            1
+                        }
                 {
                     return Err("Gorehorn preparation lost unique damage operation".into());
                 }
@@ -844,6 +875,15 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             }
             _ => {}
         }
+    }
+    crystal::validate(state)?;
+    if state
+        .engine
+        .event_history
+        .iter()
+        .any(|e| matches!(e, CommittedEvent::GorehornCrystalBeginV1 { .. }))
+    {
+        crate::effect::crystal_prevention_v1::validate(state)?;
     }
     Ok(())
 }
