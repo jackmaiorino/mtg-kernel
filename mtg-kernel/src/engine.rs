@@ -10195,6 +10195,7 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
                     Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
                 return None;
             }
+            crate::source_power_activation_v1::finish(state, &item);
             if finish_resolved_stack_item(state, completed.as_ref()).is_err() {
                 state.engine.halted =
                     Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
