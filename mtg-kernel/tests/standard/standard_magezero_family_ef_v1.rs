@@ -2399,10 +2399,11 @@ fn the_irencrag_becomes_everflame_when_a_legend_enters() {
     assert_eq!(player, P0);
     assert_eq!(candidates, vec![cecil, second_cecil]);
     act(&mut state, Action::ChooseLegendPermanent(cecil));
+    // The action records the keeper; advance completes the state-based move.
+    assert!(!resolve_everflame(&mut state, true));
     assert_eq!(state.objects.get(cecil).zone, Zone::Battlefield);
     assert_eq!(state.objects.get(second_cecil).zone, Zone::Graveyard);
     assert_eq!(engine::effective_power(&state, cecil), power + 3);
-    assert!(!resolve_everflame(&mut state, true));
 }
 
 #[test]
