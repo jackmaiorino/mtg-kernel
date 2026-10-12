@@ -1161,6 +1161,40 @@ mod tests {
         assert!(decisions > 100, "{decisions} decisions");
     }
 
+    /// A weights file written by `allocator2.py` loads in Rust and the Rust
+    /// forward, policy and behavior equal Python's values (the fixture's).
+    #[test]
+    fn python_weights_and_forward_agree() {
+        let fixture: Value = serde_json::from_str(include_str!("allocator2_parity.json")).unwrap();
+        let bound = ParentBinding {
+            lineage: "r1".into(),
+            weights_sha256: "parity".into(),
+            feature_contract_digest: "c".into(),
+            feature_encoding_digest: "e".into(),
+        };
+        let c = Controller::from_json(fixture["weights"].to_string().as_bytes(), &bound).unwrap();
+        for case in fixture["cases"].as_array().unwrap() {
+            let x: Vec<f64> = serde_json::from_value(case["x"].clone()).unwrap();
+            let remaining = case["remaining"].as_u64().unwrap();
+            let (actor, value) = c.forward(&x);
+            let close = |a: f64, b: &Value| (a - b.as_f64().unwrap()).abs() < 1e-12;
+            for (a, want) in actor.iter().zip(case["actor"].as_array().unwrap()) {
+                assert!(close(*a, want), "actor {a} vs {want}");
+            }
+            assert!(close(value, &case["value"]));
+            let q = base_q(remaining, CAP);
+            let cs = choices(remaining);
+            let pi = coalesce(&policy(&q, &actor), &cs);
+            let mu = mixture(&pi, &coalesce(&q, &cs));
+            for (got, want) in pi.iter().zip(case["pi"].as_array().unwrap()) {
+                assert!(close(*got, want));
+            }
+            for (got, want) in mu.iter().zip(case["mu"].as_array().unwrap()) {
+                assert!(close(*got, want));
+            }
+        }
+    }
+
     #[test]
     fn case_lines_parse_with_and_without_a_probe() {
         let src = json!({"id":"x","own":4,"other":1,"seat":0,"opp":"T1","seed":5,"starting_player":1,
