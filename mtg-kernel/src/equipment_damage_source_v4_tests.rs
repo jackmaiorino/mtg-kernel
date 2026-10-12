@@ -138,6 +138,23 @@ fn registered_rod_and_elves_actual_cast_equip_and_departed_grant_resolve_without
             .v4
             .stack_item_id;
         assert!(has_publication(&state, grant));
+        let mut unowned = state.clone();
+        let item = unowned
+            .stack
+            .iter()
+            .find(|item| item.v4.stack_item_id == grant)
+            .unwrap()
+            .clone();
+        let mut expected = unowned.clone();
+        expected.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            host,
+        ));
+        crate::effect::execute(&printed_root(&item).unwrap(), &context(&item), &mut unowned);
+        assert_eq!(
+            serde_json::to_vec(&unowned).unwrap(),
+            serde_json::to_vec(&expected).unwrap()
+        );
         assert!(!crate::crystal_barricade_v1::active(&state));
         // Accepted internal counter primitive against the genuine published row.
         let mut countered = state.clone();

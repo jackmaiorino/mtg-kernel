@@ -704,6 +704,15 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     }
     Ok(())
 }
+pub(crate) fn owns_context(state: &GameState, ctx: &ExecCtx) -> bool {
+    ctx.stack_item_id.is_some_and(|id| {
+        has_publication(state, id)
+            || state
+                .stack
+                .iter()
+                .any(|item| item.v4.stack_item_id == id && tracked(state, item))
+    })
+}
 pub(crate) fn requires_successor(state: &GameState) -> bool {
     state.stack.iter().any(|i| tracked(state, i))
         || state.engine.event_history.iter().any(|e| {

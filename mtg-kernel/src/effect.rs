@@ -16357,7 +16357,9 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             }
         }
         EffectOp::DealDamage { target, amount } => {
-            if crate::gorehorn_damage_v1::owns_context(state, ctx) {
+            if crate::gorehorn_damage_v1::owns_context(state, ctx)
+                || crate::equipment_damage_source_v4::owns_context(state, ctx)
+            {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
