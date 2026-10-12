@@ -40,6 +40,67 @@ pub(crate) struct DeckPrior {
 }
 
 impl DeckPrior {
+    /// Condition the approximate public prior on every supplied actor-visible
+    /// frame. Physical cards are deduplicated within a frame; tokens are excluded.
+    /// This uses only transported public/known-card objects, never private state.
+    pub(crate) fn with_visible_history(
+        mut self,
+        history: &[super::e_supported::VisibleFrame],
+        actor: PlayerId,
+    ) -> Self {
+        fn cards(
+            v: &serde_json::Value,
+            owner: &str,
+            out: &mut std::collections::BTreeMap<u64, u16>,
+        ) {
+            match v {
+                serde_json::Value::Object(m) => {
+                    if m.contains_key("card_name")
+                        && m.get("is_token").and_then(serde_json::Value::as_bool) != Some(true)
+                    {
+                        if let Some(stable) = m.get("stable") {
+                            if stable.get("owner").and_then(serde_json::Value::as_str)
+                                == Some(owner)
+                            {
+                                if let (Some(id), Some(card)) = (
+                                    stable.get("arena_id").and_then(serde_json::Value::as_u64),
+                                    stable.get("card_db_id").and_then(serde_json::Value::as_u64),
+                                ) {
+                                    out.insert(id, card as u16);
+                                }
+                            }
+                        }
+                    }
+                    for value in m.values() {
+                        cards(value, owner, out);
+                    }
+                }
+                serde_json::Value::Array(a) => {
+                    for value in a {
+                        cards(value, owner, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let owner = if actor.opponent().index() == 0 {
+            "p0"
+        } else {
+            "p1"
+        };
+        for frame in history {
+            let mut visible = std::collections::BTreeMap::new();
+            cards(&frame.observation, owner, &mut visible);
+            let mut visible: Vec<_> = visible.values().copied().collect();
+            visible.sort_unstable();
+            let keep: Vec<_> = (0..self.decks.len())
+                .filter(|&i| is_submultiset(&visible, &self.decks[i]))
+                .collect();
+            self.ids = keep.iter().map(|&i| self.ids[i]).collect();
+            self.decks = keep.iter().map(|&i| self.decks[i].clone()).collect();
+        }
+        self
+    }
     pub(crate) fn new(deck_indices: &[usize]) -> Self {
         let mut decks = Vec::new();
         let mut ids = Vec::new();

@@ -783,7 +783,13 @@ fn gae_profile_preserves_complete_update_and_records_actual_phases() {
 fn e_supported_ce_is_policy_only_combines_once_and_replays() {
     use crate::native_policy_train_step_v1::{ESupportedPolicyInputV1, ESupportedPolicyRowV1};
     use crate::sideboard_play_policy_v1::FreshLineageGenerationV1;
-    let mut base = NativePolicyValueTrainStateV1::new_v1(perturbed_model()).unwrap();
+    let mut base = NativePolicyValueTrainStateV1::new_v1(perturbed_model(
+        &model(),
+        "scorer.0.weight",
+        0,
+        0.05,
+    ))
+    .unwrap();
     let fixture = Fixture::capture(base.model_v1());
     let steps = fixture.substeps();
     let batch = groups(&steps);
@@ -869,8 +875,8 @@ fn e_supported_ce_is_policy_only_combines_once_and_replays() {
         let (mut parameters, mut first, mut second) = adam_update(
             &before.parameters,
             &gradients,
-            &before.first_moments,
-            &before.second_moments,
+            &base.first_moments,
+            &base.second_moments,
             2,
             LR,
         )
@@ -880,8 +886,8 @@ fn e_supported_ce_is_policy_only_combines_once_and_replays() {
         second[SCORER_SECOND_BIAS][0] = 0.0;
         let after = state.snapshot_v1().unwrap();
         assert_eq!(after.parameters, parameters);
-        assert_eq!(after.first_moments, first);
-        assert_eq!(after.second_moments, second);
+        assert_eq!(state.first_moments, first);
+        assert_eq!(state.second_moments, second);
         (
             state.snapshot_v1().unwrap().state_sha256_v1().unwrap(),
             report,

@@ -48,7 +48,8 @@ pub(crate) fn query(
     prior_indices: &[usize],
     select_cap: u64,
 ) -> Result<(Option<usize>, Value), String> {
-    let prior = DeckPrior::new(prior_indices);
+    let prior =
+        DeckPrior::new(prior_indices).with_visible_history(history, super::play::acting(&d));
     let ctx = RootCtx {
         visible_history: history,
         root: session,
@@ -98,22 +99,12 @@ pub(crate) fn query(
     else {
         return Ok((None, packet));
     };
-    if node.n.len() != canon.edges.len()
-        || node.wins.len() != node.n.len()
-        || node.n.iter().zip(&node.wins).any(|(n, w)| w > n)
-    {
-        return Err("E corrupt root statistics".into());
-    }
+    let (permutation, choice) = bind_supported_choice(node, canon)?;
     packet["n"] = json!(node.n);
     packet["wins"] = json!(node.wins);
     packet["tie_order"] = json!(node.perm);
-    let permutation = canon
-        .edges
-        .iter()
-        .map(|e| tree::live_index(canon, e).map_err(|e| format!("{e:?}")))
-        .collect::<Result<Vec<_>, _>>()?;
     packet["canonical_to_live"] = json!(permutation);
-    let Some(index) = node.frozen_choice() else {
+    let Some(index) = choice else {
         return Ok((None, packet));
     };
     let live = permutation[index] as usize;
@@ -125,4 +116,90 @@ pub(crate) fn query(
     packet["status"] = json!("supported_choice");
     packet["actual_fallback"] = json!(false);
     Ok((Some(live), packet))
+}
+
+fn bind_supported_choice(
+    node: &tree::Node,
+    canon: &tree::Canon,
+) -> Result<(Vec<u32>, Option<usize>), String> {
+    let width = canon.edges.len();
+    let mut ties = node.perm.clone();
+    ties.sort_unstable();
+    if node.n.len() != width
+        || node.wins.len() != width
+        || node.canon.edges != canon.edges
+        || ties != (0..width).collect::<Vec<_>>()
+        || node.n.iter().zip(&node.wins).any(|(n, w)| w > n)
+        || node.n.iter().try_fold(0_u64, |sum, n| sum.checked_add(*n)) != Some(node.visits)
+    {
+        return Err("E corrupt root statistics or action binding".into());
+    }
+    let permutation = canon
+        .edges
+        .iter()
+        .map(|e| tree::live_index(canon, e).map_err(|e| format!("{e:?}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut sorted = permutation.clone();
+    sorted.sort_unstable();
+    if sorted != (0..width as u32).collect::<Vec<_>>() {
+        return Err("E ambiguous live action binding".into());
+    }
+    Ok((permutation, node.frozen_choice()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn e_supported_binding_preserves_live_duplicates_support_and_seeded_ties() {
+        let (canon, _) = tree::canon_values(
+            json!({"step_index":7}),
+            vec![
+                json!({"action_kind":"z"}),
+                json!({"action_kind":"a"}),
+                json!({"action_kind":"a"}),
+            ],
+        )
+        .unwrap();
+        let mut node =
+            tree::Node::with_perm([0; 32], b"root".to_vec(), canon.clone(), 1, vec![2, 0, 1]);
+        node.n = vec![8, 8, 100];
+        node.wins = vec![8, 8, 0];
+        node.visits = 116;
+        let (mapping, choice) = bind_supported_choice(&node, &canon).unwrap();
+        assert_eq!(mapping, vec![1, 2, 0]);
+        assert_eq!(choice, Some(0));
+        // Execution compares Boolean means among supported edges, not visit share.
+        node.perm = vec![1, 0, 2];
+        assert_eq!(bind_supported_choice(&node, &canon).unwrap().1, Some(1));
+        node.n = vec![7, 7, 7];
+        node.wins = vec![7, 7, 0];
+        node.visits = 21;
+        assert_eq!(bind_supported_choice(&node, &canon).unwrap().1, None);
+        node.wins[0] = 8;
+        assert!(bind_supported_choice(&node, &canon).is_err());
+        node.wins[0] = 7;
+        node.perm = vec![0, 0, 1];
+        assert!(bind_supported_choice(&node, &canon).is_err());
+    }
+    #[test]
+    fn e_supported_keyer_preserves_the_supplied_visible_prefix() {
+        let history = vec![VisibleFrame {
+            observation: json!({"step_index":1}),
+            menu: vec![json!({"action_kind":"a"}), json!({"action_kind":"b"})],
+            selected: 1,
+        }];
+        let mut statistics = KeyStats::default();
+        let mut keyer = Keyer::with_history(KeyMode::Repaired, &mut statistics, &history).unwrap();
+        let root = keyer
+            .key_raw(json!({"step_index":2}), vec![json!({"action_kind":"c"})])
+            .unwrap();
+        let with_prefix = keyer.storage(&root).0;
+        let mut statistics = KeyStats::default();
+        let mut keyer = Keyer::new(KeyMode::Repaired, &mut statistics);
+        let root = keyer
+            .key_raw(json!({"step_index":2}), vec![json!({"action_kind":"c"})])
+            .unwrap();
+        assert_ne!(with_prefix, keyer.storage(&root).0);
+    }
 }
