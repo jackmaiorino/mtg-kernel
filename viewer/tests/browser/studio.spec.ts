@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import fixture from '../fixtures/actor-visible.json' with { type: 'json' };
 import native from '../fixtures/native-root-excerpt.json' with { type: 'json' };
+import replay from '../fixtures/search-replay.json' with { type: 'json' };
 
 async function openFixture(page: import('@playwright/test').Page) {
   await page.route('**/demo/manifest.json', route => route.fulfill({status:404}));
@@ -8,6 +9,26 @@ async function openFixture(page: import('@playwright/test').Page) {
   await page.locator('input[type=file]').setInputFiles({name:'recording.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(fixture))});
   await expect(page.getByRole('region', { name:'Game replay' })).toBeVisible();
 }
+test('search replay stepping, seeking, pause and deep link restore',async({page})=>{
+  await openFixture(page);
+  const load=()=>page.locator('input[type=file]').setInputFiles({name:'replay.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(replay))});
+  await load();const region=page.getByRole('region',{name:'Recorded search replay'});
+  await expect(region).toBeVisible();await region.getByRole('button',{name:'Next search event'}).click();
+  await expect(region.locator('.search-phase')).toContainText('Initial move coverage');
+  await region.getByRole('button',{name:'Next search event'}).click();
+  await expect(region.locator('.search-branches')).toContainText('1 visits');
+  await region.getByRole('button',{name:'Play search replay'}).click();
+  await region.getByRole('slider',{name:'Search event timeline'}).fill('5');
+  await expect(region.getByRole('button',{name:'Play search replay'})).toBeVisible();
+  await expect(page).toHaveURL(/searchEvent=5/);
+  await load();await expect(region.locator('.search-buttons')).toContainText('Event 6 / 6');
+  await region.getByRole('slider',{name:'Search event timeline'}).fill('0');
+  await region.getByRole('button',{name:'Next search event'}).focus();await page.keyboard.press('Enter');
+  await expect(region.locator('.search-buttons')).toContainText('Event 2 / 6');
+  await page.setViewportSize({width:320,height:900});await page.emulateMedia({reducedMotion:'reduce'});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+  await region.screenshot({path:'test-results/search-replay-320.png'});
+});
 test('import stays local; policy, cards, playback and deep links work', async ({ page }) => {
   const unexpected: string[] = [];
   page.on('request', request => { if (request.method() !== 'GET') unexpected.push(request.url()); });

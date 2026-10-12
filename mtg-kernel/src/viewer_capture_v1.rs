@@ -265,7 +265,8 @@ pub fn run(path: &Path) -> Result<(), String> {
                             .gameplay_trace_visible_v1(d, true)
                             .map_err(|e| format!("{e:?}"))?;
                         let labels =
-                            crate::human_bo3_v1::gameplay_trace_labels_v1(&actor, &actions)?;
+                            crate::human_bo3_v1::gameplay_trace_labels_v1(&actor, &actions)
+                                .map_err(|e| format!("{e:?}"))?;
                         Ok(
                             json!({"simulation":simulation,"node":node,"action":action,"actor":d.acting_player,
                             "board":fixed,"actions":actions,"labels":labels}),

@@ -36,6 +36,7 @@ def export_replay(raw, exporter, decision_key, root_actions, search):
             if context['node'] != n or context['action'] != a or not 0 <= n < len(nodes) or not 0 <= a < len(nodes[n]['actions']):
                 raise ValueError('Search choice reference mismatch')
             if len(choice['scores']) != len(nodes[n]['actions']): raise ValueError('Search scores differ from legal actions')
+            if context['actor'] != nodes[n]['actor']: raise ValueError('Search context actor differs from its node')
             # Sampled hands are never presentation data, including the featured seat's.
             observation = dict(context['board'], own_hand=[])
             board = exporter.board(observation)
