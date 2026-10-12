@@ -1923,6 +1923,7 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
             }
         }
     }
+    crate::gorehorn_damage_v1::before_batch_departures(state, &survivors);
     crate::ashroot_animist_v1::before_batch_departures(state, &survivors);
     // Lifelink changes life at the same time as the damage. Capture every
     // source/controller before any member of the simultaneous batch can die.
@@ -2013,6 +2014,13 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
 /// Freeze only new death observers; retain the existing per-member sacrifice,
 /// replacement, zone-change and unrelated-event order exactly.
 pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[ObjectId]) {
+    crate::gorehorn_damage_v1::before_batch_departures(
+        state,
+        &chosen
+            .iter()
+            .map(|id| ProposedEvent::zone_change(*id, Zone::Graveyard))
+            .collect::<Vec<_>>(),
+    );
     let captures = chosen
         .iter()
         .map(|id| {
@@ -2034,6 +2042,13 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
 /// One simultaneous SBA death group. Preserve the existing direct-commit
 /// semantics while freezing death observers before any member leaves.
 pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<ObjectId>) {
+    crate::gorehorn_damage_v1::before_batch_departures(
+        state,
+        &dying
+            .iter()
+            .map(|id| ProposedEvent::zone_change(*id, Zone::Graveyard))
+            .collect::<Vec<_>>(),
+    );
     if !crate::creature_death_capture_v1::enabled() {
         for id in dying {
             commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));

@@ -181,6 +181,31 @@ fn is_record(e: &CommittedEvent) -> bool {
             | CommittedEvent::GorehornOperationV1 { .. }
     )
 }
+
+pub(crate) fn before_batch_departures(
+    state: &mut GameState,
+    events: &[crate::event::ProposedEvent],
+) {
+    if !enabled() {
+        return;
+    }
+    let mut seen = Vec::new();
+    for event in events {
+        if let crate::event::ProposedEvent::ZoneChange(change) = event {
+            if change.to_zone != Zone::Battlefield
+                && state
+                    .objects
+                    .try_get(change.object)
+                    .is_some_and(|o| o.zone == Zone::Battlefield)
+                && !seen.contains(&change.object)
+            {
+                seen.push(change.object);
+                before_departure(state, change.object);
+            }
+        }
+    }
+}
+
 pub(crate) fn before_departure(state: &mut GameState, id: ObjectId) {
     if !enabled() {
         return;
@@ -217,6 +242,22 @@ pub(crate) fn before_departure(state: &mut GameState, id: ObjectId) {
             )
             .any(|p| p.source_contract.is_some_and(same));
     if !owned {
+        return;
+    }
+    // A simultaneous batch froze this incarnation before any member moved.
+    if state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .any(|(index, event)| {
+            matches!(event,
+        CommittedEvent::GorehornDepartureV1 { departure } if departure.facts.source.source==id
+        && departure.facts.source.zone_change_count==live.zone_change_count
+        && !state.engine.event_history[index+1..].iter().any(|later| matches!(later,
+            CommittedEvent::ZoneChange { object, .. } if *object==id)))
+        })
+    {
         return;
     }
     let index = u32::try_from(state.engine.event_history.len())

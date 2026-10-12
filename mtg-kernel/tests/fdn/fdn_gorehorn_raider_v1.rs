@@ -538,3 +538,79 @@ fn gorehorn_publication_preparation_and_actual_damage_operation_erasure_refuse_r
         }
     }
 }
+
+#[test]
+fn genuine_simultaneous_departure_preserves_prebatch_suppressed_lifelink_in_both_orders() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for witness_first in [false, true] {
+            let mut state = ready(actor, 5);
+            raid(&mut state, actor, true);
+            let source = cast(&mut state, actor);
+            target_trigger(&mut state, actor, Target::Player(actor.opponent()));
+            grant(&mut state, source, Keywords::LIFELINK);
+            assert!(engine::has_effective_keyword(
+                &state,
+                source,
+                Keywords::LIFELINK
+            ));
+            // A registered flash enabler makes the actual enchantment response legal.
+            put(&mut state, actor, "High Fae Trickster", Zone::Battlefield);
+            let witness = put(&mut state, actor, "Witness Protection", Zone::Hand);
+            state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 1;
+            assert!(
+                matches!(next(&mut state),Decision::CastSpellOrPass{player,..} if player==actor)
+            );
+            engine::step(&mut state, Action::CastSpell(witness)).unwrap();
+            assert!(
+                matches!(next(&mut state),Decision::ChooseTargets{legal_targets,..}
+    if legal_targets.contains(&Target::Object(source)))
+            );
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(source))).unwrap();
+            let _ = next(&mut state);
+            resolve_one(&mut state);
+            assert_eq!(state.objects.get(witness).zone, Zone::Battlefield);
+            assert!(!engine::has_effective_keyword(
+                &state,
+                source,
+                Keywords::LIFELINK
+            ));
+            let ids = if witness_first {
+                [witness, source]
+            } else {
+                [source, witness]
+            };
+            event::propose_and_commit_batch(
+                &mut state,
+                ids.into_iter()
+                    .map(|id| ProposedEvent::zone_change(id, Zone::Graveyard))
+                    .collect(),
+            );
+            let captures = state
+                .engine
+                .event_history
+                .iter()
+                .filter_map(|e| match e {
+                    event::CommittedEvent::GorehornDepartureV1 { departure }
+                        if departure.facts.source.source == source =>
+                    {
+                        Some(departure)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(captures.len(), 1);
+            assert!(!captures[0].facts.lifelink);
+            let before = state.players[actor.index()].life;
+            let opponent = state.players[actor.opponent().index()].life;
+            let mut restored = replay(&state);
+            assert!(settle(&mut state).is_none());
+            assert!(settle(&mut restored).is_none());
+            assert_eq!(state.players[actor.index()].life, before);
+            assert_eq!(state.players[actor.opponent().index()].life, opponent - 2);
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&restored).unwrap()
+            );
+        }
+    }
+}
