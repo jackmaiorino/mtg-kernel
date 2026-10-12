@@ -136,6 +136,26 @@ class Schedule(unittest.TestCase):
         self.assertTrue(all(v == {0, 128_000} for v in pairs.values()))
         self.assertEqual(lines[0]["case"]["id"], "dev-c1-r1-v2-f0-s1")
 
+    def test_probe_select_is_outcome_blind_and_balanced(self):
+        w0 = A.init_weights("S", PARENT, None, "t")
+        rows = []
+        for i in range(12):
+            r = fake_rows(w0, 1, 70 + i, decisions=[3])[0]
+            r.update(id=f"g{i}", lineage=A.LINEAGES[i % 2], other=i % 3, arm="S")
+            for j, d in enumerate(r["game"]["decisions"]):
+                d.update(chooser="reused" if j else "plain", nonforced=j)
+            rows.append(r)
+        picked = A.probe_select(rows, limit=6)
+        self.assertEqual(len(picked), 6)
+        self.assertEqual(len({p["row"]["id"] for p in picked}), 6)
+        self.assertEqual(len({(p["row"]["lineage"], p["row"]["other"]) for p in picked}), 6)
+        self.assertTrue(all(p["at"] in (1, 2) for p in picked))
+        flipped = copy.deepcopy(rows)
+        for r in flipped:
+            r["game"]["end"] = "loss" if r["game"]["end"] == "win" else "win"
+        self.assertEqual([(p["row"]["id"], p["at"]) for p in A.probe_select(flipped, limit=6)],
+                         [(p["row"]["id"], p["at"]) for p in picked])
+
 
 class ControllerMath(unittest.TestCase):
     def test_base_q_and_coalescing(self):

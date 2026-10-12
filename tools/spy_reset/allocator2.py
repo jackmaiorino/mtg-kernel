@@ -295,9 +295,37 @@ def probe_cases(sources: list, refresh: int = 128_000, paired: int = 4) -> list:
                                  "starting_player": row["starting_player"], "source_policy_seeds": [0, 0],
                                  "anchor_draw": 0, "guide_policy_seeds": row["live_policy_seeds"],
                                  "search_root": row["search_root"]},
-                        "probe": {"source": row["id"], "at": at, "refresh": amount, "continuation_seeds": cont}}
+                        "probe": {"source": row["id"], "at": at, "refresh": amount, "continuation_seeds": cont},
+                        "weights": row["controller"].get("weights_path")}
                 out.append(line)
     return out
+
+
+def probe_select(rows: list, limit: int = 36) -> list:
+    """Outcome-blind probe roots: at most one supported (tree-executed) focal decision per
+    distinct Spy source game with a scheduler arm, balanced round-robin over (parent,
+    opponent) strata in hash order; within a game the supported decision of least hash. Reads
+    only identities and choosers, never outcomes or sequence labels. Absent strata stay absent."""
+    strata = {}
+    for r in rows:
+        if r is None or r.get("kind") != "allocator2_game" or r["arm"] not in ("q", "S", "H"):
+            continue
+        sup = [d["nonforced"] for d in r["game"].get("decisions", [])
+               if d.get("chooser") in ("reused", "new_root") and d.get("nonforced") is not None]
+        if not sup:
+            continue
+        at = min(sup, key=lambda i: h(NS, "probe-root", r["id"], i))
+        strata.setdefault((r["lineage"], r["other"]), []).append((h(NS, "probe-game", r["id"]), r, at))
+    for v in strata.values():
+        v.sort(key=lambda x: x[0])
+    order = sorted(strata, key=lambda k: h(NS, "probe-stratum", *k))
+    picked = []
+    while len(picked) < limit and any(strata[k] for k in order):
+        for k in order:
+            if strata[k] and len(picked) < limit:
+                _, r, at = strata[k].pop(0)
+                picked.append({"row": r, "at": at})
+    return picked
 
 
 # ---------------------------------------------------------------- controller math
@@ -904,8 +932,8 @@ def train(plan: dict) -> int:
 def queue(plan: dict) -> int:
     """Arm-games of a non-training domain. PLAN: {root, binary, binary_sha256, host, phase,
     schedule, out_dir, slots, formal, throughput_evidence, [total], jobs: [{label, domain,
-    index, arm, weights (learned arms)}]} or {probe_cases: FILE, weights: {lineage: W}} for the
-    supported-node probe. Complete rows are skipped."""
+    index, arm, weights (learned arms)}]} or {probe_cases: FILE} for the
+    supported-node probe (each line names its source weights). Complete rows are skipped."""
     binary = admit(plan)
     out = Path(plan["out_dir"])
     out.mkdir(parents=True, exist_ok=True)
@@ -928,8 +956,9 @@ def queue(plan: dict) -> int:
             if (row := read_row(out / f"{label}.jsonl")) is not None and row.get("kind") == "allocator2_game":
                 continue
             lin = line["lineage"]
-            jobs.append({"label": label, "lineage": lin, "line": {k: v for k, v in line.items() if k != "lineage"},
-                         "weights": plan["weights"].get(lin) if line["arm"] in LEARNED else None,
+            jobs.append({"label": label, "lineage": lin,
+                         "line": {k: v for k, v in line.items() if k not in ("lineage", "weights")},
+                         "weights": line.get("weights") if line["arm"] in LEARNED else None,
                          "out": str(out / f"{label}.jsonl")})
     print(json.dumps({"pending": len(jobs), "host": plan["host"], "slots": plan["slots"]}), flush=True)
     run_jobs(plan, binary, jobs, int(plan["slots"]), out / "LEDGER.jsonl", plan["phase"])
@@ -991,6 +1020,10 @@ def main(argv=None) -> int:
     s.add_argument("--out", type=Path, required=True)
     s = sub.add_parser("replay")
     s.add_argument("--ledger", type=Path, required=True)
+    s = sub.add_parser("probe-select")
+    s.add_argument("--rows", type=Path, nargs="+", required=True)
+    s.add_argument("--limit", type=int, default=36)
+    s.add_argument("--out", type=Path, required=True)
     for name in ("train", "queue"):
         sub.add_parser(name).add_argument("plan", type=Path)
     a = ap.parse_args(argv)
@@ -1034,6 +1067,12 @@ def main(argv=None) -> int:
         jobs = panel_jobs(a.panel, a.arms, wmap)
         a.out.write_text(json.dumps(jobs, indent=1) + "\n")
         print(json.dumps({"jobs": len(jobs)}))
+    elif a.cmd == "probe-select":
+        files = [f for p in a.rows for f in (sorted(p.glob("*.jsonl")) if p.is_dir() else [p])]
+        rows = [read_row(f) for f in files if not f.name.endswith(".case.jsonl")]
+        lines = probe_cases(probe_select(rows, a.limit))
+        a.out.write_bytes(jsonl(lines))
+        print(json.dumps({"roots": len(lines) // 8, "lines": len(lines)}))
     elif a.cmd == "replay":
         print(json.dumps(replay(a.ledger)))
     elif a.cmd == "train":
