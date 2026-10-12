@@ -193,23 +193,29 @@ def metrics(stats: dict, blocks: dict) -> dict:
             "C": spy[1] / n_spy, "self_chosen": spy[2] / n_spy, "dr_giant_chosen": spy[3] / n_spy}
 
 
-def contrasts(stats: dict, blocks: dict) -> dict:
+def contrasts(stats: dict, blocks: dict, stats_y: dict | None = None) -> dict:
+    """First-minus-second contrasts. With ``stats_y`` the second term uses those statistics
+    (missing-data bounds: lower = worst first minus best second, upper = the reverse)."""
     cache = {key: metrics(st, blocks) for key, st in stats.items()}
+    cache_y = cache if stats_y is None else {key: metrics(st, blocks) for key, st in stats_y.items()}
     out = {}
     for lineage in LINEAGES:
         for ref in REFS:
             def get(ck):
                 return cache.get((ck, ref))
+
+            def get_y(ck):
+                return cache_y.get((ck, ref))
             for end in ENDS:
                 pairs = [("M-U", "M", "U"), ("M-O", "M", "O"), ("U-O", "U", "O")]
                 for name, a, b in pairs:
-                    x, y = get(f"{lineage}-{a}-{end}"), get(f"{lineage}-{b}-{end}")
+                    x, y = get(f"{lineage}-{a}-{end}"), get_y(f"{lineage}-{b}-{end}")
                     if x and y:
                         out[f"{lineage}/{ref}/{end}/{name}"] = {k: x[k] - y[k] for k in
                                                                 ("nine", "spy_score", "J", "C", "self_chosen", "dr_giant_chosen")}
                         out[f"{lineage}/{ref}/{end}/{name}"]["deck"] = [p - q for p, q in zip(x["deck"], y["deck"])]
                 for arm in ARMS:
-                    x, y = get(f"{lineage}-{arm}-{end}"), get(f"{lineage}-parent")
+                    x, y = get(f"{lineage}-{arm}-{end}"), get_y(f"{lineage}-parent")
                     if x and y:
                         out[f"{lineage}/{ref}/{end}/{arm}-parent"] = {"nine": x["nine"] - y["nine"],
                                                                       "deck": [p - q for p, q in zip(x["deck"], y["deck"])]}
@@ -259,27 +265,50 @@ def retention(point: dict, ci: dict) -> dict:
     return out
 
 
-def disposition(point: dict, ci: dict, ret: dict, exposure_summary: dict | None, missing: int) -> list[str]:
+FEW_FRESH_SELF_TARGET = 10  # fresh self-target choices across U and M main phases, both lineages
+
+
+def disposition(point: dict, ci: dict, ret: dict, exposure_summary: dict | None, lower: dict | None,
+                panels: dict) -> list[str]:
+    """The fixed descriptive dispositions (RUNNER section 4). ``lower`` holds the opposite-arm
+    missing-data lower bounds (None when no case is missing)."""
     notes = []
+    fresh_full = None
     if exposure_summary is not None:
-        fresh = sum(exposure_summary[f"{l}-{a}"]["main"]["fresh"]["self_chosen"] for l in LINEAGES for a in ("U", "M"))
-        if fresh == 0:
-            notes.append("Few/no fresh opportunities or successes: exposure or exploration remains unresolved; "
-                         "reset learning is not disproven.")
+        main = [exposure_summary[f"{l}-{a}"]["main"] for l in LINEAGES for a in ("U", "M")]
+        fresh_self = sum(m["fresh"]["self_chosen"] for m in main)
+        fresh_full = sum(m["fresh_full_sequence"] + m["remaining_sequence_completed"] for m in main)
+        if fresh_self < FEW_FRESH_SELF_TARGET or fresh_full == 0:
+            notes.append(f"Few/no fresh opportunities or successes ({fresh_self} fresh self-target choices, "
+                         f"{fresh_full} fresh completions in U/M practice): exposure or exploration remains "
+                         "unresolved; reset learning is not disproven.")
+    final_j = sum(panels[(f"{l}-{a}-final", r)]["J"] for l in LINEAGES for a in ("U", "M") for r in REFS
+                  if (f"{l}-{a}-final", r) in panels)
+    if fresh_full and final_j == 0:
+        notes.append("Fresh practice completed the sequence but ordinary-start U/M endpoints never did (J = 0): "
+                     "local rehearsal without demonstrated transfer.")
     agg = point.get("aggregate/final/M-U")
     agg_ci = ci.get("aggregate/final/M-U", {}).get("nine")
     parts = [point.get(f"{l}/{r}/final/M-U", {}).get("nine") for l in LINEAGES for r in REFS]
-    unresolved = any(v["unresolved_risk"] for v in ret.values())
-    if agg and agg_ci and agg_ci[0] > 0 and all(p is not None and p > 0 for p in parts) and not unresolved and not missing:
-        notes.append("M improves over U after ordinary-only training with compatible directions and a positive "
-                     "aggregate interval: evidence for this priority rule on this bank, not confirmation.")
+    bound_ok = lower is None or (lower.get("aggregate/final/M-U", {}).get("nine", -1) > 0)
+    judged = [v for k, v in ret.items() if "/final/M-parent/" in k or "/final/M-O/" in k]
+    unresolved = any(v["unresolved_risk"] for v in judged)
+    harm = any(v["material_harm"] for v in judged)
+    if agg and agg_ci and agg_ci[0] > 0 and all(p is not None and p > 0 for p in parts) and bound_ok:
+        if unresolved or harm:
+            notes.append("M improves over U after ordinary-only training with compatible directions and a positive "
+                         "aggregate interval, with unresolved retention for the final M endpoint: a priority "
+                         "benefit, not an overall improvement endorsement.")
+        else:
+            notes.append("M improves over U after ordinary-only training with compatible directions and a positive "
+                         "aggregate interval: evidence for this priority rule on this bank, not confirmation.")
     else:
         notes.append("M-U uncertain or negative: no demonstrated priority advantage at this dose.")
     main_ci = ci.get("aggregate/main/M-U", {}).get("nine")
     if main_ci and main_ci[0] > 0 and not (agg_ci and agg_ci[0] > 0):
         notes.append("Main endpoint improves but the ordinary-only endpoint does not keep it: persistence problem.")
-    if unresolved:
-        notes.append("Unresolved retention risk in at least one non-Spy deck (see retention).")
+    if harm:
+        notes.append("Material harm (upper bound below -0.02) in at least one non-Spy deck for the final M endpoint.")
     return notes
 
 
@@ -309,14 +338,16 @@ def main(argv=None) -> int:
     missing = sum(not c["complete"] for cases in data.values() for c in cases.values())
     bounds = {}
     if missing:
-        for b in ("worst", "best"):
-            bounds[b], _ = contrasts({key: block_stats(cases, b) for key, cases in data.items()}, full)
+        worst = {key: block_stats(cases, "worst") for key, cases in data.items()}
+        best = {key: block_stats(cases, "best") for key, cases in data.items()}
+        bounds["lower"], _ = contrasts(worst, full, best)
+        bounds["upper"], _ = contrasts(best, full, worst)
     ci = {} if a.no_bootstrap else bootstrap(stats)
     ret = retention(point, ci)
     exp = json.loads(a.exposure.read_text()) if a.exposure else None
     result = {"panels": {f"{k[0]}/{k[1]}": v for k, v in panels.items()}, "contrasts": point, "ci95": ci,
               "missing_cases": missing, "bounds": bounds, "retention": ret,
-              "disposition": disposition(point, ci, ret, exp, missing)}
+              "disposition": disposition(point, ci, ret, exp, bounds.get("lower"), panels)}
     a.out.write_text(json.dumps(result, indent=1) + "\n")
     print(json.dumps({"primary": {k: v for k, v in point.items() if "final/M-U" in k},
                       "disposition": result["disposition"]}))
