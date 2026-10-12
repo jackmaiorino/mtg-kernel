@@ -789,3 +789,171 @@ fn future_firebrand_fixed_history_human_menu_retry_rollback_and_safe_capture_bot
         assert_eq!(session.inner.privileged_core_environment_hash(), after);
     }
 }
+
+#[test]
+#[ignore = "Crystal Barricade remains unregistered; actual future Raid/Human qualification"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn future_printed_gorehorn_menu_public_human_safe_facts_and_owning_rollback_both_seats() {
+    use crate::engine::{self, Action, Decision};
+    use crate::event::{ActiveReplacement, ReplacementEffectKind};
+    use crate::mana::ManaColor;
+    use crate::state::{Step, Target};
+    for caster in [PlayerId::P0, PlayerId::P1] {
+        let chooser = caster.opponent();
+        let mut state = ready_state();
+        state.active_player = caster;
+        state.priority_player = caster;
+        let wall = put(&mut state, chooser, "Crystal Barricade", Zone::Battlefield);
+        let target = put(&mut state, chooser, "Shivan Dragon", Zone::Battlefield);
+        let attacker = put(&mut state, caster, "Llanowar Elves", Zone::Battlefield);
+        put(&mut state, caster, "Mountain", Zone::Battlefield);
+        put(&mut state, chooser, "Mountain", Zone::Battlefield);
+        put(&mut state, caster, "Lightning Bolt", Zone::Hand);
+        put(&mut state, chooser, "Lightning Bolt", Zone::Hand);
+        state.step = Step::DeclareAttackers;
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::DeclareAttackers { .. }
+        ));
+        engine::step(&mut state, Action::DeclareAttackers(vec![attacker])).unwrap();
+        for _ in 0..40 {
+            let d = engine::advance_until_decision(&mut state);
+            if state.step == Step::Main2
+                && matches!(d,Decision::CastSpellOrPass { player, .. } if player==caster)
+            {
+                break;
+            }
+            match d {
+                Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+                Decision::DeclareBlockers { .. } => {
+                    engine::step(&mut state, Action::DeclareBlockers(vec![])).unwrap()
+                }
+                other => panic!("actual combat {other:?}"),
+            }
+        }
+        assert_eq!(state.step, Step::Main2);
+        let gorehorn = put(&mut state, caster, "Gorehorn Raider", Zone::Hand);
+        state.players[caster.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+        state.players[caster.index()].mana_pool[ManaColor::C.pool_index()] = 4;
+        engine::step(&mut state, Action::CastSpell(gorehorn)).unwrap();
+        let _ = engine::advance_until_decision(&mut state);
+        for _ in 0..12 {
+            let d = engine::advance_until_decision(&mut state);
+            if matches!(d, Decision::ChooseTargets { .. }) {
+                break;
+            }
+            assert!(matches!(d, Decision::CastSpellOrPass { .. }), "{d:?}");
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::ChooseTargets { .. }
+        ));
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+        let _ = engine::advance_until_decision(&mut state);
+        state.engine.next_replacement_id = 1;
+        state.engine.active_replacements.push(ActiveReplacement {
+            id: 1,
+            source: wall,
+            kind: ReplacementEffectKind::PreventNextDamage {
+                target: Target::Object(target),
+                remaining: 5,
+            },
+        });
+        state.objects.get_mut(gorehorn).v4.lifelink_keyword_counters = 1;
+        for _ in 0..12 {
+            let d = engine::advance_until_decision(&mut state);
+            if matches!(d,Decision::ChooseEffectOption { player, .. } if player==chooser) {
+                break;
+            }
+            assert!(matches!(d, Decision::CastSpellOrPass { .. }), "{d:?}");
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        assert!(
+            matches!(engine::advance_until_decision(&mut state),Decision::ChooseEffectOption { player, .. } if player==chooser)
+        );
+        let base = FastActorSessionV1::from_crystal_v22_fixture_state(state);
+        let mut session = HumanCrystalSessionV22::from_session(base).unwrap();
+        let current = expected(&session);
+        let public = session.public_observation(current).unwrap();
+        let facts = public
+            .prevention_menu
+            .as_ref()
+            .unwrap()
+            .raid_source_history
+            .as_ref()
+            .unwrap();
+        assert_eq!(facts.ability_controller, caster.into());
+        assert_eq!(facts.damage_controller, caster.into());
+        assert!(!facts.historical);
+        assert!(facts.lifelink);
+        let mut projector = HumanCrystalProjectorV22::new(chooser.into());
+        let prompt = projector.project_current(&session, current).unwrap();
+        safe(&serde_json::to_value(&prompt).unwrap());
+        assert_eq!(
+            prompt
+                .state
+                .extensions
+                .prevention_menu
+                .as_ref()
+                .unwrap()
+                .raid_source_history
+                .as_ref(),
+            Some(facts)
+        );
+        let request = action(&prompt, "Apply Crystal Barricade");
+        let snapshot = session.snapshot_v22();
+        let receipt = projector.submit(&mut session, request.clone()).unwrap();
+        assert_eq!(
+            projector.submit(&mut session, request.clone()).unwrap(),
+            receipt
+        );
+        assert_eq!(
+            session
+                .inner
+                .crystal_fixture_state()
+                .objects
+                .get(target)
+                .damage,
+            0
+        );
+        assert_eq!(
+            session
+                .inner
+                .crystal_fixture_state()
+                .engine
+                .event_history
+                .iter()
+                .filter(|e| matches!(
+                    e,
+                    crate::event::CommittedEvent::GorehornCrystalCompletionV1 { .. }
+                ))
+                .count(),
+            1
+        );
+        session.restore_v22(&snapshot).unwrap();
+        let before = session.inner.privileged_core_environment_hash();
+        assert_eq!(
+            projector.submit(&mut session, request),
+            Err(Error::StaleDecision)
+        );
+        assert_eq!(before, session.inner.privileged_core_environment_hash());
+        let mut fresh = HumanCrystalProjectorV22::new(chooser.into());
+        let current = expected(&session);
+        let restored = fresh.project_current(&session, current).unwrap();
+        let request = action(&restored, "Apply Crystal Barricade");
+        fresh.submit(&mut session, request).unwrap();
+        assert_eq!(
+            session
+                .inner
+                .crystal_fixture_state()
+                .objects
+                .get(target)
+                .damage,
+            0
+        );
+    }
+}

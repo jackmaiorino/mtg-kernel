@@ -939,6 +939,12 @@ pub enum CommittedEvent {
     FixedDamageRemovedV3 {
         removal: Box<crate::fixed_source_damage_v3::RemovedV3>,
     },
+    GorehornCrystalBeginV1 {
+        begin: Box<crate::gorehorn_damage_v1::crystal::BeginV1>,
+    },
+    GorehornCrystalCompletionV1 {
+        completion: Box<crate::gorehorn_damage_v1::crystal::CompletionV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

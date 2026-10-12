@@ -3801,3 +3801,329 @@ fn real_heartfire_shield_then_crystal_resumes_twice_and_retains_exact_completion
         }
     }
 }
+
+fn raid_crystal_publication(
+    actor: PlayerId,
+    recipient_player: bool,
+) -> (GameState, ObjectId, ObjectId, ObjectId) {
+    let mut state = ready(actor);
+    let wall = source(&mut state, actor);
+    control_primitive(&mut state, wall, actor.opponent());
+    let attacker = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+    state.step = Step::DeclareAttackers;
+    assert!(
+        matches!(next(&mut state), Decision::DeclareAttackers { player, .. } if player == actor)
+    );
+    engine::step(&mut state, Action::DeclareAttackers(vec![attacker])).unwrap();
+    for _ in 0..40 {
+        let d = next(&mut state);
+        if state.step == Step::Main2
+            && matches!(d,Decision::CastSpellOrPass { player, .. } if player == actor)
+        {
+            break;
+        }
+        match d {
+            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+            Decision::DeclareBlockers { .. } => {
+                engine::step(&mut state, Action::DeclareBlockers(vec![])).unwrap()
+            }
+            other => panic!("actual Raid combat: {other:?}"),
+        }
+    }
+    assert_eq!(state.step, Step::Main2);
+    let recipient = put(
+        &mut state,
+        actor.opponent(),
+        "Shivan Dragon",
+        Zone::Battlefield,
+    );
+    let gorehorn = put(&mut state, actor, "Gorehorn Raider", Zone::Hand);
+    state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+    state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 4;
+    priority(&mut state, actor);
+    engine::step(&mut state, Action::CastSpell(gorehorn)).unwrap();
+    let _ = next(&mut state);
+    for _ in 0..12 {
+        let d = next(&mut state);
+        if let Decision::ChooseTargets { legal_targets, .. } = d {
+            let target = if recipient_player {
+                Target::Player(actor)
+            } else {
+                Target::Object(recipient)
+            };
+            assert!(legal_targets.contains(&target));
+            engine::step(&mut state, Action::ChooseTarget(target)).unwrap();
+            let _ = next(&mut state);
+            assert!(state.stack.iter().any(|i| i.source == gorehorn
+                && i.kind == mtg_kernel::state::StackItemKind::TriggeredAbility));
+            return (state, gorehorn, recipient, wall);
+        }
+        assert!(matches!(d, Decision::CastSpellOrPass { .. }), "{d:?}");
+        engine::step(&mut state, Action::Pass).unwrap();
+    }
+    panic!("actual Gorehorn target publication");
+}
+fn raid_crystal_control(state: &mut GameState, object: ObjectId, controller: PlayerId) {
+    let source = put(state, controller, "Lightning Bolt", Zone::Hand);
+    let mut ctx = mtg_kernel::effect::ExecCtx::no_targets(source, controller);
+    ctx.targets.push(Target::Object(object));
+    ctx.target_contracts
+        .push(mtg_kernel::state::StackTargetContractV4::capture(
+            state,
+            Target::Object(object),
+        ));
+    mtg_kernel::effect::execute(
+        &mtg_kernel::effect::EffectOp::GainControlOfTargetCreatureUntilEndOfTurn {
+            target_index: 0,
+        },
+        &ctx,
+        state,
+    );
+    assert!(state.engine.halted.is_none());
+    assert_eq!(state.objects.get(object).controller, controller);
+}
+fn raid_crystal_bounce(state: &mut GameState, actor: PlayerId, gorehorn: ObjectId) {
+    let old_id = state
+        .stack
+        .iter()
+        .find(|i| {
+            i.source == gorehorn && i.kind == mtg_kernel::state::StackItemKind::TriggeredAbility
+        })
+        .unwrap()
+        .v4
+        .stack_item_id;
+    let spell = put(state, actor, "Unsummon", Zone::Hand);
+    state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 1;
+    priority(state, actor);
+    engine::step(state, Action::CastSpell(spell)).unwrap();
+    assert!(
+        matches!(next(state),Decision::ChooseTargets { legal_targets, .. } if legal_targets.contains(&Target::Object(gorehorn)))
+    );
+    engine::step(state, Action::ChooseTarget(Target::Object(gorehorn))).unwrap();
+    let _ = next(state);
+    for _ in 0..12 {
+        if state.objects.get(spell).zone == Zone::Graveyard {
+            break;
+        }
+        assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
+        engine::step(state, Action::Pass).unwrap();
+    }
+    assert_eq!(state.objects.get(gorehorn).zone, Zone::Hand);
+    event::propose_and_commit(
+        state,
+        ProposedEvent::zone_change(gorehorn, Zone::Battlefield),
+    );
+    // Physical reentry after an actual Unsummon. This is not a second printed cast.
+    // Its genuine new Raid trigger is targeted and countered by the existing
+    // typed counter primitive, leaving only the original instruction in flight.
+    assert!(matches!(next(state), Decision::ChooseTargets { .. }));
+    engine::step(state, Action::ChooseTarget(Target::Player(actor))).unwrap();
+    let _ = next(state);
+    let new_id = state
+        .stack
+        .iter()
+        .rev()
+        .find(|i| i.source == gorehorn && i.v4.stack_item_id != old_id)
+        .unwrap()
+        .v4
+        .stack_item_id;
+    engine::counter_stack_item_by_id(state, new_id)
+        .unwrap()
+        .unwrap();
+}
+#[test]
+fn real_gorehorn_raid_crystal_prevention_retains_original_source_and_both_owners_after_restore() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for bounce in [false, true] {
+            for choose_shield in [false, true] {
+                let (mut state, gorehorn, recipient, wall) = raid_crystal_publication(actor, false);
+                state.objects.get_mut(gorehorn).v4.lifelink_keyword_counters = 1;
+                let old_generation = state.objects.get(gorehorn).zone_change_count;
+                if bounce {
+                    raid_crystal_bounce(&mut state, actor, gorehorn);
+                }
+
+                shield(&mut state, wall, recipient, 5);
+                let life = [state.players[0].life, state.players[1].life];
+                mixed_menu(&mut state);
+                let id = state
+                    .engine
+                    .pending_effect
+                    .as_ref()
+                    .unwrap()
+                    .resolving_item
+                    .v4
+                    .stack_item_id;
+                let public = mtg_kernel::crystal_public_v1::observe_v1(
+                    &state,
+                    &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+                    actor.opponent(),
+                    0,
+                    0,
+                    0,
+                    1,
+                )
+                .unwrap();
+                let menu = public.prevention_menu.unwrap();
+                assert_eq!(menu.source.zone_change_count, old_generation);
+                let facts = menu.raid_source_history.unwrap();
+                assert_eq!(facts.ability_controller, actor.into());
+                assert_eq!(facts.damage_controller, actor.into());
+                assert_eq!(facts.historical, bounce);
+                assert!(facts.lifelink);
+                let mut replay = restore(&state);
+                for current in [&mut state, &mut replay] {
+                    let selected = option(current, choose_shield);
+                    engine::step(current, Action::ChooseEffectOption(selected)).unwrap();
+                    finish(current);
+                    assert_eq!(current.objects.get(recipient).damage, 0);
+                    assert_eq!([current.players[0].life, current.players[1].life], life);
+                    assert_eq!(current.engine.event_history.iter().filter(|e|matches!(e,
+                        mtg_kernel::event::CommittedEvent::GorehornCrystalCompletionV1 { completion }
+                        if completion.item.v4.stack_item_id==id)).count(),1);
+                    assert_eq!(
+                        current
+                            .engine
+                            .event_history
+                            .iter()
+                            .filter(|e| matches!(e,
+                        mtg_kernel::event::CommittedEvent::GorehornOperationV1 { operation }
+                        if operation.item.v4.stack_item_id==id))
+                            .count(),
+                        0
+                    );
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&replay).unwrap()
+                );
+            }
+        }
+    }
+}
+#[test]
+fn real_gorehorn_crystal_no_menu_damage_uses_current_lifelink_controller_and_requires_completion() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, gorehorn, _, _) = raid_crystal_publication(actor, true);
+        state.objects.get_mut(gorehorn).v4.lifelink_keyword_counters = 1;
+        raid_crystal_control(&mut state, gorehorn, actor.opponent());
+        let life = [state.players[0].life, state.players[1].life];
+        let id = state
+            .stack
+            .iter()
+            .find(|i| i.source == gorehorn)
+            .unwrap()
+            .v4
+            .stack_item_id;
+        let mut replay = restore(&state);
+        for current in [&mut state, &mut replay] {
+            finish(current);
+            assert_eq!(current.players[actor.index()].life, life[actor.index()] - 2);
+            assert_eq!(
+                current.players[actor.opponent().index()].life,
+                life[actor.opponent().index()] + 2
+            );
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+        let mut bad = restore(&state);
+        bad.engine.event_history.retain(|e|!matches!(e,
+            mtg_kernel::event::CommittedEvent::GorehornCrystalCompletionV1 { completion } if completion.item.v4.stack_item_id==id));
+        let bytes = serde_json::to_vec(&bad).unwrap();
+        assert!(engine::step(&mut bad, Action::Pass).is_err());
+        assert_eq!(bytes, serde_json::to_vec(&bad).unwrap());
+        assert!(matches!(
+            engine::advance_until_decision(&mut bad),
+            Decision::Halted { .. }
+        ));
+        bad.engine.halted = None;
+        assert_eq!(bytes, serde_json::to_vec(&bad).unwrap());
+    }
+}
+#[test]
+fn real_gorehorn_crystal_captured_raid_recheck_and_completion_forgeries_refuse_readonly() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, gorehorn, recipient, wall) = raid_crystal_publication(actor, false);
+        shield(&mut state, wall, recipient, 5);
+        mixed_menu(&mut state);
+        for mode in 0..5 {
+            let mut bad = restore(&state);
+            match mode {
+                0 => bad.engine.event_history.retain(|e| {
+                    !matches!(
+                        e,
+                        mtg_kernel::event::CommittedEvent::GorehornCrystalBeginV1 { .. }
+                    )
+                }),
+                1 => {
+                    let item = bad.stack.iter_mut().find(|i| i.source == gorehorn).unwrap();
+                    item.v4.crystal_prevention_started_v1 = Default::default();
+                }
+                2 => {
+                    for e in &mut bad.engine.event_history {
+                        if let mtg_kernel::event::CommittedEvent::GorehornCrystalBeginV1 { begin } =
+                            e
+                        {
+                            begin.attacked = None;
+                        }
+                    }
+                }
+                3 => bad.engine.event_history.retain(|e| {
+                    !matches!(
+                        e,
+                        mtg_kernel::event::CommittedEvent::GorehornPreparedV1 { .. }
+                    )
+                }),
+                _ => {
+                    bad.engine.pending_effect = None;
+                    bad.stack.retain(|i| i.source != gorehorn);
+                }
+            }
+            let bytes = serde_json::to_vec(&bad).unwrap();
+            assert!(engine::step(&mut bad, Action::Pass).is_err());
+            assert_eq!(bytes, serde_json::to_vec(&bad).unwrap());
+            assert!(matches!(
+                engine::advance_until_decision(&mut bad),
+                Decision::Halted { .. }
+            ));
+            bad.engine.halted = None;
+            assert_eq!(bytes, serde_json::to_vec(&bad).unwrap());
+        }
+        let selected = option(&state, false);
+        engine::step(&mut state, Action::ChooseEffectOption(selected)).unwrap();
+        let mut replay = restore(&state);
+        finish(&mut state);
+        finish(&mut replay);
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+    }
+}
+#[test]
+fn real_gorehorn_false_intervening_raid_completes_crystal_without_preparing_damage() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, gorehorn, recipient, _) = raid_crystal_publication(actor, false);
+        // Typed stale-turn restore primitive; this is not a normal turn traversal.
+        state.turn += 1;
+        state.active_player = actor.opponent();
+        state.priority_player = actor.opponent();
+        let mut replay = restore(&state);
+        for current in [&mut state, &mut replay] {
+            finish(current);
+            assert_eq!(current.objects.get(recipient).damage, 0);
+            assert!(!current.engine.event_history.iter().any(|e| matches!(
+                e,
+                mtg_kernel::event::CommittedEvent::GorehornPreparedV1 { .. }
+            )));
+            assert!(current.engine.event_history.iter().any(|e|matches!(e,
+                mtg_kernel::event::CommittedEvent::GorehornCrystalCompletionV1 { completion } if completion.item.source==gorehorn)));
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+    }
+}

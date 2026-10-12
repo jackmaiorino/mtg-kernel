@@ -9049,7 +9049,9 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
     // Refuse lost captured Raid owners before refresh, legend, SBA or automatic work.
-    if crate::raid_entry_v1::validate_state(state).is_err() {
+    if crate::raid_entry_v1::validate_state(state).is_err()
+        || crate::gorehorn_damage_v1::validate_state(state).is_err()
+    {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
         state.engine.halted = Some((mechanic, source));
@@ -14505,28 +14507,29 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
 
     if let Some(effect) = item.inline_effect.clone() {
         let effect_history_start = state.engine.event_history.len();
-        let progress = if let Some(owner) = gorehorn_owner.as_ref() {
-            let before = state.clone();
-            if crate::gorehorn_damage_v1::execute_owned(state, &effect, &ctx, owner).is_ok() {
-                ResolutionProgress::Complete
+        let progress =
+            if let Some(owner) = gorehorn_owner.as_ref().filter(|_| crystal_owner.is_none()) {
+                let before = state.clone();
+                if crate::gorehorn_damage_v1::execute_owned(state, &effect, &ctx, owner).is_ok() {
+                    ResolutionProgress::Complete
+                } else {
+                    *state = before;
+                    state.stack.push(item.clone());
+                    state.engine.halted =
+                        Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                    ResolutionProgress::Suspended
+                }
             } else {
-                *state = before;
-                state.stack.push(item.clone());
-                state.engine.halted =
-                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
-                ResolutionProgress::Suspended
-            }
-        } else {
-            execute_resolving_program(
-                state,
-                &item,
-                &ctx,
-                &effect,
-                squad_owner.as_ref(),
-                frenzied_owner.as_ref(),
-                crystal_owner.as_ref(),
-            )
-        };
+                execute_resolving_program(
+                    state,
+                    &item,
+                    &ctx,
+                    &effect,
+                    squad_owner.as_ref(),
+                    frenzied_owner.as_ref(),
+                    crystal_owner.as_ref(),
+                )
+            };
         if progress == ResolutionProgress::Complete {
             if crate::librarian_activation_v1::record_resolved(state, &item, effect_history_start)
                 .is_err()

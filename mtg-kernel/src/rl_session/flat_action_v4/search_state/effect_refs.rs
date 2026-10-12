@@ -966,6 +966,8 @@ pub(super) fn conflicts(
                 | crate::event::CommittedEvent::GorehornPreparedV1 { .. }
                 | crate::event::CommittedEvent::GorehornDamageOperationV1 { .. }
                 | crate::event::CommittedEvent::GorehornOperationV1 { .. }
+                | crate::event::CommittedEvent::GorehornCrystalBeginV1 { .. }
+                | crate::event::CommittedEvent::GorehornCrystalCompletionV1 { .. }
         )
     }) {
         return true;
@@ -1162,6 +1164,8 @@ pub(super) fn conflicts(
             | GorehornPreparedV1 { .. }
             | GorehornDamageOperationV1 { .. }
             | GorehornOperationV1 { .. }
+            | crate::event::CommittedEvent::GorehornCrystalBeginV1 { .. }
+            | crate::event::CommittedEvent::GorehornCrystalCompletionV1 { .. }
             | SquadRallierResolutionBoundaryV1 { .. }
             | SowerRestrictionInstalledV1 { .. }
             | SowerRestrictionExpiredV1 { .. }

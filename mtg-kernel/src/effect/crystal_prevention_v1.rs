@@ -332,6 +332,7 @@ pub(crate) struct OwnerV1 {
     expected: StackItem,
     root: EffectOp,
     initial: bool,
+    gorehorn: Option<crate::gorehorn_damage_v1::OwnerV1>,
 }
 impl OwnerV1 {
     pub(crate) fn permits_damage(
@@ -603,14 +604,28 @@ fn original_damage(
 ) -> Result<DamageProposed, String> {
     let (target, amount, historical_source) = match op {
         EffectOp::DealDamage { target, amount } => {
-            let historical = ctx
-                .stack_item_id
-                .filter(|id| crate::fixed_source_damage_v3::has_payment(state, *id));
+            let historical = ctx.stack_item_id.filter(|id| {
+                crate::fixed_source_damage_v3::has_payment(state, *id)
+                    || crate::gorehorn_damage_v1::has_publication(state, *id)
+            });
             if let Some(id) = historical {
-                if *op != crate::fixed_source_damage_v3::printed_root() {
+                if crate::gorehorn_damage_v1::has_publication(state, id) {
+                    if !matches!(
+                        op,
+                        EffectOp::DealDamage {
+                            target: TargetRef::Target(0),
+                            amount: 2
+                        }
+                    ) {
+                        return Err("Crystal Gorehorn damage changed printed leaf".into());
+                    }
+                    crate::gorehorn_damage_v1::damage_source(state, id, ctx.source)?;
+                } else if *op != crate::fixed_source_damage_v3::printed_root() {
                     return Err("fixed historical damage changed printed instruction".into());
                 }
-                crate::fixed_source_damage_v3::damage_source(state, ctx.source, id)?;
+                if crate::fixed_source_damage_v3::has_payment(state, id) {
+                    crate::fixed_source_damage_v3::damage_source(state, ctx.source, id)?;
+                }
             }
             (ctx.resolve_target(*target), *amount, historical)
         }
@@ -690,7 +705,9 @@ pub(crate) fn source_power_payment_matches(
                 crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1,
             )
             || (crate::fixed_source_damage_v3::selected(saved)
-                && boundary.root == crate::fixed_source_damage_v3::printed_root()))
+                && boundary.root == crate::fixed_source_damage_v3::printed_root())
+            || (crate::gorehorn_damage_v1::selected(saved)
+                && boundary.root == crate::trigger::gorehorn_raider_effect()))
 }
 fn fight_recipe(op: &EffectOp) -> bool {
     source_fight_recipe(op)
@@ -811,7 +828,11 @@ pub(crate) fn acquire_owner(
     initial: bool,
 ) -> Result<Option<OwnerV1>, String> {
     let started = item.v4.crystal_prevention_started_v1.0.is_some();
-    if !started && !mixed_environment(state) && !crate::fixed_source_damage_v3::tracked(state, item)
+    if !started
+        && !mixed_environment(state)
+        && !crate::fixed_source_damage_v3::tracked(state, item)
+        && !(crate::gorehorn_damage_v1::selected(item)
+            && crate::crystal_barricade_v1::active(state))
     {
         return Ok(None);
     }
@@ -863,7 +884,9 @@ pub(crate) fn acquire_owner(
     {
         return Err("Crystal resume lost its published owner".into());
     }
+    let gorehorn = crate::gorehorn_damage_v1::acquire_owner(state, item)?;
     Ok(Some(OwnerV1 {
+        gorehorn,
         original: item.clone(),
         expected,
         root,
@@ -1193,6 +1216,9 @@ pub(crate) fn begin_owned(
     });
     state.engine.pending_effect = Some(p);
     record(state, owner, None)?;
+    if let Some(gorehorn) = owner.gorehorn.as_ref() {
+        crate::gorehorn_damage_v1::crystal::begin_owned(state, gorehorn, &owner.expected)?;
+    }
     drive_owned(state, owner)
 }
 pub(crate) fn resume_owned(
@@ -1270,6 +1296,14 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
             | EffectOp::StandardV1(
                 crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1,
             ) => {
+                if let Some(gorehorn) = owner.gorehorn.as_ref() {
+                    crate::gorehorn_damage_v1::crystal::prepare_owned(
+                        state,
+                        gorehorn,
+                        &pending.ctx,
+                        op,
+                    )?;
+                }
                 let damage = original_damage(state, &pending.ctx, op)?;
                 if damage.amount <= 0 {
                     steps.push(step);
@@ -1452,6 +1486,11 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
             execution: Box::new(execution),
         });
     record(state, owner, None)?;
+    if !suspended {
+        if let Some(gorehorn) = owner.gorehorn.as_ref() {
+            crate::gorehorn_damage_v1::crystal::finish_owned(state, gorehorn, &owner.expected)?;
+        }
+    }
     Ok(if suspended {
         ResumableProgress::Suspended
     } else {
@@ -2275,6 +2314,7 @@ pub(crate) fn answer_discard(state: &mut GameState, target: Option<Target>) -> R
         expected: before.resolving_item.clone(),
         root: boundary.root.clone(),
         initial: false,
+        gorehorn: None,
     };
     let mut commit = DiscardCommitV2 {
         capture: at,
@@ -3720,6 +3760,7 @@ pub(crate) fn answer(state: &mut GameState, index: u16) -> Result<(), String> {
         expected: item,
         root,
         initial: false,
+        gorehorn: None,
     };
     let answer = AnswerV1 {
         before: choice.clone(),
@@ -3899,6 +3940,7 @@ pub(crate) fn answer_program_choice(state: &mut GameState, option: u16) -> Resul
         expected: before.resolving_item.clone(),
         root: boundary.root,
         initial: false,
+        gorehorn: None,
     };
     state
         .engine

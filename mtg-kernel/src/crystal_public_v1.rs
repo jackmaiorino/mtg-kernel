@@ -33,6 +33,8 @@ pub struct MenuV1 {
     pub source_history: Option<SavedDamageSourceV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fixed_source_history: Option<SavedFixedDamageSourceV3>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raid_source_history: Option<SavedRaidDamageSourceV4>,
     /// Includes the current affected recipient. No hidden roster or raw IDs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub simultaneous_choices_remaining: Option<usize>,
@@ -81,10 +83,21 @@ pub struct SavedFixedDamageSourceV3 {
     pub deathtouch: bool,
     pub werewolf: bool,
 }
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SavedRaidDamageSourceV4 {
+    pub ability_controller: PlayerSeatV1,
+    pub damage_controller: PlayerSeatV1,
+    pub historical: bool,
+    pub color_mask: u8,
+    pub lifelink: bool,
+    pub deathtouch: bool,
+}
 type DamageOriginV3 = (
     CardStableRefV1,
     Option<SavedDamageSourceV1>,
     Option<SavedFixedDamageSourceV3>,
+    Option<SavedRaidDamageSourceV4>,
 );
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -145,6 +158,9 @@ pub fn producer_sha256_v1() -> String {
         include_str!("standard_cards_v1.rs"),
         include_str!("source_power_activation_v1.rs"),
         include_str!("fixed_source_damage_v3.rs"),
+        include_str!("gorehorn_damage_v1.rs"),
+        include_str!("gorehorn_crystal_v1.rs"),
+        include_str!("raid_entry_custody_v1.rs"),
         include_str!("rules_meaning_heartfire_v1.rs"),
         include_str!("creature_stats_lki_v1.rs"),
         include_str!("standard_legends_v1.rs"),
@@ -211,7 +227,7 @@ fn damage_origin(
     choice: &crate::effect::crystal_prevention_v1::ChoiceV1,
 ) -> Result<DamageOriginV3, RlContractError> {
     let Some(id) = choice.historical_source else {
-        return Ok((public_ref(state, choice.source)?, None, None));
+        return Ok((public_ref(state, choice.source)?, None, None, None));
     };
     let item = state
         .stack
@@ -222,6 +238,55 @@ fn damage_origin(
     let source = item.v4.ability_source_contract.ok_or_else(|| {
         RlContractError("Crystal historical source lost captured identity".into())
     })?;
+    if crate::gorehorn_damage_v1::has_publication(state, id) {
+        let ordinal = u32::try_from(
+            state
+                .stack
+                .iter()
+                .position(|row| row.v4.stack_item_id == id)
+                .ok_or_else(|| RlContractError("Crystal Raid source lost public ordinal".into()))?,
+        )
+        .map_err(|_| RlContractError("Crystal Raid ordinal overflow".into()))?;
+        let rows = crate::gorehorn_damage_v1::public_sources(state).map_err(RlContractError)?;
+        let row = rows
+            .iter()
+            .find(|row| row.stack_ordinal == ordinal)
+            .ok_or_else(|| {
+                RlContractError("Crystal Raid source lost genuine printed selector".into())
+            })?;
+        let facts = crate::gorehorn_damage_v1::damage_source(state, id, choice.source)
+            .map_err(RlContractError)?;
+        if row.color_mask != facts.color_mask
+            || row.damage_controller != facts.source.controller.into()
+            || row.lifelink != facts.lifelink
+            || row.deathtouch != facts.deathtouch
+        {
+            return Err(RlContractError(
+                "Crystal Raid public facts changed after actual preparation".into(),
+            ));
+        }
+        let reference = CardStableRefV1 {
+            arena_id: source.source.0,
+            card_db_id: source.card_def,
+            owner: source.owner.into(),
+            controller: source.controller.into(),
+            zone: source.zone,
+            zone_change_count: source.zone_change_count,
+        };
+        return Ok((
+            reference,
+            None,
+            None,
+            Some(SavedRaidDamageSourceV4 {
+                ability_controller: row.ability_controller,
+                damage_controller: row.damage_controller,
+                historical: row.historical,
+                color_mask: row.color_mask,
+                lifelink: row.lifelink,
+                deathtouch: row.deathtouch,
+            }),
+        ));
+    }
     let local = item
         .v4
         .activated_ability_index
@@ -253,6 +318,7 @@ fn damage_origin(
                 deathtouch: facts.deathtouch,
                 werewolf: facts.werewolf,
             }),
+            None,
         ));
     }
     crate::rules_meaning_heartfire_v1::root_meaning(source.card_def, u32::from(local)).map_err(
@@ -291,6 +357,7 @@ fn damage_origin(
             deathtouch: facts.deathtouch,
             werewolf: facts.werewolf,
         }),
+        None,
         None,
     ))
 }
@@ -346,7 +413,8 @@ fn menu(state: &GameState) -> Result<Option<MenuV1>, RlContractError> {
         };
         Ok(OptionV1 { kind: kind.into(), source: public_ref(state, id)?, shield_remaining: amount })
     }).collect::<Result<Vec<_>, RlContractError>>()?;
-    let (source, source_history, fixed_source_history) = damage_origin(state, choice)?;
+    let (source, source_history, fixed_source_history, raid_source_history) =
+        damage_origin(state, choice)?;
     Ok(Some(MenuV1 {
         chooser: choice.chooser.into(),
         source,
@@ -356,6 +424,7 @@ fn menu(state: &GameState) -> Result<Option<MenuV1>, RlContractError> {
         )?,
         source_history,
         fixed_source_history,
+        raid_source_history,
         simultaneous_choices_remaining: choice.batch.as_ref().map(|progress| {
             progress
                 .outcomes
