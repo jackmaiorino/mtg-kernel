@@ -1010,6 +1010,9 @@ pub enum CommittedEvent {
         publication_history_index: u32,
         removal_history_index: u32,
     },
+    AshrootDispatchV2 {
+        journal: crate::ashroot_dispatch_v2::JournalV2,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

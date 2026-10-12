@@ -3850,6 +3850,7 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
     }
     match (template, effect) {
         (EffectOp::BindAshrootAttackBoostV1, EffectOp::AshrootAttackBoostV1 { .. }) => true,
+        (EffectOp::BindAshrootAttackBoostV1, EffectOp::AshrootBoostFromCaptureV2 { .. }) => true,
         (
             EffectOp::Conditional { cond, then, else_ },
             EffectOp::Conditional {
@@ -4609,7 +4610,9 @@ pub(crate) fn collect_and_process_with_waiting(
         let keep = crate::engine::pending_trigger_targets_can_complete(pending, state);
         if !keep {
             crate::banishing_light_v1::discard_without_targets(state, pending);
-            if crate::stromkirk_dispatch_v1::unavailable(state, pending).is_err() {
+            if crate::stromkirk_dispatch_v1::unavailable(state, pending).is_err()
+                || crate::ashroot_dispatch_v2::unavailable(state, pending).is_err()
+            {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     pending.source,
@@ -4684,6 +4687,16 @@ fn triggers_from_events(
                 })
     });
     let mut new_triggers = state.legend_pending_v1.take().unwrap_or_default();
+    match crate::ashroot_dispatch_v2::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
     match crate::vampire_gourmand_dispatch_v2::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
@@ -4909,6 +4922,9 @@ fn triggers_from_events(
                 }
             }
             for (ability_index, def) in triggers_for(obj.card_def).iter().enumerate() {
+                if (def.effect)() == EffectOp::BindAshrootAttackBoostV1 {
+                    continue;
+                }
                 if def.condition == TriggerCondition::Etb
                     && crate::banishing_light_v1::owns_definition(obj.card_def)
                 {

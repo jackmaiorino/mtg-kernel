@@ -3128,7 +3128,10 @@ fn triggered_ability_targeting_source(
         zone: contract.zone,
         zone_change_count: contract.zone_change_count,
         other_than,
-        original_source_incarnation_only: matches!(effect, EffectOp::AshrootAttackBoostV1 { .. }),
+        original_source_incarnation_only: matches!(
+            effect,
+            EffectOp::AshrootAttackBoostV1 { .. } | EffectOp::AshrootBoostFromCaptureV2 { .. }
+        ),
     })
 }
 
@@ -12466,7 +12469,9 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
             // batch was just put on the stack), and a trigger whose targets
             // cannot be completed is removed rather than posing a
             // `ChooseTargets` with no legal choice.
-            if crate::stromkirk_dispatch_v1::unavailable(state, &pending).is_err() {
+            if crate::stromkirk_dispatch_v1::unavailable(state, &pending).is_err()
+                || crate::ashroot_dispatch_v2::unavailable(state, &pending).is_err()
+            {
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
                     pending.source,
@@ -12499,7 +12504,9 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
                 // false`), which `drain_pending_cast_or_decide`'s matching
                 // `targeting_can_complete`/`abort_cast` guard already
                 // avoids for spell casts.
-                if crate::stromkirk_dispatch_v1::unavailable(state, &pending).is_err() {
+                if crate::stromkirk_dispatch_v1::unavailable(state, &pending).is_err()
+                    || crate::ashroot_dispatch_v2::unavailable(state, &pending).is_err()
+                {
                     state.engine.halted = Some((
                         UnsupportedMechanic::InvalidEffectContinuation,
                         pending.source,
@@ -12996,6 +13003,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
         crate::authority_of_the_consuls_v1::publish(state, &published)?;
     }
     let finalized = state.stack.last().expect("trigger just published").clone();
+    crate::ashroot_dispatch_v2::publish(state, &finalized)?;
     crate::wildwood_capture_v1::publish(state, &finalized);
     effect::frenzied_goblin_resolution_v1::publish(state)?;
     let gourmand_item = state.stack.last().expect("trigger just published").clone();
@@ -13202,8 +13210,10 @@ fn triggered_stack_item_expected_target_spec(
         ability_source_contract,
     )?;
     crate::frenzied_goblin_v1::validate_source(state, source_card_def, ability_source_contract)?;
-    if matches!(inline_effect, EffectOp::AshrootAttackBoostV1 { .. })
-        || (item.v4.granted_by.is_none() && item.v4.cauldron_grant.0.is_none())
+    if matches!(
+        inline_effect,
+        EffectOp::AshrootAttackBoostV1 { .. } | EffectOp::AshrootBoostFromCaptureV2 { .. }
+    ) || (item.v4.granted_by.is_none() && item.v4.cauldron_grant.0.is_none())
     {
         crate::ashroot_animist_v1::validate_trigger(
             state,
@@ -14004,6 +14014,7 @@ pub(crate) fn counter_stack_item_by_id(
     let banishing_owner = crate::banishing_light_v1::acquire(state, &item)?;
     let librarian_counter_owner =
         crate::librarian_activation_v1::acquire_counter_owner(state, &item)?;
+    let ashroot_owner = crate::ashroot_dispatch_v2::acquire(state, &item)?;
     let temporal_owner = crate::extra_turn_v1::acquire_counter(state, &item)?;
     if temporal_owner.is_some() && item.is_copy {
         if let Some(plan) = departure.take() {
@@ -14012,6 +14023,7 @@ pub(crate) fn counter_stack_item_by_id(
     } else {
         state.stack.remove(position);
     }
+    crate::ashroot_dispatch_v2::counter(state, ashroot_owner.as_ref())?;
     crate::extra_turn_v1::record_countered(state, temporal_owner);
     crate::banishing_light_v1::record_removed(
         state,
@@ -14360,6 +14372,20 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 return ResolutionProgress::Suspended;
             }
         };
+    let ashroot_owner = match crate::ashroot_dispatch_v2::acquire_resolution(
+        state,
+        state.stack.last().expect("resolving item"),
+        targets_legal,
+    ) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let banishing_owner = match crate::banishing_light_v1::acquire(state, &current) {
         Ok(owner) => owner,
         Err(_) => {
@@ -14420,6 +14446,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
 
     if let Some(owner) = stromkirk_owner.as_ref() {
         if crate::stromkirk_dispatch_v1::resolve_owned(state, owner).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
+    if let Some(owner) = ashroot_owner {
+        if crate::ashroot_dispatch_v2::resolve(state, &owner, targets_legal).is_err() {
             state.engine.halted =
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
             return ResolutionProgress::Suspended;
@@ -14736,6 +14770,15 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
 /// obviously-combat-shaped divergence. See `Decision::DeclareAttackers`'s
 /// doc and the replay comparator's handling of an empty `eligible`.
 fn advance_step(state: &mut GameState) {
+    if state.step == Step::Cleanup && crate::ashroot_dispatch_v2::has_active(state) {
+        for player in &mut state.players {
+            player.mana_pool = [0; 6];
+            player.restricted_mana_pool.0.clear();
+        }
+        run_step_entry_action(state, Step::Cleanup);
+        reset_priority(state);
+        return;
+    }
     // 514.3a: priority during cleanup is followed by another cleanup step.
     // The new control producer can resolve during that priority window, so its
     // fresh duration must expire before the active player changes. Preserve the
@@ -15156,7 +15199,9 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
                 return;
             }
-            if effect::expire_vampire_gourmand_restrictions(state).is_err() {
+            if effect::expire_vampire_gourmand_restrictions(state).is_err()
+                || crate::ashroot_dispatch_v2::expire(state).is_err()
+            {
                 state.engine.halted =
                     Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
                 return;
@@ -19168,7 +19213,7 @@ pub(crate) fn finish_declare_attackers(state: &mut GameState, attackers: Vec<Obj
                     )
                 })
         });
-    for &source in &state.engine.combat.attackers {
+    for source in state.engine.combat.attackers.clone() {
         let object = state.objects.get(source);
         if another_observes_attacks
             || trigger::triggers_for(object.card_def).iter().any(|def| {
@@ -19193,6 +19238,7 @@ pub(crate) fn finish_declare_attackers(state: &mut GameState, attackers: Vec<Obj
             state.engine.event_log.push(event.clone());
             state.engine.event_history.push(event);
             let declaration = state.engine.event_history.len() - 1;
+            crate::ashroot_dispatch_v2::record_attack(state, source);
             crate::vampire_gourmand_dispatch_v2::capture_declaration(state, declaration);
         }
     }
