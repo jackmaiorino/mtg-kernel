@@ -74,32 +74,42 @@ fn starts_job(job: &StartsJob) -> Result<Value, String> {
             return Err(format!("step {} differs from action index {i}", d.step));
         }
         if acting(&d) == focal && d.substep_index == 0 {
-            let (obs, menu) = super::decision_replay_key(&s, d.clone())?;
-            starts.push(json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
+            let (obs, menu) = super::decision_replay_key(&s, d)?;
+            starts.push(
+                json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
                 "k":d.legal_action_count,"obs_hash":obs,"menu_hash":menu,
-                "state_hash":format!("{:016x}", s.diagnostic_state_hash())}));
+                "state_hash":format!("{:016x}", s.diagnostic_state_hash())}),
+            );
         }
         s.step(d.episode_id, d.step, a)
             .map_err(|e| format!("action {i}: {e:?}"))?;
     }
     let w = winner(&s)?;
-    Ok(json!({"kind":"practice_starts","id":job.id,"focal":job.episode.learner_seat,
-        "actions":job.actions.len(),"winner":w,"starts":starts}))
+    Ok(
+        json!({"kind":"practice_starts","id":job.id,"focal":job.episode.learner_seat,
+        "actions":job.actions.len(),"winner":w,"starts":starts}),
+    )
 }
 
 fn value_job(
     job: &ValueJob,
     parent: &mut crate::sideboard_play_policy_v1::FrozenPlayPolicyV1,
 ) -> Result<Value, String> {
-    let reset = job.episode.reset.as_ref().ok_or("a value job needs a reset cut")?;
+    let reset = job
+        .episode
+        .reset
+        .as_ref()
+        .ok_or("a value job needs a reset cut")?;
     let mut s = session(&job.episode)?;
     restore_reset_cut_v1(&mut s, &job.episode)?;
     let scores = parent.score_fast_session_v1(&s)?;
     let v = scores.value;
-    Ok(json!({"kind":"practice_value","id":job.id,"step":reset.prefix.len(),
+    Ok(
+        json!({"kind":"practice_value","id":job.id,"step":reset.prefix.len(),
         "physical_decision_id":reset.cut_physical_decision_id,
         "value":if v.is_finite() { json!(v) } else { Value::Null },
-        "value_bits":v.to_bits(),"finite":v.is_finite()}))
+        "value_bits":v.to_bits(),"finite":v.is_finite()}),
+    )
 }
 
 /// One transition for two trackers of the same focal seat.
@@ -210,15 +220,31 @@ fn exposure(path: &str) -> Result<Value, String> {
                 observe(&mut fresh, &s, selected, focal, &defs);
             }
         }
-        step2(&mut s, selected, focal, &mut [&mut whole, &mut fresh], &defs)?;
+        step2(
+            &mut s,
+            selected,
+            focal,
+            &mut [&mut whole, &mut fresh],
+            &defs,
+        )?;
         let after = fresh.json();
         for k in [
-            "cast_offered", "cast_chosen", "self_offered", "self_chosen", "dr_giant_offered",
-            "dr_giant_chosen", "spy_resolved", "self_target_resolved", "dr_giant_resolved",
+            "cast_offered",
+            "cast_chosen",
+            "self_offered",
+            "self_chosen",
+            "dr_giant_offered",
+            "dr_giant_chosen",
+            "spy_resolved",
+            "self_target_resolved",
+            "dr_giant_resolved",
         ] {
             if after[k] == json!(true) && before[k] != json!(true) && !fresh_first.contains_key(k) {
-                fresh_first.insert(k.into(), json!({"step":step,
-                    "physical_decision_id":d.physical_decision_id,"substep":d.substep_index}));
+                fresh_first.insert(
+                    k.into(),
+                    json!({"step":step,
+                    "physical_decision_id":d.physical_decision_id,"substep":d.substep_index}),
+                );
             }
         }
     }
@@ -266,8 +292,12 @@ pub(super) fn run(cfg: &super::super::CensusConfigV1) -> Result<(), String> {
         "s4a-practice-starts" => {
             let (path, text) = lines("PRACTICE_JOBS")?;
             for line in text.lines().filter(|l| !l.trim().is_empty()) {
-                let job: StartsJob = serde_json::from_str(line).map_err(|e| format!("{path}: {e}"))?;
-                write(starts_job(&job).unwrap_or_else(|e| json!({"kind":"error","id":job.id,"error":e})))?;
+                let job: StartsJob =
+                    serde_json::from_str(line).map_err(|e| format!("{path}: {e}"))?;
+                write(
+                    starts_job(&job)
+                        .unwrap_or_else(|e| json!({"kind":"error","id":job.id,"error":e})),
+                )?;
             }
         }
         "s4a-practice-values" => {
@@ -279,18 +309,26 @@ pub(super) fn run(cfg: &super::super::CensusConfigV1) -> Result<(), String> {
             )
             .map_err(|e| format!("{parent_path}: {e}"))?;
             let (mut parent, identity) = load_expanded_inference_v1(&source)?;
-            write(json!({"kind":"practice_parent","checkpoint_sha256":identity.checkpoint_sha256,
-                "adam_step":identity.adam_step,"state_sha256":identity.state_sha256}))?;
+            write(
+                json!({"kind":"practice_parent","checkpoint_sha256":identity.checkpoint_sha256,
+                "adam_step":identity.adam_step,"state_sha256":identity.state_sha256}),
+            )?;
             for line in text.lines().filter(|l| !l.trim().is_empty()) {
-                let job: ValueJob = serde_json::from_str(line).map_err(|e| format!("{path}: {e}"))?;
-                write(value_job(&job, &mut parent)
-                    .unwrap_or_else(|e| json!({"kind":"error","id":job.id,"error":e})))?;
+                let job: ValueJob =
+                    serde_json::from_str(line).map_err(|e| format!("{path}: {e}"))?;
+                write(
+                    value_job(&job, &mut parent)
+                        .unwrap_or_else(|e| json!({"kind":"error","id":job.id,"error":e})),
+                )?;
             }
         }
         "s4a-train-exposure" => {
             let (_, text) = lines("EXPOSURE_EPISODES")?;
             for file in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
-                write(exposure(file).unwrap_or_else(|e| json!({"kind":"error","file":file,"error":e})))?;
+                write(
+                    exposure(file)
+                        .unwrap_or_else(|e| json!({"kind":"error","file":file,"error":e})),
+                )?;
             }
         }
         _ => return Err(format!("unknown practice mode {}", cfg.mode)),
