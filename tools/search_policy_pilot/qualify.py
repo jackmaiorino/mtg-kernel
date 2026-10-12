@@ -36,7 +36,21 @@ def log(root: Path, entry: dict) -> None:
         f.write(json.dumps({"at": time.time(), **entry}) + "\n")
 
 
+SLOTS = None
+
+
 def job(plan: dict, item: dict, pre: bool) -> None:
+    """With PLAN["slots"] (core strings), at most len(slots) jobs run at once, each on a free slot."""
+    if SLOTS is None:
+        return run_job(plan, item, pre)
+    cores = SLOTS.get()
+    try:
+        return run_job(plan, {**item, "cores": cores}, pre)
+    finally:
+        SLOTS.put(cores)
+
+
+def run_job(plan: dict, item: dict, pre: bool) -> None:
     root = Path(plan["root"])
     tag = item["tag"]
     base = root / ("pre" if pre else "train") / tag
@@ -54,8 +68,9 @@ def job(plan: dict, item: dict, pre: bool) -> None:
                 item["phase"], *common)
         paths = json.loads(run(HERE / "drive.py", "requests", "--tag", tag, "--config", config, "--runtime",
                                plan["runtime"], "--root", base, "--workers", item["workers"], "--cores",
-                               item["cores"], "--host", plan["host"]))
-        log(root, {"tag": tag, "event": "requests", "paths": paths})
+                               item["cores"], "--host", plan["host"],
+                               *(["--wall", plan["wall"]] if plan.get("wall") else [])))
+        log(root, {"tag": tag, "event": "requests", "paths": paths, "cores": item["cores"]})
         for path in paths:
             t0 = time.time()
             out = run(HERE / "drive.py", "wait", path)
@@ -66,7 +81,13 @@ def job(plan: dict, item: dict, pre: bool) -> None:
 
 
 def main() -> None:
+    global SLOTS
     plan = json.loads(Path(sys.argv[1]).read_text())
+    if plan.get("slots"):
+        import queue
+        SLOTS = queue.Queue()
+        for cores in plan["slots"]:
+            SLOTS.put(cores)
     threads = [threading.Thread(target=job, args=(plan, item, False)) for item in plan.get("families", [])]
     threads += [threading.Thread(target=job, args=(plan, item, True)) for item in plan.get("pre", [])]
     for t in threads:
