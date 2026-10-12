@@ -1690,6 +1690,14 @@ const FRENZIED_GOBLIN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef 
     ..etb_trigger(frenzied_goblin_effect)
 }];
 
+fn vampire_gourmand_effect() -> EffectOp {
+    crate::vampire_gourmand_v1::program()
+}
+const VAMPIRE_GOURMAND_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Attacks,
+    ..etb_trigger(vampire_gourmand_effect)
+}];
+
 fn blood_fountain_effect() -> EffectOp {
     let blood = crate::card_def::card_id_by_name("Blood Token").expect("Blood Token in CARD_DEFS");
     EffectOp::CreateToken {
@@ -3517,6 +3525,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Courageous Goblin" => &COURAGEOUS_GOBLIN_TRIGGERS,
         "Frenzied Goblin" => &FRENZIED_GOBLIN_TRIGGERS,
         "Ashroot Animist" => &ASHROOT_ANIMIST_TRIGGERS,
+        "Vampire Gourmand" => &VAMPIRE_GOURMAND_TRIGGERS,
         "Webweaver Changeling" => &WEBWEAVER_CHANGELING_TRIGGERS,
         "Glint Hawk" => &GLINT_HAWK_TRIGGERS,
         "Gatecreeper Vine" => &GATECREEPER_VINE_TRIGGERS,
@@ -4675,6 +4684,16 @@ fn triggers_from_events(
                 })
     });
     let mut new_triggers = state.legend_pending_v1.take().unwrap_or_default();
+    match crate::vampire_gourmand_dispatch_v2::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
     match crate::stromkirk_dispatch_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
@@ -5531,6 +5550,12 @@ fn trigger_matches(
     state: &GameState,
     draws_this_turn_at_event: u32,
 ) -> bool {
+    if cond == TriggerCondition::Attacks
+        && crate::vampire_gourmand_dispatch_v2::owns_definition(state.objects.get(source).card_def)
+    {
+        return false;
+    }
+
     match (cond, ev) {
         (
             TriggerCondition::TurnedFaceUp,

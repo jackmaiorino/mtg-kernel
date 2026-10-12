@@ -6,12 +6,14 @@ pub enum ObjectSelectionFilterV1 {
     Creature,
     CreatureOrPlaneswalker,
     UntappedArtifactOrCreature,
+    AnotherCreatureFromCapturedSourceV1,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ObjectSelectionActionV1 {
     MoveTo(Zone),
     TapFiveThenTransformSource,
     CountersAndKeyword { counters: u8, keyword: Keywords },
+    SacrificeThenDrawAndMakeCapturedSourceUnblockableV1,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ObjectSelectionRuleV1 {
@@ -28,6 +30,7 @@ fn candidates(
     state: &GameState,
     player: PlayerId,
     rule: ObjectSelectionRuleV1,
+    source: Option<crate::state::AbilitySourceContractV4>,
 ) -> Result<Vec<EffectObjectBinding>, String> {
     if !matches!(rule.zone, Zone::Battlefield | Zone::Graveyard) || rule.min > rule.max {
         return Err("object selection requires a public zone and ordered bounds".into());
@@ -54,6 +57,19 @@ fn candidates(
                 ObjectSelectionFilterV1::Creature => creature,
                 ObjectSelectionFilterV1::CreatureOrPlaneswalker => {
                     creature || crate::engine::object_has_type(state, id, CardType::Planeswalker)
+                }
+                ObjectSelectionFilterV1::AnotherCreatureFromCapturedSourceV1 => {
+                    let source =
+                        source.ok_or("another-creature selection lost its captured source")?;
+                    if live.zone != rule.zone || live.controller != player {
+                        return Err(
+                            "another-creature selection has malformed battlefield membership"
+                                .into(),
+                        );
+                    }
+                    creature
+                        && !(id == source.source
+                            && live.zone_change_count == source.zone_change_count)
                 }
             };
             if matches {
@@ -92,7 +108,7 @@ pub(super) fn begin(
     path: Vec<u16>,
 ) -> Result<(), String> {
     let player = pending.ctx.resolve_player(rule.player, state);
-    let original_candidates = candidates(state, player, rule)?;
+    let original_candidates = candidates(state, player, rule, pending.ctx.ability_source_contract)?;
     let available = u16::try_from(original_candidates.len()).unwrap_or(u16::MAX);
     pending.choice = Some(PendingEffectChoice::SelectTargets {
         player,
@@ -135,7 +151,7 @@ pub(super) fn validate_prompt(
 ) -> Result<(), String> {
     validate_origin(state, pending, rule, path)?;
     let player = pending.ctx.resolve_player(rule.player, state);
-    let current = candidates(state, player, rule)?;
+    let current = candidates(state, player, rule, pending.ctx.ability_source_contract)?;
     let available = u16::try_from(current.len()).unwrap_or(u16::MAX);
     if current != original
         || chooser != player
@@ -165,8 +181,8 @@ pub(super) fn validate_prompt(
     validate_exact_binding_permutation(original, &all, "object selection candidates")
 }
 
-pub(super) fn apply_selection(
-    state: &mut GameState,
+pub(super) fn validate_answer(
+    state: &GameState,
     pending: &EffectContinuation,
     rule: ObjectSelectionRuleV1,
     original: &[EffectObjectBinding],
@@ -175,14 +191,29 @@ pub(super) fn apply_selection(
 ) -> Result<(), String> {
     validate_origin(state, pending, rule, path)?;
     let player = pending.ctx.resolve_player(rule.player, state);
-    if candidates(state, player, rule)? != original
+    if candidates(state, player, rule, pending.ctx.ability_source_contract)? != original
         || selected.len() < usize::from(rule.min).min(original.len())
         || selected.len() > usize::from(rule.max).min(original.len())
     {
         return Err("object selection answer changed".into());
     }
     canonicalize_binding_subset(original, selected)?;
+    Ok(())
+}
+
+pub(super) fn apply_selection(
+    state: &mut GameState,
+    pending: &EffectContinuation,
+    rule: ObjectSelectionRuleV1,
+    original: &[EffectObjectBinding],
+    selected: &[EffectObjectBinding],
+    path: &[u16],
+) -> Result<(), String> {
+    validate_answer(state, pending, rule, original, selected, path)?;
     match rule.action {
+        ObjectSelectionActionV1::SacrificeThenDrawAndMakeCapturedSourceUnblockableV1 => {
+            return Err("Gourmand cost requires the private removed-item owner".into());
+        }
         ObjectSelectionActionV1::TapFiveThenTransformSource => {
             if !selected.is_empty() {
                 if selected.len() != 5 {

@@ -956,6 +956,15 @@ pub(super) fn conflicts(
                 | crate::event::CommittedEvent::LibrarianActivationCounterRemovalV1 { .. }
                 | crate::event::CommittedEvent::LibrarianActivationOperationV1 { .. }
                 | crate::event::CommittedEvent::LibrarianActivationFinishedV1 { .. }
+                | crate::event::CommittedEvent::VampireGourmandResolutionBoundaryV1 { .. }
+                | crate::event::CommittedEvent::VampireGourmandCostOperationV2 { .. }
+                | crate::event::CommittedEvent::VampireGourmandCleanupV2 { .. }
+                | crate::event::CommittedEvent::VampireGourmandExpiredV2 { .. }
+                | crate::event::CommittedEvent::VampireGourmandAttackCaptureV2 { .. }
+                | crate::event::CommittedEvent::VampireGourmandCollectedV2 { .. }
+                | crate::event::CommittedEvent::VampireGourmandPublishedV2 { .. }
+                | crate::event::CommittedEvent::VampireGourmandCounterRemovedV2 { .. }
+                | crate::event::CommittedEvent::VampireGourmandCounterClosedV2 { .. }
         )
     }) {
         return true;
@@ -1161,6 +1170,15 @@ pub(super) fn conflicts(
             | FrenziedGoblinInstalledV1 { .. }
             | FrenziedGoblinExpiredV1 { .. }
             | FrenziedGoblinCleanupV1 { .. }
+            | VampireGourmandResolutionBoundaryV1 { .. }
+            | VampireGourmandCostOperationV2 { .. }
+            | VampireGourmandCleanupV2 { .. }
+            | VampireGourmandExpiredV2 { .. }
+            | VampireGourmandAttackCaptureV2 { .. }
+            | VampireGourmandCollectedV2 { .. }
+            | VampireGourmandPublishedV2 { .. }
+            | VampireGourmandCounterRemovedV2 { .. }
+            | VampireGourmandCounterClosedV2 { .. }
             | DifferentControllerTargetDepartureV1 { .. }
             | LifeLoss { .. }
             | LifeGain { .. }

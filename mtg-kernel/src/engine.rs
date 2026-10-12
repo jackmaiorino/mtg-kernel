@@ -511,6 +511,13 @@ pub enum UntilEndOfTurnEffect {
         controller: PlayerId,
         timestamp: u64,
     },
+    /// Rule-changing evasion, not a removable granted ability.
+    ResolvedObjectCantBeBlockedV1 {
+        object_id: ObjectId,
+        object_zone_change_count: u32,
+        timestamp: u64,
+        duration: EffectDuration,
+    },
 }
 
 /// Whether an `effect::EffectOp::ImpulseDraw`-exiled card's `PlayPermission`
@@ -8917,7 +8924,9 @@ fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
     if defender_controls_island && has_effective_keyword(state, attacker, Keywords::ISLANDWALK) {
         return Vec::new();
     }
-    if has_effective_keyword(state, attacker, Keywords::CANT_BE_BLOCKED) {
+    if crate::vampire_gourmand_v1::cant_be_blocked(state, attacker)
+        || has_effective_keyword(state, attacker, Keywords::CANT_BE_BLOCKED)
+    {
         return Vec::new();
     }
     // Azure Fleet Admiral: "can't be blocked by creatures the monarch
@@ -10137,6 +10146,15 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
             return None;
         }
     };
+    let gourmand_owner =
+        match effect::acquire_vampire_gourmand_resolution_owner(state, &item, false) {
+            Ok(owner) => owner,
+            Err(_) => {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                return None;
+            }
+        };
     let index = resolution_cast_v1::resolving_index(state, item.v4.stack_item_id);
     match index
         .filter(|&i| i < state.stack.len())
@@ -10160,6 +10178,8 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
         effect::resume_owned_squad_rallier_resolution(state, owner)
     } else if let Some(owner) = frenzied_owner.as_ref() {
         effect::resume_owned_frenzied_goblin_resolution(state, owner)
+    } else if let Some(owner) = gourmand_owner.as_ref() {
+        effect::resume_owned_vampire_gourmand_resolution(state, owner)
     } else {
         effect::resume_resumable_resolution(state)
     };
@@ -12978,6 +12998,8 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
     let finalized = state.stack.last().expect("trigger just published").clone();
     crate::wildwood_capture_v1::publish(state, &finalized);
     effect::frenzied_goblin_resolution_v1::publish(state)?;
+    let gourmand_item = state.stack.last().expect("trigger just published").clone();
+    crate::vampire_gourmand_dispatch_v2::publish(state, &gourmand_item)?;
     crate::cerberus_capture_v1::publish(state, &finalized)?;
     crate::banishing_light_v1::publish(state, &finalized)?;
     crate::stromkirk_dispatch_v1::publish(state, &finalized)?;
@@ -13198,6 +13220,7 @@ fn triggered_stack_item_expected_target_spec(
     )?;
     crate::cerberus_capture_v1::validate_source(state, inline_effect, ability_source_contract)?;
 
+    crate::vampire_gourmand_v1::validate_source(state, source_card_def, ability_source_contract)?;
     #[cfg(feature = "standard-magezero-fixtures")]
     if matches!(
         inline_effect,
@@ -13961,6 +13984,8 @@ pub(crate) fn counter_stack_item_by_id(
     };
     let item = state.stack[position].clone();
     let stromkirk_counter_owner = crate::stromkirk_dispatch_v1::acquire(state, &item)?;
+    let gourmand_counter_owner =
+        crate::vampire_gourmand_dispatch_v2::acquire_counter(state, &item)?;
     effect::frenzied_goblin_resolution_v1::preflight_unstarted_removal(state, &item)?;
     validated_stack_item_target_spec(&item, state)?;
     if item.kind == StackItemKind::Spell
@@ -13995,6 +14020,11 @@ pub(crate) fn counter_stack_item_by_id(
     );
     crate::banishing_light_v1::finish(state, &item);
     crate::stromkirk_dispatch_v1::counter_removed(state, stromkirk_counter_owner.as_ref(), &item)?;
+    crate::vampire_gourmand_dispatch_v2::counter_removed(
+        state,
+        gourmand_counter_owner.as_ref(),
+        &item,
+    )?;
     effect::frenzied_goblin_resolution_v1::complete_unstarted(
         state,
         &item,
@@ -14128,6 +14158,7 @@ fn execute_resolving_program(
     program: &EffectOp,
     squad_owner: Option<&effect::SquadRallierResolutionOwnerV1>,
     frenzied_owner: Option<&effect::FrenziedGoblinResolutionOwnerV1>,
+    gourmand_owner: Option<&effect::VampireGourmandResolutionOwnerV1>,
 ) -> ResolutionProgress {
     if !effect::contains_player_choice(program) {
         effect::execute(program, ctx, state);
@@ -14138,19 +14169,22 @@ fn execute_resolving_program(
         effect::begin_owned_squad_rallier_resolution(state, program, ctx, owner)
     } else if let Some(owner) = frenzied_owner {
         effect::begin_owned_frenzied_goblin_resolution(state, program, ctx, owner)
+    } else if let Some(owner) = gourmand_owner {
+        effect::begin_owned_vampire_gourmand_resolution(state, program, ctx, owner)
     } else {
         effect::begin_resumable_resolution(program, ctx, item.clone(), state)
     };
     match progress {
         Ok(effect::ResumableProgress::Complete(completed))
-            if squad_owner.map_or_else(
-                || {
-                    frenzied_owner.map_or(*completed == *item, |owner| {
-                        owner.completion_matches(&completed)
-                    })
-                },
-                |owner| owner.completion_matches(&completed),
-            ) =>
+            if if let Some(owner) = squad_owner {
+                owner.completion_matches(&completed)
+            } else if let Some(owner) = frenzied_owner {
+                owner.completion_matches(&completed)
+            } else if let Some(owner) = gourmand_owner {
+                owner.completion_matches(&completed)
+            } else {
+                *completed == *item
+            } =>
         {
             ResolutionProgress::Complete
         }
@@ -14158,17 +14192,18 @@ fn execute_resolving_program(
             // Keep the resolving item visible throughout the decision, but
             // grant no priority/SBA/trigger window until the continuation
             // completes.
-            let published = if squad_owner.is_some() || frenzied_owner.is_some() {
-                state
-                    .engine
-                    .pending_effect
-                    .as_ref()
-                    .expect("owned suspension publishes pending")
-                    .resolving_item
-                    .clone()
-            } else {
-                item.clone()
-            };
+            let published =
+                if squad_owner.is_some() || frenzied_owner.is_some() || gourmand_owner.is_some() {
+                    state
+                        .engine
+                        .pending_effect
+                        .as_ref()
+                        .expect("owned suspension publishes pending")
+                        .resolving_item
+                        .clone()
+                } else {
+                    item.clone()
+                };
             resolution_cast_v1::restore_parent(state, published);
             ResolutionProgress::Suspended
         }
@@ -14234,6 +14269,20 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         }
     };
     let squad_owner = match effect::acquire_squad_rallier_resolution_owner(
+        state,
+        state.stack.last().expect("resolving genuine stack item"),
+        true,
+    ) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
+    let gourmand_owner = match effect::acquire_vampire_gourmand_resolution_owner(
         state,
         state.stack.last().expect("resolving genuine stack item"),
         true,
@@ -14448,6 +14497,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             &effect,
             squad_owner.as_ref(),
             frenzied_owner.as_ref(),
+            gourmand_owner.as_ref(),
         );
         if progress == ResolutionProgress::Complete {
             if crate::librarian_activation_v1::record_resolved(state, &item, effect_history_start)
@@ -14520,6 +14570,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             &program,
             squad_owner.as_ref(),
             frenzied_owner.as_ref(),
+            gourmand_owner.as_ref(),
         ) == ResolutionProgress::Suspended
         {
             return ResolutionProgress::Suspended;
@@ -14717,11 +14768,13 @@ fn advance_step(state: &mut GameState) {
     // Cleanup priority can install a fresh rule-changing restriction. CR 514.3
     // repeats cleanup before the player flip, including these new records.
     if state.step == Step::Cleanup
-        && state
-            .engine
-            .until_end_of_turn
-            .iter()
-            .any(|effect| matches!(effect, UntilEndOfTurnEffect::ResolvedObjectCantBlock { .. }))
+        && state.engine.until_end_of_turn.iter().any(|effect| {
+            matches!(
+                effect,
+                UntilEndOfTurnEffect::ResolvedObjectCantBlock { .. }
+                    | UntilEndOfTurnEffect::ResolvedObjectCantBeBlockedV1 { .. }
+            )
+        })
     {
         for player in &mut state.players {
             player.mana_pool = [0; 6];
@@ -15099,6 +15152,11 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             crate::sower_restriction_capture_v1::expire(state);
             crate::effect::temporary_control_v1::expire_at_cleanup(state);
             if effect::frenzied_goblin_resolution_v1::expire(state).is_err() {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                return;
+            }
+            if effect::expire_vampire_gourmand_restrictions(state).is_err() {
                 state.engine.halted =
                     Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
                 return;
@@ -16048,7 +16106,8 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
                 UntilEndOfTurnEffect::SyntheticMarker(_) => false,
                 UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
                 | UntilEndOfTurnEffect::ResolvedObjectCantBlock { .. }
-                | UntilEndOfTurnEffect::ResolvedObjectControlEffect { .. } => false,
+                | UntilEndOfTurnEffect::ResolvedObjectControlEffect { .. }
+                | UntilEndOfTurnEffect::ResolvedObjectCantBeBlockedV1 { .. } => false,
             };
             if grants {
                 return true;
@@ -19133,6 +19192,8 @@ pub(crate) fn finish_declare_attackers(state: &mut GameState, attackers: Vec<Obj
             };
             state.engine.event_log.push(event.clone());
             state.engine.event_history.push(event);
+            let declaration = state.engine.event_history.len() - 1;
+            crate::vampire_gourmand_dispatch_v2::capture_declaration(state, declaration);
         }
     }
     if !state.engine.combat.attackers.is_empty() {
@@ -19189,6 +19250,10 @@ mod raid_history_tests;
 ))]
 #[path = "engine/sower_of_chaos_v1_tests.rs"]
 mod sower_of_chaos_v1_tests;
+
+#[cfg(test)]
+#[path = "engine/vampire_gourmand_v1_tests.rs"]
+mod vampire_gourmand_v1_tests;
 
 #[cfg(test)]
 #[path = "engine/anytarget_planeswalker_tests.rs"]

@@ -45,6 +45,7 @@ pub(crate) mod cerberus_v19;
 pub(crate) mod employment_v18;
 pub mod extra_turn_v23;
 pub(crate) mod frenzied_v15;
+pub(crate) mod gourmand_v29;
 pub(crate) mod human_opening_v1;
 pub(crate) mod human_v8;
 pub(crate) mod juggernaut_v25;
@@ -4450,6 +4451,7 @@ enum FlatActionContractModeV1 {
     AshrootV27,
     BanishingV26,
     StromkirkV28,
+    GourmandV29,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -7423,6 +7425,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:frenzied_v15:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::GourmandV29 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = gourmand_v29::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:gourmand_v29:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));

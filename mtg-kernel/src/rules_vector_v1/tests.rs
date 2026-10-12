@@ -766,6 +766,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Ashroot Animist",
     "Wildwood Scourge",
     "Authority of the Consuls",
+    "Vampire Gourmand",
     "Vengeful Bloodwitch",
     "Soul-Shackled Zombie",
     "Archmage of Runes",

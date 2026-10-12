@@ -1494,6 +1494,9 @@ pub struct StackStateV4 {
     pub frenzied_goblin_started_v1: FrenziedGoblinStartedV1,
     #[serde(default, skip_serializing_if = "FrenziedGoblinPublicationV1::is_empty")]
     pub frenzied_goblin_publication_v1: FrenziedGoblinPublicationV1,
+    /// Empty contributes neither serialized bytes nor Hash input.
+    #[serde(default, skip_serializing_if = "VampireGourmandStartedV1::is_empty")]
+    pub vampire_gourmand_started_v1: VampireGourmandStartedV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1557,6 +1560,32 @@ impl Hash for FrenziedGoblinPublicationV1 {
         if let Some(index) = self.0 {
             "frenzied-goblin-publication/v1".hash(state);
             index.hash(state);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct VampireGourmandStartedBindingV1 {
+    pub stack_item_id: StackItemId,
+    pub source: AbilitySourceContractV4,
+    pub first_receipt_history_index: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct VampireGourmandStartedV1(pub Option<VampireGourmandStartedBindingV1>);
+
+impl VampireGourmandStartedV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+
+impl Hash for VampireGourmandStartedV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(binding) = self.0 {
+            "vampire-gourmand-started/v1".hash(state);
+            binding.hash(state);
         }
     }
 }

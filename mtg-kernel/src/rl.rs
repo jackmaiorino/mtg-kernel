@@ -1947,7 +1947,7 @@ fn build_observation_v2(
         acting_player,
         step_index,
         text_mode,
-        (false, false, false, false),
+        (false, false, false, false, false),
     )
 }
 
@@ -1957,10 +1957,15 @@ fn build_observation_common_v2(
     acting_player: PlayerId,
     step_index: u64,
     text_mode: ObservationTextModeV2,
-    capabilities: (bool, bool, bool, bool),
+    capabilities: (bool, bool, bool, bool, bool),
 ) -> Result<ObservationV2> {
-    let (accept_cant_block, accept_temporary_control, accept_extra_turn, accept_banishing) =
-        capabilities;
+    let (
+        accept_cant_block,
+        accept_temporary_control,
+        accept_extra_turn,
+        accept_banishing,
+        accept_gourmand,
+    ) = capabilities;
     crate::extra_turn_v1::validate(state).map_err(RlContractError)?;
     if !accept_extra_turn && state.extra_turn_v1.is_some() {
         return Err(RlContractError(
@@ -2004,7 +2009,7 @@ fn build_observation_common_v2(
         continuous_effects: continuous_effects_common_v2(
             state,
             acting_player,
-            accept_cant_block,
+            (accept_cant_block, accept_gourmand),
             accept_temporary_control,
         )?,
         object_relations: object_relations_public_v4(state, acting_player)?,
@@ -2254,7 +2259,7 @@ fn build_policy_observation_parts(
         acting_player,
         step_index,
         text_mode,
-        (false, false, false, false),
+        (false, false, false, false, false),
     )
 }
 fn build_policy_observation_parts_common(
@@ -2263,10 +2268,15 @@ fn build_policy_observation_parts_common(
     acting_player: PlayerId,
     step_index: u64,
     text_mode: ObservationTextModeV2,
-    capabilities: (bool, bool, bool, bool),
+    capabilities: (bool, bool, bool, bool, bool),
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
-    let (accept_cant_block, accept_temporary_control, accept_extra_turn, accept_banishing) =
-        capabilities;
+    let (
+        accept_cant_block,
+        accept_temporary_control,
+        accept_extra_turn,
+        accept_banishing,
+        accept_gourmand,
+    ) = capabilities;
     let base = build_observation_common_v2(
         state,
         surface.harness_surface(),
@@ -2278,6 +2288,7 @@ fn build_policy_observation_parts_common(
             accept_temporary_control,
             accept_extra_turn,
             accept_banishing,
+            accept_gourmand,
         ),
     )?;
     let context = policy_surface_context_v5(
@@ -2454,7 +2465,7 @@ fn build_policy_observation_storage_v6(
         false,
         false,
         false,
-        (false, false, false, false),
+        (false, false, false, false, false),
     )
 }
 
@@ -2484,7 +2495,7 @@ pub(crate) fn extra_turn_observation_storage_v1(
         false,
         false,
         false,
-        (false, true, false, false),
+        (false, true, false, false, false),
     )
 }
 
@@ -2541,7 +2552,7 @@ pub(crate) fn sower_observation_storage_v1(
         false,
         false,
         false,
-        (false, false, false, false),
+        (false, false, false, false, false),
     )
 }
 
@@ -2571,7 +2582,7 @@ pub(crate) fn employment_observation_storage_v1(
         false,
         true,
         false,
-        (false, false, false, false),
+        (false, false, false, false, false),
     )
 }
 
@@ -2601,7 +2612,7 @@ pub(crate) fn wildwood_observation_storage_v1(
         true,
         false,
         false,
-        (false, false, false, false),
+        (false, false, false, false, false),
     )
 }
 
@@ -2631,7 +2642,7 @@ pub(crate) fn cerberus_observation_storage_v1(
         false,
         false,
         true,
-        (false, false, false, false),
+        (false, false, false, false, false),
     )
 }
 
@@ -2661,7 +2672,7 @@ pub(crate) fn authority_observation_storage_v1(
         false,
         false,
         false,
-        (true, false, false, false),
+        (true, false, false, false, false),
     )
 }
 
@@ -2691,7 +2702,7 @@ pub(crate) fn frenzied_observation_storage_v1(
         false,
         false,
         false,
-        (false, false, false, false),
+        (false, false, false, false, false),
     )
 }
 
@@ -2721,7 +2732,7 @@ pub(crate) fn juggernaut_observation_storage_v1(
         false,
         false,
         false,
-        (false, false, true, false),
+        (false, false, true, false, false),
     )
 }
 
@@ -2751,10 +2762,39 @@ pub(crate) fn banishing_observation_storage_v1(
         false,
         false,
         false,
-        (false, false, false, true),
+        (false, false, false, true, false),
     )
 }
 
+pub(crate) fn gourmand_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::gourmand_public_v1::validate_projection_authority(state)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_common(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
+        false,
+        false,
+        false,
+        false,
+        (false, false, false, false, true),
+    )
+}
 fn build_policy_observation_storage_common(
     request: PolicyObservationBuildV5<'_>,
     accept_life_ward: bool,
@@ -2762,10 +2802,20 @@ fn build_policy_observation_storage_common(
     accept_wildwood: bool,
     accept_temporary_control: bool,
     accept_cerberus: bool,
-    accepted_statics: (bool, bool, bool, bool),
+    accepted_statics: (bool, bool, bool, bool, bool),
 ) -> Result<PolicyObservationStorageV6> {
-    let (accept_authority, accept_extra_turn, accept_combat_rules, accept_banishing) =
-        accepted_statics;
+    let (
+        accept_authority,
+        accept_extra_turn,
+        accept_combat_rules,
+        accept_banishing,
+        accept_gourmand,
+    ) = accepted_statics;
+    if !accept_gourmand && crate::vampire_gourmand_dispatch_v2::requires_successor(request.state) {
+        return Err(RlContractError(
+            "Gourmand requires its selected public/Human successor".into(),
+        ));
+    }
     if !accept_banishing && crate::banishing_light_v1::requires_successor(request.state) {
         return Err(RlContractError(
             "Banishing Light requires its selected public/Human successor".into(),
@@ -2817,6 +2867,7 @@ fn build_policy_observation_storage_common(
             accept_temporary_control,
             accept_extra_turn,
             accept_banishing,
+            accept_gourmand,
         ),
     )?;
     if let Some(search) = &extensions.decision_local_library {
@@ -7091,9 +7142,10 @@ fn validate_linked_exile_records_public_v4(state: &GameState) -> Result<()> {
 fn continuous_effects_common_v2(
     state: &GameState,
     acting_player: PlayerId,
-    accept_cant_block: bool,
+    accept_cant_block: (bool, bool),
     accept_temporary_control: bool,
 ) -> Result<Vec<ContinuousEffectPublicV2>> {
+    let (accept_cant_block, accept_gourmand) = accept_cant_block;
     if crate::crystal_barricade_v1::active(state) {
         return Err(RlContractError(
             "player hexproof and controlled-creature noncombat prevention require a public successor".into(),
@@ -7329,6 +7381,14 @@ fn continuous_effects_common_v2(
             }
             UntilEndOfTurnEffect::ResolvedObjectCantBlock { .. } => {
                 if accept_cant_block {
+                    continue;
+                }
+                return Err(RlContractError(
+                    "temporary cant-block restriction requires a public successor".into(),
+                ));
+            }
+            UntilEndOfTurnEffect::ResolvedObjectCantBeBlockedV1 { .. } => {
+                if accept_gourmand {
                     continue;
                 }
                 return Err(RlContractError(

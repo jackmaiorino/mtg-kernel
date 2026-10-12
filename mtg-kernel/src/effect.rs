@@ -51,6 +51,16 @@ pub use frenzied_goblin_resolution_v1::{
     FrenziedGoblinOutcomeV1, FrenziedGoblinPublicationRecordV1, FrenziedGoblinResolutionReceiptV1,
     FrenziedGoblinRestrictionV1,
 };
+mod vampire_gourmand_resolution_v1;
+pub(crate) use vampire_gourmand_resolution_v1::{
+    acquire_owner as acquire_vampire_gourmand_resolution_owner,
+    begin_owned as begin_owned_vampire_gourmand_resolution,
+    expire as expire_vampire_gourmand_restrictions,
+    resume_owned as resume_owned_vampire_gourmand_resolution, VampireGourmandResolutionOwnerV1,
+};
+pub use vampire_gourmand_resolution_v1::{
+    VampireGourmandCostOperationV2, VampireGourmandCostResultV2, VampireGourmandResolutionReceiptV1,
+};
 mod squad_rallier_resolution_v1;
 pub(crate) use squad_rallier_resolution_v1::owned_root as squad_rallier_root_is_exact;
 pub use squad_rallier_resolution_v1::SquadRallierResolutionReceiptV1;
@@ -3039,6 +3049,8 @@ pub fn begin_resumable_resolution(
         return Err("cannot begin an effect while another continuation is pending".to_string());
     }
     validate_resumable_program(op)?;
+    let owned_gourmand =
+        vampire_gourmand_resolution_v1::preflight_begin(state, op, ctx, &resolving_item)?;
     let owned_squad_look =
         squad_rallier_resolution_v1::preflight_begin(state, op, ctx, &resolving_item)?;
     let owned_frenzied =
@@ -3053,6 +3065,9 @@ pub fn begin_resumable_resolution(
         choice: None,
         answered_choice_guard: None,
     });
+    if owned_gourmand {
+        vampire_gourmand_resolution_v1::record_begin(state)?;
+    }
     if owned_squad_look {
         squad_rallier_resolution_v1::record_begin(state)?;
     }
@@ -3408,6 +3423,7 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
         complete_resumable_target_selection(continuation)?;
     }
     squad_rallier_resolution_v1::record_boundary(state)?;
+    vampire_gourmand_resolution_v1::record_boundary(state)?;
     Ok(())
 }
 
@@ -3475,7 +3491,8 @@ pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), St
         drop(token);
     }
     complete_resumable_target_selection(state.engine.pending_effect.as_mut().unwrap())?;
-    squad_rallier_resolution_v1::record_boundary(state)
+    squad_rallier_resolution_v1::record_boundary(state)?;
+    vampire_gourmand_resolution_v1::record_boundary(state)
 }
 
 /// Records one generic Boolean answer without executing its consequence.
@@ -7851,6 +7868,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::wildwood_capture_v1::validate_state(state)?;
     squad_rallier_resolution_v1::validate(state)?;
     frenzied_goblin_resolution_v1::validate(state)?;
+    vampire_gourmand_resolution_v1::validate(state)?;
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(());
     };
@@ -9886,7 +9904,7 @@ pub(crate) fn validate_resolution_play_authorization(
 }
 
 fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
-    frenzied_goblin_resolution_v1::drive(state)
+    vampire_gourmand_resolution_v1::drive(state)
 }
 
 fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, String> {
