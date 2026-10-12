@@ -183,7 +183,15 @@ fn exposure(path: &str) -> Result<Value, String> {
             || d.physical_decision_id != r["physical_decision_id"].as_u64().ok_or("row pd")?
             || acting(&d).0 != actor
         {
-            return Err(format!("suffix row {i} differs from the replay"));
+            return Err(format!(
+                "suffix row {i} differs from the replay: replay step {} physical {} actor {} k {}, \
+                 record step {step} physical {} actor {actor}",
+                d.step,
+                d.physical_decision_id,
+                acting(&d).0,
+                d.legal_action_count,
+                r["physical_decision_id"]
+            ));
         }
         first_step.get_or_insert(step);
         // Labels before this row's menu and transition: offered/chosen flags

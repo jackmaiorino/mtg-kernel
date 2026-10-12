@@ -21,6 +21,7 @@ descriptive dispositions.
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import random
 import sys
@@ -49,7 +50,7 @@ def exposure(root: Path) -> dict:
                         "fresh_full_sequence": 0, "remaining_sequence_completed": 0, "inherited_complete": 0,
                         "spy_reset_wdl": [0, 0, 0], "spy_ordinary_fresh_full_sequence": 0,
                         "returns": 0, "suffix_rows": 0, "learner_rows": 0, "value_abs_error": 0.0,
-                        "by_deck_reset": {}, "update_mismatches": 0, "updates": 0,
+                        "by_deck_reset": {}, "update_mismatches": 0, "updates": 0, "replay_errors": 0,
                         "prefix_rows_in_episodes": 0}
                    for ph in ("main", "wash")}
             for k in range(10):
@@ -57,14 +58,20 @@ def exposure(root: Path) -> dict:
                 ph = "main" if k < 8 else "wash"
                 a = agg[ph]
                 rows = [json.loads(l) for l in (block / "exposure.jsonl").read_text().splitlines() if l.strip()]
+                # Gradient inclusion from the recorded trajectories themselves (compact rows).
                 per_iteration: dict = {}
+                with gzip.open(block / "compact.jsonl.gz", "rt") as z:
+                    for line in z:
+                        c = json.loads(line)
+                        seat = c["episode"]["learner_seat"]
+                        mine = [d for d in c["decisions"] if d[3] == seat]
+                        pi = per_iteration.setdefault(c["file"].split("/")[1], [0, 0])
+                        pi[0] += len(mine)
+                        pi[1] += len({d[1] for d in mine})
                 for r in rows:
-                    if r["kind"] != "train_exposure":
-                        raise ValueError(f"{block}: {r}")
-                    it = Path(r["file"]).parts[-4]
-                    pi = per_iteration.setdefault(it, [0, 0])
-                    pi[0] += r["learner_rows"]
-                    pi[1] += r["learner_physical_decisions"]
+                    if r["kind"] == "error":
+                        a["replay_errors"] += 1
+                        continue
                     a["episodes"] += 1
                     a["returns"] += r["reward"]
                     a["suffix_rows"] += r["suffix_rows"]
