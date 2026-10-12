@@ -946,6 +946,8 @@ pub(super) fn conflicts(
             e,
             crate::event::CommittedEvent::VampireGourmandResolutionBoundaryV1 { .. }
                 | crate::event::CommittedEvent::VampireGourmandCostOperationV2 { .. }
+                | crate::event::CommittedEvent::VampireGourmandCleanupV2 { .. }
+                | crate::event::CommittedEvent::VampireGourmandExpiredV2 { .. }
         )
     }) {
         return true;
@@ -1109,6 +1111,8 @@ pub(super) fn conflicts(
             | FrenziedGoblinCleanupV1 { .. }
             | VampireGourmandResolutionBoundaryV1 { .. }
             | VampireGourmandCostOperationV2 { .. }
+            | VampireGourmandCleanupV2 { .. }
+            | VampireGourmandExpiredV2 { .. }
             | DifferentControllerTargetDepartureV1 { .. }
             | LifeLoss { .. }
             | LifeGain { .. }

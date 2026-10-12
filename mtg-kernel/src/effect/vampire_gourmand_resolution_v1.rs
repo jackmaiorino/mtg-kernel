@@ -441,6 +441,121 @@ fn validate_cost_operations(
     Ok(())
 }
 
+fn validate_restrictions(state: &GameState) -> Result<Vec<u32>, String> {
+    let mut active = Vec::new();
+    let mut used_expiries = Vec::new();
+    let mut used_batches = Vec::new();
+    for (at, event) in state.engine.event_history.iter().enumerate() {
+        let CommittedEvent::VampireGourmandCostOperationV2 { operation } = event else {
+            continue;
+        };
+        let Some(marker) = operation.result.installed.as_ref() else {
+            continue;
+        };
+        let present = state
+            .engine
+            .until_end_of_turn
+            .iter()
+            .filter(|e| *e == marker)
+            .count();
+        let expired: Vec<_> = state
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .filter_map(|(index, e)| {
+                if let CommittedEvent::VampireGourmandExpiredV2 {
+                    operation_history_index,
+                    cleanup_history_index,
+                } = e
+                {
+                    (*operation_history_index as usize == at)
+                        .then_some((index, *cleanup_history_index))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        match (present, expired.as_slice()) {
+            (1, []) => active.push(at.try_into().map_err(|_| "Gourmand history exceeds u32")?),
+            (0, [(expired_at, cleanup)]) => {
+                let Some(CommittedEvent::VampireGourmandCleanupV2 {
+                    step: crate::state::Step::Cleanup,
+                    operation_history_indices,
+                    ..
+                }) = state.engine.event_history.get(*cleanup as usize)
+                else {
+                    return Err("Gourmand expiry lacks genuine Cleanup batch".into());
+                };
+                let positions: Vec<_> = operation_history_indices
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(position, id)| (*id as usize == at).then_some(position))
+                    .collect();
+                if positions.len() != 1
+                    || *cleanup as usize <= at
+                    || *expired_at != *cleanup as usize + 1 + positions[0]
+                {
+                    return Err("Gourmand expiry changed batch occurrence or order".into());
+                }
+                used_expiries.push(*expired_at);
+                used_batches.push(*cleanup as usize);
+            }
+            _ => {
+                return Err(
+                    "Gourmand restriction erased, duplicated, expired early or reintroduced".into(),
+                )
+            }
+        }
+    }
+    for (at, event) in state.engine.event_history.iter().enumerate() {
+        match event {
+            CommittedEvent::VampireGourmandExpiredV2 { .. } if !used_expiries.contains(&at) =>
+                return Err("orphan Gourmand expiry".into()),
+            CommittedEvent::VampireGourmandCleanupV2 { operation_history_indices, .. } => {
+                if operation_history_indices.is_empty() || !used_batches.contains(&at)
+                    || operation_history_indices.iter().enumerate().any(|(ordinal,id)| operation_history_indices[..ordinal].contains(id)
+                        || !matches!(state.engine.event_history.get(at + 1 + ordinal), Some(CommittedEvent::VampireGourmandExpiredV2 {
+                            operation_history_index,cleanup_history_index }) if operation_history_index == id && *cleanup_history_index as usize == at)) {
+                    return Err("Gourmand Cleanup batch lost exact ordered expiry members".into());
+                }
+            },
+            _ => {},
+        }
+    }
+    Ok(active)
+}
+pub(crate) fn expire(state: &mut GameState) -> Result<(), String> {
+    let operation_history_indices = validate_restrictions(state)?;
+    if operation_history_indices.is_empty() {
+        return Ok(());
+    }
+    if state.step != crate::state::Step::Cleanup {
+        return Err("Gourmand expiry requires actual Cleanup".into());
+    }
+    let cleanup_history_index = u32::try_from(state.engine.event_history.len())
+        .map_err(|_| "Gourmand history exceeds u32")?;
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::VampireGourmandCleanupV2 {
+            turn: state.turn,
+            ending_player: state.active_player,
+            step: state.step,
+            operation_history_indices: operation_history_indices.clone(),
+        });
+    for operation_history_index in operation_history_indices {
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::VampireGourmandExpiredV2 {
+                operation_history_index,
+                cleanup_history_index,
+            });
+    }
+    Ok(())
+}
+
 pub(super) fn validate(state: &GameState) -> Result<(), String> {
     validate_with_owner(state, None)
 }
@@ -453,12 +568,15 @@ fn validate_with_owner(
             event,
             CommittedEvent::VampireGourmandResolutionBoundaryV1 { .. }
                 | CommittedEvent::VampireGourmandCostOperationV2 { .. }
+                | CommittedEvent::VampireGourmandCleanupV2 { .. }
+                | CommittedEvent::VampireGourmandExpiredV2 { .. }
         )
     }) {
         return Err("optional sacrifice receipt cannot enter the public trigger event log".into());
     }
     let receipts = history(state)?;
     validate_cost_operations(state, &receipts)?;
+    validate_restrictions(state)?;
     // A started live root must retain its independent stack-owned marker.
     // Erasing pending_effect and every progress receipt cannot turn it back
     // into a genuinely unstarted stack item.

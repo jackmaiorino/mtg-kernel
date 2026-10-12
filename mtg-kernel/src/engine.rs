@@ -14835,6 +14835,11 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
                 return;
             }
+            if effect::expire_vampire_gourmand_restrictions(state).is_err() {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                return;
+            }
             state.engine.until_end_of_turn.clear();
             state.engine.active_replacements.retain(|replacement| {
                 !matches!(

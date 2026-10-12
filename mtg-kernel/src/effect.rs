@@ -55,6 +55,7 @@ mod vampire_gourmand_resolution_v1;
 pub(crate) use vampire_gourmand_resolution_v1::{
     acquire_owner as acquire_vampire_gourmand_resolution_owner,
     begin_owned as begin_owned_vampire_gourmand_resolution,
+    expire as expire_vampire_gourmand_restrictions,
     resume_owned as resume_owned_vampire_gourmand_resolution, VampireGourmandResolutionOwnerV1,
 };
 pub use vampire_gourmand_resolution_v1::{

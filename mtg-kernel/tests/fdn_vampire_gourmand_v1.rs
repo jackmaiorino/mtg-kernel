@@ -902,3 +902,91 @@ fn actual_paid_and_declined_operations_restore_and_reject_missing_draw_or_replay
         }
     }
 }
+
+#[test]
+fn installed_genuine_rule_requires_actual_cleanup_expiry_and_cannot_resurrect() {
+    use mtg_kernel::event::CommittedEvent;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source, other) = fixture(actor);
+        selection(&mut state, actor, source);
+        engine::step(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(other)),
+        )
+        .unwrap();
+        finish(&mut state);
+        let marker = state.engine.until_end_of_turn.iter().find(|e| matches!(e,
+            UntilEndOfTurnEffect::ResolvedObjectCantBeBlockedV1 { object_id, .. } if *object_id == source)).unwrap().clone();
+        let operation = state
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .find_map(|(at, e)| {
+                matches!(e, CommittedEvent::VampireGourmandCostOperationV2 { .. })
+                    .then_some(at as u32)
+            })
+            .unwrap();
+        for case in 0..3 {
+            let mut bad = restore(&state);
+            match case {
+                0 => bad.engine.until_end_of_turn.retain(|e| *e != marker),
+                1 => bad.engine.until_end_of_turn.push(marker.clone()),
+                _ => {
+                    bad.engine.until_end_of_turn.retain(|e| *e != marker);
+                    bad.engine
+                        .event_history
+                        .push(CommittedEvent::VampireGourmandExpiredV2 {
+                            operation_history_index: operation,
+                            cleanup_history_index: operation,
+                        });
+                }
+            }
+            refused_cost_state(&bad);
+        }
+        for _ in 0..30 {
+            match next(&mut state) {
+                Decision::DeclareBlockers { .. } => {
+                    engine::step(&mut state, Action::DeclareBlockers(vec![])).unwrap();
+                    break;
+                }
+                Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+                other => panic!("actual blocker transition {other:?}"),
+            }
+        }
+        let mut replay = restore(&state);
+        cleanup(&mut state, actor);
+        cleanup(&mut replay, actor);
+        assert!(!restricted(&state, source));
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+        assert!(state
+            .engine
+            .event_history
+            .iter()
+            .any(|e| matches!(e, CommittedEvent::VampireGourmandCleanupV2 { .. })));
+        for case in 0..3 {
+            let mut bad = restore(&state);
+            match case {
+                0 => bad.engine.until_end_of_turn.push(marker.clone()),
+                1 => bad
+                    .engine
+                    .event_history
+                    .retain(|e| !matches!(e, CommittedEvent::VampireGourmandExpiredV2 { .. })),
+                _ => {
+                    let expired = bad
+                        .engine
+                        .event_history
+                        .iter()
+                        .find(|e| matches!(e, CommittedEvent::VampireGourmandExpiredV2 { .. }))
+                        .unwrap()
+                        .clone();
+                    bad.engine.event_history.push(expired);
+                }
+            }
+            refused_cost_state(&bad);
+        }
+    }
+}

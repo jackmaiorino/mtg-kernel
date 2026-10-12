@@ -826,6 +826,16 @@ pub enum CommittedEvent {
     VampireGourmandCostOperationV2 {
         operation: Box<crate::effect::VampireGourmandCostOperationV2>,
     },
+    VampireGourmandCleanupV2 {
+        turn: u32,
+        ending_player: PlayerId,
+        step: crate::state::Step,
+        operation_history_indices: Vec<u32>,
+    },
+    VampireGourmandExpiredV2 {
+        operation_history_index: u32,
+        cleanup_history_index: u32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
