@@ -9247,6 +9247,12 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
         if let Some(d) = drain_pending_triggers_or_decide(state) {
             return d;
         }
+        // Collection can stage a legend-rule SBA while retaining the newly
+        // captured triggers. Revisit that decision before exposing priority
+        // or progressing combat; the protected batch cannot be placed yet.
+        if state.pending_legend_rule_v1.is_some() {
+            continue;
+        }
 
         if state.step == Step::DeclareAttackers && !state.engine.combat.attackers_declared {
             return Decision::DeclareAttackers {
