@@ -7099,6 +7099,36 @@
         "chosen_color_controlled_creatures_plus_one_power",
         "tap_chosen_color_mana"
       ]
+    },
+    {
+      "name": "Inspiration from Beyond",
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mill",
+        "graveyard_return",
+        "flashback"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/i/InspirationFromBeyond.java",
+      "engine_capability": "full",
+      "is_token": false,
+      "decks": [
+        "FDN_reference_inspiration_from_beyond.dck"
+      ]
     }
   ]
 }

@@ -259,6 +259,16 @@ class LimitedDeckTest(unittest.TestCase):
         for name in ["Mountain", "Plains"]:
             self.assertEqual(resolved.count(self.registry[name].card_id), 10)
 
+    def test_inspiration_reference_uses_real_instant_sorcery_and_mana(self) -> None:
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_inspiration_from_beyond.dck").read_text(encoding="utf-8"))
+        resolved = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(resolved), 40)
+        self.assertEqual(self.registry["Inspiration from Beyond"].card_id, 431)
+        self.assertEqual(resolved[:4], [431] * 4)
+        for name in ["Think Twice", "Refute", "Uncharted Voyage"]:
+            self.assertEqual(resolved.count(self.registry[name].card_id), 4)
+        self.assertEqual(resolved.count(self.registry["Island"].card_id), 24)
+
     def test_original_decks_are_40_cards_and_fully_resolve(self) -> None:
         for filename, supported_copies, source_sha256 in [
             ("FDN_top_04956_UG.dck", 40, "bb618d6eaddf04b0a9e51e9a88cd512a04635e99ebca91b11ace4c305d634c86"),
@@ -461,7 +471,7 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("FDN_top_*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
-        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 226)
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 227)
         self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
                              for card in report["cards"]), 0)
 

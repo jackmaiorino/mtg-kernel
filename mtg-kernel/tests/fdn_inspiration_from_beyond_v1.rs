@@ -18,7 +18,7 @@ fn ready(actor: PlayerId, mill_spells: bool) -> GameState {
     let forest = card_id_by_name("Forest").unwrap();
     let mut library = vec![forest; 40];
     if mill_spells {
-        library[0] = card_id_by_name("Negate").unwrap();
+        library[0] = card_id_by_name("Refute").unwrap();
         library[2] = card_id_by_name("Think Twice").unwrap();
     }
     let mut state = GameState::new_from_libraries_with_starting_player_v1(
@@ -170,7 +170,7 @@ fn actual_cast_mill_three_mandatory_non_target_return_and_restore_both_seats() {
         let mut state = ready(actor, true);
         let source = put(&mut state, actor, "Inspiration from Beyond", Zone::Hand);
         let prior = put(&mut state, actor, "Think Twice", Zone::Graveyard);
-        let opposing = put(&mut state, actor.opponent(), "Negate", Zone::Graveyard);
+        let opposing = put(&mut state, actor.opponent(), "Refute", Zone::Graveyard);
         let milled = state.players[actor.index()].library[..3].to_vec();
         cast(&mut state, actor, source, false);
         state = restore(&state);
@@ -461,9 +461,14 @@ fn ordinary_counter_response_prevents_mill_and_flashback_still_exiles_both_seats
             );
             cast(&mut state, actor, source, flashback);
             engine::step(&mut state, Action::Pass).unwrap();
-            let counter = put(&mut state, actor.opponent(), "Negate", Zone::Hand);
+            let counter = put(
+                &mut state,
+                actor.opponent(),
+                "An Offer You Can't Refuse",
+                Zone::Hand,
+            );
             state.players[actor.opponent().index()].mana_pool[ManaColor::U.pool_index()] = 1;
-            state.players[actor.opponent().index()].mana_pool[5] = 1;
+            state.players[actor.opponent().index()].mana_pool[5] = 0;
             assert!(
                 matches!(next(&mut state), Decision::CastSpellOrPass { player, castable_spells, .. } if player == actor.opponent() && castable_spells.contains(&counter))
             );
