@@ -713,7 +713,7 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 .as_ref()
                 .and_then(|s| s.life_this_turn)
                 .is_some_and(|(turn, _, lost)| {
-                    turn == state.turn && lost[ctx.controller.opponent().index()] > 0
+                    turn == state.turn_key_v1() && lost[ctx.controller.opponent().index()] > 0
                 })
             {
                 crate::effect::execute(
@@ -839,7 +839,7 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         StandardOpV1::GraveyardCreaturesCastableThisTurn => {
-            let turn = state.turn;
+            let turn = state.turn_key_v1();
             let grants = state.players[ctx.controller.index()]
                 .graveyard
                 .iter()
@@ -1788,7 +1788,7 @@ pub(crate) fn after_damage(state: &mut GameState, source: ObjectId, amount: i32,
         return;
     }
     let controller = live.controller;
-    let turn = state.turn;
+    let turn = state.turn_key_v1();
     let standard = state.standard_v1.get_or_insert_with(Default::default);
     let (recorded_turn, totals) = standard.red_noncombat_damage.get_or_insert((turn, [0, 0]));
     if *recorded_turn != turn {
@@ -1812,7 +1812,7 @@ pub(crate) fn after_historical_damage(
     {
         return;
     }
-    let turn = state.turn;
+    let turn = state.turn_key_v1();
     let standard = state.standard_v1.get_or_insert_with(Default::default);
     let (recorded_turn, totals) = standard.red_noncombat_damage.get_or_insert((turn, [0, 0]));
     if *recorded_turn != turn {
@@ -1828,7 +1828,7 @@ fn red_noncombat_damage_this_turn(state: &GameState, player: PlayerId) -> u32 {
         .standard_v1
         .as_ref()
         .and_then(|standard| standard.red_noncombat_damage)
-        .filter(|(turn, _)| *turn == state.turn)
+        .filter(|(turn, _)| *turn == state.turn_key_v1())
         .map_or(0, |(_, totals)| totals[player.index()])
 }
 
@@ -2384,7 +2384,7 @@ pub(crate) fn record_life(state: &mut GameState, player: PlayerId, gained: i32, 
     if gained <= 0 && lost <= 0 {
         return;
     }
-    let turn = state.turn;
+    let turn = state.turn_key_v1();
     let standard = state.standard_v1.get_or_insert_with(Default::default);
     let (recorded_turn, gains, losses) =
         standard
@@ -2405,7 +2405,7 @@ pub(crate) fn life_gained_this_turn(state: &GameState, player: PlayerId) -> u32 
         .standard_v1
         .as_ref()
         .and_then(|standard| standard.life_this_turn)
-        .filter(|(turn, _, _)| *turn == state.turn)
+        .filter(|(turn, _, _)| *turn == state.turn_key_v1())
         .map_or(0, |(_, gains, _)| gains[player.index()])
 }
 
@@ -2414,7 +2414,7 @@ fn life_changed_this_turn(state: &GameState, player: PlayerId, require_lost: boo
         .standard_v1
         .as_ref()
         .and_then(|standard| standard.life_this_turn)
-        .filter(|(turn, _, _)| *turn == state.turn)
+        .filter(|(turn, _, _)| *turn == state.turn_key_v1())
         .is_some_and(|(_, gains, losses)| {
             gains[player.index()] > 0 && (!require_lost || losses[player.index()] > 0)
         })
@@ -2427,7 +2427,7 @@ pub(crate) fn record_attackers(state: &mut GameState, count: usize) {
     if count == 0 {
         return;
     }
-    let turn = state.turn;
+    let turn = state.turn_key_v1();
     let standard = state.standard_v1.get_or_insert_with(Default::default);
     let (recorded_turn, total) = standard.attackers_this_turn.get_or_insert((turn, 0));
     if *recorded_turn != turn {
@@ -2838,7 +2838,7 @@ pub(crate) fn graveyard_cast_granted(
     state.standard_v1.as_ref().is_some_and(|standard| {
         standard
             .graveyard_casts
-            .contains(&(object, zone_change_count, holder, state.turn))
+            .contains(&(object, zone_change_count, holder, state.turn_key_v1()))
     })
 }
 
@@ -4067,7 +4067,7 @@ pub(crate) fn cauldron_activation_allowed(
                     && d.zone_change_count == state.objects.get(donor).zone_change_count
                     && *i == local
                     && ((def.name == "Surge Engine" && local == 2)
-                        || (*t == state.turn && *p == state.active_player))
+                        || (*t == state.turn_key_v1() && *p == state.active_player))
             })
             .count()
     });
@@ -4101,7 +4101,7 @@ pub(crate) fn note_cauldron_activation(
         object: grant.donor.source,
         zone_change_count: grant.donor.zone_change_count,
     };
-    let turn = state.turn;
+    let turn = state.turn_key_v1();
     let active = state.active_player;
     state
         .standard_v1

@@ -1,7 +1,7 @@
 //! Candidate E and controls A and D: selection under the transition ceiling,
 //! then independent evaluation on paired worlds (RUNNER.md sections 2-3).
 
-use super::canon2::{KeyMode, KeyStats, Keyer};
+use super::canon2::{KeyMemo, KeyMode, KeyStats, Keyer};
 use super::diag::{EvalSrc, SelSrc, Trace};
 use super::labels::{SpyDefs, Suffix};
 use super::play::{
@@ -30,6 +30,18 @@ pub(crate) const D_TOP: usize = 2;
 pub(crate) const D_UNIFORM: usize = 2;
 pub(crate) const D_HORIZON: usize = 3;
 pub(crate) const ARMS: [&str; 3] = ["E", "A", "D"];
+
+fn select_observed(node: &Node, urgency: Option<f64>, _trace: &mut Option<&mut Trace>) -> usize {
+    #[cfg(feature = "viewer-recording-v1")]
+    if let Some(v) = _trace
+        .as_deref_mut()
+        .and_then(|t| t.viewer.as_mut())
+        .filter(|v| v.error.is_none())
+    {
+        return node.select_with_scores(urgency, &mut v.scores);
+    }
+    node.select_with(urgency)
+}
 
 /// Run settings (the formal values are the constants above; tests and the
 /// cost-only engineering checks may lower them, and every row records them).
@@ -67,6 +79,7 @@ pub(crate) struct Roles {
 
 /// Everything fixed for one frozen root.
 pub(crate) struct RootCtx<'a> {
+    pub(crate) visible_history: &'a [super::e_supported::VisibleFrame],
     pub(crate) root: &'a FastActorSessionV1,
     pub(crate) d: FastActorDecisionV1,
     pub(crate) focal: PlayerId,
@@ -689,6 +702,7 @@ impl Roles {
         rec: &mut SimRecord,
         mut capture: Option<&mut Capture>,
         diag: &mut SearchDiag,
+        mut memo: Option<&mut KeyMemo>,
     ) -> Result<(Vec<(Key, usize)>, Vec<(Key, Node)>, End), PlayErr> {
         let capturing = capture
             .as_deref()
@@ -698,16 +712,21 @@ impl Roles {
                 "depth retention and capture use legacy keys only".into(),
             ));
         }
-        if ctx.interchange && (retain > 1 || capturing) {
+        if ctx.interchange && (retain > 1 || capturing || !ctx.visible_history.is_empty()) {
             return Err(PlayErr::Fault(
-                "depth retention and capture do not merge interchangeable choices".into(),
+                "depth retention, capture and E history do not merge interchangeable choices"
+                    .into(),
             ));
         }
         let SearchDiag {
             keys, legacy_path, ..
         } = diag;
         legacy_path.clear();
-        let mut keyer = Keyer::new(ctx.key_mode, keys).with_interchange(ctx.interchange);
+        let mut keyer = Keyer::with_history(ctx.key_mode, keys, ctx.visible_history)?
+            .with_interchange(ctx.interchange);
+        if memo.is_some() {
+            keyer.start_memo();
+        }
         let mut sup = Sup::new();
         let mut path: Vec<(Key, usize)> = Vec::new();
         let mut new: Vec<(Key, Node)> = Vec::new();
@@ -722,11 +741,14 @@ impl Roles {
         let mut depth = 0u32;
         let mut last_phys: Option<u64> = None;
         loop {
+            let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::Response);
             if let Some(end) = terminal(&s, ctx.focal) {
+                drop(span);
                 sup.finish(rec);
                 return Ok((path, new, end));
             }
             let d = decision(&s).expect("decision");
+            drop(span);
             let a = if acting(&d) == ctx.focal {
                 if d.legal_action_count >= 2 {
                     if last_phys != Some(d.physical_decision_id) {
@@ -748,16 +770,28 @@ impl Roles {
                         SelSrc::TailAfterExpand
                     };
                     let a = if in_tree && depth <= MAX_DEPTH {
-                        let st = keyer.step(&s, d)?;
+                        let span = crate::search_profile_v1::span(
+                            crate::search_profile_v1::Bucket::KeyStep,
+                        );
+                        let st = keyer.step_memo(&s, d, memo.as_deref_mut())?;
                         let (key, pk, pe, cn) = keyer.storage(&st);
-                        let (edge_index, edge) = match tree.find(&key, &pk, &pe, cn)? {
+                        drop(span);
+                        let span = crate::search_profile_v1::span(
+                            crate::search_profile_v1::Bucket::TreeFind,
+                        );
+                        let found = tree.find(&key, &pk, &pe, cn)?;
+                        drop(span);
+                        let (edge_index, edge) = match found {
                             Found::Hit(node) => {
+                                let _span = crate::search_profile_v1::span(
+                                    crate::search_profile_v1::Bucket::NodeSelect,
+                                );
                                 src = SelSrc::Tree;
                                 rec.existing += 1;
                                 if staged.contains(&key) {
                                     rec.staged_hits += 1;
                                 }
-                                let e = node.select_with(ctx.urgency);
+                                let e = select_observed(node, ctx.urgency, &mut trace);
                                 supported = node.n[e] >= super::tree::MIN_EXEC_BACKUPS;
                                 (e, cn.edges[e].clone())
                             }
@@ -769,10 +803,14 @@ impl Roles {
                                 if let Some(t) = trace.as_deref_mut() {
                                     t.node_created(&key, path.last(), cn, &s, ctx.focal, &ctx.defs);
                                 }
+                                let span = crate::search_profile_v1::span(
+                                    crate::search_profile_v1::Bucket::Expand,
+                                );
                                 let perm = keyer.perm(&st, ctx.seeds)?;
                                 let mut node = Node::with_perm(pk, pe, cn.clone(), depth, perm);
                                 node.skip = keyer.skipped(&st);
-                                let e = node.select_with(ctx.urgency);
+                                let e = select_observed(&node, ctx.urgency, &mut trace);
+                                drop(span);
                                 new.push((key, node));
                                 in_tree = false;
                                 // Boundary: before the expanded choice's
@@ -785,7 +823,10 @@ impl Roles {
                         legacy_path.push(st.legacy_key);
                         let live = live_index(cn, &edge)?;
                         parent = (key, edge);
-                        keyer.advance(st, live);
+                        let _span = crate::search_profile_v1::span(
+                            crate::search_profile_v1::Bucket::KeyAdvance,
+                        );
+                        keyer.advance_memo(st, live, memo.as_deref_mut());
                         live
                     } else if !in_tree && new.len() < retain && depth <= MAX_DEPTH {
                         // Depth retention (D8): stage this choice node and
@@ -845,7 +886,15 @@ impl Roles {
                 }
                 a
             };
+            #[cfg(feature = "viewer-recording-v1")]
+            if let Some(v) = trace.as_deref_mut().and_then(|t| t.viewer.as_mut()) {
+                v.before(&s, d, a);
+            }
             apply(&mut s, &d, a, meter, ctx.focal, Some(suffix), &ctx.defs)?;
+            #[cfg(feature = "viewer-recording-v1")]
+            if let Some(v) = trace.as_deref_mut().and_then(|t| t.viewer.as_mut()) {
+                v.after(&s, suffix.last);
+            }
             if let Some(t) = trace.as_deref_mut() {
                 t.event(meter.spent, acting(&d) == ctx.focal, suffix.last);
             }
@@ -913,6 +962,8 @@ impl Roles {
         let mut own = SearchDiag::default();
         let diag = diag.unwrap_or(&mut own);
         let retain = retain.max(1);
+        // Exact and per search: this context's keys only.
+        let mut memo = key_memo_enabled().then(KeyMemo::new);
         let mut staged: std::collections::HashSet<Key> = std::collections::HashSet::new();
         let started = Instant::now();
         let mut sel = Selection::default();
@@ -930,7 +981,10 @@ impl Roles {
             let index = i;
             i += 1;
             sel.attempted += 1;
-            let world = match sample_world(ctx, ctx.root, seed, &mut sel.sampler) {
+            let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::Sample);
+            let world = sample_world(ctx, ctx.root, seed, &mut sel.sampler);
+            drop(span);
+            let world = match world {
                 Ok(w) => w,
                 Err(_) => {
                     consecutive += 1;
@@ -947,7 +1001,9 @@ impl Roles {
                 }
             };
             consecutive = 0;
+            let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::Reseed);
             self.reset_main(ctx, "E", index, "select");
+            drop(span);
             let mut suffix = Suffix::new(ctx.cast_root);
             if let Some(t) = trace.as_deref_mut() {
                 t.sim_begin(index, meter.spent);
@@ -970,6 +1026,7 @@ impl Roles {
                 &mut rec,
                 capture.as_deref_mut(),
                 diag,
+                memo.as_mut(),
             );
             if let Some(cap) = capture.as_deref_mut() {
                 cap.end(matches!(&r, Ok((_, _, End::Natural { .. }))));
@@ -1009,6 +1066,8 @@ impl Roles {
                 Ok((path, new, End::Natural { win })) => {
                     sel.discovery
                         .add(&suffix, Some(End::Natural { win }), index);
+                    let _span =
+                        crate::search_profile_v1::span(crate::search_profile_v1::Bucket::Backup);
                     diag.before_backup(&tree, &path, &new, win, sel.completed);
                     tree.backup(&path, new, win);
                     sel.completed += 1;
@@ -1030,6 +1089,9 @@ impl Roles {
         }
         if let Some(t) = trace {
             t.finish_tree(&tree);
+        }
+        if let Some(m) = &memo {
+            diag.key_memo = m.json();
         }
         sel.transitions = meter.spent;
         sel.inference = c.inference;
@@ -1140,7 +1202,8 @@ impl Roles {
         mut log: Option<&mut Vec<u32>>,
     ) -> Result<End, PlayErr> {
         let mut kstats = KeyStats::default();
-        let mut keyer = Keyer::new(ctx.key_mode, &mut kstats).with_interchange(ctx.interchange);
+        let mut keyer = Keyer::with_history(ctx.key_mode, &mut kstats, ctx.visible_history)?
+            .with_interchange(ctx.interchange);
         let mut matching = true;
         let mut depth = 0u32;
         let mut last_phys: Option<u64> = None;
@@ -1391,10 +1454,23 @@ pub(crate) struct EdgeWin {
     pub(crate) wins_after: u64,
 }
 
+/// Whether E searches memoize key steps (`S4A_KEY_MEMO=1`; default off).
+/// Exact: selection, trees and key statistics are unchanged; only time is.
+pub(crate) fn key_memo_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| match std::env::var("S4A_KEY_MEMO").as_deref() {
+        Ok("1") => true,
+        Ok("0") | Err(_) => false,
+        Ok(v) => panic!("S4A_KEY_MEMO must be 0 or 1, got {v:?}"),
+    })
+}
+
 /// Search diagnostics (never read by selection, backup or execution).
 #[derive(Debug, Default)]
 pub(crate) struct SearchDiag {
     pub(crate) keys: KeyStats,
+    /// Key memo counters when `S4A_KEY_MEMO=1` (null otherwise).
+    pub(crate) key_memo: Value,
     pub(crate) edges: HashMap<(Key, usize), EdgeWin>,
     /// Stored node -> legacy history identity -> natural backups per edge.
     pub(crate) legacy: HashMap<Key, BTreeMap<Key, Vec<u64>>>,

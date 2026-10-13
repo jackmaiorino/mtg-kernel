@@ -44,6 +44,10 @@ native-flat-tensorizer-diagnostic = []
 # call counts of tensorizer fill, packet encode and pooled forward, printed by
 # the multirun pilot. Off by default; production builds carry no counters.
 tensorize-cost-profile-v1 = []
+# Measurement-only exclusive cost split of Stage 4a persistent search
+# (`s4a-search-profile` rows). Off by default; default builds compile the
+# spans to nothing, so uninstrumented timings use a build without it.
+s4a-profile-v1 = []
 # Windows-only production admission for the native V2 training-store writer.
 # Non-Windows builds retain parser/stub support but never emit a production
 # build-capture tuple.
@@ -57,6 +61,16 @@ required-features = ["native-training-store-v2-production"]
 [[bin]]
 name = "viewer_capture_v1"
 path = "src/bin/viewer_capture_v1.rs"
+required-features = ["viewer-recording-v1"]
+
+[[bin]]
+name = "viewer_replay_v1"
+path = "src/bin/viewer_replay_v1.rs"
+required-features = ["viewer-recording-v1"]
+
+[[bin]]
+name = "viewer_spy_capture_v1"
+path = "src/bin/viewer_spy_capture_v1.rs"
 required-features = ["viewer-recording-v1"]
 
 # Cycle-4 arm launcher. Gated behind the same two features the production

@@ -156,6 +156,48 @@ struct Node {
 type Witness<'a> =
     Option<&'a mut dyn FnMut(&FastActorSessionV1, u32) -> std::result::Result<[u8; 32], String>>;
 
+#[cfg_attr(
+    not(feature = "viewer-recording-v1"),
+    allow(
+        dead_code,
+        reason = "observer payload is consumed only by optional viewer capture"
+    )
+)]
+pub(crate) enum ViewerEvent<'a> {
+    Choice {
+        session: &'a FastActorSessionV1,
+        simulation: u32,
+        node: usize,
+        action: u32,
+    },
+    Leaf {
+        session: &'a FastActorSessionV1,
+        simulation: u32,
+        reason: &'static str,
+    },
+}
+type ViewerObserver<'a> = Option<&'a mut dyn for<'s> FnMut(ViewerEvent<'s>)>;
+
+#[cfg(feature = "viewer-recording-v1")]
+pub(crate) fn search_viewer<E: Evaluator>(
+    session: &FastActorSessionV1,
+    limits: Limits,
+    evaluator: &E,
+    observer: ViewerObserver<'_>,
+) -> Result<Outcome> {
+    search_observed(
+        session,
+        limits,
+        evaluator,
+        RootAllocation::Puct,
+        InteriorBonus::PriorWeighted,
+        BackupMode::Off,
+        crate::rl_session::V4SearchSampleMode::Legacy,
+        None,
+        observer,
+    )
+}
+
 fn live(s: &FastActorSessionV1) -> Result<FastActorDecisionV1> {
     match s.current_response() {
         FastActorResponseV1::Decision(d) => Ok(d),
@@ -368,7 +410,34 @@ pub(crate) fn search_with_sample_mode<E: Evaluator>(
     interior_bonus: InteriorBonus,
     backup: BackupMode,
     mode: crate::rl_session::V4SearchSampleMode,
+    w: Witness<'_>,
+) -> Result<Outcome> {
+    search_observed(
+        session,
+        l,
+        e,
+        allocation,
+        interior_bonus,
+        backup,
+        mode,
+        w,
+        None,
+    )
+}
+#[allow(
+    clippy::too_many_arguments,
+    reason = "preserves explicit search inputs with an optional read-only observer"
+)]
+fn search_observed<E: Evaluator>(
+    session: &FastActorSessionV1,
+    l: Limits,
+    e: &E,
+    allocation: RootAllocation,
+    interior_bonus: InteriorBonus,
+    backup: BackupMode,
+    mode: crate::rl_session::V4SearchSampleMode,
     mut w: Witness<'_>,
+    mut observer: ViewerObserver<'_>,
 ) -> Result<Outcome> {
     crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1()
         .map_err(|x| Error::Evaluator(format!("{x:?}")))?;
@@ -471,6 +540,14 @@ pub(crate) fn search_with_sample_mode<E: Evaluator>(
                     }
                 })
                 .collect::<Result<Vec<_>>>()?;
+            if let Some(observe) = &mut observer {
+                observe(ViewerEvent::Choice {
+                    session: &sample,
+                    simulation: simulations,
+                    node: at,
+                    action: action as u32,
+                });
+            }
             choices.push(TraceChoice {
                 node: at,
                 action,
@@ -580,6 +657,24 @@ pub(crate) fn search_with_sample_mode<E: Evaluator>(
                 result = value(&f, actor, root)?;
                 break;
             }
+        }
+        if let Some(observe) = &mut observer {
+            let reason = if census.natural > census_before.natural {
+                "natural"
+            } else if census.expanded > census_before.expanded {
+                "expanded"
+            } else if census.depth > census_before.depth {
+                "depth"
+            } else if census.budget > census_before.budget {
+                "transition_budget"
+            } else {
+                "coverage"
+            };
+            observe(ViewerEvent::Leaf {
+                session: &sample,
+                simulation: simulations,
+                reason,
+            });
         }
         let rw = &mut root_work[edges[0].1];
         rw.natural_wins += census.natural_wins - census_before.natural_wins;

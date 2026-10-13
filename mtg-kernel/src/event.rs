@@ -820,6 +820,101 @@ pub enum CommittedEvent {
         stack_item_id: StackItemId,
         operation_history_index: u64,
     },
+    LibrarianActivationCommittedV1 {
+        item: Box<crate::state::StackItem>,
+    },
+    LibrarianActivationFinishedV1 {
+        stack_item_id: crate::ids::StackItemId,
+        operation_history_index: u64,
+    },
+    LibrarianActivationOperationV1 {
+        item: Box<crate::state::StackItem>,
+        operation: crate::librarian_activation_v1::OperationV1,
+    },
+    LibrarianActivationCounterRemovalV1 {
+        item: Box<crate::state::StackItem>,
+    },
+    PrivateKeepOneLibraryCapturedV1 {
+        binding: Box<crate::effect::PrivateKeepOneBindingV1>,
+    },
+    PrivateKeepOneLibraryConsumedV1 {
+        resolving_stack_item: StackItemId,
+        graveyard: Vec<crate::effect::EffectObjectBinding>,
+        move_history_indices: Vec<usize>,
+    },
+    RaidEntrySourceV1 {
+        source: crate::state::AbilitySourceContractV4,
+        entry_history_index: usize,
+    },
+    /// History-only actual initial Raid-false completion, never a public event.
+    PrivateKeepOneRaidSkippedV1 {
+        resolving_stack_item: StackItemId,
+        initial_boundary_history_index: u32,
+    },
+    ExtraTurnStartedV1 {
+        initial: crate::extra_turn_v1::ExtraTurnStateV1,
+        round: u32,
+        active_player: PlayerId,
+    },
+    ExtraTurnScheduledV1 {
+        item: Box<crate::state::StackItem>,
+    },
+    ExtraTurnBeganV1 {
+        previous: crate::extra_turn_v1::ExtraTurnStateV1,
+        after: crate::extra_turn_v1::ExtraTurnStateV1,
+        round: u32,
+        active_player: PlayerId,
+    },
+    ExtraTurnOwnerPublishedV1 {
+        item: Box<crate::state::StackItem>,
+    },
+    ExtraTurnOwnerRemovedV1 {
+        item: Box<crate::state::StackItem>,
+        outcome: crate::extra_turn_v1::RemovalV1,
+    },
+    ExtraTurnVirtualCeasedV1 {
+        source: crate::state::StackSourceContractV4,
+        stack_item_id: StackItemId,
+    },
+    /// Private scoped power snapshot before a genuine battlefield departure.
+    AshrootPowerBeforeDepartureV1 {
+        source: crate::state::ObjectLinkV4,
+        owner: PlayerId,
+        power: i32,
+    },
+    AshrootDispatchV2 {
+        journal: crate::ashroot_dispatch_v2::JournalV2,
+    },
+    GorehornDepartureV1 {
+        departure: Box<crate::gorehorn_damage_v1::DepartureV1>,
+    },
+    GorehornPublishedV1 {
+        publication: Box<crate::gorehorn_damage_v1::PublicationV1>,
+    },
+    GorehornPreparedV1 {
+        prepared: Box<crate::gorehorn_damage_v1::PreparedV1>,
+    },
+    GorehornDamageOperationV1 {
+        operation: Box<crate::gorehorn_damage_v1::DamageOperationV1>,
+    },
+    GorehornOperationV1 {
+        operation: Box<crate::gorehorn_damage_v1::OperationV1>,
+    },
+    RaidEntryCaptureV1 {
+        capture: Box<crate::raid_entry_custody_v1::CaptureV1>,
+    },
+    RaidEntryPublishedV1 {
+        publication: Box<crate::raid_entry_custody_v1::PublishedV1>,
+    },
+    RaidEntryDroppedV1 {
+        dropped: Box<crate::raid_entry_custody_v1::DroppedV1>,
+    },
+    RaidEntryCounteredV1 {
+        countered: Box<crate::raid_entry_custody_v1::CounteredV1>,
+    },
+    RaidEntryStartedV1 {
+        started: Box<crate::raid_entry_custody_v1::StartedV1>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1050,7 +1145,7 @@ fn replacement_applies(
             ProposedEvent::Damage(d),
         ) => {
             d.is_combat
-                && *turn == state.turn
+                && *turn == state.turn_key_v1()
                 && *active_player == state.active_player
                 && d.target == Target::Object(object.object)
                 && state.objects.try_get(object.object).is_some_and(|live| {
@@ -1066,7 +1161,7 @@ fn replacement_applies(
             },
             ProposedEvent::Damage(d),
         ) => {
-            *turn == state.turn
+            *turn == state.turn_key_v1()
                 && *active_player == state.active_player
                 && damage_color_mask(state, d) & crate::card_def::mana_color_mask(*color) != 0
         }
@@ -1148,7 +1243,7 @@ pub fn install_color_damage_prevention(
         source,
         kind: ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn {
             color,
-            turn: state.turn,
+            turn: state.turn_key_v1(),
             active_player: state.active_player,
         },
     });
@@ -1183,7 +1278,7 @@ pub(crate) fn install_combat_damage_prevention(
         source,
         kind: ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn {
             object: binding,
-            turn: state.turn,
+            turn: state.turn_key_v1(),
             active_player: state.active_player,
         },
     });
@@ -1236,6 +1331,76 @@ pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
     }
 }
 
+/// Only the nonserializable owner obtained before actual engine removal may
+/// commit the printed Raid damage. Ordinary proposals retain their old path.
+pub(crate) fn propose_and_commit_gorehorn_owned(
+    state: &mut GameState,
+    damage: DamageProposed,
+    preparation: u32,
+    owner: &crate::gorehorn_damage_v1::OwnerV1,
+) -> Result<u32, String> {
+    if !owner.permits_damage(state, &damage) {
+        return Err("Gorehorn damage lacks actual removed-item authority".into());
+    }
+    crate::effect::temporary_control_v1::authority::validate(state)?;
+    let replacements_before = state.engine.active_replacements.clone();
+    let turn = state.turn_key_v1();
+    let active = state.active_player;
+    let prevention_overridden = state.engine.until_end_of_turn.iter().any(|effect| {
+        matches!(
+            effect,
+            crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
+        )
+    });
+    let start = state.engine.event_history.len();
+    let final_event = apply_replacements(state, ProposedEvent::Damage(damage));
+    let mut output = None;
+    if let Some(event) = final_event {
+        let ProposedEvent::Damage(damage) = &event else {
+            return Err("Gorehorn replacement changed event kind".into());
+        };
+        output = Some(crate::gorehorn_damage_v1::DamageResultV1 {
+            source: damage.source,
+            target: damage.target,
+            amount: damage.amount,
+            touched: damage.touched_by.clone(),
+        });
+        let gain = lifelink_gain_for(state, &event);
+        commit(state, event);
+        if let Some((player, amount)) = gain {
+            commit(state, ProposedEvent::life_gain(player, amount));
+        }
+    }
+    let damage_index = state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .skip(start)
+        .find_map(|(i, e)| matches!(e, CommittedEvent::Damage { .. }).then_some(i))
+        .map(u32::try_from)
+        .transpose()
+        .map_err(|_| "Gorehorn damage index overflow")?;
+    let index = u32::try_from(state.engine.event_history.len())
+        .map_err(|_| "Gorehorn operation overflow")?;
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::GorehornDamageOperationV1 {
+            operation: Box::new(crate::gorehorn_damage_v1::DamageOperationV1 {
+                index,
+                preparation,
+                replacements_before,
+                output,
+                damage_index,
+                turn,
+                active,
+                prevention_overridden,
+            }),
+        });
+    Ok(index)
+}
+
 /// Applies the (possibly rewritten) proposal to `GameState` and appends the
 /// resulting `CommittedEvent` to the event log for this resolution.
 pub fn commit(state: &mut GameState, event: ProposedEvent) {
@@ -1254,6 +1419,7 @@ fn commit_with_ability_lki(
         abilities_removed_before,
         frozen_death_captures,
         None,
+        false,
     );
 }
 
@@ -1263,6 +1429,7 @@ fn commit_with_ability_lki_and_entry_batch(
     abilities_removed_before: Option<bool>,
     frozen_death_captures: Option<Vec<CommittedEvent>>,
     mut authority_batch: Option<&mut crate::authority_of_the_consuls_v1::EntryBatchV1>,
+    defer_raid_entry: bool,
 ) {
     let mut event = event;
     if let ProposedEvent::ZoneChange(change) = &mut event {
@@ -1412,7 +1579,9 @@ fn commit_with_ability_lki_and_entry_batch(
                 crate::standard_statics_v1::record_creature_stats_lki(state, z.object);
             }
             if from == Zone::Battlefield {
+                crate::ashroot_animist_v1::before_departure(state, z.object);
                 crate::source_power_activation_v1::before_departure(state, z.object);
+                crate::gorehorn_damage_v1::before_departure(state, z.object);
             }
             #[cfg(feature = "standard-magezero-fixtures")]
             crate::standard_keywords_v1::before_zone_change(state, z.object, z.to_zone);
@@ -1457,7 +1626,7 @@ fn commit_with_ability_lki_and_entry_batch(
             #[cfg(feature = "limited-fdn-fixtures")]
             if creature_died && state.objects.get(z.object).zone == Zone::Graveyard {
                 state.creature_death_turn_v1 = Some(crate::state::CreatureDeathTurnV1 {
-                    turn: state.turn,
+                    turn: state.turn_key_v1(),
                     active_player: state.active_player,
                 });
             }
@@ -1549,7 +1718,7 @@ fn commit_with_ability_lki_and_entry_batch(
                 attachments: Vec::new(),
                 v4: {
                     let mut v4 = crate::state::ObjectStateV4::from_card_def(t.token_def);
-                    v4.entered_battlefield_turn = Some(state.turn);
+                    v4.entered_battlefield_turn = Some(state.turn_key_v1());
                     v4.entered_battlefield_this_turn = cfg!(feature = "standard-magezero-fixtures");
                     v4
                 },
@@ -1715,6 +1884,11 @@ fn commit_with_ability_lki_and_entry_batch(
     if let Some(source) = single_graveyard_entry {
         crate::soul_shackled_zombie_v1::record_entry(state, source);
     }
+    if let Some(capture) = crate::raid_entry_v1::record_entry(state, entry_history_index) {
+        if !defer_raid_entry {
+            crate::raid_entry_custody_v1::capture_entry(state, capture);
+        }
+    }
     if let Some(batch) = authority_batch.as_mut() {
         batch.record(entry_history_index);
     } else {
@@ -1757,6 +1931,7 @@ fn commit_with_ability_lki_and_entry_batch(
 /// / trigger collection exactly once after the whole batch (see
 /// `engine::deal_combat_damage`), not per event.
 pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent>) {
+    let raid_history_start = state.engine.event_history.len();
     let mut authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
     let survivors: Vec<ProposedEvent> = events
         .into_iter()
@@ -1770,6 +1945,8 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
             }
         }
     }
+    crate::gorehorn_damage_v1::before_batch_departures(state, &survivors);
+    crate::ashroot_animist_v1::before_batch_departures(state, &survivors);
     // Lifelink changes life at the same time as the damage. Capture every
     // source/controller before any member of the simultaneous batch can die.
     // CR 119.9: one source damaging several recipients simultaneously is
@@ -1829,6 +2006,7 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
                 Some(removed),
                 captures,
                 authority_batch.as_mut(),
+                true,
             );
         }
     } else {
@@ -1842,6 +2020,7 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
                 None,
                 captures,
                 authority_batch.as_mut(),
+                true,
             );
         }
     }
@@ -1850,6 +2029,7 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
         batch.finish(state);
     }
 
+    crate::raid_entry_custody_v1::capture_batch_entries(state, raid_history_start);
     for (_, player, amount) in lifelink_gains {
         commit(state, ProposedEvent::life_gain(player, amount));
     }
@@ -1859,6 +2039,13 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
 /// Freeze only new death observers; retain the existing per-member sacrifice,
 /// replacement, zone-change and unrelated-event order exactly.
 pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[ObjectId]) {
+    crate::gorehorn_damage_v1::before_batch_departures(
+        state,
+        &chosen
+            .iter()
+            .map(|id| ProposedEvent::zone_change(*id, Zone::Graveyard))
+            .collect::<Vec<_>>(),
+    );
     let captures = chosen
         .iter()
         .map(|id| {
@@ -1880,6 +2067,13 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
 /// One simultaneous SBA death group. Preserve the existing direct-commit
 /// semantics while freezing death observers before any member leaves.
 pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<ObjectId>) {
+    crate::gorehorn_damage_v1::before_batch_departures(
+        state,
+        &dying
+            .iter()
+            .map(|id| ProposedEvent::zone_change(*id, Zone::Graveyard))
+            .collect::<Vec<_>>(),
+    );
     if !crate::creature_death_capture_v1::enabled() {
         for id in dying {
             commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
@@ -2108,7 +2302,8 @@ fn permanent_enters_battlefield_tapped(
                 other_lands() < usize::from(least)
             }
             EntersTappedUnlessControllerDef::WithinOwnFirstTurns(turns) => {
-                !(state.active_player == controller && state.turn <= u32::from(turns))
+                !(state.active_player == controller
+                    && state.own_turn_count_v1(controller) <= u32::from(turns))
             }
         };
     }
@@ -2229,7 +2424,7 @@ fn commit_zone_change(
         Zone::Stack => panic!("MoveObject to Stack is an engine action, not an effect leaf"),
     }
 
-    let turn = state.turn;
+    let turn = state.turn_key_v1();
     let enters_battlefield_tapped = to_zone == Zone::Battlefield
         && (force_battlefield_tapped || permanent_enters_battlefield_tapped(state, id, owner));
     {
@@ -2447,10 +2642,33 @@ fn refresh_paid_creature_power_lki(state: &mut GameState, id: ObjectId, from_zon
 /// its leaves-the-battlefield return still resolves from the row by source
 /// contract.
 pub fn cease_to_exist(state: &mut GameState, id: ObjectId) -> bool {
+    let temporal_copy = state
+        .stack
+        .iter()
+        .find(|item| item.source == id && item.is_copy)
+        .filter(|item| {
+            item.v4
+                .source_contract
+                .is_some_and(|source| crate::extra_turn_v1::selected_definition(source.card_def))
+        })
+        .and_then(|item| {
+            item.v4
+                .source_contract
+                .map(|source| (source, item.v4.stack_item_id))
+        });
     let owner = state.objects.get(id).owner;
     let zone = state.objects.get(id).zone;
     let removed = remove_from_zone(state, owner, id, zone);
     if removed {
+        if let Some((source, stack_item_id)) = temporal_copy {
+            state
+                .engine
+                .event_history
+                .push(CommittedEvent::ExtraTurnVirtualCeasedV1 {
+                    source,
+                    stack_item_id,
+                });
+        }
         state.forget_hand_object(id);
         state.clear_object_relations(id);
         state
@@ -2999,6 +3217,7 @@ mod authority_visibility_tests {
                     None,
                     None,
                     Some(&mut batch),
+                    false,
                 );
                 // A typed physical hidden-characteristic boundary before
                 // deferred entry capture, not an admitted FDN disguise card.

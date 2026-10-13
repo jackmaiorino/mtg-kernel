@@ -3,7 +3,7 @@ use crate::expanded_deck_training_v1::{load_expanded_inference_v1, ExpandedModel
 use crate::ids::PlayerId;
 use crate::kernel_native_search_opponent_v1::KernelNativeSearchActionStatV1;
 use crate::model_guided_search_core_v1::ModelGuidedSearchDecisionV1;
-use crate::model_guided_search_core_v4::{search_inner, Limits};
+use crate::model_guided_search_core_v4::{search_inner, search_viewer, Limits, ViewerEvent};
 use crate::model_guided_search_outcome_v4::{lower_hex_sha256_v4, root_statistics_digest_v4};
 use crate::paired_bo1_harness_v1::paired_policy_seeds_v1;
 use crate::rl::{PlayerSeatV1, TerminalClassificationV1};
@@ -30,6 +30,8 @@ struct Config {
     decks: [usize; 2],
     #[serde(default = "record_default")]
     record: bool,
+    #[serde(default)]
+    search_replay_steps: Vec<u64>,
     #[serde(default = "max_steps_default")]
     max_steps: u64,
     #[serde(default = "max_seconds_default")]
@@ -114,6 +116,7 @@ pub fn run(path: &Path) -> Result<(), String> {
         || config.max_seconds == 0
         || config.max_seconds > 5400
         || config.decks.iter().any(|&i| i >= RUNTIME_DECKS.len())
+        || config.search_replay_steps.len() > 3
     {
         return Err("invalid bounded capture configuration".into());
     }
@@ -227,18 +230,105 @@ pub fn run(path: &Path) -> Result<(), String> {
         };
         let (sampled, scores, masses) = policy.select_viewer_receipt_v1(&session)?;
         let evaluator = V4SearchLeafEvaluatorV1::new(&policy)?;
-        let outcome = search_inner(
-            &session,
-            Limits {
-                simulations: 512,
-                transitions: 512,
-                depth: 64,
-                seed: config.seed ^ decision.step.wrapping_mul(0x9e3779b97f4a7c15) ^ 0x564945574552,
-            },
-            &evaluator,
-            None,
-        )
+        let limits = Limits {
+            simulations: 512,
+            transitions: 512,
+            depth: 64,
+            seed: config.seed ^ decision.step.wrapping_mul(0x9e3779b97f4a7c15) ^ 0x564945574552,
+        };
+        let mut contexts = Vec::new();
+        let mut context_bytes = 0;
+        let mut snapshots = Vec::new();
+        let mut snapshot_ids = std::collections::BTreeMap::<[u8; 32], usize>::new();
+        let mut replay_error = None;
+        let replay_enabled = capture.is_some()
+            && config.search_replay_steps.contains(&decision.step)
+            && decision.acting_player == PlayerSeatV1::P0;
+        let mut observe = |event: ViewerEvent<'_>| {
+            if replay_error.is_some() {
+                return;
+            }
+            let result = (|| -> Result<Value, String> {
+                match event {
+                    ViewerEvent::Choice {
+                        session: sample,
+                        simulation,
+                        node,
+                        action,
+                    } => {
+                        let d = match sample.current_response() {
+                            FastActorResponseV1::Decision(d) => d,
+                            _ => return Err("search context has no decision".into()),
+                        };
+                        let mut fixed = sample
+                            .viewer_observation_v1(PlayerSeatV1::P0)
+                            .map_err(|e| format!("{e:?}"))?;
+                        fixed.own_hand.clear();
+                        let (_, actions) = sample
+                            .gameplay_trace_visible_v1(d, true)
+                            .map_err(|e| format!("{e:?}"))?;
+                        Ok(
+                            json!({"simulation":simulation,"node":node,"action":action,"actor":d.acting_player,
+                            "board":fixed,"actions":actions}),
+                        )
+                    }
+                    ViewerEvent::Leaf {
+                        session: sample,
+                        simulation,
+                        reason,
+                    } => {
+                        let mut board = sample
+                            .viewer_observation_v1(PlayerSeatV1::P0)
+                            .map_err(|e| format!("{e:?}"))?;
+                        board.own_hand.clear();
+                        Ok(
+                            json!({"simulation":simulation,"leaf":true,"reason":reason,"board":board}),
+                        )
+                    }
+                }
+            })();
+            match result {
+                Ok(mut row) => {
+                    let fields = row.as_object_mut().unwrap();
+                    let mut snapshot = json!({"board":fields.remove("board").unwrap()});
+                    if let Some(actions) = fields.remove("actions") {
+                        snapshot["actions"] = actions;
+                    }
+                    let encoded = snapshot.to_string();
+                    let digest: [u8; 32] = Sha256::digest(encoded.as_bytes()).into();
+                    let index = if let Some(index) = snapshot_ids.get(&digest) {
+                        *index
+                    } else {
+                        let index = snapshots.len();
+                        context_bytes += encoded.len();
+                        snapshots.push(snapshot);
+                        snapshot_ids.insert(digest, index);
+                        index
+                    };
+                    row["snapshot"] = json!(index);
+                    context_bytes += row.to_string().len();
+                    if context_bytes > 6 * 1024 * 1024 {
+                        replay_error = Some("search replay byte bound".into());
+                    } else {
+                        contexts.push(row);
+                    }
+                }
+                Err(error) => replay_error = Some(error),
+            }
+        };
+        let outcome = if replay_enabled {
+            search_viewer(&session, limits, &evaluator, Some(&mut observe))
+        } else {
+            search_inner(&session, limits, &evaluator, None)
+        }
         .map_err(|e| format!("search at {}: {e:?}", decision.step))?;
+        if let Some(error) = &replay_error {
+            eprintln!("search replay incomplete: {error}");
+            recorder.as_mut().unwrap().stopped =
+                Some(format!("search replay unavailable: {error}"));
+        }
+        let replay = replay_enabled.then(|| json!({"schema":"mtg-kernel-search-capture/v1",
+            "complete":replay_error.is_none(),"nodes":outcome.tree,"trace":outcome.trace,"contexts":contexts,"snapshots":snapshots}));
         let selected = outcome.selected;
         let stats: Vec<_> = outcome
             .root_visits
@@ -288,7 +378,7 @@ pub fn run(path: &Path) -> Result<(), String> {
                     "episode_id":decision.episode_id,"step":decision.step,"physical_decision_id":decision.physical_decision_id,
                     "substep_index":decision.substep_index,"acting_player":decision.acting_player},"before":before,"after":after,
                     "actions":semantics,"labels":labels,"policy":{"sampled":sampled,"masses":masses,"value":scores.value},
-                    "search":{"result":result,"digest":lower_hex_sha256_v4(root_statistics_digest_v4(&result))},
+                    "search":{"result":result,"digest":lower_hex_sha256_v4(root_statistics_digest_v4(&result)),"replay":replay},
                     "selected":selected,"terminal":terminal}));
             } else {
                 recorder.as_mut().unwrap().stopped =

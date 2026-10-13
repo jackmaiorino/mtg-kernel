@@ -1609,6 +1609,20 @@ pub enum EffectOp {
     CerberusUntapV1 {
         capture_history_index: u64,
     },
+    /// Private Raid look: keep zero or one on top, move the remainder to graveyard.
+    LookTopMayKeepOneRestGraveyard {
+        count: u8,
+    },
+    /// Extra turn owned by the exact removed resolving spell.
+    TakeExtraTurnAfterThisOneV1,
+    /// Definition-owned Ashroot template, bound to the actual attacking source.
+    BindAshrootAttackBoostV1,
+    AshrootAttackBoostV1 {
+        source: EffectObjectBinding,
+    },
+    AshrootBoostFromCaptureV2 {
+        capture_history_index: u64,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -2998,6 +3012,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::ReturnTargetPermanentToBattlefield { .. }
         | EffectOp::ResolveUndercityThrone { .. }
         | EffectOp::LookAtTopMayRevealThen { .. }
+        | EffectOp::LookTopMayKeepOneRestGraveyard { .. }
         | EffectOp::Surveil { .. } => true,
         EffectOp::StandardV1(op) => op.contains_player_choice(),
         _ => false,
@@ -5112,6 +5127,9 @@ fn surveil_top_card(
     })
 }
 
+mod private_keep_one_v1;
+pub(crate) use private_keep_one_v1::selection_shape;
+pub use private_keep_one_v1::PrivateKeepOneBindingV1;
 mod surveil_many;
 
 fn validate_surveil_one_metadata(
@@ -6734,7 +6752,7 @@ fn until_players_next_turn_expiry(state: &GameState, player: PlayerId) -> Result
             .checked_add(1)
             .ok_or("turn counter overflow while scheduling next-turn expiry".to_string())
     } else {
-        Ok(state.turn)
+        Ok(state.turn_key_v1())
     }
 }
 
@@ -7770,18 +7788,29 @@ fn validate_standard_choose_permanent_origin(
 }
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
+    crate::raid_entry_v1::validate_state(state)?;
+    crate::extra_turn_v1::validate(state)?;
+    crate::ashroot_animist_v1::validate_state(state)?;
     temporary_control_v1::authority::validate(state)?;
     crate::self_reflection_v1::validate_live_stack(state)?;
     crate::authority_of_the_consuls_v1::validate_state(state)?;
     crate::cerberus_capture_v1::validate_state(state)?;
     crate::soul_shackled_zombie_v1::validate_state(state)?;
     crate::source_power_activation_v1::validate_state(state)?;
+    crate::librarian_activation_v1::validate_state(state)?;
     crate::wildwood_capture_v1::validate_state(state)?;
     squad_rallier_resolution_v1::validate(state)?;
     frenzied_goblin_resolution_v1::validate(state)?;
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(());
     };
+    if matches!(
+        pending.resolving_item.inline_effect,
+        Some(EffectOp::AshrootAttackBoostV1 { .. } | EffectOp::AshrootBoostFromCaptureV2 { .. })
+    ) {
+        return Err("Ashroot atomic boost has no externally resumable choice".into());
+    }
+
     if pending.ctx.stack_item_id != Some(pending.resolving_item.v4.stack_item_id)
         || pending.ctx.source != pending.resolving_item.source
         || pending.ctx.controller != pending.resolving_item.controller
@@ -7834,6 +7863,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
             return Err("life Ward lost its payment choice or authenticated answer".into());
         }
     }
+    private_keep_one_v1::validate_required_stage(state, pending)?;
     validate_exact_spell_search_continuation(state, pending)?;
     crate::frenzied_goblin_v1::validate_continuation(state, pending)?;
     validate_answered_choice_guard(state, pending)?;
@@ -13232,6 +13262,13 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
             }
+            EffectOp::LookTopMayKeepOneRestGraveyard { count } => {
+                let player = continuation.ctx.controller;
+                if surveil_many::begin(state, &mut continuation, player, count, path)? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
             EffectOp::Surveil { player, count } => {
                 let player = continuation.ctx.resolve_player(player, state);
                 if count == 0 {
@@ -16015,6 +16052,13 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         EffectOp::DealDamage { target, amount } => {
+            if crate::gorehorn_damage_v1::owns_context(state, ctx) {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
             let target = ctx.resolve_target(*target);
             event::propose_and_commit(
                 state,
@@ -16960,7 +17004,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     zone_change_generation: exiled.zone_change_count,
                     play_or_cast: crate::engine::PlayOrCast::Cast,
                     expiry: crate::engine::PlayPermissionExpiry::LaterTurn {
-                        granted_turn: state.turn,
+                        granted_turn: state.turn_key_v1(),
                         granted_active_player: state.active_player,
                     },
                 };
@@ -18516,6 +18560,18 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 );
             }
         }
+        EffectOp::BindAshrootAttackBoostV1 => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        EffectOp::AshrootAttackBoostV1 { .. } | EffectOp::AshrootBoostFromCaptureV2 { .. } => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
         EffectOp::WildwoodCounterFromReceiptV1 { .. } => {
             if crate::wildwood_capture_v1::execute(state, ctx, op).is_err() {
                 state.engine.halted = Some((
@@ -18523,6 +18579,13 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     ctx.source,
                 ));
             }
+        }
+        EffectOp::TakeExtraTurnAfterThisOneV1 => {
+            // Only the private pre-removal resolution owner may schedule turns.
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
         }
         EffectOp::PreventTargetBlockingUntilEndOfTurn { target_index } => {
             crate::sower_of_chaos_v1::install(state, ctx, *target_index);
@@ -18603,7 +18666,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                         state.objects.get(ctx.source).name,
                         top.0,
                         state.objects.get(top).name,
-                        state.turn,
+                        state.turn_key_v1(),
                         state.step,
                         state.players[ctx.controller.index()].library.len(),
                         state.players[ctx.controller.index()].hand.len(),
@@ -19219,6 +19282,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. }
         | EffectOp::PutObjectInOwnersLibraryTopOrBottom { .. }
         | EffectOp::SurveilOne { .. }
+        | EffectOp::LookTopMayKeepOneRestGraveyard { .. }
         | EffectOp::PutBoundObjectInOwnersLibrary { .. }
         | EffectOp::CounterUnlessPaysGeneric { .. }
         | EffectOp::CounterUnlessPaysLifeWithChoice { .. }

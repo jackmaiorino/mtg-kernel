@@ -279,6 +279,7 @@ pub(super) fn guide_ctx<'a>(
 ) -> Result<RootCtx<'a>, String> {
     let d = decision(anchor).ok_or("anchor is terminal")?;
     Ok(RootCtx {
+        visible_history: &[],
         root: anchor,
         d,
         focal,

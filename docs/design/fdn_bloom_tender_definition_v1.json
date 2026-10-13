@@ -1,0 +1,33 @@
+{
+  "schema": "mtg-kernel/prepared-fdn-definition/v1",
+  "registered": false,
+  "card_id": null,
+  "name": "Bloom Tender",
+  "reference": {
+    "repository": "mage",
+    "commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+    "path": "Mage.Sets/src/mage/cards/b/BloomTender.java",
+    "ability_path": "Mage/src/main/java/mage/abilities/mana/AddEachControlledColorManaAbility.java"
+  },
+  "frozen_printing": {
+    "set": "SPG",
+    "collector_number": "79",
+    "scryfall_id": "ef1b78d9-8f09-4d67-ac6b-45204e525b35",
+    "oracle_id": "0c23fefe-9891-4dd8-9bb1-eebdb3274e31"
+  },
+  "mana_cost": "{1}{G}",
+  "mana_value": 2,
+  "colors": ["G"],
+  "types": ["Creature"],
+  "subtypes": ["Elf", "Druid"],
+  "power": "1",
+  "toughness": "1",
+  "printed_text": "{T}: For each color among permanents you control, add one mana of that color.",
+  "mechanics": ["mana_ability"],
+  "produces_mana": ["W", "U", "B", "R", "G"],
+  "target_spec": "None",
+  "recipe": "pure TapSelf / EachControlledPermanentColor / no damage / no activation cap",
+  "primary_action_selector": "G identifies the sole ability; it does not select an output color",
+  "native_qualification": "unexecuted",
+  "catalog_profile_model_admission": false
+}

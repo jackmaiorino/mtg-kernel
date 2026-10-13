@@ -224,6 +224,8 @@ impl Cursor {
 }
 
 struct Searches<'a> {
+    #[cfg(feature = "viewer-recording-v1")]
+    observer: Option<&'a mut super::viewer_uct::Recorder>,
     roles: &'a mut Roles,
     sh: &'a BankShared,
     focal: PlayerId,
@@ -265,9 +267,21 @@ impl Searches<'_> {
         ctx.interchange = self.interchange;
         let started = Instant::now();
         let mut diag = super::arms::SearchDiag::default();
-        let (sel, tree) = self
-            .roles
-            .select_e_diagnosed(&ctx, None, 1, None, None, Some(&mut diag));
+        #[cfg(feature = "viewer-recording-v1")]
+        let mut trace = self
+            .observer
+            .as_ref()
+            .filter(|r| r.error.is_none() && k < 3)
+            .map(|_| {
+                let mut trace = super::diag::Trace::default();
+                trace.viewer = Some(super::viewer_uct::SearchCapture::default());
+                trace
+            });
+        #[cfg(not(feature = "viewer-recording-v1"))]
+        let mut trace = None;
+        let (sel, tree) =
+            self.roles
+                .select_e_diagnosed(&ctx, trace.as_mut(), 1, None, None, Some(&mut diag));
         self.keys.merge(&diag.keys);
         self.used += sel.transitions;
         let failed = sel.incomplete || !sel.faults.is_empty();
@@ -276,6 +290,20 @@ impl Searches<'_> {
             "transitions":sel.transitions,"completed_natural":sel.completed,"attempted":sel.attempted,
             "nonnatural":sel.nonnatural,"incomplete":sel.incomplete,"faults":sel.faults,
             "tree":sel.extra["tree"].clone(),"keys":diag.keys.json(),"wall":started.elapsed().as_secs_f64()}));
+        if !diag.key_memo.is_null() {
+            if let Some(r) = self.records.last_mut() {
+                r["key_memo"] = diag.key_memo;
+            }
+        }
+        #[cfg(feature = "viewer-recording-v1")]
+        if let Some(observer) = self.observer.as_deref_mut() {
+            let mut record = self.records.last().unwrap().clone();
+            record["key"] =
+                serde_json::to_value(crate::rl::PlayerSeatV1::from(self.focal)).unwrap();
+            let d = decision(s).unwrap();
+            record["decision"] = json!({"episode_id":d.episode_id,"step":d.step,"physical_decision_id":d.physical_decision_id,"substep_index":d.substep_index,"acting_player":d.acting_player});
+            observer.search(k, &record, trace.and_then(|mut t| t.viewer.take()));
+        }
         Ok((!failed).then_some(tree))
     }
 }
@@ -294,10 +322,88 @@ fn guide(
     anchor_tree: Option<(Tree, Value)>,
     run: GuideRun,
 ) -> Result<(Value, Option<Tree>), String> {
+    guide_inner(
+        sh,
+        roles,
+        live_focal,
+        live_opp,
+        anchor,
+        src,
+        opp,
+        allocation,
+        anchor_tree,
+        run,
+        #[cfg(feature = "viewer-recording-v1")]
+        None,
+        #[cfg(feature = "viewer-recording-v1")]
+        None,
+        #[cfg(feature = "viewer-recording-v1")]
+        None,
+    )
+}
+
+#[cfg(feature = "viewer-recording-v1")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "same guide with passive viewer observer"
+)]
+pub(super) fn guide_viewer(
+    sh: &BankShared,
+    roles: &mut Roles,
+    live_focal: &mut FrozenPlayPolicyV1,
+    live_opp: &mut FrozenPlayPolicyV1,
+    anchor: &FastActorSessionV1,
+    src: &SourceSpec,
+    observer: Option<&mut super::viewer_uct::Recorder>,
+    max_step: u64,
+) -> Result<Value, String> {
+    let mut actual_core_hash = 0u64;
+    guide_inner(
+        sh,
+        roles,
+        live_focal,
+        live_opp,
+        anchor,
+        src,
+        0,
+        Allocation::R,
+        None,
+        GuideRun::ANCHOR_LEGACY,
+        observer,
+        Some(max_step),
+        Some(&mut actual_core_hash),
+    )
+    .map(|(mut v, _)| {
+        v["actual_core_hash"] = json!(actual_core_hash);
+        v
+    })
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "existing guide roles and optional passive viewer sink"
+)]
+fn guide_inner(
+    sh: &BankShared,
+    roles: &mut Roles,
+    live_focal: &mut FrozenPlayPolicyV1,
+    live_opp: &mut FrozenPlayPolicyV1,
+    anchor: &FastActorSessionV1,
+    src: &SourceSpec,
+    opp: usize,
+    allocation: Allocation,
+    anchor_tree: Option<(Tree, Value)>,
+    run: GuideRun,
+    #[cfg(feature = "viewer-recording-v1")] observer: Option<&mut super::viewer_uct::Recorder>,
+    #[cfg(feature = "viewer-recording-v1")] max_step: Option<u64>,
+    #[cfg(feature = "viewer-recording-v1")] actual_core_hash: Option<&mut u64>,
+) -> Result<(Value, Option<Tree>), String> {
     let started = Instant::now();
     let focal = PlayerId(src.seat);
     let defs = spy_defs();
     let mut searches = Searches {
+        #[cfg(feature = "viewer-recording-v1")]
+        observer,
         roles,
         sh,
         focal,
@@ -351,6 +457,15 @@ fn guide(
     let (mut actions, mut decisions) = (Vec::new(), Vec::new());
     let mut invalid: Option<String> = None;
     while let Some(d) = decision(&s) {
+        #[cfg(feature = "viewer-recording-v1")]
+        if max_step.is_some_and(|limit| d.step >= limit) {
+            invalid = Some("viewer development step bound".into());
+            break;
+        }
+        #[cfg(feature = "viewer-recording-v1")]
+        if let Some(observer) = searches.observer.as_deref_mut() {
+            observer.before(&s, d);
+        }
         let a = if acting(&d) == focal && d.legal_action_count >= 2 {
             let remaining_before = allocation.total.saturating_sub(searches.used);
             let (mut lookup, mut hit) = cursor.lookup(&s, d)?;
@@ -443,8 +558,21 @@ fn guide(
         };
         actions.push(a);
         apply(&mut s, &d, a, &mut meter, focal, suffix.as_mut(), &defs).map_err(err)?;
+        #[cfg(feature = "viewer-recording-v1")]
+        if let Some(observer) = searches.observer.as_deref_mut() {
+            let evidence = decisions
+                .last()
+                .filter(|r| r["step"] == d.step)
+                .cloned()
+                .unwrap_or(Value::Null);
+            observer.after(&s, a, evidence);
+        }
     }
     cursor_keys.merge(&cursor.keyer.stats);
+    #[cfg(feature = "viewer-recording-v1")]
+    if let Some(hash) = actual_core_hash {
+        *hash = s.privileged_core_environment_hash();
+    }
     let end = if invalid.is_some() {
         None
     } else {

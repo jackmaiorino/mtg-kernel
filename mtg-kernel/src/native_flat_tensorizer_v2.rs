@@ -300,6 +300,8 @@ pub(crate) struct NativeFlatTensorScratchV3 {
 }
 
 #[cfg(test)]
+mod digest_memo_tests;
+#[cfg(test)]
 mod reuse_tests;
 #[cfg(test)]
 mod successor_digest_tests;
@@ -349,6 +351,20 @@ impl Default for DigestBatchV1 {
 
 const STATE_CHECKPOINT_EVERY_V1: usize = 8;
 const STATE_CACHE_ENTRIES_V1: usize = 64;
+const STATE_CACHE_MAX_ENTRIES_V1: usize = 4096;
+
+/// Prefix cache capacity: 64 unless `MTG_KERNEL_TENSORIZE_STATE_CACHE_ENTRIES`
+/// names another count (1 to 4096). Capacity changes cost, never output.
+fn state_prefix_cache_entries_v1() -> usize {
+    static ENTRIES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *ENTRIES.get_or_init(|| {
+        std::env::var("MTG_KERNEL_TENSORIZE_STATE_CACHE_ENTRIES")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|entries| (1..=STATE_CACHE_MAX_ENTRIES_V1).contains(entries))
+            .unwrap_or(STATE_CACHE_ENTRIES_V1)
+    })
+}
 const STATE_HEADER_BYTES_V1: usize = STATE_HASH_NAMESPACE_V2.len() + 4;
 /// JSON bytes inside the first checkpoint span; entries sharing fewer
 /// leading bytes cannot share a checkpoint, so they are not compared.
@@ -473,13 +489,144 @@ fn state_prefix_cache_insert_v1(
     let mut cache = STATE_PREFIX_CACHE_V1
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if cache.entries.len() < STATE_CACHE_ENTRIES_V1 {
+    let capacity = state_prefix_cache_entries_v1();
+    if cache.entries.len() < capacity {
         cache.entries.push(entry);
     } else {
         let slot = cache.next;
         cache.entries[slot] = entry;
-        cache.next = (slot + 1) % STATE_CACHE_ENTRIES_V1;
+        cache.next = (slot + 1) % capacity;
     }
+}
+
+// --- Whole-message digest memo -------------------------------------------
+//
+// Opt-in (`MTG_KERNEL_TENSORIZE_DIGEST_MEMO_MIB`, a per-thread byte budget;
+// unset or 0 means off). A message whose namespace and bytes equal a stored
+// one, compared in full, reuses that message's six digests instead of
+// hashing it again. SHA-512 is a function of the bytes, so the features are
+// identical; only cost changes. Search revisits the same visible states and
+// offers the same actions many times, which is where this pays.
+
+const DIGEST_MEMO_ENTRY_OVERHEAD_V1: usize = 64 * ACTION_HASH_BLOCK_COUNT_V1 + 64;
+
+struct DigestMemoEntryV1 {
+    namespace: &'static [u8],
+    message: Box<[u8]>,
+    blocks: [[u8; 64]; ACTION_HASH_BLOCK_COUNT_V1],
+}
+
+#[derive(Default)]
+struct DigestMemoV1 {
+    by_hash: std::collections::HashMap<u64, Vec<usize>>,
+    entries: Vec<Option<DigestMemoEntryV1>>,
+    order: std::collections::VecDeque<(u64, usize)>,
+    free: Vec<usize>,
+    bytes: usize,
+}
+
+fn digest_memo_budget_v1() -> usize {
+    static BUDGET: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *BUDGET.get_or_init(|| {
+        std::env::var("MTG_KERNEL_TENSORIZE_DIGEST_MEMO_MIB")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .map_or(0, |mib| mib.saturating_mul(1 << 20))
+    })
+}
+
+/// Bucketing hash (not an identity: hits compare bytes in full).
+fn digest_memo_hash_v1(namespace: &[u8], message: &[u8]) -> u64 {
+    let mut hash = 0x9e37_79b9_7f4a_7c15_u64 ^ (message.len() as u64).rotate_left(32);
+    hash ^= namespace.len() as u64;
+    let mut chunks = message.chunks_exact(8);
+    for chunk in &mut chunks {
+        let word = u64::from_le_bytes(chunk.try_into().expect("eight-byte chunk"));
+        hash = (hash ^ word).wrapping_mul(0xff51_afd7_ed55_8ccd);
+        hash ^= hash >> 32;
+    }
+    let mut tail = [0u8; 8];
+    tail[..chunks.remainder().len()].copy_from_slice(chunks.remainder());
+    hash = (hash ^ u64::from_le_bytes(tail)).wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+    hash ^ (hash >> 29)
+}
+
+impl DigestMemoV1 {
+    fn get(
+        &self,
+        hash: u64,
+        namespace: &[u8],
+        message: &[u8],
+    ) -> Option<&[[u8; 64]; ACTION_HASH_BLOCK_COUNT_V1]> {
+        self.by_hash.get(&hash)?.iter().find_map(|&index| {
+            let entry = self.entries[index].as_ref()?;
+            (entry.namespace == namespace && *entry.message == *message).then_some(&entry.blocks)
+        })
+    }
+
+    fn insert(
+        &mut self,
+        budget: usize,
+        hash: u64,
+        namespace: &'static [u8],
+        message: &[u8],
+        blocks: [[u8; 64]; ACTION_HASH_BLOCK_COUNT_V1],
+    ) {
+        let cost = message.len() + DIGEST_MEMO_ENTRY_OVERHEAD_V1;
+        if cost > budget || self.get(hash, namespace, message).is_some() {
+            return;
+        }
+        // First in, first out.
+        while self.bytes + cost > budget {
+            let Some((old_hash, old_index)) = self.order.pop_front() else {
+                break;
+            };
+            if let Some(old) = self.entries[old_index].take() {
+                self.bytes -= old.message.len() + DIGEST_MEMO_ENTRY_OVERHEAD_V1;
+            }
+            if let Some(bucket) = self.by_hash.get_mut(&old_hash) {
+                bucket.retain(|&index| index != old_index);
+                if bucket.is_empty() {
+                    self.by_hash.remove(&old_hash);
+                }
+            }
+            self.free.push(old_index);
+        }
+        let entry = Some(DigestMemoEntryV1 {
+            namespace,
+            message: message.into(),
+            blocks,
+        });
+        let index = match self.free.pop() {
+            Some(index) => {
+                self.entries[index] = entry;
+                index
+            }
+            None => {
+                self.entries.push(entry);
+                self.entries.len() - 1
+            }
+        };
+        self.by_hash.entry(hash).or_default().push(index);
+        self.order.push_back((hash, index));
+        self.bytes += cost;
+    }
+}
+
+thread_local! {
+    static DIGEST_MEMO_V1: std::cell::RefCell<DigestMemoV1> =
+        std::cell::RefCell::new(DigestMemoV1::default());
+}
+
+/// Hit and miss counts of this thread's digest memo since the last call
+/// (messages, not digests); `None` while the memo is off.
+pub(crate) fn take_digest_memo_counts_v1() -> Option<(u64, u64)> {
+    let counts = DIGEST_MEMO_COUNTS_V1.with(|counts| counts.replace((0, 0)));
+    (digest_memo_budget_v1() > 0).then_some(counts)
+}
+
+thread_local! {
+    static DIGEST_MEMO_COUNTS_V1: std::cell::Cell<(u64, u64)> = const { std::cell::Cell::new((0, 0)) };
 }
 
 /// Where an action's canonical JSON goes when its digest is deferred.
@@ -771,12 +918,40 @@ fn prepare_full_decision_v2(
 /// resume from the prefix cache when an earlier state JSON shares their
 /// leading blocks byte for byte. Returns each slot's range in `batch.blocks`.
 fn hash_prepared_slots_v2(slots: &[DigestSlotV1], batch: &mut DigestBatchV1) -> Vec<usize> {
+    let budget = digest_memo_budget_v1();
+    if budget == 0 {
+        return hash_prepared_slots_unmemoized_v2(slots, batch);
+    }
+    DIGEST_MEMO_V1.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        hash_prepared_slots_memoized_v2(slots, batch, &mut memo, budget)
+    })
+}
+
+fn hash_prepared_slots_unmemoized_v2(
+    slots: &[DigestSlotV1],
+    batch: &mut DigestBatchV1,
+) -> Vec<usize> {
     let mut offsets = Vec::with_capacity(slots.len() + 1);
     let mut resumes = Vec::with_capacity(slots.len());
     let mut jobs = Vec::new();
     for slot in slots {
         offsets.push(jobs.len());
         let resume = state_prefix_cache_lookup_v1(&slot.state_json);
+        #[cfg(feature = "s4a-profile-v1")]
+        crate::search_profile_v1::digest::observe(
+            &slot.state_json,
+            &slot
+                .action_ranges
+                .iter()
+                .map(|&(start, end)| &slot.action_json[start..end])
+                .collect::<Vec<_>>(),
+            resume.as_ref().map_or(0, |hit| hit.blocks),
+            STATE_HEADER_BYTES_V1,
+            ACTION_HASH_NAMESPACE_V1.len() + 4,
+            STATE_CHECKPOINT_EVERY_V1,
+            STATE_CACHE_KEY_BYTES_V1,
+        );
         for counter in 0..ACTION_HASH_BLOCK_COUNT_V1 as u32 {
             let job = Sha512JobV1::new(STATE_HASH_NAMESPACE_V2, counter, &slot.state_json);
             jobs.push(match &resume {
@@ -811,6 +986,118 @@ fn hash_prepared_slots_v2(slots: &[DigestSlotV1], batch: &mut DigestBatchV1) -> 
                 resume,
                 &batch.checkpoints.states[offset..offset + ACTION_HASH_BLOCK_COUNT_V1],
             );
+        }
+    }
+    offsets
+}
+
+/// [`hash_prepared_slots_unmemoized_v2`] with the whole-message memo: the
+/// same messages in the same order, with stored digests reused for messages
+/// equal byte for byte to a stored one. Only messages missing from the memo
+/// are hashed (state messages still resume from the prefix cache).
+fn hash_prepared_slots_memoized_v2(
+    slots: &[DigestSlotV1],
+    batch: &mut DigestBatchV1,
+    memo: &mut DigestMemoV1,
+    budget: usize,
+) -> Vec<usize> {
+    const N: usize = ACTION_HASH_BLOCK_COUNT_V1;
+    // Per message (in output order): its memo hash and either the index of
+    // its copied stored digests or the index of its first job.
+    enum Source {
+        Stored(usize),
+        Jobs(usize),
+    }
+    let mut offsets = Vec::with_capacity(slots.len() + 1);
+    let mut messages: Vec<(&'static [u8], &[u8], u64, Source)> = Vec::new();
+    let mut state_resumes = Vec::new();
+    let mut jobs = Vec::new();
+    let mut stored: Vec<[[u8; 64]; N]> = Vec::new();
+    let (mut hits, mut misses) = (0u64, 0u64);
+    for slot in slots {
+        offsets.push(messages.len() * N);
+        let state = slot.state_json.as_slice();
+        let hash = digest_memo_hash_v1(STATE_HASH_NAMESPACE_V2, state);
+        if let Some(blocks) = memo.get(hash, STATE_HASH_NAMESPACE_V2, state) {
+            hits += 1;
+            stored.push(*blocks);
+            messages.push((
+                STATE_HASH_NAMESPACE_V2,
+                state,
+                hash,
+                Source::Stored(stored.len() - 1),
+            ));
+        } else {
+            misses += 1;
+            let resume = state_prefix_cache_lookup_v1(state);
+            let first = jobs.len();
+            for counter in 0..N as u32 {
+                let job = Sha512JobV1::new(STATE_HASH_NAMESPACE_V2, counter, state);
+                jobs.push(match &resume {
+                    Some(hit) => job.resumed(hit.blocks, hit.states[counter as usize]),
+                    None => job,
+                });
+            }
+            state_resumes.push((state, resume, first));
+            messages.push((STATE_HASH_NAMESPACE_V2, state, hash, Source::Jobs(first)));
+        }
+        for &(start, end) in slot.action_ranges.iter() {
+            let action = &slot.action_json[start..end];
+            let hash = digest_memo_hash_v1(ACTION_HASH_NAMESPACE_V1, action);
+            if let Some(blocks) = memo.get(hash, ACTION_HASH_NAMESPACE_V1, action) {
+                hits += 1;
+                stored.push(*blocks);
+                messages.push((
+                    ACTION_HASH_NAMESPACE_V1,
+                    action,
+                    hash,
+                    Source::Stored(stored.len() - 1),
+                ));
+            } else {
+                misses += 1;
+                let first = jobs.len();
+                for counter in 0..N as u32 {
+                    jobs.push(Sha512JobV1::new(ACTION_HASH_NAMESPACE_V1, counter, action));
+                }
+                messages.push((ACTION_HASH_NAMESPACE_V1, action, hash, Source::Jobs(first)));
+            }
+        }
+    }
+    offsets.push(messages.len() * N);
+    DIGEST_MEMO_COUNTS_V1.with(|counts| {
+        let (h, m) = counts.get();
+        counts.set((h + hits, m + misses));
+    });
+    let mut hashed = vec![[0u8; 64]; jobs.len()];
+    let caching = state_prefix_cache_enabled_v1();
+    if !jobs.is_empty() {
+        sha512_jobs_v1(
+            &jobs,
+            &mut hashed,
+            caching.then_some(&mut batch.checkpoints),
+        );
+        if caching {
+            for (state, resume, first) in state_resumes {
+                state_prefix_cache_insert_v1(
+                    state,
+                    resume,
+                    &batch.checkpoints.states[first..first + N],
+                );
+            }
+        }
+    }
+    batch.blocks.clear();
+    batch.blocks.reserve(messages.len() * N);
+    for (namespace, message, hash, source) in messages {
+        match source {
+            Source::Stored(index) => batch.blocks.extend_from_slice(&stored[index]),
+            Source::Jobs(first) => {
+                let blocks: [[u8; 64]; N] = hashed[first..first + N]
+                    .try_into()
+                    .expect("six digests per message");
+                batch.blocks.extend_from_slice(&blocks);
+                memo.insert(budget, hash, namespace, message, blocks);
+            }
         }
     }
     offsets
@@ -1197,14 +1484,17 @@ pub(crate) fn fill_native_flat_decision_tensors_v3_with_scratch(
     scratch: &mut NativeFlatTensorScratchV3,
     output: &mut NativeFlatDecisionTensorV2,
 ) -> Result<(), NativeFlatTensorErrorV2> {
+    let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::TensorProject);
     let decision = view.common();
     if decision.globals().acting_player != FlatRelativePlayerV1::SelfPlayer {
         return Err(NativeFlatTensorErrorV2::ActingPlayerNotRelativeSelf);
     }
     validate_auxiliary_tables_v2(decision)?;
+    let projection = build_object_projection_v3(view)?;
+    drop(span);
     fill_successor_reusing_v2(
         decision,
-        build_object_projection_v3(view)?,
+        projection,
         scratch,
         output,
         |projection, edges| append_extension_edges_v3(view, projection, edges),
@@ -1218,14 +1508,17 @@ pub(crate) fn fill_native_flat_decision_tensors_v4_with_scratch(
     scratch: &mut NativeFlatTensorScratchV3,
     output: &mut NativeFlatDecisionTensorV2,
 ) -> Result<(), NativeFlatTensorErrorV2> {
+    let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::TensorProject);
     let decision = view.common();
     if decision.globals().acting_player != FlatRelativePlayerV1::SelfPlayer {
         return Err(NativeFlatTensorErrorV2::ActingPlayerNotRelativeSelf);
     }
     validate_auxiliary_tables_v2(decision)?;
+    let projection = build_object_projection_v4(view)?;
+    drop(span);
     fill_successor_reusing_v2(
         decision,
-        build_object_projection_v4(view)?,
+        projection,
         scratch,
         output,
         |projection, edges| append_extension_edges_v4(view, projection, edges),
@@ -1244,6 +1537,7 @@ fn fill_successor_reusing_v2(
     ) -> Result<(), NativeFlatTensorErrorV2>,
     extensions: impl FnOnce(&mut Vec<u8>) -> Result<(), NativeFlatTensorErrorV2>,
 ) -> Result<(), NativeFlatTensorErrorV2> {
+    let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::TensorGraph);
     let mut buffers = std::mem::take(&mut scratch.pending);
     let objects = encode_objects_reusing_v2(decision, projection, &mut buffers)?;
     let mut edges = encode_edges_reusing_v2(
@@ -1256,6 +1550,8 @@ fn fill_successor_reusing_v2(
         },
     )?;
     append_extensions(&objects.projection, &mut edges)?;
+    drop(span);
+    let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::TensorStateJson);
     write_canonical_observation_with_streamed_extensions_reusing_v2(
         decision,
         &objects.projection,
@@ -1263,7 +1559,11 @@ fn fill_successor_reusing_v2(
         &mut scratch.slot.state_json,
         &mut scratch.canonical_base,
     )?;
+    drop(span);
+    let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::TensorStateHead);
     let mut state = encode_state_head_reusing_v2(decision, buffers.state)?;
+    drop(span);
+    let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::TensorActions);
     scratch.slot.action_json.clear();
     scratch.slot.action_ranges.clear();
     let mut actions = encode_action_half_reusing_v3(
@@ -1288,9 +1588,13 @@ fn fill_successor_reusing_v2(
     {
         return Err(NativeFlatTensorErrorV2::OutputInvariant);
     }
+    drop(span);
     // Keep the V3/V4 canonical messages and row order unchanged, but use the
     // same state-plus-action multi-buffer digest path as V2.
+    let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::TensorHash);
     let offsets = hash_prepared_slots_v2(std::slice::from_ref(&scratch.slot), &mut scratch.digests);
+    drop(span);
+    let _span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::TensorFinish);
     let blocks = &scratch.digests.blocks[offsets[0]..offsets[1]];
     let head_len = state.len();
     state.resize(head_len + NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V2, 0.0);

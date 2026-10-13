@@ -7,6 +7,24 @@ fn conflicts(
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    if state.engine.event_history.iter().any(|event| {
+        matches!(
+            event,
+            crate::event::CommittedEvent::AshrootDispatchV2 { .. }
+        )
+    }) && !pool.is_empty()
+    {
+        return true;
+    }
+    // The source's old definition and power remain authoritative after it returns
+    // to a hidden zone. This lane does not admit a historical resampling scheme.
+    if state.engine.event_history.iter().any(|event| {
+        matches!(event,
+        crate::event::CommittedEvent::AshrootPowerBeforeDepartureV1 { source, .. }
+            if pool.contains(&source.object))
+    }) {
+        return true;
+    }
     // Receipt-owned references remain binding through legend/deferred stages
     // and after the physical source or recipient returns to a hidden zone.
     match crate::wildwood_capture_v1::active(state) {
@@ -203,6 +221,21 @@ fn redeterminize_with_library_plan_inner(
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
     classified: bool,
 ) -> Result<(), Error> {
+    if state.extra_turn_v1.is_some()
+        || state.engine.event_history.iter().any(|event| {
+            matches!(
+                event,
+                crate::event::CommittedEvent::ExtraTurnOwnerPublishedV1 { .. }
+                    | crate::event::CommittedEvent::ExtraTurnOwnerRemovedV1 { .. }
+                    | crate::event::CommittedEvent::ExtraTurnVirtualCeasedV1 { .. }
+                    | crate::event::CommittedEvent::ExtraTurnScheduledV1 { .. }
+                    | crate::event::CommittedEvent::ExtraTurnStartedV1 { .. }
+                    | crate::event::CommittedEvent::ExtraTurnBeganV1 { .. }
+            )
+        })
+    {
+        return Err(Error::UnsupportedActionContract);
+    }
     let mut rng = SplitMix64::seed(seed);
     for owner in [PlayerId::P0, PlayerId::P1] {
         // Slots are canonical: owner order, then hand indices, then library indices.

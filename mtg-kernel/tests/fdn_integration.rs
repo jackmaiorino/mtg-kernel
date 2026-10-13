@@ -10,6 +10,8 @@ mod fdn_arbiter_of_woe_v1;
 mod fdn_armasaur_guide_v1;
 #[path = "fdn/fdn_attack_draw_triggers_v1.rs"]
 mod fdn_attack_draw_triggers_v1;
+#[path = "fdn/fdn_bloom_tender_v1.rs"]
+mod fdn_bloom_tender_v1;
 #[path = "fdn/fdn_bounty_v1.rs"]
 mod fdn_bounty_v1;
 #[path = "fdn/fdn_brineborn_cutthroat_v1.rs"]
@@ -181,5 +183,16 @@ mod fdn_frenzied_goblin_v1;
 #[path = "fdn/fdn_slumbering_cerberus_v1.rs"]
 mod fdn_slumbering_cerberus_v1;
 
+#[path = "fdn/fdn_gorehorn_raider_v1.rs"]
+mod fdn_gorehorn_raider_v1;
+#[path = "fdn/fdn_gutless_plunderer_v1.rs"]
+mod fdn_gutless_plunderer_v1;
+#[path = "fdn/fdn_mild_mannered_librarian_v1.rs"]
+mod fdn_mild_mannered_librarian_v1;
 #[path = "fdn/fdn_wildwood_scourge_v1.rs"]
 mod fdn_wildwood_scourge_v1;
+
+#[path = "fdn/fdn_ashroot_animist_v1.rs"]
+mod fdn_ashroot_animist_v1;
+#[path = "fdn/fdn_juggernaut_v1.rs"]
+mod fdn_juggernaut_v1;
