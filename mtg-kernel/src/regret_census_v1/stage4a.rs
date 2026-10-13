@@ -20,6 +20,9 @@
 //! `OPPONENTS` (`label=source,...`, in game-setup order), and optionally
 //! `S4A_LIMITS=select_cap,eval_worlds,eval_cap` for cost-only engineering
 //! checks (rows record the limits and whether they are formal).
+//! In `s4a-budget`, `S4A_INTERCHANGE=1` merges interchangeable choices
+//! (`stage4a/interchange.rs`); unset or `0` leaves the search unchanged, and
+//! rows carry `"interchange"` only when it is on.
 
 mod arms;
 mod bank;
@@ -29,6 +32,7 @@ mod canon2;
 mod diag;
 pub(crate) mod e_supported;
 mod identity;
+mod interchange;
 mod labels;
 mod play;
 mod profile_roots;
@@ -212,6 +216,17 @@ fn parse_select_rule(
         "" | "untried-first" => Ok(None),
         "fpu-1.5" if mode == "s4a-diag" || mode == "s4a-bank-parity" => Ok(Some(1.5)),
         other => Err(format!("unsupported S4A_SELECT {other} for {mode}")),
+    }
+}
+
+/// `S4A_INTERCHANGE`: `1` merges interchangeable choices; `0` or unset is
+/// the unchanged search.
+fn parse_interchange(setting: Result<String, std::env::VarError>) -> Result<bool, String> {
+    match setting.as_deref() {
+        Ok("1") => Ok(true),
+        Ok("0") | Err(std::env::VarError::NotPresent) => Ok(false),
+        Ok(v) => Err(format!("S4A_INTERCHANGE must be 0 or 1, not {v}")),
+        Err(e) => Err(format!("invalid S4A_INTERCHANGE: {e}")),
     }
 }
 
@@ -584,6 +599,7 @@ fn run_root(
         limits: shared.limits,
         urgency: None,
         key_mode: canon2::KeyMode::Legacy,
+        interchange: false,
     };
     let (e_sel, e_tree) = roles.select_e(&ctx);
     let a_cands = arms::a_candidates(&probs);
@@ -736,6 +752,7 @@ fn run_root_diag(
         limits: shared.limits,
         urgency: shared.select_urgency,
         key_mode: canon2::KeyMode::Legacy,
+        interchange: false,
     };
     let trace_dir = std::env::var("S4A_TRACE").ok();
     let mut trace = trace_dir.as_ref().map(|_| diag::Trace::default());
@@ -1160,6 +1177,9 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
             Ok("legacy") => canon2::KeyMode::Legacy,
             _ => return Err("BUDGET_KEY_MODE must be repaired or legacy".into()),
         };
+        // Opt-in interchangeable-choice merging (`stage4a/interchange.rs`);
+        // off unless set, so existing budget runs are unchanged.
+        let interchange = parse_interchange(std::env::var("S4A_INTERCHANGE"))?;
         let first = cfg.first_game as usize;
         let end = (first + cfg.games as usize).min(cases.len());
         let mut out = String::new();
@@ -1168,7 +1188,7 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
                 std::thread::Builder::new()
                     .stack_size(256 << 20)
                     .spawn_scoped(scope, || {
-                        refresh::budget_case(&sh, policy, src, total, mode, &binding)
+                        refresh::budget_case(&sh, policy, src, total, mode, interchange, &binding)
                     })
                     .map_err(|e| e.to_string())?
                     .join()

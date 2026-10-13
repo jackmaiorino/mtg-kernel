@@ -95,6 +95,9 @@ pub(crate) struct RootCtx<'a> {
     /// E's node key version (`canon2.rs`); selection and frozen execution
     /// always use the same one.
     pub(crate) key_mode: KeyMode,
+    /// Merge interchangeable choices into one edge (`interchange.rs`);
+    /// selection and frozen execution always agree on it.
+    pub(crate) interchange: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -709,11 +712,18 @@ impl Roles {
                 "depth retention and capture use legacy keys only".into(),
             ));
         }
+        if ctx.interchange && (retain > 1 || capturing || !ctx.visible_history.is_empty()) {
+            return Err(PlayErr::Fault(
+                "depth retention, capture and E history do not merge interchangeable choices"
+                    .into(),
+            ));
+        }
         let SearchDiag {
             keys, legacy_path, ..
         } = diag;
         legacy_path.clear();
-        let mut keyer = Keyer::with_history(ctx.key_mode, keys, ctx.visible_history)?;
+        let mut keyer = Keyer::with_history(ctx.key_mode, keys, ctx.visible_history)?
+            .with_interchange(ctx.interchange);
         if memo.is_some() {
             keyer.start_memo();
         }
@@ -797,7 +807,8 @@ impl Roles {
                                     crate::search_profile_v1::Bucket::Expand,
                                 );
                                 let perm = keyer.perm(&st, ctx.seeds)?;
-                                let node = Node::with_perm(pk, pe, cn.clone(), depth, perm);
+                                let mut node = Node::with_perm(pk, pe, cn.clone(), depth, perm);
+                                node.skip = keyer.skipped(&st);
                                 let e = select_observed(&node, ctx.urgency, &mut trace);
                                 drop(span);
                                 new.push((key, node));
@@ -1191,7 +1202,8 @@ impl Roles {
         mut log: Option<&mut Vec<u32>>,
     ) -> Result<End, PlayErr> {
         let mut kstats = KeyStats::default();
-        let mut keyer = Keyer::with_history(ctx.key_mode, &mut kstats, ctx.visible_history)?;
+        let mut keyer = Keyer::with_history(ctx.key_mode, &mut kstats, ctx.visible_history)?
+            .with_interchange(ctx.interchange);
         let mut matching = true;
         let mut depth = 0u32;
         let mut last_phys: Option<u64> = None;
@@ -1243,7 +1255,11 @@ impl Roles {
                                     None => {
                                         src = EvalSrc::MatchedNoQualified;
                                         stats.fallbacks += 1;
-                                        act(&mut self.focal, s, &d, c)?
+                                        // An interchangeable copy plays as
+                                        // its representative, so the history
+                                        // stays on the stored edge.
+                                        let a = act(&mut self.focal, s, &d, c)?;
+                                        keyer.representative(&st, a)
                                     }
                                 }
                             }
