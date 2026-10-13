@@ -1,12 +1,10 @@
 use super::*;
 use crate::ids::PlayerId;
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::put;
 use crate::state::Zone;
 
 fn basic(actor: PlayerId, hidden: &str) -> crate::state::GameState {
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
     put(&mut state, actor, "Forest", Zone::Hand);
     put(&mut state, actor.opponent(), hidden, Zone::Hand);
     state

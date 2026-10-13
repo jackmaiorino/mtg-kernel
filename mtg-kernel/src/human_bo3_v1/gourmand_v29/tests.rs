@@ -1,6 +1,6 @@
 use super::*;
 use crate::ids::PlayerId;
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::put;
 use crate::state::{GameState, Zone};
 
 fn expected(session: &HumanGourmandSessionV29) -> FastActorDecisionV1 {
@@ -18,9 +18,7 @@ fn owned(state: GameState) -> HumanGourmandSessionV29 {
 }
 
 fn basic(actor: PlayerId, hidden: &str) -> GameState {
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
     put(&mut state, actor, "Forest", Zone::Hand);
     put(&mut state, actor.opponent(), hidden, Zone::Hand);
     state
@@ -172,9 +170,7 @@ fn ward_state(actor: PlayerId) -> GameState {
     use crate::engine::{self, Action, Decision};
     use crate::mana::ManaColor;
     use crate::state::Target;
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
     let terror = put(
         &mut state,
         actor.opponent(),

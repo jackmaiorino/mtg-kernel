@@ -208,7 +208,7 @@ mod tests {
     use super::*;
     use crate::card_def::Keywords;
     use crate::engine::{self, Action, Decision, EffectDuration, Layers, UntilEndOfTurnEffect};
-    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::policy_observation_v6::tests::put;
 
     fn assert_predecessor_observation_refuses(state: &GameState, actor: PlayerId) {
         let before = serde_json::to_vec(state).unwrap();
@@ -233,9 +233,7 @@ mod tests {
         optional: bool,
         survives: bool,
     ) -> (GameState, ObjectId, ObjectId, ExecCtx) {
-        let mut state = ready_state();
-        state.active_player = caster;
-        state.priority_player = caster;
+        let mut state = crate::policy_observation_v6::tests::ready_state_for(caster);
         let source = put(&mut state, caster, "Lightning Bolt", Zone::Hand);
         let creature = put(
             &mut state,

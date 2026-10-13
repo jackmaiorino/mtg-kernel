@@ -772,8 +772,11 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
         .objects
         .iter()
         .any(|(source, _)| active(state, source))
-        || state.engine.event_history.iter().any(|event| {
-            is_history(event) || matches!(event, CommittedEvent::ArahboTokenCaptureV1 { .. })
+        || state.engine.event_history.iter().any(|event| match event {
+            // Every entry gets an observation, including entries without an
+            // Arahbo observer. Only actual captured roots need its transport.
+            CommittedEvent::ArahboEntryObservationV1 { sources, .. } => !sources.is_empty(),
+            _ => is_history(event) || matches!(event, CommittedEvent::ArahboTokenCaptureV1 { .. }),
         })
 }
 
