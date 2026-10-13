@@ -78,6 +78,18 @@ fn hash(parts: &[&[u8]]) -> Key {
     h.finalize().into()
 }
 
+fn put(out: &mut Vec<u8>, bytes: &[u8]) {
+    out.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+    out.extend_from_slice(bytes);
+}
+
+fn put_list(out: &mut Vec<u8>, items: &[Vec<u8>]) {
+    out.extend_from_slice(&(items.len() as u64).to_le_bytes());
+    for item in items {
+        put(out, item);
+    }
+}
+
 fn basic(name: &str) -> bool {
     matches!(name, "Plains" | "Island" | "Swamp" | "Mountain" | "Forest")
 }
@@ -211,8 +223,21 @@ fn view(mut obs: Value, menu: &[Value], cn: &Canon) -> Result<Vec<u8>, PlayErr> 
             m.remove(k);
         }
     }
-    serde_json::to_vec(&(obs, menu, &cn.obs, &cn.menu, &cn.edges))
-        .map_err(|e| PlayErr::Fault(e.to_string()))
+    // Keep each exact JSON component without expanding byte buffers into
+    // JSON integer arrays, then expanding them again in the endpoint key.
+    let mut out = Vec::new();
+    put(
+        &mut out,
+        &serde_json::to_vec(&obs).map_err(|e| PlayErr::Fault(e.to_string()))?,
+    );
+    put(
+        &mut out,
+        &serde_json::to_vec(menu).map_err(|e| PlayErr::Fault(e.to_string()))?,
+    );
+    put(&mut out, &cn.obs);
+    put_list(&mut out, &cn.menu);
+    put_list(&mut out, &cn.edges);
+    Ok(out)
 }
 
 impl Sharing {
@@ -267,9 +292,13 @@ impl Sharing {
             self.eligible_endpoints += 1;
             let mut taps = run.taps.clone();
             taps.sort();
-            let identity =
-                serde_json::to_vec(&(run.anchor, &run.start, taps, depth, transitions, &view))
-                    .map_err(|e| PlayErr::Fault(e.to_string()))?;
+            let mut identity = Vec::new();
+            put(&mut identity, &run.anchor);
+            put(&mut identity, &run.start);
+            put_list(&mut identity, &taps);
+            put(&mut identity, &depth.to_le_bytes());
+            put(&mut identity, &transitions.to_le_bytes());
+            put(&mut identity, &view);
             let key = hash(&[b"stage4a-basic-tap-endpoint-v1", &identity]);
             let g = match self.groups.entry(key) {
                 std::collections::hash_map::Entry::Occupied(entry)
