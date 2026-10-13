@@ -51,3 +51,5 @@ remain intact. Static inspection preserves the full root prefixes of208 EffectOp
 128 CommittedEvent,69 TriggerCondition and21 private consumer modes, appending
 only Garruk definitions. Existing catalogs and the Ashroot/Gorehorn/Stromkirk/
 Gourmand/linked-operation source files are unchanged from that prerequisite.
+
+Native95 residual repair: the Human printed-cast fixture supplies genuine Forest library and priority resources and checks the exact drawn physical card while retaining draw, trample, stale request and restore assertions. Garruk alone retains completed linked-Aura confirmations from authenticated original capture, owner answer, actual return and expiry journals. Pending APNAP answers remain visible; generic Banishing projection stays unchanged. Historical Aura printing/incarnation stays original. Host links use the common visibility-safe reference and disappear after exact-host departure/reentry. Prepared cases include real closed return batch, serialized restore and erased-answer readonly refusal. Only pinned formatting/diff checks have run on this repair, with no native/gameplay qualification claim.

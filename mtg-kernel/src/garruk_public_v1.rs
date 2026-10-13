@@ -385,6 +385,60 @@ pub(crate) fn facts(
     Ok((entry_occurrences, active_sources))
 }
 
+/// This successor retains already completed public owner choices. The generic
+/// Banishing producer intentionally exposes only answers to its active choice.
+/// Historical Aura identities come from the original public exile capture;
+/// the chosen host is shown only for its still-public exact BF incarnation.
+fn confirmed_linked_attachments(
+    state: &GameState,
+    pending: Vec<crate::banishing_public_v1::ConfirmedAttachmentV1>,
+) -> Result<Vec<crate::banishing_public_v1::ConfirmedAttachmentV1>, RlContractError> {
+    crate::banishing_light_v1::validate_state(state).map_err(RlContractError)?;
+    let mut confirmed = Vec::new();
+    for event in &state.engine.event_history {
+        let crate::event::CommittedEvent::BanishingAuraHostChosenV1 {
+            capture_history_index,
+            host,
+            ..
+        } = event
+        else {
+            continue;
+        };
+        let at = usize::try_from(*capture_history_index)
+            .map_err(|_| RlContractError("Aura capture index exceeds usize".into()))?;
+        let Some(crate::event::CommittedEvent::BanishingAuraHostsCapturedV1 { choice }) =
+            state.engine.event_history.get(at)
+        else {
+            return Err(RlContractError(
+                "completed Aura answer lost original capture".into(),
+            ));
+        };
+        let current_chosen_host = state
+            .objects
+            .try_get(host.object)
+            .filter(|live| {
+                live.zone == Zone::Battlefield
+                    && live.zone_change_count == host.expected_zone_change_count
+            })
+            .map(|live| crate::sower_restriction_capture_v1::masked_ref(host.object, live))
+            .transpose()?;
+        confirmed.push(crate::banishing_public_v1::ConfirmedAttachmentV1 {
+            aura: CardStableRefV1 {
+                arena_id: choice.aura.object.0,
+                card_db_id: choice.link.exiled_card_def,
+                owner: choice.owner.into(),
+                controller: choice.owner.into(),
+                zone: choice.aura.expected_zone,
+                zone_change_count: choice.aura.expected_zone_change_count,
+            },
+            owner: choice.owner.into(),
+            current_chosen_host,
+        });
+    }
+    confirmed.extend(pending);
+    Ok(confirmed)
+}
+
 pub fn observe_v1(
     state: &GameState,
     surface: &PolicySurfaceV5,
@@ -401,7 +455,7 @@ pub fn observe_v1(
         triggers,
         links,
         attachment_choice,
-        confirmed_attachments,
+        confirmed_attachments: confirmed_linked_attachments(state, confirmed_attachments)?,
         roots: crate::banishing_public_v1::roots()?,
     };
     let (entry_occurrences, active_sources) = facts(state)?;
@@ -463,4 +517,87 @@ pub fn observe_v1(
     };
     observation.projection_sha256 = commitment(&observation)?;
     Ok(observation)
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod attachment_history_tests {
+    use super::*;
+    use crate::engine::{self, Action};
+    use crate::event::{self, CommittedEvent, ProposedEvent};
+    use crate::state::Target;
+
+    #[test]
+    fn completed_apnap_attachments_preserve_original_aura_and_mask_departed_host_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, _, _, own_aura, other_aura, host) =
+                crate::garruks_uprising_v1::attachment_tests::pending_returns(actor, false, true);
+            let captures = [own_aura, other_aura].map(|id| {
+                state
+                    .engine
+                    .event_history
+                    .iter()
+                    .find_map(|event| match event {
+                        CommittedEvent::BanishingAuraHostsCapturedV1 { choice }
+                            if choice.aura.object == id =>
+                        {
+                            Some(choice.clone())
+                        }
+                        _ => None,
+                    })
+                    .unwrap()
+            });
+            engine::step(&mut state, Action::ChooseEffectTarget(Target::Object(host))).unwrap();
+            let facts = confirmed_linked_attachments(&state, Vec::new()).unwrap();
+            assert_eq!(facts.len(), 2);
+            for (row, capture) in facts.iter().zip(&captures) {
+                assert_eq!(row.aura.arena_id, capture.aura.object.0);
+                assert_eq!(row.aura.card_db_id, capture.link.exiled_card_def);
+                assert_eq!(
+                    row.aura.zone_change_count,
+                    capture.aura.expected_zone_change_count
+                );
+                assert_eq!(row.aura.zone, Zone::Exile);
+                assert_eq!(row.owner, capture.owner.into());
+                assert_eq!(row.current_chosen_host.as_ref().unwrap().arena_id, host.0);
+            }
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(
+                confirmed_linked_attachments(&restored, Vec::new()).unwrap(),
+                facts
+            );
+            let mut erased = restored;
+            let answer = erased
+                .engine
+                .event_history
+                .iter()
+                .position(|event| matches!(event, CommittedEvent::BanishingAuraHostChosenV1 { .. }))
+                .unwrap();
+            erased.engine.event_history[answer] = CommittedEvent::LifeLoss {
+                player: actor,
+                amount: 0,
+            };
+            let before = serde_json::to_vec(&erased).unwrap();
+            assert!(confirmed_linked_attachments(&erased, Vec::new()).is_err());
+            assert_eq!(serde_json::to_vec(&erased).unwrap(), before);
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(host, Zone::Hand));
+            let departed = confirmed_linked_attachments(&state, Vec::new()).unwrap();
+            assert_eq!(departed.len(), 2);
+            assert!(departed.iter().all(|row| row.current_chosen_host.is_none()));
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(host, Zone::Battlefield),
+            );
+            let returned = confirmed_linked_attachments(&state, Vec::new()).unwrap();
+            assert!(returned.iter().all(|row| row.current_chosen_host.is_none()));
+            for (original, later) in facts.iter().zip(&returned) {
+                assert_eq!(original.aura, later.aura);
+                assert_eq!(original.owner, later.owner);
+            }
+        }
+    }
 }
