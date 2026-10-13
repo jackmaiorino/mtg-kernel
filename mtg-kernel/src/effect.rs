@@ -7175,7 +7175,7 @@ fn validate_answered_choice_guard(
     pending: &EffectContinuation,
 ) -> Result<(), String> {
     for frame in &pending.frames {
-        if let EffectFrame::Program { op, .. } = frame {
+        if let EffectFrame::Program { op, path } = frame {
             if matches!(op, EffectOp::PutBoundAuraOntoBattlefieldAttached { .. }) {
                 if !matches!(
                     pending.answered_choice_guard,
@@ -7200,7 +7200,8 @@ fn validate_answered_choice_guard(
                         "bound chosen-permanent action has no answered choice guard".to_string()
                     );
                 }
-            } else {
+            } else if !crystal_prevention_v1::authenticates_legacy_frame(state, pending, op, path)?
+            {
                 validate_resumable_program(op)?;
             }
         }

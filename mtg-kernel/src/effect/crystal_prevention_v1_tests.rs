@@ -374,3 +374,10 @@ fn registered_snap_keeps_its_true_land_choice_on_the_nondamage_path() {
         ]))
     );
 }
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "crystal_prevention_owned_frame_tests.rs"]
+mod owned_frame;
