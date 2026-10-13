@@ -145,6 +145,9 @@ pub fn producer_sha256_v1() -> String {
             include_str!("rules_meaning_akroma_v1.rs"),
             include_str!("controlled_creature_grants_v1.rs"),
             include_str!("rl.rs"),
+            include_str!("rl/heartfire_history_v1.rs"),
+            include_str!("heartfire_history_v1.rs"),
+            include_str!("planeswalker_v1.rs"),
             include_str!("rl_session.rs"),
             include_str!("rl_session/akroma_v40.rs"),
             include_str!("human_bo3_v1/akroma_v40.rs"),
@@ -165,6 +168,38 @@ pub fn producer_sha256_v1() -> String {
         ] {
             h.update([0]);
             h.update(source.as_bytes());
+        }
+        for dependency in [
+            crate::sower_public_v1::producer_sha256_v1(),
+            crate::frenzied_public_v1::producer_sha256_v1(),
+            crate::wildwood_public_v1::producer_sha256_v1(),
+            crate::authority_public_v1::producer_sha256_v1(),
+            crate::employment_public_v1::producer_sha256_v1(),
+            crate::cerberus_public_v1::producer_sha256_v1(),
+            crate::librarian_public_v1::producer_sha256_v1(),
+            crate::extra_turn_public_v1::producer_sha256_v1(),
+            crate::juggernaut_public_v1::producer_sha256_v1(),
+            crate::ashroot_public_v1::producer_sha256_v1(),
+            crate::banishing_public_v1::producer_sha256_v1(),
+            crate::stromkirk_public_v1::producer_sha256_v1(),
+            crate::gourmand_public_v1::producer_sha256_v1(),
+            crate::garruk_public_v1::producer_sha256_v1(),
+            crate::crystal_public_v1::producer_sha256_v1(),
+            crate::arahbo_public_v1::producer_sha256_v1(),
+            crate::strongbox_public_v1::producer_sha256_v1(),
+            crate::fiery_observation_v1::producer_sha256_v1(),
+            crate::krenko_observation_v1::producer_sha256_v1(),
+            crate::zul_ashur_observation_v1::producer_sha256_v1(),
+            crate::banner_observation_v1::producer_sha256_v1(),
+            crate::inspiration_observation_v1::producer_sha256_v1(),
+            crate::heartfire_public_v1::source_sha256(),
+            crate::ooze_public_v1::source_sha256(),
+            crate::soul_shackled_zombie_public_v1::source_sha256(),
+            crate::bloom_tender_public_v1::producer_sha256_v1(),
+            crate::raid_entry_public_v1::producer_sha256_v1(),
+        ] {
+            h.update([0]);
+            h.update(dependency.as_bytes());
         }
         h.finalize().iter().map(|b| format!("{b:02x}")).collect()
     })

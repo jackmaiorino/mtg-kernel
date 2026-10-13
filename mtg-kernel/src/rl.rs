@@ -2170,7 +2170,7 @@ fn build_observation_common_v2_fishing_v39(
             public_cards_v2(state, &state.players[1].graveyard, text_mode)?,
         ],
         exile: public_cards_v2(state, &state.exile, text_mode)?,
-        stack: stack_public_v2(state, acting_player, accept_fishing)?,
+        stack: stack_public_union_v40(state, acting_player, accept_fishing, accept_akroma)?,
         combat: combat_public_v2(state, acting_player)?,
         continuous_effects: continuous_effects_common_v2(
             state,
@@ -2181,11 +2181,20 @@ fn build_observation_common_v2_fishing_v39(
         )?,
         object_relations: object_relations_public_v4(state, acting_player)?,
         exile_play_permissions: exile_play_permissions_public_v2(state)?,
-        engine_context: engine_context_v2(
-            state,
-            acting_player,
-            (accept_banishing, accept_inspiration, accept_fishing),
-        )?,
+        engine_context: if accept_akroma {
+            engine_context_v2_akroma_inner(
+                state,
+                acting_player,
+                (accept_banishing, accept_inspiration, accept_fishing),
+                true,
+            )?
+        } else {
+            engine_context_v2(
+                state,
+                acting_player,
+                (accept_banishing, accept_inspiration, accept_fishing),
+            )?
+        },
         surface_context: surface_context_v2(state, surface, acting_player)?,
     };
     let own_hand = state.players[acting_player.index()]
@@ -3668,12 +3677,13 @@ fn build_policy_observation_storage_common_fishing_v39(
             "invalid physical decision substep {substep_index}/{substep_count}"
         )));
     }
-    let extensions = policy_observation_extensions_common_v6_fishing_v39(
+    let extensions = policy_observation_extensions_union_inner_v40(
         state,
         acting_player,
         text_mode,
         accept_life_ward,
         accept_fishing,
+        accept_akroma,
     )?;
     let (mut base, policy_surface_context) = build_policy_observation_parts_common_fishing_v39(
         state,
@@ -3875,11 +3885,20 @@ pub(crate) fn policy_observation_extensions_fishing_v39(
     )
 }
 
+// Retain the committed V40 join API; its per-item dispatcher now handles both
+// authenticated Fishing and copied Heartfire sources without widening V39.
 pub(crate) fn policy_observation_extensions_fishing_union_v40(
     state: &GameState,
     actor: PlayerId,
 ) -> Result<PolicyObservationExtensionsV6> {
-    policy_observation_extensions_fishing_v39(state, actor)
+    policy_observation_extensions_union_inner_v40(
+        state,
+        actor,
+        ObservationTextModeV2::FlatForbiddenElided,
+        true,
+        true,
+        true,
+    )
 }
 
 fn policy_observation_extensions_with_text_v6(
@@ -3910,6 +3929,23 @@ fn policy_observation_extensions_common_v6_fishing_v39(
     text_mode: ObservationTextModeV2,
     accept_life_ward: bool,
     accept_fishing: bool,
+) -> Result<PolicyObservationExtensionsV6> {
+    policy_observation_extensions_union_inner_v40(
+        state,
+        acting_player,
+        text_mode,
+        accept_life_ward,
+        accept_fishing,
+        false,
+    )
+}
+fn policy_observation_extensions_union_inner_v40(
+    state: &GameState,
+    acting_player: PlayerId,
+    text_mode: ObservationTextModeV2,
+    accept_life_ward: bool,
+    accept_fishing: bool,
+    accept_akroma: bool,
 ) -> Result<PolicyObservationExtensionsV6> {
     let pending = state
         .engine
@@ -4043,7 +4079,7 @@ fn policy_observation_extensions_common_v6_fishing_v39(
         // stack_source_ref validates the independent finalized cast binding,
         // including equality with the complete paid-cost record and its LKI.
         if item.kind == StackItemKind::Spell {
-            let source = stack_source_ref_common_fishing_v39(state, item, accept_fishing)?;
+            let source = stack_source_ref_union_v40(state, item, accept_fishing, accept_akroma)?;
             let chosen_creature_cost = CARD_DEFS[source.card_db_id as usize].additional_cost
                 .is_some_and(|cost| cost.iter().any(|component| matches!(component,
                     crate::card_def::CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand)));
@@ -4071,7 +4107,7 @@ fn policy_observation_extensions_common_v6_fishing_v39(
                     stack_index: u32::try_from(index)
                         .map_err(|_| RlContractError("stack index exceeds u32".into()))?,
                 },
-                source: stack_source_ref_common_fishing_v39(state, item, accept_fishing)?,
+                source: stack_source_ref_union_v40(state, item, accept_fishing, accept_akroma)?,
                 stack_item_kind: item.kind.into(),
             });
         }
@@ -4094,10 +4130,11 @@ fn policy_observation_extensions_common_v6_fishing_v39(
         }
         historical_public_sources.push(HistoricalPublicSourceV6 {
             context: HistoricalSourceContextV6::PendingEffect,
-            source: stack_source_ref_common_fishing_v39(
+            source: stack_source_ref_union_v40(
                 state,
                 &pending.resolving_item,
                 accept_fishing,
+                accept_akroma,
             )?,
             stack_item_kind: pending.resolving_item.kind.into(),
         });
@@ -8453,6 +8490,14 @@ fn engine_context_v2(
     acting_player: PlayerId,
     capabilities: (bool, bool, bool),
 ) -> Result<EngineContextV2> {
+    engine_context_v2_akroma_inner(state, acting_player, capabilities, false)
+}
+fn engine_context_v2_akroma_inner(
+    state: &GameState,
+    acting_player: PlayerId,
+    capabilities: (bool, bool, bool),
+    accept_akroma: bool,
+) -> Result<EngineContextV2> {
     let (accept_banishing, accept_inspiration, accept_fishing) = capabilities;
     let planeswalkers = if state.planeswalkers_v1.is_some() {
         state
@@ -8662,12 +8707,22 @@ fn engine_context_v2(
             .map(|p| pending_spell_copy_semantic_v2(state, acting_player, p))
             .transpose()?,
         pending_effect: if let Some(pending) = state.engine.pending_effect.as_ref() {
-            Some(pending_effect_semantic_v4(
-                state,
-                acting_player,
-                pending,
-                (accept_inspiration, accept_fishing),
-            )?)
+            Some(if accept_akroma {
+                pending_effect_semantic_v4_akroma_inner(
+                    state,
+                    acting_player,
+                    pending,
+                    (accept_inspiration, accept_fishing),
+                    true,
+                )?
+            } else {
+                pending_effect_semantic_v4(
+                    state,
+                    acting_player,
+                    pending,
+                    (accept_inspiration, accept_fishing),
+                )?
+            })
         } else if let Some(pending) = state.engine.pending_land_play.as_ref() {
             engine::validate_pending_land_play(state, pending).map_err(RlContractError)?;
             Some(PendingEffectSemanticV4 {
@@ -8730,6 +8785,15 @@ fn pending_effect_semantic_v4(
     pending: &crate::effect::EffectContinuation,
     capabilities: (bool, bool),
 ) -> Result<PendingEffectSemanticV4> {
+    pending_effect_semantic_v4_akroma_inner(state, acting_player, pending, capabilities, false)
+}
+fn pending_effect_semantic_v4_akroma_inner(
+    state: &GameState,
+    acting_player: PlayerId,
+    pending: &crate::effect::EffectContinuation,
+    capabilities: (bool, bool),
+    accept_akroma: bool,
+) -> Result<PendingEffectSemanticV4> {
     let (accept_inspiration, accept_fishing) = capabilities;
     crate::effect::validate_pending_effect_choice(state).map_err(RlContractError)?;
     // Every private batch stage, including an accepted answer waiting for
@@ -8754,10 +8818,11 @@ fn pending_effect_semantic_v4(
     };
     if let Some(player) = surveil_player.filter(|player| *player != acting_player) {
         return Ok(PendingEffectSemanticV4 {
-            source: Some(stack_source_ref_common_fishing_v39(
+            source: Some(stack_source_ref_union_v40(
                 state,
                 &pending.resolving_item,
                 accept_fishing,
+                accept_akroma,
             )?),
             controller: pending.resolving_item.controller.into(),
             choice: Some(PendingEffectChoiceSemanticV4::Targets {
@@ -9082,10 +9147,11 @@ fn pending_effect_semantic_v4(
         // A resolving stack item's source was already public as part of that
         // stack item. Reuse the same unconditional public source reference even
         // if the underlying card has since moved to a normally hidden zone.
-        source: Some(stack_source_ref_common_fishing_v39(
+        source: Some(stack_source_ref_union_v40(
             state,
             &pending.resolving_item,
             accept_fishing,
+            accept_akroma,
         )?),
         controller: pending.resolving_item.controller.into(),
         choice,
@@ -9478,10 +9544,11 @@ fn stack_item_public_v1(
     })
 }
 
-fn stack_public_v2(
+fn stack_public_union_v40(
     state: &GameState,
     acting_player: PlayerId,
     accept_fishing: bool,
+    accept_akroma: bool,
 ) -> Result<Vec<StackItemPublicV2>> {
     state
         .stack
@@ -9494,6 +9561,7 @@ fn stack_public_v2(
                 stack_index as u32,
                 item,
                 accept_fishing,
+                accept_akroma,
             )
         })
         .collect()
@@ -9505,6 +9573,7 @@ fn stack_item_public_v2(
     stack_index: u32,
     item: &StackItem,
     accept_fishing: bool,
+    accept_akroma: bool,
 ) -> Result<StackItemPublicV2> {
     if (item.kind == StackItemKind::Spell) != item.v4.cast_method.is_some() {
         return Err(RlContractError(
@@ -9513,7 +9582,7 @@ fn stack_item_public_v2(
     }
     Ok(StackItemPublicV2 {
         stack_index,
-        source: stack_source_ref_common_fishing_v39(state, item, accept_fishing)?,
+        source: stack_source_ref_union_v40(state, item, accept_fishing, accept_akroma)?,
         controller: item.controller.into(),
         // Announced stack targets are public historical facts. Project the
         // frozen target contract rather than rebuilding a reference from a
@@ -9688,6 +9757,76 @@ pub(crate) fn crystal_resolving_source_ref(
         zone,
         zone_change_count,
     })
+}
+pub(crate) fn akroma_crystal_resolving_source_ref_v40(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<CardStableRefV1> {
+    if !matches!(
+        item.inline_effect.as_ref(),
+        Some(crate::effect::EffectOp::StandardV1(
+            crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1
+        ))
+    ) {
+        return crystal_resolving_source_ref(state, item);
+    }
+    let pending = state.engine.pending_effect.as_ref().ok_or_else(|| {
+        RlContractError("V40 historical Crystal source lacks genuine pending owner".into())
+    })?;
+    if pending.resolving_item != *item {
+        return Err(RlContractError(
+            "V40 historical Crystal source changed its pending owner".into(),
+        ));
+    }
+    crate::effect::crystal_prevention_v1::validate(state).map_err(RlContractError)?;
+    crate::source_power_activation_v1::validate_state(state).map_err(RlContractError)?;
+    akroma_historical_source_ref_v40(state, item)
+}
+pub(crate) fn akroma_historical_source_ref_v40(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<CardStableRefV1> {
+    let live = state
+        .stack
+        .iter()
+        .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+        .collect::<Vec<_>>();
+    if !matches!(live.as_slice(), [row] if *row == item) {
+        return Err(RlContractError(
+            "V40 historical source requires its genuine complete live row".into(),
+        ));
+    }
+    stack_source_ref_union_v40(state, item, true, true)
+}
+
+/// Select each genuine source family independently; no transport rewrites another family's rows.
+fn stack_source_ref_union_v40(
+    state: &GameState,
+    item: &StackItem,
+    accept_fishing: bool,
+    accept_akroma: bool,
+) -> Result<CardStableRefV1> {
+    if accept_akroma
+        && matches!(
+            item.inline_effect.as_ref(),
+            Some(crate::effect::EffectOp::StandardV1(
+                crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1
+            ))
+        )
+    {
+        let live = state
+            .stack
+            .iter()
+            .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+            .collect::<Vec<_>>();
+        if !matches!(live.as_slice(), [row] if *row == item) {
+            return Err(RlContractError(
+                "V40 captured Heartfire source requires its genuine complete live row".into(),
+            ));
+        }
+        return heartfire_history_v1::captured_source_ref(state, item);
+    }
+    stack_source_ref_common_fishing_v39(state, item, accept_fishing)
 }
 fn stack_source_ref_common_fishing_v39(
     state: &GameState,

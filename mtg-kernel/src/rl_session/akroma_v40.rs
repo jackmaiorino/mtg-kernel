@@ -390,6 +390,40 @@ mod tests {
             assert!(session.state.engine.combat.attackers.contains(&elf));
         }
     }
+
+    #[test]
+    fn registered_private_bindings_do_not_revive_after_repeated_owning_backend_restore() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
+            put(&mut state, actor, "Forest", Zone::Hand);
+            let mut session = FastActorSessionV1::from_akroma_v40_fixture_state(state);
+            let FastActorResponseV1::Decision(original) = session.current_response() else {
+                panic!("real priority");
+            };
+            let (_, _, binding) = session
+                .akroma_current_decision_input_v40(original, actor.into())
+                .unwrap();
+            let snapshot = session.snapshot_v1();
+            let mut revision = original.environment_revision;
+            for _ in 0..3 {
+                session.akroma_restore_v40(&snapshot).unwrap();
+                let FastActorResponseV1::Decision(expected) = session.current_response() else {
+                    panic!("restored real menu");
+                };
+                assert!(expected.environment_revision > revision);
+                revision = expected.environment_revision;
+                session
+                    .akroma_current_decision_input_v40(expected, actor.into())
+                    .unwrap();
+                let before = session.privileged_core_environment_hash();
+                assert!(session
+                    .akroma_validate_bound_decision_v40(original, actor.into(), &binding)
+                    .is_err());
+                assert_eq!(session.privileged_core_environment_hash(), before);
+            }
+        }
+    }
+
     #[test]
     fn repeated_owning_restore_never_revives_previous_private_union_binding_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {

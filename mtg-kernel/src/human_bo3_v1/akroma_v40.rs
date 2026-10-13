@@ -551,6 +551,13 @@ impl HumanAkromaProjectorV40 {
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
+#[path = "akroma_v40_history_tests.rs"]
+mod history_tests;
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 #[path = "akroma_v40_mixed_tests.rs"]
 mod mixed_tests;
 #[cfg(test)]

@@ -111,7 +111,7 @@ pub(crate) fn validate_artifact(observation: &HeartfireHistoryObservationV1) -> 
     }
     Ok(())
 }
-fn captured_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRefV1> {
+pub(super) fn captured_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRefV1> {
     if !matches!(
         item.inline_effect.as_ref(),
         Some(crate::effect::EffectOp::StandardV1(
@@ -149,7 +149,10 @@ fn captured_source_ref(state: &GameState, item: &StackItem) -> Result<CardStable
         zone_change_count: source.zone_change_count,
     })
 }
-fn stack_public_history(state: &GameState, actor: PlayerId) -> Result<Vec<StackItemPublicV2>> {
+pub(super) fn stack_public_history(
+    state: &GameState,
+    actor: PlayerId,
+) -> Result<Vec<StackItemPublicV2>> {
     state
         .stack
         .iter()
@@ -369,7 +372,7 @@ fn build(
     })
 }
 
-fn normalization_common(
+pub(super) fn normalization_common(
     state: &GameState,
     acting_player: PlayerId,
     text_mode: ObservationTextModeV2,
