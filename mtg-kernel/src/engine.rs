@@ -4767,6 +4767,7 @@ fn validate_counter_removal_prefix(
 fn activation_tap_cost_subtype(components: &[CostComponent]) -> Option<card_def::Subtype> {
     components.iter().find_map(|component| match component {
         CostComponent::TapOtherUntappedControlledPermanentWithSubtype(subtype) => Some(*subtype),
+        CostComponent::TapFishingPoleAttachedToSource => Some(card_def::Subtype::Equipment),
         _ => None,
     })
 }
@@ -5004,7 +5005,12 @@ fn payable_activation_cost_object_candidates(
     let Some(subtype) = activation_tap_cost_subtype(components) else {
         return Vec::new();
     };
-    activation_cost_object_candidates(player, source, subtype, state, &[])
+    let candidates = if crate::fishing_pole_v39::named_cost(components) {
+        crate::fishing_pole_v39::cost_candidates(state, player, source)
+    } else {
+        activation_cost_object_candidates(player, source, subtype, state, &[])
+    };
+    candidates
         .into_iter()
         .filter(|candidate| {
             activation_mana_payment(components, player, source, state).is_none_or(|cost| {
@@ -5154,7 +5160,8 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                 }
                 pay_life_count += 1;
             }
-            CostComponent::TapOtherUntappedControlledPermanentWithSubtype(_) => {
+            CostComponent::TapOtherUntappedControlledPermanentWithSubtype(_)
+            | CostComponent::TapFishingPoleAttachedToSource => {
                 tap_other_permanent_count += 1;
                 saw_source_changing_component = true;
             }
@@ -5461,6 +5468,9 @@ fn can_pay_components(
             }
             CostComponent::TapOtherUntappedControlledPermanentWithSubtype(subtype) => {
                 !activation_cost_object_candidates(player, source, *subtype, state, &[]).is_empty()
+            }
+            CostComponent::TapFishingPoleAttachedToSource => {
+                !crate::fishing_pole_v39::cost_candidates(state, player, source).is_empty()
             }
             CostComponent::TapUntappedControlledPermanent(filter) => {
                 !tap_permanent_cost_candidates(player, state, *filter, &[]).is_empty()
@@ -5774,15 +5784,14 @@ fn validate_cost_component_choices_v1(
             return None;
         }
     }
-    let tap_other_subtype = components.iter().find_map(|component| match component {
-        CostComponent::TapOtherUntappedControlledPermanentWithSubtype(subtype) => Some(*subtype),
-        _ => None,
-    });
+    let tap_other_subtype = activation_tap_cost_subtype(components);
     if let Some(subtype) = tap_other_subtype {
-        if object_cost_chosen.len() != 1
-            || !activation_cost_object_candidates(player, source, subtype, state, &[])
-                .contains(&object_cost_chosen[0])
-        {
+        let candidates = if crate::fishing_pole_v39::named_cost(components) {
+            crate::fishing_pole_v39::cost_candidates(state, player, source)
+        } else {
+            activation_cost_object_candidates(player, source, subtype, state, &[])
+        };
+        if object_cost_chosen.len() != 1 || !candidates.contains(&object_cost_chosen[0]) {
             return None;
         }
     }
@@ -5996,7 +6005,8 @@ fn commit_cost_components_from_plan_v1(
                 ProposedEvent::life_payment(player, i32::from(*amount)),
             ),
             CostComponent::DiscardCards(_) => {}
-            CostComponent::TapOtherUntappedControlledPermanentWithSubtype(_) => {
+            CostComponent::TapOtherUntappedControlledPermanentWithSubtype(_)
+            | CostComponent::TapFishingPoleAttachedToSource => {
                 event::propose_and_commit(state, ProposedEvent::tap(object_cost_chosen[0]));
             }
             CostComponent::TapUntappedControlledPermanent(_) => {
@@ -8851,6 +8861,18 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
                         && activation_target_prefix_can_complete(id, &granted, &[], state)
                     {
                         out.push((id, granted_index));
+                    }
+                }
+                if let Some(granted) = crate::fishing_pole_v39::granted_ability(state, id) {
+                    let index = def.activated_abilities.len()
+                        + usize::from(equipped_granted_activated_ability(state, id).is_some());
+                    if let Ok(index) = u8::try_from(index) {
+                        if !crate::standard_cards_v1::activations_locked(state, id)
+                            && can_pay_activation_components(granted.cost, player, id, state)
+                            && activation_target_prefix_can_complete(id, &granted, &[], state)
+                        {
+                            out.push((id, index));
+                        }
                     }
                 }
                 // Agatha's Soul Cauldron's granted abilities follow
@@ -16898,6 +16920,9 @@ fn equipped_granted_activated_ability_with_equipment(
     host: ObjectId,
 ) -> Option<(ObjectId, card_def::ActivatedAbilityDef)> {
     attached_equipment_profiles(state, host).find_map(|(equipment_id, equipment)| {
+        if crate::fishing_pole_v39::selected_definition(state.objects.get(equipment_id).card_def) {
+            return None;
+        }
         equipment
             .granted_activated_ability
             .map(|granted| (equipment_id, synthesized_granted_activated_ability(granted)))
@@ -16943,6 +16968,13 @@ pub(crate) fn resolved_activated_ability(
     let def = card_def::CARD_DEFS.get(card_def_idx as usize)?;
     if let Some(ability) = def.activated_abilities.get(ability_index as usize) {
         return Some(*ability);
+    }
+    let pole_index = def.activated_abilities.len()
+        + usize::from(equipped_granted_activated_ability(state, source).is_some());
+    if usize::from(ability_index) == pole_index {
+        if let Some(ability) = crate::fishing_pole_v39::granted_ability(state, source) {
+            return Some(ability);
+        }
     }
     if ability_index as usize != def.activated_abilities.len() {
         return crate::standard_cards_v1::cauldron_granted_abilities(state, source)
@@ -17008,7 +17040,9 @@ fn resolved_stack_activated_ability(
         }
         return Ok(*ability);
     }
-    if ability_index as usize > def.activated_abilities.len() {
+    let fishing_grant = granted_by
+        .is_some_and(|grant| crate::fishing_pole_v39::selected_definition(grant.card_def));
+    if ability_index as usize > def.activated_abilities.len() && !fishing_grant {
         return Err("Cauldron stack item lost frozen ability provenance".into());
     }
     let equipment = granted_by.ok_or("granted activated ability lost its equipment provenance")?;
@@ -21110,6 +21144,12 @@ fn freeze_activation_source(
     let granted_by = if let Some(grant) = pending.cauldron_grant.0 {
         debug_assert_eq!(grant.host, source);
         Some(grant.donor)
+    } else if crate::fishing_pole_v39::named_cost(ability.cost) {
+        let chosen = pending
+            .object_cost_chosen
+            .first()
+            .expect("validated named Pole cost has its exact selected grant");
+        Some(AbilitySourceContractV4::capture(state, chosen.object))
     } else if pending.ability_index as usize
         == card_def::CARD_DEFS[source.card_def as usize]
             .activated_abilities

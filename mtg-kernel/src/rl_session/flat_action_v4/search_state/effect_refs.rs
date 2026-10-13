@@ -182,6 +182,7 @@ impl Scan<'_> {
             | TakeExtraTurnAfterThisOneV1
             | CreateControlledCreatureTargetCopyV1
             | KrenkoCreateGoblinsV1
+            | FishingPoleAddBaitV39
             | FieryAnnihilation
             | DoubleTargetPowerUntilEndOfTurn { .. }
             | DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
