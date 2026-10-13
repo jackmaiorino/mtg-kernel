@@ -262,6 +262,7 @@ pub enum TriggerCondition {
     GarrukOwnEtbFerociousV1,
     GarrukControlledCreaturePowerEntryV1,
     ArahboThisOrOtherNontokenCatEntryV1,
+    FishingPoleEquippedCreatureUntappedV39,
 }
 
 pub struct TriggeredAbilityDef {
@@ -1602,6 +1603,14 @@ const GUTLESS_PLUNDERER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
+fn fishing_pole_untap() -> EffectOp {
+    EffectOp::BindFishingPoleUntapV39
+}
+const FISHING_POLE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::FishingPoleEquippedCreatureUntappedV39,
+    ..etb_trigger(fishing_pole_untap)
+}];
+
 fn arahbo_cat_entry() -> EffectOp {
     EffectOp::BindArahboCatEntryV1
 }
@@ -3573,6 +3582,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
             not(feature = "standard-magezero-fixtures")
         ))]
         "Arahbo, the First Fang" => &ARAHBO_TRIGGERS,
+        "Fishing Pole" => &FISHING_POLE_TRIGGERS,
         "Garruk's Uprising" => &GARRUKS_UPRISING_TRIGGERS,
 
         "Searslicer Goblin" => &SEARSLICER_GOBLIN_TRIGGERS,
@@ -3980,6 +3990,7 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
         ) => count == actual_count && max_taken == actual_max_taken,
         (EffectOp::BindAuthorityEntryGainLifeV1, EffectOp::AuthorityEntryGainLifeV1 { .. }) => true,
         (EffectOp::BindArahboCatEntryV1, EffectOp::ArahboTokenFromCaptureV1 { .. }) => true,
+        (EffectOp::BindFishingPoleUntapV39, EffectOp::FishingPoleUntapV39 { .. }) => true,
         (
             EffectOp::BindGarrukEtbDrawV1 | EffectOp::BindGarrukPowerEntryDrawV1,
             EffectOp::GarrukDrawFromCaptureV1 { .. },
@@ -4101,6 +4112,9 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    if matches!(effect, EffectOp::FishingPoleUntapV39 { .. }) {
+        return crate::fishing_pole_v39::selected_definition(card_def).then_some(TargetSpec::None);
+    }
     if matches!(effect, EffectOp::ArahboTokenFromCaptureV1 { .. }) {
         return crate::arahbo_v1::selected_definition(card_def).then_some(TargetSpec::None);
     }
@@ -4836,6 +4850,16 @@ fn triggers_from_events(
         }
     }
     match crate::garruks_uprising_v1::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
+    match crate::fishing_pole_v39::lifecycle::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
             state.engine.halted = Some((

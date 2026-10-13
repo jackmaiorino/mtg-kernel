@@ -502,8 +502,9 @@ impl PolicySurfaceV5 {
         self.scan_context_for(observer)
     }
 
-    /// Owning successor restore rebinds only authenticated derived scan state.
-    /// Predecessor next/apply entry points keep their original binding modes.
+    /// Rebind only the derived private scan after its original owning snapshot
+    /// and current decision have already been authenticated by the caller.
+    /// Standalone exact-hash scans and every old caller keep their old boundary.
     pub(crate) fn rebind_owned_revision_after_restore_v1(
         &mut self,
         state: &GameState,
@@ -528,6 +529,7 @@ impl PolicySurfaceV5 {
         }
         Ok(())
     }
+
     pub fn next_decision(&mut self, state: &mut GameState) -> Result<PolicyDecisionV5, String> {
         self.next_decision_with_binding(state, EnvironmentBindingModeV5::Exact)
     }

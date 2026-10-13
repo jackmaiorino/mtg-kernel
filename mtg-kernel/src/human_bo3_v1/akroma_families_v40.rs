@@ -30,6 +30,7 @@ pub enum HumanFamilyV40 {
     ZulAshur(Box<super::zul_ashur_v35::HumanZulAshurExtensionsV35>),
     Banner(Box<super::banner_v36::HumanBannerExtensionsV36>),
     Inspiration(Box<super::inspiration_v37::HumanInspirationExtensionsV37>),
+    Fishing(Box<super::fishing_pole_v39::HumanFishingPoleExtensionsV39>),
 }
 pub(super) fn register(
     projections: &[FamilyProjectionV40],
@@ -37,6 +38,9 @@ pub(super) fn register(
 ) -> Result<(), Error> {
     for projection in projections {
         match projection {
+            FamilyProjectionV40::Fishing(o) => {
+                super::fishing_pole_v39::register_for_akroma_parts(&o.parts, handles)?
+            }
             FamilyProjectionV40::Early(o) => super::akroma_early_v40::register(o, handles)?,
             FamilyProjectionV40::Sower(o) => {
                 super::sower_v14::register_for_akroma_parts(o, handles)?
@@ -116,6 +120,9 @@ pub(super) fn states(
     projections
         .iter()
         .map(|projection| match projection {
+            FamilyProjectionV40::Fishing(o) => Ok(HumanFamilyV40::Fishing(Box::new(
+                super::fishing_pole_v39::state_for_akroma_parts(&o.parts, handles, human)?,
+            ))),
             FamilyProjectionV40::Early(o) => Ok(HumanFamilyV40::Early(Box::new(
                 super::akroma_early_v40::state(o, handles)?,
             ))),
@@ -194,6 +201,9 @@ pub(super) fn unary(
 ) -> Result<(), Error> {
     for fact in facts {
         match fact {
+            HumanFamilyV40::Fishing(o) => {
+                super::fishing_pole_v39::unary_for_akroma_parts(o, unary)?
+            }
             HumanFamilyV40::Early(o) => super::akroma_early_v40::unary(o, unary)?,
             HumanFamilyV40::Sower(o) => super::sower_v14::unary_for_akroma_parts(o, unary)?,
             HumanFamilyV40::Frenzied(o) => super::frenzied_v15::unary_for_akroma_parts(o, unary)?,
@@ -237,7 +247,18 @@ pub(super) fn label(
     human: PlayerSeatV1,
 ) -> Result<Option<String>, Error> {
     for projection in projections {
+        if let FamilyProjectionV40::Fishing(o) = projection {
+            if let Some(label) =
+                super::fishing_pole_v39::label_for_akroma_parts(action, o, handles, human)?
+            {
+                return Ok(Some(label));
+            }
+        }
+    }
+    for projection in projections {
         let selected = match projection {
+            FamilyProjectionV40::Fishing(_) => None,
+
             FamilyProjectionV40::Early(o) => {
                 super::akroma_early_v40::label(action, o, handles, human)?
             }

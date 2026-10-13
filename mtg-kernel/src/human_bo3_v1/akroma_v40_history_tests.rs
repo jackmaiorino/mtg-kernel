@@ -23,6 +23,13 @@ fn resolve(state: &mut GameState, source: ObjectId) {
     panic!("genuine cast did not finish");
 }
 fn announced(actor: PlayerId, memorial: bool) -> (GameState, ObjectId, ObjectId, u32) {
+    announced_with_fishing(actor, memorial, false).0
+}
+type AnnouncedWithFishing = (
+    (GameState, ObjectId, ObjectId, u32),
+    Option<(ObjectId, ObjectId)>,
+);
+fn announced_with_fishing(actor: PlayerId, memorial: bool, fishing: bool) -> AnnouncedWithFishing {
     let mut state = ready_state_for(actor);
     put(&mut state, actor, "Lightning Bolt", Zone::Hand);
     put(&mut state, actor.opponent(), "Forest", Zone::Hand);
@@ -32,6 +39,23 @@ fn announced(actor: PlayerId, memorial: bool) -> (GameState, ObjectId, ObjectId,
         engine::step(&mut state, Action::CastSpell(m)).unwrap();
         resolve(&mut state, m);
     }
+    let fishing_objects = fishing.then(|| {
+        let host = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        let pole = put(&mut state, actor, "Fishing Pole", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+        engine::step(&mut state, Action::CastSpell(pole)).unwrap();
+        resolve(&mut state, pole);
+        state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 2;
+        engine::step(&mut state, Action::ActivateAbility(pole, 0)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::ChooseTargets { .. }
+        ));
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(host))).unwrap();
+        resolve(&mut state, pole);
+        assert_eq!(state.objects.get(pole).v4.attached_to.unwrap().object, host);
+        (host, pole)
+    });
     let donor = put(&mut state, actor, "Heartfire Immolator", Zone::Hand);
     state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
     state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
@@ -96,7 +120,10 @@ fn announced(actor: PlayerId, memorial: bool) -> (GameState, ObjectId, ObjectId,
         state.objects.get(source).card_def,
         crate::card_def::card_id_by_name("Llanowar Elves").unwrap()
     );
-    (state, source, target, host.zone_change_count)
+    (
+        (state, source, target, host.zone_change_count),
+        fishing_objects,
+    )
 }
 fn check(memorial: bool) {
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -382,4 +409,168 @@ fn registered_copied_heartfire_captured_identity_reentry_privacy_owning_restore_
 fn actual_memorial_copied_heartfire_union_uses_original_public_source_and_damage_facts_both_seats()
 {
     check(true);
+}
+
+#[test]
+#[ignore = "requires genuine future Fishing Pole and Fish registration; no fixture admission hook"]
+fn real_fishing_and_copied_heartfire_rows_keep_independent_original_sources_and_binding_both_seats()
+{
+    use crate::akroma_family_public_v40::FamilyFactsV40;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let ((mut state, heartfire, target, generation), fishing) =
+            announced_with_fishing(actor, false, true);
+        let (host, pole) = fishing.unwrap();
+        let fishing_generation = state.objects.get(host).zone_change_count;
+        let native = u8::try_from(
+            crate::card_def::CARD_DEFS[state.objects.get(host).card_def as usize]
+                .activated_abilities
+                .len(),
+        )
+        .unwrap();
+        state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+        engine::step(&mut state, Action::ActivateAbility(host, native)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::ChooseCostTargets { player, candidates, .. }
+                if player == actor && candidates.contains(&pole)
+        ));
+        engine::step(&mut state, Action::ChooseCostTarget(pole)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert!(state.engine.pending_activation.is_none());
+        assert_eq!(state.stack.len(), 2);
+        assert!(state.objects.get(host).tapped && state.objects.get(pole).tapped);
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(host, Zone::Hand));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change_to_battlefield_under_controller(heartfire, actor.opponent()),
+        );
+        let restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        let core = FastActorSessionV1::from_akroma_v40_fixture_state(restored);
+        let mut session = HumanAkromaSessionV40::from_session(core, actor.into()).unwrap();
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("actual two-family held rows");
+        };
+        let public = session.public_observation(expected).unwrap();
+        let heart = public
+            .projection
+            .surface
+            .stack
+            .iter()
+            .find(|row| row.source.arena_id == heartfire.0)
+            .unwrap();
+        let fishing = public
+            .projection
+            .surface
+            .stack
+            .iter()
+            .find(|row| row.source.arena_id == host.0)
+            .unwrap();
+        assert_eq!(
+            heart.source.card_db_id,
+            crate::card_def::card_id_by_name("Heartfire Immolator").unwrap()
+        );
+        assert_eq!(heart.source.zone_change_count, generation);
+        assert_eq!(heart.source.controller, actor.into());
+        assert_eq!(
+            fishing.source.card_db_id,
+            crate::card_def::card_id_by_name("Llanowar Elves").unwrap()
+        );
+        assert_eq!(fishing.source.zone, Zone::Battlefield);
+        assert_eq!(fishing.source.zone_change_count, fishing_generation);
+        assert_eq!(fishing.source.controller, actor.into());
+        for source in [&heart.source, &fishing.source] {
+            assert!(public
+                .extensions
+                .historical_public_sources
+                .iter()
+                .any(|row| &row.source == source));
+        }
+        assert!(public
+            .families
+            .iter()
+            .any(|row| matches!(row, FamilyFactsV40::Fishing(_))));
+        assert!(public
+            .families
+            .iter()
+            .any(|row| matches!(row, FamilyFactsV40::Early(facts)
+            if facts.saved_heartfire_damage.len() == 1)));
+        let snapshot = session.snapshot_v40();
+        let mut projector = HumanAkromaProjectorV40::new(actor.into());
+        let prompt = projector.project_current(&session, expected).unwrap();
+        let json = serde_json::to_string(&prompt).unwrap();
+        for private in [
+            "arena_id",
+            "source_contract",
+            "private_snapshot_json",
+            "event_history",
+        ] {
+            assert!(!json.contains(private), "{private}");
+        }
+        let row = prompt
+            .actions
+            .iter()
+            .find(|row| row.label == "Pass priority")
+            .unwrap();
+        let request = HumanActionRequestV1 {
+            prompt_seq: prompt.prompt_seq,
+            action_index: row.action_index,
+        };
+        let receipt = projector.submit(&mut session, request.clone()).unwrap();
+        assert_eq!(
+            projector.submit(&mut session, request.clone()).unwrap(),
+            receipt
+        );
+        session.restore_v40(&snapshot).unwrap();
+        let before = session.inner.privileged_core_environment_hash();
+        assert_eq!(
+            projector.submit(&mut session, request),
+            Err(Error::StaleDecision)
+        );
+        assert_eq!(session.inner.privileged_core_environment_hash(), before);
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("restored mixed rows");
+        };
+        let replay = projector.project_current(&session, expected).unwrap();
+        assert_eq!(replay.state, prompt.state);
+        assert_eq!(replay.actions, prompt.actions);
+        for mode in 0..2 {
+            let mut bad = state.clone();
+            if mode == 0 {
+                bad.engine.event_history.retain(|event| {
+                    !matches!(
+                        event,
+                        crate::event::CommittedEvent::FishingPoleJournalV39 { .. }
+                    )
+                });
+            } else {
+                let mut json = serde_json::to_value(&bad).unwrap();
+                json["standard_v1"]["copied_card_defs"] = serde_json::json!([]);
+                bad = serde_json::from_value(json).unwrap();
+            }
+            let bytes = serde_json::to_vec(&bad).unwrap();
+            let surface = crate::policy_surface_v5::PolicySurfaceV5::new_for_session();
+            assert!(
+                crate::akroma_public_v1::observe_v1(&bad, &surface, actor, 0, 0, (0, 1)).is_err()
+            );
+            assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+        }
+        for _ in 0..40 {
+            if state.stack.is_empty() {
+                break;
+            }
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        assert!(state.stack.is_empty());
+        assert_eq!(state.objects.get(pole).counters.bait, 1);
+        assert_eq!(state.objects.get(target).damage, 2);
+        assert_eq!(state.objects.get(heartfire).controller, actor.opponent());
+    }
 }

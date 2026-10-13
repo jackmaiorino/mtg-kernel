@@ -162,6 +162,19 @@ pub struct InspirationFactsV40 {
     pub choice: Option<crate::inspiration_observation_v1::ChoiceV1>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FishingFactsV40 {
+    pub poles: Vec<crate::fishing_pole_public_v39::PoleV39>,
+    pub operations: Vec<crate::fishing_pole_public_v39::OperationV39>,
+    pub roots: Vec<crate::fishing_pole_observation_v39::RootV1>,
+}
+// Actual ordered action classifications stay private and participate in binding.
+#[derive(Clone, PartialEq)]
+pub(crate) struct FishingProjectionV40 {
+    pub(crate) parts: crate::fishing_pole_observation_v39::FishingPoleObservationV1,
+    pub(crate) actions: Vec<crate::rl_session::fishing_pole_v39::ClassifiedActionV39>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "family", content = "facts")]
 pub enum FamilyFactsV40 {
     Early(Box<crate::akroma_early_public_v40::EarlyFactsV40>),
@@ -187,6 +200,7 @@ pub enum FamilyFactsV40 {
     ZulAshur(Box<ZulAshurFactsV40>),
     Banner(Box<BannerFactsV40>),
     Inspiration(Box<InspirationFactsV40>),
+    Fishing(Box<FishingFactsV40>),
 }
 // Backend-only temporaries; never exported as standalone predecessor artifacts.
 #[derive(Clone, PartialEq)]
@@ -214,10 +228,16 @@ pub(crate) enum FamilyProjectionV40 {
     ZulAshur(Box<crate::zul_ashur_observation_v1::ZulAshurObservationV1>),
     Banner(Box<crate::banner_observation_v1::BannerObservationV1>),
     Inspiration(Box<crate::inspiration_observation_v1::InspirationObservationV1>),
+    Fishing(Box<FishingProjectionV40>),
 }
 impl FamilyProjectionV40 {
     pub(crate) fn facts(&self) -> FamilyFactsV40 {
         match self {
+            Self::Fishing(o) => FamilyFactsV40::Fishing(Box::new(FishingFactsV40 {
+                poles: o.parts.facts.poles.clone(),
+                operations: o.parts.facts.operations.clone(),
+                roots: o.parts.roots.clone(),
+            })),
             Self::Early(o) => FamilyFactsV40::Early(Box::new(o.facts.clone())),
             Self::Sower(o) => FamilyFactsV40::Sower(Box::new(SowerFactsV40 {
                 restrictions: o.restrictions.clone(),
@@ -336,6 +356,7 @@ impl FamilyProjectionV40 {
     }
     pub(crate) fn projection(&self) -> &crate::rl::PublicObservationProjectionV5 {
         match self {
+            Self::Fishing(o) => &o.parts.projection,
             Self::Early(o) => &o.projection,
             Self::Sower(o) => &o.projection,
             Self::Frenzied(o) => &o.projection,
@@ -365,6 +386,7 @@ impl FamilyProjectionV40 {
 impl FamilyProjectionV40 {
     pub(crate) fn set_projection(&mut self, projection: &crate::rl::PublicObservationProjectionV5) {
         match self {
+            Self::Fishing(o) => o.parts.projection = projection.clone(),
             Self::Early(o) => o.projection = projection.clone(),
             Self::Sower(o) => o.projection = projection.clone(),
             Self::Frenzied(o) => o.projection = projection.clone(),
@@ -488,9 +510,16 @@ pub(crate) fn build(
                 state, surface, actor, step, physical, substep,
             )?,
         )),
+        FamilyProjectionV40::Fishing(Box::new(FishingProjectionV40 {
+            parts: crate::fishing_pole_observation_v39::parts_for_akroma_v40(
+                state, surface, actor, step, physical, substep,
+            )?,
+            actions: Vec::new(),
+        })),
     ])
 }
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    crate::fishing_pole_v39::lifecycle::validate_state(state)?;
     crate::planeswalker_v1::validate_heartfire_recipients_v12(state)?;
     crate::effect::validate_pending_effect_choice(state)?;
     crate::sower_restriction_capture_v1::active(state).map_err(|e| e.0)?;

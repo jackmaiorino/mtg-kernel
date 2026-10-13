@@ -42,6 +42,7 @@ fn threshold(out: &mut Collector, player: RelF, zone: ZoneF, obj: ObjF, minimum:
 pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector) {
     match condition {
         TriggerCondition::ArahboThisOrOtherNontokenCatEntryV1
+        | TriggerCondition::FishingPoleEquippedCreatureUntappedV39
         | TriggerCondition::GarrukOwnEtbFerociousV1
         | TriggerCondition::GarrukControlledCreaturePowerEntryV1
         | TriggerCondition::OpponentCreatureEntersV1 => out.atoms.push(Atom::Opaque),
@@ -617,6 +618,12 @@ fn move_self_cost(out: &mut Collector, from: ZoneF, to: ZoneF) {
 /// One component of an activation, flashback or additional cost.
 pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
     match component {
+        CostComponent::TapFishingPoleAttachedToSource => {
+            // The named granting Equipment and the source-host relation are
+            // outside the frozen cost vocabulary. Do not equate this with
+            // tapping any controlled artifact.
+            out.atoms.push(Atom::Opaque);
+        }
         CostComponent::LoyaltyX => {
             // Announcement chooses X; payment removes that many loyalty
             // counters. Counter kind, variable quantity and the loyalty

@@ -107,7 +107,7 @@ pub(super) fn normalized_origin(
     flat_validate_current_binding_header_akroma_inner(session, &original, true)?;
     flat_validate_origin_decision_akroma_inner(&original, &session.state, true)?;
     let common =
-        crate::rl::heartfire_history_v1::normalization_extensions(&session.state, current.actor)
+        crate::rl::policy_observation_extensions_fishing_union_v40(&session.state, current.actor)
             .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
     super::flat_action_v3::normalize_candidates(
         &mut original.candidates,
@@ -157,6 +157,7 @@ impl FastActorSessionV1 {
             .checked_add(1)
             .ok_or_else(|| RlContractError("Akroma mixed restore revision exhausted".into()))?;
         if let Some(mut current) = restored.current.take() {
+            // Authenticate the original snapshot relation before rebinding its owner.
             prepare_current(&restored, &mut current)
                 .map_err(|_| RlContractError("invalid original Akroma restored menu".into()))?;
             restored
@@ -172,7 +173,7 @@ impl FastActorSessionV1 {
             restored.environment_revision = next_revision;
             current.environment_revision = next_revision;
             prepare_current(&restored, &mut current)
-                .map_err(|_| RlContractError("invalid Akroma restored menu".into()))?;
+                .map_err(|_| RlContractError("invalid rebound Akroma restored menu".into()))?;
             restored.current = Some(current);
         } else {
             restored.environment_revision = next_revision;
@@ -262,7 +263,7 @@ impl FastActorSessionV1 {
         if candidates != current.candidates {
             return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
         }
-        let (observation, families) = crate::akroma_public_v1::observe_parts_v40(
+        let (observation, mut families) = crate::akroma_public_v1::observe_parts_v40(
             &self.state,
             &self.surface,
             current.actor,
@@ -281,6 +282,16 @@ impl FastActorSessionV1 {
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let classified = actions
+            .iter()
+            .cloned()
+            .map(|semantic| super::fishing_pole_v39::classify(&self.state, semantic))
+            .collect::<Result<Vec<_>, _>>()?;
+        for family in &mut families {
+            if let crate::akroma_family_public_v40::FamilyProjectionV40::Fishing(fishing) = family {
+                fishing.actions = classified.clone();
+            }
+        }
         let binding = AkromaDecisionBindingV40 {
             expected,
             candidates,
@@ -413,6 +424,37 @@ mod tests {
         }
     }
 
+    #[test]
+    fn repeated_owning_restore_never_revives_previous_private_union_binding_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let state = crate::policy_observation_v6::tests::ready_state_for(actor);
+            let mut session = FastActorSessionV1::from_akroma_v40_fixture_state(state);
+            let snapshot = session.snapshot_v1();
+            for _ in 0..3 {
+                let FastActorResponseV1::Decision(old) = session.current_response() else {
+                    panic!("ordinary union menu");
+                };
+                let (_, _, binding) = session
+                    .akroma_current_decision_input_v40(old, actor.into())
+                    .unwrap();
+                session.akroma_restore_v40(&snapshot).unwrap();
+                let before = session.privileged_core_environment_hash();
+                assert!(session
+                    .akroma_validate_bound_decision_v40(old, actor.into(), &binding)
+                    .is_err());
+                assert_eq!(session.privileged_core_environment_hash(), before);
+                let FastActorResponseV1::Decision(current) = session.current_response() else {
+                    panic!("restored union menu");
+                };
+                let (_, _, valid) = session
+                    .akroma_current_decision_input_v40(current, actor.into())
+                    .unwrap();
+                session
+                    .akroma_validate_bound_decision_v40(current, actor.into(), &valid)
+                    .unwrap();
+            }
+        }
+    }
     #[test]
     fn complete_ordered_binding_observation_identity_seat_and_menu_changes_refuse_readonly() {
         for actor in [PlayerId::P0, PlayerId::P1] {

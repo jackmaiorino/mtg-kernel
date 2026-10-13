@@ -66,6 +66,8 @@ pub struct Counters {
     pub charge: i32,
     #[serde(default, skip_serializing_if = "counter_i32_zero")]
     pub net: i32,
+    #[serde(default, skip_serializing_if = "counter_i32_zero")]
+    pub bait: i32,
 }
 
 fn counter_i32_zero(value: &i32) -> bool {
@@ -87,6 +89,7 @@ impl Counters {
             || self.oil != 0
             || self.charge != 0
             || self.net != 0
+            || self.bait != 0
     }
 }
 
@@ -114,6 +117,10 @@ impl std::hash::Hash for Counters {
         if self.net != 0 {
             b"net_v1".hash(state);
             self.net.hash(state);
+        }
+        if self.bait != 0 {
+            b"bait_v39".hash(state);
+            self.bait.hash(state);
         }
         if self.oil != 0 {
             b"oil_counters_v1".hash(state);

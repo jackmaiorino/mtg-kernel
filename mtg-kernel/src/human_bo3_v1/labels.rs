@@ -1644,6 +1644,107 @@ pub(super) fn label_krenko_v34(
     label_parts_v8(action, &parts, handles, human)
 }
 
+pub(super) fn label_fishing_pole_v39(
+    action: &A,
+    grant: Option<&crate::rl_session::fishing_pole_v39::GrantedLabelV39>,
+    observation: &crate::fishing_pole_observation_v39::FishingPoleObservationV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    let pending_label = |index: usize,
+                         source: &crate::rl::CardStableRefV1,
+                         sources: &[crate::rl::CardStableRefV1]|
+     -> Result<String, Error> {
+        let occurrence = sources[..index]
+            .iter()
+            .filter(|previous| {
+                previous.arena_id == source.arena_id
+                    && previous.zone_change_count == source.zone_change_count
+            })
+            .count();
+        let original = observation
+            .facts
+            .operations
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| {
+                row.trigger
+                    && row.stage == crate::fishing_pole_public_v39::StageV39::Pending
+                    && row.original_pole.arena_id == source.arena_id
+                    && row.original_pole.zone_change_count == source.zone_change_count
+            })
+            .nth(occurrence);
+        if let Some((ordinal, _)) = original {
+            Ok(format!(
+                "{} untap occurrence {}",
+                handles.name(source)?,
+                ordinal + 1
+            ))
+        } else {
+            handles.name(source)
+        }
+    };
+    if let A::OrderTriggers {
+        actor,
+        pending_sources,
+        order,
+    } = action
+    {
+        if *actor != human {
+            return Err(Error::UnsupportedPrompt);
+        }
+        let names = order
+            .iter()
+            .map(|index| {
+                pending_sources
+                    .get(*index)
+                    .ok_or(Error::InvalidVisibleReference)
+                    .and_then(|source| pending_label(*index, source, pending_sources))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        return Ok(format!(
+            "Put triggers on the stack in this order (last resolves first): {}",
+            names.join(", ")
+        ));
+    }
+    if let A::CastSpell { actor, source } = action {
+        if observation.roots.iter().any(|root| {
+            root.card_id == source.card_db_id
+                && root.root == crate::rules_meaning_fishing_pole_v39::RootV39::PrintedArtifactSpell
+        }) {
+            if *actor != human {
+                return Err(Error::UnsupportedPrompt);
+            }
+            return Ok(format!("Begin casting {} (printed cost {{1}}): Equipment with equip {{2}}, a granted bait ability, and mandatory untap Fish trigger",handles.name(source)?));
+        }
+    }
+    if let A::ActivateAbility { actor, source, .. } = action {
+        if let Some(grant) = grant {
+            if *actor != human {
+                return Err(Error::UnsupportedPrompt);
+            }
+            let name = handles.name(source)?;
+            if grant.fishing {
+                return Ok(format!("Activate Fishing Pole-granted ability of {name}: printed cost {{1}}, tap this creature, and tap the chosen actual attached Fishing Pole; put one bait counter on that original Pole at resolution"));
+            }
+            return Ok(format!(
+                "Activate granted ability of {name}: {}: {}",
+                activation_cost(&grant.cost, &name)?,
+                describe_effect(&grant.effect)?
+            ));
+        }
+    }
+    let parts = super::life_ward_v8::ProjectionPartsV8 {
+        projection: &observation.projection,
+        own_hand: &observation.own_hand,
+        known_library_cards: &observation.known_library_cards,
+        known_hand_cards: &observation.known_hand_cards,
+        known_face_down_cards: &observation.known_face_down_cards,
+        extensions: &observation.extensions,
+    };
+    label_parts_v8(action, &parts, handles, human)
+}
+
 #[cfg(test)]
 mod variable_target_refusal_tests {
     use super::*;

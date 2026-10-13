@@ -1673,6 +1673,12 @@ pub enum EffectOp {
     FieryAnnihilation,
     /// Definition-owned Krenko token batch; requires the private paid owner.
     KrenkoCreateGoblinsV1,
+    /// The actual granting Pole is bound by the named activation cost.
+    FishingPoleAddBaitV39,
+    BindFishingPoleUntapV39,
+    FishingPoleUntapV39 {
+        capture_history_index: u64,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -18807,7 +18813,10 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             }
         }
         EffectOp::FieryAnnihilation => crate::fiery_annihilation_v1::execute(ctx, state),
-        EffectOp::KrenkoCreateGoblinsV1 => {
+        EffectOp::KrenkoCreateGoblinsV1
+        | EffectOp::FishingPoleAddBaitV39
+        | EffectOp::BindFishingPoleUntapV39
+        | EffectOp::FishingPoleUntapV39 { .. } => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
