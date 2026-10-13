@@ -324,6 +324,32 @@ pub(super) fn project_base_with_handles(
     ),
     Error,
 > {
+    project_with_handles(observation, actions, human, families, false)
+}
+
+pub(super) fn project_limited_with_handles(
+    observation: &AkromaObservationV1,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+) -> Result<ProjectionWithHandles, Error> {
+    project_with_handles(observation, actions, human, families, true)
+}
+
+type ProjectionWithHandles = (
+    HumanVisibleStateV1<HumanAkromaExtensionsV40>,
+    Vec<HumanLegalActionV1>,
+    Vec<u32>,
+    Handles,
+);
+
+fn project_with_handles(
+    observation: &AkromaObservationV1,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+    limited: bool,
+) -> Result<ProjectionWithHandles, Error> {
     if observation.acting_player != human {
         return Err(Error::NotHumanTurn);
     }
@@ -391,6 +417,28 @@ pub(super) fn project_base_with_handles(
             .push(visible::without_handles(row)?);
     }
     super::akroma_families_v40::unary(&initial.extensions.families, &mut unary)?;
+    if limited {
+        if let Some(combat) = &observation.projection.foundations_combat {
+            for (index, assignment) in combat.assignments.iter().enumerate() {
+                unary
+                    .entry(handles.get(&assignment.source)?.handle.clone())
+                    .or_default()
+                    .push(format!(
+                        "limited_damage_source_{index}_{}",
+                        assignment.amount
+                    ));
+                if let crate::rl::TargetRefV1::Object { object } = &assignment.recipient {
+                    unary
+                        .entry(handles.get(object)?.handle.clone())
+                        .or_default()
+                        .push(format!(
+                            "limited_damage_recipient_{index}_{}",
+                            assignment.amount
+                        ));
+                }
+            }
+        }
+    }
     for rows in unary.values_mut() {
         rows.sort();
         rows.dedup();
@@ -402,7 +450,14 @@ pub(super) fn project_base_with_handles(
         .enumerate()
         .map(|(index, action)| {
             Ok((
-                label(action, observation, &handles, human, families)?,
+                if limited {
+                    match super::limited_common_v1::label(action, &handles, human)? {
+                        Some(label) => label,
+                        None => label(action, observation, &handles, human, families)?,
+                    }
+                } else {
+                    label(action, observation, &handles, human, families)?
+                },
                 u32::try_from(index).map_err(|_| Error::InvalidAction)?,
             ))
         })

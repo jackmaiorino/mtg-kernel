@@ -56,6 +56,7 @@ pub(crate) mod garruk_v30;
 pub(crate) mod gourmand_v29;
 pub(crate) mod inspiration_v37;
 pub(crate) mod krenko_v34;
+mod limited_common_v1;
 pub(crate) mod strongbox_v32;
 pub(crate) mod twinflame_v38;
 pub(crate) mod zul_ashur_v35;
@@ -3347,7 +3348,7 @@ fn flat_validate_current_binding_header_akroma_inner(
     {
         return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
     }
-    if !accept_akroma && session.flat_action_contract_mode == FlatActionContractModeV1::AkromaV40 {
+    if !accept_akroma && session.is_common_v40() {
         return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
     }
 
@@ -4391,7 +4392,7 @@ fn flat_validate_expected_decision_akroma_inner(
     {
         return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
     }
-    if !accept_akroma && session.flat_action_contract_mode == FlatActionContractModeV1::AkromaV40 {
+    if !accept_akroma && session.is_common_v40() {
         return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
     }
 
@@ -4418,31 +4419,33 @@ fn flat_validate_expected_decision_akroma_inner(
     if crate::twinflame_tyrant_v1::requires_successor(&session.state)
         && !matches!(
             session.flat_action_contract_mode,
-            FlatActionContractModeV1::TwinflameV38 | FlatActionContractModeV1::AkromaV40
+            FlatActionContractModeV1::TwinflameV38
+                | FlatActionContractModeV1::AkromaV40
+                | FlatActionContractModeV1::LimitedCommonV1
         )
     {
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
     }
-    if (crate::fishing_pole_v39::lifecycle::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::FishingPoleV39 && session.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)
-        || (crate::inspiration_observation_v1::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37 && session.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)
+    if (crate::fishing_pole_v39::lifecycle::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::FishingPoleV39 && !session.is_common_v40())
+        || (crate::inspiration_observation_v1::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37 && !session.is_common_v40())
         || (crate::krenko_v1::requires_successor(&session.state)
-        && session.flat_action_contract_mode != FlatActionContractModeV1::KrenkoV34 && session.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)
-        || (crate::zul_ashur_v1::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::ZulAshurV35 && session.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)
+        && session.flat_action_contract_mode != FlatActionContractModeV1::KrenkoV34 && !session.is_common_v40())
+        || (crate::zul_ashur_v1::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::ZulAshurV35 && !session.is_common_v40())
         || (crate::heraldic_banner_v1::requires_successor(&session.state)
-        && session.flat_action_contract_mode != FlatActionContractModeV1::BannerV36 && session.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)
+        && session.flat_action_contract_mode != FlatActionContractModeV1::BannerV36 && !session.is_common_v40())
         || (crate::fiery_annihilation_v1::requires_successor(&session.state)
-        && session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33 && session.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)
+        && session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33 && !session.is_common_v40())
         || (crate::combat_static_rules_v1::requires_successor(&session.state)
-        && session.flat_action_contract_mode != FlatActionContractModeV1::JuggernautV25 && session.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)
+        && session.flat_action_contract_mode != FlatActionContractModeV1::JuggernautV25 && !session.is_common_v40())
         || session.state.objects.iter().any(|(_, object)| {
         i16::try_from(object.counters.plus1_plus1).is_err()
             || u16::try_from(object.damage).is_err()
-    }) || (session.state.planeswalkers_v1.is_some() && session.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)
+    }) || (session.state.planeswalkers_v1.is_some() && !session.is_common_v40())
         || session.state.trigger_uses_v1.is_some()
         || session.state.engine.active_replacements.iter().any(|replacement| {
             match replacement.kind {
-                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. } => !matches!(session.flat_action_contract_mode,FlatActionContractModeV1::TwinflameV38|FlatActionContractModeV1::AkromaV40),
-                crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. } => session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33 && session.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40,
+                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. } => !matches!(session.flat_action_contract_mode,FlatActionContractModeV1::TwinflameV38|FlatActionContractModeV1::AkromaV40|FlatActionContractModeV1::LimitedCommonV1),
+                crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. } => session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33 && !session.is_common_v40(),
                 _ => false,
             }
         })
@@ -4573,6 +4576,7 @@ enum FlatActionContractModeV1 {
     AkromaV40,
     FishingPoleV39,
     TwinflameV38,
+    LimitedCommonV1,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -7215,7 +7219,7 @@ impl FastActorSessionV1 {
         selected_index: u32,
         apply_path: FastActorApplyPathV1,
     ) -> Result<FastActorResponseV1, RlSessionError> {
-        if self.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40
+        if !self.is_common_v40()
             && crate::game_outcome_protection_v1::requires_successor(
                 &self.state,
                 self.current.as_ref().map(|current| current.actor),
@@ -7226,7 +7230,7 @@ impl FastActorSessionV1 {
                 "unrepresented game-outcome protection requires common successor",
             ));
         }
-        if self.flat_action_contract_mode == FlatActionContractModeV1::AkromaV40 {
+        if self.is_common_v40() {
             let current = self.current.as_ref().ok_or_else(|| {
                 session_error(
                     RlSessionErrorCode::StaleEnvironmentBinding,
@@ -7249,7 +7253,7 @@ impl FastActorSessionV1 {
         }
         if self.state.extra_turn_v1.is_some()
             && self.flat_action_contract_mode != FlatActionContractModeV1::ExtraTurnV23
-            && self.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40
+            && !self.is_common_v40()
         {
             return Err(session_error(
                 RlSessionErrorCode::StaleEnvironmentBinding,
@@ -7387,7 +7391,9 @@ impl FastActorSessionV1 {
         if (crate::twinflame_tyrant_v1::requires_successor(&self.state)
             && !matches!(
                 self.flat_action_contract_mode,
-                FlatActionContractModeV1::TwinflameV38 | FlatActionContractModeV1::AkromaV40
+                FlatActionContractModeV1::TwinflameV38
+                    | FlatActionContractModeV1::AkromaV40
+                    | FlatActionContractModeV1::LimitedCommonV1
             ))
             || (self.flat_action_contract_mode == FlatActionContractModeV1::TwinflameV38
                 && crate::twinflame_observation_v1::validate_projection_authority(&self.state)
@@ -7404,7 +7410,7 @@ impl FastActorSessionV1 {
             ));
             return;
         }
-        if self.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40
+        if !self.is_common_v40()
             && crate::game_outcome_protection_v1::requires_successor(&self.state, None)
         {
             self.current = None;
@@ -7418,7 +7424,7 @@ impl FastActorSessionV1 {
             ));
             return;
         }
-        if (if self.flat_action_contract_mode == FlatActionContractModeV1::AkromaV40 {
+        if (if self.is_common_v40() {
             crate::akroma_public_v1::validate_state(&self.state)
         } else {
             crate::controlled_creature_grants_v1::require_legacy_consumer_supported(&self.state)
@@ -7438,7 +7444,7 @@ impl FastActorSessionV1 {
         }
         if (crate::fishing_pole_v39::lifecycle::requires_successor(&self.state)
             && self.flat_action_contract_mode != FlatActionContractModeV1::FishingPoleV39
-            && self.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)
+            && !self.is_common_v40())
             || (self.flat_action_contract_mode == FlatActionContractModeV1::FishingPoleV39
                 && crate::fishing_pole_observation_v39::validate_projection_authority(&self.state)
                     .is_err())
@@ -7456,7 +7462,7 @@ impl FastActorSessionV1 {
         }
         if (crate::inspiration_observation_v1::requires_successor(&self.state)
             && self.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37
-            && self.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)
+            && !self.is_common_v40())
             || (self.flat_action_contract_mode == FlatActionContractModeV1::InspirationV37
                 && crate::inspiration_observation_v1::validate_projection_authority(&self.state)
                     .is_err())
@@ -7479,7 +7485,7 @@ impl FastActorSessionV1 {
                     .is_err())
             || (crate::heraldic_banner_v1::requires_successor(&self.state)
                 && self.flat_action_contract_mode != FlatActionContractModeV1::BannerV36
-                && self.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)
+                && !self.is_common_v40())
         {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -7495,7 +7501,7 @@ impl FastActorSessionV1 {
 
         if crate::krenko_v1::requires_successor(&self.state)
             && self.flat_action_contract_mode != FlatActionContractModeV1::KrenkoV34
-            && self.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40
+            && !self.is_common_v40()
         {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -7510,7 +7516,7 @@ impl FastActorSessionV1 {
         }
         if crate::arahbo_v1::requires_successor(&self.state)
             && self.flat_action_contract_mode != FlatActionContractModeV1::ArahboV31
-            && self.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40
+            && !self.is_common_v40()
         {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -7529,6 +7535,7 @@ impl FastActorSessionV1 {
                 FlatActionContractModeV1::GarrukV30
                     | FlatActionContractModeV1::ArahboV31
                     | FlatActionContractModeV1::AkromaV40
+                    | FlatActionContractModeV1::LimitedCommonV1
             )
         {
             self.current = None;
@@ -7545,7 +7552,7 @@ impl FastActorSessionV1 {
         self.current = None;
         if self.state.extra_turn_v1.is_some()
             && self.flat_action_contract_mode != FlatActionContractModeV1::ExtraTurnV23
-            && self.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40
+            && !self.is_common_v40()
         {
             self.terminal = Some(halted_terminal(
                 &self.deck_ids,
@@ -7581,6 +7588,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::GarrukV30
                     | FlatActionContractModeV1::ArahboV31
                     | FlatActionContractModeV1::AkromaV40
+                    | FlatActionContractModeV1::LimitedCommonV1
             )
         {
             self.terminal = Some(halted_terminal(
@@ -7664,7 +7672,7 @@ impl FastActorSessionV1 {
             ));
             return;
         };
-        let raw = if self.flat_action_contract_mode == FlatActionContractModeV1::AkromaV40 {
+        let raw = if self.is_common_v40() {
             akroma_v40::actual_candidates(&surfaced, &self.state)
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::InspirationV37 {
             inspiration_v37::actual_candidates(&surfaced, &self.state)
@@ -7907,7 +7915,7 @@ impl FastActorSessionV1 {
                     return;
                 }
             }
-            FlatActionContractModeV1::AkromaV40 => {
+            FlatActionContractModeV1::AkromaV40 | FlatActionContractModeV1::LimitedCommonV1 => {
                 self.flat_action_cache_spare = None;
                 self.flat_action_cache_spare_v2 = None;
                 if let Err(error) = akroma_v40::prepare_current(self, &mut current) {

@@ -108,7 +108,9 @@ pub(super) fn normalized_origin(
     original.candidates = actual_candidates(&current.origin_decision, &session.state)
         .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
     flat_validate_current_binding_header_akroma_inner(session, &original, true)?;
-    if !crate::twinflame_tyrant_v1::combat::has_pending(&session.state) {
+    if !super::limited_common_v1::validate_origin(session, &original)?
+        && !crate::twinflame_tyrant_v1::combat::has_pending(&session.state)
+    {
         flat_validate_origin_decision_akroma_inner(&original, &session.state, true)?;
     }
     let common =
@@ -150,7 +152,8 @@ impl FastActorSessionV1 {
         snapshot: &FastActorSessionSnapshotV1,
     ) -> Result<(), RlContractError> {
         let mut restored = snapshot.0.clone();
-        if restored.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40
+        if !restored.is_common_v40()
+            || restored.flat_action_contract_mode != self.flat_action_contract_mode
             || restored.episode_id != self.episode_id
         {
             return Err(RlContractError("wrong Akroma snapshot owner".into()));
@@ -253,7 +256,7 @@ impl FastActorSessionV1 {
         ),
         FlatActionDecisionSliceErrorV1,
     > {
-        if self.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40 {
+        if !self.is_common_v40() {
             return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
         }
         let current = self
