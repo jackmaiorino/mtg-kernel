@@ -971,7 +971,7 @@ def train(plan: dict) -> int:
     if n_updates > len(batches):
         raise ValueError("requested cycles exceed this domain; continue on the next training domain")
     config = h("train-plan", arm, plan["domain"], cases, batches, plan.get("total", CAP),
-               credit_roots, plan.get("lr", LR), plan["binary_sha256"])
+               credit_roots, plan.get("lr", LR), plan["binary_sha256"]).hex()
     if state_path.exists():
         state = json.loads(state_path.read_text())
         if state.get("config") != config:
