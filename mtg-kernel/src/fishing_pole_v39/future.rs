@@ -863,3 +863,273 @@ fn private_underlying_pole_is_not_enumerated_as_a_public_current_pole_both_seats
             .is_empty());
     }
 }
+
+fn mixed_memorial(actor: PlayerId) -> (GameState, ObjectId, ObjectId) {
+    let (mut state, host, pole) = copied_pole(actor);
+    let memorial = put(&mut state, actor, "Akroma's Memorial", Zone::Hand);
+    state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 7;
+    engine::step(&mut state, Action::CastSpell(memorial)).unwrap();
+    finish(&mut state);
+    assert!(engine::has_effective_keyword(
+        &state,
+        host,
+        crate::card_def::Keywords::HASTE
+    ));
+    let bow = put(&mut state, actor, "Viridian Longbow", Zone::Battlefield);
+    state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 3;
+    engine::step(&mut state, Action::ActivateAbility(bow, 0)).unwrap();
+    assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(host))).unwrap();
+    finish(&mut state);
+    state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+    (state, host, pole)
+}
+#[test]
+#[ignore = "requires genuine future Fishing/Fish and Akroma registrations"]
+fn real_mixed_family_binding_keeps_named_pole_and_longbow_grants_distinct_and_readonly_both_seats()
+{
+    use crate::akroma_family_public_v40::{FamilyFactsV40, FamilyProjectionV40};
+    use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (state, host, pole) = mixed_memorial(actor);
+        let legacy = FastActorSessionV1::from_fishing_pole_v39_fixture_state(snapshot(&state));
+        assert!(matches!(
+            legacy.current_response(),
+            FastActorResponseV1::Terminal(_)
+        ));
+        let mut session = FastActorSessionV1::from_akroma_v40_fixture_state(state);
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("actual mixed menu");
+        };
+        let (public, actions, binding) = session
+            .akroma_current_decision_input_v40(expected, expected.acting_player)
+            .unwrap();
+        assert!(!public.grants.is_empty());
+        assert!(public.families.iter().any(|f| matches!(f, FamilyFactsV40::Fishing(f) if f.poles.iter().any(|p| p.source.arena_id==pole.0))));
+        let FamilyProjectionV40::Fishing(fishing) = binding
+            .families
+            .iter()
+            .find(|f| matches!(f, FamilyProjectionV40::Fishing(_)))
+            .unwrap()
+        else {
+            unreachable!();
+        };
+        let grants = fishing
+            .actions
+            .iter()
+            .filter_map(|a| a.granted_label.as_ref())
+            .collect::<Vec<_>>();
+        assert!(grants.iter().any(|g| g.fishing));
+        assert!(grants.iter().any(|g| !g.fishing));
+        assert_eq!(
+            fishing
+                .actions
+                .iter()
+                .map(|a| a.semantic.clone())
+                .collect::<Vec<_>>(),
+            actions
+        );
+        let before = session.privileged_core_environment_hash();
+        let mut forged = binding.clone();
+        let FamilyProjectionV40::Fishing(f) = forged
+            .families
+            .iter_mut()
+            .find(|f| matches!(f, FamilyProjectionV40::Fishing(_)))
+            .unwrap()
+        else {
+            unreachable!();
+        };
+        f.actions
+            .iter_mut()
+            .find(|a| a.granted_label.as_ref().is_some_and(|g| g.fishing))
+            .unwrap()
+            .granted_label
+            .as_mut()
+            .unwrap()
+            .cost
+            .clear();
+        assert!(session
+            .akroma_validate_bound_decision_v40(expected, expected.acting_player, &forged)
+            .is_err());
+        assert_eq!(session.privileged_core_environment_hash(), before);
+        let original = session.akroma_fixture_state().engine.event_history.clone();
+        crate::standard_cards_v1::gain_control(
+            session.akroma_fixture_state_mut(),
+            pole,
+            actor.opponent(),
+        );
+        let bytes = serde_json::to_vec(session.akroma_fixture_state()).unwrap();
+        assert!(session
+            .akroma_validate_bound_decision_v40(expected, expected.acting_player, &binding)
+            .is_err());
+        assert_eq!(
+            serde_json::to_vec(session.akroma_fixture_state()).unwrap(),
+            bytes
+        );
+        assert_eq!(
+            session.akroma_fixture_state().engine.event_history[..original.len()],
+            original
+        );
+        assert_eq!(
+            session.akroma_fixture_state().objects.get(host).controller,
+            actor
+        );
+    }
+}
+#[test]
+#[ignore = "requires genuine future Fishing/Fish and Akroma registrations"]
+fn actual_mixed_human_named_grant_cost_restore_retry_and_current_facts_both_seats() {
+    use crate::akroma_family_public_v40::FamilyFactsV40;
+    use crate::human_bo3_v1::{
+        HumanActionRequestV1, HumanAkromaProjectorV40, HumanAkromaSessionV40, HumanDecisionErrorV1,
+    };
+    use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (state, _, pole) = mixed_memorial(actor);
+        let mut human = HumanAkromaSessionV40::from_session(
+            FastActorSessionV1::from_akroma_v40_fixture_state(state),
+            actor.into(),
+        )
+        .unwrap();
+        let mut projector = HumanAkromaProjectorV40::new(actor.into());
+        let FastActorResponseV1::Decision(expected) = human.current_response() else {
+            panic!("actual mixed Human");
+        };
+        let prompt = projector.project_current(&human, expected).unwrap();
+        assert!(prompt
+            .actions
+            .iter()
+            .any(|a| a.label.starts_with("Activate Fishing Pole-granted ability")));
+        assert!(prompt.actions.iter().any(
+            |a| a.label.starts_with("Activate granted ability") && a.label.contains("1 damage")
+        ));
+        let action = prompt
+            .actions
+            .iter()
+            .find(|a| a.label.starts_with("Activate Fishing Pole-granted ability"))
+            .unwrap();
+        let request = HumanActionRequestV1 {
+            prompt_seq: prompt.prompt_seq,
+            action_index: action.action_index,
+        };
+        let saved = human.snapshot_v40();
+        human.restore_v40(&saved).unwrap();
+        assert_eq!(
+            projector.submit(&mut human, request),
+            Err(HumanDecisionErrorV1::StaleDecision)
+        );
+        let FastActorResponseV1::Decision(expected) = human.current_response() else {
+            panic!("restored mixed Human");
+        };
+        let prompt = projector.project_current(&human, expected).unwrap();
+        let action = prompt
+            .actions
+            .iter()
+            .find(|a| a.label.starts_with("Activate Fishing Pole-granted ability"))
+            .unwrap();
+        projector
+            .submit(
+                &mut human,
+                HumanActionRequestV1 {
+                    prompt_seq: prompt.prompt_seq,
+                    action_index: action.action_index,
+                },
+            )
+            .unwrap();
+        let FastActorResponseV1::Decision(expected) = human.current_response() else {
+            panic!("real named Pole cost");
+        };
+        let prompt = projector.project_current(&human, expected).unwrap();
+        let action = prompt
+            .actions
+            .iter()
+            .find(|a| a.label.contains("Fishing Pole"))
+            .unwrap();
+        let request = HumanActionRequestV1 {
+            prompt_seq: prompt.prompt_seq,
+            action_index: action.action_index,
+        };
+        let receipt = projector.submit(&mut human, request.clone()).unwrap();
+        assert_eq!(projector.submit(&mut human, request).unwrap(), receipt);
+        let mut done = false;
+        for _ in 0..30 {
+            let FastActorResponseV1::Decision(expected) = human.current_response() else {
+                panic!("real mixed priority");
+            };
+            if expected.acting_player == actor.into() {
+                let observation = human.public_observation(expected).unwrap();
+                assert!(!observation.grants.is_empty());
+                if observation.families.iter().any(|f| matches!(f, FamilyFactsV40::Fishing(f) if f.poles.iter().any(|p| p.source.arena_id==pole.0 && p.bait==1) && f.operations.iter().any(|op| !op.trigger && op.stage==crate::fishing_pole_public_v39::StageV39::Resolved))) { done=true; break; }
+                let prompt = projector.project_current(&human, expected).unwrap();
+                let action = prompt
+                    .actions
+                    .iter()
+                    .find(|a| a.label == "Pass priority")
+                    .unwrap();
+                projector
+                    .submit(
+                        &mut human,
+                        HumanActionRequestV1 {
+                            prompt_seq: prompt.prompt_seq,
+                            action_index: action.action_index,
+                        },
+                    )
+                    .unwrap();
+            } else {
+                assert!(human.public_observation(expected).is_err());
+                human
+                    .step_opponent_with(expected, |observation, actions| {
+                        assert_eq!(observation.acting_player, actor.opponent().into());
+                        actions
+                            .iter()
+                            .position(|a| matches!(a, crate::rl::ActionSemanticV1::Pass { .. }))
+                            .map(|i| i as u32)
+                            .ok_or_else(|| {
+                                crate::rl::RlContractError("actual opponent pass".into())
+                            })
+                    })
+                    .unwrap();
+            }
+        }
+        assert!(done);
+    }
+}
+#[test]
+#[ignore = "requires genuine future Fishing/Fish and Akroma registrations"]
+fn actual_mixed_copied_pole_untap_original_controller_history_and_human_restore_both_seats() {
+    use crate::akroma_family_public_v40::FamilyFactsV40;
+    use crate::human_bo3_v1::{HumanAkromaProjectorV40, HumanAkromaSessionV40};
+    use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, host, pole) = mixed_memorial(actor);
+        add(&mut state, actor, host, pole);
+        finish(&mut state);
+        assert!(engine::attempt_untap(&mut state, host));
+        next(&mut state);
+        crate::standard_cards_v1::gain_control(&mut state, pole, actor.opponent());
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(host, Zone::Hand));
+        let mut restored = snapshot(&state);
+        let base = FastActorSessionV1::from_akroma_v40_fixture_state(snapshot(&state));
+        let FastActorResponseV1::Decision(expected) = base.current_response() else {
+            panic!("true mixed original trigger");
+        };
+        let mut human = HumanAkromaSessionV40::from_session(base, expected.acting_player).unwrap();
+        let mut projector = HumanAkromaProjectorV40::new(expected.acting_player);
+        let prompt = projector.project_current(&human, expected).unwrap();
+        assert!(!prompt.state.extensions.grants.is_empty());
+        let snapshot = human.snapshot_v40();
+        human.restore_v40(&snapshot).unwrap();
+        let FastActorResponseV1::Decision(expected) = human.current_response() else {
+            panic!("restored mixed source");
+        };
+        let observation = human.public_observation(expected).unwrap();
+        assert!(observation.families.iter().any(|f| matches!(f, FamilyFactsV40::Fishing(f) if f.operations.iter().any(|op| op.trigger && op.original_controller==actor.into() && op.original_pole.arena_id==pole.0))));
+        projector.project_current(&human, expected).unwrap();
+        for branch in [&mut state, &mut restored] {
+            finish(branch);
+            assert_eq!(fish(branch, actor), 1);
+            assert_eq!(fish(branch, actor.opponent()), 0);
+        }
+        assert_eq!(state, restored);
+    }
+}

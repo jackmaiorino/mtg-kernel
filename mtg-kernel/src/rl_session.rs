@@ -36,6 +36,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fmt;
 
+pub(crate) mod akroma_v40;
 pub(crate) mod arahbo_v31;
 pub(crate) mod ashroot_v27;
 pub(crate) mod authority_v17;
@@ -323,6 +324,7 @@ pub(crate) mod heartfire_v12;
 pub(crate) mod raid_entry_v21;
 mod raid_v9;
 mod soul_shackled_zombie_v13;
+pub(crate) use soul_shackled_zombie_v13::context_for_akroma_v40 as akroma_zombie_context_v40;
 pub mod variable_cast_v1;
 #[cfg(test)]
 pub(crate) use flat_action_v3::{
@@ -1921,10 +1923,26 @@ fn flat_validate_origin_decision_v1(
     current: &FastActorCurrentDecisionV1,
     state: &crate::state::GameState,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    flat_validate_origin_decision_akroma_inner(current, state, false)
+}
+fn flat_validate_origin_decision_akroma_inner(
+    current: &FastActorCurrentDecisionV1,
+    state: &crate::state::GameState,
+    accept_akroma: bool,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
     use crate::engine::Action;
     use crate::surface::SurfaceAction;
 
     let invalid = || FlatActionDecisionSliceErrorV1::InvalidDecisionRelation;
+    if (if accept_akroma {
+        crate::akroma_public_v1::validate_state(state)
+    } else {
+        crate::controlled_creature_grants_v1::require_legacy_consumer_supported(state)
+    })
+    .is_err()
+    {
+        return Err(invalid());
+    }
     match &current.origin_decision {
         PolicyDecisionV5::AttackerInclusion {
             player,
@@ -3305,6 +3323,17 @@ fn flat_validate_current_binding_header_v1(
     session: &FastActorSessionV1,
     current: &FastActorCurrentDecisionV1,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    flat_validate_current_binding_header_akroma_inner(session, current, false)
+}
+fn flat_validate_current_binding_header_akroma_inner(
+    session: &FastActorSessionV1,
+    current: &FastActorCurrentDecisionV1,
+    accept_akroma: bool,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    if !accept_akroma && session.flat_action_contract_mode == FlatActionContractModeV1::AkromaV40 {
+        return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
+    }
+
     if current.environment_revision != session.environment_revision
         || current.bound_policy_step_count != session.policy_step_count
         || current.bound_physical_decision_count != session.physical_decision_count
@@ -3364,6 +3393,11 @@ fn flat_validate_current_binding_header_v2(
         return flat_validate_current_binding_header_v1(session, current);
     }
     let invalid = || FlatActionDecisionSliceErrorV1::InvalidDecisionRelation;
+    if crate::controlled_creature_grants_v1::require_legacy_consumer_supported(&session.state)
+        .is_err()
+    {
+        return Err(invalid());
+    }
     let raw = core_policy_action_candidates_v5(&current.origin_decision, &session.state)
         .map_err(|_| invalid())?;
     let original = FastActorCurrentDecisionV1 {
@@ -4320,6 +4354,18 @@ fn flat_validate_expected_decision_v1(
     current: &FastActorCurrentDecisionV1,
     expected: FastActorDecisionV1,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    flat_validate_expected_decision_akroma_inner(session, current, expected, false)
+}
+fn flat_validate_expected_decision_akroma_inner(
+    session: &FastActorSessionV1,
+    current: &FastActorCurrentDecisionV1,
+    expected: FastActorDecisionV1,
+    accept_akroma: bool,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    if !accept_akroma && session.flat_action_contract_mode == FlatActionContractModeV1::AkromaV40 {
+        return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
+    }
+
     if expected.episode_id != session.episode_id {
         return Err(FlatActionDecisionSliceErrorV1::StaleEpisodeBinding);
     }
@@ -4340,26 +4386,26 @@ fn flat_validate_expected_decision_v1(
     }
     // The frozen flat formats cannot represent these extended mechanics or
     // numeric ranges. Refuse before publishing any incomplete buffers.
-    if (crate::fishing_pole_v39::lifecycle::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::FishingPoleV39)
-        || (crate::inspiration_observation_v1::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37)
+    if (crate::fishing_pole_v39::lifecycle::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::FishingPoleV39 && session.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)
+        || (crate::inspiration_observation_v1::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37 && session.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)
         || (crate::krenko_v1::requires_successor(&session.state)
-        && session.flat_action_contract_mode != FlatActionContractModeV1::KrenkoV34)
-        || (crate::zul_ashur_v1::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::ZulAshurV35)
+        && session.flat_action_contract_mode != FlatActionContractModeV1::KrenkoV34 && session.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)
+        || (crate::zul_ashur_v1::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::ZulAshurV35 && session.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)
         || (crate::heraldic_banner_v1::requires_successor(&session.state)
-        && session.flat_action_contract_mode != FlatActionContractModeV1::BannerV36)
+        && session.flat_action_contract_mode != FlatActionContractModeV1::BannerV36 && session.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)
         || (crate::fiery_annihilation_v1::requires_successor(&session.state)
-        && session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33)
+        && session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33 && session.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)
         || (crate::combat_static_rules_v1::requires_successor(&session.state)
-        && session.flat_action_contract_mode != FlatActionContractModeV1::JuggernautV25)
+        && session.flat_action_contract_mode != FlatActionContractModeV1::JuggernautV25 && session.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)
         || session.state.objects.iter().any(|(_, object)| {
         i16::try_from(object.counters.plus1_plus1).is_err()
             || u16::try_from(object.damage).is_err()
-    }) || session.state.planeswalkers_v1.is_some()
+    }) || (session.state.planeswalkers_v1.is_some() && session.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)
         || session.state.trigger_uses_v1.is_some()
         || session.state.engine.active_replacements.iter().any(|replacement| {
             match replacement.kind {
                 crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. } => true,
-                crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. } => session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33,
+                crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. } => session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33 && session.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40,
                 _ => false,
             }
         })
@@ -4488,6 +4534,7 @@ enum FlatActionContractModeV1 {
     BannerV36,
     InspirationV37,
     FishingPoleV39,
+    AkromaV40,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -5435,6 +5482,24 @@ impl RlEpisodeSessionV1 {
 
     #[cfg(test)]
     fn advance_to_decision_or_terminal(&mut self) {
+        if (if self.flat_action_contract_mode == FlatActionContractModeV1::AkromaV40 {
+            crate::akroma_public_v1::validate_state(&self.state)
+        } else {
+            crate::controlled_creature_grants_v1::require_legacy_consumer_supported(&self.state)
+        })
+        .is_err()
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:controlled_creature_grant_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         self.advance_to_decision_or_terminal_profiled(None);
     }
 
@@ -5442,6 +5507,20 @@ impl RlEpisodeSessionV1 {
         &mut self,
         mut profile: Option<&mut RlPhaseProfileV1>,
     ) {
+        if crate::controlled_creature_grants_v1::require_legacy_consumer_supported(&self.state)
+            .is_err()
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:controlled_creature_grant_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         if crate::fishing_pole_v39::lifecycle::requires_successor(&self.state) {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -7103,8 +7182,30 @@ impl FastActorSessionV1 {
         selected_index: u32,
         apply_path: FastActorApplyPathV1,
     ) -> Result<FastActorResponseV1, RlSessionError> {
+        if self.flat_action_contract_mode == FlatActionContractModeV1::AkromaV40 {
+            let current = self.current.as_ref().ok_or_else(|| {
+                session_error(
+                    RlSessionErrorCode::StaleEnvironmentBinding,
+                    "missing Akroma current decision",
+                )
+            })?;
+            let mut rederived = current.clone();
+            akroma_v40::prepare_current(self, &mut rederived).map_err(|_| {
+                session_error(
+                    RlSessionErrorCode::StaleEnvironmentBinding,
+                    "invalid Akroma complete binding",
+                )
+            })?;
+            if rederived.candidates != current.candidates {
+                return Err(session_error(
+                    RlSessionErrorCode::StaleEnvironmentBinding,
+                    "changed Akroma complete menu",
+                ));
+            }
+        }
         if self.state.extra_turn_v1.is_some()
             && self.flat_action_contract_mode != FlatActionContractModeV1::ExtraTurnV23
+            && self.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40
         {
             return Err(session_error(
                 RlSessionErrorCode::StaleEnvironmentBinding,
@@ -7240,7 +7341,8 @@ impl FastActorSessionV1 {
 
     fn advance_to_decision_or_terminal(&mut self) {
         if (crate::fishing_pole_v39::lifecycle::requires_successor(&self.state)
-            && self.flat_action_contract_mode != FlatActionContractModeV1::FishingPoleV39)
+            && self.flat_action_contract_mode != FlatActionContractModeV1::FishingPoleV39
+            && self.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)
             || (self.flat_action_contract_mode == FlatActionContractModeV1::FishingPoleV39
                 && crate::fishing_pole_observation_v39::validate_projection_authority(&self.state)
                     .is_err())
@@ -7257,7 +7359,8 @@ impl FastActorSessionV1 {
             return;
         }
         if (crate::inspiration_observation_v1::requires_successor(&self.state)
-            && self.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37)
+            && self.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37
+            && self.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)
             || (self.flat_action_contract_mode == FlatActionContractModeV1::InspirationV37
                 && crate::inspiration_observation_v1::validate_projection_authority(&self.state)
                     .is_err())
@@ -7279,7 +7382,8 @@ impl FastActorSessionV1 {
                 && crate::banner_observation_v1::validate_projection_authority(&self.state)
                     .is_err())
             || (crate::heraldic_banner_v1::requires_successor(&self.state)
-                && self.flat_action_contract_mode != FlatActionContractModeV1::BannerV36)
+                && self.flat_action_contract_mode != FlatActionContractModeV1::BannerV36
+                && self.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)
         {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -7295,6 +7399,7 @@ impl FastActorSessionV1 {
 
         if crate::krenko_v1::requires_successor(&self.state)
             && self.flat_action_contract_mode != FlatActionContractModeV1::KrenkoV34
+            && self.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40
         {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -7309,6 +7414,7 @@ impl FastActorSessionV1 {
         }
         if crate::arahbo_v1::requires_successor(&self.state)
             && self.flat_action_contract_mode != FlatActionContractModeV1::ArahboV31
+            && self.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40
         {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -7324,7 +7430,9 @@ impl FastActorSessionV1 {
         if crate::garruks_uprising_v1::requires_successor(&self.state)
             && !matches!(
                 self.flat_action_contract_mode,
-                FlatActionContractModeV1::GarrukV30 | FlatActionContractModeV1::ArahboV31
+                FlatActionContractModeV1::GarrukV30
+                    | FlatActionContractModeV1::ArahboV31
+                    | FlatActionContractModeV1::AkromaV40
             )
         {
             self.current = None;
@@ -7341,6 +7449,7 @@ impl FastActorSessionV1 {
         self.current = None;
         if self.state.extra_turn_v1.is_some()
             && self.flat_action_contract_mode != FlatActionContractModeV1::ExtraTurnV23
+            && self.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40
         {
             self.terminal = Some(halted_terminal(
                 &self.deck_ids,
@@ -7375,6 +7484,7 @@ impl FastActorSessionV1 {
                 FlatActionContractModeV1::BanishingV26
                     | FlatActionContractModeV1::GarrukV30
                     | FlatActionContractModeV1::ArahboV31
+                    | FlatActionContractModeV1::AkromaV40
             )
         {
             self.terminal = Some(halted_terminal(
@@ -7458,7 +7568,9 @@ impl FastActorSessionV1 {
             ));
             return;
         };
-        let raw = if self.flat_action_contract_mode == FlatActionContractModeV1::InspirationV37 {
+        let raw = if self.flat_action_contract_mode == FlatActionContractModeV1::AkromaV40 {
+            akroma_v40::actual_candidates(&surfaced, &self.state)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::InspirationV37 {
             inspiration_v37::actual_candidates(&surfaced, &self.state)
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::BannerV36 {
             banner_v36::actual_candidates(&surfaced, &self.state)
@@ -7677,6 +7789,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:strongbox_v32:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::AkromaV40 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = akroma_v40::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:akroma_v40:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));

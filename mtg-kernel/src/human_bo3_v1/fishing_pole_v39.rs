@@ -290,6 +290,119 @@ type ProjectedFishingPoleV39 = (
     Vec<u32>,
 );
 
+pub(super) fn register_for_akroma_parts(
+    observation: &FishingPoleObservationV1,
+    handles: &mut Handles,
+) -> Result<(), Error> {
+    for row in &observation.projection.surface.stack {
+        handles.insert(&row.source)?;
+    }
+    for row in &observation.extensions.historical_public_sources {
+        handles.insert(&row.source)?;
+    }
+    for row in &observation.facts.poles {
+        handles.insert(&row.source)?;
+    }
+    for row in &observation.facts.operations {
+        handles.insert(&row.original_pole)?;
+    }
+    Ok(())
+}
+pub(super) fn state_for_akroma_parts(
+    observation: &FishingPoleObservationV1,
+    handles: &mut Handles,
+    human: PlayerSeatV1,
+) -> Result<HumanFishingPoleExtensionsV39, Error> {
+    Ok(state(observation, handles, human)?.extensions)
+}
+pub(super) fn unary_for_akroma_parts(
+    extension: &HumanFishingPoleExtensionsV39,
+    unary: &mut BTreeMap<String, Vec<String>>,
+) -> Result<(), Error> {
+    for row in &extension.predecessor.predecessor.ward_life_card_traits {
+        unary
+            .entry(row.source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    for (ordinal, row) in extension.poles.iter().enumerate() {
+        let facts = visible::without_handles(row)?;
+        unary
+            .entry(row.source.handle.clone())
+            .or_default()
+            .push(format!("Pole{ordinal}:source:{facts}"));
+        if let Some(host) = row
+            .attached_host
+            .as_ref()
+            .and_then(|host| host.current_visible_card.as_ref())
+        {
+            unary
+                .entry(host.handle.clone())
+                .or_default()
+                .push(format!("Pole{ordinal}:host:{facts}"));
+        }
+    }
+    for (ordinal, row) in extension.operations.iter().enumerate() {
+        let facts = visible::without_handles(row)?;
+        unary
+            .entry(row.original_pole.handle.clone())
+            .or_default()
+            .push(format!("Operation{ordinal}:source:{facts}"));
+        for (role, relation) in [
+            ("host", Some(&row.original_host)),
+            ("fish", row.created_fish.as_ref()),
+        ] {
+            if let Some(card) = relation.and_then(|r| r.current_visible_card.as_ref()) {
+                unary
+                    .entry(card.handle.clone())
+                    .or_default()
+                    .push(format!("Operation{ordinal}:{role}:{facts}"));
+            }
+        }
+    }
+    Ok(())
+}
+pub(super) fn label_for_akroma_parts(
+    action: &ActionSemanticV1,
+    observation: &crate::akroma_family_public_v40::FishingProjectionV40,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<Option<String>, Error> {
+    let classified = observation
+        .actions
+        .iter()
+        .filter(|row| row.semantic == *action)
+        .collect::<Vec<_>>();
+    let [classified] = classified.as_slice() else {
+        if classified.iter().any(|row| row.granted_label.is_some()) {
+            return Err(Error::InvalidAction);
+        }
+        return Ok(None);
+    };
+    let selected = classified.granted_label.is_some()
+        || matches!(action, ActionSemanticV1::OrderTriggers { pending_sources, .. } if pending_sources.iter().any(|source| observation.parts.facts.operations.iter().any(|op| op.trigger && op.stage == crate::fishing_pole_public_v39::StageV39::Pending && op.original_pole == *source)))
+        || match action {
+            ActionSemanticV1::CastSpell { source, .. }
+            | ActionSemanticV1::ActivateAbility { source, .. } => observation
+                .parts
+                .roots
+                .iter()
+                .any(|root| root.card_id == source.card_db_id),
+            _ => false,
+        };
+    if !selected {
+        return Ok(None);
+    }
+    super::labels::label_fishing_pole_v39(
+        action,
+        classified.granted_label.as_ref(),
+        &observation.parts,
+        handles,
+        human,
+    )
+    .map(Some)
+}
+
 fn project_base(
     observation: &FishingPoleObservationV1,
     actions: &[crate::rl_session::fishing_pole_v39::ClassifiedActionV39],

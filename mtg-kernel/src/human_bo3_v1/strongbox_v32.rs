@@ -277,6 +277,110 @@ type ProjectedStrongboxV32 = (
     Vec<u32>,
 );
 
+// V40 uses the same typed safe fields; no predecessor artifact/input admission.
+pub(super) fn register_for_akroma_parts(
+    observation: &crate::strongbox_public_v1::StrongboxObservationV1,
+    handles: &mut Handles,
+) -> Result<(), Error> {
+    for row in &observation.projection.surface.stack {
+        handles.insert(&row.source)?;
+    }
+    for row in &observation.extensions.historical_public_sources {
+        handles.insert(&row.source)?;
+    }
+    for row in &observation.entries {
+        handles.insert(&row.source_at_entry)?;
+        for card in &row.exiled {
+            handles.insert(card)?;
+        }
+        if let Some(card) = &row.selected {
+            handles.insert(card)?;
+        }
+        if let Some(permission) = &row.ordinary_permission {
+            handles.insert(&permission.card)?;
+        }
+    }
+    if let Some(menu) = &observation.selection_menu {
+        handles.insert(&menu.source_at_entry)?;
+        for card in menu.legal.iter().chain(&menu.selected) {
+            handles.insert(card)?;
+        }
+    }
+    Ok(())
+}
+pub(super) fn state_for_akroma_parts(
+    observation: &crate::strongbox_public_v1::StrongboxObservationV1,
+    handles: &mut Handles,
+    human: PlayerSeatV1,
+) -> Result<HumanStrongboxExtensionsV32, Error> {
+    Ok(state(observation, handles, human)?.extensions)
+}
+pub(super) fn label_for_akroma_parts(
+    action: &ActionSemanticV1,
+    observation: &crate::strongbox_public_v1::StrongboxObservationV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    super::labels::label_strongbox_v32(action, observation, handles, human)
+}
+
+pub(super) fn unary_for_akroma_parts(
+    extension: &HumanStrongboxExtensionsV32,
+    unary: &mut BTreeMap<String, Vec<String>>,
+) -> Result<(), Error> {
+    for row in &extension.predecessor.predecessor.ward_life_card_traits {
+        unary
+            .entry(row.source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    for row in &extension.entries {
+        unary
+            .entry(row.source_at_entry.handle.clone())
+            .or_default()
+            .push(format!(
+                "strongbox_entry:{}",
+                visible::without_handles(row)?
+            ));
+        for (index, card) in row.exiled.iter().enumerate() {
+            unary
+                .entry(card.handle.clone())
+                .or_default()
+                .push(format!("strongbox_exile:{}:{index}", row.entry_order));
+        }
+        if let Some(card) = &row.selected {
+            unary
+                .entry(card.handle.clone())
+                .or_default()
+                .push(format!("strongbox_selected:{}", row.entry_order));
+        }
+        if let Some(permission) = &row.permission {
+            unary
+                .entry(permission.card.handle.clone())
+                .or_default()
+                .push(format!(
+                    "strongbox_permission:{}",
+                    visible::without_handles(permission)?
+                ));
+        }
+    }
+    if let Some(menu) = &extension.selection_menu {
+        unary
+            .entry(menu.source_at_entry.handle.clone())
+            .or_default()
+            .push(format!(
+                "strongbox_chooser:{}",
+                visible::without_handles(menu)?
+            ));
+        for card in &menu.legal {
+            unary
+                .entry(card.handle.clone())
+                .or_default()
+                .push("strongbox_legal_exile".into());
+        }
+    }
+    Ok(())
+}
 fn project_base(
     observation: &StrongboxObservationV1,
     actions: &[ActionSemanticV1],

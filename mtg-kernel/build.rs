@@ -4610,6 +4610,17 @@ fn enters_with_plus_one_counters_for(name: &str) -> &'static str {
     }
 }
 
+fn controlled_creature_grant_for(name: &str) -> &'static str {
+    if cfg!(feature = "standard-magezero-fixtures") || !cfg!(feature = "limited-fdn-fixtures") {
+        return "None";
+    }
+    match name {
+        "Akroma's Memorial" => {
+            "Some(ControlledCreatureGrantDef { keywords: Keywords(61), protection_color_mask: 12 })"
+        }
+        _ => "None",
+    }
+}
 fn controlled_counter_keyword_for(name: &str) -> &'static str {
     match name {
         "Gnarlid Colony" => "Some(Keywords::TRAMPLE)",
@@ -9941,6 +9952,12 @@ fn codegen(cards: &[CardJson]) -> String {
             controlled_counter_keyword_for(&c.name)
         )
         .unwrap();
+        writeln!(
+            out,
+            "        controlled_creature_grant: {},",
+            controlled_creature_grant_for(&c.name)
+        )
+        .unwrap();
         writeln!(out, "        keywords: {},", keywords_for(c)).unwrap();
         writeln!(out, "        spell_effect: {spell_effect_src},").unwrap();
         writeln!(out, "        mana_ability: {mana_ability_src},").unwrap();
@@ -10290,6 +10307,10 @@ fn codegen(cards: &[CardJson]) -> String {
         }
         if c.name == "Goblin Boarders" {
             canon.push_str(";raid_entry_counters=controller_declared_attackers_this_turn:round_and_active_seat:printed_abilities_active:plus_one_counter:1:before_entry_events_and_sbas");
+        }
+        let creature_grant = controlled_creature_grant_for(&c.name);
+        if creature_grant != "None" {
+            canon.push_str(&format!(";controlled_creature_grant={creature_grant}"));
         }
         let counter_keyword = controlled_counter_keyword_for(&c.name);
         if counter_keyword != "None" {

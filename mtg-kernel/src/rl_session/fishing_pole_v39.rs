@@ -15,7 +15,7 @@ pub(crate) struct ClassifiedActionV39 {
     pub semantic: ActionSemanticV1,
     pub granted_label: Option<GrantedLabelV39>,
 }
-fn classify(
+pub(super) fn classify(
     state: &GameState,
     semantic: ActionSemanticV1,
 ) -> Result<ClassifiedActionV39, FlatActionDecisionSliceErrorV1> {

@@ -444,6 +444,7 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         starting_loyalty,
         enters_with_plus_one_counters,
         controlled_counter_keyword,
+        controlled_creature_grant,
         is_land,
         produces_mana,
         colors,
@@ -1086,6 +1087,17 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                         .keyword(keyword),
                 );
             }
+        });
+    }
+    if let Some(grant) = controlled_creature_grant {
+        walk.rec(
+            "controlled_creature_grant",
+            json!([grant.keywords.0, grant.protection_color_mask]),
+        );
+        walk.opaque
+            .push("live controlled-creature keyword and color-protection descriptor");
+        walk.ability(CtxF::Static, |out| {
+            out.atoms.push(Atom::Opaque);
         });
     }
     if crate::engine::static_counter_keyword_controller_turn_only_for(name) {

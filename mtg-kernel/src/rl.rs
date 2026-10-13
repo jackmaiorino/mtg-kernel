@@ -1837,6 +1837,16 @@ pub fn card_name(card_id: u16) -> String {
 }
 
 fn refuse_unrepresented_shroud(state: &GameState) -> Result<()> {
+    refuse_unrepresented_shroud_for_akroma(state, false)
+}
+fn refuse_unrepresented_shroud_for_akroma(state: &GameState, accept_akroma: bool) -> Result<()> {
+    if accept_akroma {
+        crate::controlled_creature_grants_v1::validate_color_history(state)
+            .map_err(RlContractError)?;
+    } else {
+        crate::controlled_creature_grants_v1::require_legacy_consumer_supported(state)
+            .map_err(RlContractError)?;
+    }
     if state.objects.iter().any(|(id, object)| {
         object.zone == Zone::Battlefield
             && engine::has_effective_keyword(state, id, Keywords::SHROUD)
@@ -2012,6 +2022,7 @@ fn build_observation_common_v2(
         step_index,
         text_mode,
         (capabilities, false),
+        false,
     )
 }
 
@@ -2040,9 +2051,10 @@ fn build_observation_common_v2_fishing_v39(
         ),
         bool,
     ),
+    accept_akroma: bool,
 ) -> Result<ObservationV2> {
     let (capabilities, accept_fishing) = capabilities;
-    refuse_unrepresented_shroud(state)?;
+    refuse_unrepresented_shroud_for_akroma(state, accept_akroma)?;
     let (
         accept_cant_block,
         accept_temporary_control,
@@ -2442,6 +2454,7 @@ fn build_policy_observation_parts_common(
         step_index,
         text_mode,
         (capabilities, false),
+        false,
     )
 }
 
@@ -2470,9 +2483,10 @@ fn build_policy_observation_parts_common_fishing_v39(
         ),
         bool,
     ),
+    accept_akroma: bool,
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
     let (capabilities, accept_fishing) = capabilities;
-    refuse_unrepresented_shroud(state)?;
+    refuse_unrepresented_shroud_for_akroma(state, accept_akroma)?;
     let (
         accept_cant_block,
         accept_temporary_control,
@@ -2549,6 +2563,7 @@ fn build_policy_observation_parts_common_fishing_v39(
             ),
             accept_fishing,
         ),
+        accept_akroma,
     )?;
     let context = policy_surface_context_v5(
         state,
@@ -3151,6 +3166,43 @@ pub(crate) fn fiery_observation_storage_v1(
         ),
     )
 }
+pub(crate) fn akroma_family_observation_storage_v40(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::controlled_creature_grants_v1::validate_color_history(state).map_err(RlContractError)?;
+    crate::akroma_family_public_v40::validate_state(state).map_err(RlContractError)?;
+    build_policy_observation_storage_common_fishing_v39(
+        (
+            PolicyObservationBuildV5 {
+                state,
+                surface,
+                acting_player: actor,
+                step_index,
+                physical_decision_id,
+                substep_index: substep.0,
+                substep_count: substep.1,
+                text_mode: ObservationTextModeV2::FullArtifact,
+            },
+            true,
+        ),
+        true,
+        true,
+        true,
+        true,
+        true,
+        (
+            (
+                true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+            ),
+            true,
+        ),
+    )
+}
 pub(crate) fn inspiration_observation_storage_v1(
     state: &GameState,
     surface: &PolicySurfaceV5,
@@ -3226,16 +3278,19 @@ pub(crate) fn fishing_pole_observation_storage_v39(
     crate::fishing_pole_observation_v39::validate_projection_authority(state)?;
     crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
     build_policy_observation_storage_common_fishing_v39(
-        PolicyObservationBuildV5 {
-            state,
-            surface,
-            acting_player: actor,
-            step_index,
-            physical_decision_id,
-            substep_index: substep.0,
-            substep_count: substep.1,
-            text_mode: ObservationTextModeV2::FullArtifact,
-        },
+        (
+            PolicyObservationBuildV5 {
+                state,
+                surface,
+                acting_player: actor,
+                step_index,
+                physical_decision_id,
+                substep_index: substep.0,
+                substep_count: substep.1,
+                text_mode: ObservationTextModeV2::FullArtifact,
+            },
+            false,
+        ),
         true,
         false,
         false,
@@ -3440,7 +3495,7 @@ fn build_policy_observation_storage_common(
     ),
 ) -> Result<PolicyObservationStorageV6> {
     build_policy_observation_storage_common_fishing_v39(
-        request,
+        (request, false),
         accept_life_ward,
         accept_cant_block,
         accept_wildwood,
@@ -3451,7 +3506,7 @@ fn build_policy_observation_storage_common(
 }
 
 fn build_policy_observation_storage_common_fishing_v39(
-    request: PolicyObservationBuildV5<'_>,
+    request: (PolicyObservationBuildV5<'_>, bool),
     accept_life_ward: bool,
     accept_cant_block: bool,
     accept_wildwood: bool,
@@ -3477,6 +3532,7 @@ fn build_policy_observation_storage_common_fishing_v39(
         bool,
     ),
 ) -> Result<PolicyObservationStorageV6> {
+    let (request, accept_akroma) = request;
     let (accepted_statics, accept_fishing) = accepted_statics;
     let (
         accept_authority,
@@ -3618,6 +3674,7 @@ fn build_policy_observation_storage_common_fishing_v39(
             ),
             accept_fishing,
         ),
+        accept_akroma,
     )?;
     if let Some(search) = &extensions.decision_local_library {
         let Some(PendingEffectChoiceSemanticV4::Targets { legal_targets, .. }) = base
@@ -3775,6 +3832,19 @@ pub(crate) fn policy_observation_extensions_common_for_human_v8(
         state,
         acting_player,
         ObservationTextModeV2::FlatForbiddenElided,
+        true,
+    )
+}
+
+pub(crate) fn policy_observation_extensions_fishing_union_v40(
+    state: &GameState,
+    actor: PlayerId,
+) -> Result<PolicyObservationExtensionsV6> {
+    policy_observation_extensions_common_v6_fishing_v39(
+        state,
+        actor,
+        ObservationTextModeV2::FlatForbiddenElided,
+        true,
         true,
     )
 }

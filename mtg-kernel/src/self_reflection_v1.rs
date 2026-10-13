@@ -67,6 +67,7 @@ pub(crate) fn anonymous_blueprint_is_exact(card_def: u16) -> bool {
         && def.starting_loyalty.is_none()
         && def.enters_with_plus_one_counters.is_none()
         && def.controlled_counter_keyword.is_none()
+        && def.controlled_creature_grant.is_none()
         && def.alt_cost.is_none()
         && def.kicker_cost.is_none()
         && def.additional_cost.is_none()

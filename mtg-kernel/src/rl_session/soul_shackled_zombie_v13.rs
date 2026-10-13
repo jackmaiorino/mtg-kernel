@@ -6,6 +6,62 @@ use crate::soul_shackled_zombie_public_v1::{
 };
 use crate::state::{AbilitySourceContractV4, StackTargetContractV4};
 
+pub(crate) fn context_for_akroma_v40(
+    state: &crate::state::GameState,
+    stage: TriggerStageV1,
+    source: AbilitySourceContractV4,
+    targets: &[Target],
+    contracts: &[StackTargetContractV4],
+) -> Result<SingleGraveyardContextV1, RlContractError> {
+    let legal_choices = Vec::new();
+    let can_finish = false;
+    crate::soul_shackled_zombie_v1::validate_source(state, source).map_err(RlContractError)?;
+    crate::soul_shackled_zombie_v1::validate_target_contracts(contracts)
+        .map_err(RlContractError)?;
+    let selected = contracts
+        .iter()
+        .map(selected_ref)
+        .collect::<Result<Vec<_>, _>>()?;
+    let selected_live_legal = targets
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            state
+                .objects
+                .try_get(match t {
+                    Target::Object(id) => *id,
+                    _ => return false,
+                })
+                .is_some_and(|o| {
+                    o.zone_change_count == selected[i].zone_change_count
+                        && o.zone == selected[i].zone
+                })
+                && crate::engine::effect_target_is_legal_from_ability_source(
+                    state,
+                    source,
+                    source.controller,
+                    crate::card_def::TargetSpec::UpToTwoCardsInSingleGraveyard,
+                    targets,
+                    i,
+                )
+        })
+        .collect();
+    Ok(SingleGraveyardContextV1 {
+        stage,
+        source: source_ref(source),
+        original_controller: source.controller.into(),
+        captured_definition_colors: crate::card_def::CARD_DEFS[source.card_def as usize]
+            .colors
+            .to_vec(),
+        selected_graveyard_owner: selected.first().map(|r| r.owner),
+        selected,
+        selected_live_legal,
+        minimum: 0,
+        maximum: 2,
+        legal_choices,
+        can_finish,
+    })
+}
 fn source_ref(c: AbilitySourceContractV4) -> CardStableRefV1 {
     CardStableRefV1 {
         arena_id: c.source.0,

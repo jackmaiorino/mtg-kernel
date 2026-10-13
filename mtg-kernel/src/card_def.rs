@@ -2032,6 +2032,13 @@ pub struct ChosenColorCreatureBoostDefV1 {
     pub toughness: i16,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ControlledCreatureGrantDef {
+    pub keywords: Keywords,
+    /// WUBRG color bits, evaluated against all source colors.
+    pub protection_color_mask: u8,
+}
+
 pub struct CardDef {
     pub name: &'static str,
     pub capability: CardCapability,
@@ -2067,6 +2074,8 @@ pub struct CardDef {
     pub enters_with_plus_one_counters: Option<EntersWithPlusOneCountersDef>,
     /// Continuously grants this keyword to controlled creatures with +1/+1 counters.
     pub controlled_counter_keyword: Option<Keywords>,
+    /// Immutable continuous grants to every currently controlled creature.
+    pub controlled_creature_grant: Option<ControlledCreatureGrantDef>,
     pub is_land: bool,
     pub produces_mana: &'static [ManaColor],
     /// This card's color identity per 105.1/202.2 (the color of mana

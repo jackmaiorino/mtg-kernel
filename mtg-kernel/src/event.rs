@@ -1283,6 +1283,10 @@ pub enum CommittedEvent {
     FishingPoleJournalV39 {
         journal: Box<crate::fishing_pole_v39::lifecycle::JournalV39>,
     },
+    ProtectionSourceColorDepartureV1 {
+        snapshot: crate::controlled_creature_grants_v1::DepartureColorV1,
+        departure_history_index: u64,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -2291,7 +2295,7 @@ fn commit_with_ability_lki_and_entry_batch(
     event: ProposedEvent,
     abilities_removed_before: Option<bool>,
     frozen_death_captures: Option<Vec<CommittedEvent>>,
-    mut authority_batch: Option<&mut crate::authority_of_the_consuls_v1::EntryBatchV1>,
+    authority_batch: Option<&mut crate::authority_of_the_consuls_v1::EntryBatchV1>,
     entry_batches: (
         Option<&mut crate::garruks_uprising_v1::EntryBatchV1>,
         Option<&mut crate::arahbo_v1::EntryBatchV1>,
@@ -2301,6 +2305,36 @@ fn commit_with_ability_lki_and_entry_batch(
         bool,
     ),
 ) {
+    commit_with_entry_batch_and_source_color(
+        state,
+        event,
+        abilities_removed_before,
+        frozen_death_captures,
+        authority_batch,
+        entry_batches,
+        (entry_context, None),
+    );
+}
+type EntryContextWithSourceColorV1 = (
+    (
+        Option<(ObjectId, crate::garruks_uprising_v1::EntryCharacteristicsV1)>,
+        bool,
+    ),
+    Option<crate::controlled_creature_grants_v1::DepartureColorV1>,
+);
+fn commit_with_entry_batch_and_source_color(
+    state: &mut GameState,
+    event: ProposedEvent,
+    abilities_removed_before: Option<bool>,
+    frozen_death_captures: Option<Vec<CommittedEvent>>,
+    mut authority_batch: Option<&mut crate::authority_of_the_consuls_v1::EntryBatchV1>,
+    entry_batches: (
+        Option<&mut crate::garruks_uprising_v1::EntryBatchV1>,
+        Option<&mut crate::arahbo_v1::EntryBatchV1>,
+    ),
+    entry_context: EntryContextWithSourceColorV1,
+) {
+    let (entry_context, frozen_source_color) = entry_context;
     match crate::linked_aura_operation_v1::prepare_entry_colors(state, std::slice::from_ref(&event))
     {
         Ok(true) => {}
@@ -2314,6 +2348,8 @@ fn commit_with_ability_lki_and_entry_batch(
         }
     }
     let entry_color_proposal = event.clone();
+    let source_color = frozen_source_color
+        .or_else(|| crate::controlled_creature_grants_v1::capture_departure_color(state, &event));
     let (entering_characteristics, defer_raid_entry) = entry_context;
     let (mut garruk_batch, mut arahbo_batch) = entry_batches;
     // Direct commits are also used for simultaneous state-based deaths. Apply
@@ -2772,6 +2808,12 @@ fn commit_with_ability_lki_and_entry_batch(
         | CommittedEvent::CreateToken { object, .. } => Some(*object),
         _ => None,
     };
+    if let Some(snapshot) = source_color.filter(|snapshot| {
+        matches!(&committed, CommittedEvent::ZoneChange { object, from: Zone::Battlefield, to, .. }
+            if *object == snapshot.source.source && *to != Zone::Battlefield)
+    }) {
+        crate::controlled_creature_grants_v1::log_departure_color(state, snapshot);
+    }
     state.engine.event_log.push(committed.clone());
     let committed_death = matches!(
         committed,
@@ -3030,6 +3072,14 @@ fn commit_batch_survivors(
             lifelink_gains.push((damage.source, player, amount));
         }
     }
+    let source_colors = crate::controlled_creature_grants_v1::enabled().then(|| {
+        survivors
+            .iter()
+            .filter_map(|event| {
+                crate::controlled_creature_grants_v1::capture_departure_color(state, event)
+            })
+            .collect::<Vec<_>>()
+    });
     let mut death_captures = crate::creature_death_capture_v1::enabled().then(|| {
         survivors
             .iter()
@@ -3055,14 +3105,16 @@ fn commit_batch_survivors(
             let captures = death_captures
                 .as_mut()
                 .map(|captures| captures.next().expect("one capture per batch member"));
-            commit_with_ability_lki_and_entry_batch(
+            let frozen_color = source_colors.as_ref().and_then(|colors| colors.iter().cloned().find(|snapshot|
+                matches!(&event, ProposedEvent::ZoneChange(change) if change.object == snapshot.source.source)));
+            commit_with_entry_batch_and_source_color(
                 state,
                 event,
                 Some(removed),
                 captures,
                 authority_batch.as_mut(),
                 (garruk_batch.as_mut(), arahbo_batch.as_mut()),
-                (None, true),
+                ((None, true), frozen_color),
             );
         }
     } else {
@@ -3070,14 +3122,16 @@ fn commit_batch_survivors(
             let captures = death_captures
                 .as_mut()
                 .map(|captures| captures.next().expect("one capture per batch member"));
-            commit_with_ability_lki_and_entry_batch(
+            let frozen_color = source_colors.as_ref().and_then(|colors| colors.iter().cloned().find(|snapshot|
+                matches!(&event, ProposedEvent::ZoneChange(change) if change.object == snapshot.source.source)));
+            commit_with_entry_batch_and_source_color(
                 state,
                 event,
                 None,
                 captures,
                 authority_batch.as_mut(),
                 (garruk_batch.as_mut(), arahbo_batch.as_mut()),
-                (None, true),
+                ((None, true), frozen_color),
             );
         }
     }
@@ -3138,6 +3192,18 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
             .map(|id| ProposedEvent::zone_change(*id, Zone::Graveyard))
             .collect::<Vec<_>>(),
     );
+    let mut source_colors = crate::controlled_creature_grants_v1::enabled().then(|| {
+        chosen
+            .iter()
+            .map(|id| {
+                crate::controlled_creature_grants_v1::capture_departure_color(
+                    state,
+                    &ProposedEvent::zone_change(*id, Zone::Graveyard),
+                )
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+    });
     let captures = chosen
         .iter()
         .map(|id| {
@@ -3148,11 +3214,20 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
         })
         .collect::<Vec<_>>();
     for (&id, captures) in chosen.iter().zip(captures) {
+        let frozen_color = source_colors.as_mut().and_then(Iterator::next).flatten();
         log_sacrifice(state, id);
         if let Some(event) =
             apply_replacements(state, ProposedEvent::zone_change(id, Zone::Graveyard))
         {
-            commit_with_ability_lki(state, event, None, Some(captures));
+            commit_with_entry_batch_and_source_color(
+                state,
+                event,
+                None,
+                Some(captures),
+                None,
+                (None, None),
+                ((None, false), frozen_color),
+            );
         }
     }
 }
@@ -3175,9 +3250,34 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
             .map(|id| ProposedEvent::zone_change(*id, Zone::Graveyard))
             .collect::<Vec<_>>(),
     );
+    let mut source_colors = crate::controlled_creature_grants_v1::enabled().then(|| {
+        dying
+            .iter()
+            .map(|id| {
+                crate::controlled_creature_grants_v1::capture_departure_color(
+                    state,
+                    &ProposedEvent::zone_change(*id, Zone::Graveyard),
+                )
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+    });
     if !crate::creature_death_capture_v1::enabled() {
         for id in dying {
-            commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
+            let frozen_color = source_colors.as_mut().and_then(Iterator::next).flatten();
+            if frozen_color.is_some() {
+                commit_with_entry_batch_and_source_color(
+                    state,
+                    ProposedEvent::zone_change(id, Zone::Graveyard),
+                    None,
+                    None,
+                    None,
+                    (None, None),
+                    ((None, false), frozen_color),
+                );
+            } else {
+                commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
+            }
         }
         crate::linked_aura_operation_v1::end_batch(state);
         return;
@@ -3191,7 +3291,16 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
         .map(|event| crate::creature_death_capture_v1::capture(state, event))
         .collect::<Vec<_>>();
     for (event, captures) in events.into_iter().zip(captures) {
-        commit_with_ability_lki(state, event, None, Some(captures));
+        let frozen_color = source_colors.as_mut().and_then(Iterator::next).flatten();
+        commit_with_entry_batch_and_source_color(
+            state,
+            event,
+            None,
+            Some(captures),
+            None,
+            (None, None),
+            ((None, false), frozen_color),
+        );
     }
     crate::linked_aura_operation_v1::end_batch(state);
 }

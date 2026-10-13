@@ -178,6 +178,182 @@ fn roots() -> Result<Vec<RootV1>, RlContractError> {
     .collect()
 }
 
+// V40 consumes these private typed parts; standalone predecessors retain their refusal path.
+pub(crate) fn parts_for_akroma_v40(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<AuthorityObservationV1, RlContractError> {
+    let (substep_index, substep_count) = substep;
+
+    crate::authority_public_capture_v1::validate_state(state).map_err(RlContractError)?;
+    let mut entry_occurrences = Vec::new();
+    let mut event_order = 0;
+    let mut previous_entry = None;
+    for event in &state.engine.event_history {
+        let crate::event::CommittedEvent::AuthorityEntryCaptureV1 { capture } = event else {
+            continue;
+        };
+        if previous_entry.is_some_and(|previous| previous != capture.observer_authority_index) {
+            event_order += 1;
+        }
+        previous_entry = Some(capture.observer_authority_index);
+        let facts =
+            crate::authority_public_capture_v1::facts_at(state, capture.observer_authority_index)
+                .map_err(RlContractError)?;
+        let entrant_at_entry = facts
+            .entrant
+            .clone()
+            .ok_or_else(|| RlContractError("public entrant sentinel missing".into()))?;
+        let index = capture.history_index;
+        let owns = |pending: &crate::trigger::PendingTrigger| {
+            matches!(pending.effect,
+            crate::effect::EffectOp::AuthorityEntryGainLifeV1 { capture_history_index } if capture_history_index == index)
+        };
+        let stack_index = state.stack.iter().position(|item| matches!(item.inline_effect,
+            Some(crate::effect::EffectOp::AuthorityEntryGainLifeV1 { capture_history_index }) if capture_history_index == index))
+            .map(u32::try_from).transpose().map_err(|_| RlContractError("public stack ordinal overflow".into()))?;
+        let pending_order_index = state
+            .engine
+            .pending_triggers
+            .iter()
+            .position(owns)
+            .map(u32::try_from)
+            .transpose()
+            .map_err(|_| RlContractError("public trigger ordinal overflow".into()))?;
+        let lifecycle = if let Some(kind) =
+            state
+                .engine
+                .event_history
+                .iter()
+                .find_map(|event| match event {
+                    crate::event::CommittedEvent::AuthorityEntryOperationV1 {
+                        capture_history_index,
+                        kind,
+                        ..
+                    } if *capture_history_index == index => Some(kind),
+                    _ => None,
+                }) {
+            match kind { crate::authority_of_the_consuls_v1::AuthorityEntryOperationKindV1::GainCommitted { .. } => EntryLifecycleV1::Gained,
+                crate::authority_of_the_consuls_v1::AuthorityEntryOperationKindV1::CounterCommitted => EntryLifecycleV1::Countered }
+        } else if stack_index.is_some() {
+            EntryLifecycleV1::Published
+        } else if state.engine.pending_triggers.iter().any(owns) {
+            EntryLifecycleV1::Pending
+        } else if state.legend_pending_v1.iter().flatten().any(owns)
+            || state
+                .pending_legend_rule_v1
+                .iter()
+                .flat_map(|pending| pending.waiting_triggers())
+                .any(owns)
+        {
+            EntryLifecycleV1::LegendWaiting
+        } else if state
+            .standard_v1
+            .iter()
+            .filter_map(|standard| standard.resolution_play.as_ref())
+            .flat_map(|resolution| resolution.deferred_triggers.iter())
+            .any(owns)
+        {
+            EntryLifecycleV1::ResolutionDeferred
+        } else {
+            EntryLifecycleV1::Uncollected
+        };
+        let source = capture.source;
+        entry_occurrences.push(EntryOccurrenceV1 {
+            entrant_at_entry,
+            entrant_face_index: facts.entrant_face_index,
+            observer_at_entry: CardStableRefV1 {
+                arena_id: source.source.0,
+                card_db_id: source.card_def,
+                owner: source.owner.into(),
+                controller: source.controller.into(),
+                zone: source.zone,
+                zone_change_count: source.zone_change_count,
+            },
+            beneficiary: source.controller.into(),
+            event_order,
+            lifecycle,
+            stack_index,
+            pending_order_index,
+            original_source_present: state.objects.try_get(source.source).is_some_and(|live| {
+                live.owner == source.owner
+                    && live.zone == Zone::Battlefield
+                    && live.zone_change_count == source.zone_change_count
+            }),
+        });
+    }
+    let active_sources = state
+        .objects
+        .iter()
+        .filter(|(source, _)| crate::authority_of_the_consuls_v1::active(state, *source))
+        .map(|(source, live)| {
+            Ok(ActiveSourceV1 {
+                source: crate::sower_restriction_capture_v1::masked_ref(source, live)?,
+                affected_entry_controller: live.controller.opponent().into(),
+                opposing_creatures_enter_tapped: true,
+                mandatory_gain_per_entry: 1,
+            })
+        })
+        .collect::<Result<Vec<_>, RlContractError>>()?;
+    let base = crate::rl::akroma_family_observation_storage_v40(
+        state,
+        surface,
+        actor,
+        step_index,
+        physical_decision_id,
+        (substep_index, substep_count),
+    )?;
+    let storage = crate::policy_observation_v8::observation_storage_v8(state, actor, base)?;
+    let mut base = storage.base;
+    // Pending Authority rows always name the captured observer, including a
+    // visible source whose controller changed. Ordinary rows remain untouched.
+    for row in &entry_occurrences {
+        if let Some(position) = row.pending_order_index {
+            let pending = base
+                .projection
+                .surface
+                .engine_context
+                .pending_triggers
+                .get_mut(position as usize)
+                .ok_or_else(|| {
+                    RlContractError("Authority public pending position missing".into())
+                })?;
+            pending.source = Some(row.observer_at_entry.clone());
+        }
+    }
+    let observation = AuthorityObservationV1 {
+        schema: String::new(),
+        producer_sha256: String::new(),
+        kernel_version: base.kernel_version,
+        surface_version: base.surface_version,
+        policy_surface_version: base.policy_surface_version,
+        card_db_hash: base.card_db_hash,
+        acting_player: base.acting_player,
+        step_index: base.step_index,
+        physical_decision_id: base.physical_decision_id,
+        substep_index: base.substep_index,
+        substep_count: base.substep_count,
+        projection: base.projection,
+        own_hand: base.own_hand,
+        known_library_cards: base.known_library_cards,
+        known_hand_cards: base.known_hand_cards,
+        known_face_down_cards: base.known_face_down_cards,
+        extensions: storage.extensions,
+        attacked_this_turn: [
+            state.player_attacked_this_turn_v1(PlayerId::P0),
+            state.player_attacked_this_turn_v1(PlayerId::P1),
+        ],
+        entry_occurrences,
+        active_sources,
+        roots: roots()?,
+        projection_sha256: String::new(),
+    };
+    Ok(observation)
+}
 #[allow(clippy::too_many_arguments)]
 pub fn observe_v1(
     state: &GameState,

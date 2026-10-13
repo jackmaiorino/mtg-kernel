@@ -214,6 +214,55 @@ pub fn observe_v1(
     Ok(observation)
 }
 
+pub(crate) fn parts_for_akroma_v40(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<FishingPoleObservationV1, RlContractError> {
+    let (substep_index, substep_count) = substep;
+    validate_projection_authority(state)?;
+    let base = crate::rl::akroma_family_observation_storage_v40(
+        state,
+        surface,
+        actor,
+        step_index,
+        physical_decision_id,
+        (substep_index, substep_count),
+    )?;
+    let storage = crate::policy_observation_v8::observation_storage_v8(state, actor, base)?;
+    let base = storage.base;
+    let observation = FishingPoleObservationV1 {
+        schema: String::new(),
+        producer_sha256: String::new(),
+        kernel_version: base.kernel_version,
+        surface_version: base.surface_version,
+        policy_surface_version: base.policy_surface_version,
+        card_db_hash: base.card_db_hash,
+        acting_player: base.acting_player,
+        step_index: base.step_index,
+        physical_decision_id: base.physical_decision_id,
+        substep_index: base.substep_index,
+        substep_count: base.substep_count,
+        projection: base.projection,
+        own_hand: base.own_hand,
+        known_library_cards: base.known_library_cards,
+        known_hand_cards: base.known_hand_cards,
+        known_face_down_cards: base.known_face_down_cards,
+        extensions: storage.extensions,
+        attacked_this_turn: [
+            state.player_attacked_this_turn_v1(PlayerId::P0),
+            state.player_attacked_this_turn_v1(PlayerId::P1),
+        ],
+        facts: crate::fishing_pole_public_v39::facts_v39(state)?,
+        roots: roots()?,
+        projection_sha256: String::new(),
+    };
+    Ok(observation)
+}
+
 pub(crate) fn validate_projection_authority(state: &GameState) -> Result<(), RlContractError> {
     crate::effect::validate_pending_effect_choice(state).map_err(RlContractError)?;
     crate::fishing_pole_public_v39::facts_v39(state)?;
