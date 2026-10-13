@@ -20,6 +20,13 @@ def calibrate(paths):
             require(row["evaluation"].get("performed") is False, "calibration must not inspect action quality")
             anchor = row.get("anchor", row["budget"])
             require(row["budget"] == anchor and anchor in (16000, 64000), "baseline calibration must use actual transition anchor")
+            require(row.get("safety_cap") == anchor and row["selection"].get("transitions") == anchor
+                    and row.get("safety_cap_reached") is True,
+                    "baseline calibration did not complete the actual transition ceiling")
+            require(row.get("cpu_budget_seconds") is None and row.get("work_limit") is None,
+                    "baseline calibration cannot stop on CPU or replay work limits")
+            require(row.get("technical_incomplete") is False and row["selection"].get("incomplete") is False
+                    and row["selection"].get("faults") == [], "baseline calibration contains technical search failure")
             cpu = job["cpu_seconds"]
             require(math.isfinite(cpu) and cpu > 0, "final process CPU missing")
             # Source load is already counted by the native full process cutoff.

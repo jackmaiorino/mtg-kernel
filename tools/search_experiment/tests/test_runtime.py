@@ -29,7 +29,8 @@ class QualificationTests(unittest.TestCase):
             spec = {"binary": {"sha256": "binary"}, "workload": {"mode": "search"},
                     "inputs": [], "storage": {"volume": "D"}, "eligible_workers": 2, "cores_claimed": 1}
             receipt = Path(directory) / "receipt.json"
-            rates = {str(n): {"completed_jobs": 3, "wall_seconds": 3 / n, "completed_per_second": n} for n in (1, 2, 4)}
+            rates = {str(n): {"completed_jobs": 4, "wall_seconds": 4 / n, "completed_per_second": n,
+                              "peak_active_workers": n} for n in (1, 2, 4)}
             launch.publish(receipt, {"compatible": launch.compatibility(spec), "parity": True, "rates": rates})
             spec["qualification"] = {"path": str(receipt), "sha256": launch.digest(receipt)}
             launch.qualification_guard(spec, 2)
@@ -37,6 +38,12 @@ class QualificationTests(unittest.TestCase):
                 launch.qualification_guard(spec, 1)
             spec["workload"]["mode"] = "changed"
             with self.assertRaisesRegex(ValueError, "incompatible"):
+                launch.qualification_guard(spec, 2)
+            spec["workload"]["mode"] = "search"
+            rates["2"]["peak_active_workers"] = 1
+            launch.publish(receipt, {"compatible": launch.compatibility(spec), "parity": True, "rates": rates})
+            spec["qualification"]["sha256"] = launch.digest(receipt)
+            with self.assertRaisesRegex(ValueError, "parallel overlap"):
                 launch.qualification_guard(spec, 2)
 
     def test_parallel_primary_mismatch_refused(self):

@@ -120,6 +120,8 @@ def qualification_guard(spec, workers):
                 "qualification has no completed work")
         require(math.isfinite(row["completed_per_second"]) and row["completed_per_second"] > 0,
                 "invalid throughput rate")
+        require(row.get("peak_active_workers", 0) >= int(count),
+                "advertised worker count lacks observed parallel overlap")
     require(str(workers) in rates, "requested worker count was not measured")
     eligible = [n for n in rates if int(n) <= spec["eligible_workers"]]
     require(eligible, "no measured eligible allocation")
@@ -409,6 +411,8 @@ def qualify(paths, out):
     canonical = [(r["id"], r["primary_sha256"]) for r in first["results"]]
     require(all([(r["id"], r["primary_sha256"]) for r in row["results"]] == canonical for row in batches),
             "serial/parallel jobs or primary outputs differ")
+    require(all(row.get("peak_active_workers", 0) >= row["workers"] for row in batches),
+            "qualification batch did not reach its advertised live worker count")
     rates = {str(row["workers"]): {"completed_jobs": len(row["results"]), "wall_seconds": row["wall_seconds"],
                                   "cpu_seconds": row["cpu_seconds"],
                                   "peak_active_workers": row["peak_active_workers"],
