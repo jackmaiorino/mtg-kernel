@@ -1197,14 +1197,17 @@ pub(crate) fn fill_native_flat_decision_tensors_v3_with_scratch(
     scratch: &mut NativeFlatTensorScratchV3,
     output: &mut NativeFlatDecisionTensorV2,
 ) -> Result<(), NativeFlatTensorErrorV2> {
+    let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::TensorProject);
     let decision = view.common();
     if decision.globals().acting_player != FlatRelativePlayerV1::SelfPlayer {
         return Err(NativeFlatTensorErrorV2::ActingPlayerNotRelativeSelf);
     }
     validate_auxiliary_tables_v2(decision)?;
+    let projection = build_object_projection_v3(view)?;
+    drop(span);
     fill_successor_reusing_v2(
         decision,
-        build_object_projection_v3(view)?,
+        projection,
         scratch,
         output,
         |projection, edges| append_extension_edges_v3(view, projection, edges),
@@ -1218,14 +1221,17 @@ pub(crate) fn fill_native_flat_decision_tensors_v4_with_scratch(
     scratch: &mut NativeFlatTensorScratchV3,
     output: &mut NativeFlatDecisionTensorV2,
 ) -> Result<(), NativeFlatTensorErrorV2> {
+    let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::TensorProject);
     let decision = view.common();
     if decision.globals().acting_player != FlatRelativePlayerV1::SelfPlayer {
         return Err(NativeFlatTensorErrorV2::ActingPlayerNotRelativeSelf);
     }
     validate_auxiliary_tables_v2(decision)?;
+    let projection = build_object_projection_v4(view)?;
+    drop(span);
     fill_successor_reusing_v2(
         decision,
-        build_object_projection_v4(view)?,
+        projection,
         scratch,
         output,
         |projection, edges| append_extension_edges_v4(view, projection, edges),
@@ -1244,6 +1250,7 @@ fn fill_successor_reusing_v2(
     ) -> Result<(), NativeFlatTensorErrorV2>,
     extensions: impl FnOnce(&mut Vec<u8>) -> Result<(), NativeFlatTensorErrorV2>,
 ) -> Result<(), NativeFlatTensorErrorV2> {
+    let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::TensorGraph);
     let mut buffers = std::mem::take(&mut scratch.pending);
     let objects = encode_objects_reusing_v2(decision, projection, &mut buffers)?;
     let mut edges = encode_edges_reusing_v2(
@@ -1256,6 +1263,8 @@ fn fill_successor_reusing_v2(
         },
     )?;
     append_extensions(&objects.projection, &mut edges)?;
+    drop(span);
+    let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::TensorStateJson);
     write_canonical_observation_with_streamed_extensions_reusing_v2(
         decision,
         &objects.projection,
@@ -1263,7 +1272,11 @@ fn fill_successor_reusing_v2(
         &mut scratch.slot.state_json,
         &mut scratch.canonical_base,
     )?;
+    drop(span);
+    let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::TensorStateHead);
     let mut state = encode_state_head_reusing_v2(decision, buffers.state)?;
+    drop(span);
+    let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::TensorActions);
     scratch.slot.action_json.clear();
     scratch.slot.action_ranges.clear();
     let mut actions = encode_action_half_reusing_v3(
@@ -1288,9 +1301,13 @@ fn fill_successor_reusing_v2(
     {
         return Err(NativeFlatTensorErrorV2::OutputInvariant);
     }
+    drop(span);
     // Keep the V3/V4 canonical messages and row order unchanged, but use the
     // same state-plus-action multi-buffer digest path as V2.
+    let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::TensorHash);
     let offsets = hash_prepared_slots_v2(std::slice::from_ref(&scratch.slot), &mut scratch.digests);
+    drop(span);
+    let _span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::TensorFinish);
     let blocks = &scratch.digests.blocks[offsets[0]..offsets[1]];
     let head_len = state.len();
     state.resize(head_len + NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V2, 0.0);
