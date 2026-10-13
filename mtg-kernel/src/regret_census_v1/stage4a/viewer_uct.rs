@@ -174,14 +174,15 @@ impl SearchCapture {
     pub(crate) fn choice(
         &mut self,
         s: &FastActorSessionV1,
+        d: &FastActorDecisionV1,
+        live: u32,
         at: Option<&(Key, usize)>,
         src: SelSrc,
     ) {
         if let Some((key, edge)) = at {
             self.attempt(|this| {
             let id=*this.ids.get(key).ok_or("UCT choice node missing")?; let board=this.snapshot(s)?;
-            let step=match s.current_response() { FastActorResponseV1::Decision(d)=>d.step, _=>return Err("UCT choice is terminal".into()) };
-            let v=json!({"node":id,"action":edge,"board":board,"step":step,"expanded":src==SelSrc::Expand,"scores":std::mem::take(&mut this.scores)});
+            let v=json!({"node":id,"action":edge,"live":live,"board":board,"step":d.step,"physical":d.physical_decision_id,"substep":d.substep_index,"expanded":src==SelSrc::Expand,"scores":std::mem::take(&mut this.scores)});
             this.charge(&v)?;this.current["choices"].as_array_mut().ok_or("UCT attempt missing")?.push(v);Ok(())
         });
         }

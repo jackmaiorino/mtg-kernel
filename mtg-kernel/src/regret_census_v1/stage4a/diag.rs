@@ -294,7 +294,7 @@ impl Trace {
     ) {
         #[cfg(feature = "viewer-recording-v1")]
         if let Some(v) = self.viewer.as_mut() {
-            v.choice(s, at, src);
+            v.choice(s, d, a, at, src);
         }
         let menu = menu_bits(s, focal, defs);
         let off = menu.iter().fold(0u8, |x, y| x | y);
