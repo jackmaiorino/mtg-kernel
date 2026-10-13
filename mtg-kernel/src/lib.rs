@@ -122,6 +122,7 @@ pub mod gourmand_public_v1;
 mod fiery_annihilation_v1;
 pub mod fiery_public_v1;
 pub(crate) mod high_society_hunter_custody_v45;
+pub mod high_society_hunter_public_v45;
 pub(crate) mod high_society_hunter_v1;
 pub mod human_opening_v1;
 pub mod native_expanded_training_run_v1;
