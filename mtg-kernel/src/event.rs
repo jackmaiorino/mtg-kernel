@@ -4501,6 +4501,12 @@ mod garruk_entry_tests {
             for face_down in [false, true] {
                 let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
                 state.step = crate::state::Step::Main1;
+                for owner in [actor, actor.opponent()] {
+                    for _ in 0..4 {
+                        put(&mut state, owner, "Forest", Zone::Library);
+                    }
+                }
+                put(&mut state, actor, "Forest", Zone::Battlefield);
                 let source = put(&mut state, actor, "Garruk's Uprising", Zone::Hand);
                 let entrant = put(&mut state, actor, "Myr Enforcer", Zone::Hand);
                 let mut batch = crate::garruks_uprising_v1::EntryBatchV1::capture().unwrap();
@@ -4633,7 +4639,7 @@ mod arahbo_entry_tests {
             cast(&mut state, actor);
             // Labeled physical layer-4 substrate: an accepted Equipment with Cat
             // subtype, not a claim of a natural printed FDN type-grant producer.
-            let equipment = put(&mut state, actor, "Bonesplitter", Zone::Hand);
+            let equipment = put(&mut state, actor, "Goldvein Pick", Zone::Hand);
             crate::event::propose_and_commit(
                 &mut state,
                 ProposedEvent::zone_change(equipment, Zone::Battlefield),
