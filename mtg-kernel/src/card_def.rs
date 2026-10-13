@@ -1618,6 +1618,9 @@ pub enum ManaAbilityAmountDef {
     /// Evaluate one shared board-dependent value at activation resolution.
     /// Appended for Priest of Titania without renumbering existing variants.
     Dynamic(DynamicValueDef),
+    /// One unit of every W/U/B/R/G color among controlled permanents.
+    /// The primary action color identifies the ability, not one chosen output.
+    EachControlledPermanentColor,
 }
 
 /// A reusable integer derived from current game state. All consumers sample
@@ -1982,6 +1985,19 @@ pub struct EntersWithPlusOneCountersDef {
     pub if_kicked: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CombatStaticRulesDef {
+    pub must_attack_each_combat: bool,
+    pub cant_be_blocked_by_subtype: Option<Subtype>,
+}
+
+impl CombatStaticRulesDef {
+    pub const NONE: Self = Self {
+        must_attack_each_combat: false,
+        cant_be_blocked_by_subtype: None,
+    };
+}
+
 pub struct CardDef {
     pub name: &'static str,
     pub capability: CardCapability,
@@ -2195,6 +2211,8 @@ pub struct CardDef {
     pub animation: Option<AnimationDef>,
     /// Generic-cost reducers for printed activated abilities.
     pub activated_ability_generic_reductions: &'static [ActivatedAbilityGenericReductionDef],
+    /// Printed combat rules, active only on the live front-face creature.
+    pub combat_static_rules: CombatStaticRulesDef,
 }
 
 impl CardDef {
@@ -2592,12 +2610,12 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 403 (Sower of Chaos after Squad, neutral copy, Self and Searslicer,
-        // Run Away Together, Raid, Skyknight and Sire).
+        // batches append through id 417 (Ashroot after Juggernaut, Temporal,
+        // Bloom, Gutless, Gorehorn and Librarian; earlier definitions retain ids).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                411
+                418
             } else {
                 192
             }
@@ -2633,7 +2651,8 @@ mod tests {
         assert!(CARD_DEFS[390].keywords.has(Keywords::FLYING));
         assert_eq!(crate::trigger::triggers_for(390).len(), 1);
         assert!(crate::trigger::triggers_for(391).is_empty());
-        assert!(card_id_by_name("Gorehorn Raider").is_none());
+        assert_eq!(card_id_by_name("Gorehorn Raider"), Some(412));
+        assert_eq!(card_id_by_name("Gutless Plunderer"), Some(413));
         assert!(card_id_by_name("Strongbox Raider").is_none());
     }
 
@@ -2760,8 +2779,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v79_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0xd907_cd57_6aa6_015c;
+    fn card_db_hash_v80_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0xcd01_0e14_1405_787c;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

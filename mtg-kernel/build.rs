@@ -3463,6 +3463,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         mode2: None,
     };
     Some(match name {
+        "Temporal Manipulation" => program(
+            "None",
+            "TakeExtraTurnAfterThisOneV1(Controller,lastCreatedFirst,nextRegularTurnPreserved,distinctOccurrence)",
+            "EffectOp::TakeExtraTurnAfterThisOneV1",
+        ),
         "Self-Reflection" => program(
             "ControlledCreature",
             "CreateControlledCreatureTargetCopyV1(Target0,currentController,exactPhysicalIncarnation,currentCopiableDefinitionAndFace,tokenOwnerController=spellController,ordinaryETB,noHasteOrDelayedSacrifice)",
@@ -4120,8 +4125,10 @@ fn keywords_for(card: &CardJson) -> String {
     }
     match card.name.as_str() {
         "Faerie Dreamthief" => keywords.push("Keywords::FLYING"),
-        "Surrak, Elusive Hunter" | "Etali, Primal Conqueror" => keywords.push("Keywords::TRAMPLE"),
-        "Preacher of the Schism" => keywords.push("Keywords::DEATHTOUCH"),
+        "Surrak, Elusive Hunter" | "Etali, Primal Conqueror" | "Ashroot Animist" => {
+            keywords.push("Keywords::TRAMPLE")
+        }
+        "Preacher of the Schism" | "Gutless Plunderer" => keywords.push("Keywords::DEATHTOUCH"),
         "Vampire Token" => keywords.push("Keywords::LIFELINK"),
         "Knight Vigilance Token" => keywords.push("Keywords::VIGILANCE"),
         "Mosswood Dreadknight" => keywords.push("Keywords::TRAMPLE"),
@@ -4368,6 +4375,8 @@ fn has_activated_mana_ability(card: &CardJson) -> bool {
 /// additional rich definition, leaving its free colorless ability primary.
 fn primary_mana_ability_colors(card: &CardJson) -> Vec<&str> {
     match card.name.as_str() {
+        // One action identifies the whole simultaneous bundle, not a color choice.
+        "Bloom Tender" => vec!["G"],
         "Citadel Gate" => vec!["W"],
         "Sea Gate" => vec!["U"],
         "Heap Gate" => vec!["C"],
@@ -4506,6 +4515,7 @@ fn conditional_tap_yield_program_for(name: &str) -> Option<&'static str> {
 /// source fragment is included in the card-database identity below.
 fn mana_ability_def_for(name: &str) -> &'static str {
     match name {
+        "Bloom Tender" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::EachControlledPermanentColor, controller_damage: 0, max_activations_per_turn: None })",
         "Elves of Deep Shadow" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 1, max_activations_per_turn: None })",
         "Lotus Petal" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::SacrificeSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
         "Overgrown Battlement" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::ControlledCreaturesWithKeyword(Keywords::DEFENDER), controller_damage: 0, max_activations_per_turn: None })",
@@ -4756,6 +4766,15 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
         return recipes;
     }
     match name {
+        "Mild-Mannered Librarian" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ManaCost("{3}{G}")],
+            effect: AbilityEffectRecipe::StandardProgram("crate::mild_mannered_librarian_v1::program_v1"),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Scavenging Ooze" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Mana { colored: Some("G"), generic: 0 }],
             effect: AbilityEffectRecipe::Program {
@@ -6795,10 +6814,13 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Nessian Hornbeetle" => "beginning_controller_combat_if_other_creature_effective_power_at_least:4:recheck_at_resolution:plus_one_counter_on_bound_source:1",
         "Micromancer" => "etb:may_search_library:instant_or_sorcery_mana_value:1:reveal_to_hand:shuffle:fail_to_find_allowed",
         "Skyship Buccaneer" => "self_etb:intervening_if_captured_controller_declared_attackers_this_turn:declaration_history_round_and_active_seat:recheck_at_resolution:draw_controller:1",
+        "Gorehorn Raider" => "self_etb:independent_original_entry_controller:raid_capture_and_recheck:any_target_player_creature_planeswalker:damage2",
+        "Gutless Plunderer" => "self_etb:independent_original_entry_controller:raid_capture_and_recheck:private_look3:keep0_or1_top:rest_ordered_graveyard:exact_committed_library",
         "Authority of the Consuls" => "opponent_creature_entry:actual_zonechange_or_create_token:captured_controller:gain_life_1;static:opponent_creatures_enter_tapped:active_printed_ability",
         "Searslicer Goblin" => "beginning_captured_controller_end_step:intervening_if_captured_controller_declared_attackers_this_turn:declaration_history_round_and_active_seat:recheck_at_resolution:create_goblin_token_for_captured_controller:1:untapped:nonattacking:no_haste",
         "Ruby, Daring Tracker" => "source_attacks_while_controller_has_effective_power_at_least:4:bound_source_pump_until_end_of_turn:2:2",
         "Courageous Goblin" => "source_attacks_while_controller_has_effective_power_at_least:4:bound_source_pump_until_end_of_turn:1:0:menace_on_exact_trigger_source",
+        "Ashroot Animist" => "attack:another_controlled_creature:trample_and_boost_until_cleanup:power_sample_once_resolution:same_source_or_actual_departure_lki:nonnegative:exact_source_target_incarnations",
         "Frenzied Goblin" => "source_declared_attacker:target_creature_at_placement:may_pay_R_at_resolution:if_paid_exact_target_cannot_block_until_cleanup:captured_controller:full_target_recheck",
         "Wardens of the Cycle" => "controller_end_step:intervening_if_creature_died_this_turn:mode_at_placement:gain_controller_life:2|draw_controller:1_then_lose_controller_life:1:recheck_morbid_in_each_branch:untargeted",
         "Archmage of Runes" => "cast_instant_or_sorcery:draw_controller:1",
@@ -7046,6 +7068,13 @@ fn standard_static_recipe_for(name: &str) -> &'static str {
             "cda_power:controller_graveyard_instant_sorcery_cards;controller_instant_sorcery_spells_cost_generic_less:1"
         }
         _ => "none",
+    }
+}
+
+fn combat_static_rules_for(name: &str) -> &'static str {
+    match name {
+        "Juggernaut" => "CombatStaticRulesDef { must_attack_each_combat: true, cant_be_blocked_by_subtype: Some(Subtype::Wall) }",
+        _ => "CombatStaticRulesDef::NONE",
     }
 }
 
@@ -10053,6 +10082,12 @@ fn codegen(cards: &[CardJson]) -> String {
             standard.activated_ability_generic_reductions
         )
         .unwrap();
+        writeln!(
+            out,
+            "        combat_static_rules: {},",
+            combat_static_rules_for(&c.name)
+        )
+        .unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -10160,6 +10195,10 @@ fn codegen(cards: &[CardJson]) -> String {
             canon.push_str(&format!(";starting_loyalty={loyalty}"));
         }
         let entry_counters = enters_with_plus_one_counters_for(&c.name);
+        let combat_rules = combat_static_rules_for(&c.name);
+        if combat_rules != "CombatStaticRulesDef::NONE" {
+            canon.push_str(&format!(";combat_static_rules={combat_rules}"));
+        }
         if entry_counters != "None" {
             canon.push_str(&format!(";entry_counters={entry_counters}"));
         }

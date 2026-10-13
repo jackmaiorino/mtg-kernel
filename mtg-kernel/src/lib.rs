@@ -50,9 +50,13 @@ pub(crate) mod continuous_characteristics_v1;
 mod creature_death_capture_v1;
 mod creature_stats_lki_v1;
 pub mod legend_rule_v1;
+mod librarian_activation_v1;
+pub mod librarian_public_v1;
+pub mod mild_mannered_librarian_v1;
 pub mod native_search_collection_v3;
 pub mod native_search_trajectory_v3;
 pub mod planeswalker_v1;
+pub mod rules_meaning_librarian_v1;
 mod soul_shackled_zombie_v1;
 pub mod standard_cards_v1;
 pub mod standard_creature_choices_v1;
@@ -84,10 +88,14 @@ pub mod event;
 pub mod expanded_deck_training_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 mod experimental_burn_net8_packed_v1;
+pub mod extra_turn_v1;
 mod fdn_raid_v1;
 pub mod frenzied_public_v1;
+mod gorehorn_damage_v1;
 pub mod human_opening_v1;
 pub mod native_expanded_training_run_v1;
+mod raid_entry_custody_v1;
+mod raid_entry_v1;
 mod source_power_activation_v1;
 pub mod sower_of_chaos_v1;
 pub mod sower_public_v1;
@@ -483,6 +491,8 @@ pub mod sideboard_search_campaign_v1;
 mod authority_of_the_consuls_v1;
 pub(crate) mod cerberus_capture_v1;
 pub mod cerberus_public_v1;
+pub(crate) mod combat_static_rules_v1;
+pub mod juggernaut_public_v1;
 pub(crate) mod life_gain_turn_v1;
 pub mod phase_profile;
 pub mod policy_surface_v5;
@@ -492,6 +502,7 @@ pub(crate) mod private_physical_trajectory_v2;
 pub mod regret_census_v1;
 pub mod rl;
 pub mod rl_session;
+pub mod rules_meaning_juggernaut_v1;
 pub mod rules_meaning_soul_shackled_zombie_v1;
 pub mod runtime_decks;
 mod self_reflection_v1;
@@ -516,9 +527,13 @@ pub mod xmage_observed_inference_v1;
 
 pub const KERNEL_VERSION: &str = "0.0.4-spike";
 
+mod ashroot_animist_v1;
+pub mod ashroot_dispatch_v2;
+pub mod ashroot_public_v1;
 mod frenzied_goblin_v1;
 pub mod public_cost_features_v1;
 pub(crate) mod public_stack_features_v1;
+pub mod rules_meaning_ashroot_v1;
 pub mod rules_meaning_crystal_barricade_v1;
 pub mod rules_meaning_frenzied_goblin_v1;
 pub mod rules_meaning_searslicer_v1;
@@ -547,7 +562,15 @@ pub fn run_experimental_burn_net8_cuda_train_v1() -> Result<(), Box<dyn std::err
     experimental_burn_net8_packed_v1::run_cuda_training_v1()
 }
 
+pub(crate) mod bloom_tender_mana_v1;
+pub mod bloom_tender_public_v1;
 pub mod cauldron_grants_v1;
 mod crystal_barricade_v1;
+pub mod rules_meaning_bloom_tender_v1;
 pub mod rules_meaning_cerberus_v1;
 pub mod rules_meaning_employment_v1;
+
+pub mod extra_turn_public_v1;
+pub mod raid_entry_public_v1;
+pub mod rules_meaning_extra_turn_v1;
+pub mod rules_meaning_raid_entry_v1;

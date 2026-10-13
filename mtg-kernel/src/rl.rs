@@ -1836,6 +1836,12 @@ pub fn observe_v1(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
+    crate::extra_turn_v1::validate(state).map_err(RlContractError)?;
+    if state.extra_turn_v1.is_some() {
+        return Err(RlContractError(
+            "extra turns require their selected public/Human successor".into(),
+        ));
+    }
     crate::effect::validate_legacy_ward_observation(state).map_err(RlContractError)?;
     crate::effect::temporary_control_v1::refuse_legacy_observation(state)
         .map_err(RlContractError)?;
@@ -1941,8 +1947,7 @@ fn build_observation_v2(
         acting_player,
         step_index,
         text_mode,
-        false,
-        false,
+        (false, false, false),
     )
 }
 
@@ -1952,9 +1957,15 @@ fn build_observation_common_v2(
     acting_player: PlayerId,
     step_index: u64,
     text_mode: ObservationTextModeV2,
-    accept_cant_block: bool,
-    accept_temporary_control: bool,
+    capabilities: (bool, bool, bool),
 ) -> Result<ObservationV2> {
+    let (accept_cant_block, accept_temporary_control, accept_extra_turn) = capabilities;
+    crate::extra_turn_v1::validate(state).map_err(RlContractError)?;
+    if !accept_extra_turn && state.extra_turn_v1.is_some() {
+        return Err(RlContractError(
+            "extra turns require their selected public/Human successor".into(),
+        ));
+    }
     if accept_temporary_control {
         crate::effect::temporary_control_v1::authority::validate(state).map_err(RlContractError)?;
     } else {
@@ -2242,8 +2253,7 @@ fn build_policy_observation_parts(
         acting_player,
         step_index,
         text_mode,
-        false,
-        false,
+        (false, false, false),
     )
 }
 fn build_policy_observation_parts_common(
@@ -2252,17 +2262,20 @@ fn build_policy_observation_parts_common(
     acting_player: PlayerId,
     step_index: u64,
     text_mode: ObservationTextModeV2,
-    accept_cant_block: bool,
-    accept_temporary_control: bool,
+    capabilities: (bool, bool, bool),
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
+    let (accept_cant_block, accept_temporary_control, accept_extra_turn) = capabilities;
     let base = build_observation_common_v2(
         state,
         surface.harness_surface(),
         acting_player,
         step_index,
         text_mode,
-        accept_cant_block,
-        accept_temporary_control,
+        (
+            accept_cant_block,
+            accept_temporary_control,
+            accept_extra_turn,
+        ),
     )?;
     let context = policy_surface_context_v5(
         state,
@@ -2438,7 +2451,64 @@ fn build_policy_observation_storage_v6(
         false,
         false,
         false,
+        (false, false, false),
+    )
+}
+
+pub(crate) fn extra_turn_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::extra_turn_v1::validate(state).map_err(RlContractError)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_common(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
         false,
+        false,
+        false,
+        false,
+        (false, true, false),
+    )
+}
+
+/// Distinct selected Librarian input using shared internal typed storage.
+/// This does not bypass any predecessor variable/cant-block/Wildwood refusal.
+pub(crate) fn librarian_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::librarian_activation_v1::validate_state(state).map_err(RlContractError)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_v6(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
     )
 }
 
@@ -2468,7 +2538,7 @@ pub(crate) fn sower_observation_storage_v1(
         false,
         false,
         false,
-        false,
+        (false, false, false),
     )
 }
 
@@ -2498,7 +2568,7 @@ pub(crate) fn employment_observation_storage_v1(
         false,
         true,
         false,
-        false,
+        (false, false, false),
     )
 }
 
@@ -2528,7 +2598,7 @@ pub(crate) fn wildwood_observation_storage_v1(
         true,
         false,
         false,
-        false,
+        (false, false, false),
     )
 }
 
@@ -2558,7 +2628,7 @@ pub(crate) fn cerberus_observation_storage_v1(
         false,
         false,
         true,
-        false,
+        (false, false, false),
     )
 }
 
@@ -2588,7 +2658,7 @@ pub(crate) fn authority_observation_storage_v1(
         false,
         false,
         false,
-        true,
+        (true, false, false),
     )
 }
 
@@ -2618,7 +2688,37 @@ pub(crate) fn frenzied_observation_storage_v1(
         false,
         false,
         false,
+        (false, false, false),
+    )
+}
+
+pub(crate) fn juggernaut_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::juggernaut_public_v1::validate_state(state).map_err(RlContractError)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_common(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
         false,
+        false,
+        false,
+        false,
+        (false, false, true),
     )
 }
 
@@ -2629,8 +2729,14 @@ fn build_policy_observation_storage_common(
     accept_wildwood: bool,
     accept_temporary_control: bool,
     accept_cerberus: bool,
-    accept_authority: bool,
+    accepted_statics: (bool, bool, bool),
 ) -> Result<PolicyObservationStorageV6> {
+    let (accept_authority, accept_extra_turn, accept_combat_rules) = accepted_statics;
+    if !accept_combat_rules && crate::combat_static_rules_v1::requires_successor(request.state) {
+        return Err(RlContractError(
+            "printed combat statics require their selected successor".into(),
+        ));
+    }
     if !accept_authority && crate::authority_of_the_consuls_v1::requires_successor(request.state) {
         return Err(RlContractError(
             "Authority requires its selected public/Human successor".into(),
@@ -2667,8 +2773,11 @@ fn build_policy_observation_storage_common(
         acting_player,
         step_index,
         text_mode,
-        accept_cant_block,
-        accept_temporary_control,
+        (
+            accept_cant_block,
+            accept_temporary_control,
+            accept_extra_turn,
+        ),
     )?;
     if let Some(search) = &extensions.decision_local_library {
         let Some(PendingEffectChoiceSemanticV4::Targets { legal_targets, .. }) = base
@@ -7286,7 +7395,7 @@ fn continuous_effects_common_v2(
                 color,
                 turn,
                 active_player,
-            } if turn == state.turn && active_player == state.active_player => {
+            } if turn == state.turn_key_v1() && active_player == state.active_player => {
                 mask | crate::card_def::mana_color_mask(color)
             }
             _ => mask,
@@ -7396,7 +7505,7 @@ fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<Engin
             let live = state.objects.try_get(object.object)?;
             (live.zone == Zone::Battlefield
                 && live.zone_change_count == object.zone_change_count
-                && turn == state.turn
+                && turn == state.turn_key_v1()
                 && active_player == state.active_player)
                 .then(|| {
                     card_ref(state, object.object).map(|permanent| CombatPreventionSemanticV1 {

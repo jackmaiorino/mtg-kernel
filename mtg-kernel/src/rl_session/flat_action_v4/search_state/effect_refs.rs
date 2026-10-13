@@ -52,6 +52,7 @@ impl Scan<'_> {
     fn op(&self, op: &EffectOp) -> bool {
         use EffectOp::*;
         match op {
+            AshrootAttackBoostV1 { source } => self.raw(source.object),
             WildwoodCounterFromReceiptV1 { capture_history_index, .. } => usize::try_from(*capture_history_index).ok().and_then(|index| self.state.engine.event_history.get(index)).is_none_or(|event| {
                 let crate::event::CommittedEvent::WildwoodCounterCaptureV1 { capture } = event else { return true; };
                 capture.observers.iter().any(|source| self.raw(source.source)) || matches!(capture.recipient, crate::state::StackTargetContractV4::Object { object, .. } if self.raw(object))
@@ -166,7 +167,11 @@ impl Scan<'_> {
             | ReturnTwoDifferentControllerCreaturesToOwnersHands
             | BindAuthorityEntryGainLifeV1
             | AuthorityEntryGainLifeV1 { .. }
+            | BindAshrootAttackBoostV1
+            | AshrootBoostFromCaptureV2 { .. }
             | CerberusUntapV1 { .. }
+            | LookTopMayKeepOneRestGraveyard { .. }
+            | TakeExtraTurnAfterThisOneV1
             | CreateControlledCreatureTargetCopyV1
             | DoubleTargetPowerUntilEndOfTurn { .. }
             | DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
@@ -941,6 +946,29 @@ pub(super) fn conflicts(
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    // This sampler has no qualified migration for the independently retained
+    // payment, removal and completion ownership of a Librarian activation.
+    if state.engine.event_history.iter().any(|event| {
+        matches!(
+            event,
+            crate::event::CommittedEvent::LibrarianActivationCommittedV1 { .. }
+                | crate::event::CommittedEvent::LibrarianActivationCounterRemovalV1 { .. }
+                | crate::event::CommittedEvent::LibrarianActivationOperationV1 { .. }
+                | crate::event::CommittedEvent::LibrarianActivationFinishedV1 { .. }
+                | crate::event::CommittedEvent::RaidEntryCaptureV1 { .. }
+                | crate::event::CommittedEvent::RaidEntryPublishedV1 { .. }
+                | crate::event::CommittedEvent::RaidEntryDroppedV1 { .. }
+                | crate::event::CommittedEvent::RaidEntryCounteredV1 { .. }
+                | crate::event::CommittedEvent::RaidEntryStartedV1 { .. }
+                | crate::event::CommittedEvent::GorehornDepartureV1 { .. }
+                | crate::event::CommittedEvent::GorehornPublishedV1 { .. }
+                | crate::event::CommittedEvent::GorehornPreparedV1 { .. }
+                | crate::event::CommittedEvent::GorehornDamageOperationV1 { .. }
+                | crate::event::CommittedEvent::GorehornOperationV1 { .. }
+        )
+    }) {
+        return true;
+    }
     let s = Scan { state, pool };
     if let Some(crate::engine::PendingDiscard {
         resume: crate::engine::DiscardResume::FinishEffectContinuation { original_hand, .. },
@@ -1053,6 +1081,8 @@ pub(super) fn conflicts(
                             || source.attached_to.is_some_and(|link| s.raw(link.object))
                     })
             }
+            AshrootPowerBeforeDepartureV1 { source, .. } => s.raw(source.object),
+            AshrootDispatchV2 { .. } => !s.pool.is_empty(),
             CerberusCaptureV1 { capture } => s.raw(capture.source.source),
             CerberusObserversV1 { sources, .. } => {
                 sources.iter().any(|source| s.raw(source.source))
@@ -1070,11 +1100,35 @@ pub(super) fn conflicts(
             }
             InitiativeTrigger { binding } => s.raw(binding.source.source),
             MonarchTrigger { binding } => s.raw(binding.source.source),
+            LibrarianActivationCommittedV1 { .. }
+            | LibrarianActivationCounterRemovalV1 { .. }
+            | LibrarianActivationOperationV1 { .. }
+            | LibrarianActivationFinishedV1 { .. } => true,
+            ExtraTurnOwnerPublishedV1 { .. }
+            | ExtraTurnOwnerRemovedV1 { .. }
+            | ExtraTurnVirtualCeasedV1 { .. }
+            | ExtraTurnScheduledV1 { .. }
+            | ExtraTurnStartedV1 { .. }
+            | ExtraTurnBeganV1 { .. } => true,
             ControlledCreatureDeathCaptureCollectedV1 { .. }
             | AuthorityEntryCollectedV1 { .. }
             | AuthorityEntryCompletedV1 { .. }
             | CerberusCollectedV1 { .. }
             | CerberusCompletedV1 { .. }
+            | PrivateKeepOneLibraryCapturedV1 { .. }
+            | PrivateKeepOneLibraryConsumedV1 { .. }
+            | PrivateKeepOneRaidSkippedV1 { .. }
+            | RaidEntrySourceV1 { .. }
+            | RaidEntryCaptureV1 { .. }
+            | RaidEntryPublishedV1 { .. }
+            | RaidEntryDroppedV1 { .. }
+            | RaidEntryCounteredV1 { .. }
+            | RaidEntryStartedV1 { .. }
+            | GorehornDepartureV1 { .. }
+            | GorehornPublishedV1 { .. }
+            | GorehornPreparedV1 { .. }
+            | GorehornDamageOperationV1 { .. }
+            | GorehornOperationV1 { .. }
             | SquadRallierResolutionBoundaryV1 { .. }
             | SowerRestrictionInstalledV1 { .. }
             | SowerRestrictionExpiredV1 { .. }
