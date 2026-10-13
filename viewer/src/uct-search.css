@@ -1,0 +1,13 @@
+.search-discovery {display:flex;align-items:center;justify-content:space-between;gap:20px;padding:20px 24px;border:1px solid #66d3ad45;border-radius:14px;background:linear-gradient(110deg,#16362c9c,#101c1999);margin:24px 0;color:#d9f7eb}
+.search-discovery>div {display:grid;grid-template-columns:24px 1fr;gap:8px 12px}
+.search-discovery svg {color:#84dabb;grid-row:span 2}
+.search-discovery span {font-size:12px;line-height:1.6;color:#aec7bd}
+.search-discovery button {display:flex;align-items:center;gap:8px;white-space:nowrap;background:#8ce4c4;color:#10251d;border:0;border-radius:8px;font-weight:650;padding:12px 16px;cursor:pointer}
+.search-zone-counts {display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;color:#a7b6b0;font-size:12px;padding:14px 18px;border-top:1px solid #ffffff0a}
+.search-caption>span {display:block;margin-top:8px}
+.search-rollout-inspector {margin:18px;padding:14px 16px;border:1px solid #ffffff12;border-radius:8px;color:#b8c2bd;font-size:12px}
+.search-rollout-inspector summary {cursor:pointer;color:#dfebe6;margin-bottom:12px}
+.search-rollout-inspector label {display:grid;gap:8px}
+.search-rollout-inspector select {width:100%;min-width:0;background:#151c19;color:#e4ebe7;border:1px solid #52605b;border-radius:6px;padding:9px;font:inherit}
+.search-rollout-inspector p {line-height:1.65}
+@media(max-width:600px) {.search-discovery {align-items:stretch;flex-direction:column;padding:16px}.search-discovery button {justify-content:center}.search-discovery>div {grid-template-columns:20px minmax(0,1fr)}}

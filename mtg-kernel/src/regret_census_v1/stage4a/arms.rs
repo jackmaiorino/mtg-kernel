@@ -31,6 +31,18 @@ pub(crate) const D_UNIFORM: usize = 2;
 pub(crate) const D_HORIZON: usize = 3;
 pub(crate) const ARMS: [&str; 3] = ["E", "A", "D"];
 
+fn select_observed(node: &Node, urgency: Option<f64>, _trace: &mut Option<&mut Trace>) -> usize {
+    #[cfg(feature = "viewer-recording-v1")]
+    if let Some(v) = _trace
+        .as_deref_mut()
+        .and_then(|t| t.viewer.as_mut())
+        .filter(|v| v.error.is_none())
+    {
+        return node.select_with_scores(urgency, &mut v.scores);
+    }
+    node.select_with(urgency)
+}
+
 /// Run settings (the formal values are the constants above; tests and the
 /// cost-only engineering checks may lower them, and every row records them).
 #[derive(Clone, Copy, Debug)]
@@ -750,7 +762,7 @@ impl Roles {
                                 if staged.contains(&key) {
                                     rec.staged_hits += 1;
                                 }
-                                let e = node.select_with(ctx.urgency);
+                                let e = select_observed(node, ctx.urgency, &mut trace);
                                 supported = node.n[e] >= super::tree::MIN_EXEC_BACKUPS;
                                 (e, cn.edges[e].clone())
                             }
@@ -764,7 +776,7 @@ impl Roles {
                                 }
                                 let perm = keyer.perm(&st, ctx.seeds)?;
                                 let node = Node::with_perm(pk, pe, cn.clone(), depth, perm);
-                                let e = node.select_with(ctx.urgency);
+                                let e = select_observed(&node, ctx.urgency, &mut trace);
                                 new.push((key, node));
                                 in_tree = false;
                                 // Boundary: before the expanded choice's
@@ -837,7 +849,15 @@ impl Roles {
                 }
                 a
             };
+            #[cfg(feature = "viewer-recording-v1")]
+            if let Some(v) = trace.as_deref_mut().and_then(|t| t.viewer.as_mut()) {
+                v.before(&s, d, a);
+            }
             apply(&mut s, &d, a, meter, ctx.focal, Some(suffix), &ctx.defs)?;
+            #[cfg(feature = "viewer-recording-v1")]
+            if let Some(v) = trace.as_deref_mut().and_then(|t| t.viewer.as_mut()) {
+                v.after(&s, suffix.last);
+            }
             if let Some(t) = trace.as_deref_mut() {
                 t.event(meter.spent, acting(&d) == ctx.focal, suffix.last);
             }

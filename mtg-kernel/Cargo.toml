@@ -64,6 +64,11 @@ name = "viewer_replay_v1"
 path = "src/bin/viewer_replay_v1.rs"
 required-features = ["viewer-recording-v1"]
 
+[[bin]]
+name = "viewer_spy_capture_v1"
+path = "src/bin/viewer_spy_capture_v1.rs"
+required-features = ["viewer-recording-v1"]
+
 # Cycle-4 arm launcher. Gated behind the same two features the production
 # CUDA training lane already requires: the Windows-only production Store
 # admission and the burn/CUDA dense backend the v4 arms train on. Without
