@@ -54,14 +54,30 @@ fn genuine_later_apnap_aura_owner_has_v30_public_choices_restore_and_retry_both_
                 1
             );
             safe(&serde_json::to_value(&prompt).unwrap());
+            // Two identical Eagles are legal. Follow the sealed projector's
+            // actual menu mapping to select the same physical host as the
+            // first APNAP answer, rather than the first matching name label.
+            let (_, engine_actions, _) = session
+                .inner
+                .garruk_current_decision_input_v30(expected, actor.opponent().into())
+                .unwrap();
+            let indexes = &projector.pending.as_ref().unwrap().engine_indexes;
             let choice = prompt
                 .actions
                 .iter()
                 .find(|row| {
-                    row.label.starts_with("Attach returning Twinblade Blessing")
-                        && row.label.contains("to Empyrean Eagle")
+                    matches!(
+                        &engine_actions[indexes[row.action_index as usize] as usize],
+                        ActionSemanticV1::ChooseEffectTarget {
+                            target: crate::rl::TargetRefV1::Object { object }, ..
+                        } if object.arena_id == host.0
+                    )
                 })
                 .unwrap();
+            assert!(choice
+                .label
+                .starts_with("Attach returning Twinblade Blessing"));
+            assert!(choice.label.contains("to Empyrean Eagle"));
             let request = HumanActionRequestV1 {
                 prompt_seq: prompt.prompt_seq,
                 action_index: choice.action_index,
