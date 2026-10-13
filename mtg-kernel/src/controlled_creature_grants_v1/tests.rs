@@ -307,7 +307,7 @@ mod future_printed {
                     ProposedEvent::zone_change(source, Zone::Graveyard),
                 );
                 assert_grants(branch, elf, false);
-                require_legacy_consumer_supported(branch).unwrap();
+                assert!(require_legacy_consumer_supported(branch).is_err());
             }
             assert_eq!(
                 serde_json::to_vec(&state).unwrap(),
@@ -424,7 +424,7 @@ mod future_printed {
                     16
                 );
                 let clean = serde_json::to_vec(&state).unwrap();
-                for mode in 0..4 {
+                for mode in 0..6 {
                     let mut bad: GameState = serde_json::from_slice(&clean).unwrap();
                     if mode == 0 {
                         bad.engine.event_history.retain(|event| {
@@ -449,6 +449,14 @@ mod future_printed {
                             1 => *departure_history_index += 1,
                             2 => snapshot.source.owner = actor.opponent(),
                             3 => snapshot.source.zone_change_count += 1,
+                            4 => snapshot.private_snapshot_json.clear(),
+                            5 => {
+                                let mut original: crate::state::GameObject =
+                                    serde_json::from_str(&snapshot.private_snapshot_json).unwrap();
+                                original.card_def = card_id_by_name("Forest").unwrap();
+                                snapshot.private_snapshot_json =
+                                    serde_json::to_string(&original).unwrap();
+                            }
                             _ => unreachable!(),
                         }
                     }

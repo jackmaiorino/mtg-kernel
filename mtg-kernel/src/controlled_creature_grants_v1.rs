@@ -23,7 +23,7 @@ pub(crate) fn enabled() -> bool {
             .any(|d| d.is_executable() && d.controlled_creature_grant.is_some())
     })
 }
-fn active(state: &GameState, source: ObjectId) -> bool {
+pub(crate) fn active(state: &GameState, source: ObjectId) -> bool {
     state.objects.try_get(source).is_some_and(|live| {
         live.zone == Zone::Battlefield
             && state.players[live.controller.index()]
@@ -36,7 +36,7 @@ fn active(state: &GameState, source: ObjectId) -> bool {
             && crate::continuous_characteristics_v1::printed_abilities_active(state, source)
     })
 }
-fn applies(state: &GameState, source: ObjectId, recipient: ObjectId) -> bool {
+pub(crate) fn applies(state: &GameState, source: ObjectId, recipient: ObjectId) -> bool {
     let Some(source_object) = state.objects.try_get(source) else {
         return false;
     };
@@ -161,10 +161,11 @@ pub(crate) fn detach_protected_nonauras(state: &mut GameState) -> bool {
 
 /// Color LKI is an opt-in core dependency of the new protection descriptor.
 /// The actual departure follows this independent snapshot immediately.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct DepartureColorV1 {
     pub source: crate::state::AbilitySourceContractV4,
     pub color_mask: u8,
+    pub private_snapshot_json: String,
 }
 pub(crate) fn capture_departure_color(
     state: &GameState,
@@ -183,6 +184,7 @@ pub(crate) fn capture_departure_color(
     Some(DepartureColorV1 {
         source: crate::state::AbilitySourceContractV4::capture(state, change.object),
         color_mask: crate::engine::object_color_mask(state, change.object),
+        private_snapshot_json: serde_json::to_string(live).expect("GameObject serialization"),
     })
 }
 pub(crate) fn log_departure_color(state: &mut GameState, snapshot: DepartureColorV1) {
@@ -225,6 +227,20 @@ pub(crate) fn validate_color_history(state: &GameState) -> Result<(), String> {
                         && *controller_before == snapshot.source.controller)
             {
                 return Err("color snapshot lacks exact committed battlefield departure".into());
+            }
+            let captured: crate::state::GameObject =
+                serde_json::from_str(&snapshot.private_snapshot_json)
+                    .map_err(|_| "invalid original color visibility snapshot")?;
+            if serde_json::to_string(&captured).map_err(|_| "color visibility serialization")?
+                != snapshot.private_snapshot_json
+                || captured.card_def != snapshot.source.card_def
+                || captured.owner != snapshot.source.owner
+                || captured.controller != snapshot.source.controller
+                || captured.zone != snapshot.source.zone
+                || captured.zone_change_count != snapshot.source.zone_change_count
+                || (captured.v4.face_down_v1.is_some() && snapshot.color_mask != 0)
+            {
+                return Err("color visibility snapshot changed original source".into());
             }
             let live = state
                 .objects
