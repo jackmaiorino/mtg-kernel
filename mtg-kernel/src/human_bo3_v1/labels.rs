@@ -344,7 +344,11 @@ fn pending_program(
     selected.ok_or(Error::UnsupportedPrompt)
 }
 
-fn target(target: &TargetRefV1, handles: &Handles, human: PlayerSeatV1) -> Result<String, Error> {
+pub(super) fn target(
+    target: &TargetRefV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
     match target {
         TargetRefV1::Player { player } => Ok(if *player == human {
             "you"
