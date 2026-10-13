@@ -175,6 +175,18 @@ pub(crate) struct FishingProjectionV40 {
     pub(crate) actions: Vec<crate::rl_session::fishing_pole_v39::ClassifiedActionV39>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TwinflameFactsV40 {
+    pub static_sources: Vec<crate::twinflame_observation_v1::StaticSourceV1>,
+    pub multiplier_sources: Vec<crate::twinflame_observation_v1::StaticSourceV1>,
+    pub meanings: Vec<crate::twinflame_tyrant_v1::PrintedMeaningV1>,
+    pub prevention_menu: Option<crate::twinflame_observation_v1::MenuV1>,
+    pub combat_allocation: Option<crate::twinflame_observation_v1::AllocationMenuV38>,
+    pub optional_discard_menu: Option<crate::twinflame_observation_v1::DiscardMenuV2>,
+    pub optional_fight_menu: Option<crate::twinflame_observation_v1::ProgramMenuV3>,
+    pub equipment_damage_sources: Vec<crate::equipment_damage_source_v4::PublicSourceV4>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "family", content = "facts")]
 pub enum FamilyFactsV40 {
     Early(Box<crate::akroma_early_public_v40::EarlyFactsV40>),
@@ -202,6 +214,7 @@ pub enum FamilyFactsV40 {
     Inspiration(Box<InspirationFactsV40>),
     Fishing(Box<FishingFactsV40>),
     GameOutcome(Box<GameOutcomeFactsV40>),
+    Twinflame(Box<TwinflameFactsV40>),
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -242,6 +255,7 @@ pub(crate) enum FamilyProjectionV40 {
     Inspiration(Box<crate::inspiration_observation_v1::InspirationObservationV1>),
     Fishing(Box<FishingProjectionV40>),
     GameOutcome(Box<GameOutcomeProjectionV40>),
+    Twinflame(Box<crate::twinflame_observation_v1::TwinflameObservationV1>),
 }
 impl FamilyProjectionV40 {
     pub(crate) fn facts(&self) -> FamilyFactsV40 {
@@ -366,6 +380,16 @@ impl FamilyProjectionV40 {
                 meanings: o.meanings.clone(),
                 choice: o.choice.clone(),
             })),
+            Self::Twinflame(o) => FamilyFactsV40::Twinflame(Box::new(TwinflameFactsV40 {
+                static_sources: o.static_sources.clone(),
+                multiplier_sources: o.multiplier_sources.clone(),
+                meanings: o.meanings.clone(),
+                prevention_menu: o.prevention_menu.clone(),
+                combat_allocation: o.combat_allocation.clone(),
+                optional_discard_menu: o.optional_discard_menu.clone(),
+                optional_fight_menu: o.optional_fight_menu.clone(),
+                equipment_damage_sources: o.equipment_damage_sources.clone(),
+            })),
         }
     }
     pub(crate) fn projection(&self) -> &crate::rl::PublicObservationProjectionV5 {
@@ -395,6 +419,7 @@ impl FamilyProjectionV40 {
             Self::ZulAshur(o) => &o.projection,
             Self::Banner(o) => &o.projection,
             Self::Inspiration(o) => &o.projection,
+            Self::Twinflame(o) => &o.projection,
         }
     }
 }
@@ -426,6 +451,7 @@ impl FamilyProjectionV40 {
             Self::ZulAshur(o) => o.projection = projection.clone(),
             Self::Banner(o) => o.projection = projection.clone(),
             Self::Inspiration(o) => o.projection = projection.clone(),
+            Self::Twinflame(o) => o.projection = projection.clone(),
         }
     }
 }
@@ -555,6 +581,11 @@ pub(crate) fn build(
             },
         )));
     }
+    parts.push(FamilyProjectionV40::Twinflame(Box::new(
+        crate::twinflame_observation_v1::parts_for_akroma_v40(
+            state, surface, actor, step, physical, substep,
+        )?,
+    )));
     Ok(parts)
 }
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
@@ -564,6 +595,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     }
     crate::fishing_pole_v39::lifecycle::validate_state(state)?;
     crate::planeswalker_v1::validate_heartfire_recipients_v12(state)?;
+    crate::twinflame_observation_v1::validate_projection_authority(state).map_err(|e| e.0)?;
     crate::effect::validate_pending_effect_choice(state)?;
     crate::sower_restriction_capture_v1::active(state).map_err(|e| e.0)?;
     crate::effect::frenzied_goblin_resolution_v1::validate(state)?;

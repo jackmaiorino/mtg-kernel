@@ -287,6 +287,9 @@ fn menu_check(memorial: bool) {
                     _ => None,
                 })
                 .unwrap();
+            assert!(public.families.iter().any(|row| matches!(row,
+                crate::akroma_family_public_v40::FamilyFactsV40::Twinflame(o)
+                    if o.prevention_menu.is_none() && o.optional_discard_menu.is_none())));
             assert_eq!(crystal.chooser, chooser.into());
             assert_eq!(
                 crystal.resolving_source.card_db_id,
@@ -572,5 +575,342 @@ fn real_fishing_and_copied_heartfire_rows_keep_independent_original_sources_and_
         assert_eq!(state.objects.get(pole).counters.bait, 1);
         assert_eq!(state.objects.get(target).damage, 2);
         assert_eq!(state.objects.get(heartfire).controller, actor.opponent());
+    }
+}
+
+#[test]
+#[ignore = "requires genuine Twinflame registration; actual copied Heartfire payment and V40 history route"]
+fn actual_twinflame_copied_heartfire_order_history_private_binding_and_restore_both_seats() {
+    use crate::akroma_family_public_v40::{FamilyFactsV40, FamilyProjectionV40};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source, target, generation) = announced(actor, false);
+        put(&mut state, actor, "Mountain", Zone::Battlefield);
+        for seat in [actor, actor.opponent()] {
+            for _ in 0..8 {
+                put(&mut state, seat, "Forest", Zone::Library);
+            }
+        }
+        // Cast the real Tyrant above the already paid copied activation. Its
+        // actual entry precedes damage preparation, without replacing journals.
+        let tyrant = put(&mut state, actor, "Twinflame Tyrant", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 3;
+        state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 2;
+        engine::step(&mut state, Action::CastSpell(tyrant)).unwrap();
+        resolve(&mut state, tyrant);
+        assert_eq!(state.objects.get(tyrant).zone, Zone::Battlefield);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change_to_battlefield_under_controller(source, actor.opponent()),
+        );
+        assert_eq!(state.objects.get(source).controller, actor.opponent());
+        assert!(state.objects.get(source).zone_change_count > generation);
+        state.engine.next_replacement_id += 1;
+        state
+            .engine
+            .active_replacements
+            .push(crate::event::ActiveReplacement {
+                id: state.engine.next_replacement_id,
+                source: target,
+                kind: crate::event::ReplacementEffectKind::PreventNextDamage {
+                    target: Target::Object(target),
+                    remaining: 1,
+                },
+            });
+        for _ in 0..20 {
+            let next = engine::advance_until_decision(&mut state);
+            if matches!(next, Decision::ChooseEffectOption { .. }) {
+                break;
+            }
+            assert!(matches!(next, Decision::CastSpellOrPass { .. }), "{next:?}");
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        assert!(crate::effect::crystal_prevention_v1::is_choice(&state));
+        let chooser = actor.opponent();
+        let mut session = HumanAkromaSessionV40::from_session(
+            FastActorSessionV1::from_akroma_v40_fixture_state(state),
+            chooser.into(),
+        )
+        .unwrap();
+        let mut projector = HumanAkromaProjectorV40::new(chooser.into());
+        let saved = session.snapshot_v40();
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("real historical replacement menu");
+        };
+        let public = session.public_observation(expected).unwrap();
+        let menu = public
+            .families
+            .iter()
+            .find_map(|row| match row {
+                FamilyFactsV40::Twinflame(o) => o.prevention_menu.as_ref(),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(menu.chooser, chooser.into());
+        assert_eq!(menu.original_damage, 2);
+        assert_eq!(
+            menu.source_history.as_ref().unwrap().captured_controller,
+            actor.into()
+        );
+        assert_eq!(menu.source_history.as_ref().unwrap().signed_power, 2);
+        assert_eq!(
+            menu.resolving_source.card_db_id,
+            crate::card_def::card_id_by_name("Heartfire Immolator").unwrap()
+        );
+        assert_eq!(menu.resolving_source.zone_change_count, generation);
+        assert_eq!(menu.resolving_source.controller, actor.into());
+        assert!(public.families.iter().any(|row| matches!(row,
+            FamilyFactsV40::Crystal(o) if o.prevention_menu.is_none())));
+        let (_, _, binding) = session
+            .inner
+            .akroma_current_decision_input_v40(expected, chooser.into())
+            .unwrap();
+        let mut forged = binding.clone();
+        let part = forged
+            .families
+            .iter_mut()
+            .find_map(|row| match row {
+                FamilyProjectionV40::Twinflame(o) => Some(o),
+                _ => None,
+            })
+            .unwrap();
+        part.prevention_menu
+            .as_mut()
+            .unwrap()
+            .resolving_source
+            .zone_change_count += 1;
+        let before = session.inner.privileged_core_environment_hash();
+        assert!(session
+            .inner
+            .akroma_validate_bound_decision_v40(expected, chooser.into(), &forged)
+            .is_err());
+        assert_eq!(session.inner.privileged_core_environment_hash(), before);
+        let prompt = projector.project_current(&session, expected).unwrap();
+        let json = serde_json::to_string(&prompt).unwrap();
+        for private in [
+            "arena_id",
+            "event_history",
+            "source_contract",
+            "private_snapshot_json",
+            "zone_change_count",
+        ] {
+            assert!(!json.contains(private), "{private}");
+        }
+        let choose = |prompt: &HumanDecisionAkromaV40, needle: &str| HumanActionRequestV1 {
+            prompt_seq: prompt.prompt_seq,
+            action_index: prompt
+                .actions
+                .iter()
+                .find(|row| row.label.contains(needle))
+                .unwrap()
+                .action_index,
+        };
+        let doubled = choose(&prompt, "double the remaining damage");
+        let receipt = projector.submit(&mut session, doubled.clone()).unwrap();
+        let before = session.inner.privileged_core_environment_hash();
+        assert_eq!(
+            projector.submit(&mut session, doubled.clone()).unwrap(),
+            receipt
+        );
+        assert_eq!(session.inner.privileged_core_environment_hash(), before);
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("remaining shield");
+        };
+        let remaining = projector.project_current(&session, expected).unwrap();
+        projector
+            .submit(&mut session, choose(&remaining, "shield"))
+            .unwrap();
+        let core = session.inner.akroma_fixture_state();
+        assert_eq!(core.objects.get(target).damage, 3);
+        assert!(core.engine.pending_effect.is_none());
+        assert_eq!(
+            core.engine
+                .event_history
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    crate::event::CommittedEvent::SourcePowerActivationFinishedV1 { .. }
+                ))
+                .count(),
+            1
+        );
+        session.restore_v40(&saved).unwrap();
+        let before = session.inner.privileged_core_environment_hash();
+        assert_eq!(
+            projector.submit(&mut session, doubled),
+            Err(Error::StaleDecision)
+        );
+        assert_eq!(session.inner.privileged_core_environment_hash(), before);
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("restored original menu");
+        };
+        let restored = projector.project_current(&session, expected).unwrap();
+        assert_eq!(restored.state, prompt.state);
+        assert_eq!(restored.actions, prompt.actions);
+        projector
+            .submit(&mut session, choose(&restored, "shield"))
+            .unwrap();
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("remaining multiplier");
+        };
+        let remaining = projector.project_current(&session, expected).unwrap();
+        projector
+            .submit(
+                &mut session,
+                choose(&remaining, "double the remaining damage"),
+            )
+            .unwrap();
+        let core = session.inner.akroma_fixture_state();
+        assert_eq!(core.objects.get(target).damage, 2);
+        assert!(core.engine.pending_effect.is_none());
+        assert_eq!(core.objects.get(source).controller, chooser);
+        assert_eq!(
+            core.engine
+                .event_history
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    crate::event::CommittedEvent::SourcePowerActivationFinishedV1 { .. }
+                ))
+                .count(),
+            1
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires genuine Twinflame registration; actual Incinerating Blast optional discard DTO and owning choices"]
+fn actual_twinflame_incinerating_discard_parts_and_owning_decline_pay_restore_both_seats() {
+    use crate::akroma_family_public_v40::FamilyFactsV40;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        put(&mut state, actor, "Mountain", Zone::Battlefield);
+        put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+        let discarded = put(&mut state, actor, "Forest", Zone::Hand);
+        for seat in [actor, actor.opponent()] {
+            for _ in 0..8 {
+                put(&mut state, seat, "Forest", Zone::Library);
+            }
+        }
+        let drawn = state.players[actor.index()].library[0];
+        let tyrant = put(&mut state, actor, "Twinflame Tyrant", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 3;
+        state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 2;
+        engine::step(&mut state, Action::CastSpell(tyrant)).unwrap();
+        resolve(&mut state, tyrant);
+        let target = put(
+            &mut state,
+            actor.opponent(),
+            "Shivan Dragon",
+            Zone::Battlefield,
+        );
+        let spell = put(&mut state, actor, "Incinerating Blast", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 4;
+        state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+        engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::ChooseTargets { .. }
+        ));
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+        for _ in 0..24 {
+            let next = engine::advance_until_decision(&mut state);
+            if crate::effect::crystal_prevention_v1::is_discard_choice(&state) {
+                break;
+            }
+            assert!(matches!(next, Decision::CastSpellOrPass { .. }), "{next:?}");
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        assert!(crate::effect::crystal_prevention_v1::is_discard_choice(
+            &state
+        ));
+        let mut session = HumanAkromaSessionV40::from_session(
+            FastActorSessionV1::from_akroma_v40_fixture_state(state),
+            actor.into(),
+        )
+        .unwrap();
+        let mut projector = HumanAkromaProjectorV40::new(actor.into());
+        let saved = session.snapshot_v40();
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("actual optional discard");
+        };
+        let public = session.public_observation(expected).unwrap();
+        let menu = public
+            .families
+            .iter()
+            .find_map(|row| match row {
+                FamilyFactsV40::Twinflame(o) => o.optional_discard_menu.as_ref(),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(menu.chooser, actor.into());
+        assert_eq!((menu.maximum_cards, menu.draws_if_discarded), (1, 1));
+        assert_eq!(
+            menu.source.card_db_id,
+            crate::card_def::card_id_by_name("Incinerating Blast").unwrap()
+        );
+        assert!(public.families.iter().any(|row| matches!(row,
+            FamilyFactsV40::Crystal(o) if o.optional_discard_menu.is_none())));
+        let prompt = projector.project_current(&session, expected).unwrap();
+        let decline = HumanActionRequestV1 {
+            prompt_seq: prompt.prompt_seq,
+            action_index: prompt
+                .actions
+                .iter()
+                .find(|row| row.label == "Decline the optional discard")
+                .unwrap()
+                .action_index,
+        };
+        projector.submit(&mut session, decline.clone()).unwrap();
+        assert_eq!(
+            session
+                .inner
+                .akroma_fixture_state()
+                .objects
+                .get(discarded)
+                .zone,
+            Zone::Hand
+        );
+        assert_eq!(
+            session.inner.akroma_fixture_state().objects.get(drawn).zone,
+            Zone::Library
+        );
+        assert_eq!(
+            session.inner.akroma_fixture_state().objects.get(spell).zone,
+            Zone::Graveyard
+        );
+        session.restore_v40(&saved).unwrap();
+        let before = session.inner.privileged_core_environment_hash();
+        assert_eq!(
+            projector.submit(&mut session, decline),
+            Err(Error::StaleDecision)
+        );
+        assert_eq!(session.inner.privileged_core_environment_hash(), before);
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("restored optional discard");
+        };
+        let restored = projector.project_current(&session, expected).unwrap();
+        assert_eq!(restored.state, prompt.state);
+        assert_eq!(restored.actions, prompt.actions);
+        let pay = HumanActionRequestV1 {
+            prompt_seq: restored.prompt_seq,
+            action_index: restored
+                .actions
+                .iter()
+                .find(|row| row.label.starts_with("Discard Forest "))
+                .unwrap()
+                .action_index,
+        };
+        let receipt = projector.submit(&mut session, pay.clone()).unwrap();
+        let before = session.inner.privileged_core_environment_hash();
+        assert_eq!(projector.submit(&mut session, pay).unwrap(), receipt);
+        assert_eq!(session.inner.privileged_core_environment_hash(), before);
+        let core = session.inner.akroma_fixture_state();
+        assert_eq!(core.objects.get(discarded).zone, Zone::Graveyard);
+        assert_eq!(core.objects.get(drawn).zone, Zone::Hand);
+        assert_eq!(core.objects.get(spell).zone, Zone::Graveyard);
+        assert!(core.engine.pending_effect.is_none());
+        assert!(core.engine.event_history.iter().any(|event| matches!(event,
+            crate::event::CommittedEvent::Damage { source, target: actual, amount: 12, .. }
+                if *source == spell && *actual == Target::Object(target))));
     }
 }

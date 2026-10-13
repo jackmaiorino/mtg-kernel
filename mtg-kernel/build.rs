@@ -4243,6 +4243,7 @@ fn keywords_for(card: &CardJson) -> String {
                 "Keywords::LIFELINK",
             ]);
         }
+        "Twinflame Tyrant" => keywords.push("Keywords::FLYING"),
         "Elfsworn Giant" => keywords.push("Keywords::REACH"),
         "Eager Trufflesnout" => keywords.push("Keywords::TRAMPLE"),
         _ => {}
@@ -4431,6 +4432,18 @@ fn as_enters_color_choice_v1(name: &str) -> &'static str {
         "None"
     }
 }
+fn damage_replacement_v1(name: &str) -> &'static str {
+    if cfg!(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    )) && name == "Twinflame Tyrant"
+    {
+        "Some(DamageReplacementDefV1::DoubleControlledSourceToOpponent)"
+    } else {
+        "None"
+    }
+}
+
 fn chosen_color_creature_boost_v1(name: &str) -> &'static str {
     if as_enters_color_choice_v1(name) != "None" {
         "Some(ChosenColorCreatureBoostDefV1 { power: 1, toughness: 0 })"
@@ -10208,6 +10221,16 @@ fn codegen(cards: &[CardJson]) -> String {
             }
         )
         .unwrap();
+        writeln!(
+            out,
+            "        damage_replacement_v1: {},",
+            if executable {
+                damage_replacement_v1(&c.name)
+            } else {
+                "None"
+            }
+        )
+        .unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -10425,6 +10448,11 @@ fn codegen(cards: &[CardJson]) -> String {
         {
             canon
                 .push_str("as_enters_color_choice_v1=AnyWubrg|chosen_color_creature_boost_v1=1,0|");
+        }
+        if c.engine_capability != EngineCapabilityJson::NoEffect
+            && damage_replacement_v1(&c.name) != "None"
+        {
+            canon.push_str("damage_replacement_v1=DoubleControlledSourceToOpponent|");
         }
         canon.push_str("as_enters_choose_color_other_than=");
         canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {

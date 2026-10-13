@@ -1287,6 +1287,33 @@ pub enum CommittedEvent {
     FishingPoleJournalV39 {
         journal: Box<crate::fishing_pole_v39::lifecycle::JournalV39>,
     },
+    TwinflameReplacementInputV38 {
+        input: Box<crate::twinflame_tyrant_v1::ordering::AnswerInputV38>,
+    },
+    TwinflameReplacementOperationV38 {
+        operation: Box<crate::twinflame_tyrant_v1::ordering::AnswerOperationV38>,
+    },
+    TwinflameDamagePreparationV38 {
+        preparation: Box<crate::twinflame_tyrant_v1::ordering::PreparationV38>,
+    },
+    TwinflameCombatPublishedV38 {
+        publication: Box<crate::twinflame_tyrant_v1::combat::PublicationV38>,
+    },
+    TwinflameCombatInputV38 {
+        input: Box<crate::twinflame_tyrant_v1::combat::InputV38>,
+    },
+    TwinflameCombatOperationV38 {
+        operation: Box<crate::twinflame_tyrant_v1::combat::OperationV38>,
+    },
+    TwinflameDynamicDamageSampleV38 {
+        sample: Box<crate::twinflame_tyrant_v1::sampling::SampleV38>,
+    },
+    TwinflameFieryCaptureV38 {
+        capture: Box<crate::twinflame_tyrant_v1::fiery::CaptureV38>,
+    },
+    TwinflameFieryFinishedV38 {
+        operation: Box<crate::twinflame_tyrant_v1::fiery::FinishV38>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -1441,6 +1468,13 @@ pub fn apply_replacements(
             )
         });
     if let ProposedEvent::Damage(damage) = &mut proposed {
+        if crate::twinflame_tyrant_v1::replace(state, damage).is_err() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                damage.source,
+            ));
+            return None;
+        }
         crate::standard_cards_v1::replace_damage(state, damage);
     }
     if let ProposedEvent::Damage(damage) = &proposed {
@@ -2014,7 +2048,43 @@ pub(crate) fn propose_and_commit_crystal_owned(
     if !owner.permits_damage(state, &ProposedEvent::Damage(damage.clone())) {
         return Err("Crystal damage lost private removed-item authority".into());
     }
-    prepare_commit_crystal_damage(state, damage, ctx, op, path)
+    prepare_commit_crystal_damage(state, damage, ctx, op, path, owner)
+}
+/// Genuine opaque Fiery final instruction under the same removed-item loan.
+/// Any selected linked-Aura operation must retain its surrounding owning replay.
+pub(crate) fn propose_and_commit_twinflame_fiery_equipment_owned(
+    state: &mut GameState,
+    capture: &crate::twinflame_tyrant_v1::fiery::CaptureV38,
+    owner: &crate::effect::crystal_prevention_v1::OwnerV1,
+) -> Result<(), String> {
+    let Some(crate::state::Target::Object(equipment)) = capture.ctx.targets.get(1) else {
+        return Err("Fiery equipment instruction lost actual selected object".into());
+    };
+    if !capture.legal[1]
+        || owner
+            .packet_before(
+                state,
+                &capture.ctx,
+                &crate::effect::EffectOp::FieryAnnihilation,
+                &capture.path,
+            )
+            .is_none_or(|(_, item)| item != *capture.item)
+        || !matches!(state.engine.event_history.get(capture.index as usize),Some(CommittedEvent::TwinflameFieryCaptureV38{capture:original}) if original.as_ref()==capture)
+        || crate::linked_aura_operation_v1::needs_event_owner(state)
+            && !crate::linked_aura_operation_v1::locally_owned(state)
+    {
+        return Err(
+            "Fiery equipment instruction lost private original or linked-operation owner".into(),
+        );
+    }
+    propose_and_commit_inner(
+        state,
+        ProposedEvent::zone_change(*equipment, crate::state::Zone::Exile),
+    );
+    if state.engine.halted.is_some() {
+        return Err("Fiery actual equipment exile halted".into());
+    }
+    Ok(())
 }
 pub(crate) fn propose_and_commit_crystal_power_owned(
     state: &mut GameState,
@@ -2025,16 +2095,78 @@ pub(crate) fn propose_and_commit_crystal_power_owned(
     if !owner.permits_creature_power(state, capture, &ProposedEvent::Damage(damage.clone())) {
         return Err("Crystal chosen-power damage lost private removed-item authority".into());
     }
-    prepare_commit_crystal_damage(state, damage, &capture.ctx, &capture.op, &capture.path)
+    prepare_commit_crystal_damage(
+        state,
+        damage,
+        &capture.ctx,
+        &capture.op,
+        &capture.path,
+        owner,
+    )
 }
 /// Separate actual interpreter operation. Completion alone cannot invent its
 /// replacement preparation or omit its accepted positive/fully-prevented result.
+pub(crate) fn twinflame_packet_lifelink_player(
+    state: &GameState,
+    damage: DamageProposed,
+) -> Option<PlayerId> {
+    lifelink_gain_for(state, &ProposedEvent::Damage(damage)).map(|(player, _)| player)
+}
+pub(crate) fn twinflame_lifelink_player(
+    state: &GameState,
+    choice: &crate::effect::crystal_prevention_v1::ChoiceV1,
+) -> Option<PlayerId> {
+    let mut damage =
+        match ProposedEvent::damage(choice.source, choice.target, choice.remaining_amount) {
+            ProposedEvent::Damage(d) => d,
+            _ => unreachable!(),
+        };
+    damage.historical_source = choice.historical_source;
+    lifelink_gain_for(state, &ProposedEvent::Damage(damage)).map(|(player, _)| player)
+}
+pub(crate) fn commit_twinflame_ordered_scalar(
+    state: &mut GameState,
+    owner: &crate::effect::crystal_prevention_v1::OwnerV1,
+    before: &crate::effect::EffectContinuation,
+    choice: &crate::effect::crystal_prevention_v1::ChoiceV1,
+) -> Result<(u32, Option<u32>), String> {
+    if !owner.permits_replacement_answer(state, before)
+        || choice.remaining_amount <= 0
+        || !choice.options.is_empty()
+        || choice.batch.is_some()
+    {
+        return Err("ordered positive packet lacks genuine scalar answer owner".into());
+    }
+    let mut damage =
+        match ProposedEvent::damage(choice.source, choice.target, choice.remaining_amount) {
+            ProposedEvent::Damage(d) => d,
+            _ => unreachable!(),
+        };
+    damage.historical_source = choice.historical_source;
+    damage.touched_by = choice.touched.clone();
+    let proposed = ProposedEvent::Damage(damage);
+    let gain = lifelink_gain_for(state, &proposed);
+    let at = u32::try_from(state.engine.event_history.len())
+        .map_err(|_| "ordered damage index overflow")?;
+    commit(state, proposed);
+    let gain_at = if let Some((player, amount)) = gain {
+        let index = u32::try_from(state.engine.event_history.len())
+            .map_err(|_| "ordered gain index overflow")?;
+        commit(state, ProposedEvent::life_gain(player, amount));
+        Some(index)
+    } else {
+        None
+    };
+    Ok((at, gain_at))
+}
+
 fn prepare_commit_crystal_damage(
     state: &mut GameState,
     damage: DamageProposed,
     ctx: &crate::effect::ExecCtx,
     op: &crate::effect::EffectOp,
     path: &[u16],
+    owner: &crate::effect::crystal_prevention_v1::OwnerV1,
 ) -> Result<u32, String> {
     use crate::effect::crystal_prevention_v1::{BatchDamageV2, DamageOperationV3};
     if crate::effect::temporary_control_v1::authority::validate(state).is_err()
@@ -2051,7 +2183,46 @@ fn prepare_commit_crystal_damage(
         touched: damage.touched_by.clone(),
     };
     let historical_source = damage.historical_source;
-    let prepared = apply_replacements(state, ProposedEvent::Damage(damage));
+    let mut guaranteed_zero = false;
+    if preventers.iter().any(|o| {
+        matches!(
+            o,
+            crate::effect::crystal_prevention_v1::PreventionV1::Multiplier(_)
+        )
+    }) {
+        let (previous, item) = owner
+            .packet_before(state, ctx, op, path)
+            .ok_or("multiplier preparation lacks genuine removed owner")?;
+        let preparation = crate::twinflame_tyrant_v1::ordering::PreparationV38 {
+            index: u32::try_from(state.engine.event_history.len())
+                .map_err(|_| "multiplier preparation index overflow")?,
+            previous,
+            item: Box::new(item),
+            ctx: ctx.clone(),
+            op: op.clone(),
+            path: path.to_vec(),
+            input: original.clone(),
+            historical_source,
+            options: preventers.clone(),
+            lifelink_player: lifelink_gain_for(state, &ProposedEvent::Damage(damage.clone()))
+                .map(|(p, _)| p),
+        };
+        guaranteed_zero = crate::twinflame_tyrant_v1::ordering::prepared_amount(&preparation)? == 0;
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::TwinflameDamagePreparationV38 {
+                preparation: Box::new(preparation),
+            });
+    }
+    // Full prevention commutes to the exact zero result, even when an
+    // unchosen multiplier-first intermediate exceeds the damage representation.
+    // Its independently published options/preparation remain mandatory proof.
+    let prepared = if guaranteed_zero {
+        None
+    } else {
+        apply_replacements(state, ProposedEvent::Damage(damage))
+    };
     if state.engine.halted.is_some() {
         return Err("Crystal damage preparation halted".into());
     }
@@ -2935,6 +3106,21 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
         crate::effect::EffectObjectBinding,
     )>,
 ) {
+    // Validate the entire replacement roster before any shield or packet mutates.
+    if let Some(source) = events.iter().find_map(|event| match event {
+        ProposedEvent::Damage(damage)
+            if crate::twinflame_tyrant_v1::validate_commuting_damage(state, damage).is_err() =>
+        {
+            Some(damage.source)
+        }
+        _ => None,
+    }) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        ));
+        return;
+    }
     let garruk_batch = crate::garruks_uprising_v1::EntryBatchV1::capture();
     let arahbo_batch = crate::arahbo_v1::EntryBatchV1::capture();
     let raid_history_start = state.engine.event_history.len();
@@ -2999,6 +3185,27 @@ pub(crate) fn commit_crystal_prepared_batch(
         raid_history_start: state.engine.event_history.len(),
     };
     commit_batch_survivors(state, survivors, authority_batch, context);
+}
+pub(crate) fn commit_twinflame_prepared_combat(
+    state: &mut GameState,
+    survivors: Vec<ProposedEvent>,
+    owner: &crate::twinflame_tyrant_v1::combat::OwnerV38,
+) -> Result<(), String> {
+    if !owner.permits(state, &survivors) {
+        return Err("combat prepared commit lost private actual wave owner".into());
+    }
+    let authority = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
+    let context = EntryBatchCommitContextV1 {
+        garruk_batch: crate::garruks_uprising_v1::EntryBatchV1::capture(),
+        arahbo_batch: crate::arahbo_v1::EntryBatchV1::capture(),
+        attachments: Vec::new(),
+        raid_history_start: state.engine.event_history.len(),
+    };
+    commit_batch_survivors(state, survivors, authority, context);
+    if state.engine.halted.is_some() {
+        return Err("actual combat prepared commit halted".into());
+    }
+    Ok(())
 }
 struct EntryBatchCommitContextV1 {
     garruk_batch: Option<crate::garruks_uprising_v1::EntryBatchV1>,

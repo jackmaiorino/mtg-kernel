@@ -279,7 +279,12 @@ impl HumanDecisionProjectorV1 {
 }
 
 mod inspiration_v37;
+mod twinflame_v38;
 pub use inspiration_v37::*;
+pub use twinflame_v38::{
+    HumanDecisionTwinflameV38, HumanTwinflameExtensionsV38, HumanTwinflameProjectorV38,
+    HumanTwinflameSessionV38, HumanTwinflameSnapshotV38,
+};
 mod banner_v36;
 mod fiery_v33;
 mod zul_ashur_v35;
