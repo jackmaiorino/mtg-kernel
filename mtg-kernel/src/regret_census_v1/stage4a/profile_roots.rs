@@ -10,16 +10,20 @@
 //! context, keys, selection rule and accounting) with the requested
 //! selection-transition budget and its own seed root. Rows carry the
 //! selection record, a primary hash over every deterministic search output,
-//! wall time and, with the `s4a-profile-v1` feature, the exclusive cost split.
+//! wall time, the root's supported (teacher) choice beside the plain game's
+//! own choice there, and, with the `s4a-profile-v1` feature, the exclusive
+//! cost split.
 
 use super::arms::Limits;
 use super::bank::{
     bank_roles, guide_ctx, plain_logged, source_session, walk, BankShared, SourceSpec,
 };
-use super::canon2::KeyMode;
-use super::play::acting;
+use super::canon2::{KeyMode, KeyStats, Keyer};
+use super::play::{acting, decision};
 use super::seeds::RootSeeds;
+use super::tree::{live_index, Found, Tree, MIN_EXEC_BACKUPS};
 use crate::ids::PlayerId;
+use crate::rl_session::FastActorSessionV1;
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -82,9 +86,10 @@ pub(super) fn profile_case(
         let mut diag = super::arms::SearchDiag::default();
         let _ = crate::search_profile_v1::take();
         let started = Instant::now();
-        let (sel, _tree) = roles.select_e_diagnosed(&ctx, None, 1, None, None, Some(&mut diag));
+        let (sel, tree) = roles.select_e_diagnosed(&ctx, None, 1, None, None, Some(&mut diag));
         let wall = started.elapsed().as_secs_f64();
         let profile = crate::search_profile_v1::take_json();
+        let teacher = root_teacher(&root, mode, &tree, actions[step as usize])?;
         let mut keys = diag.keys.json();
         keys["keying_seconds"] = Value::Null;
         let primary = json!({"selection":sel.json(),"keys":keys});
@@ -100,8 +105,38 @@ pub(super) fn profile_case(
             "game_actions":actions.len(),"budget":budget,"key_mode":mode.label(),
             "bank_binding_sha256":binding,"selection":sel.json(),
             "keying_seconds":diag.keys.seconds,"primary_sha256":primary_sha256,
-            "wall":wall,"key_memo":diag.key_memo,"profile":profile}),
+            "wall":wall,"teacher":teacher,"key_memo":diag.key_memo,"profile":profile}),
         );
     }
     Ok(rows)
+}
+
+/// The root's frozen supported choice (as the teacher contract binds it) and
+/// the plain game's own choice at that root, as live action indices.
+fn root_teacher(
+    root: &FastActorSessionV1,
+    mode: KeyMode,
+    tree: &Tree,
+    played: u32,
+) -> Result<Value, String> {
+    let err = |e: super::play::PlayErr| format!("{e:?}");
+    let d = decision(root).ok_or("root is terminal")?;
+    let mut stats = KeyStats::default();
+    let mut keyer = Keyer::new(mode, &mut stats);
+    let st = keyer.step(root, d).map_err(err)?;
+    let (key, pk, pe, cn) = keyer.storage(&st);
+    Ok(match tree.find(&key, &pk, &pe, cn).map_err(err)? {
+        Found::Hit(node) => {
+            let choice = node.frozen_choice();
+            let live = choice
+                .map(|e| live_index(cn, &cn.edges[e]))
+                .transpose()
+                .map_err(err)?;
+            json!({"root_found":true,"supported":choice.is_some(),"teacher_live":live,
+                "played_live":played,"agree":live.map(|l| l == played),"root_visits":node.visits,
+                "supported_edges":node.n.iter().filter(|n| **n >= MIN_EXEC_BACKUPS).count(),
+                "edges":node.n.len()})
+        }
+        Found::Miss => json!({"root_found":false,"supported":false,"played_live":played}),
+    })
 }
