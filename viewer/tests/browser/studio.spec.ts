@@ -4,6 +4,7 @@ import native from '../fixtures/native-root-excerpt.json' with { type: 'json' };
 import replay from '../fixtures/search-replay.json' with { type: 'json' };
 import graph from '../fixtures/search-graph.json' with {type:'json'};
 import retained from '../fixtures/retained-search.json' with {type:'json'};
+import uct from '../fixtures/uct-search.json' with {type:'json'};
 import { createHash } from 'node:crypto';
 
 async function openFixture(page: import('@playwright/test').Page) {
@@ -12,6 +13,22 @@ async function openFixture(page: import('@playwright/test').Page) {
   await page.locator('input[type=file]').setInputFiles({name:'recording.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(fixture))});
   await expect(page.getByRole('region', { name:'Game replay' })).toBeVisible();
 }
+
+test('full UCT tree exposes discovery, rollout moves and discarded attempts',async({page})=>{
+  await openFixture(page);await page.locator('input[type=file]').setInputFiles({name:'uct.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(uct))});
+  await page.getByRole('button',{name:'Watch this search unfold'}).click();
+  await expect(page.locator('.decision-evidence')).toContainText('Tree choices, rollout actions');
+  await page.getByRole('button',{name:'Watch its discovery'}).click();
+  await expect(page.locator('.search-discovery')).toContainText('attempt 1');
+  await page.getByRole('button',{name:'Next search event',exact:true}).click();await expect(page.locator('[data-node]')).toHaveCount(2);
+  await page.getByRole('button',{name:'Next search event',exact:true}).click();await expect(page.locator('.search-caption')).toContainText('Selected at a UCT tree node');
+  await page.getByRole('button',{name:'See complete graph'}).click();await expect(page.locator('[data-node]')).toHaveCount(3);await expect(page.locator('.search-caption')).toContainText('without a backup');
+  await page.getByText('Inspect every simulated move', {exact:false}).click();await page.getByLabel('Inspect rollout move').selectOption('1');
+  await expect(page.locator('.search-caption')).toContainText('step 16');
+  await page.setViewportSize({width:320,height:900});await page.emulateMedia({reducedMotion:'reduce'});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+  await page.screenshot({path:'test-results/uct-search-320.png',fullPage:true});
+});
 
 test('retained search choices link to roots and show legal moves without fabricated scores',async({page})=>{
   await openFixture(page);

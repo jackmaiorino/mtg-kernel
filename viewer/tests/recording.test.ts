@@ -4,12 +4,36 @@ import native from './fixtures/native-root-excerpt.json';
 import replayFixture from './fixtures/search-replay.json';
 import graphFixture from './fixtures/search-graph.json';
 import retained from './fixtures/retained-search.json';
+import uctFixture from './fixtures/uct-search.json';
+import { uctEvents, uctGraphAt } from '../src/uct-playback';
 import { graphAt, graphLayout } from '../src/search-graph';
 import { initialSearchPlayback, searchReducer, searchEvents, rootHistory } from '../src/search-playback';
 import { comparePolicyMasses, policyFavorite, parseRecording, verifySearchDigests } from '../src/recording';
 import { initialPlayback, playbackReducer } from '../src/playback';
 
 const copy = () => structuredClone(fixture);
+describe('full UCT discovery traces',()=>{
+  it('reconciles natural wins, draws and discarded proposals, revealing branches before backup',async()=>{
+    const r=parseRecording(uctFixture);await verifySearchDigests(r);const u=r.frames[0].search!.uctReplay!;
+    expect(u.firstCombo).toBe(0);expect(uctEvents(u).filter(e=>e.phase==='rollout')).toHaveLength(8);
+    const pending=uctGraphAt(u,{simulation:0,phase:'select',choice:1});expect(pending.nodes.size).toBe(2);expect(pending.completed).toBe(0);
+    const natural=uctGraphAt(u,{simulation:0,phase:'backup',choice:1});expect(natural.nodes.get(1)?.visits).toBe(1);
+    const final=uctGraphAt(u,{simulation:2,phase:'backup',choice:1});expect(final.completed).toBe(2);expect(final.nodes.get(0)?.sum).toBe(1000000n);expect(final.nodes.get(2)?.visits).toBe(0);
+    expect(uctGraphAt(u,{simulation:0,phase:'select',choice:0}).nodes.size).toBe(1);
+  });
+  it('rejects invented source, combo, move attribution, labels and early backups',()=>{
+    const mutate=[(r:typeof uctFixture)=>{r.frames[0].decisionSource.artifactSha256='b'.repeat(64);},
+      (r:typeof uctFixture)=>{r.frames[0].search.uctReplay.simulations[0].rollout[0][5]=0;},
+      (r:typeof uctFixture)=>{r.frames[0].search.uctReplay.simulations[0].choices[0].live=0;},
+      (r:typeof uctFixture)=>{r.frames[0].search.uctReplay.nodes[0].actions[0].label='Invented move';},
+      (r:typeof uctFixture)=>{r.frames[0].search.uctReplay.nodes[2].visits=1;}];
+    for(const change of mutate){const r=structuredClone(uctFixture);change(r);expect(()=>parseRecording(r)).toThrow(/UCT/);}
+  });
+  it('verifies its compact public table digest independently',async()=>{
+    const r=structuredClone(uctFixture);r.frames[0].search.uctReplay.tableDigest='b'.repeat(64);
+    await expect(verifySearchDigests(parseRecording(r))).rejects.toThrow(/public table digest/);
+  });
+});
 describe('retained search-controlled decisions',()=>{
   it('accepts original Git source identities and binds the reconstruction artifact',()=>{
     const reconstruction={kind:'recorded-actions',originalSource:'c'.repeat(40),originalRuntime:'d'.repeat(64),

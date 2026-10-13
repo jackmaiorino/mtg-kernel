@@ -1,4 +1,4 @@
-import type { Board, SearchReplay } from './recording';
+import type { Board, Frame, Seat, SearchReplay } from './recording';
 import type { SearchEvent } from './search-playback';
 
 export type GraphEdge = {from:number; to:number; action:number; key:string};
@@ -41,7 +41,8 @@ export function graphAt(replay:SearchReplay,event:SearchEvent):SearchGraphState 
 }
 
 export type GraphPoint={x:number;y:number;depth:number};
-export function graphLayout(replay:SearchReplay):Map<number,GraphPoint> {
+export type GraphTopology={schema:string;nodes:{actor:Seat;actions:Frame['actions'];children:number[][]}[];simulations:{reason:string}[]};
+export function graphLayout(replay:Pick<GraphTopology,'nodes'>):Map<number,GraphPoint> {
   // Lay out a canonical spanning tree while retaining every recorded edge.
   // Shared positions keep one identity, including multiple incoming routes.
   const children=replay.nodes.map(n=>[...new Set(n.children.flat())].sort((a,b)=>a-b));

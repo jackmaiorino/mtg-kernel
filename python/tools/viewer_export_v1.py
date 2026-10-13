@@ -254,7 +254,11 @@ def build_recording(path: Path, identifier: str, title: str, exporter: Exporter,
         first = json.loads(stream.readline(8 * 1024 * 1024))
     native = first.get("schema") == CAPTURE_SCHEMA
     reconstructed = first.get('schema') == 'mtg-kernel-viewer-reconstruction/v1'
-    if reconstructed:
+    uct = first.get('schema') == 'mtg-kernel-uct-viewer-capture/v1'
+    if uct:
+        from viewer_uct_export_v1 import export_capture as export_uct
+        header, frames, complete = export_uct(path, exporter)
+    elif reconstructed:
         from viewer_reconstruction_export_v1 import export_reconstruction
         header, frames, complete = export_reconstruction(path, exporter)
     else:
@@ -263,17 +267,17 @@ def build_recording(path: Path, identifier: str, title: str, exporter: Exporter,
         raise ValueError("No decisions for the requested perspective")
     runtime = header.get("runtime", header.get("identity", {}).get("runtime", {}))
     identity = header.get("identity", {})
-    checkpoint = (f"r1 {header['focal_checkpoint']} vs T1 {header['opponent_checkpoint']}" if reconstructed else
+    checkpoint = (f"r1 {header['focal_checkpoint']} vs T1 {header['opponent_checkpoint']}" if reconstructed or uct else
         identity.get("checkpoint_sha256") or identity.get("actual_model", {}).get("parameter_values_sha256", "historical-recorded-model"))
     decks = header.get("decks", ["Recorded deck", "Recorded deck"])
-    version = 'mtg-kernel-viewer-recording/v3' if reconstructed else 'mtg-kernel-viewer-recording/v2' if any(f['search'] and f['search'].get('replay') for f in frames) else SCHEMA
+    version = 'mtg-kernel-viewer-recording/v4' if uct else 'mtg-kernel-viewer-recording/v3' if reconstructed else 'mtg-kernel-viewer-recording/v2' if any(f['search'] and f['search'].get('replay') for f in frames) else SCHEMA
     recording = {"schema":version,"id":identifier,"title":title,
-        "description":("A selected qualification game: r1 Spy versus T1 Wildfire. A plain-policy opening leads to a persistent-search guide from turn 8. Search selected the self-mill and Giant reanimation choices. Reconstructed from recorded real actions; root tables and chooser identities were retained, individual simulations and policy distributions were not. This example is not representative of the refresh pilot or a playing-strength benchmark." if reconstructed else "Illustrative self-play with a frozen model. Recorded behavior is not a playing-strength benchmark." if native else "Historical actor-visible diagnostic recording."),
-        "perspective":exporter.perspective,"complete":complete,"coverage":"every-step" if native or reconstructed else "decision-snapshots",
+        "description":("A fresh frozen-policy execution of the known r1 Spy versus T1 Wildfire development setup. Policies generate the opening; persistent UCT begins at scheduled decision 181. Actual search attempts, selected tree paths, rollout moves, natural results and backups were captured. No saved actions or scripted combo choices. This illustrative example is not a playing-strength benchmark." if uct else "A selected qualification game: r1 Spy versus T1 Wildfire. A plain-policy opening leads to a persistent-search guide from turn 8. Search selected the self-mill and Giant reanimation choices. Reconstructed from recorded real actions; root tables and chooser identities were retained, individual simulations and policy distributions were not. This example is not representative of the refresh pilot or a playing-strength benchmark." if reconstructed else "Illustrative self-play with a frozen model. Recorded behavior is not a playing-strength benchmark." if native else "Historical actor-visible diagnostic recording."),
+        "perspective":exporter.perspective,"complete":complete,"coverage":"every-step" if native or reconstructed or uct else "decision-snapshots",
         "identity":{"source":runtime.get("engine_commit", "unknown"),"runtime":runtime.get("executable_sha256", "unknown"),
             "checkpoint":checkpoint,"cardDatabase":str(identity.get("model", {}).get("card_db_hash", "recorded registry")),
             "sourceSha256":hashlib.sha256(path.read_bytes()).hexdigest()},
-        "seats":[{"name":"r1 / Search guide" if reconstructed else "Kernel / Agent 01","deck":decks[0]},{"name":"T1 / Policy" if reconstructed else "Kernel / Agent 02","deck":decks[1]}],
+        "seats":[{"name":"r1 / Search guide" if reconstructed or uct else "Kernel / Agent 01","deck":decks[0]},{"name":"T1 / Policy" if reconstructed or uct else "Kernel / Agent 02","deck":decks[1]}],
         "cards":exporter.cards,"frames":frames,"bookmarks":bookmarks}
     if reconstructed:
         recording['reconstruction'] = {'kind':'recorded-actions','originalSource':header['original_source'],

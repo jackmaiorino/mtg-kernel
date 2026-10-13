@@ -3,7 +3,7 @@ import { motion, useReducedMotion } from 'motion/react';
 import { Focus, Maximize2, Minus, Plus } from 'lucide-react';
 import type { Recording, SearchReplay } from './recording';
 import type { SearchEvent } from './search-playback';
-import { graphAt, graphBounds, graphLayout, type GraphPoint } from './search-graph';
+import { graphAt, graphBounds, graphLayout, type GraphPoint, type GraphTopology, type SearchGraphState } from './search-graph';
 
 type Camera={x:number;y:number;scale:number};
 const height=390;
@@ -11,7 +11,14 @@ export function SearchGraph({replay,event,recording,playing,speed,epoch,selected
   replay:SearchReplay;event:SearchEvent;recording:Recording;playing:boolean;speed:number;epoch:number;
   selected:number|null;onSelect:(id:number|null)=>void;onComplete:()=>void;onInteract:()=>void;
 }) {
-  const graph=useMemo(()=>graphAt(replay,event),[replay,event]),layout=useMemo(()=>graphLayout(replay),[replay]);
+  const graph=useMemo(()=>graphAt(replay,event),[replay,event]);
+  return <SearchGraphCanvas topology={replay} graph={graph} event={event} recording={recording} playing={playing} speed={speed} epoch={epoch} selected={selected} onSelect={onSelect} onComplete={onComplete} onInteract={onInteract}/>;
+}
+export function SearchGraphCanvas({topology:replay,graph,event,recording,playing,speed,epoch,selected,onSelect,onComplete,onInteract,uct=false}:{
+  topology:GraphTopology;graph:SearchGraphState;event:SearchEvent;recording:Recording;playing:boolean;speed:number;epoch:number;
+  selected:number|null;onSelect:(id:number|null)=>void;onComplete:()=>void;onInteract:()=>void;uct?:boolean;
+}) {
+  const layout=useMemo(()=>graphLayout(replay),[replay]);
   const container=useRef<HTMLDivElement>(null),drag=useRef<{x:number;y:number;camera:Camera;moved:boolean}|null>(null);
   const [width,setWidth]=useState(800),[camera,setCamera]=useState<Camera|null>(null),[focus,setFocus]=useState(0);
   const reduced=useReducedMotion(),simulation=replay.simulations[event.simulation];
@@ -62,10 +69,10 @@ export function SearchGraph({replay,event,recording,playing,speed,epoch,selected
       <div className="search-graph-tools"><button aria-label="Zoom in search graph" onClick={()=>zoom(1.6)}><Plus size={15}/></button><button aria-label="Zoom out search graph" onClick={()=>zoom(1/1.6)}><Minus size={15}/></button><button aria-label="Fit discovered graph" onClick={()=>{onInteract();setCamera(null);}}><Maximize2 size={15}/></button><button aria-label="Focus current simulation path" onClick={()=>{onInteract();setCamera(fit(path));}}><Focus size={15}/></button></div>
       <span className="search-graph-pan-hint">Drag to pan · Zoom to inspect</span>
     </div>
-    <div className="search-graph-legend"><span className="agent">Agent position</span><span className="opponent">Opponent position</span><span className="frontier">Evaluated frontier</span><span className="route">Current route</span></div>
+    <div className="search-graph-legend"><span className="agent">Agent position</span>{!uct&&<span className="opponent">Opponent position</span>}<span className="frontier">{uct?'Proposed position':'Evaluated frontier'}</span><span className="route">Current route</span></div>
     <div className="search-node-picker"><label>Inspect a discovered position <select aria-label="Inspect discovered position" value={selected??''} onChange={e=>{if(e.target.value!=='')inspect(Number(e.target.value));else onSelect(null);}}><option value="">Follow current simulation</option>{[...graph.nodes.keys()].map(id=><option key={id} value={id}>Node {id} · {replay.nodes[id].actor===recording.perspective?'Agent':'Opponent'} · depth {points.get(id)?.depth}</option>)}</select></label></div>
     {selectedNode&&chosen&&<div className="search-node-detail"><strong>Node {selectedNode.id} · {recording.seats[chosen.actor==='p0'?0:1].name}</strong><span>{selectedNode.born<0?'Root position':`Discovered in simulation ${selectedNode.born+1}`} · {selectedNode.visits} backed-up visits · mean {selectedNode.visits?String(selectedNode.sum/BigInt(selectedNode.visits)):'Pending'}</span><span>{selectedNode.estimate!==null?`First leaf estimate: ${selectedNode.estimate}. `:''}{chosen.actions.length} legal continuations; {[...graph.edges.values()].filter(e=>e.from===selectedNode.id).length} recorded outgoing connections.</span></div>}
-    <p className="search-graph-note">Each connection is a recorded move leading to a sampled position. One move can reach several hidden-world outcomes. Amber frontier positions were evaluated; their continuations have not yet been explored.</p>
+    <p className="search-graph-note">{uct?'The UCT tree stores the focal agent’s non-forced choices. Opponent and later policy moves run between nodes. Proposed branches commit only after a natural result; truncated attempts add no visits.':'Each connection is a recorded move leading to a sampled position. One move can reach several hidden-world outcomes. Amber frontier positions were evaluated; their continuations have not yet been explored.'}</p>
     {replay.schema==='mtg-kernel-search-replay/v1'&&<p className="search-graph-note">This older recording contains path nodes but no leaf identities. Only observed path connections can grow during its replay.</p>}
   </div>;
 }

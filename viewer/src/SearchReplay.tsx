@@ -9,7 +9,7 @@ import './search-replay.css';
 const label=(s:string)=>s.replace(/\s*\[c\d+\]/g,'');
 const reasons={natural:'Natural game result',expanded:'New position evaluated',depth:'Depth limit reached',transition_budget:'Transition budget reached',coverage:'Initial move coverage'};
 
-function Preview({board,recording,assetBase}:{board:Board;recording:Recording;assetBase:string}) {
+export function Preview({board,recording,assetBase}:{board:Board;recording:Recording;assetBase:string}) {
   return <div className="search-board" aria-label="Hypothetical public position">{[1-seatIndex(recording.perspective),seatIndex(recording.perspective)].map(i=><div className="search-seat" key={i}>
     <div className="search-seat-heading"><span>{recording.seats[i].name}</span><strong>{board.players[i].life}<small> LIFE</small></strong></div>
     <div className="search-mini-cards">{board.players[i].battlefield.map(o=>{const c=recording.cards[o.card];return <div key={o.id} className={o.tapped?'search-mini tapped':'search-mini'}>
