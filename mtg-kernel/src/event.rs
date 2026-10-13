@@ -1356,6 +1356,9 @@ pub enum CommittedEvent {
     FiendishPandaCaptureCollectedV1 {
         capture_history_index: u64,
     },
+    FiendishPandaJournalV1 {
+        journal: Box<crate::fiendish_panda_v1::custody::JournalV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

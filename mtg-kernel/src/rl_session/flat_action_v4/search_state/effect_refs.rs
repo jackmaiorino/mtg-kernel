@@ -1391,7 +1391,8 @@ pub(super) fn conflicts(
                 | MandatoryCastPaymentV1 { .. } | MandatoryCastPaymentInputV1 { .. }
                 | FiendishPandaLifeGainCaptureV1 { .. }
                 | FiendishPandaDeathCaptureV1 { .. }
-                | FiendishPandaCaptureCollectedV1 { .. } => true,
+                | FiendishPandaCaptureCollectedV1 { .. }
+                | FiendishPandaJournalV1 { .. } => true,
         }
     })
 }

@@ -12964,6 +12964,7 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
             if crate::stromkirk_dispatch_v1::unavailable(state, &pending).is_err()
                 || crate::ashroot_dispatch_v2::unavailable(state, &pending).is_err()
                 || crate::raid_entry_custody_v1::record_drop(state, &pending).is_err()
+                || crate::fiendish_panda_v1::custody::unavailable(state, &pending).is_err()
             {
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
@@ -13000,6 +13001,7 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
                 if crate::stromkirk_dispatch_v1::unavailable(state, &pending).is_err()
                     || crate::ashroot_dispatch_v2::unavailable(state, &pending).is_err()
                     || crate::raid_entry_custody_v1::record_drop(state, &pending).is_err()
+                    || crate::fiendish_panda_v1::custody::unavailable(state, &pending).is_err()
                 {
                     state.engine.halted = Some((
                         UnsupportedMechanic::InvalidEffectContinuation,
@@ -13529,6 +13531,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
     let gourmand_item = state.stack.last().expect("trigger just published").clone();
     crate::vampire_gourmand_dispatch_v2::publish(state, &gourmand_item)?;
     crate::high_society_hunter_custody_v45::publish(state, &finalized)?;
+    crate::fiendish_panda_v1::custody::publish(state, &finalized)?;
     crate::cerberus_capture_v1::publish(state, &finalized)?;
     crate::banishing_light_v1::publish(state, &finalized)?;
     crate::stromkirk_dispatch_v1::publish(state, &finalized)?;
@@ -14611,6 +14614,7 @@ pub(crate) fn counter_stack_item_by_id(
     let item = state.stack[position].clone();
     let hunter_counter_owner =
         crate::high_society_hunter_custody_v45::acquire(state, &item, false, true)?;
+    let panda_counter_owner = crate::fiendish_panda_v1::custody::acquire(state, &item)?;
     let stromkirk_counter_owner = crate::stromkirk_dispatch_v1::acquire(state, &item)?;
     let gourmand_counter_owner =
         crate::vampire_gourmand_dispatch_v2::acquire_counter(state, &item)?;
@@ -14693,6 +14697,7 @@ pub(crate) fn counter_stack_item_by_id(
         &item,
     )?;
 
+    crate::fiendish_panda_v1::custody::counter_removed(state, panda_counter_owner.as_ref(), &item)?;
     crate::raid_entry_custody_v1::record_countered(state, raid_counter_owner)?;
     crate::equipment_damage_source_v4::record_countered(state, equipment_owner)?;
     if let Some(owner) = zul_owner {
@@ -15001,6 +15006,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 return ResolutionProgress::Suspended;
             }
         };
+    let panda_owner = match crate::fiendish_panda_v1::custody::acquire(state, item) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let inspiration_owner = match effect::acquire_inspiration_resolution_owner(state, item, true) {
         Ok(owner) => owner,
         Err(_) => {
@@ -15337,6 +15352,22 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         x_value: item.v4.x_value,
     };
 
+    if let Some(owner) = panda_owner.as_ref() {
+        if crate::fiendish_panda_v1::custody::resolve_owned(
+            state,
+            owner,
+            &item,
+            &ctx,
+            targets_legal,
+        )
+        .is_err()
+        {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
     if let Some(owner) = faebloom_owner {
         if crate::faebloom_trick_v43::resolve(
             state,

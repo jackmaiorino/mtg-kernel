@@ -7,6 +7,8 @@ use crate::mana::{Cost, ManaColor, Pip};
 use crate::state::{AbilitySourceContractV4, GameState, Target, Zone};
 use crate::trigger::{PendingTrigger, TriggerCondition, TriggeredAbilityDef};
 
+pub(crate) mod custody;
+
 pub const PRINTED_COST: Cost = Cost {
     generic: 2,
     pips: &[Pip::Colored(ManaColor::W), Pip::Colored(ManaColor::B)],
@@ -342,10 +344,13 @@ pub(crate) fn collect(
     Ok(waiting)
 }
 pub(crate) fn execute(
-    state: &mut GameState,
-    ctx: &ExecCtx,
-    effect: &EffectOp,
+    _state: &mut GameState,
+    _ctx: &ExecCtx,
+    _effect: &EffectOp,
 ) -> Result<(), String> {
+    Err("Panda effects require the actual publication's private removal owner".into())
+}
+fn execute_core(state: &mut GameState, ctx: &ExecCtx, effect: &EffectOp) -> Result<(), String> {
     let index = match effect {
         EffectOp::FiendishPandaCounterFromCaptureV1 {
             capture_history_index,
@@ -412,6 +417,7 @@ pub(crate) fn require_legacy_supported(
             CommittedEvent::FiendishPandaLifeGainCaptureV1 { .. }
                 | CommittedEvent::FiendishPandaDeathCaptureV1 { .. }
                 | CommittedEvent::FiendishPandaCaptureCollectedV1 { .. }
+                | CommittedEvent::FiendishPandaJournalV1 { .. }
         )
     });
     if retained {
@@ -459,7 +465,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             _ => {}
         }
     }
-    Ok(())
+    custody::validate(state)
 }
 
 #[cfg(test)]
