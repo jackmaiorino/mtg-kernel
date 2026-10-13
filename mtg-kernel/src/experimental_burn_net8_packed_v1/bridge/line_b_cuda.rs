@@ -264,8 +264,7 @@ pub(super) fn line_b_cuda_result_v1(
     match term {
         Some(term) => LineBCudaAuxiliaryV1 {
             auxiliary: LineBAuxiliaryResultV1 {
-                // This path has aggregate head norms, not the CPU reference's
-                // per-component ordinary/auxiliary gradient pairs.
+                // The device term reports no per-component gradient split.
                 gradient_components: serde_json::Value::Null,
                 divergences_before: term.divergences_before,
                 auxiliary_loss: term.auxiliary_loss,
@@ -277,6 +276,7 @@ pub(super) fn line_b_cuda_result_v1(
         },
         None => LineBCudaAuxiliaryV1 {
             auxiliary: LineBAuxiliaryResultV1 {
+                // The device term reports no per-component gradient split.
                 gradient_components: serde_json::Value::Null,
                 divergences_before: vec![None; plan.count],
                 auxiliary_loss: 0.0,
