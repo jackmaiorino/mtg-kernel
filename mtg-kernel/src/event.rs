@@ -1334,9 +1334,11 @@ pub enum CommittedEvent {
     MandatoryCastPaymentV1 {
         source: crate::state::StackSourceContractV4,
         choice: crate::engine::mandatory_cast_cost_v1::PaidV1,
+        item: Box<crate::state::StackItem>,
     },
     MandatoryCastPaymentInputV1 {
         pending: Box<crate::engine::PendingCast>,
+        item: Box<crate::state::StackItem>,
     },
 }
 

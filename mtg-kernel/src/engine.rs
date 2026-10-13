@@ -21199,7 +21199,6 @@ fn finalize_owned_cast(
     });
     let finalized_source_contract =
         StackSourceContractV4::capture(state, pending.spell, cast_method);
-    mandatory_cast_cost_v1::record_paid(state, finalized_source_contract);
     let item = state.stack.last_mut().expect("begin_cast pushed this spell's StackItem and nothing can push another item while a cast is pending");
     debug_assert_eq!(
         item.source, pending.spell,
@@ -21239,6 +21238,7 @@ fn finalize_owned_cast(
     item.v4.cast_method = Some(cast_method);
     item.v4.source_contract = Some(finalized_source_contract);
     let stack_item_id = item.v4.stack_item_id;
+    mandatory_cast_cost_v1::record_paid(state, finalized_source_contract);
     state.players[pending.controller.index()].spells_cast_this_turn = state.players
         [pending.controller.index()]
     .spells_cast_this_turn

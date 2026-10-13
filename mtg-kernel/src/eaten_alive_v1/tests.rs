@@ -466,3 +466,118 @@ fn actual_snakeskin_response_protects_target_without_refunding_mana_both_seats()
         );
     }
 }
+
+#[test]
+#[ignore = "requires serial Eaten Alive registration and native qualification"]
+fn actual_unpayable_selected_branch_refuses_without_rewinding_cast_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let first = creature(&mut state, actor);
+        let second = creature(&mut state, actor);
+        let recipient = creature(&mut state, actor.opponent());
+        let spell = put(&mut state, actor, "Eaten Alive", Zone::Hand);
+        fund(&mut state, actor, 1, 0);
+        assert!(
+            matches!(target(&mut state,actor,spell,recipient),Decision::ChooseCostTargets{remaining:1,candidates,..} if candidates == [first,second])
+        );
+        assert_eq!(
+            state
+                .engine
+                .pending_cast
+                .as_ref()
+                .unwrap()
+                .mandatory_additional_cost
+                .unwrap()
+                .pay_mana,
+            Some(false)
+        );
+        let original_history = state.engine.event_history.clone();
+        for _ in 0..3 {
+            let mut forged = restore(&state);
+            forged
+                .engine
+                .pending_cast
+                .as_mut()
+                .unwrap()
+                .mandatory_additional_cost
+                .as_mut()
+                .unwrap()
+                .pay_mana = Some(true);
+            assert_eq!(forged.engine.event_history, original_history);
+            refuses(&mut forged, Action::Pass);
+            let mut halted_only = forged.clone();
+            assert!(matches!(
+                engine::advance_until_decision(&mut forged),
+                Decision::Halted {
+                    mechanic: engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    source: ObjectId(0)
+                }
+            ));
+            halted_only.engine.halted = forged.engine.halted;
+            assert_eq!(bytes(&forged), bytes(&halted_only));
+            assert_eq!(forged.objects.get(spell).zone, Zone::Stack);
+            assert!(forged.engine.pending_cast.is_some());
+        }
+        engine::step(&mut state, Action::ChooseCostTarget(first)).unwrap();
+        assert!(matches!(next(&mut state),Decision::CastSpellOrPass{player,..} if player==actor));
+        assert_eq!(state.objects.get(first).zone, Zone::Graveyard);
+        resolve(&mut state, spell);
+        assert_eq!(state.objects.get(recipient).zone, Zone::Exile);
+    }
+}
+
+#[test]
+#[ignore = "requires serial Eaten Alive registration and native qualification"]
+fn actual_finalized_publication_requires_unique_original_row_until_real_departure_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for pay_mana in [false, true] {
+            let mut state = ready(actor);
+            let own = creature(&mut state, actor);
+            let recipient = creature(&mut state, actor.opponent());
+            state.objects.get_mut(own).tapped = true;
+            let spell = put(&mut state, actor, "Eaten Alive", Zone::Hand);
+            fund(&mut state, actor, 2, 3);
+            assert!(matches!(
+                target(&mut state, actor, spell, recipient),
+                Decision::ChooseEffectOption {
+                    option_count: 2,
+                    ..
+                }
+            ));
+            engine::step(&mut state, Action::ChooseEffectOption(u16::from(pay_mana))).unwrap();
+            next(&mut state);
+            let published = state.stack.last().unwrap().clone();
+            let original_history = state.engine.event_history.clone();
+            for _ in 0..3 {
+                let mut forged = restore(&state);
+                forged
+                    .stack
+                    .retain(|item| item.v4.stack_item_id != published.v4.stack_item_id);
+                assert_eq!(forged.engine.event_history, original_history);
+                assert_eq!(forged.objects.get(spell).zone, Zone::Stack);
+                refuses(&mut forged, Action::Pass);
+                let mut halted_only = forged.clone();
+                assert!(matches!(
+                    engine::advance_until_decision(&mut forged),
+                    Decision::Halted { .. }
+                ));
+                halted_only.engine.halted = forged.engine.halted;
+                assert_eq!(bytes(&forged), bytes(&halted_only));
+                assert_eq!(forged.objects.get(recipient).zone, Zone::Battlefield);
+            }
+            let mut countered = restore(&state);
+            // Accepted exact-ID counter primitive acquires the genuine row before
+            // removal and commits its actual physical source departure.
+            engine::counter_stack_item_by_id(&mut countered, published.v4.stack_item_id).unwrap();
+            assert_eq!(countered.objects.get(spell).zone, Zone::Graveyard);
+            crate::engine::mandatory_cast_cost_v1::validate_state(&restore(&countered)).unwrap();
+            let mut replay = restore(&countered);
+            replay.stack.push(published.clone());
+            refuses(&mut replay, Action::Pass);
+            state = restore(&state);
+            resolve(&mut state, spell);
+            assert_eq!(state.objects.get(recipient).zone, Zone::Exile);
+            crate::engine::mandatory_cast_cost_v1::validate_state(&restore(&state)).unwrap();
+        }
+    }
+}
