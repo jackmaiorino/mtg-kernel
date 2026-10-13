@@ -1,0 +1,9 @@
+# PR252 temporary-control fixture repair
+
+Own source from6f497090f85071efdef6e759e89e07b579c008d2. Completed CI38394587408 reported one E0618 in the targeted-spell timing fixture and seven failed temporary-control tests in Limited Store. The actual log remains outside Git at C:/Users/Jack/AppData/Local/Temp/fdn110-ci6f-failed.log.
+
+The first timing surface variable is renamed; the actual payment surface helper and all timing/target/payment assertions remain unchanged. Five temporary-control failures were stale retained life-loss turn anchors after manual active-player replacement. These fixtures now use the real starting-player constructor with an actual Forest library card for each seat, preserving all original control/untap/haste/Treasure/combat/incarnation/cleanup/forgery assertions. Cleanup helpers explicitly reject Halted decisions before checking expired rows.
+
+The two repeated-cleanup fixtures now traverse a real End-to-Cleanup discard: nine actual hand cards include Fiery Temper, and exact Forest+Temper discard publishes the genuine Madness offer. Initial control has actually expired while the actor remains in Cleanup priority. A later registered-recipient control primitive then installs its own independent receipt. Ordinary priority passes and declining Madness cause the real repeated Cleanup before the player flips; both original and serialized branches must match. Authority still requires exactly two real cleanup records; ordinary and restricted mana for both players must both be zero; recipient control must unwind to its original owner. No active-player/turn overwrite, journal reset, production weakening, ignored test or artificial receipt is introduced.
+
+Pinned Rust1.94.1 formatting/check, git diff/check and source inventory99 FDN/11 Standard checks pass. No local/native compilation, gameplay or CI rerun was launched here; parent owns qualification.
