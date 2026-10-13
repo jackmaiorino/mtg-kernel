@@ -134,6 +134,12 @@ mod imp {
 
     pub(crate) struct Span;
 
+    // Ends a span explicitly at `drop(span)` call sites in both builds.
+    impl Drop for Span {
+        #[inline(always)]
+        fn drop(&mut self) {}
+    }
+
     #[inline(always)]
     pub(crate) fn span(_: Bucket) -> Span {
         Span
