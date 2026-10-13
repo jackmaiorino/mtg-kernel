@@ -473,6 +473,7 @@ fn captured_attack_controller_and_exact_source_survive_control_change_or_departu
             }
             assert!(choice(&mut state, actor, hunter).contains(&Target::Object(other)));
             let hand = state.players[actor.index()].hand.len();
+            let opponent_hand = state.players[actor.opponent().index()].hand.len();
             let mut replay = restore(&state);
             for current in [&mut state, &mut replay] {
                 engine::step(current, Action::ChooseEffectTarget(Target::Object(other))).unwrap();
@@ -485,6 +486,10 @@ fn captured_attack_controller_and_exact_source_survive_control_change_or_departu
                 assert_eq!(
                     current.players[actor.index()].hand.len(),
                     hand + usize::from(reenter)
+                );
+                assert_eq!(
+                    current.players[actor.opponent().index()].hand.len(),
+                    opponent_hand + usize::from(!reenter)
                 );
             }
             assert_eq!(

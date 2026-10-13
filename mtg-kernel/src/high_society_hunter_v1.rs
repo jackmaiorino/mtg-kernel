@@ -232,16 +232,15 @@ pub(crate) fn pay_selection(
     {
         return Err("Hunter sacrifice requires another exact controlled creature".into());
     }
-    if let Some(live) = state.objects.try_get(source.source) {
-        if live.zone == Zone::Battlefield
+    if let Some(live) = state.objects.try_get(source.source).filter(|live| {
+        live.zone == Zone::Battlefield
             && live.owner == source.owner
             && live.zone_change_count == source.zone_change_count
-        {
-            live.counters
-                .plus1_plus1
-                .checked_add(1)
-                .ok_or("Hunter +1/+1 counter overflow")?;
-        }
+    }) {
+        live.counters
+            .plus1_plus1
+            .checked_add(1)
+            .ok_or("Hunter +1/+1 counter overflow")?;
     }
     crate::event::commit_sacrifice_death_group_v1(state, &[chosen.object]);
     if state.objects.get(chosen.object).zone == Zone::Battlefield

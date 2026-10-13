@@ -9,7 +9,7 @@ fn registered_counter_recipient_primitive_binds_incarnation_and_keeps_original_c
         for leave in [false, true] {
             let mut state = crate::extra_turn_v1::tests::ready(actor);
             // Actual registered permanent, exercising only the shared exact-source counter primitive.
-            let source = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let source = put(&mut state, actor, "Forest", Zone::Battlefield);
             let captured = AbilitySourceContractV4::capture(&state, source);
             if leave {
                 event::propose_and_commit(
@@ -56,7 +56,7 @@ fn registered_counter_recipient_primitive_binds_incarnation_and_keeps_original_c
 fn registered_absence_has_no_new_capture_or_consumer_mutation_and_retains_state_hash() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = crate::extra_turn_v1::tests::ready(actor);
-        let source = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        let source = put(&mut state, actor, "Forest", Zone::Battlefield);
         let declared = CommittedEvent::DeclaredAttacker {
             source,
             source_zone_change_count: state.objects.get(source).zone_change_count,
