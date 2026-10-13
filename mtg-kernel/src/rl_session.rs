@@ -48,6 +48,7 @@ pub(crate) mod crystal_v22;
 pub(crate) mod employment_v18;
 pub mod extra_turn_v23;
 pub(crate) mod fiery_v33;
+pub(crate) mod fishing_pole_v39;
 pub(crate) mod frenzied_v15;
 pub(crate) mod garruk_v30;
 pub(crate) mod gourmand_v29;
@@ -4339,7 +4340,8 @@ fn flat_validate_expected_decision_v1(
     }
     // The frozen flat formats cannot represent these extended mechanics or
     // numeric ranges. Refuse before publishing any incomplete buffers.
-    if (crate::inspiration_observation_v1::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37)
+    if (crate::fishing_pole_v39::lifecycle::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::FishingPoleV39)
+        || (crate::inspiration_observation_v1::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37)
         || (crate::krenko_v1::requires_successor(&session.state)
         && session.flat_action_contract_mode != FlatActionContractModeV1::KrenkoV34)
         || (crate::zul_ashur_v1::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::ZulAshurV35)
@@ -4485,6 +4487,7 @@ enum FlatActionContractModeV1 {
     ZulAshurV35,
     BannerV36,
     InspirationV37,
+    FishingPoleV39,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -5440,9 +5443,16 @@ impl RlEpisodeSessionV1 {
         mut profile: Option<&mut RlPhaseProfileV1>,
     ) {
         if crate::fishing_pole_v39::lifecycle::requires_successor(&self.state) {
-            return Err(RlContractError(
-                "Fishing Pole requires its unadmitted V39 owning transport".into(),
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:fishing_pole_v39_authority_or_transport".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
             ));
+            return;
         }
         if crate::inspiration_observation_v1::requires_successor(&self.state) {
             self.current = None;
@@ -7229,10 +7239,22 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
-        if crate::fishing_pole_v39::lifecycle::requires_successor(&self.state) {
-            return Err(RlContractError(
-                "Fishing Pole requires its unadmitted V39 owning transport".into(),
+        if (crate::fishing_pole_v39::lifecycle::requires_successor(&self.state)
+            && self.flat_action_contract_mode != FlatActionContractModeV1::FishingPoleV39)
+            || (self.flat_action_contract_mode == FlatActionContractModeV1::FishingPoleV39
+                && crate::fishing_pole_observation_v39::validate_projection_authority(&self.state)
+                    .is_err())
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:fishing_pole_v39_authority_or_transport".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
             ));
+            return;
         }
         if (crate::inspiration_observation_v1::requires_successor(&self.state)
             && self.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37)
@@ -7715,6 +7737,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:krenko_v34:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::FishingPoleV39 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = fishing_pole_v39::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:fishing_pole_v39:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));

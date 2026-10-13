@@ -70,6 +70,12 @@ fn add(
     pole: ObjectId,
 ) -> crate::state::StackItem {
     state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+    let mana_before: u16 = state.players[actor.index()]
+        .mana_pool
+        .iter()
+        .copied()
+        .map(u16::from)
+        .sum();
     let index = u8::try_from(
         CARD_DEFS[state.objects.get(host).card_def as usize]
             .activated_abilities
@@ -93,8 +99,13 @@ fn add(
     next(state);
     assert!(state.engine.pending_activation.is_none());
     assert_eq!(
-        state.players[actor.index()].mana_pool[ManaColor::C.pool_index()],
-        0
+        state.players[actor.index()]
+            .mana_pool
+            .iter()
+            .copied()
+            .map(u16::from)
+            .sum::<u16>(),
+        mana_before - 1
     );
     assert!(state.objects.get(host).tapped && state.objects.get(pole).tapped);
     let item = state.stack.last().unwrap().clone();
@@ -140,7 +151,8 @@ fn printed_cast_equip_named_cost_first_and_zero_bait_real_untap_both_seats() {
                 x_count: 0
             })]
         );
-        state.objects.get_mut(host).tapped = true;
+        engine::step(&mut state, Action::ActivateManaAbility(host)).unwrap();
+        assert!(state.objects.get(host).tapped);
         assert!(engine::attempt_untap(&mut state, host));
         let mut restored = snapshot(&state);
         for branch in [&mut state, &mut restored] {
@@ -524,6 +536,33 @@ fn original_untap_controller_survives_host_departure_and_pole_control_change_wit
             finish(branch);
             assert_eq!(fish(branch, actor), 1);
             assert_eq!(fish(branch, actor.opponent()), 0);
+            assert_eq!(branch.objects.get(pole).counters.bait, 0);
+        }
+        assert_eq!(state, restored);
+    }
+}
+
+#[test]
+#[ignore = "requires actual future Fishing Pole and Fish Token registration"]
+fn actual_witness_suppresses_granted_bait_but_not_equipment_own_untap_trigger_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, host, pole) = fixture(actor);
+        add(&mut state, actor, host, pole);
+        finish(&mut state);
+        let witness = put(&mut state, actor, "Witness Protection", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 1;
+        engine::step(&mut state, Action::CastSpell(witness)).unwrap();
+        assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(host))).unwrap();
+        finish(&mut state);
+        assert!(grants(&state, host).is_empty());
+        assert!(cost_candidates(&state, actor, host).is_empty());
+        assert!(state.objects.get(host).tapped);
+        assert!(engine::attempt_untap(&mut state, host));
+        let mut restored = snapshot(&state);
+        for branch in [&mut state, &mut restored] {
+            finish(branch);
+            assert_eq!(fish(branch, actor), 1);
             assert_eq!(branch.objects.get(pole).counters.bait, 0);
         }
         assert_eq!(state, restored);

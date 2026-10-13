@@ -2005,6 +2005,43 @@ fn build_observation_common_v2(
         bool,
     ),
 ) -> Result<ObservationV2> {
+    build_observation_common_v2_fishing_v39(
+        state,
+        surface,
+        acting_player,
+        step_index,
+        text_mode,
+        (capabilities, false),
+    )
+}
+
+fn build_observation_common_v2_fishing_v39(
+    state: &GameState,
+    surface: &crate::surface_v2::HarnessSurfaceV2,
+    acting_player: PlayerId,
+    step_index: u64,
+    text_mode: ObservationTextModeV2,
+    capabilities: (
+        (
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+        ),
+        bool,
+    ),
+) -> Result<ObservationV2> {
+    let (capabilities, accept_fishing) = capabilities;
     refuse_unrepresented_shroud(state)?;
     let (
         accept_cant_block,
@@ -2022,7 +2059,7 @@ fn build_observation_common_v2(
         accept_banner,
         accept_inspiration,
     ) = capabilities;
-    if crate::fishing_pole_v39::lifecycle::requires_successor(state) {
+    if !accept_fishing && crate::fishing_pole_v39::lifecycle::requires_successor(state) {
         return Err(RlContractError(
             "Fishing Pole requires its unadmitted V39 transport".into(),
         ));
@@ -2398,6 +2435,43 @@ fn build_policy_observation_parts_common(
         bool,
     ),
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
+    build_policy_observation_parts_common_fishing_v39(
+        state,
+        surface,
+        acting_player,
+        step_index,
+        text_mode,
+        (capabilities, false),
+    )
+}
+
+fn build_policy_observation_parts_common_fishing_v39(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    acting_player: PlayerId,
+    step_index: u64,
+    text_mode: ObservationTextModeV2,
+    capabilities: (
+        (
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+        ),
+        bool,
+    ),
+) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
+    let (capabilities, accept_fishing) = capabilities;
     refuse_unrepresented_shroud(state)?;
     let (
         accept_cant_block,
@@ -2415,7 +2489,7 @@ fn build_policy_observation_parts_common(
         accept_banner,
         accept_inspiration,
     ) = capabilities;
-    if crate::fishing_pole_v39::lifecycle::requires_successor(state) {
+    if !accept_fishing && crate::fishing_pole_v39::lifecycle::requires_successor(state) {
         return Err(RlContractError(
             "Fishing Pole requires its unadmitted V39 transport".into(),
         ));
@@ -2450,27 +2524,30 @@ fn build_policy_observation_parts_common(
             .map_err(RlContractError)?;
     }
 
-    let base = build_observation_common_v2(
+    let base = build_observation_common_v2_fishing_v39(
         state,
         surface.harness_surface(),
         acting_player,
         step_index,
         text_mode,
         (
-            accept_cant_block,
-            accept_temporary_control,
-            accept_extra_turn,
-            accept_banishing,
-            accept_gourmand,
-            accept_garruk,
-            accept_crystal,
-            accept_arahbo,
-            accept_strongbox,
-            accept_fiery,
-            accept_krenko,
-            accept_zul,
-            accept_banner,
-            accept_inspiration,
+            (
+                accept_cant_block,
+                accept_temporary_control,
+                accept_extra_turn,
+                accept_banishing,
+                accept_gourmand,
+                accept_garruk,
+                accept_crystal,
+                accept_arahbo,
+                accept_strongbox,
+                accept_fiery,
+                accept_krenko,
+                accept_zul,
+                accept_banner,
+                accept_inspiration,
+            ),
+            accept_fishing,
         ),
     )?;
     let context = policy_surface_context_v5(
@@ -3138,6 +3215,42 @@ pub(crate) fn banner_observation_storage_v1(
         ),
     )
 }
+pub(crate) fn fishing_pole_observation_storage_v39(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::fishing_pole_observation_v39::validate_projection_authority(state)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_common_fishing_v39(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
+        false,
+        false,
+        false,
+        false,
+        (
+            (
+                false, false, false, false, false, false, false, false, false, false, false, false,
+                false, false,
+            ),
+            true,
+        ),
+    )
+}
+
 pub(crate) fn krenko_observation_storage_v1(
     state: &GameState,
     surface: &PolicySurfaceV5,
@@ -3326,6 +3439,45 @@ fn build_policy_observation_storage_common(
         bool,
     ),
 ) -> Result<PolicyObservationStorageV6> {
+    build_policy_observation_storage_common_fishing_v39(
+        request,
+        accept_life_ward,
+        accept_cant_block,
+        accept_wildwood,
+        accept_temporary_control,
+        accept_cerberus,
+        (accepted_statics, false),
+    )
+}
+
+fn build_policy_observation_storage_common_fishing_v39(
+    request: PolicyObservationBuildV5<'_>,
+    accept_life_ward: bool,
+    accept_cant_block: bool,
+    accept_wildwood: bool,
+    accept_temporary_control: bool,
+    accept_cerberus: bool,
+    accepted_statics: (
+        (
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+        ),
+        bool,
+    ),
+) -> Result<PolicyObservationStorageV6> {
+    let (accepted_statics, accept_fishing) = accepted_statics;
     let (
         accept_authority,
         accept_extra_turn,
@@ -3342,7 +3494,7 @@ fn build_policy_observation_storage_common(
         accept_banner,
         accept_inspiration,
     ) = accepted_statics;
-    if crate::fishing_pole_v39::lifecycle::requires_successor(request.state) {
+    if !accept_fishing && crate::fishing_pole_v39::lifecycle::requires_successor(request.state) {
         return Err(RlContractError(
             "Fishing Pole requires its unadmitted V39 transport".into(),
         ));
@@ -3436,27 +3588,30 @@ fn build_policy_observation_storage_common(
     }
     let extensions =
         policy_observation_extensions_common_v6(state, acting_player, text_mode, accept_life_ward)?;
-    let (mut base, policy_surface_context) = build_policy_observation_parts_common(
+    let (mut base, policy_surface_context) = build_policy_observation_parts_common_fishing_v39(
         state,
         surface,
         acting_player,
         step_index,
         text_mode,
         (
-            accept_cant_block,
-            accept_temporary_control,
-            accept_extra_turn,
-            accept_banishing,
-            accept_gourmand,
-            accept_garruk,
-            accept_crystal,
-            accept_arahbo,
-            accept_strongbox,
-            accept_fiery,
-            accept_krenko,
-            accept_zul,
-            accept_banner,
-            accept_inspiration,
+            (
+                accept_cant_block,
+                accept_temporary_control,
+                accept_extra_turn,
+                accept_banishing,
+                accept_gourmand,
+                accept_garruk,
+                accept_crystal,
+                accept_arahbo,
+                accept_strongbox,
+                accept_fiery,
+                accept_krenko,
+                accept_zul,
+                accept_banner,
+                accept_inspiration,
+            ),
+            accept_fishing,
         ),
     )?;
     if let Some(search) = &extensions.decision_local_library {
