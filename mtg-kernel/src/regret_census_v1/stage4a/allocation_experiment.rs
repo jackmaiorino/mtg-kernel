@@ -360,25 +360,36 @@ pub(super) fn profile_case(
         "id":src.id,"lineage":sh.spec.lineage,"own":src.own,"other":src.other,"seat":src.seat,
         "opp":src.opp,"position":label,"fraction":fraction,"eligible_index":index,"eligible_count":eligible.len(),
         "root_step":step,"root_width":width,"root_obs_sha256":obs_hash,"root_menu_sha256":menu_hash,
-        "game_actions":actions.len(),"budget":config.anchor,"anchor":config.anchor,
+        "game_actions":actions.len()});
+    let controls = json!({"budget":config.anchor,"anchor":config.anchor,
         "safety_cap":budget,"safety_cap_reached":safety_cap_reached,"technical_incomplete":technical_incomplete,
         "stopping_reason":selection["extra"]["stop_reason"],"key_mode":mode.label(),"interchange":config.interchange,
         "urgency":ctx.urgency,"seed":config.seed,"seed_namespace":namespace,"arm":config.arm,
-        "bank_binding_sha256":binding,"selection":selection,"teacher":teacher,"primary_sha256":primary_hash,
-        "search_tree_sha256":search_tree_hash,"search_tree_estimated_bytes":search_tree.as_ref().map(tree_bytes),
         "work_attempts":work,"cpu_budget_seconds":config.options.cpu_seconds,"work_limit":config.options.work_limit,
-        "evaluation_source":config.eval_only,"setup_cpu_seconds":setup_cpu,"search_cpu_seconds":search_cpu,
+        "evaluation_source":config.eval_only,"cpu_overhead_reserve_seconds":config.finishing_reserve});
+    let results = json!({"bank_binding_sha256":binding,"selection":selection,"teacher":teacher,
+        "primary_sha256":primary_hash,"search_tree_sha256":search_tree_hash,
+        "search_tree_estimated_bytes":search_tree.as_ref().map(tree_bytes),
+        "evaluation":evaluation,"evaluation_sha256":evaluation_hash,
+        "execution_tree_clone_estimated_bytes":execution_tree.as_ref().map(tree_bytes)});
+    let search_cost = json!({"setup_cpu_seconds":setup_cpu,"search_cpu_seconds":search_cpu,
         "process_cpu_before_case_seconds":cpu0,"search_process_cpu_seconds":search_process_cpu,
         "selection_return_process_cpu_seconds":selection_return_process_cpu,
         "search_finalization_cpu_seconds":selection_return_process_cpu.map(|t| search_process_cpu-t),
-        "cpu_overhead_reserve_seconds":config.finishing_reserve,
-        "search_wall_seconds":search_wall,"evaluation":evaluation,"evaluation_sha256":evaluation_hash,
-        "execution_prep_cpu_seconds":execution_prep_cpu,
-        "execution_tree_clone_estimated_bytes":execution_tree.as_ref().map(tree_bytes),
+        "search_wall_seconds":search_wall,"execution_prep_cpu_seconds":execution_prep_cpu});
+    let total_cost = json!({
         "evaluation_cpu_seconds":pure_evaluation_cpu,"pure_evaluation_cpu_seconds":pure_evaluation_cpu,
         "selection_construction_process_cpu_seconds":total_cpu+cpu0-pure_evaluation_cpu,
         "total_cpu_seconds":total_cpu,"process_cpu_before_final_output_seconds":total_cpu+cpu0,
         "total_wall_seconds":wall0.elapsed().as_secs_f64()});
+    for fields in [controls, results, search_cost, total_cost] {
+        let Value::Object(fields) = fields else {
+            unreachable!("root fields are an object");
+        };
+        row.as_object_mut()
+            .expect("root row is an object")
+            .extend(fields);
+    }
     let output_cpu = super::process_cpu::seconds()?;
     let _serialized = serde_json::to_vec(&row).map_err(|e| e.to_string())?;
     row["output_serialize_cpu_seconds"] = json!(super::process_cpu::seconds()? - output_cpu);

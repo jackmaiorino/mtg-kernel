@@ -2,7 +2,7 @@
 //! Quotas and means use actual natural terminal backups. Ties at the cut
 //! survive, including an all-loss prefix. No learned prior enters allocation.
 
-use super::tree::{Key, MIN_EXEC_BACKUPS, Node};
+use super::tree::{Key, Node, MIN_EXEC_BACKUPS};
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
