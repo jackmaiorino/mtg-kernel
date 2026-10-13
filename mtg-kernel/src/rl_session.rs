@@ -51,6 +51,7 @@ pub(crate) mod fiery_v33;
 pub(crate) mod frenzied_v15;
 pub(crate) mod garruk_v30;
 pub(crate) mod gourmand_v29;
+pub(crate) mod inspiration_v37;
 pub(crate) mod krenko_v34;
 pub(crate) mod strongbox_v32;
 pub(crate) mod zul_ashur_v35;
@@ -4338,7 +4339,8 @@ fn flat_validate_expected_decision_v1(
     }
     // The frozen flat formats cannot represent these extended mechanics or
     // numeric ranges. Refuse before publishing any incomplete buffers.
-    if (crate::krenko_v1::requires_successor(&session.state)
+    if (crate::inspiration_observation_v1::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37)
+        || (crate::krenko_v1::requires_successor(&session.state)
         && session.flat_action_contract_mode != FlatActionContractModeV1::KrenkoV34)
         || (crate::zul_ashur_v1::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::ZulAshurV35)
         || (crate::heraldic_banner_v1::requires_successor(&session.state)
@@ -4482,6 +4484,7 @@ enum FlatActionContractModeV1 {
     KrenkoV34,
     ZulAshurV35,
     BannerV36,
+    InspirationV37,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -5429,6 +5432,24 @@ impl RlEpisodeSessionV1 {
 
     #[cfg(test)]
     fn advance_to_decision_or_terminal(&mut self) {
+        if (crate::inspiration_observation_v1::requires_successor(&self.state)
+            && self.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37)
+            || (self.flat_action_contract_mode == FlatActionContractModeV1::InspirationV37
+                && crate::inspiration_observation_v1::validate_projection_authority(&self.state)
+                    .is_err())
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:inspiration_v37_authority_or_transport".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+
         self.advance_to_decision_or_terminal_profiled(None);
     }
 
@@ -5436,6 +5457,19 @@ impl RlEpisodeSessionV1 {
         &mut self,
         mut profile: Option<&mut RlPhaseProfileV1>,
     ) {
+        if crate::inspiration_observation_v1::requires_successor(&self.state) {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:inspiration_v37_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+
         if crate::heraldic_banner_v1::validate_state(&self.state).is_err()
             || crate::heraldic_banner_v1::requires_successor(&self.state)
         {
@@ -7392,7 +7426,9 @@ impl FastActorSessionV1 {
             ));
             return;
         };
-        let raw = if self.flat_action_contract_mode == FlatActionContractModeV1::BannerV36 {
+        let raw = if self.flat_action_contract_mode == FlatActionContractModeV1::InspirationV37 {
+            inspiration_v37::actual_candidates(&surfaced, &self.state)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::BannerV36 {
             banner_v36::actual_candidates(&surfaced, &self.state)
         } else {
             core_policy_action_candidates_v5(&surfaced, &self.state)
@@ -7609,6 +7645,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:strongbox_v32:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::InspirationV37 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = inspiration_v37::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:inspiration_v37:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));

@@ -1854,6 +1854,11 @@ pub fn observe_v1(
     step_index: u64,
 ) -> Result<ObservationV1> {
     refuse_unrepresented_shroud(state)?;
+    if crate::inspiration_observation_v1::requires_successor(state) {
+        return Err(RlContractError(
+            "Inspiration requires V37 exact choice transport".into(),
+        ));
+    }
     if crate::heraldic_banner_v1::requires_successor(state) {
         return Err(RlContractError(
             "Banner requires selected V36 transport".into(),
@@ -1972,7 +1977,7 @@ fn build_observation_v2(
         text_mode,
         (
             false, false, false, false, false, false, false, false, false, false, false, false,
-            false,
+            false, false,
         ),
     )
 }
@@ -1984,6 +1989,7 @@ fn build_observation_common_v2(
     step_index: u64,
     text_mode: ObservationTextModeV2,
     capabilities: (
+        bool,
         bool,
         bool,
         bool,
@@ -2014,7 +2020,13 @@ fn build_observation_common_v2(
         accept_krenko,
         accept_zul,
         accept_banner,
+        accept_inspiration,
     ) = capabilities;
+    if !accept_inspiration && crate::inspiration_observation_v1::requires_successor(state) {
+        return Err(RlContractError(
+            "Inspiration union and mandatory bounds require V37".into(),
+        ));
+    }
     if !accept_banner && crate::heraldic_banner_v1::requires_successor(state) {
         return Err(RlContractError(
             "Banner requires selected V36 entry/color transport".into(),
@@ -2103,7 +2115,11 @@ fn build_observation_common_v2(
         )?,
         object_relations: object_relations_public_v4(state, acting_player)?,
         exile_play_permissions: exile_play_permissions_public_v2(state)?,
-        engine_context: engine_context_v2(state, acting_player, accept_banishing)?,
+        engine_context: engine_context_v2(
+            state,
+            acting_player,
+            (accept_banishing, accept_inspiration),
+        )?,
         surface_context: surface_context_v2(state, surface, acting_player)?,
     };
     let own_hand = state.players[acting_player.index()]
@@ -2350,7 +2366,7 @@ fn build_policy_observation_parts(
         text_mode,
         (
             false, false, false, false, false, false, false, false, false, false, false, false,
-            false,
+            false, false,
         ),
     )
 }
@@ -2361,6 +2377,7 @@ fn build_policy_observation_parts_common(
     step_index: u64,
     text_mode: ObservationTextModeV2,
     capabilities: (
+        bool,
         bool,
         bool,
         bool,
@@ -2391,7 +2408,13 @@ fn build_policy_observation_parts_common(
         accept_krenko,
         accept_zul,
         accept_banner,
+        accept_inspiration,
     ) = capabilities;
+    if !accept_inspiration && crate::inspiration_observation_v1::requires_successor(state) {
+        return Err(RlContractError(
+            "Inspiration union and mandatory bounds require V37".into(),
+        ));
+    }
     if !accept_banner && crate::heraldic_banner_v1::requires_successor(state) {
         return Err(RlContractError(
             "Banner requires selected V36 entry/color transport".into(),
@@ -2437,6 +2460,7 @@ fn build_policy_observation_parts_common(
             accept_krenko,
             accept_zul,
             accept_banner,
+            accept_inspiration,
         ),
     )?;
     let context = policy_surface_context_v5(
@@ -2615,7 +2639,7 @@ fn build_policy_observation_storage_v6(
         false,
         (
             false, false, false, false, false, false, false, false, false, false, false, false,
-            false,
+            false, false,
         ),
     )
 }
@@ -2648,7 +2672,7 @@ pub(crate) fn extra_turn_observation_storage_v1(
         false,
         (
             false, true, false, false, false, false, false, false, false, false, false, false,
-            false,
+            false, false,
         ),
     )
 }
@@ -2708,7 +2732,7 @@ pub(crate) fn sower_observation_storage_v1(
         false,
         (
             false, false, false, false, false, false, false, false, false, false, false, false,
-            false,
+            false, false,
         ),
     )
 }
@@ -2741,7 +2765,7 @@ pub(crate) fn employment_observation_storage_v1(
         false,
         (
             false, false, false, false, false, false, false, false, false, false, false, false,
-            false,
+            false, false,
         ),
     )
 }
@@ -2774,7 +2798,7 @@ pub(crate) fn wildwood_observation_storage_v1(
         false,
         (
             false, false, false, false, false, false, false, false, false, false, false, false,
-            false,
+            false, false,
         ),
     )
 }
@@ -2807,7 +2831,7 @@ pub(crate) fn cerberus_observation_storage_v1(
         true,
         (
             false, false, false, false, false, false, false, false, false, false, false, false,
-            false,
+            false, false,
         ),
     )
 }
@@ -2840,7 +2864,7 @@ pub(crate) fn authority_observation_storage_v1(
         false,
         (
             true, false, false, false, false, false, false, false, false, false, false, false,
-            false,
+            false, false,
         ),
     )
 }
@@ -2873,7 +2897,7 @@ pub(crate) fn frenzied_observation_storage_v1(
         false,
         (
             false, false, false, false, false, false, false, false, false, false, false, false,
-            false,
+            false, false,
         ),
     )
 }
@@ -2906,7 +2930,7 @@ pub(crate) fn juggernaut_observation_storage_v1(
         false,
         (
             false, false, true, false, false, false, false, false, false, false, false, false,
-            false,
+            false, false,
         ),
     )
 }
@@ -2939,7 +2963,7 @@ pub(crate) fn banishing_observation_storage_v1(
         false,
         (
             false, false, false, true, false, false, false, false, false, false, false, false,
-            false,
+            false, false,
         ),
     )
 }
@@ -2972,7 +2996,7 @@ pub(crate) fn gourmand_observation_storage_v1(
         false,
         (
             false, false, false, false, true, false, false, false, false, false, false, false,
-            false,
+            false, false,
         ),
     )
 }
@@ -3004,7 +3028,7 @@ pub(crate) fn strongbox_observation_storage_v1(
         false,
         (
             false, false, false, false, false, false, false, false, true, false, false, false,
-            false,
+            false, false,
         ),
     )
 }
@@ -3036,7 +3060,39 @@ pub(crate) fn fiery_observation_storage_v1(
         false,
         (
             false, false, false, false, false, false, false, false, false, true, false, false,
-            false,
+            false, false,
+        ),
+    )
+}
+pub(crate) fn inspiration_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::inspiration_observation_v1::validate_projection_authority(state)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_common(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
+        false,
+        false,
+        false,
+        false,
+        (
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, true,
         ),
     )
 }
@@ -3068,7 +3124,7 @@ pub(crate) fn banner_observation_storage_v1(
         false,
         (
             false, false, false, false, false, false, false, false, false, false, false, false,
-            true,
+            true, false,
         ),
     )
 }
@@ -3100,7 +3156,7 @@ pub(crate) fn krenko_observation_storage_v1(
         false,
         (
             false, false, false, false, false, false, false, false, false, false, true, false,
-            false,
+            false, false,
         ),
     )
 }
@@ -3132,7 +3188,7 @@ pub(crate) fn zul_ashur_observation_storage_v1(
         false,
         (
             false, false, false, false, false, false, false, false, false, false, false, true,
-            false,
+            false, false,
         ),
     )
 }
@@ -3163,7 +3219,8 @@ pub(crate) fn garruk_observation_storage_v1(
         false,
         false,
         (
-            false, false, false, true, false, true, false, false, false, false, false, false, false,
+            false, false, false, true, false, true, false, false, false, false, false, false,
+            false, false,
         ),
     )
 }
@@ -3196,7 +3253,7 @@ pub(crate) fn crystal_observation_storage_v1(
         false,
         (
             false, false, false, false, false, false, true, false, false, false, false, false,
-            false,
+            false, false,
         ),
     )
 }
@@ -3230,6 +3287,7 @@ pub(crate) fn arahbo_observation_storage_v1(
         false,
         (
             false, false, false, true, false, true, false, true, false, false, false, false, false,
+            false,
         ),
     )
 }
@@ -3242,6 +3300,7 @@ fn build_policy_observation_storage_common(
     accept_temporary_control: bool,
     accept_cerberus: bool,
     accepted_statics: (
+        bool,
         bool,
         bool,
         bool,
@@ -3271,7 +3330,13 @@ fn build_policy_observation_storage_common(
         accept_krenko,
         accept_zul,
         accept_banner,
+        accept_inspiration,
     ) = accepted_statics;
+    if !accept_inspiration && crate::inspiration_observation_v1::requires_successor(request.state) {
+        return Err(RlContractError(
+            "Inspiration union and mandatory bounds require V37".into(),
+        ));
+    }
     if !accept_banner && crate::heraldic_banner_v1::requires_successor(request.state) {
         return Err(RlContractError(
             "Banner requires selected V36 entry/color transport".into(),
@@ -3376,6 +3441,7 @@ fn build_policy_observation_storage_common(
             accept_krenko,
             accept_zul,
             accept_banner,
+            accept_inspiration,
         ),
     )?;
     if let Some(search) = &extensions.decision_local_library {
@@ -8088,8 +8154,9 @@ fn exile_play_permissions_public_v2(state: &GameState) -> Result<Vec<ExilePlayPe
 fn engine_context_v2(
     state: &GameState,
     acting_player: PlayerId,
-    accept_banishing: bool,
+    capabilities: (bool, bool),
 ) -> Result<EngineContextV2> {
+    let (accept_banishing, accept_inspiration) = capabilities;
     let planeswalkers = if state.planeswalkers_v1.is_some() {
         state
             .objects
@@ -8298,7 +8365,12 @@ fn engine_context_v2(
             .map(|p| pending_spell_copy_semantic_v2(state, acting_player, p))
             .transpose()?,
         pending_effect: if let Some(pending) = state.engine.pending_effect.as_ref() {
-            Some(pending_effect_semantic_v4(state, acting_player, pending)?)
+            Some(pending_effect_semantic_v4(
+                state,
+                acting_player,
+                pending,
+                accept_inspiration,
+            )?)
         } else if let Some(pending) = state.engine.pending_land_play.as_ref() {
             engine::validate_pending_land_play(state, pending).map_err(RlContractError)?;
             Some(PendingEffectSemanticV4 {
@@ -8359,6 +8431,7 @@ fn pending_effect_semantic_v4(
     state: &GameState,
     acting_player: PlayerId,
     pending: &crate::effect::EffectContinuation,
+    accept_inspiration: bool,
 ) -> Result<PendingEffectSemanticV4> {
     crate::effect::validate_pending_effect_choice(state).map_err(RlContractError)?;
     // Every private batch stage, including an accepted answer waiting for
@@ -8512,6 +8585,10 @@ fn pending_effect_semantic_v4(
                                     // confined to the chooser and prompt.
                                     target_ref(state, candidate.target)
                                 } else {
+                                    if accept_inspiration && matches!(purpose, crate::effect::EffectTargetSelectionPurpose::OrderMilledIntoGraveyard) && crate::inspiration_observation_v1::requires_successor(state) {
+                                        let Target::Object(id)=candidate.target else { return Err(RlContractError("private mill target is not a card".into())); };
+                                        return Ok(TargetRefV1::Object{object:crate::inspiration_observation_v1::mill_card_ref(state,acting_player,id)?});
+                                    }
                                     effect_target_ref_visible(
                                         state,
                                         candidate.target,
