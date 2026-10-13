@@ -205,7 +205,7 @@ pub(crate) fn collect(
             continue;
         };
         let JournalV39::Captured { pole, .. } = journal.as_ref() else {
-            return Err(ObjectId::default());
+            return Err(ObjectId(0));
         };
         let occurrences = state
             .engine

@@ -213,11 +213,11 @@ fn multiple_bait_remove_exactly_one_and_explicit_effect_untap_both_seats() {
             x_value: 0,
         };
         crate::effect::execute(
-            &mut state,
             &EffectOp::UntapObject {
-                target: crate::effect::TargetRef::Target(0),
+                object: crate::effect::ObjectRef::Target(0),
             },
             &ctx,
+            &mut state,
         );
         assert!(!state.objects.get(pole).tapped);
         // Untap host while the first bait activation remains below its own

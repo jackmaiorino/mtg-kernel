@@ -34,7 +34,7 @@ fn held(actor: PlayerId, memorial: bool) -> (GameState, ObjectId, ObjectId) {
     ));
     engine::step(
         &mut state,
-        Action::ChooseTarget(crate::target::Target::Object(target)),
+        Action::ChooseTarget(crate::state::Target::Object(target)),
     )
     .unwrap();
     assert!(matches!(
@@ -136,7 +136,7 @@ fn check(memorial: bool) {
             .iter()
             .find_map(|row| match row {
                 super::super::akroma_families_v40::HumanFamilyV40::Employment(o) => {
-                    o.installations.first()
+                    o.temporary_control_installations.first()
                 }
                 _ => None,
             })
@@ -222,7 +222,7 @@ fn actual_employment_twinflame_union_order_privacy_retry_and_restore_both_seats(
                 .remaining_damage,
             3
         );
-        assert!(prompt.state.extensions.families.iter().any(|row| matches!(row, super::super::akroma_families_v40::HumanFamilyV40::Employment(o) if o.installations.len() == 1 && o.installations[0].captured_controller == actor.into())));
+        assert!(prompt.state.extensions.families.iter().any(|row| matches!(row, super::super::akroma_families_v40::HumanFamilyV40::Employment(o) if o.temporary_control_installations.len() == 1 && o.temporary_control_installations[0].captured_controller == actor.into())));
         let json = serde_json::to_string(&prompt).unwrap();
         for hidden in [
             "source_contract",

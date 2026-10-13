@@ -1,6 +1,7 @@
 //! Committed ownership of the bounded mill-then-mandatory-return lifecycle.
 //! Predecessor programs emit no receipts and retain their existing behavior.
 use super::*;
+use crate::card_def::CARD_DEFS;
 use crate::event::CommittedEvent;
 use crate::state::{AbilitySourceContractV4, InspirationStartedV1};
 
@@ -533,9 +534,8 @@ fn tracked(state: &GameState) -> Result<bool, String> {
     if !may_be_owned {
         return Ok(false);
     }
-    Ok(owned_root(&validated_definition_owned_root_effect(
-        state, pending,
-    )?))
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    Ok(owned_root(root.as_ref()))
 }
 
 fn history(state: &GameState) -> Result<Vec<&InspirationResolutionReceiptV1>, String> {

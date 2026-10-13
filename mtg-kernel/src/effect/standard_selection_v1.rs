@@ -379,14 +379,17 @@ mod instant_or_sorcery_boundary_tests {
                 "Lightning Bolt",
                 Zone::Graveyard,
             );
-            let expected = candidates(&state, actor, rule()).unwrap();
+            let expected = candidates(&state, actor, rule(), None).unwrap();
             assert_eq!(
                 expected.iter().map(|b| b.object).collect::<Vec<_>>(),
                 vec![instant, sorcery]
             );
             let restored: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
-            assert_eq!(candidates(&restored, actor, rule()).unwrap(), expected);
+            assert_eq!(
+                candidates(&restored, actor, rule(), None).unwrap(),
+                expected
+            );
             for forgery in 0..4 {
                 let mut altered = restored.clone();
                 match forgery {
@@ -396,7 +399,7 @@ mod instant_or_sorcery_boundary_tests {
                     _ => altered.objects.get_mut(instant).owner = actor.opponent(),
                 }
                 let before = altered.clone();
-                assert!(candidates(&altered, actor, rule()).is_err());
+                assert!(candidates(&altered, actor, rule(), None).is_err());
                 assert_eq!(altered, before);
             }
             event::propose_and_commit(
@@ -408,13 +411,13 @@ mod instant_or_sorcery_boundary_tests {
                 event::ProposedEvent::zone_change(instant, Zone::Graveyard),
             );
             assert_ne!(
-                candidates(&state, actor, rule()).unwrap(),
+                candidates(&state, actor, rule(), None).unwrap(),
                 expected,
                 "returning card is a new incarnation"
             );
             let mut invalid = rule();
             invalid.min = 0;
-            assert!(candidates(&state, actor, invalid).is_err());
+            assert!(candidates(&state, actor, invalid, None).is_err());
         }
     }
 }

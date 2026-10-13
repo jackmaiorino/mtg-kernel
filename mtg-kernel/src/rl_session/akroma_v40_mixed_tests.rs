@@ -16,7 +16,7 @@ fn cast_target(state: &mut GameState, actor: PlayerId, card: ObjectId, target: O
     assert!(matches!(decision(state), Decision::ChooseTargets { .. }));
     engine::step(
         state,
-        Action::ChooseTarget(crate::target::Target::Object(target)),
+        Action::ChooseTarget(crate::state::Target::Object(target)),
     )
     .unwrap();
     assert!(matches!(decision(state), Decision::CastSpellOrPass { .. }));
@@ -168,13 +168,13 @@ fn registered_partial_ajani_recipient_full_loyalty_binding_remains_scoped_both_s
             .akroma_validate_bound_decision_v40(expected, expected.acting_player, &binding)
             .is_err());
         assert_eq!(session.privileged_core_environment_hash(), before);
-        session
-            .akroma_fixture_state_mut()
-            .planeswalkers_v1
-            .as_mut()
-            .unwrap()
-            .loyalty
-            .remove(&walker);
+        assert_eq!(
+            crate::planeswalker_v1::remove_loyalty_row_for_test_v1(
+                session.akroma_fixture_state_mut(),
+                walker
+            ),
+            Some(5)
+        );
         let before = session.privileged_core_environment_hash();
         assert!(session
             .akroma_current_decision_input_v40(expected, expected.acting_player)

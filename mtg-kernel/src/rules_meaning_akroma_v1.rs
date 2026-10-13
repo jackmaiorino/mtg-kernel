@@ -70,7 +70,7 @@ pub fn producer_sha256_v1() -> String {
         include_str!("state.rs"),
         include_str!("continuous_characteristics_v1.rs"),
         include_str!("standard_cards_v1.rs"),
-        include_str!("effect/source_power_activation_v1.rs"),
+        include_str!("source_power_activation_v1.rs"),
     ] {
         hash.update([0]);
         hash.update(source.as_bytes());
@@ -218,7 +218,6 @@ mod tests {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
-
     fn actual_two_roots_and_all_meaning_fields_reconstruct() {
         let id = crate::card_def::card_id_by_name("Akroma's Memorial").unwrap();
         let selector = live_selector().unwrap();

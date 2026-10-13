@@ -202,3 +202,21 @@ fn validate_recipients_inner(state: &GameState, accept_full: bool) -> Result<(),
     }
     Ok(())
 }
+
+/// Negative fixture primitive: erase a row without exposing the private ledger.
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) fn remove_loyalty_row_for_test_v1(
+    state: &mut GameState,
+    object: ObjectId,
+) -> Option<u32> {
+    state
+        .planeswalkers_v1
+        .as_mut()?
+        .loyalty
+        .remove(&object)
+        .map(|entry| entry.counters)
+}
