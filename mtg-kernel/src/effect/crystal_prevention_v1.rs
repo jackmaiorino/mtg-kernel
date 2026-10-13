@@ -9,6 +9,7 @@ pub enum PreventionV1 {
     Barricade(crate::state::AbilitySourceContractV4),
     Protection(EffectObjectBinding),
     Replacement(ActiveReplacement),
+    Multiplier(crate::state::AbilitySourceContractV4),
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ChoiceV1 {
@@ -28,6 +29,11 @@ pub struct ChoiceV1 {
     pub path: Vec<u16>,
     pub options: Vec<PreventionV1>,
     pub remaining_frames: Vec<EffectFrame>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::twinflame_tyrant_v1::ordering::AppliedMultipliersV38::is_empty"
+    )]
+    pub applied_multipliers: crate::twinflame_tyrant_v1::ordering::AppliedMultipliersV38,
 }
 impl ChoiceV1 {
     fn damage(&self) -> DamageProposed {
@@ -336,6 +342,42 @@ pub(crate) struct OwnerV1 {
     equipment: Option<crate::equipment_damage_source_v4::OwnerV4>,
 }
 impl OwnerV1 {
+    pub(crate) fn packet_before(
+        &self,
+        state: &GameState,
+        ctx: &ExecCtx,
+        op: &EffectOp,
+        path: &[u16],
+    ) -> Option<(u32, StackItem)> {
+        (ctx == &context(&self.expected)
+            && effect_op_at_structural_path(&self.root, path) == Some(op)
+            && state.engine.pending_effect.is_none()
+            && !state
+                .stack
+                .iter()
+                .any(|i| i.v4.stack_item_id == self.expected.v4.stack_item_id))
+        .then(|| last(state, &self.expected).map(|b| (b.history_index, self.expected.clone())))
+        .flatten()
+    }
+
+    pub(crate) fn permits_replacement_answer(
+        &self,
+        state: &GameState,
+        before: &EffectContinuation,
+    ) -> bool {
+        before.resolving_item == self.expected
+            && before.ctx == context(&self.expected)
+            && state.engine.pending_effect.as_ref() == Some(before)
+            && state
+                .stack
+                .iter()
+                .filter(|i| i.v4.stack_item_id == self.expected.v4.stack_item_id)
+                .collect::<Vec<_>>()
+                .as_slice()
+                == [&self.expected]
+            && last(state, &self.expected).and_then(|b| b.pending.as_deref()) == Some(before)
+    }
+
     pub(crate) fn permits_damage(
         &self,
         state: &GameState,
@@ -886,7 +928,7 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
         || is_choice(state)
 }
 pub(crate) fn mixed_environment(state: &GameState) -> bool {
-    crate::crystal_barricade_v1::active(state)
+    (crate::crystal_barricade_v1::active(state) || crate::twinflame_tyrant_v1::has_active_source(state))
         && state.engine.active_replacements.iter().any(|r|
             matches!(r.kind, ReplacementEffectKind::PreventNextDamage { remaining, .. } if remaining > 0))
 }
@@ -1040,6 +1082,7 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
     }) {
         return Err("private Crystal ownership cannot enter the public trigger log".into());
     }
+    crate::twinflame_tyrant_v1::ordering::validate(state)?;
     validate_shields(state)?;
     validate_damage_operations(state)?;
     validate_batch_preparations(state)?;
@@ -1106,7 +1149,8 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
                     .is_some_and(|p| p.choice == b.pending.as_deref().unwrap().choice);
                 if !repeated
                     && (choice.remaining_amount != choice.original_amount
-                        || !choice.touched.is_empty())
+                        || !choice.touched.is_empty()
+                        || !choice.applied_multipliers.is_empty())
                 {
                     return Err("Crystal first damage proposal changed its original amount".into());
                 }
@@ -1121,12 +1165,26 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
             if old.choice.as_ref() != Some(&menu(answer.before.clone())) {
                 return Err("Crystal answer changed its independent prior menu".into());
             }
+            if crate::twinflame_tyrant_v1::ordering::has_multiplier(&answer.before) {
+                if !matches!(state.engine.event_history.get(index-1),Some(CommittedEvent::TwinflameReplacementOperationV38{operation})
+                    if operation.after.as_ref()==b.pending.as_deref().ok_or("multiplier answer closed interpreter prematurely")?)
+                {
+                    return Err("multiplier answer lost actual owning operation".into());
+                }
+            }
             let mut expected = answer.before.clone();
             match expected
                 .options
                 .get(usize::from(answer.option))
                 .ok_or("Crystal answer exceeds menu")?
             {
+                PreventionV1::Multiplier(source) => {
+                    if expected.applied_multipliers.0.contains(source) {
+                        return Err("multiplier answer repeated source".into());
+                    }
+                    expected.applied_multipliers.0.push(*source);
+                    expected.remaining_amount = expected.remaining_amount.saturating_mul(2);
+                }
                 PreventionV1::Barricade(_) | PreventionV1::Protection(_) => {
                     expected.remaining_amount = 0
                 }
@@ -1149,10 +1207,11 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
                 }
             }
             expected.options.retain(
-                |o| !matches!(o, PreventionV1::Replacement(r) if expected.touched.contains(&r.id)),
+                |o| !matches!(o, PreventionV1::Replacement(r) if expected.touched.contains(&r.id))
+                    && !matches!(o,PreventionV1::Multiplier(source) if expected.applied_multipliers.0.contains(source)),
             );
             let mut next = old.clone();
-            if expected.remaining_amount > 0 {
+            if expected.remaining_amount > 0 && !expected.options.is_empty() {
                 next.choice = Some(menu(expected));
             } else if expected.batch.is_some() {
                 let (_, next_choice) = advance_batch_choice(state, &expected)?;
@@ -1209,7 +1268,8 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
                         || choice.target != damage.target
                         || choice.original_amount != damage.amount
                         || choice.remaining_amount <= 0
-                        || choice.remaining_amount > damage.amount
+                        || choice.remaining_amount
+                            > crate::twinflame_tyrant_v1::ordering::amount_bound(choice)
                         || p.frames != frames
                         || choice.remaining_frames != frames
                         || p.answered_choice_guard.is_some()
@@ -1688,6 +1748,52 @@ fn validate_damage_operations(state: &GameState) -> Result<(), String> {
         {
             return Err("Crystal damage outcome repeated or changed exact executing owner".into());
         }
+        if let Some(preparation) =
+            crate::twinflame_tyrant_v1::ordering::preparation_at(state, operation, at)?
+        {
+            if preparation.index as usize >= at
+                || preparation.previous != execution.previous
+                || preparation.item != execution.item
+                || effect_op_at_structural_path(
+                    &last(state, &execution.item)
+                        .ok_or("multiplier packet lost owner root")?
+                        .root,
+                    &preparation.path,
+                ) != Some(&preparation.op)
+            {
+                return Err(
+                    "multiplier preparation changed original root or execution owner".into(),
+                );
+            }
+            let amount = crate::twinflame_tyrant_v1::ordering::prepared_amount(preparation)?;
+            if amount == 0 {
+                if operation.output.is_some() || operation.damage_history.is_some() {
+                    return Err("fully prevented multiplier output claimed positive damage".into());
+                }
+            } else {
+                let output = operation
+                    .output
+                    .as_ref()
+                    .ok_or("positive multiplier output was erased")?;
+                let index = operation
+                    .damage_history
+                    .ok_or("positive multiplier lost actual committed Damage")?
+                    as usize;
+                if output.source != operation.input.source
+                    || output.target != operation.input.target
+                    || output.amount != amount
+                    || index <= preparation.index as usize
+                    || index >= at
+                    || !matches!(state.engine.event_history.get(index),Some(CommittedEvent::Damage{source,target,amount:n,..}) if *source==output.source && *target==output.target && *n==amount)
+                {
+                    return Err(
+                        "multiplier differs from original preparation or actual damage occurrence"
+                            .into(),
+                    );
+                }
+            }
+            continue;
+        }
         match (&operation.output,operation.damage_history) {
             (Some(output),Some(index)) if output.source==operation.input.source && output.target==operation.input.target
                 && output.amount>0 && output.amount<=operation.input.amount && (index as usize)<at
@@ -1872,6 +1978,7 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                             || choice.original_amount != damage.amount
                             || choice.remaining_amount != damage.amount
                             || !choice.touched.is_empty()
+                            || !choice.applied_multipliers.is_empty()
                             || choice.remaining_frames != pending.frames
                         {
                             return Err(
@@ -2823,6 +2930,7 @@ fn batch_choice(
         path: capture.path.clone(),
         options,
         remaining_frames: frames,
+        applied_multipliers: Default::default(),
     })
 }
 fn resolve_fighter(
@@ -2963,6 +3071,12 @@ fn capture_batch(
     op: &EffectOp,
     path: &[u16],
 ) -> Result<BatchCaptureV2, String> {
+    if crate::twinflame_tyrant_v1::requires_successor(state) {
+        return Err(
+            "Twinflame simultaneous replacement ordering remains a required successor".into(),
+        );
+    }
+
     if !batch_recipe(op) {
         return Err("Crystal batch is not a supported printed recipe".into());
     }
@@ -3596,59 +3710,89 @@ fn cannot_prevent(state: &GameState) -> bool {
     })
 }
 pub(crate) fn applicable(state: &GameState, damage: &DamageProposed) -> Vec<PreventionV1> {
-    if cannot_prevent(state) || damage.amount <= 0 || damage.is_combat {
+    applicable_after(state, damage, &Default::default())
+}
+fn applicable_after(
+    state: &GameState,
+    damage: &DamageProposed,
+    applied: &crate::twinflame_tyrant_v1::ordering::AppliedMultipliersV38,
+) -> Vec<PreventionV1> {
+    if damage.amount <= 0 {
         return Vec::new();
     }
-    let Target::Object(target) = damage.target else {
-        return Vec::new();
-    };
-    let mut options = crate::crystal_barricade_v1::sources_protecting(state, target)
-        .into_iter()
-        .map(PreventionV1::Barricade)
-        .collect::<Vec<_>>();
-    let protected = match damage.historical_source {
-        Some(id) => crate::source_power_activation_v1::damage_source(state, damage.source, id)
-            .is_ok_and(|facts| crate::source_power_activation_v1::protected(state, facts, target)),
-        None => {
-            crate::engine::damage_is_prevented_by_protection(state, damage.source, damage.target)
+    let mut options = Vec::new();
+    if !cannot_prevent(state) && !damage.is_combat {
+        if let Target::Object(target) = damage.target {
+            options.extend(
+                crate::crystal_barricade_v1::sources_protecting(state, target)
+                    .into_iter()
+                    .map(PreventionV1::Barricade),
+            );
+            let protected = match damage.historical_source {
+                Some(id) => {
+                    crate::source_power_activation_v1::damage_source(state, damage.source, id)
+                        .is_ok_and(|facts| {
+                            crate::source_power_activation_v1::protected(state, facts, target)
+                        })
+                }
+                None => crate::engine::damage_is_prevented_by_protection(
+                    state,
+                    damage.source,
+                    damage.target,
+                ),
+            };
+            if protected {
+                let o = state.objects.get(target);
+                options.push(PreventionV1::Protection(EffectObjectBinding {
+                    object: target,
+                    expected_zone: o.zone,
+                    expected_zone_change_count: o.zone_change_count,
+                }));
+            }
         }
-    };
-    if protected {
-        let o = state.objects.get(target);
-        options.push(PreventionV1::Protection(EffectObjectBinding {
-            object: target,
-            expected_zone: o.zone,
-            expected_zone_change_count: o.zone_change_count,
-        }));
+        // Old Crystal only handled permanent packets. Player prevention is
+        // admitted only when the new multiplier actually creates an order.
+        if matches!(damage.target, Target::Object(_))
+            || !crate::twinflame_tyrant_v1::sources(state, damage)
+                .unwrap_or_default()
+                .is_empty()
+        {
+            options.extend(
+                state
+                    .engine
+                    .active_replacements
+                    .iter()
+                    .filter(|r| {
+                        !damage.touched_by.contains(&r.id)
+                            && crate::event::replacement_applies(
+                                r,
+                                &crate::event::ProposedEvent::Damage(damage.clone()),
+                                state,
+                            )
+                    })
+                    .cloned()
+                    .map(PreventionV1::Replacement),
+            );
+        }
     }
     options.extend(
-        state
-            .engine
-            .active_replacements
-            .iter()
-            .filter(|r| {
-                !damage.touched_by.contains(&r.id)
-                    && crate::event::replacement_applies(
-                        r,
-                        &crate::event::ProposedEvent::Damage(damage.clone()),
-                        state,
-                    )
-            })
-            .cloned()
-            .map(PreventionV1::Replacement),
+        crate::twinflame_tyrant_v1::sources(state, damage)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|id| crate::state::AbilitySourceContractV4::capture(state, id))
+            .filter(|source| !applied.0.contains(source))
+            .map(PreventionV1::Multiplier),
     );
     options
 }
 pub(crate) fn needs_choice(state: &GameState, damage: &DamageProposed) -> bool {
     let options = applicable(state, damage);
-    options
-        .iter()
-        .any(|o| matches!(o, PreventionV1::Barricade(_)))
-        && options.iter().any(|o| {
-            matches!(o, PreventionV1::Replacement(r)
-            if matches!(r.kind, ReplacementEffectKind::PreventNextDamage { .. }))
-        })
+    let numeric=options.iter().any(|o| matches!(o,PreventionV1::Replacement(r) if matches!(r.kind,ReplacementEffectKind::PreventNextDamage{..})));
+    numeric
         && options.len() > 1
+        && options
+            .iter()
+            .any(|o| matches!(o, PreventionV1::Barricade(_) | PreventionV1::Multiplier(_)))
 }
 fn menu(choice: ChoiceV1) -> PendingEffectChoice {
     PendingEffectChoice::ChooseOption {
@@ -3688,8 +3832,10 @@ fn offer_damage(
     {
         return Err("mixed Crystal damage lacks a pre-pop owner".into());
     }
-    let Target::Object(target) = damage.target else {
-        return Err("Crystal recipient is not a permanent".into());
+    let chooser = match damage.target {
+        Target::Object(target) => state.objects.get(target).controller,
+        Target::Player(player) => player,
+        Target::StackItem(_) => return Err("replacement recipient is not damaged".into()),
     };
     let choice = ChoiceV1 {
         source: damage.source,
@@ -3700,10 +3846,11 @@ fn offer_damage(
         original_amount: damage.amount,
         remaining_amount: damage.amount,
         touched: Vec::new(),
-        chooser: state.objects.get(target).controller,
+        chooser,
         path: path.to_vec(),
         options: applicable(state, &damage),
         remaining_frames: continuation.frames.clone(),
+        applied_multipliers: Default::default(),
     };
     u16::try_from(choice.options.len())
         .map_err(|_| "Crystal menu exceeds u16 decision transport")?;
@@ -3788,7 +3935,8 @@ fn validate_choice(state: &GameState, pending: &EffectContinuation) -> Result<()
         validate_batch_choice_record(state, pending, &root, choice)?;
         let capture = batch_capture_at(state, progress.capture, &choice.path)?;
         validate_live_batch(state, capture)?;
-        if choice.options != applicable(state, &choice.damage()) {
+        if choice.options != applicable_after(state, &choice.damage(), &choice.applied_multipliers)
+        {
             return Err("Crystal simultaneous menu changed applicable prevention".into());
         }
         return Ok(());
@@ -3801,8 +3949,12 @@ fn validate_choice(state: &GameState, pending: &EffectContinuation) -> Result<()
     }
     let mut expected_frames = Vec::new();
     remaining(&root, &choice.path, &[], &mut expected_frames)?;
-    let Target::Object(recipient) = choice.target else {
-        return Err("Crystal choice lost its affected permanent".into());
+    let recipient_valid = match choice.target {
+        Target::Object(recipient) => state.objects.try_get(recipient).is_some_and(|o| {
+            o.zone == crate::state::Zone::Battlefield && o.controller == choice.chooser
+        }),
+        Target::Player(player) => player == choice.chooser,
+        Target::StackItem(_) => false,
     };
     if pending.choice.as_ref() != Some(&menu((**choice).clone()))
         || choice.source != damage.source
@@ -3810,18 +3962,17 @@ fn validate_choice(state: &GameState, pending: &EffectContinuation) -> Result<()
         || choice.target != damage.target
         || choice.original_amount != damage.amount
         || choice.remaining_amount <= 0
-        || choice.remaining_amount > damage.amount
+        || choice.remaining_amount > crate::twinflame_tyrant_v1::ordering::amount_bound(choice)
         || pending.frames != choice.remaining_frames
         || pending.frames != expected_frames
         || pending.answered_choice_guard.is_some()
-        || state.objects.try_get(recipient).is_none_or(|o| {
-            o.zone != crate::state::Zone::Battlefield || o.controller != choice.chooser
-        })
-        || choice.options != applicable(state, &choice.damage())
-        || !choice
-            .options
-            .iter()
-            .any(|o| matches!(o, PreventionV1::Barricade(_)))
+        || !recipient_valid
+        || choice.options != applicable_after(state, &choice.damage(), &choice.applied_multipliers)
+        || (!crate::twinflame_tyrant_v1::ordering::has_multiplier(choice)
+            && !choice
+                .options
+                .iter()
+                .any(|o| matches!(o, PreventionV1::Barricade(_))))
     {
         return Err("Crystal affected-player menu or captured instruction changed".into());
     }
@@ -3875,11 +4026,30 @@ pub(crate) fn answer(state: &mut GameState, index: u16) -> Result<(), String> {
         gorehorn: None,
         equipment: None,
     };
+    let multiplier_input = if crate::twinflame_tyrant_v1::ordering::has_multiplier(&choice) {
+        if choice.batch.is_some() {
+            return Err("multiplier batch ordering pending successor".into());
+        }
+        Some(crate::twinflame_tyrant_v1::ordering::record_input(
+            state, &owner, &before, index,
+        )?)
+    } else {
+        None
+    };
+    let mut multiplier_damage = None;
+    let mut multiplier_gain = None;
     let answer = AnswerV1 {
         before: choice.clone(),
         option: index,
     };
     match selected {
+        PreventionV1::Multiplier(source) => {
+            if choice.applied_multipliers.0.contains(&source) {
+                return Err("multiplier source already applied".into());
+            }
+            choice.applied_multipliers.0.push(source);
+            choice.remaining_amount = choice.remaining_amount.saturating_mul(2);
+        }
         PreventionV1::Barricade(_) | PreventionV1::Protection(_) => choice.remaining_amount = 0,
         PreventionV1::Replacement(replacement) => {
             let mut damage = choice.damage();
@@ -3898,11 +4068,19 @@ pub(crate) fn answer(state: &mut GameState, index: u16) -> Result<(), String> {
         }
     }
     let next = if choice.remaining_amount > 0 {
-        choice.options = applicable(state, &choice.damage());
+        choice.options = applicable_after(state, &choice.damage(), &choice.applied_multipliers);
         if choice.options.is_empty() {
-            return Err("Crystal static prevention disappeared during resolution".into());
+            if multiplier_input.is_none() {
+                return Err("Crystal static prevention disappeared during resolution".into());
+            }
+            let (damage, gain) =
+                crate::event::commit_twinflame_ordered_scalar(state, &owner, &before, &choice)?;
+            multiplier_damage = Some(damage);
+            multiplier_gain = gain;
+            None
+        } else {
+            Some(menu(choice))
         }
-        Some(menu(choice))
     } else if choice.batch.is_some() {
         let (progress, next_choice) = advance_batch_choice(state, &choice)?;
         if next_choice.is_none() {
@@ -3956,6 +4134,22 @@ pub(crate) fn answer(state: &mut GameState, index: u16) -> Result<(), String> {
         None
     };
     state.engine.pending_effect.as_mut().unwrap().choice = next;
+    if let Some(input) = multiplier_input {
+        let operation = crate::twinflame_tyrant_v1::ordering::AnswerOperationV38 {
+            index: u32::try_from(state.engine.event_history.len())
+                .map_err(|_| "multiplier operation index overflow")?,
+            input,
+            after: Box::new(state.engine.pending_effect.as_ref().unwrap().clone()),
+            damage: multiplier_damage,
+            life_gain: multiplier_gain,
+        };
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::TwinflameReplacementOperationV38 {
+                operation: Box::new(operation),
+            });
+    }
     record(state, &owner, Some(answer))?;
     Ok(())
 }

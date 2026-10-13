@@ -24,6 +24,14 @@ pub fn owns_definition(id: u16) -> bool {
         && def.subtypes == [Subtype::Dragon]
         && def.supertypes.is_empty()
         && def.colors == [ManaColor::R]
+        && def.mana_value == 5
+        && !def.is_land
+        && !def.is_token
+        && def.alt_cost.is_none()
+        && def.kicker_cost.is_none()
+        && def.additional_cost.is_none()
+        && def.flashback.is_none()
+        && def.ward_cost.is_none()
         && def.power == Some(3)
         && def.toughness == Some(5)
         && def.keywords == Keywords::FLYING
@@ -33,7 +41,7 @@ pub fn owns_definition(id: u16) -> bool {
         && (def.spell_effect)()
             == Some(EffectOp::MoveObject {
                 object: ObjectRef::ThisSource,
-                to: Zone::Battlefield,
+                to_zone: Zone::Battlefield,
             })
         && def.activated_abilities.is_empty()
         && crate::trigger::triggers_for(id).is_empty()
@@ -53,17 +61,32 @@ pub(crate) fn controller(state: &GameState, id: ObjectId) -> Option<PlayerId> {
     .then_some(object.controller)
 }
 
-pub(crate) fn requires_successor(state: &GameState) -> bool {
+pub(crate) fn has_active_source(state: &GameState) -> bool {
     state
         .objects
         .iter()
         .any(|(id, _)| controller(state, id).is_some())
+}
+pub(crate) fn requires_successor(state: &GameState) -> bool {
+    has_active_source(state)
         || state.stack.iter().any(|item| {
-            state.objects.try_get(item.source).is_some_and(|object| {
-                CARD_DEFS[usize::from(object.card_def)]
-                    .damage_replacement_v1
-                    .is_some()
+            item.v4.source_contract.is_some_and(|source| {
+                CARD_DEFS
+                    .get(usize::from(source.card_def))
+                    .is_some_and(|def| def.damage_replacement_v1.is_some())
+            }) || state.objects.try_get(item.source).is_some_and(|object| {
+                CARD_DEFS
+                    .get(usize::from(object.card_def))
+                    .is_some_and(|def| def.damage_replacement_v1.is_some())
             })
+        })
+        || state.engine.event_history.iter().any(|e| {
+            matches!(
+                e,
+                crate::event::CommittedEvent::TwinflameReplacementInputV38 { .. }
+                    | crate::event::CommittedEvent::TwinflameReplacementOperationV38 { .. }
+                    | crate::event::CommittedEvent::TwinflameDamagePreparationV38 { .. }
+            )
         })
 }
 
@@ -117,9 +140,6 @@ pub(crate) fn validate_commuting_damage(
     let sources = sources(state, damage)?;
     if sources.is_empty() {
         return Ok(sources);
-    }
-    if crate::crystal_barricade_v1::active(state) {
-        return Err("Twinflame multiplier requires its owned Crystal ordering successor".into());
     }
     let cannot_prevent = state.engine.until_end_of_turn.iter().any(|e| {
         matches!(
@@ -196,6 +216,7 @@ pub fn printed_meaning(id: u16) -> Result<PrintedMeaningV1, String> {
     .map_err(|e| e.to_string())?;
     let producer = [
         include_str!("twinflame_tyrant_v1.rs"),
+        include_str!("twinflame_tyrant_v1/ordering.rs"),
         include_str!("card_def.rs"),
         include_str!("event.rs"),
         include_str!("source_power_activation_v1.rs"),
@@ -235,3 +256,5 @@ impl PrintedMeaningV1 {
 
 #[cfg(test)]
 mod tests;
+
+pub mod ordering;

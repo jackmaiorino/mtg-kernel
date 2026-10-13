@@ -1009,6 +1009,9 @@ pub(super) fn conflicts(
                 | crate::event::CommittedEvent::ZulAshurExpiredV1 { .. }
                 | crate::event::CommittedEvent::ZulAshurRemovalInputV1 { .. }
                 | crate::event::CommittedEvent::InspirationResolutionBoundaryV1 { .. }
+                | crate::event::CommittedEvent::TwinflameReplacementInputV38 { .. }
+                | crate::event::CommittedEvent::TwinflameReplacementOperationV38 { .. }
+                | crate::event::CommittedEvent::TwinflameDamagePreparationV38 { .. }
                 | crate::event::CommittedEvent::InspirationResolutionInputV1 { .. }
                 | crate::event::CommittedEvent::InspirationResolutionOperationV1 { .. }
                 | crate::event::CommittedEvent::InspirationEngineDepartureV1 { .. }
@@ -1349,7 +1352,8 @@ pub(super) fn conflicts(
             // This receipt is history-only. Active snapshot references are
             // already visited through the owning pending continuation above.
             | InspirationResolutionBoundaryV1 { .. } => false,
-            InspirationResolutionInputV1 { .. } | InspirationResolutionOperationV1 { .. }
+            TwinflameReplacementInputV38 {..} | TwinflameReplacementOperationV38 {..} | TwinflameDamagePreparationV38 {..}
+            | InspirationResolutionInputV1 { .. } | InspirationResolutionOperationV1 { .. }
                 | InspirationEngineDepartureV1 { .. } => true,
         }
     })

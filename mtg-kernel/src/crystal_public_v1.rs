@@ -405,6 +405,7 @@ fn menu(state: &GameState) -> Result<Option<MenuV1>, RlContractError> {
     };
     let options = choice.options.iter().map(|option| {
         let (kind, id, amount) = match option {
+            PreventionV1::Multiplier(source) => ("multiplier", source.source, None),
             PreventionV1::Barricade(source) => ("barricade", source.source, None),
             PreventionV1::Protection(target) => ("protection", target.object, None),
             PreventionV1::Replacement(r) => match r.kind {

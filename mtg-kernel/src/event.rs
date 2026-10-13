@@ -1280,6 +1280,15 @@ pub enum CommittedEvent {
     InspirationEngineDepartureV1 {
         departure: Box<crate::effect::InspirationDepartureV1>,
     },
+    TwinflameReplacementInputV38 {
+        input: Box<crate::twinflame_tyrant_v1::ordering::AnswerInputV38>,
+    },
+    TwinflameReplacementOperationV38 {
+        operation: Box<crate::twinflame_tyrant_v1::ordering::AnswerOperationV38>,
+    },
+    TwinflameDamagePreparationV38 {
+        preparation: Box<crate::twinflame_tyrant_v1::ordering::PreparationV38>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -2014,7 +2023,7 @@ pub(crate) fn propose_and_commit_crystal_owned(
     if !owner.permits_damage(state, &ProposedEvent::Damage(damage.clone())) {
         return Err("Crystal damage lost private removed-item authority".into());
     }
-    prepare_commit_crystal_damage(state, damage, ctx, op, path)
+    prepare_commit_crystal_damage(state, damage, ctx, op, path, owner)
 }
 pub(crate) fn propose_and_commit_crystal_power_owned(
     state: &mut GameState,
@@ -2025,16 +2034,72 @@ pub(crate) fn propose_and_commit_crystal_power_owned(
     if !owner.permits_creature_power(state, capture, &ProposedEvent::Damage(damage.clone())) {
         return Err("Crystal chosen-power damage lost private removed-item authority".into());
     }
-    prepare_commit_crystal_damage(state, damage, &capture.ctx, &capture.op, &capture.path)
+    prepare_commit_crystal_damage(
+        state,
+        damage,
+        &capture.ctx,
+        &capture.op,
+        &capture.path,
+        owner,
+    )
 }
 /// Separate actual interpreter operation. Completion alone cannot invent its
 /// replacement preparation or omit its accepted positive/fully-prevented result.
+pub(crate) fn twinflame_lifelink_player(
+    state: &GameState,
+    choice: &crate::effect::crystal_prevention_v1::ChoiceV1,
+) -> Option<PlayerId> {
+    let mut damage =
+        match ProposedEvent::damage(choice.source, choice.target, choice.remaining_amount) {
+            ProposedEvent::Damage(d) => d,
+            _ => unreachable!(),
+        };
+    damage.historical_source = choice.historical_source;
+    lifelink_gain_for(state, &ProposedEvent::Damage(damage)).map(|(player, _)| player)
+}
+pub(crate) fn commit_twinflame_ordered_scalar(
+    state: &mut GameState,
+    owner: &crate::effect::crystal_prevention_v1::OwnerV1,
+    before: &crate::effect::EffectContinuation,
+    choice: &crate::effect::crystal_prevention_v1::ChoiceV1,
+) -> Result<(u32, Option<u32>), String> {
+    if !owner.permits_replacement_answer(state, before)
+        || choice.remaining_amount <= 0
+        || !choice.options.is_empty()
+        || choice.batch.is_some()
+    {
+        return Err("ordered positive packet lacks genuine scalar answer owner".into());
+    }
+    let mut damage =
+        match ProposedEvent::damage(choice.source, choice.target, choice.remaining_amount) {
+            ProposedEvent::Damage(d) => d,
+            _ => unreachable!(),
+        };
+    damage.historical_source = choice.historical_source;
+    damage.touched_by = choice.touched.clone();
+    let proposed = ProposedEvent::Damage(damage);
+    let gain = lifelink_gain_for(state, &proposed);
+    let at = u32::try_from(state.engine.event_history.len())
+        .map_err(|_| "ordered damage index overflow")?;
+    commit(state, proposed);
+    let gain_at = if let Some((player, amount)) = gain {
+        let index = u32::try_from(state.engine.event_history.len())
+            .map_err(|_| "ordered gain index overflow")?;
+        commit(state, ProposedEvent::life_gain(player, amount));
+        Some(index)
+    } else {
+        None
+    };
+    Ok((at, gain_at))
+}
+
 fn prepare_commit_crystal_damage(
     state: &mut GameState,
     damage: DamageProposed,
     ctx: &crate::effect::ExecCtx,
     op: &crate::effect::EffectOp,
     path: &[u16],
+    owner: &crate::effect::crystal_prevention_v1::OwnerV1,
 ) -> Result<u32, String> {
     use crate::effect::crystal_prevention_v1::{BatchDamageV2, DamageOperationV3};
     if crate::effect::temporary_control_v1::authority::validate(state).is_err()
@@ -2051,6 +2116,37 @@ fn prepare_commit_crystal_damage(
         touched: damage.touched_by.clone(),
     };
     let historical_source = damage.historical_source;
+    if preventers.iter().any(|o| {
+        matches!(
+            o,
+            crate::effect::crystal_prevention_v1::PreventionV1::Multiplier(_)
+        )
+    }) {
+        let (previous, item) = owner
+            .packet_before(state, ctx, op, path)
+            .ok_or("multiplier preparation lacks genuine removed owner")?;
+        let preparation = crate::twinflame_tyrant_v1::ordering::PreparationV38 {
+            index: u32::try_from(state.engine.event_history.len())
+                .map_err(|_| "multiplier preparation index overflow")?,
+            previous,
+            item: Box::new(item),
+            ctx: ctx.clone(),
+            op: op.clone(),
+            path: path.to_vec(),
+            input: original.clone(),
+            historical_source,
+            options: preventers.clone(),
+            lifelink_player: lifelink_gain_for(state, &ProposedEvent::Damage(damage.clone()))
+                .map(|(p, _)| p),
+        };
+        crate::twinflame_tyrant_v1::ordering::prepared_amount(&preparation)?;
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::TwinflameDamagePreparationV38 {
+                preparation: Box::new(preparation),
+            });
+    }
     let prepared = apply_replacements(state, ProposedEvent::Damage(damage));
     if state.engine.halted.is_some() {
         return Err("Crystal damage preparation halted".into());

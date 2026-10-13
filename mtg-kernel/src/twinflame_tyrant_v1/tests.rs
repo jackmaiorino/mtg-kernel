@@ -19,6 +19,24 @@ fn registered_absence_preserves_proposal_and_state_both_seats() {
     }
 }
 
+#[test]
+fn absent_applied_multiplier_wrapper_contributes_no_hash_bytes() {
+    use std::hash::{Hash, Hasher};
+    #[derive(Default)]
+    struct Bytes(Vec<u8>);
+    impl Hasher for Bytes {
+        fn finish(&self) -> u64 {
+            0
+        }
+        fn write(&mut self, b: &[u8]) {
+            self.0.extend_from_slice(b);
+        }
+    }
+    let mut h = Bytes::default();
+    ordering::AppliedMultipliersV38::default().hash(&mut h);
+    assert!(h.0.is_empty());
+}
+
 #[cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
@@ -156,6 +174,138 @@ mod future_printed {
             let halted = state.engine.halted.take();
             assert!(halted.is_some());
             assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+        }
+    }
+    #[test]
+    #[ignore = "true Twinflame printing remains unregistered"]
+    fn genuine_bolt_owned_scalar_order_has_zero_or_three_damage_and_retained_input_proof_both_seats(
+    ) {
+        use crate::effect::crystal_prevention_v1::PreventionV1;
+        use crate::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for double_first in [false, true] {
+                let mut state = ready(actor);
+                cast(&mut state, actor);
+                let recipient = put(
+                    &mut state,
+                    actor.opponent(),
+                    "Shivan Dragon",
+                    Zone::Battlefield,
+                );
+                // Genuine existing numeric shield primitive; no counterfeit spell producer.
+                state
+                    .engine
+                    .active_replacements
+                    .push(event::ActiveReplacement {
+                        id: 90_039,
+                        source: recipient,
+                        kind: event::ReplacementEffectKind::PreventNextDamage {
+                            target: Target::Object(recipient),
+                            remaining: 3,
+                        },
+                    });
+                let spell = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+                state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+                engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+                engine::step(&mut state, Action::ChooseTarget(Target::Object(recipient))).unwrap();
+                for _ in 0..12 {
+                    if state.engine.pending_effect.as_ref().is_some_and(|p| {
+                        matches!(
+                            p.choice,
+                            Some(PendingEffectChoice::ChooseOption {
+                                purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { .. },
+                                ..
+                            })
+                        )
+                    }) {
+                        break;
+                    }
+                    assert!(matches!(
+                        engine::advance_until_decision(&mut state),
+                        Decision::CastSpellOrPass { .. }
+                    ));
+                    engine::step(&mut state, Action::Pass).unwrap();
+                }
+                let bytes = serde_json::to_vec(&state).unwrap();
+                let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
+                for branch in [&mut state, &mut restored] {
+                    let pending = branch.engine.pending_effect.as_ref().unwrap();
+                    let Some(PendingEffectChoice::ChooseOption {
+                        player,
+                        purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                        ..
+                    }) = pending.choice.as_ref()
+                    else {
+                        panic!("actual affected-player order")
+                    };
+                    assert_eq!(*player, actor.opponent());
+                    let index = choice
+                        .options
+                        .iter()
+                        .position(|o| {
+                            if double_first {
+                                matches!(o, PreventionV1::Multiplier(_))
+                            } else {
+                                matches!(o, PreventionV1::Replacement(_))
+                            }
+                        })
+                        .unwrap();
+                    engine::step(branch, Action::ChooseEffectOption(index as u16)).unwrap();
+                    if double_first {
+                        let Some(PendingEffectChoice::ChooseOption {
+                            purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                            ..
+                        }) = branch
+                            .engine
+                            .pending_effect
+                            .as_ref()
+                            .unwrap()
+                            .choice
+                            .as_ref()
+                        else {
+                            panic!("real remaining shield")
+                        };
+                        assert_eq!(choice.remaining_amount, 6);
+                        assert_eq!(choice.applied_multipliers.0.len(), 1);
+                        assert_eq!(choice.options.len(), 1);
+                        engine::step(branch, Action::ChooseEffectOption(0)).unwrap();
+                    }
+                    finish(branch);
+                    assert_eq!(
+                        branch.objects.get(recipient).damage,
+                        if double_first { 3 } else { 0 }
+                    );
+                    assert_eq!(branch.objects.get(spell).zone, Zone::Graveyard);
+                    crate::effect::validate_pending_effect_choice(branch).unwrap();
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&restored).unwrap()
+                );
+                for input in [true, false] {
+                    let mut bad: GameState =
+                        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                    let index = bad
+                        .engine
+                        .event_history
+                        .iter()
+                        .position(|e| {
+                            if input {
+                                matches!(e, CommittedEvent::TwinflameReplacementInputV38 { .. })
+                            } else {
+                                matches!(e, CommittedEvent::TwinflameReplacementOperationV38 { .. })
+                            }
+                        })
+                        .unwrap();
+                    bad.engine.event_history[index] = CommittedEvent::LifeGain {
+                        player: actor,
+                        amount: 0,
+                    };
+                    let before = serde_json::to_vec(&bad).unwrap();
+                    assert!(engine::step(&mut bad, Action::Pass).is_err());
+                    assert_eq!(serde_json::to_vec(&bad).unwrap(), before);
+                }
+            }
         }
     }
 }
