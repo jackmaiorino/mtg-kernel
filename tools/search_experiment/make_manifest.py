@@ -79,6 +79,9 @@ def prepare(args):
     if calibration:
         spec["calibration"] = {"path": str(Path(args.calibration).resolve()), "sha256": digest(args.calibration)}
         spec["inputs"].append(spec["calibration"])
+    if args.resource_profile:
+        spec["resource_profile"] = {"path": str(Path(args.resource_profile).resolve()), "sha256": digest(args.resource_profile)}
+        spec["inputs"].append(spec["resource_profile"])
     if args.qualification:
         spec["qualification"] = {"path": str(Path(args.qualification).resolve()), "sha256": digest(args.qualification)}
     publish(args.out, spec)
@@ -94,6 +97,7 @@ if __name__ == "__main__":
     parser.add_argument("--host-slots", required=True)
     parser.add_argument("--host-reservation", default=str(Path(__file__).resolve().parents[2] / "python/tools/host_reservation_v1.py"))
     parser.add_argument("--host-lock-root", help="on Linux use /var/lib/mtg-node/host-lock for both supported helpers")
+    parser.add_argument("--resource-profile", help="pin the owned Pod's observed CPU/quota/memory/storage profile")
     parser.add_argument("--phase", choices=("qualify", "measure"), default="qualify")
     parser.add_argument("--out", required=True)
     parser.add_argument("--eligible-workers", type=int, default=2)

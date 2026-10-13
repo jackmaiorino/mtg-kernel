@@ -83,7 +83,7 @@ def output_bytes(root):
     total = 0
     for folder, directories, files in os.walk(root, followlinks=False):
         directories[:] = [d for d in directories if not Path(folder, d).is_symlink()
-                           and not Path(folder, d).is_junction()]
+                           and not getattr(Path(folder, d), "is_junction", lambda: False)()]
         for name in files:
             path = Path(folder, name)
             if not path.is_symlink():
@@ -140,6 +140,8 @@ def validate(spec, workers, phase):
     for asset in spec["inputs"]:
         checked(asset)
     require(spec["jobs"] and len({j["id"] for j in spec["jobs"]}) == len(spec["jobs"]), "job IDs must be unique")
+    require(len({j["group"] for j in spec["jobs"]}) >= workers,
+            "requested worker concurrency exceeds independent matched group count")
     for job in spec["jobs"]:
         require(job["id"].replace("-", "").replace("_", "").isalnum(), "invalid job ID")
         require(0 < job["max_wall_seconds"] and 0 < job["max_cpu_seconds"] <= spec["cpu_cap_seconds"],
@@ -274,8 +276,9 @@ def execute(spec, workers, phase, label):
     pending = list(range(len(results)))
     cores = sorted(psutil.Process().cpu_affinity())
     require(len(cores) == spec["cores_claimed"], "current claimed affinity does not match core allocation")
-    groups = list(dict.fromkeys(job["group"] for job in spec["jobs"]))
-    group_core = {group: cores[i % len(cores)] for i, group in enumerate(groups)}
+    group_core = {}
+    per_core_limit = math.ceil(workers / len(cores))
+    peak_active_workers = 0
     error = None
     last_checkpoint = 0.0
     try:
@@ -289,11 +292,21 @@ def execute(spec, workers, phase, label):
             storage_guard(spec, workers * 1024 * 1024)
             require(not (root / "STOP").exists(), "experiment STOP file present")
             used_groups = {spec["jobs"][index]["group"] for index in active}
+            core_counts = {core: sum(item["core"] == core for item in active.values()) for core in cores}
             for index in list(pending):
                 group = spec["jobs"][index]["group"]
-                core = group_core[group]
                 if group in used_groups or len(active) >= workers:
                     continue
+                if group in group_core:
+                    core = group_core[group]
+                    if core_counts[core] >= per_core_limit:
+                        continue
+                else:
+                    free = [core for core in cores if core_counts[core] < per_core_limit]
+                    if not free:
+                        continue
+                    core = min(free, key=lambda core: (core_counts[core], core))
+                    group_core[group] = core
                 job = spec["jobs"][index]
                 folder = destination / job["id"]
                 folder.mkdir()
@@ -335,6 +348,9 @@ def execute(spec, workers, phase, label):
                     active[index]["power"] = {"platform": "linux", "nice": 10, "affinity_before_exec": True}
                 pending.remove(index)
                 used_groups.add(group)
+                core_counts[core] += 1
+                peak_active_workers = max(peak_active_workers,
+                                          sum(item["clock"].poll() is None for item in active.values()))
             for index, item in list(active.items()):
                 child, job = item["child"], spec["jobs"][index]
                 elapsed = time.monotonic() - item["started"]
@@ -375,6 +391,7 @@ def execute(spec, workers, phase, label):
     finally:
         cpu = sum(row["cpu_seconds"] for row in results if row) + time.process_time() - manager_start
         record = {"label": label, "phase": phase, "workers": workers, "cpu_seconds": cpu,
+                  "peak_active_workers": peak_active_workers, "cores_claimed": len(cores),
                   "wall_seconds": time.monotonic() - batch_start, "compatible": compatibility(spec),
                   "results": results, "error": error, "output_bytes": output_bytes(root)}
         publish(destination / "completion.json", record)
@@ -394,6 +411,8 @@ def qualify(paths, out):
             "serial/parallel jobs or primary outputs differ")
     rates = {str(row["workers"]): {"completed_jobs": len(row["results"]), "wall_seconds": row["wall_seconds"],
                                   "cpu_seconds": row["cpu_seconds"],
+                                  "peak_active_workers": row["peak_active_workers"],
+                                  "claimed_cores": row["cores_claimed"],
                                   "completed_per_second": len(row["results"]) / row["wall_seconds"]} for row in batches}
     require("1" in rates and any(int(n) > 1 for n in rates), "serial and parallel counts required")
     receipt = {"schema": SCHEMA, "compatible": first["compatible"], "parity": True, "rates": rates,

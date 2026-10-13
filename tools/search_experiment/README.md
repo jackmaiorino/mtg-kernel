@@ -136,7 +136,7 @@ locations before releasing an ephemeral Pod. These commands prepare/verify the
 runtime only; they are not permission to create a Pod.
 
 On the Pod, use the pinned Rust 1.94.1 toolchain and an observed linker, Python
-with psutil, the reviewed source archive, and the 83 MB explicit input archive.
+3.12 with psutil, the reviewed source archive, and the 83 MB explicit input archive.
 Run `relocate_inputs.py` once after transfer; it verifies the explicit assets,
 preserves the transport index and changes source specification paths only.
 The lead records actual CPU topology, cgroup quota/memory and storage profile;
@@ -148,7 +148,7 @@ allowed CPU set and limit claimed cores by observed effective quota:
 ```bash
 export HOST_SLOTS_ROOT=/var/lib/mtg-node/host-lock
 export MTG_HOST_LOCK_ROOT=/var/lib/mtg-node/host-lock
-python3 -c 'import os,platform,json,pathlib,re; root=pathlib.Path(os.environ["HOST_SLOTS_ROOT"]); host=re.sub(r"[^A-Za-z0-9-]","-",platform.node()).upper(); p=root/(host+".slots"); p.mkdir(parents=True,exist_ok=True); json.dump({"cores":",".join(map(str,sorted(os.sched_getaffinity(0)))),"keep_free":0,"priority":"below_normal"},(p/"config.json").open("x"))'
+python3 tools/search_experiment/configure_slots.py --out /workspace/search-sharing-allocation-20261013/HOST_PROFILE.json
 python3 tools/search_experiment/relocate_inputs.py --inputs /workspace/search-sharing-allocation-20261013/inputs
 python3 -m unittest discover -s tools/search_experiment/tests -v
 python3 python/tools/host_slots_v1.py status
@@ -157,7 +157,7 @@ python3 python/tools/host_slots_v1.py status
 Prepare the first small cost-only root queue, then have the lead review it:
 
 ```bash
-python3 tools/search_experiment/make_manifest.py --root /workspace/search-sharing-allocation-20261013 --binary /workspace/pinned-runtime/regret_census_v1 --commit REVIEWED_SHA --host-slots python/tools/host_slots_v1.py --host-lock-root /var/lib/mtg-node/host-lock --hot-volume /workspace --hot-disk RunPod-CPU3c-local-100GB --cold-volume /workspace --cold-binary-root /workspace/pinned-binaries --cores-claimed 2 --eligible-workers 2 --decks 1 --budgets 16000 --calibrate --seeds search-sharing-allocation-20261013/calibration/cloud-r1 --out /workspace/search-sharing-allocation-20261013/CALIBRATION-MANIFEST.json
+python3 tools/search_experiment/make_manifest.py --root /workspace/search-sharing-allocation-20261013 --binary /workspace/pinned-runtime/regret_census_v1 --commit REVIEWED_SHA --host-slots python/tools/host_slots_v1.py --host-lock-root /var/lib/mtg-node/host-lock --resource-profile /workspace/search-sharing-allocation-20261013/HOST_PROFILE.json --hot-volume /workspace --hot-disk RunPod-CPU3c-local-100GB --cold-volume /workspace --cold-binary-root /workspace/pinned-binaries --cores-claimed 2 --eligible-workers 2 --decks 1 --budgets 16000 --calibrate --seeds search-sharing-allocation-20261013/calibration/cloud-r1 --out /workspace/search-sharing-allocation-20261013/CALIBRATION-MANIFEST.json
 python3 tools/search_experiment/launch.py check --manifest /workspace/search-sharing-allocation-20261013/CALIBRATION-MANIFEST.json --phase qualify --workers 1 --label cal-cloud-probe
 ```
 
@@ -168,3 +168,10 @@ calibration asset. Do not carry a Windows receipt across host, binary, source
 path or storage changes. Generate full formal queues only when the measured
 projection fits the lead's remaining CPU/dollar/lease/output ceilings. The
 runtime carries no API key and has no provider creation or spending path.
+
+New matched groups are assigned to currently available cores, then keep that
+affinity for A/B/C. When workers do not exceed claimed cores, only one job runs
+per core. Measured oversubscription is bounded and balanced when workers exceed
+cores. Dispatch refuses concurrency greater than independent matched groups;
+completion and throughput receipts report actual peak live workers. A requested
+32-worker limit is not evidence that 32 workers were active.
