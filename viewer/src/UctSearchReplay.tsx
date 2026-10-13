@@ -18,7 +18,7 @@ export function UctSearchReplayView({frame,actualFrame=frame,recording,assetBase
     const p=new URLSearchParams(window.location.hash.slice(1)),event=Number(p.get('searchEvent')??0);
     return {...s,event:p.get('decision')===actualFrame.id&&p.get('game')===recording.id&&Number.isInteger(event)&&event>=0&&event<events.length?event:0};
   });
-  const [showActual,setShowActual]=useState(()=>{const p=new URLSearchParams(window.location.hash.slice(1));return actualFrame.id!==frame.id&&!(p.get('decision')===actualFrame.id&&p.has('searchEvent'));});
+  const [showActual,setShowActual]=useState(()=>{const p=new URLSearchParams(window.location.hash.slice(1));return p.get('searchView')==='actual'||actualFrame.id!==frame.id&&!(p.get('decision')===actualFrame.id&&p.has('searchEvent'));});
   const execution=actualFrame.searchLifecycle;
   const actual=execution?.root===frame.id&&execution.node!==null?{node:execution.node,path:actualTreePath(replay,execution.node)}:undefined;
   const [previewNode,setPreviewNode]=useState<number|null>(null),[manualMove,setManualMove]=useState<number|null>(null);
@@ -52,9 +52,9 @@ export function UctSearchReplayView({frame,actualFrame=frame,recording,assetBase
   useEffect(()=>{if(linked.current)document.getElementById('search-replay')?.scrollIntoView({behavior:'instant',block:'start'});},[]);
   useEffect(()=>{if(!state.playing)return;const timer=window.setTimeout(()=>dispatch({type:'advance',length:events.length}),(event.phase==='rollout'?1100:650)/state.speed);return()=>window.clearTimeout(timer);},[state,event.phase,events.length]);
   useEffect(()=>{
-    setPreviewNode(null);setManualMove(null);const p=new URLSearchParams(window.location.hash.slice(1));p.set('game',recording.id);p.set('decision',actualFrame.id);p.set('searchEvent',String(state.event));window.history.replaceState(null,'',`#${p}`);
-  },[state.event,actualFrame.id,recording.id]);
-  useEffect(()=>{const listener=()=>{const p=new URLSearchParams(window.location.hash.slice(1)),n=Number(p.get('searchEvent')??0);if(p.get('game')===recording.id&&p.get('decision')===actualFrame.id&&Number.isInteger(n)&&n>=0&&n<events.length)dispatch({type:'seek',event:n});};window.addEventListener('hashchange',listener);return()=>window.removeEventListener('hashchange',listener);},[recording.id,actualFrame.id,events.length]);
+    setPreviewNode(null);setManualMove(null);const p=new URLSearchParams(window.location.hash.slice(1));p.set('game',recording.id);p.set('decision',actualFrame.id);p.set('searchEvent',String(state.event));if(showActual)p.set('searchView','actual');else p.delete('searchView');window.history.replaceState(null,'',`#${p}`);
+  },[state.event,actualFrame.id,recording.id,showActual]);
+  useEffect(()=>{const listener=()=>{const p=new URLSearchParams(window.location.hash.slice(1)),n=Number(p.get('searchEvent')??0);if(p.get('game')===recording.id&&p.get('decision')===actualFrame.id&&Number.isInteger(n)&&n>=0&&n<events.length){setShowActual(p.get('searchView')==='actual');dispatch({type:'seek',event:n});}};window.addEventListener('hashchange',listener);return()=>window.removeEventListener('hashchange',listener);},[recording.id,actualFrame.id,events.length]);
   const seek=(n:number)=>{onInteract();setShowActual(false);dispatch({type:'seek',event:Math.max(0,Math.min(events.length-1,n))});};
   const interact=()=>{onInteract();if(state.playing)dispatch({type:'seek',event:state.event});};
   const start=(n:number)=>events.findIndex(e=>e.simulation===n);

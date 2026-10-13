@@ -32,6 +32,7 @@ test('actual guide lifecycle distinguishes refresh from reuse and locates the ga
   await expect(page.locator('[data-actual-node="1"]')).toHaveCount(0);
   await page.getByRole('button',{name:'Locate actual game in tree'}).click();
   await expect(page.locator('[data-actual-node="1"]')).toBeVisible();await expect(page).toHaveURL(/decision=d17/);
+  await expect(page).toHaveURL(/searchView=actual/);
   await page.setViewportSize({width:320,height:900});await page.emulateMedia({reducedMotion:'reduce'});
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
   await status.screenshot({path:'test-results/search-lifecycle-320.png'});

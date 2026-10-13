@@ -160,6 +160,7 @@ function App() {
     const oldParams=new URLSearchParams(window.location.hash.slice(1));
     const nextParams=new URLSearchParams({game:recording.id,decision:frame.id});
     if(oldParams.get('game')===recording.id&&oldParams.get('decision')===frame.id&&oldParams.has('searchEvent'))nextParams.set('searchEvent',oldParams.get('searchEvent')!);
+    if(oldParams.get('game')===recording.id&&oldParams.get('decision')===frame.id&&oldParams.has('searchView'))nextParams.set('searchView',oldParams.get('searchView')!);
     window.history.replaceState(null, '', `#${nextParams}`);
   }, [recording, frame]);
   useEffect(() => {
