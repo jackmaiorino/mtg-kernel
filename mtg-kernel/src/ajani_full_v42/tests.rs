@@ -216,7 +216,6 @@ mod future {
     }
 
     #[test]
-    #[ignore = "requires actual Full Ajani promotion and 2/2 Cat token admission"]
     fn genuine_cast_zero_target_paid_once_and_targeted_counter_restore_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for targeted in [false, true] {
@@ -248,7 +247,6 @@ mod future {
         }
     }
     #[test]
-    #[ignore = "requires actual Full Ajani promotion and 2/2 Cat token admission"]
     fn genuine_strike_departure_reentry_control_target_fizzle_and_natural_expiry_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for stale in [false, true] {
@@ -310,7 +308,6 @@ mod future {
         }
     }
     #[test]
-    #[ignore = "requires actual Full Ajani promotion and 2/2 Cat token admission"]
     fn ultimate_uses_original_controller_current_life_after_source_departure_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);
@@ -354,7 +351,6 @@ mod future {
         }
     }
     #[test]
-    #[ignore = "requires actual Full Ajani promotion and 2/2 Cat token admission"]
     fn paid_owner_erasure_coherent_source_rewrite_counter_and_completed_replay_both_seats() {
         use lifecycle::JournalV42;
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -452,7 +448,6 @@ mod future {
         public
     }
     #[test]
-    #[ignore = "requires genuine Full Ajani promotion and 2/2 Cat token"]
     fn protected_herald_nonpositive_ultimate_is_real_zero_operation_with_mixed_restore_both_seats()
     {
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -498,7 +493,6 @@ mod future {
         }
     }
     #[test]
-    #[ignore = "requires genuine Full Ajani promotion and 2/2 Cat token"]
     fn genuine_copy_allocator_initializes_loyalty_before_real_legend_choice_then_token_can_activate_both_seats(
     ) {
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -534,7 +528,6 @@ mod future {
         }
     }
     #[test]
-    #[ignore = "requires genuine Full Ajani promotion and 2/2 Cat token"]
     fn real_bolt_planeswalker_damage_and_twin_multiplier_preserve_loyalty_and_owner_on_restore_both_seats(
     ) {
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -591,7 +584,6 @@ mod future {
         }
     }
     #[test]
-    #[ignore = "requires genuine Full Ajani promotion and 2/2 Cat token"]
     fn paid_temporal_same_seat_extra_turn_reopens_one_loyalty_use_with_new_occurrence_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);
@@ -645,7 +637,6 @@ mod future {
         }
     }
     #[test]
-    #[ignore = "requires genuine Full Ajani promotion and 2/2 Cat token"]
     fn stolen_source_sorcery_timing_and_original_controller_life_survive_owner_reentry_both_seats()
     {
         for owner in [PlayerId::P0, PlayerId::P1] {

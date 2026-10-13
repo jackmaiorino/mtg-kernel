@@ -2671,13 +2671,13 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 436 (Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
+        // batches append through id 437 (Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                437
+                438
             } else {
                 192
             }
@@ -2694,6 +2694,9 @@ mod tests {
             assert_eq!(card_id_by_name("Fishing Pole"), Some(434));
             assert_eq!(card_id_by_name("Fish Token"), Some(435));
             assert_eq!(card_id_by_name("Twinflame Tyrant"), Some(436));
+            assert_eq!(card_id_by_name("Ajani Cat Token"), Some(437));
+            assert_eq!(card_id_by_name("Ajani, Caller of the Pride"), Some(215));
+            assert_eq!(CARD_DEFS[215].capability, CardCapability::Full);
         }
     }
 
