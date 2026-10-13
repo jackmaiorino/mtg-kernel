@@ -310,6 +310,10 @@ fn actual_opponent_turn_flash_payment_and_paid_counter_response_restore_both_sea
 fn actual_witness_protection_removes_herald_prohibition_and_restore_keeps_the_loss_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, herald) = cast_herald(actor);
+        let selector = crate::rules_meaning_game_outcome_protection_v1::live_selector().unwrap();
+        let before_public =
+            crate::game_outcome_protection_public_v1::capture(&state, &selector).unwrap();
+        assert!(before_public.sources[0].printed_rules_active);
         let witness = put(&mut state, actor, "Witness Protection", Zone::Hand);
         state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 1;
         assert!(matches!(engine::advance_until_decision(&mut state),
@@ -353,6 +357,16 @@ fn actual_witness_protection_removes_herald_prohibition_and_restore_keeps_the_lo
             assert!(!active(branch, herald));
             assert!(!cannot_lose(branch, actor));
             assert!(!cannot_win(branch, actor.opponent()));
+            let public =
+                crate::game_outcome_protection_public_v1::capture(branch, &selector).unwrap();
+            assert_eq!(public.sources.len(), 1);
+            assert!(!public.sources[0].printed_rules_active);
+            assert_eq!(public.cannot_lose, [false; 2]);
+            assert_eq!(public.cannot_win, [false; 2]);
+            assert_eq!(
+                crate::game_outcome_protection_public_v1::validate(branch, &before_public),
+                Err(crate::game_outcome_protection_public_v1::ErrorV1::IdentityMismatch)
+            );
             crate::event::propose_and_commit(
                 branch,
                 crate::event::ProposedEvent::life_loss(actor, 20),
@@ -361,6 +375,58 @@ fn actual_witness_protection_removes_herald_prohibition_and_restore_keeps_the_lo
             assert!(branch.players[actor.index()].has_lost);
         }
         assert_eq!(state, replay);
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "requires genuine Herald registration and native qualification"]
+fn actual_paid_herald_public_scope_rejects_forgery_and_hides_private_identity_with_restore() {
+    use crate::game_outcome_protection_public_v1::{capture, validate, ErrorV1};
+    let selector = crate::rules_meaning_game_outcome_protection_v1::live_selector().unwrap();
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (state, source) = cast_herald(actor);
+        let before = serde_json::to_vec(&state).unwrap();
+        let record = capture(&state, &selector).unwrap();
+        assert_eq!(record.sources.len(), 1);
+        assert_eq!(record.sources[0].source.arena_id, source.0);
+        assert!(record.sources[0].printed_rules_active);
+        assert!(record.cannot_lose[actor.index()]);
+        assert!(!record.cannot_lose[actor.opponent().index()]);
+        assert!(record.cannot_win[actor.opponent().index()]);
+        assert!(!record.cannot_win[actor.index()]);
+        let restored: GameState = serde_json::from_slice(&before).unwrap();
+        assert_eq!(capture(&restored, &selector).unwrap(), record);
+        for field in 0..7 {
+            let mut forged = record.clone();
+            match field {
+                0 => forged.sources.clear(),
+                1 => forged.sources.push(record.sources[0].clone()),
+                2 => forged.sources[0].source.controller = actor.opponent().into(),
+                3 => forged.sources[0].source.zone_change_count += 1,
+                4 => forged.sources[0].printed_rules_active = false,
+                5 => forged.sources[0].printed_meaning.opponents_cannot_win_game = false,
+                _ => forged.cannot_win[actor.index()] = true,
+            }
+            assert_eq!(validate(&state, &forged), Err(ErrorV1::IdentityMismatch));
+            assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+        }
+        // Named private-zone fixture: changing a concealed hand identity must
+        // not add a row or alter these public static facts.
+        let mut private_herald = state.clone();
+        put(
+            &mut private_herald,
+            actor.opponent(),
+            "Herald of Eternal Dawn",
+            Zone::Hand,
+        );
+        let mut private_forest = state.clone();
+        put(&mut private_forest, actor.opponent(), "Forest", Zone::Hand);
+        assert_eq!(capture(&private_herald, &selector).unwrap(), record);
+        assert_eq!(capture(&private_forest, &selector).unwrap(), record);
     }
 }
 
