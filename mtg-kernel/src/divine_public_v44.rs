@@ -44,6 +44,89 @@ pub struct FactsV44 {
     pub pending: Option<PendingV44>,
     pub finalized: Vec<FinalizedV44>,
 }
+/// Project exact target incarnations with the existing authenticated disguise history.
+/// The original private target contract remains in the owning binding.
+pub(crate) fn target_ref_v44(
+    state: &GameState,
+    contract: crate::state::StackTargetContractV4,
+) -> Result<CardStableRefV1, RlContractError> {
+    let mut reference = crate::policy_observation_variable_cast_v1::captured_target_ref(contract)?;
+    let id = crate::ids::ObjectId(reference.arena_id);
+    let live = state
+        .objects
+        .try_get(id)
+        .ok_or_else(|| RlContractError("Divine target object absent".into()))?;
+    if live.zone_change_count == reference.zone_change_count {
+        reference.card_db_id =
+            crate::rl::projected_card_def(state, id, reference.zone_change_count);
+    } else {
+        // A newer hidden incarnation cannot disclose or redefine the historical
+        // recipient. Use only an authenticated original battlefield departure.
+        crate::controlled_creature_grants_v1::validate_color_history(state)
+            .map_err(RlContractError)?;
+        let mut snapshots = state.engine.event_history.iter().filter_map(|e| {
+            let crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. } = e
+            else {
+                return None;
+            };
+            (snapshot.source.source == id
+                && snapshot.source.zone_change_count == reference.zone_change_count
+                && snapshot.source.card_def == reference.card_db_id
+                && PlayerSeatV1::from(snapshot.source.owner) == reference.owner)
+                .then_some(snapshot)
+        });
+        let snapshot = snapshots.next().ok_or_else(|| {
+            RlContractError("Divine departed target has no original visibility occurrence".into())
+        })?;
+        if snapshots.next().is_some() {
+            return Err(RlContractError(
+                "Divine target visibility occurrence duplicated".into(),
+            ));
+        }
+        let original: crate::state::GameObject =
+            serde_json::from_str(&snapshot.private_snapshot_json)
+                .map_err(|e| RlContractError(e.to_string()))?;
+        if let Some(face) = original.v4.face_down_v1 {
+            reference.card_db_id = crate::card_def::card_id_by_name(if face.disguised {
+                "Face-down creature"
+            } else {
+                "Face-down card"
+            })
+            .ok_or_else(|| RlContractError("Divine hidden target sentinel absent".into()))?;
+        }
+    }
+    Ok(reference)
+}
+fn context_v44(
+    state: &GameState,
+    decision: &PolicyDecisionV5,
+) -> Result<Option<VariableCastContextV1>, RlContractError> {
+    let mut context = variable_cast_context(state, decision)?;
+    if let Some(VariableCastContextV1::Targets {
+        selected,
+        legal_choices,
+        ..
+    }) = &mut context
+    {
+        let pending = state.engine.pending_cast.as_ref().ok_or_else(|| {
+            RlContractError("Divine context lost original pending authority".into())
+        })?;
+        *selected = pending
+            .target_contracts
+            .iter()
+            .copied()
+            .map(|c| target_ref_v44(state, c))
+            .collect::<Result<Vec<_>, _>>()?;
+        for reference in legal_choices {
+            let contract = crate::state::StackTargetContractV4::capture(
+                state,
+                Target::Object(crate::ids::ObjectId(reference.arena_id)),
+            );
+            *reference = target_ref_v44(state, contract)?;
+        }
+    }
+    Ok(context)
+}
 fn owns(id: u16) -> bool {
     crate::card_def::CARD_DEFS
         .get(usize::from(id))
@@ -147,7 +230,7 @@ fn finalized(
         .target_contracts
         .iter()
         .copied()
-        .map(crate::policy_observation_variable_cast_v1::captured_target_ref)
+        .map(|contract| target_ref_v44(state, contract))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(FinalizedV44 {
         stack_ordinal: u32::try_from(ordinal)
@@ -183,7 +266,7 @@ pub(crate) fn facts(
                 .target_contracts
                 .iter()
                 .copied()
-                .map(crate::policy_observation_variable_cast_v1::captured_target_ref)
+                .map(|contract| target_ref_v44(state, contract))
                 .collect::<Result<Vec<_>, _>>()?;
             if selected.len() != pending.targets_chosen.len()
                 || selected.iter().enumerate().any(|(i, target)| {
@@ -215,7 +298,7 @@ pub(crate) fn facts(
                 selected,
                 minimum: pending.kicked.map(|k| if k { 0 } else { 1 }),
                 maximum: pending.kicked.and_then(|k| if k { None } else { Some(1) }),
-                context: variable_cast_context(state, decision)?,
+                context: context_v44(state, decision)?,
                 unkicked_quote: quote(state, false)?,
                 kicked_quote: quote(state, true)?,
             })

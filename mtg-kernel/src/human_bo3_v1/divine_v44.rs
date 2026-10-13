@@ -1067,7 +1067,7 @@ fn project_divine(
     let pending = facts
         .pending
         .as_ref()
-        .map(|p| {
+        .map(|p| -> Result<HumanDivinePendingV44, Error> {
             let (legal_choices, legal_kicker_choices, can_finish) = match &p.context {
                 Some(
                     crate::policy_observation_variable_cast_v1::VariableCastContextV1::Targets {
@@ -1099,8 +1099,7 @@ fn project_divine(
             })
         })
         .transpose()?;
-    let finalized = facts
-        .finalized
+    lized
         .iter()
         .map(|p| {
             Ok(HumanDivineFinalizedV44 {
@@ -1150,3 +1149,10 @@ fn divine_unary(
     }
     Ok(())
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod tests;

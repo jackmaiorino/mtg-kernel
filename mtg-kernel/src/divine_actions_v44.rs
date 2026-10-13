@@ -41,7 +41,13 @@ pub(crate) fn candidates(
                     source,
                     kicked,
                     selected_count,
-                    target,
+                    target: crate::divine_public_v44::target_ref_v44(
+                        state,
+                        crate::state::StackTargetContractV4::capture(
+                            state,
+                            crate::state::Target::Object(crate::ids::ObjectId(target.arena_id)),
+                        ),
+                    )?,
                 },
                 Wide::FinishVariableCastTargets {
                     actor,

@@ -2,7 +2,11 @@
 
 use super::*;
 use crate::divine_observation_v44::DivineObservationV44;
-#[cfg(test)]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 use crate::state::GameState;
 
 // No Debug/Serialize: executable candidates and the transport observation
@@ -221,6 +225,22 @@ pub(super) fn normalized_origin(
         session,
         &original.origin_decision,
     )?;
+    let projection = crate::divine_observation_v44::observe_v44(
+        &session.state,
+        &session.surface,
+        (current.actor, &current.origin_decision),
+        session.policy_step_count,
+        current.physical_decision_id,
+        (current.substep_index, current.substep_count),
+    )
+    .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
+    for candidate in &mut original.candidates {
+        candidate.semantic = visible_semantic(
+            &session.state,
+            &projection.projection,
+            candidate.semantic.clone(),
+        )?;
+    }
     Ok(original.candidates)
 }
 
@@ -375,7 +395,11 @@ impl FastActorSessionV1 {
         Ok(self)
     }
 
-    #[cfg(test)]
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     pub(crate) fn from_divine_v44_fixture_state(state: GameState) -> Self {
         let mut session = Self::reset_with_limits(23, 91, 10_000, 10_000);
         session.state = state;
@@ -406,11 +430,19 @@ impl FastActorSessionV1 {
         session
     }
 
-    #[cfg(test)]
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     pub(crate) fn divine_fixture_state(&self) -> &GameState {
         &self.state
     }
-    #[cfg(test)]
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     pub(crate) fn divine_fixture_state_mut(&mut self) -> &mut GameState {
         &mut self.state
     }
@@ -429,7 +461,7 @@ impl FastActorSessionV1 {
         ),
         FlatActionDecisionSliceErrorV1,
     > {
-        if !self.is_common_v40() {
+        if self.flat_action_contract_mode != FlatActionContractModeV1::DivineV44 {
             return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
         }
         let current = self
@@ -497,3 +529,10 @@ impl FastActorSessionV1 {
         Ok(())
     }
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod tests;

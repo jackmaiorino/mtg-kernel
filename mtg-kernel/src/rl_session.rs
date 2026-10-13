@@ -1946,22 +1946,6 @@ fn flat_validate_origin_decision_akroma_inner(
         crate::rl::CommonProjectionScopeV42::ExistingV40,
     )
 }
-fn flat_validate_origin_decision_common_scoped(
-    current: &FastActorCurrentDecisionV1,
-    state: &crate::state::GameState,
-    accepted: (bool, bool),
-) -> Result<(), FlatActionDecisionSliceErrorV1> {
-    flat_validate_origin_decision_common_scoped_v42(
-        current,
-        state,
-        accepted.0,
-        if accepted.1 {
-            crate::rl::CommonProjectionScopeV42::FullFaebloomV43
-        } else {
-            crate::rl::CommonProjectionScopeV42::ExistingV40
-        },
-    )
-}
 fn flat_validate_origin_decision_common_scoped_v42(
     current: &FastActorCurrentDecisionV1,
     state: &crate::state::GameState,

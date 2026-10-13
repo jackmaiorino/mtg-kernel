@@ -327,9 +327,6 @@ pub use ajani_v42::{
     HumanAjaniProjectorV42, HumanAjaniSessionV42, HumanAjaniSnapshotV42, HumanDecisionAjaniV42,
 };
 
-#[cfg(test)]
-mod tests;
-
 pub mod divine_v44;
 pub mod faebloom_v43;
 pub use divine_v44::{
@@ -339,3 +336,6 @@ pub use faebloom_v43::{
     HumanDecisionFaebloomV43, HumanFaebloomProjectorV43, HumanFaebloomSessionV43,
     HumanFaebloomSnapshotV43,
 };
+
+#[cfg(test)]
+mod tests;

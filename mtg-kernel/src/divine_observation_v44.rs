@@ -84,6 +84,12 @@ pub fn commitment(value: &DivineObservationV44) -> Result<String, RlContractErro
         .collect())
 }
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    if !cfg!(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    )) {
+        return Err("Divine V44 requires the actual Foundations catalog".into());
+    }
     crate::controlled_creature_grants_v1::validate_color_history(state)?;
     crate::akroma_public_v1::roots().map_err(|e| e.0)?;
     crate::akroma_family_public_v40::validate_state_for_divine_v44(state)?;
@@ -179,6 +185,9 @@ impl DivineObservationV44 {
             || self.roots != crate::akroma_public_v1::roots()?
             || self.divine.meanings != crate::divine_public_v44::meanings()?
             || self.ajani.meanings != crate::ajani_public_v42::meanings()?
+            || self.faebloom.schema != crate::faebloom_public_v43::SCHEMA
+            || self.faebloom.producer_sha256 != crate::faebloom_public_v43::producer_sha256()
+            || self.faebloom.card_db_hash != self.card_db_hash
             || self.substep_count == 0
             || self.substep_index >= self.substep_count
             || self.card_db_hash != crate::card_def::KERNEL_CARDDB_HASH
@@ -191,6 +200,12 @@ impl DivineObservationV44 {
         for meaning in &self.ajani.meanings {
             crate::rules_meaning_ajani_v42::validate(meaning)
                 .map_err(|_| RlContractError("Ajani precise root differs".into()))?;
+        }
+        let selector =
+            crate::rules_meaning_faebloom_v43::live_selector().map_err(RlContractError)?;
+        for meaning in &self.faebloom.roots {
+            crate::rules_meaning_faebloom_v43::validate(&selector, meaning)
+                .map_err(RlContractError)?;
         }
         Ok(())
     }
