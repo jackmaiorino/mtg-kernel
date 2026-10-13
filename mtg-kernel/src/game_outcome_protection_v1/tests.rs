@@ -436,6 +436,124 @@ fn actual_paid_herald_public_scope_rejects_forgery_and_hides_private_identity_wi
     not(feature = "standard-magezero-fixtures")
 ))]
 #[ignore = "requires genuine Herald registration and native qualification"]
+fn actual_paid_herald_legend_pass_preserves_predeparture_loss_scope_and_restore() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for lethal in [false, true] {
+            for cause in 0..3 {
+                let (mut state, herald) = cast_herald(actor);
+                // Named registered physical legend prerequisite. The legend
+                // choice and simultaneous SBA pass themselves use the engine.
+                let first = put(&mut state, actor, "Krenko, Mob Boss", Zone::Battlefield);
+                let second = put(&mut state, actor, "Krenko, Mob Boss", Zone::Battlefield);
+                match cause {
+                    0 => state.players[actor.index()].life = 0,
+                    1 => state.players[actor.index()].poison_counters.0 = 10,
+                    _ => {
+                        crate::event::propose_and_commit(
+                            &mut state,
+                            crate::event::ProposedEvent::draw(actor),
+                        );
+                        assert!(state.players[actor.index()].drew_from_empty);
+                    }
+                }
+                if lethal {
+                    // Named physical lethal-damage prerequisite before the pass.
+                    state.objects.get_mut(herald).damage = 6;
+                }
+                crate::trigger::sba_fixed_point(&mut state);
+                assert!(!state.players[actor.index()].has_lost);
+                assert!(matches!(engine::advance_until_decision(&mut state),
+                    Decision::ChooseLegendPermanent { player, ref candidates }
+                    if player == actor && candidates == &[first, second]));
+                let mut replay: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                for branch in [&mut state, &mut replay] {
+                    engine::step(branch, Action::ChooseLegendPermanent(first)).unwrap();
+                    crate::trigger::sba_fixed_point(branch);
+                    assert_eq!(branch.objects.get(first).zone, Zone::Battlefield);
+                    assert_eq!(branch.objects.get(second).zone, Zone::Graveyard);
+                    assert_eq!(
+                        branch.objects.get(herald).zone,
+                        if lethal {
+                            Zone::Graveyard
+                        } else {
+                            Zone::Battlefield
+                        }
+                    );
+                    assert_eq!(branch.players[actor.index()].has_lost, lethal && cause != 2);
+                    assert!(!branch.players[actor.index()].drew_from_empty);
+                    assert!(!branch.players[actor.opponent().index()].has_lost);
+                }
+                assert_eq!(state, replay);
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "requires genuine Herald registration and native qualification"]
+fn actual_paid_herald_copy_allocator_primitive_retains_prohibition_after_original_leaves() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, herald) = cast_herald(actor);
+        // The existing exact copy allocator is exercised as a named primitive,
+        // without claiming a paid, registered Self-Reflection spell.
+        let copy_source = put(&mut state, actor, "Counterspell", Zone::Hand);
+        let mut ctx = crate::effect::ExecCtx::no_targets(copy_source, actor);
+        ctx.targets = vec![crate::state::Target::Object(herald)];
+        ctx.target_contracts = vec![crate::state::StackTargetContractV4::capture(
+            &state,
+            ctx.targets[0],
+        )];
+        crate::self_reflection_v1::execute(&mut state, &ctx);
+        let token = *state.players[actor.index()].battlefield.last().unwrap();
+        assert_ne!(token, herald);
+        assert!(state.objects.get(token).v4.is_token);
+        assert_eq!(
+            state.objects.get(token).card_def,
+            state.objects.get(herald).card_def
+        );
+        assert!(active(&state, token));
+        let selector = crate::rules_meaning_game_outcome_protection_v1::live_selector().unwrap();
+        let both = crate::game_outcome_protection_public_v1::capture(&state, &selector).unwrap();
+        assert_eq!(both.sources.len(), 2);
+        state.objects.get_mut(herald).damage = 6;
+        state.players[actor.index()].life = 0;
+        let mut replay: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        for branch in [&mut state, &mut replay] {
+            crate::trigger::sba_fixed_point(branch);
+            assert_eq!(branch.objects.get(herald).zone, Zone::Graveyard);
+            assert!(active(branch, token));
+            assert!(!branch.players[actor.index()].has_lost);
+            let public =
+                crate::game_outcome_protection_public_v1::capture(branch, &selector).unwrap();
+            assert_eq!(public.sources.len(), 1);
+            assert_eq!(public.sources[0].source.arena_id, token.0);
+            branch.objects.get_mut(token).damage = 6;
+            crate::trigger::sba_fixed_point(branch);
+            assert!(!cannot_lose(branch, actor));
+            assert!(branch.players[actor.index()].has_lost);
+            assert!(
+                crate::game_outcome_protection_public_v1::capture(branch, &selector)
+                    .unwrap()
+                    .sources
+                    .is_empty()
+            );
+        }
+        assert_eq!(state, replay);
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "requires genuine Herald registration and native qualification"]
 fn actual_involuntary_employment_moves_loss_protection_to_new_controller_with_restore_both_seats() {
     for owner in [PlayerId::P0, PlayerId::P1] {
         let thief = owner.opponent();
