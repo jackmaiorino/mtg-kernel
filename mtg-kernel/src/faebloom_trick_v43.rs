@@ -634,6 +634,9 @@ fn waiting(state: &GameState) -> impl Iterator<Item = &PendingTrigger> {
                 .flat_map(|p| p.deferred_triggers.iter()),
         )
 }
+pub(crate) fn owns_pending(state: &GameState, pending: &PendingTrigger) -> bool {
+    waiting(state).filter(|row| *row == pending).count() == 1
+}
 fn matching(state: &GameState, predicate: impl Fn(&JournalV43) -> bool) -> Vec<(u64, &JournalV43)> {
     state
         .engine

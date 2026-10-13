@@ -460,4 +460,153 @@ mod future_printed {
             );
         }
     }
+
+    #[test]
+    #[ignore = "genuine unregistered Faebloom printing; parent serial admission required"]
+    fn actual_printed_an_offer_counter_before_creation_preserves_library_and_creates_real_treasures_both_seats(
+    ) {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor);
+            let spell = cast(&mut state, actor);
+            // Retain actual caster priority before the opponent's real instant response.
+            assert!(
+                matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+            );
+            engine::step(&mut state, Action::Pass).unwrap();
+            let offer = put(
+                &mut state,
+                actor.opponent(),
+                "An Offer You Can't Refuse",
+                Zone::Hand,
+            );
+            state.players[actor.opponent().index()].mana_pool[ManaColor::U.pool_index()] = 1;
+            let libraries = state.players.each_ref().map(|p| p.library.clone());
+            assert!(
+                matches!(next(&mut state), Decision::CastSpellOrPass { player, castable_spells, .. } if player == actor.opponent() && castable_spells.contains(&offer))
+            );
+            engine::step(&mut state, Action::CastSpell(offer)).unwrap();
+            assert!(
+                matches!(next(&mut state), Decision::ChooseTargets { legal_targets, .. } if legal_targets == vec![Target::Object(spell.source)])
+            );
+            engine::step(
+                &mut state,
+                Action::ChooseTarget(Target::Object(spell.source)),
+            )
+            .unwrap();
+            let response = state.stack.last().unwrap().v4.stack_item_id;
+            let saved = serde_json::to_vec(&state).unwrap();
+            finish(&mut state, response);
+            assert_eq!(state.objects.get(spell.source).zone, Zone::Graveyard);
+            assert_eq!(state.objects.get(offer).zone, Zone::Graveyard);
+            assert_eq!(
+                state.players.each_ref().map(|p| p.library.clone()),
+                libraries
+            );
+            assert!(state.engine.event_history.iter().all(|e| !matches!(
+                journal(e),
+                Some(JournalV43::Created { .. } | JournalV43::ReflexiveCaptured { .. })
+            )));
+            assert_eq!(state.engine.event_history.iter().filter(|e| matches!(e, CommittedEvent::CreateToken { token_def, controller, .. } if Some(*token_def) == crate::card_def::card_id_by_name("Treasure Token") && *controller == actor)).count(), 2);
+            let mut replay: GameState = serde_json::from_slice(&saved).unwrap();
+            finish(&mut replay, response);
+            assert_eq!(
+                serde_json::to_vec(&replay).unwrap(),
+                serde_json::to_vec(&state).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "genuine unregistered Faebloom printing; parent serial admission required"]
+    fn reflexive_blue_protection_control_and_historical_hidden_target_recheck_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for mode in 0..3 {
+                let mut state = ready(actor);
+                let target = put(
+                    &mut state,
+                    actor.opponent(),
+                    "Llanowar Elves",
+                    Zone::Battlefield,
+                );
+                if mode == 2 {
+                    // A typed disguised-creature state, not a printed disguise-card claim.
+                    state.objects.get_mut(target).v4.face_down_v1 =
+                        Some(crate::state::FaceDownV1 {
+                            disguised: true,
+                            lookers: 0,
+                            hidden_by: None,
+                            hidden_by_source: None,
+                        });
+                }
+                cast(&mut state, actor);
+                creation(&mut state);
+                engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+                let trigger = state.stack.last().unwrap().clone();
+                let target_binding = crate::effect::EffectObjectBinding {
+                    object: target,
+                    expected_zone: Zone::Battlefield,
+                    expected_zone_change_count: state.objects.get(target).zone_change_count,
+                };
+                if mode == 0 {
+                    // Accepted temporary-keyword primitive proves the blue original spell source.
+                    crate::effect::install_temporary_boost(
+                        &mut state,
+                        target_binding,
+                        0,
+                        0,
+                        Keywords::PROTECTION_FROM_MONOCOLORED,
+                    );
+                } else if mode == 1 {
+                    // Existing permanent-control kernel primitive, retaining original target generation.
+                    crate::standard_cards_v1::gain_control(&mut state, target, actor);
+                } else {
+                    let facts = crate::faebloom_public_v43::capture(&state).unwrap();
+                    let historical = facts.reflexives[0].target_at_placement.as_ref().unwrap();
+                    assert_eq!(
+                        Some(historical.card_db_id),
+                        crate::card_def::card_id_by_name("Face-down creature")
+                    );
+                    let mut forged = state.clone();
+                    for event in &mut forged.engine.event_history {
+                        if let CommittedEvent::FaebloomJournalV43 { journal } = event {
+                            if let JournalV43::TriggerPublished {
+                                target_at_placement,
+                                ..
+                            } = journal.as_mut()
+                            {
+                                target_at_placement.card_db_id = state.objects.get(target).card_def;
+                            }
+                        }
+                    }
+                    refused(&forged);
+                    crate::event::propose_and_commit(
+                        &mut state,
+                        ProposedEvent::zone_change(target, Zone::Hand),
+                    );
+                    let after = crate::faebloom_public_v43::capture(&state).unwrap();
+                    assert_eq!(
+                        after.reflexives[0].target_at_placement.as_ref(),
+                        Some(historical)
+                    );
+                    assert!(after.reflexives[0].current_target.is_none());
+                }
+                let saved = serde_json::to_vec(&state).unwrap();
+                finish(&mut state, trigger.v4.stack_item_id);
+                assert!(!state.objects.get(target).tapped);
+                assert_eq!(
+                    crate::faebloom_public_v43::capture(&state)
+                        .unwrap()
+                        .reflexives[0]
+                        .stage,
+                    crate::faebloom_public_v43::StageV43::NoLegalTarget
+                );
+                let mut replay: GameState = serde_json::from_slice(&saved).unwrap();
+                finish(&mut replay, trigger.v4.stack_item_id);
+                assert_eq!(
+                    serde_json::to_vec(&replay).unwrap(),
+                    serde_json::to_vec(&state).unwrap()
+                );
+            }
+        }
+    }
 }

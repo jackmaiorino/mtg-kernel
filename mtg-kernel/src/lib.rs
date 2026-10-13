@@ -653,3 +653,5 @@ pub mod rules_meaning_ajani_v42;
 pub mod ajani_public_v42;
 
 pub mod ajani_observation_v42;
+
+pub mod faebloom_observation_v43;

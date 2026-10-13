@@ -2078,7 +2078,7 @@ fn build_observation_common_v2_fishing_v39(
         step_index,
         text_mode,
         capabilities,
-        (accept_akroma, false),
+        (accept_akroma, false, false),
     )
 }
 
@@ -2108,13 +2108,19 @@ fn build_observation_common_v2_fishing_v39_ajani_v42(
         ),
         bool,
     ),
-    accepted_planes: (bool, bool),
+    accepted_planes: (bool, bool, bool),
 ) -> Result<ObservationV2> {
-    let (accept_akroma, accept_ajani) = accepted_planes;
+    let (accept_akroma, accept_ajani, accept_faebloom) = accepted_planes;
     let (capabilities, accept_fishing) = capabilities;
-    crate::faebloom_trick_v43::require_legacy_supported(state, Some(acting_player))
-        .map_err(RlContractError)?;
-    refuse_unrepresented_shroud_for_akroma(state, accept_akroma)?;
+    if accept_faebloom {
+        crate::faebloom_trick_v43::validate_state(state).map_err(RlContractError)?;
+    } else {
+        crate::faebloom_trick_v43::require_legacy_supported(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
+    if !accept_faebloom {
+        refuse_unrepresented_shroud_for_akroma(state, accept_akroma)?;
+    }
     if !accept_akroma {
         crate::game_outcome_protection_v1::require_legacy_consumer_supported(
             state,
@@ -2232,7 +2238,12 @@ fn build_observation_common_v2_fishing_v39_ajani_v42(
             public_cards_v2(state, &state.players[1].graveyard, text_mode)?,
         ],
         exile: public_cards_v2(state, &state.exile, text_mode)?,
-        stack: stack_public_union_v40(state, acting_player, accept_fishing, accept_akroma)?,
+        stack: stack_public_union_v40(
+            state,
+            acting_player,
+            accept_fishing,
+            (accept_akroma, accept_faebloom),
+        )?,
         combat: combat_public_v2(state, acting_player)?,
         continuous_effects: continuous_effects_common_v2(
             state,
@@ -2248,7 +2259,7 @@ fn build_observation_common_v2_fishing_v39_ajani_v42(
                 state,
                 acting_player,
                 (accept_banishing, accept_inspiration, accept_fishing),
-                true,
+                (true, accept_faebloom),
             )?
         } else {
             engine_context_v2(
@@ -2577,7 +2588,7 @@ fn build_policy_observation_parts_common_fishing_v39(
         step_index,
         text_mode,
         capabilities,
-        (accept_akroma, false),
+        (accept_akroma, false, false),
     )
 }
 
@@ -2607,13 +2618,19 @@ fn build_policy_observation_parts_common_fishing_v39_ajani_v42(
         ),
         bool,
     ),
-    accepted_planes: (bool, bool),
+    accepted_planes: (bool, bool, bool),
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
-    let (accept_akroma, accept_ajani) = accepted_planes;
+    let (accept_akroma, accept_ajani, accept_faebloom) = accepted_planes;
     let (capabilities, accept_fishing) = capabilities;
-    crate::faebloom_trick_v43::require_legacy_supported(state, Some(acting_player))
-        .map_err(RlContractError)?;
-    refuse_unrepresented_shroud_for_akroma(state, accept_akroma)?;
+    if accept_faebloom {
+        crate::faebloom_trick_v43::validate_state(state).map_err(RlContractError)?;
+    } else {
+        crate::faebloom_trick_v43::require_legacy_supported(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
+    if !accept_faebloom {
+        refuse_unrepresented_shroud_for_akroma(state, accept_akroma)?;
+    }
     if !accept_akroma {
         crate::game_outcome_protection_v1::require_legacy_consumer_supported(
             state,
@@ -2705,7 +2722,7 @@ fn build_policy_observation_parts_common_fishing_v39_ajani_v42(
             ),
             accept_fishing,
         ),
-        (accept_akroma, accept_ajani),
+        (accept_akroma, accept_ajani, accept_faebloom),
     )?;
     let context = policy_surface_context_v5(
         state,
@@ -3345,6 +3362,7 @@ pub(crate) fn twinflame_observation_storage_v38(
 pub(crate) enum CommonProjectionScopeV42 {
     ExistingV40,
     FullAjaniV42,
+    FullFaebloomV43,
 }
 pub(crate) fn common_family_observation_storage_scoped(
     request: (CommonProjectionScopeV42, &GameState),
@@ -3362,6 +3380,10 @@ pub(crate) fn common_family_observation_storage_scoped(
     }
     crate::akroma_family_public_v40::validate_state_for_ajani_v42(state)
         .map_err(RlContractError)?;
+    let accept_faebloom = scope == CommonProjectionScopeV42::FullFaebloomV43;
+    if accept_faebloom {
+        crate::faebloom_trick_v43::validate_state(state).map_err(RlContractError)?;
+    }
     build_policy_observation_storage_common_fishing_v39_ajani_v42(
         (
             PolicyObservationBuildV5 {
@@ -3374,7 +3396,7 @@ pub(crate) fn common_family_observation_storage_scoped(
                 substep_count: substep.1,
                 text_mode: ObservationTextModeV2::FullArtifact,
             },
-            (true, true),
+            (true, true, accept_faebloom),
         ),
         true,
         true,
@@ -3761,7 +3783,7 @@ fn build_policy_observation_storage_common_fishing_v39(
     ),
 ) -> Result<PolicyObservationStorageV6> {
     build_policy_observation_storage_common_fishing_v39_ajani_v42(
-        (request.0, (request.1, false)),
+        (request.0, (request.1, false, false)),
         accept_life_ward,
         accept_cant_block,
         accept_wildwood,
@@ -3772,7 +3794,7 @@ fn build_policy_observation_storage_common_fishing_v39(
 }
 
 fn build_policy_observation_storage_common_fishing_v39_ajani_v42(
-    request: (PolicyObservationBuildV5<'_>, (bool, bool)),
+    request: (PolicyObservationBuildV5<'_>, (bool, bool, bool)),
     accept_life_ward: bool,
     accept_cant_block: bool,
     accept_wildwood: bool,
@@ -3799,7 +3821,7 @@ fn build_policy_observation_storage_common_fishing_v39_ajani_v42(
         bool,
     ),
 ) -> Result<PolicyObservationStorageV6> {
-    let (request, (accept_akroma, accept_ajani)) = request;
+    let (request, (accept_akroma, accept_ajani, accept_faebloom)) = request;
     if !accept_akroma {
         crate::game_outcome_protection_v1::require_legacy_consumer_supported(
             request.state,
@@ -3830,8 +3852,15 @@ fn build_policy_observation_storage_common_fishing_v39_ajani_v42(
             "Fishing Pole requires its unadmitted V39 transport".into(),
         ));
     }
-    crate::faebloom_trick_v43::require_legacy_supported(request.state, Some(request.acting_player))
+    if accept_faebloom {
+        crate::faebloom_trick_v43::validate_state(request.state).map_err(RlContractError)?;
+    } else {
+        crate::faebloom_trick_v43::require_legacy_supported(
+            request.state,
+            Some(request.acting_player),
+        )
         .map_err(RlContractError)?;
+    }
     refuse_unrepresented_twinflame(request.state, accept_twinflame)?;
     if !accept_inspiration && crate::inspiration_observation_v1::requires_successor(request.state) {
         return Err(RlContractError(
@@ -3932,6 +3961,7 @@ fn build_policy_observation_storage_common_fishing_v39_ajani_v42(
         accept_life_ward,
         accept_fishing,
         accept_akroma,
+        accept_faebloom,
     )?;
     let (mut base, policy_surface_context) =
         build_policy_observation_parts_common_fishing_v39_ajani_v42(
@@ -3960,7 +3990,7 @@ fn build_policy_observation_storage_common_fishing_v39_ajani_v42(
                 ),
                 accept_fishing,
             ),
-            (accept_akroma, accept_ajani),
+            (accept_akroma, accept_ajani, accept_faebloom),
         )?;
     if let Some(search) = &extensions.decision_local_library {
         let Some(PendingEffectChoiceSemanticV4::Targets { legal_targets, .. }) = base
@@ -4148,6 +4178,21 @@ pub(crate) fn policy_observation_extensions_fishing_union_v40(
         true,
         true,
         true,
+        false,
+    )
+}
+pub(crate) fn policy_observation_extensions_faebloom_v43(
+    state: &GameState,
+    actor: PlayerId,
+) -> Result<PolicyObservationExtensionsV6> {
+    policy_observation_extensions_union_inner_v40(
+        state,
+        actor,
+        ObservationTextModeV2::FlatForbiddenElided,
+        true,
+        true,
+        true,
+        true,
     )
 }
 
@@ -4187,6 +4232,7 @@ fn policy_observation_extensions_common_v6_fishing_v39(
         accept_life_ward,
         accept_fishing,
         false,
+        false,
     )
 }
 fn policy_observation_extensions_union_inner_v40(
@@ -4196,6 +4242,7 @@ fn policy_observation_extensions_union_inner_v40(
     accept_life_ward: bool,
     accept_fishing: bool,
     accept_akroma: bool,
+    accept_faebloom: bool,
 ) -> Result<PolicyObservationExtensionsV6> {
     let pending = state
         .engine
@@ -4329,7 +4376,12 @@ fn policy_observation_extensions_union_inner_v40(
         // stack_source_ref validates the independent finalized cast binding,
         // including equality with the complete paid-cost record and its LKI.
         if item.kind == StackItemKind::Spell {
-            let source = stack_source_ref_union_v40(state, item, accept_fishing, accept_akroma)?;
+            let source = stack_source_ref_union_v40(
+                state,
+                item,
+                accept_fishing,
+                (accept_akroma, accept_faebloom),
+            )?;
             let chosen_creature_cost = CARD_DEFS[source.card_db_id as usize].additional_cost
                 .is_some_and(|cost| cost.iter().any(|component| matches!(component,
                     crate::card_def::CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand)));
@@ -4357,7 +4409,12 @@ fn policy_observation_extensions_union_inner_v40(
                     stack_index: u32::try_from(index)
                         .map_err(|_| RlContractError("stack index exceeds u32".into()))?,
                 },
-                source: stack_source_ref_union_v40(state, item, accept_fishing, accept_akroma)?,
+                source: stack_source_ref_union_v40(
+                    state,
+                    item,
+                    accept_fishing,
+                    (accept_akroma, accept_faebloom),
+                )?,
                 stack_item_kind: item.kind.into(),
             });
         }
@@ -4384,7 +4441,7 @@ fn policy_observation_extensions_union_inner_v40(
                 state,
                 &pending.resolving_item,
                 accept_fishing,
-                accept_akroma,
+                (accept_akroma, accept_faebloom),
             )?,
             stack_item_kind: pending.resolving_item.kind.into(),
         });
@@ -8740,14 +8797,15 @@ fn engine_context_v2(
     acting_player: PlayerId,
     capabilities: (bool, bool, bool),
 ) -> Result<EngineContextV2> {
-    engine_context_v2_akroma_inner(state, acting_player, capabilities, false)
+    engine_context_v2_akroma_inner(state, acting_player, capabilities, (false, false))
 }
 fn engine_context_v2_akroma_inner(
     state: &GameState,
     acting_player: PlayerId,
     capabilities: (bool, bool, bool),
-    accept_akroma: bool,
+    accepted_sources: (bool, bool),
 ) -> Result<EngineContextV2> {
+    let (accept_akroma, accept_faebloom) = accepted_sources;
     let (accept_banishing, accept_inspiration, accept_fishing) = capabilities;
     let planeswalkers = if state.planeswalkers_v1.is_some() {
         state
@@ -9002,7 +9060,14 @@ fn engine_context_v2_akroma_inner(
             )
             .map(|p| {
                 Ok(PendingTriggerSemanticV2 {
-                    source: visible_card_ref(state, p.source, acting_player)?,
+                    source: if accept_faebloom {
+                        match crate::faebloom_public_v43::pending_source_reference(state, p)? {
+                            Some(source) => Some(source),
+                            None => visible_card_ref(state, p.source, acting_player)?,
+                        }
+                    } else {
+                        visible_card_ref(state, p.source, acting_player)?
+                    },
                     controller: p.controller.into(),
                     trigger_kind: if p.is_madness_offer {
                         PendingTriggerKindV2::MadnessOffer
@@ -9072,7 +9137,7 @@ fn pending_effect_semantic_v4_akroma_inner(
                 state,
                 &pending.resolving_item,
                 accept_fishing,
-                accept_akroma,
+                (accept_akroma, false),
             )?),
             controller: pending.resolving_item.controller.into(),
             choice: Some(PendingEffectChoiceSemanticV4::Targets {
@@ -9401,7 +9466,7 @@ fn pending_effect_semantic_v4_akroma_inner(
             state,
             &pending.resolving_item,
             accept_fishing,
-            accept_akroma,
+            (accept_akroma, false),
         )?),
         controller: pending.resolving_item.controller.into(),
         choice,
@@ -9798,7 +9863,7 @@ fn stack_public_union_v40(
     state: &GameState,
     acting_player: PlayerId,
     accept_fishing: bool,
-    accept_akroma: bool,
+    accepted_sources: (bool, bool),
 ) -> Result<Vec<StackItemPublicV2>> {
     state
         .stack
@@ -9811,7 +9876,7 @@ fn stack_public_union_v40(
                 stack_index as u32,
                 item,
                 accept_fishing,
-                accept_akroma,
+                accepted_sources,
             )
         })
         .collect()
@@ -9823,21 +9888,29 @@ fn stack_item_public_v2(
     stack_index: u32,
     item: &StackItem,
     accept_fishing: bool,
-    accept_akroma: bool,
+    accepted_sources: (bool, bool),
 ) -> Result<StackItemPublicV2> {
     if (item.kind == StackItemKind::Spell) != item.v4.cast_method.is_some() {
         return Err(RlContractError(
             "spell stack items require a cast method and abilities must not carry one".to_string(),
         ));
     }
+    let targets = if accepted_sources.1 {
+        match crate::faebloom_public_v43::original_target_reference(state, item)? {
+            Some(object) => vec![TargetRefV1::Object { object }],
+            None => stack_target_refs(state, item)?,
+        }
+    } else {
+        stack_target_refs(state, item)?
+    };
     Ok(StackItemPublicV2 {
         stack_index,
-        source: stack_source_ref_union_v40(state, item, accept_fishing, accept_akroma)?,
+        source: stack_source_ref_union_v40(state, item, accept_fishing, accepted_sources)?,
         controller: item.controller.into(),
         // Announced stack targets are public historical facts. Project the
         // frozen target contract rather than rebuilding a reference from a
         // potentially later incarnation currently reusing the same arena id.
-        targets: stack_target_refs(state, item)?,
+        targets,
         stack_item_kind: item.kind.into(),
         is_copy: item.is_copy,
         is_flashback: item.is_flashback,
@@ -10052,7 +10125,7 @@ pub(crate) fn akroma_historical_source_ref_v40(
             "V40 historical source requires its genuine complete live row".into(),
         ));
     }
-    stack_source_ref_union_v40(state, item, true, true)
+    stack_source_ref_union_v40(state, item, true, (true, false))
 }
 
 /// Select each genuine source family independently; no transport rewrites another family's rows.
@@ -10060,8 +10133,14 @@ fn stack_source_ref_union_v40(
     state: &GameState,
     item: &StackItem,
     accept_fishing: bool,
-    accept_akroma: bool,
+    accepted_sources: (bool, bool),
 ) -> Result<CardStableRefV1> {
+    let (accept_akroma, accept_faebloom) = accepted_sources;
+    if accept_faebloom {
+        if let Some(source) = crate::faebloom_public_v43::stack_source_reference(state, item)? {
+            return Ok(source);
+        }
+    }
     if accept_akroma
         && matches!(
             item.inline_effect.as_ref(),

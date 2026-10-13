@@ -364,6 +364,25 @@ pub fn original_target_reference(
         })
 }
 
+/// A pending relation is published only from an authentic held reflexive occurrence.
+pub(crate) fn pending_source_reference(
+    state: &GameState,
+    pending: &crate::trigger::PendingTrigger,
+) -> Result<Option<CardStableRefV1>, RlContractError> {
+    let Some(capture) = crate::faebloom_trick_v43::capture_of(&pending.effect) else {
+        return Ok(None);
+    };
+    crate::faebloom_trick_v43::validate_state(state).map_err(RlContractError)?;
+    if !crate::faebloom_trick_v43::owns_pending(state, pending) {
+        return Err(RlContractError(
+            "Faebloom pending source detached its authentic held occurrence".into(),
+        ));
+    }
+    Ok(Some(original_ref(
+        crate::faebloom_trick_v43::source_at(state, capture).map_err(RlContractError)?,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
