@@ -15,7 +15,9 @@ include=AVAILABILITY&product=POD&vcpuCount=32.
 [Disk pricing](https://docs.runpod.io/pods/pricing) is $0.10/GB/month for
 running container disks. Conservatively using 720 hours/month, this is
 $0.96 + $0.013889 = **$0.973889/hour**. Four hours plus $0.05 recovery reserve
-and a 20 percent margin projects **$4.734667**. No persistent/network volume
+and a 20 percent margin projects **$4.734667**. The guard permits an observed
+compute rate of at most $1/hour, yielding a worst-case guarded projection of
+**$4.926667** including disk and the same reserve/margin. No persistent/network volume
 is created, so deleting this pod leaves no new storage charge.
 
 The pinned existing Python image is

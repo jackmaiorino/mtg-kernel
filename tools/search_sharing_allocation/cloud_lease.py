@@ -45,7 +45,7 @@ def prepare(root, name, public_key, region, now=None):
         "schema": "phase1-cloud-lease/v1", "name": name,
         "created_epoch": now, "deadline_epoch": now + 4 * 3600,
         "increment_cap_usd": 5, "total_cap_usd": 5,
-        "prior_conservative_usd": 0, "rate_ceiling_usd_hour": 0.96,
+        "prior_conservative_usd": 0, "rate_ceiling_usd_hour": 1.00,
         "storage_usd_hour": 100 * 0.10 / 720,
         "postrun_storage_reserve_usd": 0, "recovery_reserve_usd": 0.05,
         "funded_balance_usd": 5, "safety_multiplier": 1.2,
@@ -156,6 +156,9 @@ def create(root, execute):
             result = safe_pod(matches[0], lease["name"])
             result["reconciled_exact_name"] = True
     write(root / "lease/created-pod.json", result, replace=True)
+    if result["cost_per_hour_usd"] is not None and float(result["cost_per_hour_usd"]) > lease["rate_ceiling_usd_hour"]:
+        write(root / "release-authorized.json", {"epoch": time.time(), "reason": "observed price exceeds ceiling"}, replace=True)
+        raise ValueError("observed pod price exceeds the bounded lease; guardian release requested")
     return result
 
 
@@ -202,13 +205,15 @@ def guardian(root):
                     receipt = preserve(root, self.pod_id)
                 except Exception as error:
                     receipt = {"copied": False, "error_type": type(error).__name__}
-                write(root / "preservation.json", {"pod_id": self.pod_id,
-                      "epoch": time.time(), **receipt}, replace=True)
+                lease_guard.best_effort_receipt(root / "preservation.json", {"pod_id": self.pod_id,
+                      "epoch": time.time(), **receipt})
             return super().call(method)
 
     pid, creation = host_slots_v1.self_identity()
     write(root / "guardian-ready.json", {"name": lease["name"], "pid": pid, "creation_time": creation,
           "epoch": time.time(), "deadline_epoch": lease["deadline_epoch"]}, replace=True)
+    # Receipt failure must not prevent a deadline or completion DELETE.
+    external_guard.write = lambda path, value, **kwargs: lease_guard.best_effort_receipt(path, value)
     external_guard.run(root, key, provider=PreservingProvider)
 
 
