@@ -5,19 +5,20 @@ use super::canon2::{KeyMemo, KeyMode, KeyStats, Keyer};
 use super::diag::{EvalSrc, SelSrc, Trace};
 use super::labels::{SpyDefs, Suffix};
 use super::play::{
-    act, acting, apply, decision, observe, plain_to_end, terminal, Counters, End, Meter, PlayErr,
+    Counters, End, Meter, PlayErr, act, acting, apply, decision, observe, plain_to_end, terminal,
 };
+use super::root_allocation::{RootAllocation, RootAllocator, SearchOptions};
 use super::seeds::{Purpose, RootSeeds};
 use super::tree::{
-    canon, canon_values, child_key, live_index, raw_decision, Found, Key, Mapping, Node, Tree,
-    MAX_DEPTH,
+    Found, Key, MAX_DEPTH, Mapping, Node, Tree, canon, canon_values, child_key, live_index,
+    raw_decision,
 };
-use super::world::{sample, DeckPrior};
+use super::world::{DeckPrior, sample};
 use crate::ids::PlayerId;
 use crate::rl_session::{FastActorDecisionV1, FastActorSessionV1};
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
 use crate::state::SplitMix64;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Instant;
 
@@ -703,6 +704,7 @@ impl Roles {
         mut capture: Option<&mut Capture>,
         diag: &mut SearchDiag,
         mut memo: Option<&mut KeyMemo>,
+        mut allocator: Option<&mut RootAllocator>,
     ) -> Result<(Vec<(Key, usize)>, Vec<(Key, Node)>, End), PlayErr> {
         let capturing = capture
             .as_deref()
@@ -791,7 +793,12 @@ impl Roles {
                                 if staged.contains(&key) {
                                     rec.staged_hits += 1;
                                 }
-                                let e = select_observed(node, ctx.urgency, &mut trace);
+                                let e = if path.is_empty() {
+                                    allocator.as_deref_mut().map(|a| a.select(key, node))
+                                } else {
+                                    None
+                                }
+                                .unwrap_or_else(|| select_observed(node, ctx.urgency, &mut trace));
                                 supported = node.n[e] >= super::tree::MIN_EXEC_BACKUPS;
                                 (e, cn.edges[e].clone())
                             }
@@ -809,7 +816,12 @@ impl Roles {
                                 let perm = keyer.perm(&st, ctx.seeds)?;
                                 let mut node = Node::with_perm(pk, pe, cn.clone(), depth, perm);
                                 node.skip = keyer.skipped(&st);
-                                let e = select_observed(&node, ctx.urgency, &mut trace);
+                                let e = if path.is_empty() {
+                                    allocator.as_deref_mut().map(|a| a.select(key, &node))
+                                } else {
+                                    None
+                                }
+                                .unwrap_or_else(|| select_observed(&node, ctx.urgency, &mut trace));
                                 drop(span);
                                 new.push((key, node));
                                 in_tree = false;
@@ -959,8 +971,61 @@ impl Roles {
         mut capture: Option<&mut Capture>,
         diag: Option<&mut SearchDiag>,
     ) -> (Selection, Tree) {
+        self.select_e_options(
+            ctx,
+            trace.take(),
+            retain,
+            records.take(),
+            capture.take(),
+            diag,
+            &SearchOptions::default(),
+        )
+    }
+
+    /// Explicit experiment controls; defaults preserve the production path.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "existing search roles and opt-in controls"
+    )]
+    pub(crate) fn select_e_options(
+        &mut self,
+        ctx: &RootCtx,
+        mut trace: Option<&mut Trace>,
+        retain: usize,
+        mut records: Option<&mut Vec<SimRecord>>,
+        mut capture: Option<&mut Capture>,
+        diag: Option<&mut SearchDiag>,
+        options: &SearchOptions,
+    ) -> (Selection, Tree) {
         let mut own = SearchDiag::default();
         let diag = diag.unwrap_or(&mut own);
+        if options.sharing {
+            return (
+                Selection {
+                    incomplete: true,
+                    faults: vec!["sharing implementation unavailable".into()],
+                    ..Selection::default()
+                },
+                Tree::default(),
+            );
+        }
+        let cpu_start = match super::process_cpu::seconds() {
+            Ok(t) => t,
+            Err(e) if options.cpu_seconds.is_some() => {
+                return (
+                    Selection {
+                        incomplete: true,
+                        faults: vec![e],
+                        ..Selection::default()
+                    },
+                    Tree::default(),
+                );
+            }
+            Err(_) => 0.0,
+        };
+        let mut allocator =
+            (options.allocation == RootAllocation::Halving).then(RootAllocator::default);
+        let mut stop_reason = None;
         let retain = retain.max(1);
         // Exact and per search: this context's keys only.
         let mut memo = key_memo_enabled().then(KeyMemo::new);
@@ -973,6 +1038,24 @@ impl Roles {
         let mut consecutive = 0u64;
         let mut i = 0u64;
         loop {
+            if options.work_limit.is_some_and(|limit| i >= limit) {
+                stop_reason = Some("work_limit");
+                break;
+            }
+            if let Some(limit) = options.cpu_seconds {
+                match super::process_cpu::seconds() {
+                    Ok(t) if t - cpu_start >= limit => {
+                        stop_reason = Some("cpu_budget");
+                        break;
+                    }
+                    Err(e) => {
+                        sel.incomplete = true;
+                        sel.faults.push(e);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
             if consecutive >= MAX_CONSECUTIVE_REJECTIONS {
                 sel.incomplete = true;
                 break;
@@ -1027,6 +1110,7 @@ impl Roles {
                 capture.as_deref_mut(),
                 diag,
                 memo.as_mut(),
+                allocator.as_mut(),
             );
             if let Some(cap) = capture.as_deref_mut() {
                 cap.end(matches!(&r, Ok((_, _, End::Natural { .. }))));
@@ -1096,6 +1180,21 @@ impl Roles {
         sel.transitions = meter.spent;
         sel.inference = c.inference;
         sel.extra = json!({"tree":tree_stats(&tree)});
+        if let Some(allocator) = &allocator {
+            if let Some((key, node)) = tree
+                .nodes
+                .iter()
+                .find(|(_, n)| n.depth == 1 && n.parent == [0; 32])
+            {
+                sel.choice = allocator
+                    .choice(key, node)
+                    .map(|a| node.canon.edges[a].clone());
+            }
+            sel.extra["root_allocation"] = json!("successive-halving-v1");
+        }
+        if options.cpu_seconds.is_some() || options.work_limit.is_some() {
+            sel.extra["stop_reason"] = json!(stop_reason);
+        }
         sel.wall = started.elapsed().as_secs_f64();
         (sel, tree)
     }

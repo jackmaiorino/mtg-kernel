@@ -36,6 +36,8 @@ mod interchange;
 mod labels;
 mod play;
 mod profile_roots;
+mod root_allocation;
+mod process_cpu;
 mod refresh;
 mod replay_labels;
 mod seeds;
