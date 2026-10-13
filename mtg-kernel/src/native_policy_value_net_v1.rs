@@ -17,6 +17,7 @@ pub(crate) mod stack_inputs_v1;
 pub(crate) use scratch_v1::NativePolicyValueForwardScratchV1;
 #[cfg(test)]
 use scratch_v1::NativePolicyValueOutputViewV1;
+pub(crate) use scratch_v1::{PooledRepresentationV1, POOLING_SCHEMA_V1};
 
 /// Selects which `tanh` implementation the forward pass's activation
 /// primitive (`tanh_in_place_v1`, below) uses. `LibmTanh` is today's

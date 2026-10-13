@@ -51,6 +51,53 @@ impl NativePolicyValueForwardScratchV1 {
 pub(crate) struct NativePolicyValueOutputViewV1<'a> {
     pub(crate) logits: &'a [f32],
     pub(crate) value: f32,
+    /// The state encoder output (one row of the model's hidden width).
+    state_hidden: &'a [f32],
+    /// The scorer's post-tanh hidden row of every legal action, in action
+    /// order: the rows the final scorer layer reads.
+    scorer_hidden: &'a [f32],
+}
+
+/// Detached copy of the frozen player's representation at one decision
+/// (`POOLING_SCHEMA_V1`): the state row and the unweighted mean and
+/// elementwise max over every legal action's scorer hidden row. Widths are
+/// the model's (64 for Net8 contract models).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PooledRepresentationV1 {
+    pub(crate) state: Vec<f32>,
+    pub(crate) action_mean: Vec<f32>,
+    pub(crate) action_max: Vec<f32>,
+    pub(crate) actions: usize,
+}
+
+/// The pooling contract of `PooledRepresentationV1`.
+pub(crate) const POOLING_SCHEMA_V1: &str =
+    "net8-pooled-representation-v1/state_hidden+scorer_hidden_mean+scorer_hidden_max";
+
+impl NativePolicyValueOutputViewV1<'_> {
+    /// Pooled copy of the representation rows of this validated output. Pure
+    /// reads of the forward's own buffers: no arithmetic of the forward
+    /// changes and nothing is retained. The mean sums rows in action order in
+    /// f32 and divides once by the action count.
+    pub(crate) fn pooled_representation_v1(&self) -> PooledRepresentationV1 {
+        let actions = self.logits.len();
+        let width = self.scorer_hidden.len() / actions.max(1);
+        let mut sum = vec![0.0f32; width];
+        let mut max = vec![f32::NEG_INFINITY; width];
+        for row in self.scorer_hidden.chunks_exact(width.max(1)) {
+            for ((s, m), v) in sum.iter_mut().zip(max.iter_mut()).zip(row) {
+                *s += v;
+                *m = m.max(*v);
+            }
+        }
+        let n = actions.max(1) as f32;
+        PooledRepresentationV1 {
+            state: self.state_hidden.to_vec(),
+            action_mean: sum.iter().map(|v| v / n).collect(),
+            action_max: max,
+            actions,
+        }
+    }
 }
 
 impl NativePolicyValueNetV1 {
@@ -326,6 +373,8 @@ impl NativePolicyValueNetV1 {
         Ok(NativePolicyValueOutputViewV1 {
             logits: &scratch.logits,
             value,
+            state_hidden: &scratch.state_hidden,
+            scorer_hidden: &scratch.scorer_hidden,
         })
     }
 }
@@ -363,4 +412,39 @@ fn two_layer_into(
     tanh_in_place_v1(hidden, mode);
     linear_into(&encoder.second, hidden, rows, output);
     tanh_in_place_v1(output, mode);
+}
+
+#[cfg(test)]
+mod pooled_representation_tests {
+    use super::*;
+
+    #[test]
+    fn pooled_representation_is_the_mean_and_max_of_scorer_rows() {
+        let state: Vec<f32> = (0..HIDDEN_DIM_V1).map(|i| i as f32 / 100.0).collect();
+        let scorer: Vec<f32> = (0..3 * HIDDEN_DIM_V1)
+            .map(|i| ((i * 37 % 101) as f32 - 50.0) / 50.0)
+            .collect();
+        let logits = [0.5f32, -1.0, 2.0];
+        let view = NativePolicyValueOutputViewV1 {
+            logits: &logits,
+            value: 0.25,
+            state_hidden: &state,
+            scorer_hidden: &scorer,
+        };
+        let p = view.pooled_representation_v1();
+        assert_eq!(p.actions, 3);
+        assert_eq!(p.state, state);
+        for j in 0..HIDDEN_DIM_V1 {
+            let col = [
+                scorer[j],
+                scorer[HIDDEN_DIM_V1 + j],
+                scorer[2 * HIDDEN_DIM_V1 + j],
+            ];
+            assert_eq!(
+                p.action_mean[j].to_bits(),
+                ((col[0] + col[1] + col[2]) / 3.0).to_bits()
+            );
+            assert_eq!(p.action_max[j], col[0].max(col[1]).max(col[2]));
+        }
+    }
 }

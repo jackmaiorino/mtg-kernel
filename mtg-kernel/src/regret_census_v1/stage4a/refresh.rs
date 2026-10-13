@@ -36,6 +36,8 @@ use super::tree::{live_index, Found, Tree, MAX_DEPTH};
 use crate::ids::PlayerId;
 use crate::rl_session::FastActorSessionV1;
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
+use crate::state::SplitMix64;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::time::Instant;
 
@@ -109,6 +111,212 @@ pub(super) enum Step {
     Plain,
 }
 
+/// Summary of a matched tree node at a real decision, before any request
+/// here: natural backups per edge and win means of tried edges.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) struct NodeSummary {
+    pub(super) edges: usize,
+    pub(super) tried: usize,
+    pub(super) visits: u64,
+    pub(super) max_backups: u64,
+    /// Edges with at least the support threshold of natural backups.
+    pub(super) supported: usize,
+    /// Storage index of the greatest-mean tried edge (ties to the seeded order).
+    pub(super) best_edge: Option<usize>,
+    pub(super) best_mean: Option<f64>,
+    /// Best minus second-best tried mean (None with fewer than two tried).
+    pub(super) mean_gap: Option<f64>,
+}
+
+impl NodeSummary {
+    pub(super) fn of(node: &super::tree::Node) -> Self {
+        let mut means: Vec<(usize, f64)> = Vec::new();
+        for &a in &node.perm {
+            if node.n[a] > 0 {
+                means.push((a, node.wins[a] as f64 / node.n[a] as f64));
+            }
+        }
+        let mut best: Option<(usize, f64)> = None;
+        for &(a, m) in &means {
+            if best.is_none_or(|(_, b)| m > b) {
+                best = Some((a, m));
+            }
+        }
+        let second = best.and_then(|(ba, _)| {
+            means
+                .iter()
+                .filter(|(a, _)| *a != ba)
+                .map(|&(_, m)| m)
+                .fold(None, |acc: Option<f64>, m| {
+                    Some(acc.map_or(m, |x| x.max(m)))
+                })
+        });
+        Self {
+            edges: node.n.len(),
+            tried: means.len(),
+            visits: node.visits,
+            max_backups: node.n.iter().copied().max().unwrap_or(0),
+            supported: node
+                .n
+                .iter()
+                .filter(|&&x| x >= super::tree::MIN_EXEC_BACKUPS)
+                .count(),
+            best_edge: best.map(|(a, _)| a),
+            best_mean: best.map(|(_, m)| m),
+            mean_gap: best.zip(second).map(|((_, b), s)| b - s),
+        }
+    }
+}
+
+/// Summary of a retained tree, taken when its search finished.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) struct TreeSummary {
+    pub(super) nodes: usize,
+    pub(super) root: NodeSummary,
+    pub(super) completed_natural: u64,
+}
+
+impl TreeSummary {
+    fn of(tree: &Tree, completed_natural: u64) -> Self {
+        let root = tree
+            .nodes
+            .values()
+            .find(|n| n.parent == [0u8; 32])
+            .map(NodeSummary::of)
+            .unwrap_or_default();
+        Self {
+            nodes: tree.nodes.len(),
+            root,
+            completed_natural,
+        }
+    }
+}
+
+/// Lawful game context at a consultation, beyond the v1 counts (all known
+/// before the request; nothing about the request's own search).
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct GuideContext {
+    /// No search has run yet in this game.
+    pub(super) no_tree: bool,
+    /// Distinct focal physical decisions before this one (nonforced).
+    pub(super) physical: u64,
+    /// Focal physical decisions since the last search's; None before any.
+    pub(super) physical_since_search: Option<u64>,
+    /// Natural simulations completed by this game's searches so far.
+    pub(super) natural: u64,
+    pub(super) transitions_used: u64,
+    pub(super) substep_index: u32,
+    /// The retained tree, when one exists.
+    pub(super) tree: Option<TreeSummary>,
+    /// The matched node, when the history matched one.
+    pub(super) node: Option<NodeSummary>,
+    /// Live index of the node's best tried edge.
+    pub(super) node_best_live: Option<u32>,
+}
+
+/// One consultation of a search scheduler.
+pub(super) struct ConsultCtx<'a> {
+    pub(super) s: &'a FastActorSessionV1,
+    pub(super) focal: PlayerId,
+    pub(super) lookup: Lookup,
+    pub(super) counts: super::allocator::Counts,
+    pub(super) context: GuideContext,
+}
+
+/// A supported-node refresh probe (collab
+/// LANES/allocator-redesign-20261012/DESIGN.md, "Consultation and tree
+/// reuse"): at focal nonforced decision `at`, which must execute a
+/// supported edge, either execute it (`refresh` 0) or run one fresh search
+/// of `refresh` transitions first; from that decision on the live policies
+/// continue on `continuation_seeds` and no further search runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ProbeSpec {
+    pub(super) at: u64,
+    pub(super) refresh: u64,
+    pub(super) continuation_seeds: [u64; 2],
+}
+
+/// A search scheduler driving `guide` (allocator v1 and v2).
+pub(super) trait Consult {
+    fn cap(&self) -> u64;
+    /// The amount to search now (0 = none) and the decision record.
+    fn consult(&mut self, c: &ConsultCtx<'_>) -> Result<(u64, Value), String>;
+    fn probe(&self) -> Option<ProbeSpec> {
+        None
+    }
+    fn credit(&self) -> Option<CreditSpec> {
+        None
+    }
+    fn fork(&self) -> Result<Box<dyn Consult>, String> {
+        Err("scheduler does not support paired continuation".into())
+    }
+}
+
+/// Uniform reservoir of consultations, independent of actual-play randomness.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CreditSpec {
+    pub(super) max_roots: usize,
+    pub(super) sample_seed: u64,
+    // Exercise the production snapshot/resume path without changing its action.
+    #[cfg(test)]
+    #[serde(skip)]
+    replay_factual: bool,
+}
+
+/// Draw a uniform slot without modulo bias. None leaves the reservoir unchanged.
+fn reservoir_slot(rng: &mut SplitMix64, seen: u64, capacity: usize) -> Option<usize> {
+    if seen <= capacity as u64 {
+        return Some((seen - 1) as usize);
+    }
+    let threshold = seen.wrapping_neg() % seen;
+    loop {
+        let draw = rng.next_u64();
+        if draw >= threshold {
+            let slot = draw % seen;
+            return (slot < capacity as u64).then_some(slot as usize);
+        }
+    }
+}
+
+/// Event-keyed sampling keeps extra searches from consuming live-policy draws.
+pub(super) fn credit_seed(seed: u64, domain: &str, step: u64) -> u64 {
+    use sha2::{Digest, Sha256};
+    let key = serde_json::to_vec(&("allocator-paired-v1", seed, domain, step)).unwrap();
+    u64::from_le_bytes(Sha256::digest(key)[..8].try_into().unwrap())
+}
+
+struct Resume {
+    session: FastActorSessionV1,
+    cursor: Cursor,
+    lookup: Lookup,
+    hit: Option<Hit>,
+    root_record: Value,
+    cursor_keys: KeyStats,
+    suffix: Option<super::labels::Suffix>,
+    meter: Meter,
+    counters: Counters,
+    actions: Vec<u32>,
+    decisions: Vec<Value>,
+    nonforced: u64,
+    last_search_at: Option<u64>,
+    physical: u64,
+    last_phys: Option<u64>,
+    last_search_phys: Option<u64>,
+    search_used: u64,
+    search_records: Vec<Value>,
+    search_keys: KeyStats,
+    natural: u64,
+    last_natural: u64,
+}
+
+struct CreditSample {
+    resume: Resume,
+    scheduler: Box<dyn Consult>,
+    focal: FrozenPlayPolicyV1,
+    opponent: FrozenPlayPolicyV1,
+}
+
 /// How a guide starts and which keys it uses.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct GuideRun {
@@ -116,12 +324,16 @@ pub(super) struct GuideRun {
     /// choice) rather than from a bank anchor.
     pub(super) opening: bool,
     pub(super) mode: KeyMode,
+    /// Extended rows (allocator v2): per-search discovery counters and
+    /// retrospective decision ages. Never changes play.
+    pub(super) extended: bool,
 }
 
 impl GuideRun {
     pub(super) const ANCHOR_LEGACY: Self = Self {
         opening: false,
         mode: KeyMode::Legacy,
+        extended: false,
     };
 }
 
@@ -143,8 +355,10 @@ pub(super) fn rule(
 
 /// The current tree and where the actual history stands in it; keys use the
 /// same version and mapping as the search that built the tree.
+#[derive(Clone)]
 struct Cursor {
     tree: Tree,
+    summary: TreeSummary,
     keyer: Keyer<KeyStats>,
     advanced: bool,
     matching: bool,
@@ -155,14 +369,17 @@ struct Cursor {
 
 /// A looked-up decision: the keyed step and, on a hit, the supported edge's
 /// prior natural backups.
+#[derive(Clone)]
 struct Hit {
     step: KeyStep,
     backups: Option<u64>,
+    node: NodeSummary,
 }
 
 impl Cursor {
-    fn new(tree: Tree, search: usize, mode: KeyMode) -> Self {
+    fn new(tree: Tree, search: usize, mode: KeyMode, completed_natural: u64) -> Self {
         Self {
+            summary: TreeSummary::of(&tree, completed_natural),
             tree,
             keyer: Keyer::new(mode, KeyStats::default()),
             advanced: false,
@@ -191,17 +408,27 @@ impl Cursor {
         }
         let st = self.keyer.step(s, d).map_err(err)?;
         let (key, pk, pe, cn) = self.keyer.storage(&st);
-        let (found, backups) = match self.tree.find(&key, &pk, &pe, cn).map_err(err)? {
-            Found::Hit(node) => match node.frozen_choice() {
-                Some(e) => (Lookup::Supported(e), Some(node.n[e])),
-                None => (Lookup::Unsupported, None),
-            },
-            Found::Miss => (Lookup::Miss, None),
+        let (found, backups, node) = match self.tree.find(&key, &pk, &pe, cn).map_err(err)? {
+            Found::Hit(node) => {
+                let summary = NodeSummary::of(node);
+                match node.frozen_choice() {
+                    Some(e) => (Lookup::Supported(e), Some(node.n[e]), summary),
+                    None => (Lookup::Unsupported, None, summary),
+                }
+            }
+            Found::Miss => (Lookup::Miss, None, NodeSummary::default()),
         };
         if found == Lookup::Miss {
             self.matching = false;
         }
-        Ok((found, Some(Hit { step: st, backups })))
+        Ok((
+            found,
+            Some(Hit {
+                step: st,
+                backups,
+                node,
+            }),
+        ))
     }
 
     /// The live candidate of storage edge `e` at a looked-up decision.
@@ -228,6 +455,12 @@ struct Searches<'a> {
     records: Vec<Value>,
     mode: KeyMode,
     keys: KeyStats,
+    /// Natural simulations completed so far and those of the last search.
+    natural: u64,
+    last_natural: u64,
+    /// Record per-search discovery counters (allocator v2 rows).
+    extended: bool,
+    paired: bool,
 }
 
 impl Searches<'_> {
@@ -243,7 +476,12 @@ impl Searches<'_> {
         let k = self.records.len();
         let seeds = RootSeeds {
             model: self.lineage.clone(),
-            root: if k == 0 {
+            root: if self.paired {
+                format!("{}/paired-step{at_step}", self.root)
+            } else if reason == PROBE_REFRESH {
+                // A probe's search has its own seed root.
+                format!("{}/probe{k}", self.root)
+            } else if k == 0 {
                 self.root.clone()
             } else {
                 format!("{}/refresh{k}", self.root)
@@ -263,18 +501,33 @@ impl Searches<'_> {
         self.keys.merge(&diag.keys);
         self.used += sel.transitions;
         let failed = sel.incomplete || !sel.faults.is_empty();
-        self.records.push(json!({"search":k,"step":at_step,"reason":reason,"budget":budget,
+        self.natural += sel.completed;
+        self.last_natural = sel.completed;
+        let mut record = json!({"search":k,"step":at_step,"reason":reason,"budget":budget,
             "root":super::bank::decision_identity(s)?,
             "transitions":sel.transitions,"completed_natural":sel.completed,"attempted":sel.attempted,
             "nonnatural":sel.nonnatural,"incomplete":sel.incomplete,"faults":sel.faults,
-            "tree":sel.extra["tree"].clone(),"keys":diag.keys.json(),"wall":started.elapsed().as_secs_f64()}));
+            "tree":sel.extra["tree"].clone(),"keys":diag.keys.json(),"wall":started.elapsed().as_secs_f64()});
+        if self.extended {
+            // Sequence counters over this request's own rollouts (diagnostic
+            // only; never an allocator input or reward).
+            record["discovery"] = sel.discovery.json();
+        }
+        self.records.push(record);
         Ok((!failed).then_some(tree))
     }
 }
 
-/// One arm's guide from the anchor. Returns the arm record.
+/// Search reason of a probe's fresh search.
+pub(super) const PROBE_REFRESH: &str = "probe_refresh";
+
+/// One arm's guide from the anchor. Returns the arm record. With a
+/// `scheduler` (track A of collab LANES/discovery-efficiency-plan-20261012,
+/// and the allocator v2 of LANES/allocator-redesign-20261012), searches
+/// happen only when it chooses a positive amount at an unsupported focal
+/// decision; the support and fallback rules are unchanged.
 #[allow(clippy::too_many_arguments, reason = "explicit roles and identities")]
-fn guide(
+pub(super) fn guide(
     sh: &BankShared,
     roles: &mut Roles,
     live_focal: &mut FrozenPlayPolicyV1,
@@ -285,10 +538,50 @@ fn guide(
     allocation: Allocation,
     anchor_tree: Option<(Tree, Value)>,
     run: GuideRun,
+    scheduler: Option<&mut dyn Consult>,
+) -> Result<(Value, Option<Tree>), String> {
+    guide_from(
+        sh,
+        roles,
+        live_focal,
+        live_opp,
+        anchor,
+        src,
+        opp,
+        allocation,
+        anchor_tree,
+        run,
+        scheduler,
+        None,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "explicit roles and continuation state"
+)]
+fn guide_from(
+    sh: &BankShared,
+    roles: &mut Roles,
+    live_focal: &mut FrozenPlayPolicyV1,
+    live_opp: &mut FrozenPlayPolicyV1,
+    anchor: &FastActorSessionV1,
+    src: &SourceSpec,
+    opp: usize,
+    allocation: Allocation,
+    anchor_tree: Option<(Tree, Value)>,
+    run: GuideRun,
+    mut scheduler: Option<&mut dyn Consult>,
+    resume: Option<Resume>,
 ) -> Result<(Value, Option<Tree>), String> {
     let started = Instant::now();
     let focal = PlayerId(src.seat);
     let defs = spy_defs();
+    let credit = scheduler.as_deref().and_then(|sc| sc.credit());
+    let collect_credit = credit.is_some_and(|c| c.max_roots > 0) && resume.is_none();
+    let mut sample_rng = SplitMix64::seed(credit.map_or(0, |c| c.sample_seed));
+    let mut eligible = 0u64;
+    let mut samples: Vec<CreditSample> = Vec::new();
     let mut searches = Searches {
         roles,
         sh,
@@ -300,7 +593,13 @@ fn guide(
         records: Vec::new(),
         mode: run.mode,
         keys: KeyStats::default(),
+        natural: 0,
+        last_natural: 0,
+        extended: run.extended,
+        paired: credit.is_some(),
     };
+    let extended = searches.extended;
+    let probe = scheduler.as_deref().and_then(|sc| sc.probe());
     let (first, kept) = if run.opening {
         // From an ordinary opening: the initial search waits for the first
         // focal decision with two or more legal actions.
@@ -327,37 +626,214 @@ fn guide(
             },
         }
     };
-    let mut cursor = Cursor::new(first, 0, run.mode);
+    let mut cursor = Cursor::new(first, 0, run.mode, searches.natural);
     let mut cursor_keys = KeyStats::default();
     let mut suffix = run.opening.then(|| super::labels::Suffix::new(true));
-    live_focal.reset_sampling_v1(src.guide_policy_seeds);
-    live_opp.reset_sampling_v1(src.guide_policy_seeds);
+    if resume.is_none() {
+        live_focal.reset_sampling_v1(src.guide_policy_seeds);
+        live_opp.reset_sampling_v1(src.guide_policy_seeds);
+    }
     let mut s = anchor.clone();
     let mut meter = Meter::new(u64::MAX);
     let mut c = Counters::default();
     let (mut actions, mut decisions) = (Vec::new(), Vec::new());
     let mut invalid: Option<String> = None;
+    // Scheduler counters: focal nonforced substeps so far and the one of the
+    // last search; distinct focal physical decisions and the last search's.
+    let (mut nonforced, mut last_search_at) = (0u64, None::<u64>);
+    let (mut physical, mut last_phys, mut last_search_phys) = (0u64, None::<u64>, None::<u64>);
+    // A probe freezes search from its decision on.
+    let mut probe_frozen = false;
+    let mut resume_hit = None;
+    let mut resume_record = None;
+    if let Some(saved) = resume {
+        s = saved.session;
+        cursor = saved.cursor;
+        resume_hit = Some((saved.lookup, saved.hit));
+        resume_record = Some(saved.root_record);
+        cursor_keys = saved.cursor_keys;
+        suffix = saved.suffix;
+        meter = saved.meter;
+        c = saved.counters;
+        actions = saved.actions;
+        decisions = saved.decisions;
+        nonforced = saved.nonforced;
+        last_search_at = saved.last_search_at;
+        physical = saved.physical;
+        last_phys = saved.last_phys;
+        last_search_phys = saved.last_search_phys;
+        searches.used = saved.search_used;
+        searches.records = saved.search_records;
+        searches.keys = saved.search_keys;
+        searches.natural = saved.natural;
+        searches.last_natural = saved.last_natural;
+    }
     while let Some(d) = decision(&s) {
+        if credit.is_some() {
+            let seeds = src
+                .guide_policy_seeds
+                .map(|seed| credit_seed(seed, "live", d.step));
+            live_focal.reseed_sampling_v1(seeds);
+            live_opp.reseed_sampling_v1(seeds);
+        }
         let a = if acting(&d) == focal && d.legal_action_count >= 2 {
             let remaining_before = allocation.total.saturating_sub(searches.used);
-            let (mut lookup, mut hit) = cursor.lookup(&s, d)?;
+            let new_phys = last_phys != Some(d.physical_decision_id);
+            let phys_index = if new_phys { physical } else { physical - 1 };
+            let (mut lookup, mut hit) = match resume_hit.take() {
+                Some(hit) => hit,
+                None => cursor.lookup(&s, d)?,
+            };
             let mut refreshed = None;
-            let step = if run.opening && searches.records.is_empty() {
+            let mut scheduled = None;
+            let probe_here = probe.filter(|p| p.at == nonforced);
+            let step = if let Some(record) = resume_record.take() {
+                // Scheduler was already sampled at the root before the snapshot.
+                // Only replace this request. Future consultations remain enabled.
+                let amount = record["amount"].as_u64().ok_or("invalid resumed request")?;
+                scheduled = Some(record);
+                if amount == 0 {
+                    Step::Plain
+                } else {
+                    Step::Refresh(amount)
+                }
+            } else if let Some(p) = probe_here {
+                let Lookup::Supported(e) = lookup else {
+                    invalid = Some(format!("probe root at step {} is not supported", d.step));
+                    break;
+                };
+                *live_focal = live_focal.fork_for_seeded_continuation_v1(p.continuation_seeds)?;
+                *live_opp = live_opp.fork_for_seeded_continuation_v1(p.continuation_seeds)?;
+                probe_frozen = true;
+                if p.refresh > 0 {
+                    Step::Refresh(p.refresh)
+                } else {
+                    Step::Execute(e)
+                }
+            } else if probe_frozen {
+                match lookup {
+                    Lookup::Supported(e) => Step::Execute(e),
+                    _ => Step::Plain,
+                }
+            } else if let Some(sc) = scheduler.as_deref_mut() {
+                use super::allocator::{sched_rule, Counts, SchedStep};
+                match sched_rule(lookup, remaining_before, false) {
+                    SchedStep::Execute(e) => Step::Execute(e),
+                    SchedStep::Plain => Step::Plain,
+                    SchedStep::Consult => {
+                        let counts = Counts {
+                            remaining: remaining_before,
+                            cap: sc.cap(),
+                            nonforced,
+                            since_search: last_search_at.map(|i| nonforced - i),
+                            searches: searches.records.len() as u64,
+                        };
+                        let node = hit
+                            .as_ref()
+                            .filter(|_| lookup == Lookup::Unsupported)
+                            .map(|h| h.node);
+                        let node_best_live = match (&hit, node.and_then(|n| n.best_edge)) {
+                            (Some(h), Some(e)) => Some(cursor.live(h, e)?),
+                            _ => None,
+                        };
+                        let context = GuideContext {
+                            no_tree: searches.records.is_empty(),
+                            physical: phys_index,
+                            physical_since_search: last_search_phys.map(|i| phys_index - i),
+                            natural: searches.natural,
+                            transitions_used: searches.used,
+                            substep_index: d.substep_index,
+                            tree: (!searches.records.is_empty()).then_some(cursor.summary),
+                            node,
+                            node_best_live,
+                        };
+                        let (amount, record) = sc.consult(&ConsultCtx {
+                            s: &s,
+                            focal,
+                            lookup,
+                            counts,
+                            context,
+                        })?;
+                        if collect_credit {
+                            eligible += 1;
+                            let spec = credit.unwrap();
+                            if let Some(slot) =
+                                reservoir_slot(&mut sample_rng, eligible, spec.max_roots)
+                            {
+                                let sample = CreditSample {
+                                    resume: Resume {
+                                        session: s.clone(),
+                                        cursor: cursor.clone(),
+                                        lookup,
+                                        hit: hit.clone(),
+                                        root_record: record.clone(),
+                                        cursor_keys: cursor_keys.clone(),
+                                        suffix: suffix.clone(),
+                                        meter,
+                                        counters: c,
+                                        actions: actions.clone(),
+                                        decisions: decisions.clone(),
+                                        nonforced,
+                                        last_search_at,
+                                        physical,
+                                        last_phys,
+                                        last_search_phys,
+                                        search_used: searches.used,
+                                        search_records: searches.records.clone(),
+                                        search_keys: searches.keys.clone(),
+                                        natural: searches.natural,
+                                        last_natural: searches.last_natural,
+                                    },
+                                    scheduler: sc.fork()?,
+                                    focal: live_focal.fork_for_continuation_v1()?,
+                                    opponent: live_opp.fork_for_continuation_v1()?,
+                                };
+                                if slot == samples.len() {
+                                    samples.push(sample);
+                                } else {
+                                    samples[slot] = sample;
+                                }
+                            }
+                        }
+                        scheduled = Some(record);
+                        if amount > 0 {
+                            Step::Refresh(amount)
+                        } else {
+                            Step::Plain
+                        }
+                    }
+                }
+            } else if run.opening && searches.records.is_empty() {
                 // The initial search: min(initial allocation, ceiling).
                 Step::Refresh(allocation.anchor.min(allocation.total))
             } else {
                 rule(lookup, allocation, searches.used, false)
             };
             if let Step::Refresh(budget) = step {
-                let reason = if searches.records.is_empty() {
+                let reason = if probe_here.is_some() {
+                    PROBE_REFRESH
+                } else if scheduled.is_some() {
+                    match lookup {
+                        Lookup::Unsupported => "scheduled_unsupported",
+                        Lookup::DepthLimit => "scheduled_depth_limit",
+                        _ => "scheduled_miss",
+                    }
+                } else if searches.records.is_empty() {
                     "initial"
                 } else {
                     lookup.reason()
                 };
+                last_search_at = Some(nonforced);
+                last_search_phys = Some(phys_index);
                 match searches.run(&s, budget, d.step, reason)? {
                     Some(tree) => {
                         cursor_keys.merge(&cursor.keyer.stats);
-                        cursor = Cursor::new(tree, searches.records.len() - 1, run.mode);
+                        cursor = Cursor::new(
+                            tree,
+                            searches.records.len() - 1,
+                            run.mode,
+                            searches.last_natural,
+                        );
                         refreshed = Some(reason);
                         (lookup, hit) = cursor.lookup(&s, d)?;
                     }
@@ -369,7 +845,13 @@ fn guide(
             }
             let new_root = cursor.depth == 1 && !cursor.advanced;
             let mut edge_backups = None;
-            let (a, chooser) = match rule(lookup, allocation, searches.used, true) {
+            let executed = match lookup {
+                // After a probe's decision only supported edges or plain play.
+                Lookup::Supported(e) if probe_frozen => Step::Execute(e),
+                _ if probe_frozen => Step::Plain,
+                _ => rule(lookup, allocation, searches.used, true),
+            };
+            let (a, chooser) = match executed {
                 Step::Execute(e) => {
                     let h = hit.as_ref().expect("a supported lookup has a node");
                     edge_backups = h.backups;
@@ -401,16 +883,31 @@ fn guide(
             // self-target through the next transition (the same rule as
             // selection, frozen execution and label replay).
             super::play::observe(suffix.as_mut(), &s, a, focal, &defs);
-            decisions.push(
-                json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
+            let mut row = json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
                 "substep":d.substep_index,"k":d.legal_action_count,"chooser":chooser,
                 "search":cursor.search,"lookup":lookup.reason(),"refreshed":refreshed,
                 "edge_backups":edge_backups,"remaining_before":remaining_before,
                 "remaining_after":allocation.total.saturating_sub(searches.used),
                 "spy_cast_offered":cast_offered,"spy_cast_chosen":cast_chosen,
                 "spy_self_offered":own_offered,"spy_self_chosen":own_chosen,
-                "dr_giant_offered":dr_offered,"dr_giant_chosen":dr_chosen}),
-            );
+                "dr_giant_offered":dr_offered,"dr_giant_chosen":dr_chosen});
+            if scheduler.is_some() {
+                row["scheduler"] = scheduled.unwrap_or(Value::Null);
+            }
+            if extended {
+                // Retrospective decision age (analysis only).
+                row["focal_physical"] = json!(phys_index);
+                row["nonforced"] = json!(nonforced);
+                if probe_here.is_some() {
+                    row["probe"] = json!(true);
+                }
+            }
+            decisions.push(row);
+            nonforced += 1;
+            if new_phys {
+                physical += 1;
+                last_phys = Some(d.physical_decision_id);
+            }
             a
         } else if acting(&d) == focal {
             0
@@ -432,15 +929,63 @@ fn guide(
         (Vec::new(), Vec::new())
     };
     let valid = invalid.is_none() && end.is_some_and(|e| e != "nonnatural");
-    Ok((
-        json!({"valid":valid,"invalid_reason":invalid.or_else(|| (!valid).then(|| "non-natural guide".to_owned())),
+    let mut result = json!({"valid":valid,"invalid_reason":invalid.or_else(|| (!valid).then(|| "non-natural guide".to_owned())),
             "end":end,"actions":actions,"decisions":decisions,"learner_starts":starts.len(),
             "searches":searches.records,"transitions_used":searches.used,
             "key_mode":run.mode.label(),"search_keys":searches.keys.json(),"execution_keys":cursor_keys.json(),
             "sequence":suffix.as_ref().map(|x| x.json()),"real_transitions":meter.spent,
-            "wall":started.elapsed().as_secs_f64()}),
-        kept,
-    ))
+            "wall":started.elapsed().as_secs_f64()});
+    if collect_credit {
+        let spec = credit.unwrap();
+        let inclusion = samples.len() as f64 / eligible.max(1) as f64;
+        samples.sort_by_key(|s| s.resume.root_record["index"].as_u64().unwrap());
+        let mut rows = Vec::new();
+        for mut sample in samples {
+            let root = sample.resume.root_record.clone();
+            let search_before = sample.resume.search_used;
+            let real_before = sample.resume.meter.spent;
+            let intervene = true;
+            #[cfg(test)]
+            let intervene = intervene && !spec.replay_factual;
+            let baseline = if !valid {
+                json!({"valid":false,"end":null,"invalid_reason":"factual game nonterminal"})
+            } else if root["amount"] == 0 && intervene {
+                // Identical intervention: reuse the factual terminal outcome exactly.
+                json!({"valid":true,"end":end,"reused_factual":true,
+                    "transitions_used":search_before,"real_transitions":real_before})
+            } else {
+                if intervene {
+                    sample.resume.root_record["chosen"] = json!(0);
+                    sample.resume.root_record["amount"] = json!(0);
+                    sample.resume.root_record["counterfactual_skip"] = json!(true);
+                }
+                guide_from(
+                    sh,
+                    searches.roles,
+                    &mut sample.focal,
+                    &mut sample.opponent,
+                    anchor,
+                    src,
+                    opp,
+                    allocation,
+                    None,
+                    run,
+                    Some(sample.scheduler.as_mut()),
+                    Some(sample.resume),
+                )?
+                .0
+            };
+            rows.push(json!({"index":root["index"],"amount":root["amount"],
+                "inclusion_probability":inclusion,
+                "extra_search_transitions":baseline["transitions_used"].as_u64().map(|n| n - search_before),
+                "extra_real_transitions":baseline["real_transitions"].as_u64().map(|n| n - real_before),
+                "baseline":baseline}));
+        }
+        result["paired_credit"] = json!({"schema":"allocator-paired-v1", "coupling":"event-step-v1",
+            "max_roots":spec.max_roots,"sample_seed":spec.sample_seed,"eligible":eligible,"samples":rows});
+        result["wall"] = json!(started.elapsed().as_secs_f64());
+    }
+    Ok((result, kept))
 }
 
 /// One total-budget arm-game from an ordinary opening (collab
@@ -484,7 +1029,9 @@ pub(super) fn budget_case(
         GuideRun {
             opening: true,
             mode,
+            extended: false,
         },
+        None,
     )?;
     Ok(
         json!({"kind":"budget_game","schema":"search-total-budget-v1/game","id":src.id,
@@ -595,6 +1142,7 @@ pub(super) fn source_arms(
             Allocation::S512,
             None,
             GuideRun::ANCHOR_LEGACY,
+            None,
         )?;
         arms.insert("S512".into(), rec);
     } else {
@@ -609,6 +1157,7 @@ pub(super) fn source_arms(
             Allocation::R,
             None,
             GuideRun::ANCHOR_LEGACY,
+            None,
         )?;
         let anchor_record = rec["searches"][0].clone();
         arms.insert("R".into(), rec);
@@ -626,6 +1175,7 @@ pub(super) fn source_arms(
                     Allocation::S128,
                     Some((tree, anchor_record)),
                     GuideRun::ANCHOR_LEGACY,
+                    None,
                 )?
                 .0
             }
@@ -744,6 +1294,199 @@ mod tests {
 
     fn roles(policy: &FrozenPlayPolicyV1) -> Roles {
         bank_roles(policy, std::slice::from_ref(policy)).unwrap()
+    }
+
+    #[derive(Clone)]
+    struct ReplayScheduler {
+        credit: CreditSpec,
+        index: u64,
+    }
+
+    impl Consult for ReplayScheduler {
+        fn cap(&self) -> u64 {
+            320
+        }
+        fn credit(&self) -> Option<CreditSpec> {
+            Some(self.credit)
+        }
+        fn fork(&self) -> Result<Box<dyn Consult>, String> {
+            Ok(Box::new(self.clone()))
+        }
+        fn consult(&mut self, c: &ConsultCtx<'_>) -> Result<(u64, Value), String> {
+            let amount = 64.min(c.counts.remaining);
+            let record = json!({"index":self.index,"chosen":1,"amount":amount});
+            self.index += 1;
+            Ok((amount, record))
+        }
+    }
+
+    fn without_wall(mut v: Value) -> Value {
+        match &mut v {
+            Value::Object(m) => {
+                m.retain(|key, _| key != "wall" && !key.ends_with("_seconds"));
+                for child in m.values_mut() {
+                    *child = without_wall(child.take());
+                }
+            }
+            Value::Array(a) => {
+                for child in a {
+                    *child = without_wall(child.take());
+                }
+            }
+            _ => (),
+        }
+        v
+    }
+
+    /// Real engine, private live policies, search trees and scheduler snapshots.
+    /// Resuming an unchanged request must reproduce every deterministic field,
+    /// including prefix counters, retained knowledge and subsequent requests.
+    #[test]
+    #[ignore = "native correctness: one small-search game and three terminal replays"]
+    fn paired_snapshot_replays_unchanged_request_exactly() {
+        use super::super::bank::{BankSpec, SPEC_SCHEMA};
+        let policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let anchor = game(11);
+        let src: SourceSpec = serde_json::from_value(json!({
+            "id":"paired-replay", "own":4, "other":5, "seat":0, "opp":"fixture",
+            "seed":11,"starting_player":0,"source_policy_seeds":[1,2],"anchor_draw":0,
+            "guide_policy_seeds":[71,93],"search_root":"paired-replay"
+        }))
+        .unwrap();
+        let sh = BankShared {
+            spec: BankSpec {
+                schema: SPEC_SCHEMA.into(),
+                namespace: "spy-reset-pilot-v1".into(),
+                lineage: "fixture".into(),
+                runtime_rules: "resolution-boundary-v1".into(),
+                select_rule: "fpu-1.5".into(),
+                max_physical_decisions: 100_000,
+                max_policy_steps: 200_000,
+                decks: vec![],
+                sources: vec![],
+            },
+            labels: vec!["fixture".into()],
+            opponents: vec![],
+            prior: DeckPrior::new(&(0..RUNTIME_DECKS.len()).collect::<Vec<_>>()),
+            limits: Limits::FORMAL,
+        };
+        let execute = |max_roots, replay_factual| {
+            let mut scheduler = ReplayScheduler {
+                credit: CreditSpec {
+                    max_roots,
+                    sample_seed: 19,
+                    replay_factual,
+                },
+                index: 0,
+            };
+            guide(
+                &sh,
+                &mut roles(&policy),
+                &mut policy.fork_for_collection_v3().unwrap(),
+                &mut policy.fork_for_collection_v3().unwrap(),
+                &anchor,
+                &src,
+                0,
+                Allocation {
+                    anchor: 0,
+                    refresh: 0,
+                    total: 320,
+                },
+                None,
+                GuideRun {
+                    opening: true,
+                    mode: KeyMode::Repaired,
+                    extended: true,
+                },
+                Some(&mut scheduler),
+            )
+            .unwrap()
+            .0
+        };
+        let reference = without_wall(execute(0, true));
+        assert_eq!(reference["valid"], true, "{reference}");
+        let mut replay = without_wall(execute(3, true));
+        let pairs = replay
+            .as_object_mut()
+            .unwrap()
+            .remove("paired_credit")
+            .unwrap();
+        let changed: Vec<_> = reference
+            .as_object()
+            .unwrap()
+            .iter()
+            .filter(|(key, value)| replay[*key] != **value)
+            .map(|(key, _)| key)
+            .collect();
+        assert!(
+            changed.is_empty(),
+            "collecting snapshots changed fields {changed:?}"
+        );
+        let samples = pairs["samples"].as_array().unwrap();
+        assert_eq!(samples.len(), 3);
+        assert!(samples.iter().any(|s| s["index"].as_u64().unwrap() > 0));
+        assert!(reference["searches"][3]["tree"]["nodes"].as_u64().unwrap() > 0);
+        assert!(
+            samples.iter().any(|s| s["index"] == 4),
+            "must resume with a retained nonempty tree"
+        );
+        for sample in samples {
+            let changed: Vec<_> = reference
+                .as_object()
+                .unwrap()
+                .iter()
+                .filter(|(key, value)| sample["baseline"][*key] != **value)
+                .map(|(key, _)| key)
+                .collect();
+            assert!(
+                changed.is_empty(),
+                "resume at {} changed fields {changed:?}",
+                sample["index"]
+            );
+        }
+        use sha2::{Digest, Sha256};
+        println!(
+            "unchanged-request primary SHA-256: {:x}",
+            Sha256::digest(serde_json::to_vec(&reference).unwrap())
+        );
+        let intervened = without_wall(execute(1, false));
+        let sample = &intervened["paired_credit"]["samples"][0];
+        let baseline = &sample["baseline"];
+        assert_eq!(baseline["valid"], true);
+        let rows = baseline["decisions"].as_array().unwrap();
+        let root = rows
+            .iter()
+            .find(|r| r["scheduler"]["index"] == sample["index"])
+            .unwrap();
+        assert_eq!(root["scheduler"]["amount"], 0);
+        assert_eq!(root["remaining_after"], root["remaining_before"]);
+        assert_eq!(
+            baseline["transitions_used"], 320,
+            "saved budget must remain spendable later"
+        );
+        assert!(rows.iter().any(|r| r["scheduler"]["index"]
+            .as_u64()
+            .is_some_and(|i| i > sample["index"].as_u64().unwrap())
+            && r["scheduler"]["amount"] == 64));
+    }
+
+    #[test]
+    fn paired_reservoir_matches_python_fixture() {
+        for (capacity, expected) in [(1, vec![5]), (3, vec![1, 6, 10])] {
+            let mut rng = SplitMix64::seed(19);
+            let mut selected = Vec::new();
+            for seen in 1..=12 {
+                if let Some(slot) = reservoir_slot(&mut rng, seen, capacity) {
+                    if slot == selected.len() {
+                        selected.push(seen - 1);
+                    } else {
+                        selected[slot] = seen - 1;
+                    }
+                }
+            }
+            selected.sort();
+            assert_eq!(selected, expected);
+        }
     }
 
     /// Live plain and opponent policies are separate from the search roles:
