@@ -228,6 +228,7 @@ pub(super) fn profile_case(
                 row["primary_sha256"].clone(),
                 row["work_attempts"].clone(),
                 None,
+                row["search_tree_sha256"].clone(),
             )
         } else {
             let mut options = config.options.clone();
