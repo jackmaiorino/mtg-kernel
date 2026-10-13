@@ -534,6 +534,24 @@ mod tests {
             let (_, _, current_binding) = session
                 .faebloom_current_decision_input_v43(current, actor.into())
                 .unwrap();
+            assert!(current_binding.candidates.len() >= 2);
+            let mut reordered = current_binding.clone();
+            reordered.candidates.swap(0, 1);
+            let before = serde_json::to_vec(session.faebloom_fixture_state()).unwrap();
+            assert!(session
+                .faebloom_validate_bound_decision_v43(current, actor.into(), &reordered)
+                .is_err());
+            let mut recomputed = current_binding.clone();
+            recomputed.observation.attacked_this_turn[actor.index()] = true;
+            recomputed.observation.projection_sha256 =
+                crate::faebloom_observation_v43::commitment(&recomputed.observation).unwrap();
+            assert!(session
+                .faebloom_validate_bound_decision_v43(current, actor.into(), &recomputed)
+                .is_err());
+            assert_eq!(
+                serde_json::to_vec(session.faebloom_fixture_state()).unwrap(),
+                before
+            );
             let id = session.faebloom_fixture_state().players[actor.index()].hand[0];
             // Negative incoming physical ownership relation; no receipts or definitions fabricated.
             session
