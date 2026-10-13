@@ -51,6 +51,17 @@ fn owns(id: u16) -> bool {
             def.target_spec == crate::card_def::TargetSpec::KickerControlledCreatures
         })
 }
+pub(crate) fn meanings() -> Result<Vec<MeaningV44>, RlContractError> {
+    let selector = meaning::live_selector().map_err(RlContractError)?;
+    crate::card_def::CARD_DEFS
+        .iter()
+        .enumerate()
+        .filter(|(_, def)| {
+            def.target_spec == crate::card_def::TargetSpec::KickerControlledCreatures
+        })
+        .map(|(id, _)| meaning::meaning(&selector, id as u16).map_err(RlContractError))
+        .collect()
+}
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     let selector = meaning::live_selector()?;
     if let Some(pending) = &state.engine.pending_cast {
@@ -226,4 +237,86 @@ pub(crate) fn facts(
         pending,
         finalized,
     })
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod tests {
+    use super::*;
+    use crate::engine::{self, Action};
+    use crate::policy_observation_v6::tests::{put, ready_state_for};
+    use crate::policy_surface_v5::PolicySurfaceV5;
+    use crate::state::Zone;
+    #[test]
+    fn actual_divine_kicker_quotes_roster_zero_finish_and_both_view_privacy() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let source = put(&mut state, actor, "Divine Resilience", Zone::Hand);
+            let first = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let second = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            put(&mut state, actor.opponent(), "Lightning Bolt", Zone::Hand);
+            state.players[actor.index()].mana_pool[crate::mana::ManaColor::C.pool_index()] = 2;
+            state.players[actor.index()].mana_pool[crate::mana::ManaColor::W.pool_index()] = 2;
+            engine::step(&mut state, Action::CastSpell(source)).unwrap();
+            let mut surface = PolicySurfaceV5::new_for_session();
+            let origin = surface.next_decision(&mut state).unwrap();
+            let own = facts(&state, &origin, actor).unwrap();
+            let pending = own.pending.as_ref().unwrap();
+            assert!(matches!(
+                pending.context,
+                Some(VariableCastContextV1::Kicker { .. })
+            ));
+            assert_eq!(
+                pending.unkicked_quote.as_ref().unwrap().floating_mana_used
+                    [crate::mana::ManaColor::W.pool_index()],
+                1
+            );
+            assert_eq!(
+                pending.kicked_quote.as_ref().unwrap().floating_mana_used
+                    [crate::mana::ManaColor::W.pool_index()],
+                2
+            );
+            assert!(facts(&state, &origin, actor.opponent())
+                .unwrap()
+                .pending
+                .is_none());
+            let before = serde_json::to_vec(&state).unwrap();
+            assert_eq!(facts(&state, &origin, actor).unwrap(), own);
+            assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+            engine::step(&mut state, Action::ChooseKicker(true)).unwrap();
+            let origin = surface.next_decision(&mut state).unwrap();
+            let own = facts(&state, &origin, actor).unwrap();
+            let Some(VariableCastContextV1::Targets {
+                legal_choices,
+                minimum,
+                maximum,
+                can_finish,
+                ..
+            }) = &own.pending.unwrap().context
+            else {
+                panic!("real kicked roster");
+            };
+            assert_eq!((*minimum, *maximum, *can_finish), (0, None, true));
+            assert_eq!(
+                legal_choices
+                    .iter()
+                    .map(|row| row.arena_id)
+                    .collect::<Vec<_>>(),
+                vec![first.0, second.0]
+            );
+            engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+            let origin = surface.next_decision(&mut state).unwrap();
+            assert!(state.engine.pending_cast.is_none());
+            let own = facts(&state, &origin, actor).unwrap();
+            assert_eq!(own.finalized.len(), 1);
+            assert!(own.finalized[0].kicked && own.finalized[0].targets.is_empty());
+            assert_eq!(own.finalized[0].source.zone, Zone::Stack);
+            let replay: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(facts(&replay, &origin, actor).unwrap(), own);
+        }
+    }
 }

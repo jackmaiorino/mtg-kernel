@@ -3339,6 +3339,7 @@ pub(crate) fn twinflame_observation_storage_v38(
 pub(crate) enum CommonProjectionScopeV42 {
     ExistingV40,
     FullAjaniV42,
+    DivineV44,
 }
 pub(crate) fn common_family_observation_storage_scoped(
     request: (CommonProjectionScopeV42, &GameState),
@@ -3354,8 +3355,18 @@ pub(crate) fn common_family_observation_storage_scoped(
             state, surface, actor, step, physical, substep,
         );
     }
-    crate::akroma_family_public_v40::validate_state_for_ajani_v42(state)
-        .map_err(RlContractError)?;
+    match scope {
+        CommonProjectionScopeV42::FullAjaniV42 => {
+            crate::akroma_family_public_v40::validate_state_for_ajani_v42(state)
+        }
+        CommonProjectionScopeV42::DivineV44 => {
+            crate::akroma_family_public_v40::validate_state_for_divine_v44(state)
+        }
+        CommonProjectionScopeV42::ExistingV40 => {
+            return Err(RlContractError("unexpected frozen common scope".into()))
+        }
+    }
+    .map_err(RlContractError)?;
     build_policy_observation_storage_common_fishing_v39_ajani_v42(
         (
             PolicyObservationBuildV5 {

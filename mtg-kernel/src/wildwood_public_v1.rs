@@ -187,7 +187,7 @@ pub(crate) fn parts_for_ajani_v42(
         crate::rl::CommonProjectionScopeV42::FullAjaniV42,
     )
 }
-fn parts_for_common_scope(
+pub(crate) fn parts_for_common_scope(
     state: &GameState,
     surface: &PolicySurfaceV5,
     actor: PlayerId,
