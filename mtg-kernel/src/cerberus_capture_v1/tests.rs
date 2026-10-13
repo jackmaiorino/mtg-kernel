@@ -5,7 +5,7 @@ use super::*;
 ))]
 use crate::engine::{self, Action, Decision};
 use crate::ids::PlayerId;
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::{put, ready_state, ready_state_for};
 #[cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
@@ -71,8 +71,7 @@ fn genuine_closed_journals_cannot_transfer_to_a_foreign_catalog_both_seats() {
 fn registered_absence_preserves_bytes_hash_and_has_no_new_occurrence() {
     use std::hash::{Hash, Hasher};
     for actor in [PlayerId::P0, PlayerId::P1] {
-        let mut state = ready_state();
-        state.active_player = actor;
+        let mut state = ready_state_for(actor);
         put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
         let before = serde_json::to_vec(&state).unwrap();
         let mut old = std::collections::hash_map::DefaultHasher::new();
@@ -98,9 +97,7 @@ pub(crate) fn actual_trigger(actor: PlayerId) -> (GameState, ObjectId) {
     not(feature = "standard-magezero-fixtures")
 ))]
 fn actual_trigger_group(actor: PlayerId, duplicate: bool) -> (GameState, ObjectId) {
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = ready_state_for(actor);
     state.step = Step::Main1;
     for seat in [PlayerId::P0, PlayerId::P1] {
         put(&mut state, seat, "Lightning Bolt", Zone::Hand);

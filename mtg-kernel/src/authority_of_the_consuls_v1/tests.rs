@@ -54,6 +54,7 @@ fn unrelated_registered_entries_and_real_token_copy_preserve_absent_authority_st
 mod printed {
     use super::*;
     use crate::engine::{self, Action, Decision};
+    use crate::policy_observation_v6::tests::ready_state_for;
     fn settle(state: &mut GameState) {
         for _ in 0..40 {
             match engine::advance_until_decision(state) {
@@ -72,9 +73,7 @@ mod printed {
     fn actual_captures_authenticate_typed_deferred_and_legend_return_owners() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for transport in 0..2 {
-                let mut state = ready_state();
-                state.active_player = actor;
-                state.priority_player = actor;
+                let mut state = ready_state_for(actor);
                 let observer = put(
                     &mut state,
                     actor,
@@ -143,9 +142,7 @@ mod printed {
     fn actual_simultaneous_token_entry_and_accepted_ability_counter_close_exact_dispatch() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for observer_first in [false, true] {
-                let mut state = ready_state();
-                state.active_player = actor;
-                state.priority_player = actor;
+                let mut state = ready_state_for(actor);
                 let observer = put(&mut state, actor, "Authority of the Consuls", Zone::Hand);
                 let token_def = crate::card_def::card_id_by_name("Human Soldier Token").unwrap();
                 assert!(crate::card_def::CARD_DEFS[token_def as usize].is_token);
@@ -219,9 +216,7 @@ mod printed {
     fn future_actual_token_entry_captured_observer_survives_control_departure_restore_and_log_forgery(
     ) {
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let mut state = ready_state();
-            state.active_player = actor;
-            state.priority_player = actor;
+            let mut state = ready_state_for(actor);
             let observer = put(
                 &mut state,
                 actor,

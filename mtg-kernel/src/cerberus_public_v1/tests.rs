@@ -1,5 +1,5 @@
 use super::*;
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::{put, ready_state, ready_state_for};
 
 #[test]
 #[cfg(not(all(
@@ -35,9 +35,7 @@ fn foreign_restored_capture_refuses_readonly_before_begin_index_both_seats() {
 #[test]
 fn ordinary_predecessor_parts_hidden_identity_and_artifact_identity_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
-        let mut state = ready_state();
-        state.active_player = actor;
-        state.priority_player = actor;
+        let mut state = ready_state_for(actor);
         put(&mut state, actor, "Forest", Zone::Hand);
         let hidden = put(&mut state, actor.opponent(), "Lightning Bolt", Zone::Hand);
         let surface = PolicySurfaceV5::new();
