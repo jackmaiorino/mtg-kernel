@@ -27,7 +27,7 @@ export function SearchGraph({replay,event,recording,playing,speed,epoch,selected
   const inspectAction=(ref:ActionRef)=>{onInteract();setInspected(ref);const evidence=model.actions.get(actionKey(ref.node,ref.index));if(ref.node===0)onSelectRoot(ref.index);else if(evidence?.firstEvaluation&&!evidence.children.length)onSelectEvaluation(ref);else onSelect(ref.node);};
   const keySelect=(e:React.KeyboardEvent,choose:()=>void)=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();choose();}};
   const moveFocus=(id:number,key:string)=>{
-    const same=[...graph.nodes.keys()].filter(n=>model.depths.get(n)===model.depths.get(id)&&layout.items.has(`n${n}`));
+    const same=[...graph.nodes.keys()].filter(n=>model.depths.get(n)===model.depths.get(id)&&layout.items.has(`n${n}`)).sort((a,b)=>layout.items.get(`n${a}`)!.x-layout.items.get(`n${b}`)!.x);
     const adjacent=key==='ArrowDown'?[...graph.edges.values()].filter(e=>e.from===id).map(e=>e.to):[...graph.edges.values()].filter(e=>e.to===id).map(e=>e.from);
     const next=key==='ArrowLeft'?same[Math.max(0,same.indexOf(id)-1)]:key==='ArrowRight'?same[Math.min(same.length-1,same.indexOf(id)+1)]:adjacent[0]??id;
     const destination=layout.destinations.get(next);if(destination){setFocus(next);center(destination);container.current?.querySelector<SVGGElement>(`[data-item="${destination}"]`)?.focus();}
