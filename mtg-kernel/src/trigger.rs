@@ -263,6 +263,8 @@ pub enum TriggerCondition {
     GarrukControlledCreaturePowerEntryV1,
     ArahboThisOrOtherNontokenCatEntryV1,
     FishingPoleEquippedCreatureUntappedV39,
+    /// Any OTHER nontoken effective creature death; captured on the prebatch battlefield.
+    OtherNontokenCreatureDies,
 }
 
 pub struct TriggeredAbilityDef {
@@ -3455,6 +3457,16 @@ const BLOOM_KIN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     ..etb_trigger(bloom_kin_search)
 }];
 
+const HIGH_SOCIETY_HUNTER_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::Attacks,
+        ..etb_trigger(crate::high_society_hunter_v1::attack_program)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::OtherNontokenCreatureDies,
+        ..etb_trigger(crate::high_society_hunter_v1::death_program)
+    },
+];
 pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
     static TABLE: std::sync::OnceLock<Box<[&'static [TriggeredAbilityDef]]>> =
         std::sync::OnceLock::new();
@@ -3592,6 +3604,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Frenzied Goblin" => &FRENZIED_GOBLIN_TRIGGERS,
         "Ashroot Animist" => &ASHROOT_ANIMIST_TRIGGERS,
         "Vampire Gourmand" => &VAMPIRE_GOURMAND_TRIGGERS,
+        "High-Society Hunter" => &HIGH_SOCIETY_HUNTER_TRIGGERS,
         "Webweaver Changeling" => &WEBWEAVER_CHANGELING_TRIGGERS,
         "Glint Hawk" => &GLINT_HAWK_TRIGGERS,
         "Gatecreeper Vine" => &GATECREEPER_VINE_TRIGGERS,
@@ -4112,6 +4125,12 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    if crate::high_society_hunter_v1::owns_definition(card_def)
+        && (*effect == crate::high_society_hunter_v1::attack_program()
+            || *effect == crate::high_society_hunter_v1::death_program())
+    {
+        return Some(TargetSpec::None);
+    }
     if crate::faebloom_trick_v43::capture_of(effect).is_some() {
         return crate::faebloom_trick_v43::selected_definition(card_def)
             .then_some(TargetSpec::OpponentControlledCreature);
@@ -4824,6 +4843,16 @@ fn triggers_from_events(
             return Vec::new();
         }
     }
+    match crate::high_society_hunter_v1::collect_attacks(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
     match crate::faebloom_trick_v43::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
@@ -5111,6 +5140,7 @@ fn triggers_from_events(
                     def.condition,
                     TriggerCondition::ControllerFirstLifeGain { .. }
                         | TriggerCondition::ThisOrControlledCreatureDies
+                        | TriggerCondition::OtherNontokenCreatureDies
                         | TriggerCondition::AnotherControlledNonHydraCreatureGetsPlusOneCounters
                 ) {
                     continue;
@@ -5729,7 +5759,9 @@ fn trigger_matches(
     draws_this_turn_at_event: u32,
 ) -> bool {
     if cond == TriggerCondition::Attacks
-        && crate::vampire_gourmand_dispatch_v2::owns_definition(state.objects.get(source).card_def)
+        && (crate::vampire_gourmand_dispatch_v2::owns_definition(
+            state.objects.get(source).card_def,
+        ) || crate::high_society_hunter_v1::owns_definition(state.objects.get(source).card_def))
     {
         return false;
     }

@@ -152,7 +152,7 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         EffectOp::SelectObjectsV1 { rule } => {
             out.control(ControlF::ChooseObjects);
             match rule.action {
-                crate::effect::ObjectSelectionActionV1::SacrificeThenDrawAndMakeCapturedSourceUnblockableV1 => {
+                crate::effect::ObjectSelectionActionV1::SacrificeThenDrawAndMakeCapturedSourceUnblockableV1 | crate::effect::ObjectSelectionActionV1::SacrificeThenCounterCapturedSourceV1 => {
                     // Frozen vocabulary does not express this cost-bound consequence.
                     out.atoms.push(Atom::Opaque);
                 }

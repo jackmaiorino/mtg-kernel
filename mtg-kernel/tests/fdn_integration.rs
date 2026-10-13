@@ -75,6 +75,8 @@ mod fdn_graveyard_triggers_v1;
 mod fdn_hare_apparent_v1;
 #[path = "fdn/fdn_heartfire_immolator_v1.rs"]
 mod fdn_heartfire_immolator_v1;
+#[path = "fdn/fdn_high_society_hunter_v1.rs"]
+mod fdn_high_society_hunter_v1;
 #[path = "fdn/fdn_homunculus_creature_v1.rs"]
 mod fdn_homunculus_creature_v1;
 #[path = "fdn/fdn_inspiring_call_v1.rs"]

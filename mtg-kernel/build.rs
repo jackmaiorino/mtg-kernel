@@ -6977,6 +6977,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Ashroot Animist" => "attack:another_controlled_creature:trample_and_boost_until_cleanup:power_sample_once_resolution:same_source_or_actual_departure_lki:nonnegative:exact_source_target_incarnations",
         "Frenzied Goblin" => "source_declared_attacker:target_creature_at_placement:may_pay_R_at_resolution:if_paid_exact_target_cannot_block_until_cleanup:captured_controller:full_target_recheck",
         "Vampire Gourmand" => "source_declared_attacker:untargeted:captured_controller_may_sacrifice_another_creature_at_resolution:if_successful_draw_controller:1_and_exact_source_cannot_be_blocked_until_cleanup",
+        "High-Society Hunter" => "source_declared_attacker:untargeted:captured_controller_may_sacrifice_another_creature_at_resolution:if_successful_counter_exact_original_source:+1/+1;prebatch_each_other_nontoken_creature_dies:any_controller:draw_captured_source_controller:1:including_simultaneous_source_death",
         "Wardens of the Cycle" => "controller_end_step:intervening_if_creature_died_this_turn:mode_at_placement:gain_controller_life:2|draw_controller:1_then_lose_controller_life:1:recheck_morbid_in_each_branch:untargeted",
         "Archmage of Runes" => "cast_instant_or_sorcery:draw_controller:1",
         "Billowing Shriekmass" => "etb:mill_controller_library:3:private_ordering_exact_incarnations",

@@ -15,7 +15,11 @@ pub(crate) fn enabled() -> bool {
                 && crate::trigger::triggers_for(id as u16)
                     .iter()
                     .any(|ability| {
-                        ability.condition == TriggerCondition::ThisOrControlledCreatureDies
+                        matches!(
+                            ability.condition,
+                            TriggerCondition::ThisOrControlledCreatureDies
+                                | TriggerCondition::OtherNontokenCreatureDies
+                        )
                     })
         })
     })
@@ -40,7 +44,6 @@ pub(crate) fn capture(state: &GameState, event: &ProposedEvent) -> Vec<Committed
         .iter()
         .filter(|(source, object)| {
             object.zone == Zone::Battlefield
-                && object.controller == dead.controller
                 && CARD_DEFS[object.card_def as usize].is_executable()
                 && crate::continuous_characteristics_v1::printed_abilities_active(state, *source)
         })
@@ -49,7 +52,12 @@ pub(crate) fn capture(state: &GameState, event: &ProposedEvent) -> Vec<Committed
                 .iter()
                 .enumerate()
                 .filter(move |(_, ability)| {
-                    ability.condition == TriggerCondition::ThisOrControlledCreatureDies
+                    ((ability.condition == TriggerCondition::ThisOrControlledCreatureDies
+                        && object.controller == dead.controller)
+                        || (ability.condition == TriggerCondition::OtherNontokenCreatureDies
+                            && crate::high_society_hunter_v1::owns_definition(object.card_def)
+                            && !dead.v4.is_token
+                            && source != change.object))
                         && ability.home_zone == Zone::Battlefield
                         && ability.face_index == object.v4.face_index
                 })
@@ -128,9 +136,21 @@ pub(crate) fn pending(
         return Err(invalid());
     }
     if !definition.is_executable()
-        || ability.condition != TriggerCondition::ThisOrControlledCreatureDies
+        || !matches!(
+            ability.condition,
+            TriggerCondition::ThisOrControlledCreatureDies
+                | TriggerCondition::OtherNontokenCreatureDies
+        )
         || source.zone != Zone::Battlefield
-        || source.controller != *controller_before
+        || (ability.condition == TriggerCondition::ThisOrControlledCreatureDies
+            && source.controller != *controller_before)
+        || (ability.condition == TriggerCondition::OtherNontokenCreatureDies
+            && (!crate::high_society_hunter_v1::owns_definition(source.card_def)
+                || source.source == died.object
+                || state
+                    .objects
+                    .try_get(died.object)
+                    .is_none_or(|object| object.v4.is_token)))
         || !matches!(death, Some(CommittedEvent::ZoneChange {
             object, from: Zone::Battlefield, to: Zone::Graveyard, controller_before: actual,
         }) if *object == died.object && actual == controller_before)
@@ -143,14 +163,17 @@ pub(crate) fn pending(
                 .and_then(|moves| died.zone_change_count.checked_add(1)?.checked_add(moves))
                 != Some(object.zone_change_count)
         })
-        || state.objects.try_get(source.source).is_none_or(|object| {
-            object.card_def != source.card_def
-                || object.owner != source.owner
-                || object.zone_change_count < source.zone_change_count
-                || (object.zone_change_count == source.zone_change_count
-                    && object.zone != source.zone)
-                || object.spell_copy_origin.is_some()
-        })
+        || (ability.condition == TriggerCondition::OtherNontokenCreatureDies
+            && crate::engine::validate_historical_ability_source_contract(state, *source).is_err())
+        || (ability.condition == TriggerCondition::ThisOrControlledCreatureDies
+            && state.objects.try_get(source.source).is_none_or(|object| {
+                object.card_def != source.card_def
+                    || object.owner != source.owner
+                    || object.zone_change_count < source.zone_change_count
+                    || (object.zone_change_count == source.zone_change_count
+                        && object.zone != source.zone)
+                    || object.spell_copy_origin.is_some()
+            }))
     {
         return Err(invalid());
     }

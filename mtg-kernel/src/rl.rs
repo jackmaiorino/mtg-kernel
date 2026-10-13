@@ -1889,6 +1889,8 @@ pub fn observe_v1(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
+    crate::high_society_hunter_v1::require_legacy_supported(state, Some(acting_player))
+        .map_err(RlContractError)?;
     crate::game_outcome_protection_v1::require_legacy_consumer_supported(
         state,
         Some(acting_player),
@@ -2128,6 +2130,8 @@ fn build_observation_common_v2_fishing_v39_ajani_v42(
     ),
     accepted_planes: (bool, bool, bool, bool),
 ) -> Result<ObservationV2> {
+    crate::high_society_hunter_v1::require_legacy_supported(state, Some(acting_player))
+        .map_err(RlContractError)?;
     let (accept_akroma, accept_ajani, accept_faebloom, accept_divine) = accepted_planes;
     let (capabilities, accept_fishing) = capabilities;
     if accept_faebloom {
@@ -4922,6 +4926,8 @@ fn core_surface_action_candidates_v1(
     decision: &SurfaceDecision,
     state: &GameState,
 ) -> Result<Vec<CoreSurfaceActionCandidateV1>> {
+    crate::high_society_hunter_v1::require_legacy_supported(state, None)
+        .map_err(RlContractError)?;
     let mut out = Vec::new();
     match decision {
         SurfaceDecision::Decision(decision) => match decision {
@@ -4934,6 +4940,8 @@ fn core_surface_action_candidates_v1(
                 plot_actions,
             } => {
                 let actor = (*player).into();
+                crate::high_society_hunter_v1::require_legacy_supported(state, Some(*player))
+                    .map_err(RlContractError)?;
                 for &id in castable_spells {
                     if CARD_DEFS[state.objects.get(id).card_def as usize].target_spec
                         == crate::card_def::TargetSpec::KickerControlledCreatures

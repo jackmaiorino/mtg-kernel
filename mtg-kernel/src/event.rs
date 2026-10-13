@@ -1320,6 +1320,16 @@ pub enum CommittedEvent {
     FaebloomJournalV43 {
         journal: Box<crate::faebloom_trick_v43::JournalV43>,
     },
+    /// Original attack-time identity; actual declaration is an independent occurrence.
+    HighSocietyHunterAttackCaptureV1 {
+        declaration_history_index: u64,
+        source: crate::state::AbilitySourceContractV4,
+        turn_key: u32,
+        active_player: PlayerId,
+    },
+    HighSocietyHunterAttackCollectedV1 {
+        capture_history_index: u64,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

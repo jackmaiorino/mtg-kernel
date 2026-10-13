@@ -1276,6 +1276,8 @@ pub(super) fn conflicts(
             KrenkoPaidV1 { .. }
             | KrenkoPaymentInputV1 { .. }
             | FishingPoleJournalV39 { .. }
+            | HighSocietyHunterAttackCaptureV1 { .. }
+            | HighSocietyHunterAttackCollectedV1 { .. }
             | KrenkoRemovalInputV1 { .. }
             | KrenkoRemovedV1 { .. }
             | KrenkoSampleV1 { .. }
