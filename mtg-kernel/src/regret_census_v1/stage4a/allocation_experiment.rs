@@ -23,6 +23,8 @@ struct Config {
     eval_worlds: u64,
     evaluate: bool,
     frozen_continuation: bool,
+    anchor: u64,
+    finishing_reserve: f64,
     eval_cap: u64,
     interchange: bool,
     eval_only: Option<String>,
@@ -41,7 +43,24 @@ fn count(name: &str, default: u64) -> Result<u64, String> {
 }
 
 impl Config {
-    fn load() -> Result<Self, String> {
+    fn load(budget: u64) -> Result<Self, String> {
+        if budget == 0 {
+            return Err("BUDGET_TOTAL must be positive".into());
+        }
+        let anchor = count("PROFILE_ANCHOR", budget)?;
+        let finishing_reserve = std::env::var("PROFILE_CPU_OVERHEAD_RESERVE_SECONDS")
+            .ok()
+            .map(|v| {
+                v.parse::<f64>()
+                    .ok()
+                    .filter(|s| s.is_finite() && *s >= 0.0)
+                    .ok_or(
+                        "PROFILE_CPU_OVERHEAD_RESERVE_SECONDS must be finite and nonnegative"
+                            .to_owned(),
+                    )
+            })
+            .transpose()?
+            .unwrap_or(0.0);
         let arm = std::env::var("PROFILE_ARM").map_err(|_| "PROFILE_ARM is required")?;
         let allocation = match arm.as_str() {
             "A" | "B" => RootAllocation::Uct,
@@ -93,6 +112,8 @@ impl Config {
             return Err("frozen-tree primary evaluation must run inline; evaluation-only is secondary and needs PROFILE_EVAL_CONTINUATION=plain".into());
         }
         Ok(Self {
+            anchor,
+            finishing_reserve,
             frozen_continuation,
             evaluate,
             options: SearchOptions {
@@ -124,7 +145,7 @@ pub(super) fn profile_case(
     mode: KeyMode,
     binding: &str,
 ) -> Result<Vec<Value>, String> {
-    let config = Config::load()?;
+    let config = Config::load(budget)?;
     if positions.len() != 1 {
         return Err(
             "experiment jobs need exactly one PROFILE_POSITIONS root for full cost accounting"
@@ -233,7 +254,9 @@ pub(super) fn profile_case(
         } else {
             let mut options = config.options.clone();
             if let Some(cpu) = options.cpu_seconds {
-                options.cpu_seconds = Some((cpu - setup_cpu).max(0.0));
+                options.cpu_seconds = Some(
+                    (cpu - super::process_cpu::seconds()? - config.finishing_reserve).max(0.0),
+                );
             }
             let mut diag = SearchDiag::default();
             let (sel, tree) =
@@ -267,7 +290,8 @@ pub(super) fn profile_case(
                 json!(tree_sha),
             )
         };
-    let search_cpu = super::process_cpu::seconds()? - cpu0;
+    let search_process_cpu = super::process_cpu::seconds()?;
+    let search_cpu = search_process_cpu - cpu0;
     let search_wall = wall0.elapsed().as_secs_f64();
     let eval_seeds = RootSeeds {
         model: sh.spec.lineage.clone(),
@@ -293,7 +317,12 @@ pub(super) fn profile_case(
             execution_tree = Some(execution);
         }
     }
+    let execution_sha = execution_tree
+        .as_ref()
+        .map(tree_digest)
+        .unwrap_or_else(|| search_tree_hash.as_str().unwrap_or("").to_owned());
     let execution_prep_cpu = super::process_cpu::seconds()? - execution_prep_cpu0;
+    let pure_evaluation_cpu0 = super::process_cpu::seconds()?;
     let evaluation = if config.evaluate && config.frozen_continuation {
         let tree = execution_tree
             .as_ref()
@@ -307,28 +336,43 @@ pub(super) fn profile_case(
             config.eval_worlds,
             &config.arm,
             &forced_root_mask,
+            &execution_sha,
         )?
     } else if config.evaluate {
         evaluate_action(&mut roles, &ctx, &teacher, config.eval_worlds)?
     } else {
         json!({"performed":false,"scheduled":0,"samples":[]})
     };
+    let pure_evaluation_cpu = super::process_cpu::seconds()? - pure_evaluation_cpu0;
     let evaluation_hash = super::sha(evaluation.to_string().as_bytes());
     let total_cpu = super::process_cpu::seconds()? - cpu0;
+    let safety_cap_reached = selection["cap_reached"].as_bool().unwrap_or(false)
+        || selection["transitions"].as_u64().unwrap_or(0) >= budget;
+    let technical_incomplete = selection["incomplete"].as_bool().unwrap_or(true)
+        || selection["faults"]
+            .as_array()
+            .is_none_or(|faults| !faults.is_empty())
+        || (config.evaluate && evaluation["unknown"].as_u64().unwrap_or(0) > 0);
     let mut row = json!({"kind":"search_allocation_experiment","schema":"search-sharing-allocation-v1/root",
         "id":src.id,"lineage":sh.spec.lineage,"own":src.own,"other":src.other,"seat":src.seat,
         "opp":src.opp,"position":label,"fraction":fraction,"eligible_index":index,"eligible_count":eligible.len(),
         "root_step":step,"root_width":width,"root_obs_sha256":obs_hash,"root_menu_sha256":menu_hash,
-        "game_actions":actions.len(),"budget":budget,"key_mode":mode.label(),"interchange":config.interchange,
+        "game_actions":actions.len(),"budget":config.anchor,"anchor":config.anchor,
+        "safety_cap":budget,"safety_cap_reached":safety_cap_reached,"technical_incomplete":technical_incomplete,
+        "stopping_reason":selection["extra"]["stop_reason"],"key_mode":mode.label(),"interchange":config.interchange,
         "urgency":ctx.urgency,"seed":config.seed,"seed_namespace":namespace,"arm":config.arm,
         "bank_binding_sha256":binding,"selection":selection,"teacher":teacher,"primary_sha256":primary_hash,
         "search_tree_sha256":search_tree_hash,"search_tree_estimated_bytes":search_tree.as_ref().map(tree_bytes),
         "work_attempts":work,"cpu_budget_seconds":config.options.cpu_seconds,"work_limit":config.options.work_limit,
         "evaluation_source":config.eval_only,"setup_cpu_seconds":setup_cpu,"search_cpu_seconds":search_cpu,
+        "process_cpu_before_case_seconds":cpu0,"search_process_cpu_seconds":search_process_cpu,
+        "cpu_overhead_reserve_seconds":config.finishing_reserve,
         "search_wall_seconds":search_wall,"evaluation":evaluation,"evaluation_sha256":evaluation_hash,
         "execution_prep_cpu_seconds":execution_prep_cpu,
         "execution_tree_clone_estimated_bytes":execution_tree.as_ref().map(tree_bytes),
-        "evaluation_cpu_seconds":total_cpu-search_cpu,"total_cpu_seconds":total_cpu,
+        "evaluation_cpu_seconds":pure_evaluation_cpu,"pure_evaluation_cpu_seconds":pure_evaluation_cpu,
+        "selection_construction_process_cpu_seconds":total_cpu+cpu0-pure_evaluation_cpu,
+        "total_cpu_seconds":total_cpu,"process_cpu_before_final_output_seconds":total_cpu+cpu0,
         "total_wall_seconds":wall0.elapsed().as_secs_f64()});
     let output_cpu = super::process_cpu::seconds()?;
     let _serialized = serde_json::to_vec(&row).map_err(|e| e.to_string())?;
@@ -444,6 +488,7 @@ fn evaluate_frozen(
     worlds: u64,
     arm: &str,
     forced_root: &Value,
+    tree_sha: &str,
 ) -> Result<Value, String> {
     let mut stats = SamplerStats::default();
     let mut samples = Vec::new();
@@ -464,7 +509,6 @@ fn evaluate_frozen(
         };
         samples.push(sample);
     }
-    let tree_sha = tree_digest(tree);
     let eval_id = super::sha(
         json!({"namespace":ctx.seeds.root,"model":ctx.seeds.model,
         "arm":arm,"execution_tree_sha256":tree_sha,"forced_root":forced_root,
