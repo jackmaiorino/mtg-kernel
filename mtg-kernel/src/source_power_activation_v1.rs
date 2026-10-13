@@ -423,6 +423,11 @@ pub(crate) fn protected(
                 target,
                 crate::card_def::Keywords::PROTECTION_FROM_MONOCOLORED,
             ) && (facts.color_mask & 0x1f).count_ones() == 1
+                || crate::controlled_creature_grants_v1::protects_from_colors(
+                    state,
+                    target,
+                    facts.color_mask,
+                )
                 || crate::standard_legends_v1::katilda_protected_from_historical(
                     state,
                     target,

@@ -158,6 +158,59 @@ type ProjectedSowerV14 = (
     Vec<u32>,
 );
 
+// V40 uses the same typed safe fields; no predecessor artifact/input admission.
+pub(super) fn register_for_akroma_parts(
+    observation: &crate::sower_public_v1::SowerObservationV1,
+    handles: &mut Handles,
+) -> Result<(), Error> {
+    for row in &observation.projection.surface.stack {
+        handles.insert(&row.source)?;
+    }
+    for row in &observation.extensions.historical_public_sources {
+        handles.insert(&row.source)?;
+    }
+    for row in &observation.restrictions {
+        handles.insert(&row.recipient)?;
+        if let Some(current) = &row.current_recipient {
+            handles.insert(current)?;
+        }
+    }
+    Ok(())
+}
+pub(super) fn state_for_akroma_parts(
+    observation: &crate::sower_public_v1::SowerObservationV1,
+    handles: &mut Handles,
+    human: PlayerSeatV1,
+) -> Result<HumanSowerExtensionsV14, Error> {
+    Ok(state(observation, handles, human)?.extensions)
+}
+pub(super) fn label_for_akroma_parts(
+    action: &ActionSemanticV1,
+    observation: &crate::sower_public_v1::SowerObservationV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    super::labels::label_sower_v14(action, &parts(observation), handles, human)
+}
+
+pub(super) fn unary_for_akroma_parts(
+    extension: &HumanSowerExtensionsV14,
+    unary: &mut BTreeMap<String, Vec<String>>,
+) -> Result<(), Error> {
+    for row in &extension.predecessor.predecessor.ward_life_card_traits {
+        unary
+            .entry(row.source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    for row in &extension.cannot_block_restrictions {
+        unary
+            .entry(row.recipient_at_installation.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    Ok(())
+}
 fn project_base(
     observation: &SowerObservationV1,
     actions: &[ActionSemanticV1],

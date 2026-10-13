@@ -2029,6 +2029,13 @@ pub enum GameOutcomeProtectionDefV1 {
     ControllerCannotLoseAndOpponentsCannotWin,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ControlledCreatureGrantDef {
+    pub keywords: Keywords,
+    /// WUBRG color bits, evaluated against all source colors.
+    pub protection_color_mask: u8,
+}
+
 pub struct CardDef {
     pub name: &'static str,
     pub capability: CardCapability,
@@ -2066,6 +2073,8 @@ pub struct CardDef {
     pub controlled_counter_keyword: Option<Keywords>,
     /// Printed prohibition on game outcomes, independent of creature keywords.
     pub game_outcome_protection_v1: Option<GameOutcomeProtectionDefV1>,
+    /// Immutable continuous grants to every currently controlled creature.
+    pub controlled_creature_grant: Option<ControlledCreatureGrantDef>,
     pub is_land: bool,
     pub produces_mana: &'static [ManaColor],
     /// This card's color identity per 105.1/202.2 (the color of mana

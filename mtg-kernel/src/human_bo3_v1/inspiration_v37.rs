@@ -262,6 +262,71 @@ type ProjectedInspirationV37 = (
     Vec<u32>,
 );
 
+// V40 uses the same typed safe fields; no predecessor artifact/input admission.
+pub(super) fn register_for_akroma_parts(
+    observation: &crate::inspiration_observation_v1::InspirationObservationV1,
+    handles: &mut Handles,
+) -> Result<(), Error> {
+    for row in &observation.projection.surface.stack {
+        handles.insert(&row.source)?;
+    }
+    for row in &observation.extensions.historical_public_sources {
+        handles.insert(&row.source)?;
+    }
+    if let Some(row) = &observation.choice {
+        handles.insert(&row.source)?;
+        for card in row.selected.iter().chain(&row.legal) {
+            handles.insert(card)?;
+        }
+    }
+    Ok(())
+}
+pub(super) fn state_for_akroma_parts(
+    observation: &crate::inspiration_observation_v1::InspirationObservationV1,
+    handles: &mut Handles,
+    human: PlayerSeatV1,
+) -> Result<HumanInspirationExtensionsV37, Error> {
+    Ok(state(observation, handles, human)?.extensions)
+}
+pub(super) fn label_for_akroma_parts(
+    action: &ActionSemanticV1,
+    observation: &crate::inspiration_observation_v1::InspirationObservationV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    label(action, observation, handles, human)
+}
+
+pub(super) fn unary_for_akroma_parts(
+    extension: &HumanInspirationExtensionsV37,
+    unary: &mut BTreeMap<String, Vec<String>>,
+) -> Result<(), Error> {
+    for row in &extension.predecessor.predecessor.ward_life_card_traits {
+        unary
+            .entry(row.source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    if let Some(row) = &extension.choice {
+        unary
+            .entry(row.source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+        for (index, card) in row.selected.iter().enumerate() {
+            unary
+                .entry(card.handle.clone())
+                .or_default()
+                .push(format!("inspiration_selected_{index}"));
+        }
+        for card in &row.legal {
+            unary
+                .entry(card.handle.clone())
+                .or_default()
+                .push("inspiration_legal".into());
+        }
+    }
+    Ok(())
+}
 fn project_base(
     observation: &InspirationObservationV1,
     actions: &[ActionSemanticV1],

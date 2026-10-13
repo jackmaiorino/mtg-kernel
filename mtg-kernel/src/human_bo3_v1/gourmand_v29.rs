@@ -260,6 +260,95 @@ type ProjectedGourmandV29 = (
     Vec<u32>,
 );
 
+// V40 uses the same typed safe fields; no predecessor artifact/input admission.
+pub(super) fn register_for_akroma_parts(
+    observation: &crate::gourmand_public_v1::GourmandObservationV1,
+    handles: &mut Handles,
+) -> Result<(), Error> {
+    for row in &observation.projection.surface.stack {
+        handles.insert(&row.source)?;
+    }
+    for row in &observation.extensions.historical_public_sources {
+        handles.insert(&row.source)?;
+    }
+    for row in &observation.resolutions {
+        handles.insert(&row.source_at_attack)?;
+    }
+    for row in &observation.restrictions {
+        handles.insert(&row.recipient)?;
+        if let Some(current) = &row.current_recipient {
+            handles.insert(current)?;
+        }
+    }
+    if let Some(menu) = &observation.sacrifice_menu {
+        handles.insert(&menu.source_at_attack)?;
+        for reference in menu.legal.iter().chain(&menu.selected) {
+            handles.insert(reference)?;
+        }
+    }
+    Ok(())
+}
+pub(super) fn state_for_akroma_parts(
+    observation: &crate::gourmand_public_v1::GourmandObservationV1,
+    handles: &mut Handles,
+    human: PlayerSeatV1,
+) -> Result<HumanGourmandExtensionsV29, Error> {
+    Ok(state(observation, handles, human)?.extensions)
+}
+pub(super) fn label_for_akroma_parts(
+    action: &ActionSemanticV1,
+    observation: &crate::gourmand_public_v1::GourmandObservationV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    super::labels::label_gourmand_v29(action, observation, handles, human)
+}
+
+pub(super) fn unary_for_akroma_parts(
+    extension: &HumanGourmandExtensionsV29,
+    unary: &mut BTreeMap<String, Vec<String>>,
+) -> Result<(), Error> {
+    for row in &extension.predecessor.predecessor.ward_life_card_traits {
+        unary
+            .entry(row.source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    for row in &extension.cannot_be_blocked_restrictions {
+        unary
+            .entry(row.recipient_at_installation.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    for row in &extension.attack_resolutions {
+        unary
+            .entry(row.source_at_attack.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    if let Some(menu) = &extension.sacrifice_menu {
+        unary
+            .entry(menu.source_at_attack.handle.clone())
+            .or_default()
+            .push(format!(
+                "gourmand_cost_source:{}",
+                visible::without_handles(menu)?
+            ));
+        for reference in &menu.legal {
+            unary
+                .entry(reference.handle.clone())
+                .or_default()
+                .push("gourmand_legal_sacrifice".into());
+        }
+        for reference in &menu.selected {
+            unary
+                .entry(reference.handle.clone())
+                .or_default()
+                .push("gourmand_selected_sacrifice".into());
+        }
+    }
+    Ok(())
+}
 fn project_base(
     observation: &GourmandObservationV1,
     actions: &[ActionSemanticV1],

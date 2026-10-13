@@ -390,6 +390,99 @@ type ProjectedCrystalV22 = (
     Vec<u32>,
 );
 
+// V40 uses the same typed safe fields; no predecessor artifact/input admission.
+pub(super) fn register_for_akroma_parts(
+    observation: &crate::crystal_public_v1::CrystalObservationV1,
+    handles: &mut Handles,
+) -> Result<(), Error> {
+    for row in &observation.projection.surface.stack {
+        handles.insert(&row.source)?;
+    }
+    for row in &observation.extensions.historical_public_sources {
+        handles.insert(&row.source)?;
+    }
+    for row in &observation.static_sources {
+        handles.insert(&row.source)?;
+    }
+    for row in &observation.equipment_damage_sources {
+        handles.insert(&row.source)?;
+        handles.insert(&row.equipment)?;
+    }
+    if let Some(row) = observation.prevention_menu.as_ref() {
+        handles.insert(&row.source)?;
+        handles.insert(&row.resolving_source)?;
+        handles.insert(&row.recipient)?;
+        for option in &row.options {
+            handles.insert(&option.source)?;
+        }
+    }
+    if let Some(row) = observation.optional_discard_menu.as_ref() {
+        handles.insert(&row.source)?;
+    }
+    Ok(())
+}
+pub(super) fn state_for_akroma_parts(
+    observation: &crate::crystal_public_v1::CrystalObservationV1,
+    handles: &mut Handles,
+    human: PlayerSeatV1,
+) -> Result<HumanCrystalExtensionsV22, Error> {
+    Ok(state(observation, handles, human)?.extensions)
+}
+pub(super) fn label_for_akroma_parts(
+    action: &ActionSemanticV1,
+    observation: &crate::crystal_public_v1::CrystalObservationV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    label(action, observation, handles, human)
+}
+
+pub(super) fn unary_for_akroma_parts(
+    extension: &HumanCrystalExtensionsV22,
+    unary: &mut BTreeMap<String, Vec<String>>,
+) -> Result<(), Error> {
+    for row in &extension.predecessor.predecessor.ward_life_card_traits {
+        unary
+            .entry(row.source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    for row in &extension.equipment_damage_sources {
+        unary
+            .entry(row.source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    for row in &extension.static_sources {
+        unary
+            .entry(row.source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    if let Some(row) = extension.prevention_menu.as_ref() {
+        unary
+            .entry(row.recipient.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+        unary
+            .entry(row.source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+        for option in &row.options {
+            unary
+                .entry(option.source.handle.clone())
+                .or_default()
+                .push(visible::without_handles(option)?);
+        }
+    }
+    if let Some(row) = extension.optional_discard_menu.as_ref() {
+        unary
+            .entry(row.source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    Ok(())
+}
 fn project_base(
     observation: &CrystalObservationV1,
     actions: &[ActionSemanticV1],

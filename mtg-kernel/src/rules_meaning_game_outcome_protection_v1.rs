@@ -111,6 +111,7 @@ pub fn meaning(selector: &SelectorV1, card_id: u16) -> Result<MeaningV1, ErrorV1
         || def.equipment.is_some()
         || def.generic_cost_reduction.is_some()
         || def.controlled_counter_keyword.is_some()
+        || def.controlled_creature_grant.is_some()
         || def.enters_with_plus_one_counters.is_some()
         || def.starting_loyalty.is_some()
         || def.kicker_cost.is_some()

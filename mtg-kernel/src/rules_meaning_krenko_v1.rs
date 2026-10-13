@@ -165,6 +165,7 @@ pub fn meaning(selector: &SelectorV1, id: u16, root: RootV1) -> Result<MeaningV1
         || d.changeling
         || d.enters_with_plus_one_counters.is_some()
         || d.controlled_counter_keyword.is_some()
+        || d.controlled_creature_grant.is_some()
         || d.enters_battlefield_tapped
         || d.enters_battlefield_tapped_unless.is_some()
         || d.enters_tapped_unless_controller.is_some()

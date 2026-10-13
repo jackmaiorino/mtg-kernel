@@ -260,6 +260,73 @@ type ProjectedKrenkoV34 = (
     Vec<u32>,
 );
 
+// V40 uses the same typed safe fields; no predecessor artifact/input admission.
+pub(super) fn register_for_akroma_parts(
+    observation: &crate::krenko_observation_v1::KrenkoObservationV1,
+    handles: &mut Handles,
+) -> Result<(), Error> {
+    for row in &observation.projection.surface.stack {
+        handles.insert(&row.source)?;
+    }
+    for row in &observation.extensions.historical_public_sources {
+        handles.insert(&row.source)?;
+    }
+    for row in &observation.facts.sources {
+        handles.insert(&row.source)?;
+    }
+    for row in &observation.facts.activations {
+        handles.insert(&row.source_at_payment)?;
+    }
+    Ok(())
+}
+pub(super) fn state_for_akroma_parts(
+    observation: &crate::krenko_observation_v1::KrenkoObservationV1,
+    handles: &mut Handles,
+    human: PlayerSeatV1,
+) -> Result<HumanKrenkoExtensionsV34, Error> {
+    Ok(state(observation, handles, human)?.extensions)
+}
+pub(super) fn label_for_akroma_parts(
+    action: &ActionSemanticV1,
+    observation: &crate::krenko_observation_v1::KrenkoObservationV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    super::labels::label_krenko_v34(action, observation, handles, human)
+}
+
+pub(super) fn unary_for_akroma_parts(
+    extension: &HumanKrenkoExtensionsV34,
+    unary: &mut BTreeMap<String, Vec<String>>,
+) -> Result<(), Error> {
+    for row in &extension.predecessor.predecessor.ward_life_card_traits {
+        unary
+            .entry(row.source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    for row in &extension.sources {
+        unary
+            .entry(row.source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    for row in &extension.activations {
+        unary
+            .entry(row.source_at_payment.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+        for token in &row.created_tokens {
+            if let Some(card) = &token.current_visible_card {
+                unary
+                    .entry(card.handle.clone())
+                    .or_default()
+                    .push(visible::without_handles(row)?);
+            }
+        }
+    }
+    Ok(())
+}
 fn project_base(
     observation: &KrenkoObservationV1,
     actions: &[ActionSemanticV1],
