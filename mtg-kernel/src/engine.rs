@@ -9286,6 +9286,12 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    if crate::fiendish_panda_v1::validate_state(state).is_err() {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
     if mandatory_cast_cost_v1::validate_state(state).is_err() {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
@@ -18280,6 +18286,7 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    crate::fiendish_panda_v1::validate_state(state)?;
     mandatory_cast_cost_v1::validate_state(state)?;
     crate::high_society_hunter_custody_v45::validate(state)?;
     crate::controlled_creature_grants_v1::validate_color_history(state)?;

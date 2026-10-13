@@ -5574,6 +5574,23 @@ impl RlEpisodeSessionV1 {
         &mut self,
         mut profile: Option<&mut RlPhaseProfileV1>,
     ) {
+        if crate::fiendish_panda_v1::require_legacy_supported(
+            &self.state,
+            Some(self.state.priority_player),
+        )
+        .is_err()
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:fiendish_panda_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         if crate::engine::mandatory_cast_cost_v1::require_legacy_supported(
             &self.state,
             Some(self.state.priority_player),
@@ -7093,6 +7110,8 @@ impl FastActorSessionV1 {
             return Err(KernelNativeSearchErrorV1::InvalidDecision);
         };
         let actor = current.actor;
+        crate::fiendish_panda_v1::require_legacy_supported(&self.state, Some(actor))
+            .map_err(|_| KernelNativeSearchErrorV1::HiddenStateContract)?;
         let before_observation = self.flat_policy_observation_v2(expected)?;
         let before_semantics = self
             .diagnostic_current_action_semantics()
@@ -7482,6 +7501,23 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
+        if crate::fiendish_panda_v1::require_legacy_supported(
+            &self.state,
+            Some(self.state.priority_player),
+        )
+        .is_err()
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:fiendish_panda_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         if crate::engine::mandatory_cast_cost_v1::require_legacy_supported(
             &self.state,
             Some(self.state.priority_player),

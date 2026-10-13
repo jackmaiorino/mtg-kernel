@@ -3547,6 +3547,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Grappling Kraken" => &GRAPPLING_KRAKEN_TRIGGERS,
         "Rune-Scarred Demon" => &RUNE_SCARRED_DEMON_TRIGGERS,
         "Elvish Regrower" => &ELVISH_REGROWER_TRIGGERS,
+        "Fiendish Panda" => &crate::fiendish_panda_v1::TRIGGERS,
         "Vampire Soulcaller" => &VAMPIRE_SOULCALLER_TRIGGERS,
         "Affectionate Indrik" => &AFFECTIONATE_INDRIK_TRIGGERS,
         "Soul-Shackled Zombie" => &SOUL_SHACKLED_ZOMBIE_TRIGGERS,
@@ -4128,6 +4129,13 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    if matches!(
+        effect,
+        EffectOp::FiendishPandaCounterFromCaptureV1 { .. }
+            | EffectOp::FiendishPandaReturnFromCaptureV1 { .. }
+    ) {
+        return crate::fiendish_panda_v1::target_spec(card_def, effect);
+    }
     if crate::high_society_hunter_custody_v45::binding(effect).is_some() {
         return crate::high_society_hunter_v1::owns_definition(card_def)
             .then_some(TargetSpec::None);
@@ -4900,6 +4908,16 @@ fn triggers_from_events(
             return Vec::new();
         }
     }
+    match crate::fiendish_panda_v1::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
     match crate::authority_of_the_consuls_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
@@ -5115,6 +5133,9 @@ fn triggers_from_events(
                 }
             }
             for (ability_index, def) in triggers_for(obj.card_def).iter().enumerate() {
+                if crate::fiendish_panda_v1::owns_definition(obj.card_def) {
+                    continue; // Both roots are captured at actual commit, before later operations/SBA.
+                }
                 if (def.effect)() == EffectOp::BindAshrootAttackBoostV1 {
                     continue;
                 }

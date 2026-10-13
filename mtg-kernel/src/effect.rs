@@ -1694,6 +1694,13 @@ pub enum EffectOp {
         capture_history_index: u64,
         attack: bool,
     },
+    FiendishPandaCounterFromCaptureV1 {
+        capture_history_index: u64,
+    },
+    FiendishPandaReturnFromCaptureV1 {
+        capture_history_index: u64,
+        maximum: i32,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -17550,6 +17557,15 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 return;
             }
             if event::add_plus_one_counters(state, contract.source, ctx.controller, 1).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
+        EffectOp::FiendishPandaCounterFromCaptureV1 { .. }
+        | EffectOp::FiendishPandaReturnFromCaptureV1 { .. } => {
+            if crate::fiendish_panda_v1::execute(state, ctx, op).is_err() {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,

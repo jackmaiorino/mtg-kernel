@@ -11,16 +11,17 @@ pub(crate) fn enabled() -> bool {
     static HAS_OBSERVERS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *HAS_OBSERVERS.get_or_init(|| {
         CARD_DEFS.iter().enumerate().any(|(id, card)| {
-            card.is_executable()
-                && crate::trigger::triggers_for(id as u16)
-                    .iter()
-                    .any(|ability| {
-                        matches!(
-                            ability.condition,
-                            TriggerCondition::ThisOrControlledCreatureDies
-                                | TriggerCondition::OtherNontokenCreatureDies
-                        )
-                    })
+            crate::fiendish_panda_v1::owns_definition(id as u16)
+                || card.is_executable()
+                    && crate::trigger::triggers_for(id as u16)
+                        .iter()
+                        .any(|ability| {
+                            matches!(
+                                ability.condition,
+                                TriggerCondition::ThisOrControlledCreatureDies
+                                    | TriggerCondition::OtherNontokenCreatureDies
+                            )
+                        })
         })
     })
 }
@@ -39,7 +40,7 @@ pub(crate) fn capture(state: &GameState, event: &ProposedEvent) -> Vec<Committed
     {
         return Vec::new();
     }
-    state
+    let mut captures = state
         .objects
         .iter()
         .filter(|(source, object)| {
@@ -74,7 +75,14 @@ pub(crate) fn capture(state: &GameState, event: &ProposedEvent) -> Vec<Committed
                     },
                 )
         })
-        .collect()
+        .collect::<Vec<_>>();
+    // Legacy death markers must remain adjacent to the death in their
+    // established order. Append Panda's indexed authority after them, and
+    // retain the predecessor's single allocation when Panda is absent.
+    if let Some(capture) = crate::fiendish_panda_v1::capture_death(state, event) {
+        captures.push(capture);
+    }
+    captures
 }
 
 /// A capture is authoritative only beside its committed death in both the
