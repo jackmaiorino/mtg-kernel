@@ -44,6 +44,10 @@ native-flat-tensorizer-diagnostic = []
 # call counts of tensorizer fill, packet encode and pooled forward, printed by
 # the multirun pilot. Off by default; production builds carry no counters.
 tensorize-cost-profile-v1 = []
+# Measurement-only exclusive cost split of Stage 4a persistent search
+# (`s4a-search-profile` rows). Off by default; default builds compile the
+# spans to nothing, so uninstrumented timings use a build without it.
+s4a-profile-v1 = []
 # Windows-only production admission for the native V2 training-store writer.
 # Non-Windows builds retain parser/stub support but never emit a production
 # build-capture tuple.

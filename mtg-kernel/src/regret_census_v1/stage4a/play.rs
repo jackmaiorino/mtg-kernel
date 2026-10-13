@@ -111,6 +111,7 @@ pub(crate) fn apply(
     defs: &SpyDefs,
 ) -> Result<(), PlayErr> {
     meter.charge()?;
+    let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::LabelTransition);
     let before = labels.as_ref().map(|l| {
         let mut b = Before::take(s.game_state(), focal, defs);
         b.self_chosen_now = l.self_pending;
@@ -142,8 +143,12 @@ pub(crate) fn apply(
             l.history_len += 1;
         }
     }
+    drop(span);
+    let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::EngineStep);
     s.step(d.episode_id, d.step, a)
         .map_err(|e| PlayErr::Fault(format!("step {} action {a}: {e:?}", d.step)))?;
+    drop(span);
+    let _span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::LabelTransition);
     if let (Some(l), Some(b)) = (labels, before) {
         l.apply(events(&b, s.game_state(), focal, defs));
         l.self_pending = false;
@@ -160,6 +165,7 @@ pub(crate) fn observe(
     focal: PlayerId,
     defs: &SpyDefs,
 ) {
+    let _span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::LabelObserve);
     if let Some(l) = labels {
         if let Some(sem) = s.diagnostic_current_action_semantics() {
             l.observe_menu(s, &sem, a as usize, focal, defs);

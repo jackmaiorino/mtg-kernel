@@ -715,11 +715,14 @@ impl Roles {
         let mut depth = 0u32;
         let mut last_phys: Option<u64> = None;
         loop {
+            let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::Response);
             if let Some(end) = terminal(&s, ctx.focal) {
+                drop(span);
                 sup.finish(rec);
                 return Ok((path, new, end));
             }
             let d = decision(&s).expect("decision");
+            drop(span);
             let a = if acting(&d) == ctx.focal {
                 if d.legal_action_count >= 2 {
                     if last_phys != Some(d.physical_decision_id) {
@@ -741,10 +744,16 @@ impl Roles {
                         SelSrc::TailAfterExpand
                     };
                     let a = if in_tree && depth <= MAX_DEPTH {
+                        let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::KeyStep);
                         let st = keyer.step(&s, d)?;
                         let (key, pk, pe, cn) = keyer.storage(&st);
-                        let (edge_index, edge) = match tree.find(&key, &pk, &pe, cn)? {
+                        drop(span);
+                        let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::TreeFind);
+                        let found = tree.find(&key, &pk, &pe, cn)?;
+                        drop(span);
+                        let (edge_index, edge) = match found {
                             Found::Hit(node) => {
+                                let _span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::NodeSelect);
                                 src = SelSrc::Tree;
                                 rec.existing += 1;
                                 if staged.contains(&key) {
@@ -762,9 +771,11 @@ impl Roles {
                                 if let Some(t) = trace.as_deref_mut() {
                                     t.node_created(&key, path.last(), cn, &s, ctx.focal, &ctx.defs);
                                 }
+                                let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::Expand);
                                 let perm = keyer.perm(&st, ctx.seeds)?;
                                 let node = Node::with_perm(pk, pe, cn.clone(), depth, perm);
                                 let e = node.select_with(ctx.urgency);
+                                drop(span);
                                 new.push((key, node));
                                 in_tree = false;
                                 // Boundary: before the expanded choice's
@@ -777,6 +788,7 @@ impl Roles {
                         legacy_path.push(st.legacy_key);
                         let live = live_index(cn, &edge)?;
                         parent = (key, edge);
+                        let _span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::KeyAdvance);
                         keyer.advance(st, live);
                         live
                     } else if !in_tree && new.len() < retain && depth <= MAX_DEPTH {
@@ -922,7 +934,10 @@ impl Roles {
             let index = i;
             i += 1;
             sel.attempted += 1;
-            let world = match sample_world(ctx, ctx.root, seed, &mut sel.sampler) {
+            let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::Sample);
+            let world = sample_world(ctx, ctx.root, seed, &mut sel.sampler);
+            drop(span);
+            let world = match world {
                 Ok(w) => w,
                 Err(_) => {
                     consecutive += 1;
@@ -939,7 +954,9 @@ impl Roles {
                 }
             };
             consecutive = 0;
+            let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::Reseed);
             self.reset_main(ctx, "E", index, "select");
+            drop(span);
             let mut suffix = Suffix::new(ctx.cast_root);
             if let Some(t) = trace.as_deref_mut() {
                 t.sim_begin(index, meter.spent);
@@ -1001,6 +1018,7 @@ impl Roles {
                 Ok((path, new, End::Natural { win })) => {
                     sel.discovery
                         .add(&suffix, Some(End::Natural { win }), index);
+                    let _span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::Backup);
                     diag.before_backup(&tree, &path, &new, win, sel.completed);
                     tree.backup(&path, new, win);
                     sel.completed += 1;
