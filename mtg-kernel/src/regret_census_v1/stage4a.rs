@@ -102,6 +102,22 @@ pub(crate) fn decision_replay_key(
     replay_key(s, d)
 }
 
+/// Spy line flags of every legal action of the current menu, as (casts
+/// Spy, Spy targets `focal`, Dread Return targets Lotleth Giant): the same
+/// classifier and missing-semantics rule as the archive games' decision
+/// records, for archive distillation's binding checks and probes.
+pub(crate) fn spy_menu_flags_v1(
+    s: &crate::rl_session::FastActorSessionV1,
+    focal: u8,
+) -> Vec<(bool, bool, bool)> {
+    let defs = spy_defs();
+    s.diagnostic_current_action_semantics()
+        .unwrap_or_default()
+        .iter()
+        .map(|x| labels::classify(x, s.game_state(), crate::ids::PlayerId(focal), &defs))
+        .collect()
+}
+
 /// Replay key of a focal decision: canonical observation and menu hashes.
 fn replay_key(
     s: &crate::rl_session::FastActorSessionV1,

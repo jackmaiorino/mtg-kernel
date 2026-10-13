@@ -51,6 +51,26 @@ pub(super) struct LineBAuxiliaryTermsV1 {
     loss: f64,
 }
 
+impl LineBAuxiliaryTermsV1 {
+    /// Terms another auxiliary source (archive distillation's off-batch rows)
+    /// built with the same reverse pass, so they combine exactly as these do.
+    pub(super) fn from_parts_v1(
+        active: bool,
+        gradients: Vec<Vec<f32>>,
+        rows: Vec<(Vec<f32>, Vec<f64>)>,
+        divergences: Vec<Option<f64>>,
+        loss: f64,
+    ) -> Self {
+        Self {
+            active,
+            gradients,
+            rows,
+            divergences,
+            loss,
+        }
+    }
+}
+
 fn invalid(code: &'static str) -> NativePolicyTrainErrorV1 {
     NativePolicyTrainErrorV1::LineBAuxiliary { code }
 }
