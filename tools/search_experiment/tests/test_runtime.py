@@ -86,6 +86,33 @@ class QualificationTests(unittest.TestCase):
                 child.wait()
             clock.close()
 
+    @unittest.skipUnless(sys.platform == "linux", "Linux wait4 accounting")
+    def test_linux_wait4_final_cpu_and_affinity(self):
+        import time
+        core = min(os.sched_getaffinity(0))
+        def before_exec():
+            os.sched_setaffinity(0, {core})
+            os.nice(max(0, 10 - os.nice(0)))
+        code = "import os;assert len(os.sched_getaffinity(0))==1;assert os.nice(0)>=10;sum(range(2000000))"
+        child = subprocess.Popen([sys.executable, "-c", code], preexec_fn=before_exec)
+        clock = launch.ProcessClock(child)
+        while clock.poll() is None:
+            time.sleep(.01)
+        self.assertEqual(child.returncode, 0)
+        self.assertGreater(clock.read(), 0)
+        self.assertEqual(clock.read(), clock.read())
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux killed-child wait4 accounting")
+    def test_linux_stop_retains_final_cpu(self):
+        child = subprocess.Popen([sys.executable, "-c", "while True: sum(range(1000))"])
+        clock = launch.ProcessClock(child)
+        import time
+        time.sleep(.05)
+        cpu = clock.stop()
+        self.assertLess(child.returncode, 0)
+        self.assertGreaterEqual(cpu, 0)
+        self.assertEqual(cpu, clock.read())
+
 
 def row(arm, budget, wins, unknown=False):
     return {"kind": "search_allocation_experiment", "id": "root", "position": "middle", "seed": "seed",

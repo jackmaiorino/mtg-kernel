@@ -16,8 +16,10 @@ from pathlib import Path
 import platform
 import shutil
 import subprocess
+import signal
 import sys
 import time
+import uuid
 from contextlib import contextmanager
 
 import psutil
@@ -165,7 +167,7 @@ def ledger_owner(path):
 
 
 class ProcessClock:
-    """Keep a Windows handle so final CPU remains readable after process exit."""
+    """Retain Windows process times or reap Linux final CPU with wait4 exactly once."""
     def __init__(self, child):
         self.child = child
         self.last = 0.0
@@ -194,6 +196,8 @@ class ProcessClock:
         return {"control_mask": actual.control, "state_mask": actual.state}
 
     def read(self):
+        if os.name != "nt" and self.child.returncode is not None:
+            return self.last
         if self.handle:
             times = [ctypes.c_ulonglong() for _ in range(4)]
             require(self.kernel.GetProcessTimes(self.handle, *[ctypes.byref(t) for t in times]),
@@ -205,6 +209,30 @@ class ProcessClock:
             except psutil.NoSuchProcess:
                 pass
         return self.last
+
+    def poll(self):
+        if os.name == "nt":
+            return self.child.poll()
+        if self.child.returncode is None:
+            pid, status, usage = os.wait4(self.child.pid, os.WNOHANG)
+            if pid:
+                self.last = usage.ru_utime + usage.ru_stime
+                self.child.returncode = os.waitstatus_to_exitcode(status)
+        return self.child.returncode
+
+    def stop(self):
+        if self.poll() is None:
+            if os.name == "nt":
+                self.child.kill()
+                self.child.wait()
+            else:
+                try:
+                    os.kill(self.child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                while self.poll() is None:
+                    time.sleep(.01)
+        return self.read()
 
     def close(self):
         if self.handle:
@@ -224,7 +252,8 @@ def execute(spec, workers, phase, label):
     """Called only inside a live host_slots claim or timed declaration."""
     require(os.environ.get("HOST_SLOTS_CLAIM") or os.environ.get("MTG_HOST_RESERVATION_TOKEN"),
             "execution requires current host_slots containment")
-    require(os.name == "nt", "exact final process CPU accounting currently supports Windows only")
+    require(os.name == "nt" or (sys.platform == "linux" and hasattr(os, "wait4")),
+            "supported final CPU accounting requires Windows or Linux wait4")
     validate(spec, workers, phase)
     root = Path(spec["root"])
     destination = root / label
@@ -276,18 +305,34 @@ def execute(spec, workers, phase, label):
                 command = [spec["binary"]["path"], *job["argv"], f"out={output.as_posix()}", "workers=1"]
                 stream = (folder / "stdout.log").open("wb")
                 # Configure the exact affinity/power policy before any native work.
-                flags = subprocess.BELOW_NORMAL_PRIORITY_CLASS | subprocess.CREATE_NO_WINDOW | 0x4
+                if os.name == "nt":
+                    options = {"creationflags": subprocess.BELOW_NORMAL_PRIORITY_CLASS | subprocess.CREATE_NO_WINDOW | 0x4}
+                else:
+                    def before_exec(core=core):
+                        os.sched_setaffinity(0, {core})
+                        current = os.nice(0)
+                        if current < 10:
+                            os.nice(10 - current)
+                    options = {"preexec_fn": before_exec}
                 child = subprocess.Popen(command, env=env, stdout=stream, stderr=subprocess.STDOUT,
-                                         creationflags=flags, cwd=root)
+                                         cwd=root, **options)
                 active[index] = {"child": child, "clock": ProcessClock(child), "stream": stream,
                                  "output": output, "started": time.monotonic(), "command": command, "core": core}
                 native = psutil.Process(child.pid)
-                native.cpu_affinity([core])
-                require(native.cpu_affinity() == [core], "native affinity verification failed")
-                active[index]["power"] = active[index]["clock"].qualify_power()
-                nt = ctypes.WinDLL("ntdll")
-                nt.NtResumeProcess.argtypes = [ctypes.c_void_p]
-                require(nt.NtResumeProcess(int(child._handle)) == 0, "cannot resume configured native process")
+                if os.name == "nt":
+                    native.cpu_affinity([core])
+                    require(native.cpu_affinity() == [core], "native affinity verification failed")
+                    active[index]["power"] = active[index]["clock"].qualify_power()
+                    nt = ctypes.WinDLL("ntdll")
+                    nt.NtResumeProcess.argtypes = [ctypes.c_void_p]
+                    require(nt.NtResumeProcess(int(child._handle)) == 0, "cannot resume configured native process")
+                else:
+                    # preexec_fn configured affinity/nice before native exec.
+                    # A very short completed child can already be a zombie.
+                    if active[index]["clock"].poll() is None:
+                        require(native.cpu_affinity() == [core] and native.nice() >= 10,
+                                "Linux native affinity/priority verification failed")
+                    active[index]["power"] = {"platform": "linux", "nice": 10, "affinity_before_exec": True}
                 pending.remove(index)
                 used_groups.add(group)
             for index, item in list(active.items()):
@@ -295,7 +340,7 @@ def execute(spec, workers, phase, label):
                 elapsed = time.monotonic() - item["started"]
                 require(elapsed < job["max_wall_seconds"], f"job wall cap: {job['id']}")
                 require(item["clock"].read() + .2 < job["max_cpu_seconds"], f"job CPU cap: {job['id']}")
-                if child.poll() is None:
+                if item["clock"].poll() is None:
                     continue
                 cpu = item["clock"].read()
                 item["clock"].close()
@@ -321,8 +366,7 @@ def execute(spec, workers, phase, label):
     except BaseException as caught:
         error = f"{type(caught).__name__}: {caught}"
         for index, item in active.items():
-            item["child"].kill()
-            item["child"].wait()
+            item["clock"].stop()
             results[index] = {"id": spec["jobs"][index]["id"], "cpu_seconds": item["clock"].read(),
                               "wall_seconds": time.monotonic() - item["started"], "incomplete": True,
                               "output": str(item["output"]), "command": item["command"]}
@@ -358,15 +402,127 @@ def qualify(paths, out):
     return receipt
 
 
+def slots_command(spec, args, claim_id=None):
+    command = [sys.executable, "-B", str(checked(spec["host_slots"])), "run",
+               "--lane", "codex-search-sharing-allocation-20261013", "--work-id", args.label,
+               "--cores", str(spec["cores_claimed"]), "--priority", "below_normal"]
+    if claim_id:
+        command += ["--id", claim_id]
+    if spec.get("wait_for_cores"):
+        command += ["--wait", "--wait-timeout", str(spec["wait_timeout_seconds"])]
+    return command + ["--", sys.executable, "-B", str(Path(__file__).resolve()), "worker",
+                      "--manifest", str(Path(args.manifest).resolve()), "--manifest-sha", digest(args.manifest),
+                      "--phase", args.phase, "--workers", str(args.workers), "--label", args.label]
+
+
+def slot_environment(spec):
+    env = dict(os.environ)
+    # These are the existing allocator's documented host configuration knobs.
+    settings = spec.get("host_slots_env", {})
+    require(set(settings) <= {"HOST_SLOTS_ROOT", "HOST_SLOTS_HOST", "MTG_HOST_LOCK_ROOT"},
+            "unsupported host allocator environment setting")
+    env.update(settings)
+    return env
+
+
+def supervise_run(spec, args):
+    """A detached supervisor owns the normal guarded host_slots runner."""
+    require(args.claim_id and len(args.claim_id) == 32, "supervisor requires predeclared claim ID")
+    root = Path(spec["root"])
+    receipt = root / f"DISPATCH-{args.label}.json"
+    log = root / f"DISPATCH-{args.label}.log"
+    record = {"label": args.label, "claim_id": args.claim_id, "pid": os.getpid(),
+              "process_created": psutil.Process().create_time(), "log": str(log),
+              "method": "wmi" if os.name == "nt" else "setsid", "independent_session": True,
+              "manifest": {"path": str(args.manifest), "sha256": digest(args.manifest)}, "state": "starting"}
+    publish(receipt, record)
+    own_start = time.process_time()
+    with log.open("ab") as stream:
+        child = subprocess.Popen(slots_command(spec, args, args.claim_id), env=slot_environment(spec),
+                                 cwd=root, stdin=subprocess.DEVNULL, stdout=stream, stderr=subprocess.STDOUT)
+        clock = ProcessClock(child)
+        record.update(state="queued-or-running", slots_pid=child.pid)
+        publish(receipt, record)
+        while clock.poll() is None:
+            time.sleep(1)
+        slots_cpu = clock.read()
+        clock.close()
+    inner = root / args.label / "completion.json"
+    completion = load(inner) if inner.exists() else None
+    status = json.loads(subprocess.check_output([sys.executable, "-B", spec["host_slots"]["path"], "status"],
+                                               env=slot_environment(spec), text=True))
+    released = not any(row["id"] == args.claim_id for row in status["claims"] + status["queue"])
+    # Linux wait4 includes waited descendants; Windows process handles do not.
+    guard_cpu = (max(0.0, slots_cpu - completion["cpu_seconds"])
+                 if os.name != "nt" and completion else slots_cpu) + time.process_time() - own_start
+    with ledger_owner(spec["ledger"]):
+        append_ledger(spec["ledger"], {"label": args.label + "-supervision", "phase": args.phase,
+                                     "cpu_seconds": guard_cpu, "error": None if child.returncode == 0 else "host_slots runner failed"})
+    record.update(state="completed" if child.returncode == 0 and completion and not completion.get("error") and released else "failed",
+                  slots_exit_code=child.returncode, guard_cpu_seconds=guard_cpu,
+                  completion=str(inner), claim_release_verified=released)
+    publish(receipt, record)
+    return child.returncode if released else 2
+
+
+def supervise(spec, args):
+    try:
+        return supervise_run(spec, args)
+    except BaseException as error:
+        path = Path(spec["root"]) / f"DISPATCH-{args.label}.json"
+        record = load(path) if path.exists() else {"claim_id": args.claim_id, "pid": os.getpid()}
+        record.update(state="failed", error=f"{type(error).__name__}: {error}", claim_release_verified=False)
+        publish(path, record)
+        raise
+
+
+def dispatch_detached(spec, args):
+    root = Path(spec["root"])
+    issued = root / f"SPAWN-{args.label}.json"
+    require(not issued.exists(), "dispatch label already issued; inspect its existing claim and receipt")
+    claim_id = uuid.uuid4().hex
+    command = [sys.executable, "-B", str(Path(__file__).resolve()), "supervise",
+               "--manifest", str(Path(args.manifest).resolve()), "--manifest-sha", digest(args.manifest),
+               "--phase", args.phase, "--workers", str(args.workers), "--label", args.label, "--claim-id", claim_id]
+    record = {"claim_id": claim_id, "state": "issuing", "command": command,
+              "receipt": str(root / f"DISPATCH-{args.label}.json"), "log": str(root / f"DISPATCH-{args.label}.log")}
+    publish(issued, record)
+    try:
+        if os.name == "nt":
+            helper = checked(spec["host_reservation"])
+            sys.path.insert(0, str(helper.parent))
+            import host_reservation_v1 as reservations
+            require(Path(reservations.__file__).resolve() == helper.resolve(), "detachment helper import differs")
+            result = reservations.wmi_create(subprocess.list2cmdline(command), str(root))
+            require(result["return_value"] == 0 and result["pid"] > 0, "WMI detached creation refused")
+            record.update(pid=result["pid"], method="wmi", independent_session=True)
+        else:
+            with (root / f"SPAWN-{args.label}.log").open("ab") as stream:
+                child = subprocess.Popen(command, cwd=root, env=slot_environment(spec), stdin=subprocess.DEVNULL,
+                                         stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
+            record.update(pid=child.pid, method="setsid", independent_session=True)
+        record["state"] = "dispatched"
+    except BaseException as error:
+        # A lost WMI response can mean an existing process. Never retry silently.
+        record.update(state="creation-unconfirmed", error=f"{type(error).__name__}: {error}")
+        publish(issued, record)
+        raise
+    publish(issued, record)
+    return record
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("dispatch", "worker", "check"):
+    for name in ("dispatch", "worker", "check", "supervise"):
         sub = commands.add_parser(name)
         sub.add_argument("--manifest", required=True)
         sub.add_argument("--phase", choices=("qualify", "measure"), required=True)
         sub.add_argument("--workers", type=int, required=True)
         sub.add_argument("--label", required=True)
+        sub.add_argument("--manifest-sha")
+        sub.add_argument("--claim-id")
+        sub.add_argument("--foreground", action="store_true", help="explicit caller-dependent dispatch, no independence claim")
     sub = commands.add_parser("qualify")
     sub.add_argument("--batch", action="append", required=True)
     sub.add_argument("--out", required=True)
@@ -375,6 +531,8 @@ def main(argv=None):
         print(json.dumps(qualify(args.batch, args.out)))
         return 0
     spec = load(args.manifest)
+    if args.manifest_sha:
+        require(digest(args.manifest) == args.manifest_sha, "queued manifest changed after dispatch")
     require(args.label.replace("-", "").replace("_", "").isalnum(), "invalid attempt label")
     validate(spec, args.workers, args.phase)
     if args.command == "check":
@@ -384,9 +542,11 @@ def main(argv=None):
         with ledger_owner(spec["ledger"]):
             print(json.dumps(execute(spec, args.workers, args.phase, args.label)))
         return 0
+    if args.command == "supervise":
+        return supervise(spec, args)
     # The existing shared allocator performs the live reservation/claim check,
     # pins every descendant, and suspends claims if timed ownership changes.
-    slots = checked(spec["host_slots"])
+    checked(spec["host_slots"])
     cold = Path(spec["cold_binary_root"]) / spec["binary"]["sha256"]
     cold.mkdir(parents=True, exist_ok=True)
     target = cold / Path(spec["binary"]["path"]).name
@@ -395,14 +555,10 @@ def main(argv=None):
                 "cold pin volume below reserve")
         shutil.copy2(spec["binary"]["path"], target)
     require(digest(target) == spec["binary"]["sha256"], "cold binary pin differs")
-    command = [sys.executable, "-B", str(slots), "run", "--lane", "codex-search-sharing-allocation-20261013",
-               "--work-id", args.label, "--cores", str(spec["cores_claimed"]), "--priority", "below_normal"]
-    if spec.get("wait_for_cores"):
-        command += ["--wait", "--wait-timeout", str(spec["wait_timeout_seconds"])]
-    command += ["--",
-               sys.executable, "-B", str(Path(__file__).resolve()), "worker", "--manifest", str(Path(args.manifest).resolve()),
-               "--phase", args.phase, "--workers", str(args.workers), "--label", args.label]
-    return subprocess.call(command)
+    if args.foreground:
+        return subprocess.call(slots_command(spec, args), env=slot_environment(spec))
+    print(json.dumps(dispatch_detached(spec, args)))
+    return 0
 
 
 if __name__ == "__main__":

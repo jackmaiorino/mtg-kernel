@@ -59,13 +59,16 @@ def prepare(args):
     spec = {"schema": SCHEMA, "host": platform.node().upper(), "root": str(root), "commit": args.commit,
             "binary": {"path": str(Path(args.binary).resolve()), "sha256": digest(args.binary)},
             "host_slots": {"path": str(Path(args.host_slots).resolve()), "sha256": digest(args.host_slots)},
+            "host_reservation": {"path": str(Path(args.host_reservation).resolve()), "sha256": digest(args.host_reservation)},
             "inputs": index["assets"], "collab_input_ref": index["collab_ref"],
             "eligible_workers": args.eligible_workers, "cores_claimed": args.cores_claimed, "cpu_cap_seconds": args.cpu_cap,
             "external_cpu_seconds": args.external_cpu, "qualification_cpu_cap_seconds": args.qualification_cpu_cap,
             "output_cap_bytes": 4 * GIB, "projected_output_bytes": 64 * 1024**2,
-            "ledger": str(root / "CPU-LEDGER.jsonl"), "cold_binary_root": "E:/pinned-binaries",
-            "storage": {"hot_volume": "D", "hot_disk": "Samsung SSD 870 EVO 1TB", "cold_volume": "E"},
+            "ledger": str(root / "CPU-LEDGER.jsonl"), "cold_binary_root": args.cold_binary_root,
+            "storage": {"hot_volume": args.hot_volume, "hot_disk": args.hot_disk, "cold_volume": args.cold_volume},
             "wait_for_cores": True, "wait_timeout_seconds": args.wait_timeout,
+            "host_slots_env": ({"HOST_SLOTS_ROOT": args.host_lock_root, "MTG_HOST_LOCK_ROOT": args.host_lock_root}
+                               if args.host_lock_root else {}),
             "workload": {"mode": "s4a-search-profile", "experiment": "search-sharing-allocation-20261013",
                          "arms": "ABC", "root_panel_sha256": digest(inputs / "ROOTS.json"),
                          "common_flags": {"key_mode": "repaired", "interchange": False, "key_memo": False},
@@ -85,10 +88,12 @@ def prepare(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", default="D:/e-scratch/search-sharing-allocation-20261013")
+    parser.add_argument("--root", default="D:/e-scratch/search-sharing-allocation-20261013" if platform.system() == "Windows" else "/workspace/search-sharing-allocation-20261013")
     parser.add_argument("--binary", required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--host-slots", required=True)
+    parser.add_argument("--host-reservation", default=str(Path(__file__).resolve().parents[2] / "python/tools/host_reservation_v1.py"))
+    parser.add_argument("--host-lock-root", help="on Linux use /var/lib/mtg-node/host-lock for both supported helpers")
     parser.add_argument("--phase", choices=("qualify", "measure"), default="qualify")
     parser.add_argument("--out", required=True)
     parser.add_argument("--eligible-workers", type=int, default=2)
@@ -107,5 +112,9 @@ if __name__ == "__main__":
     parser.add_argument("--qualification")
     parser.add_argument("--calibrate", action="store_true", help="cost-only A at actual baseline transition anchors, no fresh quality evaluation")
     parser.add_argument("--safety-cap", type=int, default=16000000)
+    parser.add_argument("--cold-binary-root", default="E:/pinned-binaries" if platform.system() == "Windows" else "/workspace/pinned-binaries")
+    parser.add_argument("--hot-volume", default="D" if platform.system() == "Windows" else "/workspace")
+    parser.add_argument("--hot-disk", default="Samsung SSD 870 EVO 1TB" if platform.system() == "Windows" else "pod-local-ssd")
+    parser.add_argument("--cold-volume", default="E" if platform.system() == "Windows" else "/workspace")
     args = parser.parse_args()
     print(json.dumps(prepare(args)))

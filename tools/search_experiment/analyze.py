@@ -116,6 +116,7 @@ def analyze(paths, panel, seeds, budgets, worlds=128, repetitions=20000, bootstr
                         for key, row in indexed.items()],
               "bootstrap": {"unit": "root", "replicates": repetitions, "seed": bootstrap_seed,
                             "interval_percent": 97.5, "primary_anchor": 64000,
+                            "nominal_family_coverage_percent": 95,
                             "primary_contrasts": ["B-A", "C-A"], "secondary_anchor": 16000},
               "sources": [{"path": str(path), "sha256": digest(path)} for path in paths],
               "contrasts": {}, "support_failures": []}
@@ -162,7 +163,7 @@ def analyze(paths, panel, seeds, budgets, worlds=128, repetitions=20000, bootstr
             rng = random.Random(bootstrap_seed)
             draws = [statistics.mean(rng.choices(values, k=len(values))) for _ in range(repetitions)]
             interval = [quantile(draws, .0125), quantile(draws, .9875)]
-            contrast["simultaneous_97_5_percent_interval"] = interval
+            contrast["bonferroni_97_5_percent_interval"] = interval
             contrast["advances_quality"] = ready and interval[0] > 0
         report["contrasts"][f"{arm}-A"] = contrast
     report["verdict"] = "incomplete" if missing else ("inconclusive" if not all(c["quality_resolved"] for c in report["contrasts"].values())

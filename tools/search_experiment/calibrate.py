@@ -24,9 +24,9 @@ def calibrate(paths):
             require(math.isfinite(cpu) and cpu > 0, "final process CPU missing")
             # Source load is already counted by the native full process cutoff.
             # Reserve observed serialization/output CPU after search finishes.
-            search_absolute = row.get("search_process_cpu_seconds")
+            search_absolute = row.get("selection_return_process_cpu_seconds")
             require(isinstance(search_absolute, (float, int)), "absolute search CPU missing")
-            reserve = max(0.0, cpu - search_absolute)
+            reserve = max(0.0, cpu - row.get("pure_evaluation_cpu_seconds", 0.0) - search_absolute)
             record = {"native_cpu_seconds": cpu, "baseline_full_cpu_seconds": cpu,
                       "overhead_reserve_seconds": reserve, "baseline_transitions": row["selection"]["transitions"],
                       "baseline_work_attempts": row["work_attempts"], "wall_seconds": job["wall_seconds"],

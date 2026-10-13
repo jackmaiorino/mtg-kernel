@@ -90,7 +90,8 @@ Unsupported roots retain the actual ordinary-policy fallback outcomes and are
 reported separately. Unknown or rejected pairs remain unresolved and block a
 quality advancement. B-A/C-A primary contrasts use only the 64k anchor, averaging
 three seeds within each root, then equal root weights. Paired root-cluster
-bootstrap intervals are 97.5 percent for the two primary comparisons. The 16k
+bootstrap intervals are marginal 97.5 percent, Bonferroni-adjusted for nominal
+95 percent family coverage across the two primary comparisons. The 16k
 rows are secondary diagnostics. Plain fixed-action evaluation cannot satisfy
 primary analysis. No cross-arm dedup follows from identical first actions.
 Full process CPU comes from hash-bound runtime completion records. The
@@ -104,3 +105,66 @@ equal compute.
 This is development-panel evidence, not ordinary-start strength or policy
 learning. Final output sealing, recovery cold copy, artifact registration and
 tracker delivery belong to the lead's existing manifest and state.
+
+## Linux deployment and detached ownership
+
+The supported Linux worker uses `wait4` user+system rusage for final native CPU;
+it never substitutes the last live `/proc` sample. Affinity and nice 10 are set
+before native `exec`, and native children remain in the host_slots contained
+session. Windows keeps its retained handle and suspended affinity/EcoQoS path.
+The two Linux-only accounting tests must pass on the allocated host before
+representative qualification. They remain pending when only Windows testing
+has been observed. No remote throughput is implied by this implementation.
+
+`dispatch` now detaches by default. Windows uses the existing hidden WMI
+`host_reservation_v1.wmi_create` helper to create the supervisor outside the app
+job; Linux starts a new session. Both then run the normal host_slots claim. There
+is no breakaway fallback. `--foreground` explicitly opts into a caller-dependent
+run. `SPAWN-label.json` pins the creation response and method;
+`DISPATCH-label.json` records the actual supervisor PID, process creation time,
+claim ID, log, final runner exit and verified claim absence. The worker also
+checks that the queued manifest hash still matches. Inspect these records and
+the existing host_slots status before retrying an unconfirmed creation. A
+successful spawn alone is not completion.
+
+For the proposed CPU3c 32-vCPU/64-GB Pod, allocate at least 100 GB local disk,
+measure actual free bytes, and retain 60 GiB after the 16 GiB build scratch plus
+4 GiB run cap. The resident lease guard and independent local guardian must be
+armed by the lead's lease controller before substantial work. Recover pinned
+Linux binaries and all final/failed evidence to the registered cold/recovery
+locations before releasing an ephemeral Pod. These commands prepare/verify the
+runtime only; they are not permission to create a Pod.
+
+On the Pod, use the pinned Rust 1.94.1 toolchain and an observed linker, Python
+with psutil, the reviewed source archive, and the 83 MB explicit input archive.
+Run `relocate_inputs.py` once after transfer; it verifies the explicit assets,
+preserves the transport index and changes source specification paths only.
+The lead records actual CPU topology, cgroup quota/memory and storage profile;
+the existing `g115_d3_cloud_host_v1.observe/profile` can supply these fields when
+`/workspace` is its own mount. If it is not, inspect the containing mount instead
+of claiming that legacy helper passed. Configure allocator cores from the actual
+allowed CPU set and limit claimed cores by observed effective quota:
+
+```bash
+export HOST_SLOTS_ROOT=/var/lib/mtg-node/host-lock
+export MTG_HOST_LOCK_ROOT=/var/lib/mtg-node/host-lock
+python3 -c 'import os,platform,json,pathlib,re; root=pathlib.Path(os.environ["HOST_SLOTS_ROOT"]); host=re.sub(r"[^A-Za-z0-9-]","-",platform.node()).upper(); p=root/(host+".slots"); p.mkdir(parents=True,exist_ok=True); json.dump({"cores":",".join(map(str,sorted(os.sched_getaffinity(0)))),"keep_free":0,"priority":"below_normal"},(p/"config.json").open("x"))'
+python3 tools/search_experiment/relocate_inputs.py --inputs /workspace/search-sharing-allocation-20261013/inputs
+python3 -m unittest discover -s tools/search_experiment/tests -v
+python3 python/tools/host_slots_v1.py status
+```
+
+Prepare the first small cost-only root queue, then have the lead review it:
+
+```bash
+python3 tools/search_experiment/make_manifest.py --root /workspace/search-sharing-allocation-20261013 --binary /workspace/pinned-runtime/regret_census_v1 --commit REVIEWED_SHA --host-slots python/tools/host_slots_v1.py --host-lock-root /var/lib/mtg-node/host-lock --hot-volume /workspace --hot-disk RunPod-CPU3c-local-100GB --cold-volume /workspace --cold-binary-root /workspace/pinned-binaries --cores-claimed 2 --eligible-workers 2 --decks 1 --budgets 16000 --calibrate --seeds search-sharing-allocation-20261013/calibration/cloud-r1 --out /workspace/search-sharing-allocation-20261013/CALIBRATION-MANIFEST.json
+python3 tools/search_experiment/launch.py check --manifest /workspace/search-sharing-allocation-20261013/CALIBRATION-MANIFEST.json --phase qualify --workers 1 --label cal-cloud-probe
+```
+
+After review, the same guarded `dispatch` command starts its detached claim and
+returns a persisted receipt. Complete cost-only calibration first, then qualify
+one and increasing useful worker counts with fixed work limits and the same
+calibration asset. Do not carry a Windows receipt across host, binary, source
+path or storage changes. Generate full formal queues only when the measured
+projection fits the lead's remaining CPU/dollar/lease/output ceilings. The
+runtime carries no API key and has no provider creation or spending path.
