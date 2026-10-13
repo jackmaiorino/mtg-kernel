@@ -3,6 +3,7 @@ import fixture from '../fixtures/actor-visible.json' with { type: 'json' };
 import native from '../fixtures/native-root-excerpt.json' with { type: 'json' };
 import replay from '../fixtures/search-replay.json' with { type: 'json' };
 import graph from '../fixtures/search-graph.json' with {type:'json'};
+import rootChoices from '../fixtures/root-choices.json' with {type:'json'};
 import retained from '../fixtures/retained-search.json' with {type:'json'};
 import uct from '../fixtures/uct-search.json' with {type:'json'};
 import pooledUct from '../fixtures/uct-pooled.json' with {type:'json'};
@@ -91,6 +92,34 @@ test('search replay stepping, seeking, pause and deep link restore',async({page}
   await expect(region.locator('.search-selection-summary')).toContainText('Policy sample: Not recorded');
 });
 
+test('every root move remains visible, including evaluations without stored children',async({page})=>{
+  await openFixture(page);
+  await page.locator('input[type=file]').setInputFiles({name:'root-choices.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(rootChoices))});
+  const region=page.getByRole('region',{name:'Recorded search replay'}),svg=region.getByRole('group',{name:'Accumulated explored search graph'});
+  await expect(svg.locator('.search-graph-root-choice')).toHaveCount(4);
+  await expect(svg.locator('[data-node]')).toHaveCount(1);
+  await expect(svg.locator('[data-root-evaluation]')).toHaveCount(0);
+  await expect(region.locator('.search-root-options')).toContainText('Not evaluated yet');
+  await region.getByRole('button',{name:'See complete graph'}).click();
+  await expect(svg.locator('[data-node]')).toHaveCount(2);
+  await expect(svg.locator('[data-root-evaluation]')).toHaveCount(3);
+  await expect(region.locator('.search-root-status').filter({hasText:'Evaluated once · not expanded'})).toHaveCount(3);
+  const lava=svg.locator('.search-graph-root-choice[data-root-choice="1"]');
+  await lava.focus();await page.keyboard.press('Enter');
+  await expect(region.locator('.search-node-detail')).toContainText('Initial evaluation from simulation 2: -7786');
+  await expect(region.locator('.search-preview-label')).toContainText('Initial evaluation of move 1');
+  await expect(region.getByRole('slider',{name:'Search event timeline'})).toHaveValue('14');
+  await region.screenshot({path:'test-results/root-choices-desktop.png'});
+  await page.setViewportSize({width:320,height:900});await page.emulateMedia({reducedMotion:'reduce'});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+  await expect(svg.locator('.search-graph-root-choice')).toHaveCount(4);
+  await region.screenshot({path:'test-results/root-choices-320.png'});
+  await region.getByRole('slider',{name:'Search event timeline'}).fill('0');
+  await expect(svg.locator('[data-root-evaluation]')).toHaveCount(0);
+  await expect(region.locator('.search-preview-label')).toHaveCount(0);
+  await expect(svg.locator('.search-graph-root-choice')).toHaveCount(4);
+});
+
 test('the graph retains discovered branches, inspects positions and rewinds',async({page})=>{
   await openFixture(page);
   await page.locator('input[type=file]').setInputFiles({name:'graph.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(graph))});
@@ -99,9 +128,18 @@ test('the graph retains discovered branches, inspects positions and rewinds',asy
   await region.getByRole('slider',{name:'Search event timeline'}).fill('4');
   await expect(svg.locator('[data-node]')).toHaveCount(2);
   await region.getByRole('slider',{name:'Search event timeline'}).fill('7');
-  await expect(svg.locator('[data-node]')).toHaveCount(3);
-  await expect(svg.locator('[data-edge="0:0:1"]')).toHaveCount(1);await expect(svg.locator('[data-edge="0:0:2"]')).toHaveCount(1);
+  await expect(svg.locator('[data-node]')).toHaveCount(1);
+  await expect(svg.locator('[data-outcome-group="0:0"]')).toHaveAttribute('data-outcome-count','2');
+  await svg.locator('[data-outcome-group="0:0"]').focus();await page.keyboard.press('Enter');
+  await expect(region.locator('[data-outcome-position]')).toHaveCount(2);
+  await expect(region.locator('.search-outcome-list')).toContainText('Evaluated before a response');
+  await expect(region.getByRole('slider',{name:'Search event timeline'})).toHaveValue('7');
   await region.getByRole('button',{name:'See complete graph'}).click();await expect(svg.locator('[data-node]')).toHaveCount(4);
+  await expect(svg.locator('[data-search-action="1:0"]')).toContainText('OPPONENT');
+  await svg.locator('[data-search-action="0:0"]').focus();await page.keyboard.press('Enter');
+  await region.locator('.search-simulation-responses summary').click();
+  await expect(region.locator('.search-simulation-responses')).toContainText('Simulation 4 · Opponent tried');
+  await expect(region.locator('.search-simulation-responses')).toContainText('Pass priority');
   await region.getByRole('combobox',{name:'Inspect discovered position'}).selectOption('3');
   await expect(region.locator('.search-node-detail')).toContainText('First leaf estimate: 300');
   await region.getByRole('button',{name:'Zoom in search graph'}).click();await region.getByRole('button',{name:'Focus current simulation path'}).click();
@@ -117,6 +155,34 @@ test('the graph retains discovered branches, inspects positions and rewinds',asy
   await expect.poll(async()=>svg.locator('[data-node="0"]').evaluate(node=>{const n=node.getBoundingClientRect(),s=node.closest('svg')!.getBoundingClientRect();return n.left>=s.left&&n.right<=s.right;})).toBe(true);
   await region.screenshot({path:'test-results/search-graph-320.png'});
 });
+test('an interior evaluation previews its result without changing search time',async({page})=>{
+  await openFixture(page);
+  const recording=structuredClone(graph),frame=recording.frames[0],replay=frame.search!.replay!;
+  recording.title='Synthetic interior evaluation regression';
+  const evaluated=structuredClone(replay.simulations[3]);
+  evaluated.ordinal=5;evaluated.value='-7000';evaluated.reason='depth';evaluated.leafNode=null;
+  evaluated.choices.push({node:3,action:0,mode:'puct',scores:[null],board:structuredClone(evaluated.leaf)});
+  evaluated.leaf.players[0].life=7;replay.simulations.push(evaluated);
+  for(const n of replay.nodes){n.visits=0;n.edgeVisits.fill(0);n.edgeValueSums.fill('0');}
+  let transitions=0;
+  for(const s of replay.simulations){for(const c of s.choices){const n=replay.nodes[c.node];n.visits++;n.edgeVisits[c.action]++;n.edgeValueSums[c.action]=String(BigInt(n.edgeValueSums[c.action])+BigInt(s.value));transitions++;}if(s.leafNode!=null)replay.nodes[s.leafNode].visits++;}
+  const search=frame.search!;search.transitions=transitions;search.simulations=replay.simulations.length;
+  search.stats.forEach((s,i)=>{s.visits=replay.nodes[0].edgeVisits[i];s.valueSum=replay.nodes[0].edgeValueSums[i];s.meanValue=s.visits?String(BigInt(s.valueSum)/BigInt(s.visits)):'0';});
+  const bytes=Buffer.alloc(24+search.stats.length*24);bytes.writeBigUInt64LE(BigInt(search.stats.length));
+  search.stats.forEach((s,i)=>{const p=8+i*24;bytes.writeUInt32LE(s.index,p);bytes.writeUInt32LE(s.visits,p+4);bytes.writeBigInt64LE(BigInt(s.valueSum),p+8);bytes.writeBigInt64LE(BigInt(s.meanValue),p+16);});
+  [frame.executed,search.transitions,search.simulations,search.nodes].forEach((n,i)=>bytes.writeUInt32LE(n,8+search.stats.length*24+i*4));
+  search.digest=createHash('sha256').update(bytes).digest('hex');
+  await page.locator('input[type=file]').setInputFiles({name:'interior.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(recording))});
+  const region=page.getByRole('region',{name:'Recorded search replay'});
+  await region.getByRole('button',{name:'See complete graph'}).click();
+  await region.locator('[data-item="e3:0"]').focus();await page.keyboard.press('Enter');
+  await expect(region.locator('.search-preview-label')).toContainText('move 0 at position 3 · simulation 6');
+  await expect(region.locator('.search-seat-heading strong').last()).toContainText('7');
+  await expect(region.getByRole('slider',{name:'Search event timeline'})).toHaveValue('20');
+  await region.getByRole('slider',{name:'Search event timeline'}).fill('0');
+  await expect(region.locator('.search-preview-label')).toHaveCount(0);
+});
+
 test('import stays local; policy, cards, playback and deep links work', async ({ page }) => {
   const unexpected: string[] = [];
   page.on('request', request => { if (request.method() !== 'GET') unexpected.push(request.url()); });

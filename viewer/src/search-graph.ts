@@ -4,7 +4,34 @@ import type { SearchEvent } from './search-playback';
 export type GraphEdge = {from:number; to:number; action:number; key:string};
 export type GraphNodeState = {id:number; born:number; visits:number; sum:bigint; board:Board; estimate:string|null};
 export type SearchGraphState = {nodes:Map<number,GraphNodeState>; edges:Map<string,GraphEdge>; explored:Set<number>; activeNodes:number[]; activeEdges:Set<string>; frontier:number|null; completed:number};
+export type RootChoiceState = {index:number; visits:number; evaluations:number; unidentifiedExpansions:number; children:number[]; firstEvaluation:{board:Board; value:string; simulation:number}|null};
 export const edgeKey=(from:number,action:number,to:number)=>`${from}:${action}:${to}`;
+
+// Legal choices exist before search visits them. Evaluation-only probes are
+// retained as evidence, without adding invented nodes to the search tree.
+export function rootChoicesAt(replay:SearchReplay,event:SearchEvent,graph:SearchGraphState):RootChoiceState[] {
+  const choices=replay.nodes[0].actions.map(a=>({index:a.index,visits:0,evaluations:0,unidentifiedExpansions:0,children:[] as number[],firstEvaluation:null as RootChoiceState['firstEvaluation']}));
+  for(let i=0;i<=event.simulation;i++){
+    const s=replay.simulations[i],choice=choices[s.choices[0].action];
+    if(i<event.simulation||event.phase!=='select'){
+      choice.evaluations++;
+      if(s.choices.length===1&&s.leafNode==null){
+        if(s.reason==='expanded')choice.unidentifiedExpansions++;
+        else if(!choice.firstEvaluation)choice.firstEvaluation={board:s.leaf,value:s.value,simulation:i};
+      }
+    }
+    if(i<event.simulation||event.phase==='backup')choice.visits++;
+  }
+  for(const edge of graph.edges.values())if(edge.from===0)choices[edge.action].children.push(edge.to);
+  return choices;
+}
+
+export function rootChoiceStatus(choice:RootChoiceState):string {
+  if(choice.children.length)return `Expanded into ${choice.children.length} stored ${choice.children.length===1?'position':'positions'}`;
+  if(choice.unidentifiedExpansions)return 'Expansion recorded · child identity unavailable';
+  if(!choice.evaluations)return 'Not evaluated yet';
+  return `${choice.evaluations===1?'Evaluated once':`Evaluated ${choice.evaluations} times`} · not expanded${choice.visits<choice.evaluations?' · backup pending':''}`;
+}
 
 // Only replayed arrivals reveal topology. A new leaf appears at evaluation;
 // visits and sums change at backup. Seeking reconstructs the same prefix.

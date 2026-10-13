@@ -7,8 +7,10 @@ import retained from './fixtures/retained-search.json';
 import uctFixture from './fixtures/uct-search.json';
 import pooledUct from './fixtures/uct-pooled.json';
 import { uctEvents, uctGraphAt } from '../src/uct-playback';
-import { graphAt, graphLayout } from '../src/search-graph';
+import rootChoicesFixture from './fixtures/root-choices.json';
+import { graphAt, graphLayout, rootChoicesAt, rootChoiceStatus } from '../src/search-graph';
 import { initialSearchPlayback, searchReducer, searchEvents, rootHistory } from '../src/search-playback';
+import { actionsAt, actionLayout, responseRecords, responseSummary } from '../src/search-actions';
 import { comparePolicyMasses, policyFavorite, parseRecording, verifySearchDigests } from '../src/recording';
 import { initialPlayback, playbackReducer } from '../src/playback';
 
@@ -73,6 +75,66 @@ describe('retained search-controlled decisions',()=>{
   });
 });
 describe('growing search graph',()=>{
+  it('groups distinct prefix frontiers by action without merging their identities',()=>{
+    const replay=parseRecording(graphFixture).frames[0].search!.replay!,event={simulation:2,phase:'backup' as const,choice:0};
+    const graph=graphAt(replay,event),model=actionsAt(replay,event,graph),layout=actionLayout(model,graph);
+    expect(graph.nodes.size).toBe(3);expect(model.groups.get('0:0')).toEqual([1,2]);
+    expect(model.menus).toEqual(new Set([0]));expect(layout.destinations.get(1)).toBe('g0:0');
+    expect(layout.destinations.get(2)).toBe('g0:0');expect(model.actions.get('0:0')!.visits).toBe(3);
+    expect(responseRecords(1,replay,event)).toEqual([]);expect(responseSummary(1,replay,model)).toBe('Evaluated before a response');
+  });
+  it('unfolds an explored opponent and records its response with exact simulation timing',()=>{
+    const replay=parseRecording(graphFixture).frames[0].search!.replay!,selected={simulation:3,phase:'select' as const,choice:1};
+    const graph=graphAt(replay,selected),model=actionsAt(replay,selected,graph);
+    expect(model.groups.size).toBe(0);expect(model.menus.has(1)).toBe(true);expect(model.actions.get('1:0')!.visits).toBe(0);
+    expect(responseRecords(1,replay,selected)).toEqual([{simulation:3,index:0,label:'Pass priority',stage:'selected'}]);
+    const evaluated={...selected,phase:'evaluate' as const},backed={...selected,phase:'backup' as const};
+    expect(responseRecords(1,replay,evaluated)[0].stage).toBe('tried');expect(responseRecords(1,replay,backed)[0].stage).toBe('backed up');
+    expect(actionsAt(replay,backed,graphAt(replay,backed)).actions.get('1:0')!.visits).toBe(1);
+    const rewind={simulation:0,phase:'select' as const,choice:0};expect(actionsAt(replay,rewind,graphAt(replay,rewind)).actions.has('1:0')).toBe(false);
+  });
+  it('keeps a hypothetical chosen spell distinct from hidden hand availability',()=>{
+    const replay=parseRecording(graphFixture).frames[0].search!.replay!;
+    replay.nodes[1].actions[0].label='Cast Lightning Bolt';
+    const end={simulation:4,phase:'backup' as const,choice:0};
+    expect(responseRecords(1,replay,end)[0].label).toBe('Cast Lightning Bolt');
+    expect(responseRecords(2,replay,end)).toEqual([]);
+  });
+  it('keeps all four legal moves before search visits or evaluates them',()=>{
+    const replay=parseRecording(rootChoicesFixture).frames[0].search!.replay!;
+    const event={simulation:0,phase:'select' as const,choice:0},graph=graphAt(replay,event);
+    const choices=rootChoicesAt(replay,event,graph);
+    expect(choices.map(c=>c.index)).toEqual([0,1,2,3]);
+    expect(choices.every(c=>c.visits===0&&c.evaluations===0&&c.children.length===0&&c.firstEvaluation===null)).toBe(true);
+    expect(graph.nodes.size).toBe(1);
+  });
+  it('aligns root results beneath the action that produced them',()=>{
+    const replay=parseRecording(rootChoicesFixture).frames[0].search!.replay!,event={simulation:4,phase:'backup' as const,choice:0};
+    const graph=graphAt(replay,event),layout=actionLayout(actionsAt(replay,event,graph),graph);
+    expect(layout.items.get('n1')!.x).toBe(layout.items.get('a0:0')!.x);
+    for(const index of [1,2,3])expect(layout.items.get(`e0:${index}`)!.x).toBe(layout.items.get(`a0:${index}`)!.x);
+  });
+  it('retains evaluation-only alternatives and advances visits at backup',()=>{
+    const replay=parseRecording(rootChoicesFixture).frames[0].search!.replay!;
+    const evaluated={simulation:1,phase:'evaluate' as const,choice:0};
+    const probe=rootChoicesAt(replay,evaluated,graphAt(replay,evaluated))[1];
+    expect(probe).toMatchObject({visits:0,evaluations:1,children:[],firstEvaluation:{value:'-7786',simulation:1}});
+    expect(rootChoiceStatus(probe)).toContain('backup pending');
+    const end={simulation:4,phase:'backup' as const,choice:0},graph=graphAt(replay,end),choices=rootChoicesAt(replay,end,graph);
+    expect(choices.map(c=>c.visits)).toEqual([2,1,1,1]);
+    expect(choices[0].children).toEqual([1]);
+    expect(choices.slice(1).map(rootChoiceStatus)).toEqual(Array(3).fill('Evaluated once · not expanded'));
+    expect(graph.nodes.size).toBe(2);
+    const rewind={simulation:0,phase:'select' as const,choice:0};
+    expect(rootChoicesAt(replay,rewind,graphAt(replay,rewind)).every(c=>c.firstEvaluation===null)).toBe(true);
+  });
+  it('does not label an older expansion with missing identity as unexpanded',()=>{
+    const replay=parseRecording(rootChoicesFixture).frames[0].search!.replay!;
+    replay.schema='mtg-kernel-search-replay/v1';delete replay.simulations[4].leafNode;
+    const event={simulation:4,phase:'backup' as const,choice:0},choice=rootChoicesAt(replay,event,graphAt(replay,event))[0];
+    expect(choice.unidentifiedExpansions).toBe(1);
+    expect(rootChoiceStatus(choice)).toBe('Expansion recorded · child identity unavailable');
+  });
   it('reveals evaluated positions at expansion and updates visits only at backup',async()=>{
     const r=parseRecording(graphFixture);await verifySearchDigests(r);const replay=r.frames[0].search!.replay!;
     const before=graphAt(replay,{simulation:1,phase:'select',choice:0});expect([...before.nodes.keys()]).toEqual([0]);
