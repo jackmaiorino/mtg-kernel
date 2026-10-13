@@ -119,7 +119,18 @@ mod printed {
     #[ignore = "Requires parent-owned genuine Fiendish Panda registration; no source-validation bypass"]
     fn actual_gain_preserves_seraph_cat_first_gain_and_each_panda_gain_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let mut state = ready_state_for(actor);
+            // Select the genuine first-gain consumer at construction so its
+            // production pool initializer creates the actual turn ledger.
+            let seraph_def = crate::card_def::card_id_by_name("Vanguard Seraph").unwrap();
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                &[seraph_def],
+                &[seraph_def],
+                crate::rl::card_name,
+                110_120,
+                actor,
+            );
+            state.step = crate::state::Step::Main1;
+            assert!(state.life_gain_turn_v1.is_some());
             let source = panda(&mut state, actor);
             // Actual supported presence primitives exercise independent event producers.
             let seraph = put(&mut state, actor, "Vanguard Seraph", Zone::Battlefield);
